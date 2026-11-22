@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
@@ -256,19 +256,36 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const facts = props.facts ?? NO_FACTS;
     const [widened, setWidened] = React.useState(false);
     const [signedOutOpen, setSignedOutOpen] = React.useState(false);
-    // The accounts that can take work lead and the used-up ones follow, each in its own order: five "0% left" rows
-    // before the only usable account pushed it below the fold (acceptance 11-21 #7). Nothing here ranks accounts:
-    // the switching order is the pool selector's, shown on Plans.
-    // One story per row: an account leads only when it can take work, which is the verdict's "not exhausted" AND a
-    // window that still shows room; a row whose every window reads used up (an old reading the verdict cannot prove)
-    // follows with the used-up ones (acceptance 11-22 #7).
+    const signedOutRegionId = React.useId();
+    const sourceAccounts = React.useMemo(
+        () => groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account }))),
+        [usage.accounts],
+    );
+    const activelyViewed = useHostActivelyViewed();
+    const readNextExpiry = React.useCallback((nowMs: number) => {
+        let next: number | null = null;
+        for (const { account } of sourceAccounts) {
+            const at = account.staleAt;
+            if (at !== null && at > nowMs && (next === null || at < next)) next = at;
+        }
+        return next;
+    }, [sourceAccounts]);
+    const clockNow = useSessionListRuntimeDeadlineNowMs(readNextExpiry, activelyViewed && usage.staleAt !== null);
+    // Keep the source order within each group. An expired or saved reading can still show its numbers.
     const accounts = React.useMemo(() => {
-        const all = groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account })));
-        const canTakeWork = (entry: (typeof all)[number]) => facts.accounts?.[entry.account.key]?.quotaExhausted !== true
-            && entry.account.windows.some((window) => window.remainingPct === null || window.remainingPct > 0);
-        return [...all.filter(canTakeWork), ...all.filter((entry) => !canTakeWork(entry))];
-    }, [facts.accounts, usage.accounts]);
-    const now = Date.now();
+        type Entry = (typeof sourceAccounts)[number] & { expired: boolean };
+        const usable: Entry[] = [];
+        const spent: Entry[] = [];
+        const unknown: Entry[] = [];
+        for (const entry of sourceAccounts) {
+            const expired = entry.account.staleAt !== null && entry.account.staleAt <= clockNow;
+            const verdict = usage.source === 'live' && !expired ? facts.accounts?.[entry.account.key]?.quotaExhausted : undefined;
+            const group = verdict === false ? usable : verdict === true ? spent : unknown;
+            group.push({ ...entry, expired });
+        }
+        return [...usable, ...spent, ...unknown];
+    }, [sourceAccounts, usage.source, facts.accounts, clockNow]);
+    const now = Math.max(Date.now(), clockNow);
 
     // Known identity owns the scope even before a usage reading exists. Only an unknown identity
     // or the explicit All accounts action shows the rail's complete list.
@@ -288,7 +305,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
     // Every account shown together is named at once, so two that read as their service's account are
     // told apart by the one naming owner instead of each row naming itself.
     const names = React.useMemo(() => presentConnectedAccountNames([
-        ...accounts.map(({ provider, account }) => ({
+        ...sourceAccounts.map(({ provider, account }) => ({
             key: account.key, serviceTitle: provider.serviceLabel, displayName: account.label,
             email: account.email, accountId: account.accountId, presentIdentity: privacy.present,
         })),
@@ -296,7 +313,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
             key: account.key, serviceTitle: account.serviceLabel, displayName: account.accountLabel,
             email: account.accountEmail, accountId: account.accountId, presentIdentity: privacy.present,
         })),
-    ]), [accounts, facts.accountsNeedingSignIn, privacy.present]);
+    ]), [sourceAccounts, facts.accountsNeedingSignIn, privacy.present]);
     const refreshAccountKey = scoped ? session?.accountKey ?? null : undefined;
     const { keys: refreshKeys, refreshing, error: refreshError } = React.useMemo(() => summarizeUsagePopoverRefresh({
         refresh, accountKey: refreshAccountKey, names, presentIdentity: privacy.present,
@@ -311,6 +328,7 @@ export function SidebarUsagePopoverView(props: Readonly<{
             account={entry.account}
             facts={facts.accounts?.[entry.account.key] ?? null}
             name={names.get(entry.account.key)!}
+            expired={entry.expired}
             now={now}
         />
     );
@@ -367,21 +385,38 @@ export function SidebarUsagePopoverView(props: Readonly<{
         // signed-out run is one line with its count, opened in place (acceptance 11-22 #7).
         const signedOut = facts.accountsNeedingSignIn;
         const foldSignedOut = signedOut.length >= SIGNED_OUT_FOLD_AT;
+        const signedOutLabel = foldSignedOut ? t('sidebarFooter.usageSignedOutAccounts', { count: signedOut.length }) : null;
         body = withDividers([
             ...accounts.filter(entry => !collapsed?.has(entry)).map(renderAccount),
             ...(collapsed ? [<Text key="silent" testID="usage-popover-unavailable-accounts" style={styles.scopeLine}>
                 {t('sidebarFooter.usageUnavailableAccounts', { count: collapsed.size })}
             </Text>] : []),
-            ...(foldSignedOut ? [<ActionListSection key="signedOut" actions={[{
-                id: 'signed-out',
-                testID: 'usage-popover-signed-out-accounts',
-                label: t('sidebarFooter.usageSignedOutAccounts', { count: signedOut.length }),
-                icon: <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />,
-                right: <Icon name={signedOutOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
-                onPress: () => setSignedOutOpen((open) => !open),
-            }]} />] : []),
-            ...(!foldSignedOut || signedOutOpen ? signedOut.map(renderSignedOut) : []),
+            ...(signedOutLabel === null ? signedOut.map(renderSignedOut) : [
+                <ActionListSection key="signedOut" actions={[{
+                    id: 'signed-out',
+                    testID: 'usage-popover-signed-out-accounts',
+                    label: signedOutLabel,
+                    expanded: signedOutOpen,
+                    controls: signedOutRegionId,
+                    icon: <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />,
+                    right: <Icon name={signedOutOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+                    onPress: () => setSignedOutOpen((open) => !open),
+                }]} />,
+            ]),
         ]);
+        if (signedOutLabel !== null) {
+            body = <>
+                {body}
+                <View nativeID={signedOutRegionId} accessibilityLabel={signedOutLabel}
+                    {...(Platform.OS === 'web' ? { role: 'region' as const } : undefined)}
+                    style={signedOutOpen ? undefined : { display: 'none' }}>
+                    {signedOutOpen ? <>
+                        <View style={styles.divider} />
+                        {withDividers(signedOut.map(renderSignedOut))}
+                    </> : null}
+                </View>
+            </>;
+        }
     }
 
     // Scoped to a session, the one row widens to every account. Otherwise the header's gear opens Credentials, so no
@@ -532,14 +567,10 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     account: UsageAccountRow;
     facts: UsagePopoverAccountFacts | null;
     name: ConnectedAccountNamePresentation;
+    expired: boolean;
     now: number;
 }>) {
-    const { account } = props;
-    const staleAt = account.staleAt;
-    const activelyViewed = useHostActivelyViewed();
-    const readExpiry = React.useCallback((nowMs: number) => staleAt !== null && staleAt > nowMs ? staleAt : null, [staleAt]);
-    const clockNow = useSessionListRuntimeDeadlineNowMs(readExpiry, activelyViewed && staleAt !== null && staleAt > props.now);
-    const expired = staleAt !== null && Math.max(props.now, clockNow) >= staleAt;
+    const { account, expired } = props;
     const identity = accountHeaderLine(props.serviceLabel, props.name);
     const stateLabel = account.windows.length > 0
         ? null

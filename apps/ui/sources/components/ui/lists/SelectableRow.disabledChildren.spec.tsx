@@ -15,7 +15,7 @@ vi.mock('react-native-unistyles', async () => {
 // Construct the real module graph during collection, not inside the row interaction budget.
 const { SelectableRow } = await import('./SelectableRow');
 
-describe('SelectableRow (disabled children)', () => {
+describe('SelectableRow (control semantics)', () => {
     let container: HTMLDivElement;
     let root: Root;
 
@@ -52,6 +52,34 @@ describe('SelectableRow (disabled children)', () => {
         await act(async () => inner?.click());
         expect(onInnerPress).toHaveBeenCalledOnce();
         expect(onRowPress).not.toHaveBeenCalled();
+    });
+
+    it('preserves focus on an ActionListSection disclosure as its controlled content opens and closes', async () => {
+        const { ActionListSection } = await import('./ActionListSection');
+        function Disclosure() {
+            const [expanded, setExpanded] = React.useState(false);
+            return <ActionListSection actions={[{
+                id: 'more',
+                testID: 'disclosure',
+                label: 'Signed-out accounts',
+                expanded,
+                controls: 'signed-out',
+                onPress: () => setExpanded(value => !value),
+            }]} />;
+        }
+
+        await act(async () => root.render(<Disclosure />));
+        const button = container.querySelector<HTMLElement>('[data-testid="disclosure"]')!;
+        await act(async () => button.focus());
+        expect(button.getAttribute('role')).toBe('button');
+        expect.soft(button.getAttribute('aria-expanded')).toBe('false');
+        expect.soft(button.getAttribute('aria-controls')).toBe('signed-out');
+        await act(async () => button.click());
+        expect.soft(button.getAttribute('aria-expanded')).toBe('true');
+        expect(document.activeElement).toBe(button);
+        await act(async () => button.click());
+        expect(button.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(button);
     });
 
     it('disables the activation target by default', async () => {

@@ -72,6 +72,9 @@ export type SelectableRowProps = Readonly<{
     accessibilityRole?: 'radio' | 'checkbox';
     /** Overrides the checked state without changing the visual keyboard highlight. */
     accessibilityChecked?: boolean;
+    /** Disclosure state and the web ID of the region opened by the row. */
+    expanded?: boolean;
+    controls?: string;
     /**
      * Exposes an applied choice while retaining button activation semantics.
      * Native accessibility uses `selected`; web uses the valid toggle-button
@@ -296,12 +299,14 @@ export const SelectableRow = React.forwardRef<React.ElementRef<typeof Pressable>
     const handleKeyDown = React.useCallback((event: unknown) => {
         props.onKeyDown?.(event);
     }, [props.onKeyDown]);
-    const semanticProps: HappierOptionRowControlProps = {
+    // OptionRow forwards the control props to the same native or web Pressable.
+    const semanticProps: HappierOptionRowControlProps & Pick<React.AriaAttributes, 'aria-expanded' | 'aria-controls'> = {
         testID: props.testID,
         onKeyDown: Platform.OS === 'web' && props.onKeyDown
             ? handleKeyDown
             : undefined,
-        accessibilityState,
+        accessibilityState: props.expanded === undefined ? accessibilityState : { ...accessibilityState, expanded: props.expanded },
+        ...(Platform.OS === 'web' ? { 'aria-expanded': props.expanded, 'aria-controls': props.controls } : undefined),
         accessibilityRole: Platform.OS === 'web' ? undefined : (props.accessibilityRole ?? (props.onPress ? 'button' : undefined)),
         accessibilityLabel,
         ...(webRole ? { role: webRole } : undefined),

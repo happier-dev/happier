@@ -28,6 +28,9 @@ export type ActionListItemContent = Readonly<{
      * checked `DropdownMenu` row does) and the row is announced as a checkbox. Leave it off for one-shot operations.
      */
     checked?: boolean;
+    /** A disclosure row exposes its current state and the ID of the region it controls. */
+    expanded?: boolean;
+    controls?: string;
     onPress?: () => void;
     /** The pointer rests on the row (web): a menu that opens a submenu beside a row reads its intent here. */
     onHover?: () => void;
@@ -120,6 +123,8 @@ export function ActionListSection(props: {
             titleStyle={action.destructive ? [styles.label, styles.labelDestructive] : styles.label}
             selected={action.selected}
             accessibilityButtonSelected={action.selected}
+            expanded={action.expanded}
+            controls={action.controls}
             {...(action.checked === undefined ? {} : { accessibilityRole: 'checkbox' as const, accessibilityChecked: action.checked })}
             variant="slim"
             presentation="menu"

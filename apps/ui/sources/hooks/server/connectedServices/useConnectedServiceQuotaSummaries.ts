@@ -25,7 +25,7 @@ import {
 } from '@/sync/domains/features/featureDecisionRuntime';
 import {
     buildSummaryMeters,
-    isConnectedServiceQuotaProvablyExhausted,
+    readConnectedServiceQuotaExhaustion,
     type ConnectedServiceQuotaSummaryMeter,
     type ConnectedServiceQuotaSummaryStrategy,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
@@ -405,7 +405,7 @@ export function useConnectedServiceQuotaSummaries(options?: Readonly<{
                 ...identity,
                 planLabel: isApiKey ? null : snapshot.planLabel,
                 primaryMeter: meters[0] ?? null,
-                quotaExhausted: isConnectedServiceQuotaProvablyExhausted(snapshot.meters),
+                quotaExhausted: readConnectedServiceQuotaExhaustion(snapshot.meters),
                 meters,
                 fetchedAt: snapshot.fetchedAt,
                 ...(snapshot.staleAfterMs !== undefined ? { staleAfterMs: snapshot.staleAfterMs } : {}),

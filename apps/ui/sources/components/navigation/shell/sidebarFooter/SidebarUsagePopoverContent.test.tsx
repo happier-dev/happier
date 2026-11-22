@@ -112,12 +112,16 @@ describe('the Usage popover header', () => {
 });
 
 describe('SidebarUsagePopoverContent', () => {
-    it('leads with an account that can take work: a row that reads used up follows it even without a proven verdict (acceptance 11-22 #7)', async () => {
-        state.summaries = [summary('claude:a', 'Old zero', 0), summary('claude:b', 'Usable', 40)];
-        const screen = await renderContent();
+    it('keeps the order of retained accounts regardless of the displayed allowance', async () => {
+        state.summaries = [summary('claude:a', 'Old zero', 0), summary('claude:b', 'Old positive', 40)];
+        state.accounts = {
+            'claude:a': { quotaExhausted: true, subscription: null, recoveryCredits: null },
+            'claude:b': { quotaExhausted: false, subscription: null, recoveryCredits: null },
+        };
+        const screen = await renderContent(true);
         const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[ab]$/.test(node.props.testID))
             .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
-        expect(order).toEqual(['sidebar-usage-account-claude:b', 'sidebar-usage-account-claude:a']);
+        expect(order).toEqual(['sidebar-usage-account-claude:a', 'sidebar-usage-account-claude:b']);
     });
     it('keeps a dated quota reading and reset after it expires without a read failure', async () => {
         const reading = summary('claude:a', 'Work', 40);
@@ -131,7 +135,11 @@ describe('SidebarUsagePopoverContent', () => {
         expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeFalsy();
     });
 
-    it('folds a long signed-out run behind one line with its count', async () => {
+    it('exposes a named signed-out disclosure and an individual sign-in for every folded account', async ({ onTestFinished }) => {
+        const { Platform } = await import('react-native');
+        const previousOS = Platform.OS;
+        Platform.OS = 'web';
+        onTestFinished(() => { Platform.OS = previousOS; });
         state.summaries = [summary('claude:a', 'Usable', 40)];
         state.needingSignIn = ['p', 'q', 'r'].map(id => ({
             key: `codex:${id}`, ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: id },
@@ -139,39 +147,69 @@ describe('SidebarUsagePopoverContent', () => {
             accountLabel: `Work ${id}`, accountEmail: null, accountId: id,
         }));
         const screen = await renderContent();
+        const triggerId = 'usage-popover-signed-out-accounts';
+        const trigger = () => screen.findHostByTestId(triggerId);
+        const label = 'sidebarFooter.usageSignedOutAccounts(count=3)';
         expect(screen.findByTestId('sidebar-usage-signed-out-codex:p')).toBeFalsy();
-        expect(screen.getTextContent()).toContain('sidebarFooter.usageSignedOutAccounts(count=3)');
-        await screen.pressByTestIdAsync('usage-popover-signed-out-accounts');
-        expect(screen.findByTestId('sidebar-usage-signed-out-codex:p')).toBeTruthy();
+        expect(screen.getTextContent()).toContain(label);
+        expect.soft(trigger()?.props.accessibilityState?.expanded).toBe(false);
+        await screen.pressByTestIdAsync(triggerId);
+        expect.soft(trigger()?.props.accessibilityState?.expanded).toBe(true);
+        const region = screen.findAll(node => typeof node.type === 'string' && node.props.role === 'region'
+            && node.props.accessibilityLabel === label)[0];
+        expect(region?.props.nativeID).toBeTruthy();
+        expect(trigger()?.props['aria-controls']).toBe(region!.props.nativeID);
+        for (const account of state.needingSignIn) {
+            expect(screen.findHostByTestId(`sidebar-usage-signed-out-${account.key}-name`)).toBeTruthy();
+            expect(screen.getTextContent()).toContain(account.accountLabel);
+            await screen.pressByTestIdAsync(`sidebar-usage-sign-in-again-${account.key}`);
+            expect(modalBoundary.show).toHaveBeenLastCalledWith(expect.objectContaining({
+                props: expect.objectContaining({ request: expect.objectContaining({ account: account.ref }) }),
+            }));
+        }
+        await screen.pressByTestIdAsync(triggerId);
+        expect(trigger()?.props.accessibilityState?.expanded).toBe(false);
+        expect(screen.findByTestId('sidebar-usage-signed-out-codex:p')).toBeFalsy();
     });
-    it('lists the accounts with room before the used-up ones, keeping each group in its order (acceptance 11-21 #7)', async () => {
-        state.summaries = [summary('claude:a', 'Spent one', 0), summary('claude:b', 'Spent two', 0), summary('claude:c', 'Usable', 5),
-            summary('claude:d', 'Roomy', 80)];
-        const { buildSummaryMeters, isConnectedServiceQuotaProvablyExhausted } = await import('@/sync/domains/connectedServices/connectedServiceQuotaBadges');
-        const allowance = ConnectedServiceQuotaMeterV1Schema.parse({
+    it('groups fresh quota verdicts without ranking rounded, credit-backed or rate-limited accounts by their display windows', async () => {
+        const { buildSummaryMeters, readConnectedServiceQuotaExhaustion } = await import('@/sync/domains/connectedServices/connectedServiceQuotaBadges');
+        const allowance = (remainingPct: number) => ConnectedServiceQuotaMeterV1Schema.parse({
             meterId: 'weekly', label: 'Weekly', unit: 'count', used: null, limit: null,
-            remainingPct: 0, utilizationPct: 100, resetsAt: null, status: 'ok',
+            remainingPct, utilizationPct: 100 - remainingPct, resetsAt: null, status: 'ok',
         });
         const credits = ConnectedServiceQuotaMeterV1Schema.parse({
             meterId: 'credits', label: 'Credits', unit: 'credits', used: null, limit: null, remaining: 4,
             utilizationPct: null, resetsAt: null, status: 'ok', isExhausted: false,
         });
-        const creditBacked = [allowance, credits];
-        state.summaries.unshift({ ...summary('claude:e', 'Credit backed', 0), meters: buildSummaryMeters(creditBacked, [], 'primary') });
-        state.accounts = Object.fromEntries(([
-            ['claude:a', [allowance]],
-            ['claude:b', [allowance]],
-            ['claude:e', creditBacked],
-        ] as const).map(([key, meters]) => [key, {
-            quotaExhausted: isConnectedServiceQuotaProvablyExhausted(meters),
+        const rateLimit = ConnectedServiceQuotaMeterV1Schema.parse({
+            meterId: 'requests', label: 'Request limit', unit: 'requests', used: 10, limit: 10,
+            remainingPct: 0, utilizationPct: 100, resetsAt: null, status: 'ok',
+            details: { limitCategory: 'rate_limit' },
+        });
+        const now = Date.now();
+        const readings = [
+            ['a', [allowance(90)], now - 120_000],
+            ['b', [allowance(0)]],
+            ['c', [allowance(0.4)]],
+            ['d', [allowance(10)]],
+            ['e', [allowance(0), credits]],
+            ['f', [allowance(70), rateLimit, credits]],
+            ['g', [{ ...allowance(60), status: 'estimated' }]],
+        ] as const;
+        state.summaries = readings.map(([id, meters, fetchedAt]) => ({
+            ...summary(`claude:${id}`, `Account ${id}`, 0),
+            meters: buildSummaryMeters(meters, [], 'primary'),
+            fetchedAt: fetchedAt ?? now, staleAfterMs: 60_000,
+        }));
+        state.accounts = Object.fromEntries(readings.map(([id, meters]) => [`claude:${id}`, {
+            quotaExhausted: readConnectedServiceQuotaExhaustion(meters),
             subscription: null,
             recoveryCredits: null,
         }]));
         const screen = await renderContent();
-        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[a-e]$/.test(node.props.testID))
-            .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
-        expect(order).toEqual(['sidebar-usage-account-claude:e', 'sidebar-usage-account-claude:c', 'sidebar-usage-account-claude:d',
-            'sidebar-usage-account-claude:a', 'sidebar-usage-account-claude:b']);
+        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[a-g]$/.test(node.props.testID))
+            .map(node => (node.props.testID as string).slice(-1)).filter((id, index, all) => all.indexOf(id) === index);
+        expect(order).toEqual(['c', 'd', 'e', 'b', 'f', 'a', 'g']);
     });
     it.each([
         [null, '0 · usage.board.plans.cellNoAllowance'],

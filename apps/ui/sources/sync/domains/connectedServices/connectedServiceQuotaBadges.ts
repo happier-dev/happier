@@ -104,15 +104,26 @@ export function computeConnectedServiceQuotaSummaryBadges(params: Readonly<{
   }));
 }
 
-/** A summary can only put an account last when all reported ways to take work are exhausted. */
-export function isConnectedServiceQuotaProvablyExhausted(meters: readonly ConnectedServiceQuotaMeterV1[]): boolean {
-  return meters.length > 0 && meters.every((meter) => {
-    if (meter.status !== 'ok' || meter.confidence === 'estimated' || meter.confidence === 'stale' || meter.confidence === 'unknown') return false;
+/** The verdict a summary can prove without pool policy. An exhausted request-rate limit blocks work even with credits. */
+export function readConnectedServiceQuotaExhaustion(meters: readonly ConnectedServiceQuotaMeterV1[]): boolean | undefined {
+  let allExhausted = meters.length > 0;
+  let hasHeadroom = false;
+  for (const meter of meters) {
+    if (meter.status !== 'ok' || meter.confidence === 'estimated' || meter.confidence === 'stale' || meter.confidence === 'unknown') {
+      allExhausted = false;
+      continue;
+    }
     const credit = isConnectedServiceQuotaCreditMeter(meter);
-    if (credit && hasConnectedServiceQuotaCreditHeadroom(meter)) return false;
-    return meter.isExhausted === true || deriveQuotaMeterValues(meter).remainingPct === 0
-      || (credit && meter.remaining === 0);
-  });
+    const remainingPct = deriveQuotaMeterValues(meter).remainingPct;
+    const creditHeadroom = credit && hasConnectedServiceQuotaCreditHeadroom(meter);
+    const exhausted = !creditHeadroom && (meter.isExhausted === true || remainingPct === 0 || (credit && meter.remaining === 0));
+    if (exhausted && meter.details?.limitCategory === 'rate_limit') return true;
+    allExhausted &&= exhausted;
+    hasHeadroom ||= creditHeadroom || (!credit && !exhausted
+      && (meter.isExhausted === false || (remainingPct !== null && remainingPct > 0)));
+  }
+  if (allExhausted) return true;
+  return hasHeadroom ? false : undefined;
 }
 
 /** Usage details retain useful and pinned windows; strategy orders the comparable meters. */

@@ -15,7 +15,7 @@ import type { MeterTone } from '@/components/ui/lists/MeterBar';
 import { presentConnectedServiceQuotaReportedAmount, type ConnectedServiceQuotaReportedAmount } from '@/sync/domains/connectedServices/accountUsage/presentProviderConnectionUsage';
 import { deriveQuotaUtilizationPct } from '@/sync/domains/connectedServices/deriveQuotaUtilizationPct';
 import { resolveQuotaMeterTone } from '@/sync/domains/connectedServices/resolveQuotaTone';
-import { isConnectedServiceQuotaProvablyExhausted } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
+import { readConnectedServiceQuotaExhaustion } from '@/sync/domains/connectedServices/connectedServiceQuotaBadges';
 import { isConnectedServiceQuotaMeterPercentRankable } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 
@@ -256,7 +256,7 @@ export function projectUsagePlans(
       accountLabel: snapshot?.accountLabel ?? null,
       windows,
       headline: pickHeadline(windows),
-      quotaExhausted: isConnectedServiceQuotaProvablyExhausted(snapshot?.meters ?? []),
+      quotaExhausted: readConnectedServiceQuotaExhaustion(snapshot?.meters ?? []) === true,
       stale: stale || state.status !== 'available',
       observedAtMs: snapshot && wasConnectedServiceQuotaObserved(snapshot) ? snapshot.observedAtMs : null,
       subscription: snapshot?.subscription ?? null,
