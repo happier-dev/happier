@@ -1893,7 +1893,8 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                         : message.producerV1 === null && message.authorAccountId ? { label: speaker, mention: { accountId: message.authorAccountId } } : null} />
                 : <DiscussionMessageContent message={message} serverId={props.serverId} attachmentsBelow={committedAttachments}
                     resolveAccountLabel={props.resolveAccountLabel} resolveSessionLabel={props.resolveSessionLabel} textStyle={styles.messageText} profile="transcript" />}
-            {committedAttachments ? <DiscussionMessageAttachments reader={props.attachmentReader} messageId={message.id} attachments={attachments} /> : null}
+            {committedAttachments ? <DiscussionMessageAttachments reader={props.attachmentReader} messageId={message.id}
+                attachments={attachments} removedAttachments={message.removedAttachments} /> : null}
             {/* Open run belongs to the Run: its header under the asking message carries it, and no reply repeats it
                 (a Session's answer in a round is that Session's words; a Workflow's result is its message). */}
             {workflow && message.producerV1?.kind === 'workflow' ? <DiscussionWorkflowResult messageId={message.id}

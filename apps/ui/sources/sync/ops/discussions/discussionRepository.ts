@@ -20,6 +20,7 @@ import { watchMountedDiscussions, type MountedDiscussionChangeWatch } from '@/sy
 import type { DiscussionAnchorV1, DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionCreateInputV1 } from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
+import type { DiscussionAttachmentRemovedV1 } from '@happier-dev/protocol/discussions/attachments';
 import { DISCUSSION_NOT_TRACKED_CODE_V1 } from '@happier-dev/protocol/discussions/api';
 import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import type { DiscussionAttentionResultV1 } from '@happier-dev/protocol/discussions/actions';
@@ -293,8 +294,15 @@ export function mergeDiscussionMessages(
         // Decisions close once. A response captured before that commit cannot
         // reopen the proposal or restore content hidden by the settled projection.
         // Incoming null content still hides; a current terminal read can reopen it.
-        const reconciled = decision && decision.state !== 'open' && row.docEditProposalDispositionV1?.state === 'open'
+        let reconciled = decision && decision.state !== 'open' && row.docEditProposalDispositionV1?.state === 'open'
             ? { ...row, content: current?.content === null ? null : row.content, docEditProposalDispositionV1: decision } : row;
+        const retainedRemovals = current?.removedAttachments;
+        if (retainedRemovals?.length) {
+            // A read captured before a removal may arrive after its receipt. Removed bytes cannot be restored.
+            const newRemovals = row.removedAttachments?.filter(removal =>
+                !retainedRemovals.some(retained => retained.blobId === removal.blobId));
+            reconciled = { ...reconciled, removedAttachments: newRemovals?.length ? [...retainedRemovals, ...newRemovals] : retainedRemovals };
+        }
         // Overlapping history pages can repeat immutable messages, and their
         // mutable admission/disposition projection can change without a new seq.
         const retained = current && (current === reconciled || JSON.stringify(current) === JSON.stringify(reconciled)) ? current : reconciled;
@@ -1610,6 +1618,14 @@ export function createDiscussionRepository(options: Readonly<{
             const discussionId = ref.discussion.discussionId;
             if (!await refreshSummary(discussionId, signal)) return null;
             return readExactMessage(discussionId, ref.messageId, signal);
+        },
+        /** Apply an admitted removal to a message already held by this Account's projection. */
+        recordAttachmentRemoval(discussionId: string, messageId: string, removal: DiscussionAttachmentRemovedV1): void {
+            const thread = snapshot.threads[discussionId];
+            const message = thread?.messages.find(row => row.id === messageId);
+            if (!thread || !message) return;
+            const messages = mergeDiscussionMessages(thread.messages, [{ ...message, removedAttachments: [removal] }]);
+            updateThread(discussionId, { ...thread, messages });
         },
         refreshMessages,
         loadOlderMessages,

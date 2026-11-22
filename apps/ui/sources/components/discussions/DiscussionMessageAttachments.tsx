@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
+import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import type { StoredAttachmentPayloadV1 } from '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1';
 
 import {
@@ -71,6 +72,7 @@ export const DiscussionMessageAttachments = React.memo(
       reader: DiscussionAttachmentReader;
       messageId: string;
       attachments: readonly StoredAttachmentPayloadV1[];
+      removedAttachments?: DiscussionOpenedMessageV1['removedAttachments'];
     }>,
   ) {
     const resources = useDiscussionAttachmentResources({
@@ -83,11 +85,15 @@ export const DiscussionMessageAttachments = React.memo(
       () => new Set(),
     );
     const [failure, setFailure] = React.useState<string | null>(null);
+    const removedBlobIds = React.useMemo(
+      () => props.removedAttachments && new Set(props.removedAttachments.map(({ blobId }) => blobId)),
+      [props.removedAttachments],
+    );
 
     const pictures = React.useMemo<InlineImageAttachmentSummary[]>(
       () =>
         props.attachments.flatMap((attachment) =>
-          attachment.kind === 'file' && isPicture(attachment)
+          attachment.kind === 'file' && !removedBlobIds?.has(attachment.file.blobId) && isPicture(attachment)
             ? [{
               name: attachment.name,
               path: attachment.id,
@@ -96,7 +102,7 @@ export const DiscussionMessageAttachments = React.memo(
               sha256: attachment.file.sha256,
             }]
             : []),
-      [props.attachments],
+      [props.attachments, removedBlobIds],
     );
     // The same Image #N the inline chips carry, on each picture's corner (as a Session draws them).
     const imageNumbers = React.useMemo(() => readDiscussionAttachmentImageNumbers(props.attachments), [props.attachments]);
@@ -118,14 +124,17 @@ export const DiscussionMessageAttachments = React.memo(
       const chips: MessageAttachmentSummary[] = [];
       const files = new Map<string, FileTarget>();
       for (const attachment of props.attachments) {
-        if (isPicture(attachment)) continue;
         if (attachment.kind === 'file') {
+          const removed = removedBlobIds?.has(attachment.file.blobId);
+          if (!removed && isPicture(attachment)) continue;
           chips.push({
             name: attachment.name,
             path: attachment.id,
             mimeType: attachment.file.mime,
             sizeBytes: attachment.file.sizeBytes,
+            removed,
           });
+          if (removed) continue;
           files.set(attachment.id, {
             attachmentId: attachment.id,
             blobId: attachment.file.blobId,
@@ -140,19 +149,22 @@ export const DiscussionMessageAttachments = React.memo(
           path: attachment.id,
           mimeType: FOLDER_MIME,
           sizeBytes: attachment.entries.reduce(
-            (total, entry) => total + entry.file.sizeBytes,
+            (total, entry) => total + (removedBlobIds?.has(entry.file.blobId) ? 0 : entry.file.sizeBytes),
             0,
           ),
         });
         if (!openFolders.has(attachment.id)) continue;
         for (const entry of attachment.entries) {
           const path = `${attachment.id}/${entry.relativePath}`;
+          const removed = removedBlobIds?.has(entry.file.blobId);
           chips.push({
             name: `${attachment.name}/${entry.relativePath}`,
             path,
             mimeType: entry.file.mime,
             sizeBytes: entry.file.sizeBytes,
+            removed,
           });
+          if (removed) continue;
           files.set(path, {
             attachmentId: attachment.id,
             blobId: entry.file.blobId,
@@ -163,7 +175,7 @@ export const DiscussionMessageAttachments = React.memo(
         }
       }
       return { chips, files };
-    }, [openFolders, props.attachments]);
+    }, [openFolders, props.attachments, removedBlobIds]);
 
     const download = React.useCallback(
       async (target: FileTarget) => {

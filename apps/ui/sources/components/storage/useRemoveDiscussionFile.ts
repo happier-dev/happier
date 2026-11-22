@@ -1,8 +1,10 @@
 import * as React from 'react';
+import { DiscussionAttachmentRemovedV1Schema } from '@happier-dev/protocol/discussions/attachments';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { confirmRemoveDiscussionFile } from '@/components/storage/storageConfirmations';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { readRegisteredDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 import { t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 
@@ -38,6 +40,11 @@ export function useRemoveDiscussionFile(scope: ServerAccountScope | null, onChan
             const result = await mounted.execute('discussion.attachment.remove',
                 { discussionId: file.discussionId, messageId: file.messageId, blobId: file.blobId }, { confirmed: true });
             if (!result.ok) { alertActionFailure({ reason: t('artifacts.deleteError'), code: result.errorCode ?? null }); return; }
+            const removal = DiscussionAttachmentRemovedV1Schema.safeParse(result.result);
+            if (removal.success) {
+                readRegisteredDiscussionRepository(scope, { serverId: scope.serverId })
+                    ?.recordAttachmentRemoval(file.discussionId, file.messageId, removal.data);
+            }
             onChanged?.();
         } finally { setBusy(false); }
     }, [busy, mounted, onChanged, scope]);

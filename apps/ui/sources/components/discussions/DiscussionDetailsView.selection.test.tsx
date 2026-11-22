@@ -335,7 +335,8 @@ vi.mock('@/hooks/session/useSessionAgentActivity', () => ({
 vi.mock('@/sync/ops/discussions/useDiscussionRepositorySnapshot', () => ({
   useDiscussionRepositorySnapshot: () => snapshot,
 }));
-vi.mock('@/sync/ops/discussions/discussionRepositoryRegistry', () => ({
+vi.mock('@/sync/ops/discussions/discussionRepositoryRegistry', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/sync/ops/discussions/discussionRepositoryRegistry')>(),
   getDiscussionRepository: (options: Parameters<typeof actualDiscussionRepositoryRegistry.getDiscussionRepository>[0]) => {
     repositoryOptions.current = options;
     return {
@@ -1116,6 +1117,43 @@ describe('DiscussionDetailsView selection', () => {
       messages[0] = parent;
       messages[1] = reply;
       snapshot.threads['discussion-a'].messages = messages;
+    }
+  });
+
+  it('keeps the message and shows the removed file as a tombstone beside an available attachment', async () => {
+    const messages = snapshot.threads['discussion-a'].messages;
+    const message = messages[0]!;
+    const removedId = '762847e4-14cb-45c2-9e3a-06db902a417a';
+    const liveId = '63d77628-40c9-48c5-93f6-d197c2783ad5';
+    const file = (id: string, name: string) => ({
+      t: 'attachment' as const,
+      attachment: {
+        kind: 'file' as const, id, name,
+        file: { blobId: id, mime: 'text/plain', sizeBytes: 3, sha256: 'a'.repeat(64) },
+      },
+    });
+    messages[0] = {
+      ...message,
+      content: { v: 1, parts: [{ t: 'text', text: 'The message stays' }, file(removedId, 'old.txt'), file(liveId, 'kept.txt')] },
+      removedAttachments: [{ blobId: removedId, removedByAccountId: 'viewer' }],
+    };
+    try {
+      const screen = await renderScreen(
+        <DiscussionDetailsView target={{
+          kind: 'discussion', address: { serverId: 'srv_discussion_selection_a' }, discussionId: 'discussion-a',
+        }} active />,
+      );
+      try {
+        const summary = screen.getTextContent();
+        expect(summary).toContain('The message stays');
+        expect(summary).toContain('old.txt');
+        expect(summary).toContain('kept.txt');
+        expect(summary).toContain('Attachment removed');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      messages[0] = message;
     }
   });
 

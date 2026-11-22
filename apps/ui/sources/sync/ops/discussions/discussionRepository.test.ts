@@ -1215,6 +1215,35 @@ describe('Discussion repository', () => {
         expect(repository.getSnapshot().threads['discussion-a']?.messages).toEqual([]);
     });
 
+    it('keeps a confirmed attachment removal in the retained message without fetching it again', async () => {
+        const discussionId = 'discussion-a';
+        const earlier = storedMessage(discussionId, 2);
+        const messages = [storedMessage(discussionId, 1), earlier, storedMessage(discussionId, 3)];
+        const removed = { blobId: '762847e4-14cb-45c2-9e3a-06db902a417a', removedByAccountId: scope.accountId };
+        const requests: string[] = [];
+        const repository = createDiscussionRepository({ scope, address, client: httpClient(async path => {
+            requests.push(path);
+            if (path === '/v1/discussions/discussion-a') return response({ discussion: { ...storedSummary(discussionId), messageSeq: 3 } });
+            const query = new URL(path, 'https://home.invalid').searchParams;
+            return response({ messages: query.get('messageId') === earlier.id ? [earlier] : messages,
+                hasMoreOlder: false, messageSeq: 3 });
+        }) });
+        try {
+            await repository.refreshDiscussion(discussionId);
+            const before = repository.getSnapshot().threads[discussionId]!;
+            requests.length = 0;
+            repository.recordAttachmentRemoval(discussionId, 'unloaded', removed);
+            repository.recordAttachmentRemoval(discussionId, earlier.id, removed);
+            expect(requests).toEqual([]);
+            const after = repository.getSnapshot().threads[discussionId]!;
+            expect(after.messages.find(message => message.id === earlier.id)).toMatchObject({ content: earlier.content.v, removedAttachments: [removed] });
+            expect(after.messages.map(message => message.id)).toEqual(before.messages.map(message => message.id));
+            expect(after.newestHistorySeq).toBe(before.newestHistorySeq);
+            const ref = createDiscussionMessageRefV1({ ...address, discussionId }, earlier);
+            expect(await repository.openMessage(ref)).toMatchObject({ removedAttachments: [removed] });
+        } finally { repository.clear(); }
+    });
+
     it('projects a Home collection refusal to existing and newly demanded anchor collections', async () => {
         let denied = false;
         const repository = createDiscussionRepository({ scope, address, client: httpClient(async () => denied

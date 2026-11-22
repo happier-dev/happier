@@ -6,12 +6,14 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Text } from '@/components/ui/text/Text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
+import { t } from '@/text';
 
 export type MessageAttachmentSummary = Readonly<{
     name: string;
     path: string;
     mimeType?: string;
     sizeBytes: number;
+    removed?: boolean;
 }>;
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -68,25 +70,19 @@ export const AttachmentsMessageRow = React.memo(function AttachmentsMessageRow(p
     return (
         <View testID="message-attachments-row" style={styles.container}>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.row}>
-                {props.attachments.map((a) => (
-                    props.onOpenPath ? (
-                        <Pressable
-                            key={`${a.path}:${a.name}`}
-                            onPress={() => props.onOpenPath?.(a.path)}
-                            style={styles.attachmentChip}
-                        >
-                            <Icon name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
-                            <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
-                            <Text style={styles.attachmentMeta}>{formatHappierDataBytes(a.sizeBytes, { kind: 'storage' })}</Text>
-                        </Pressable>
-                    ) : (
-                        <View key={`${a.path}:${a.name}`} style={styles.attachmentChip}>
-                            <Icon name={resolveAttachmentIconName(a.mimeType)} size={14} color={theme.colors.text.secondary} />
-                            <Text numberOfLines={1} style={styles.attachmentText}>{a.name}</Text>
-                            <Text style={styles.attachmentMeta}>{formatHappierDataBytes(a.sizeBytes, { kind: 'storage' })}</Text>
-                        </View>
-                    )
-                ))}
+                {props.attachments.map((attachment) => {
+                    const open = !attachment.removed && props.onOpenPath;
+                    const Chip = open ? Pressable : View;
+                    return (
+                        <Chip key={`${attachment.path}:${attachment.name}`} style={styles.attachmentChip}
+                            {...(open ? { onPress: () => open(attachment.path) } : {})}>
+                            <Icon name={resolveAttachmentIconName(attachment.mimeType)} size={14} color={theme.colors.text.secondary} />
+                            <Text numberOfLines={1} style={styles.attachmentText}>{attachment.name}</Text>
+                            <Text style={styles.attachmentMeta}>{attachment.removed ? t('composerReferences.attachmentRemoved')
+                                : formatHappierDataBytes(attachment.sizeBytes, { kind: 'storage' })}</Text>
+                        </Chip>
+                    );
+                })}
             </ScrollView>
         </View>
     );
