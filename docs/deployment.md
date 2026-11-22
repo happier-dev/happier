@@ -166,18 +166,36 @@ the same bounds through `omitRestatedSingleChoiceBoundsV1`. The
 dialog renders those questions in its existing form, and an answer starts a new
 round against the retained snapshot. A connect explicitly rebuilds the catalog.
 
+The runner is the `deploySuggestionRunnerV1` setting, the background-task runner
+picker that Settings shows as "Agent for app suggestions". When a suggestion run
+fails on a usage limit, the failed step says the limit, names the Machine it ran
+on, and renders that same control for the next Try again. While the stored choice
+is Auto, the picker opens on the runner that hit the limit, so its Runs through
+choice lists that Agent's other routes. Picking one writes an explicit runner
+through `settings.set`; nothing is written until the person picks, and Auto never
+reads quota to route around a limit.
+
 Both hosts admit the model result through one validator,
 `validateDeploySuggestionV1`. The dialog calls it directly against the snapshot
-it gave the run. A Session agent calls `deployments.suggestions.check` with only
-its `suggestion` and the person's `description`: the Action reads the current
+it gave the run. A Session agent calls `deployments.suggestions.check` with
+`{ suggestion: { recommendations: [...] }, description? }`: the Action reads the current
 catalog itself through the same composition as `deployments.suggestions.catalog`,
 because an agent cannot echo the whole catalog back as tool input (a live catalog
 measured 131 KB, almost all of it catalog apps). Its result carries the catalog
 it checked against, with catalog apps kept only when a surviving card names them,
-for the transcript cards and the dialog they open. The validator parses the result once, drops unknown
-ids, invalid recommendations, price text, and incompatible source/target/forge
-pairs, then returns the validated recommendations, dropped reasons, and any
-questions. Model questions are external input: single-choice bounds that only
+for the transcript cards and the dialog they open. The check's input is strict
+and typed by the recommendation schema, so an agent reads the shape from the
+Action spec. A bare array, a wrong shape, or a recommendation missing a field is
+refused at admission with `invalid_parameters` and the issue path (for example
+`['suggestion']`), and the agent corrects its call. One schema-invalid
+recommendation refuses the whole check rather than being dropped. In the dialog,
+the run's result contract enforces the same schema before the validator sees the
+result. Every recommendation requires a `title` (a few words, the card's title)
+and a `why` (one sentence on why it fits, the card's second line), so a card names
+the setup in the person's terms instead of by ids; the price scan covers both.
+The validator then drops unknown ids, price text, and incompatible
+source/target/forge pairs, and returns the validated recommendations, dropped
+reasons, and any questions. Model questions are external input: single-choice bounds that only
 restate single choice (minimum at most 1, maximum 1) are removed before the
 shared question schema admits them, and a question it still refuses is dropped
 with a typed `droppedQuestions` reason. When nothing is left, the dialog keeps
@@ -202,8 +220,11 @@ release check for account plan lines.
 recommendation uses the existing forge compatibility read, defaults to GitHub
 when it is an offered choice, and creates the repository, Source, and Project
 through `projects.starters.create`. That Action receives the description the
-person reviewed in the dialog, byte-for-byte, followed by `renderDeployPlanBriefV1`,
-then the existing
+person reviewed in the dialog, byte-for-byte, followed by `renderDeployPlanBriefV1`.
+`renderStarterSessionMessageV1` appends the Project this creation made, by
+`projectId`, `projectSourceId` and `repositoryUrl`, and says that deployment
+Actions take that `projectSourceId`, so the build Session deploys its own Source
+rather than another Project's. Then the existing
 `sessionHandoff` opens the build Session's first message in New session, where
 the person's Send starts it (`session.authoring.open`). A modal New app steps
 aside; the page settles on Project ready and says the agent starts when that
@@ -221,6 +242,13 @@ Review shows the observed preview URL and health. Production remains the
 person's ordinary reviewed step. A catalog-app recommendation and the dialog's
 existing repository, image, and Compose doors are pure deploys and continue to
 the existing Where it runs flow without a build Session.
+
+Back on the creation review returns to the suggestion cards, kept, with no new
+run. That holds while the draft is still the chosen setup: its starter, or no
+starter for a scratch setup. A starter the person then picks by hand is not that
+setup, so one decision in the New app screen (`suggestionForDraft`) makes the
+review read as Describe, Create send no plan brief, and Back return to the source
+step.
 
 The built-in `happier:deploy` skill points to `references/create-app.md` on
 demand. That reference uses the same catalog, native Session questions, check

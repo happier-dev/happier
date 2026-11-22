@@ -24,13 +24,16 @@ deployment targets, Stores, Machines, and available repository forges. It runs a
 read-only suggestion task on an eligible Machine and Agent. If the setup needs
 more information, the questions appear in the same step. You can answer them,
 try again, or choose a starter yourself. If no Machine has a ready Agent, the
-step shows each Machine's reason and its available next action.
+step shows each Machine's reason and its available next action. If the
+suggestion stops at a usage limit, the step says so and lets you pick another
+route for that Agent before **Try again**; the choice is saved as **Agent for app
+suggestions**.
 
 The returned setup cards are checked against that catalog before they are shown.
 They identify what the app starts from, where it runs, and any selected data
 store. Choose **Use this setup** after reviewing the card. Code-creating choices
 then show **Code lives on** and the compatible forge choices in the creation
-review.
+review. **Back** returns to the same cards without asking again.
 
 Code-creating choices, including a starter or a scratch app, create the reviewed
 repository, Source, and Project. A new Session then opens with its first message
