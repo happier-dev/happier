@@ -75,7 +75,7 @@ import { deploymentMoveToRepositoryChildRoleV1 } from '../scm/repositoryFilesPul
 import { DeploymentEnvironmentCreationReviewV1Schema } from '../deployments/deploymentActionsV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
-import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './executor/approvalResults.js';
+import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentApprovalSemanticInput, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
@@ -546,7 +546,7 @@ import {
   parseQualifiedPluginActionId,
   type QualifiedPluginActionId,
 } from '../plugins/actions/invocation.js';
-import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputSourceSessionV1Schema, SessionInputAdmissionResultV1Schema, buildTrustedHostSessionInputAdmissionV1, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2 } from '../sessions/messages/sessionInputAdmission.js';
+import { PluginSessionInputAttachmentsV1Schema, PluginSessionInputSourceV1Schema, PluginSessionUserTextAuthoredFieldSchemasV1, SessionInputSourceSessionV1Schema, SessionInputAdmissionResultV1Schema, type SessionInputAdmissionResultV1, buildTrustedHostSessionInputAdmissionV1, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2 } from '../sessions/messages/sessionInputAdmission.js';
 import { PendingRequestedActionV1Schema, SessionPendingActionSetInputV1Schema, PendingResetStartSetInputV1Schema, PendingResetStartCancelInputV1Schema } from '../sessions/pending/pendingRequestedActionV1.js';
 import { PendingLocalIdSchema } from '../sessions/pending/pendingLocalId.js';
 import {
@@ -1508,9 +1508,14 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return failure.errorCode === 'action_failed' ? approvalContextUnavailable() : failure;
   }
 
-  /** Terminal approvals publish through their originating input owner, including receipt replays. */
+  /**
+   * Terminal approvals publish through their originating input owner, including receipt replays.
+   * A failure means the run itself is not proven; once the run record is terminal, delivery to
+   * the asking Session is answered as its own receipt and never replaces that record.
+   */
   async function settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest,
-    context: ActionExecutorContext, replayAcknowledgement?: ActionExecuteResult): Promise<ActionExecuteFailure | null> {
+    context: ActionExecutorContext, replayAcknowledgement?: ActionExecuteResult,
+  ): Promise<ActionExecuteFailure | Readonly<{ delivery: SessionInputAdmissionResultV1 }> | null> {
     // Retired Publish history never reaches a current outcome publisher; replay refuses it the same way.
     if (isHistoricalPublishApprovalRequestV2(request)) {
       return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
@@ -1541,52 +1546,60 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || (context.serverIdentityId ?? context.serverId) !== (origin.serverIdentityId ?? origin.serverId)) {
           return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
         }
-        const publication = await deps.approvalRequestOutcomePublication?.({ artifactId, request, context });
+        const localId = `approval-result:${artifactId}`;
+        let publication: unknown;
+        try {
+          publication = await deps.approvalRequestOutcomePublication?.({ artifactId, request, context });
+        } catch (error) {
+          return { delivery: projectThrownApprovalResultDeliveryV1(error, localId) };
+        }
         if (publication != null) {
           const outcome = readApprovalReplayResult(publication);
-          return outcome.ok ? null : outcome;
+          // The origin publisher answers with its own decision result and receipt.
+          if (!outcome.ok) return { delivery: projectApprovalResultDeliveryV1(outcome, localId) };
+          const delivered = SessionInputAdmissionResultV1Schema.safeParse(readRecord(outcome.result).delivery);
+          return delivered.success ? { delivery: delivered.data } : null;
         }
         if (!deps.sessionSendMessage) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.message.send' };
         const observed = buildApprovalDecisionResult(request);
         if (!observed.ok) return observed;
         const message = JSON.stringify({ artifactId, actionId: request.actionId, ...readRecord(observed.result) });
-        const localId = `approval-result:${artifactId}`;
         const requestedAction = { v: 1, kind: 'enqueue' } as const;
-        const response = await deps.sessionSendMessage({
-          context: {
-            surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
-            runtimeAccountId: context.runtimeAccountId, serverId: context.serverId,
-            serverIdentityId: context.serverIdentityId, signal: context.signal,
-            // Resume the admitted requester's work, not the deciding person's cause.
-            ...(origin.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.actionRequestAttributionV1 } : {}),
-            // Keep restricted transports restricted without borrowing the
-            // reviewer's permission intent, focus or confirmation.
-            externalActionExecutionAuthorization: context.externalActionExecutionAuthorization,
-            externalActionCredential: context.externalActionCredential,
-            rpcSessionAuthorization: context.rpcSessionAuthorization,
-          },
-          sessionId: origin.caller.sessionId,
-          message,
-          authoredInput: { sessionId: origin.caller.sessionId, message, localId,
-            requestedAction, reply: 'none' },
-          inputAdmission: buildTrustedHostSessionInputAdmissionV1('mcp', origin.actionRequestAttributionV1),
-          // Ordinary host input carries no question/reply correlation or human
-          // permission intent. The existing Pending identity joins retries even
-          // after this result has materialized into the parent transcript.
-          localId, requestedAction,
-          actionCaller: { kind: 'host' }, callerSurface: 'mcp', reply: 'none',
-          serverId: context.serverId ?? origin.serverId,
-          ...(context.signal ? { signal: context.signal } : {}),
-        });
-        const failure = readActionFailureEnvelope(response);
-        if (failure) return failure;
-        const delivery = SessionInputAdmissionResultV1Schema.safeParse(response);
-        if (!delivery.success) return invalidActionOutputFailure(delivery.error);
-        if (delivery.data.status !== 'accepted' && delivery.data.status !== 'alreadyAccepted') {
-          return { ok: false, errorCode: delivery.data.code,
-            error: 'The Action result was recorded, but could not be delivered to its originating Session.' };
+        let response: unknown;
+        try {
+          response = await deps.sessionSendMessage({
+            context: {
+              surface: 'mcp', authority: 'account_automation', actionCaller: { kind: 'host' },
+              runtimeAccountId: context.runtimeAccountId, serverId: context.serverId,
+              serverIdentityId: context.serverIdentityId, signal: context.signal,
+              // Resume the admitted requester's work, not the deciding person's cause.
+              ...(origin.actionRequestAttributionV1 ? { actionRequestAttributionV1: origin.actionRequestAttributionV1 } : {}),
+              // Keep restricted transports restricted without borrowing the
+              // reviewer's permission intent, focus or confirmation.
+              externalActionExecutionAuthorization: context.externalActionExecutionAuthorization,
+              externalActionCredential: context.externalActionCredential,
+              rpcSessionAuthorization: context.rpcSessionAuthorization,
+            },
+            sessionId: origin.caller.sessionId,
+            message,
+            authoredInput: { sessionId: origin.caller.sessionId, message, localId,
+              requestedAction, reply: 'none' },
+            inputAdmission: buildTrustedHostSessionInputAdmissionV1('mcp', origin.actionRequestAttributionV1),
+            // Ordinary host input carries no question/reply correlation or human
+            // permission intent. The existing Pending identity joins retries even
+            // after this result has materialized into the parent transcript.
+            localId, requestedAction,
+            actionCaller: { kind: 'host' }, callerSurface: 'mcp', reply: 'none',
+            serverId: context.serverId ?? origin.serverId,
+            ...(context.signal ? { signal: context.signal } : {}),
+          });
+        } catch (error) {
+          // A typed refusal stays refused; a lost acknowledgement leaves only the delivery uncertain.
+          return { delivery: projectThrownApprovalResultDeliveryV1(error, localId) };
         }
-        return null;
+        // Accepted, held on the Machine path, refused with its cause, or unknown:
+        // each is the Session sender's receipt, beside the unchanged run record.
+        return { delivery: projectApprovalResultDeliveryV1(response, localId) };
       }
     }
     if (request.v !== 2 || request.actionId !== 'discussion.reply' || request.status !== 'failed'
@@ -1651,7 +1664,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     privateSecretContinuation?: PrivateSecretContinuationV1;
     privateActionInputContinuation?: PrivateActionInputContinuationV1;
   }>): Promise<
-    | Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }>
+    | Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult; delivery?: SessionInputAdmissionResultV1 }>
     | ActionExecuteFailure
   > {
     if (isHistoricalPublishApprovalRequestV2(args.request)) {
@@ -1725,13 +1738,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     const executionOutcomeUnknown = projectApprovalExecutionOutcomeUnknownV1;
     const finishExecution = async (request: ApprovalRequest, exec: ActionExecuteResult) => {
       try {
-        const settlementFailure = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
-        return settlementFailure ?? { ok: true as const, request, exec };
+        const settled = await settleApprovalExecutionPublication(args.artifactId, request, args.ctx);
+        if (settled && 'ok' in settled) return settled;
+        return { ok: true as const, request, exec, ...(settled ? { delivery: settled.delivery } : {}) };
       } catch (error) {
-        // The terminal Artifact receipt is already durable. A publication
-        // transport throw leaves delivery uncertain and must surface to the
-        // caller without re-entering the generic pre-execution failure path,
-        // which would retry the publication in the same decision call.
+        // The terminal Artifact receipt is already durable. Delivery throws are
+        // settled as receipts; any other throw here leaves the outcome uncertain
+        // without re-entering the generic pre-execution failure path.
         return executionOutcomeUnknown({ ok: false, ...normalizeActionExecutorThrownError(error, 'approval.settlement') });
       }
     };
@@ -7821,8 +7834,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed' || existing.status === 'outcome_unknown')
           && isApprovalRequestExecutionApproved(existing)
           && !isRecoverableApproved) {
-          const settlementFailure = await settleApprovalExecutionPublication(artifactId, existing, ctx);
-          return settlementFailure ?? buildApprovalDecisionResult(existing);
+          const settled = await settleApprovalExecutionPublication(artifactId, existing, ctx);
+          if (settled && 'ok' in settled) return settled;
+          return withApprovalResultDeliveryV1(buildApprovalDecisionResult(existing), settled?.delivery);
         }
 
         if (existing.status !== 'open' && !isRecoverableApproved && !isCancelableApproved) {
@@ -7956,7 +7970,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const settled = await executeApprovedActionForRequest({ artifactId, request: approvedRequest,
             artifactServerId: effectiveServerId, ctx,
             ...(outcomeUnknown ? { replayOutcomeUnknown: settledFailure } : { preExecutionFailure: settledFailure }) });
-          return settled.ok ? buildApprovalDecisionResult(settled.request) : settled;
+          return settled.ok ? withApprovalResultDeliveryV1(buildApprovalDecisionResult(settled.request), settled.delivery) : settled;
         };
         try {
         let preExecutionFailure: ActionExecuteFailure | undefined = readUnavailableApprovalReplayOrigin(approvedRequest) ?? undefined;
@@ -8021,8 +8035,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               // instead requires a receipt before claiming any effect outcome.
               return await settleApprovedFailure(replayFailure, outcomeUnknown);
             }
-            const settlementFailure = await settleApprovalExecutionPublication(artifactId, approvedRequest, ctx, replay);
-            return settlementFailure ?? replay;
+            const settled = await settleApprovalExecutionPublication(artifactId, approvedRequest, ctx, replay);
+            if (settled && 'ok' in settled) return settled;
+            return withApprovalResultDeliveryV1(replay, settled?.delivery);
           }
         }
 
@@ -8058,9 +8073,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           ctx,
           observeExecution: true,
         });
-        return executed.ok ? buildApprovalDecisionResult(executed.request, {
+        return executed.ok ? withApprovalResultDeliveryV1(buildApprovalDecisionResult(executed.request, {
           exec: executed.exec, authority: resolveHostStampedAuthority(ctx),
-        }) : executed;
+        }), executed.delivery) : executed;
         } catch (error) {
           return await settleApprovalDecisionFailure({ error,
             effectMayHaveStarted: approvalEffectMayHaveStarted, settle: settleApprovedFailure });

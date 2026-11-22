@@ -126,8 +126,10 @@ it.each(['available', 'update-required', 'unavailable', 'uncommitted'] as const)
                 .toMatchObject({ ok: false, errorCode: 'session_input_idempotency_conflict' });
         }
         if (state === 'update-required' || state === 'unavailable') {
-            expect(await replay()).toMatchObject({ ok: false, errorCode: state === 'update-required'
-                ? 'session_input_target_update_required' : 'session_input_target_unavailable' });
+            // The run record answers; the refused delivery is its receipt beside it.
+            expect(await replay()).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true },
+                delivery: { status: 'rejected', code: state === 'update-required'
+                    ? 'session_input_target_update_required' : 'session_input_target_unavailable' } } });
             expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
         } else {
             for (let attempt = 0; attempt < 2; attempt++) {

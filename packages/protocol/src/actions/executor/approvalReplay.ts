@@ -9,7 +9,8 @@ import { StoredApprovalRequestSchema, isHistoricalPublishApprovalRequestV2, admi
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../decisionAuthority.js';
 import { readPluginInstallApprovalPendingReview } from '../actionApprovalPresentation.js';
 import { isApprovalActionId, isBlockingApprovalRequest } from './approvalOrigins.js';
-import { buildApprovalDecisionResult } from './approvalResults.js';
+import { buildApprovalDecisionResult, withApprovalResultDeliveryV1 } from './approvalResults.js';
+import type { SessionInputAdmissionResultV1 } from '../../sessions/messages/sessionInputAdmission.js';
 import { normalizeId } from './inputReading.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import { approvalReadFailure } from './approvalRead.js';
@@ -20,7 +21,8 @@ type Replay = ReturnType<typeof createActionExecutor>['replayApprovedApprovalReq
 export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGet' | 'approvalsUpdate'> & Readonly<{
   resumeAutomaticApproval(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ApprovalRequest | ActionExecuteFailure>;
   requireDiscussionDraftReviewAuthority(request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
-  settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext): Promise<ActionExecuteFailure | null>;
+  settleApprovalExecutionPublication(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext):
+    Promise<ActionExecuteFailure | Readonly<{ delivery: SessionInputAdmissionResultV1 }> | null>;
   resolveBlockingDecisionIfClaimed(args: Readonly<{
     artifactId: string; request: ApprovalRequest; decision: 'approve';
     decisionAuthority: NonNullable<ActionExecutorContext['authority']>; serverId: string | null;
@@ -28,7 +30,7 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
   executeApprovedActionForRequest(args: Readonly<{
     artifactId: string; request: ApprovalRequest; artifactServerId: string | null; ctx: ActionExecutorContext;
     preExecutionFailure?: ActionExecuteFailure; observeExecution?: boolean;
-  }>): Promise<Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult }> | ActionExecuteFailure>;
+  }>): Promise<Readonly<{ ok: true; request: ApprovalRequest; exec: ActionExecuteResult; delivery?: SessionInputAdmissionResultV1 }> | ActionExecuteFailure>;
 }>): Replay {
   return async (args, machineIngress) => {
     let effectMayHaveStarted = false;
@@ -69,13 +71,14 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
       }
       if ((request.status === 'executed' || request.status === 'failed' || request.status === 'outcome_unknown')
         && (isApprovalRequestExecutionApproved(request) || request.v === 2 && request.automaticChecks?.phase === 'refused')) {
-        const settlementFailure = await deps.settleApprovalExecutionPublication(artifactId, request, {
+        const settled = await deps.settleApprovalExecutionPublication(artifactId, request, {
           ...(args.callerAuthority ? { authority: args.callerAuthority } : {}),
           ...(args.currentAccount ? { runtimeAccountId: args.currentAccount.accountId, serverId: args.currentAccount.serverId,
             serverIdentityId: args.currentAccount.serverIdentityId } : {}),
           ...(args.signal ? { signal: args.signal } : {}),
         });
-        return settlementFailure ?? buildApprovalDecisionResult(request);
+        if (settled && 'ok' in settled) return settled;
+        return withApprovalResultDeliveryV1(buildApprovalDecisionResult(request), settled?.delivery);
       }
       if (request.v === 2 && request.status === 'executing') {
         return { ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' };
@@ -132,9 +135,9 @@ export function createApprovalReplay(deps: Pick<ActionExecutorDeps, 'approvalsGe
             ...(args.currentAccount.actionsSettings ? { actionsSettings: args.currentAccount.actionsSettings } : {}) } : {}),
           ...(args.callerAuthority === 'present_user' ? { authority: 'present_user' as const } : {}),
         }, observeExecution: true });
-      return executed.ok ? buildApprovalDecisionResult(executed.request, {
+      return executed.ok ? withApprovalResultDeliveryV1(buildApprovalDecisionResult(executed.request, {
         exec: executed.exec, authority: args.callerAuthority,
-      }) : executed;
+      }), executed.delivery) : executed;
     } catch (error) {
       const normalized = normalizeActionExecutorThrownError(error);
       return { ok: false, ...normalized, ...(!effectMayHaveStarted ? { effectAttempted: false } : {}) };

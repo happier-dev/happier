@@ -192,9 +192,11 @@ it.each(([
       artifactId: 'approval', decision: 'approve' }, { surface: 'cli', authority: 'present_user', runtimeAccountId: accountId,
       serverId, serverIdentityId: serverId });
     expect(transportFailures).toEqual([]);
+    // The run record answers the decision; a restricted credential's refused
+    // delivery is its own receipt beside it, never the decision's failure.
     expect(result, JSON.stringify(result)).toMatchObject(canRelay
       ? { ok: true, result: { status } }
-      : { ok: false, errorCode: 'session_input_target_unavailable' });
+      : { ok: true, result: { status, delivery: { status: 'rejected', code: 'session_input_target_unavailable' } } });
   }
   for (const authored of admittedInputs) {
     if (authored.content.type !== 'text') throw new Error('Expected outcome text');
@@ -225,12 +227,15 @@ it.each(([
     } }));
     expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
-    })).toMatchObject({ ok: false, errorCode: 'session_input_idempotency_conflict' });
+    })).toMatchObject({ ok: true, result: { status, delivery: { status: 'rejected', code: 'session_input_idempotency_conflict' } } });
     // Never reinterpret a plain envelope as the E2EE Session's retained input.
     origin.setRetainedContent('approval-result:approval', { t: 'plain', v: originalInput });
-    expect(await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
+    const plainEnvelope = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, {
       surface: 'cli', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
-    })).toMatchObject({ ok: false });
+    });
+    expect(plainEnvelope).toMatchObject({ ok: true, result: { status } });
+    expect(['rejected', 'outcomeUnknown']).toContain(plainEnvelope.ok
+      && (plainEnvelope.result as { delivery?: { status?: string } }).delivery?.status);
     expect(admittedInputs).toEqual([originalInput]);
     expect(origin.readMachineAdmissionRequests()).toBe(1);
   }

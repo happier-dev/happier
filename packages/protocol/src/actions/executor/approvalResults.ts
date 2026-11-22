@@ -19,6 +19,49 @@ import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import { ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1, withActionAutomationNoticesV1 } from '../actionExecutionResult.js';
 import { RpcError } from '../../rpc/errors.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '../invocationAuthority.js';
+import { rejectUnavailableSessionInputV1, SessionInputAdmissionResultV1Schema, type SessionInputAdmissionResultV1 } from '../../sessions/messages/sessionInputAdmission.js';
+import { SessionInputAdmissionRejectionCodeV1Schema } from '../../sessions/messages/sessionInputAdmissionRejectionV1.js';
+
+/**
+ * Delivery of an approved result to its asking Session is a fact separate from
+ * the run. Every outcome of that delivery is the Session sender's own receipt:
+ * a refusal keeps its typed code and sanitized cause, and an unproven one stays
+ * outcome-unknown under the result's retry identity.
+ */
+export function projectApprovalResultDeliveryV1(response: unknown, localId: string): SessionInputAdmissionResultV1 {
+  const receipt = SessionInputAdmissionResultV1Schema.safeParse(response);
+  if (receipt.success) return receipt.data;
+  const failure = ActionExecuteResultSchema.safeParse(response);
+  if (!failure.success || failure.data.ok) return { status: 'outcomeUnknown', localId, code: 'invalid_action_output' };
+  const code = SessionInputAdmissionRejectionCodeV1Schema.safeParse(failure.data.errorCode);
+  if (code.success) {
+    const cause = rejectUnavailableSessionInputV1('approval.result.delivery', failure.data).failureCause;
+    return { status: 'rejected', code: code.data, failureCause: cause };
+  }
+  if (isActionOutcomeUnknownErrorCodeV1(failure.data.errorCode)) {
+    return { status: 'outcomeUnknown', localId, code: failure.data.errorCode.slice(0, 128) };
+  }
+  return rejectUnavailableSessionInputV1('approval.result.delivery', failure.data);
+}
+
+/**
+ * A Session sender that throws its typed refusal keeps that refusal; any other
+ * throw (a lost acknowledgement) leaves only the delivery outcome unknown.
+ */
+export function projectThrownApprovalResultDeliveryV1(error: unknown, localId: string): SessionInputAdmissionResultV1 {
+  const failure = { ok: false as const, ...normalizeActionExecutorThrownError(error, 'approval.result.delivery') };
+  return SessionInputAdmissionRejectionCodeV1Schema.safeParse(failure.errorCode).success
+    ? projectApprovalResultDeliveryV1(failure, localId)
+    : { status: 'outcomeUnknown', localId, code: 'session_input_settlement_outcome_unknown' };
+}
+
+/** The decision answers with its run record; the delivery receipt rides beside it. */
+export function withApprovalResultDeliveryV1(result: ActionExecuteResult,
+  delivery: SessionInputAdmissionResultV1 | undefined): ActionExecuteResult {
+  if (!delivery || !result.ok || typeof result.result !== 'object' || result.result === null
+    || Array.isArray(result.result)) return result;
+  return { ...result, result: { ...result.result, delivery } };
+}
 
 /** Project settled producer evidence and dispatch uncertainty into one receipt. */
 export function projectSettledApprovalExecution(args: Readonly<{

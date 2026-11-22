@@ -32,9 +32,12 @@ fallback when no observed Machine is available; explicit conflicting targets
 still fail, and the server owns exact installation and input admission.
 Deferred approval outcomes use this same Session-input path and the stable
 `approval-result:<artifactId>` identity. Replaying a recorded outcome retries its
-publication without executing the approved Action again. A delivery refusal
-retains the execution receipt in the approval Artifact and returns its typed
-delivery code.
+publication without executing the approved Action again. The decision answers
+with its run record; delivery is a separate fact carried beside it as the
+Session sender's own receipt (`delivery`: accepted, held on the Machine path,
+refused with its typed code and sanitized cause, or outcome unknown). A refused
+delivery never turns a recorded run into a failed decision, and nothing re-sends
+it later: the result stays readable on the approval record.
 
 ## Composer send choices (0.3 development)
 
