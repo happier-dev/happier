@@ -7,6 +7,7 @@ const credentialFile = { kind: 'targetFact' as const, fact: 'invocation.credenti
 // Vendor-native keyring endpoints verified together, not inferred across distros.
 // https://pkgs.tailscale.com/stable/ (2026-11-09)
 const distributions = [
+  { id: 'ubuntu-resolute', os: 'ubuntu', release: 'resolute' },
   { id: 'ubuntu-noble', os: 'ubuntu', release: 'noble' },
   { id: 'ubuntu-jammy', os: 'ubuntu', release: 'jammy' },
   { id: 'debian-bookworm', os: 'debian', release: 'bookworm' },

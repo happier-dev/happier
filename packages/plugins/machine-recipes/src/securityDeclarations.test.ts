@@ -82,7 +82,8 @@ it('declares host-security audit rules only after a native audit capability chec
 it('pins Tailscale vendor trust and binds the selected saved key to a reviewed network switch', () => {
   const recipe = MachineRecipeV1Schema.parse({ id: 'tailscale-server', ...tailscaleServer });
   const schema = compilePluginJsonSchema(recipe.inputSchema);
-  for (const distribution of ['ubuntu-noble', 'ubuntu-jammy', 'debian-bookworm', 'debian-trixie']) {
+  // Lima's default Ubuntu template is 26.04 resolute; Tailscale serves it under the same signing key (checked 2026-11-22).
+  for (const distribution of ['ubuntu-resolute', 'ubuntu-noble', 'ubuntu-jammy', 'debian-bookworm', 'debian-trixie']) {
     const inputs = { distribution, joinCredential: { ref: 'happier:shared-secret:v1:tailscale-key', resourceRevision: 7 },
       setOperator: true };
     expect(isValidPluginJsonSchemaValue(schema, inputs)).toBe(true);
