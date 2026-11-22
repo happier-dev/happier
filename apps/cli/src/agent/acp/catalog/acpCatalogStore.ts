@@ -123,12 +123,12 @@ export function createCliAcpCatalogStore(input: Readonly<{
           sourceSettingsVersion: source.version } : transferred.status === 'not-required' ? fresh : transferred;
       }
     } else catalog = { status: 'unavailable', reason: row.status };
-    const admitted = await readStorageContext();
+    const admitted = await readStorageContext('identity');
     return admitted.mode === storage.mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
   };
   const readCatalog = async (): Promise<AcpCatalogSnapshotV1> => {
-    // Destination/source reads share one observation; private source publication
-    // above and the caller's catalog publication retain fresh admission.
+    // Catalog publication retains the captured Account lifetime. Source preparation
+    // and writes each admit fresh storage authority.
     const catalog = await (prepareCatalog)();
     await admitCurrent();
     return catalog;

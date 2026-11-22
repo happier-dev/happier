@@ -11,6 +11,20 @@ import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRo
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
 import { acquireRequesterAccountEncryptionCurrentness } from './accountEncryptionCurrentnessObservation';
 import { runWithServerHttpBaseUrl } from './serverHttpBaseUrl';
+import { ACP_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
+import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { PROFILE_ROWS_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileRecordV1';
+import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
+import { PROVIDER_CONNECTIONS_ROWS_ROUTE_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { createCliAcpCatalogStore } from '@/agent/acp/catalog/acpCatalogStore';
+import { createCliProviderConnectionsStore } from '@/providers/settings/catalogStore';
+import { createCliMcpServerStore } from '@/settings/mcp/mcpServerStore';
+import { createCliNotificationChannelStore } from '@/settings/notifications/notificationChannelStore';
+import { createCliProfileStore } from '@/settings/profiles/profileStore';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 
 /**
  * P03 R3: read-only consumers borrow the held Account encryption observation.
@@ -38,6 +52,19 @@ async function heldObservationFixture() {
             const url = request.url ?? '';
             if (url === '/v1/account/encryption/currentness') { modeReads.currentness++; return reply(200, currentness); }
             if (url === '/v1/account/encryption') { modeReads.mode++; return reply(200, { mode: currentness.mode, updatedAt: currentness.updatedAt }); }
+            if (request.method === 'GET') {
+                if ([ACP_CATALOG_ROWS_ROUTE_V1, MCP_SERVER_CATALOG_ROWS_ROUTE_V1, NOTIFICATION_CHANNELS_ROUTE_V1,
+                    PROVIDER_CONNECTIONS_ROWS_ROUTE_V1].some(route => url === route)) {
+                    return reply(200, { status: 'deleted', revision: 1 });
+                }
+                if (url === PROFILE_ROWS_ROUTE_V1) return reply(200, {
+                    status: 'listed', rows: [], nextCursor: null, complete: true, referenceGuardRevision: 'absent',
+                    transferControl: { status: 'absent' }, diagnostics: [],
+                });
+                if (url === PROFILE_TRANSFER_ROUTE_V1) return reply(200, { status: 'absent' });
+                if (url === PROFILE_ROWS_ROUTE_V1 + '/reference-guard') return reply(200, { status: 'ready', revision: 'absent' });
+                if (url === '/v2/account/settings') return reply(200, { content: null, version: 0 });
+            }
             if (url.startsWith('/v1/account/project-rows')) {
                 const result = projectAccountRowsReadHttpResponse([], url, chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {});
                 return reply(result.status, result.data);
@@ -97,4 +124,33 @@ it('reads Project rows for attribution 10 times without an Account mode HTTP rea
     }
     const after = fixture.modeReads();
     expect({ currentness: after.currentness - before.currentness, mode: after.mode - before.mode }).toEqual({ currentness: 0, mode: 0 });
+});
+
+it('publishes catalog reads with held identity while source preparation retains fresh authority', async () => {
+    const fixture = await heldObservationFixture();
+    close = fixture.close;
+    const { base, credentials } = fixture;
+    try {
+        await runWithServerHttpBaseUrl(base, async () => {
+            setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), rawSettings: {},
+                settingsVersion: 0, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKey(credentials) });
+            const noop = async () => {};
+            const reads = {
+                acp: () => createCliAcpCatalogStore({ credentials }).readCatalog(),
+                mcp: () => createCliMcpServerStore({ credentials }).readCatalog(noop),
+                notifications: () => createCliNotificationChannelStore({ credentials }).readNotificationChannelCatalog(noop),
+                providers: () => createCliProviderConnectionsStore({ credentials }).readCatalog({ onReadyBeforeCleanup: noop }),
+                profiles: () => createCliProfileStore({ credentials }).readProfileCatalog(),
+            };
+            const counts: Record<string, number> = {};
+            for (const [catalog, read] of Object.entries(reads)) {
+                const before = fixture.modeReads().currentness;
+                await expect(read()).resolves.toMatchObject({ status: 'ready' });
+                counts[catalog] = fixture.modeReads().currentness - before;
+            }
+            expect(counts).toEqual({ acp: 0, mcp: 2, notifications: 4, providers: 0, profiles: 1 });
+        });
+    } finally {
+        resetActiveAccountSettingsSnapshotForTests();
+    }
 });

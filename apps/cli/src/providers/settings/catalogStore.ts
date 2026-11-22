@@ -207,7 +207,7 @@ function createCapturedStore(input: Readonly<{
       initializeSource = row.status === 'absent';
       return row;
     }, ...options, onReadyBeforeCleanup: options?.onReadyBeforeCleanup ? async ready => {
-      const admitted = await readStorageContext();
+      const admitted = await readStorageContext('identity');
       if (admitted.mode !== context.mode) throw Object.assign(new Error('Provider Account mode changed'), { code: 'account-mode-mismatch' });
       await verifyCurrent();
       await options.onReadyBeforeCleanup?.(ready);
@@ -244,7 +244,7 @@ function createCapturedStore(input: Readonly<{
         signal: input.signal, isCurrent: async () => { try { await verifyCurrent(); return true; } catch { return false; } },
         destinationAuthority: { activeTransferredRoots: value.activeTransferredRoots } })),
     } });
-    const admitted = await readStorageContext();
+    const admitted = await readStorageContext('identity');
     await verifyCurrent();
     return admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' };
   })();

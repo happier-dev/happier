@@ -209,7 +209,7 @@ function createCapturedStore(input: Readonly<{
       readRow: async () => { const row = await readRow(); absent = row.status === 'absent'; return row; },
       hasPendingCleanup: input.hasPendingCleanup,
       onReadyBeforeCleanup: async catalog => {
-        const admitted = await readStorageContext();
+        const admitted = await readStorageContext('identity');
         await verifyCurrent();
         if (admitted.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
         admittedCatalog = catalog;
@@ -251,7 +251,7 @@ function createCapturedStore(input: Readonly<{
           serverBaseUrl: base, signal: input.signal, destinationAuthority: value,
           isCurrent: async () => { try { await verifyCurrent(); return true; } catch { return false; } } }),
       } });
-    const admitted = await readStorageContext();
+    const admitted = await readStorageContext('identity');
     await verifyCurrent();
     const result = admitted.mode === context.mode ? catalog : { status: 'unavailable' as const, reason: 'account-mode-mismatch' as const };
     // Maintenance may attach cleanup metadata, but cannot invalidate the

@@ -926,6 +926,9 @@ not turn one Account identity observation into a mode GET for every Machine.
 When the transport credential loses its last holder, the existing observation
 withdraws its fact and reconnects with a remaining admitted credential; stale
 transport events and HTTP responses cannot publish through that handover.
+The CLI catalog readers for ACP, MCP, notifications, Profiles and Provider
+Connections borrow that identity when they admit a read result for publication.
+Settings source preparation, cleanup writes and sealing retain fresh authority.
 Readers outside a subscribed lifetime retain fresh HTTP reads. A disconnected
 or invalidated observation grants no currentness; canceling one reader leaves
 other subscription holders active.

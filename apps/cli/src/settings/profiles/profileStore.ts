@@ -131,7 +131,7 @@ function createCapturedCliProfileStore(input: Readonly<{
         captured.source = await readSourceSnapshot();
         return captured.source.raw;
       } });
-    const admitted = await readStorageContext();
+    const admitted = await readStorageContext('identity');
     await verifyCurrent();
     const result: ProfileCatalogSnapshotV1 = admitted.mode !== context.mode
       ? { status: 'unavailable', reason: 'account-mode-mismatch' }

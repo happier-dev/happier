@@ -97,9 +97,8 @@ export function createCliNotificationChannelStore(input: Readonly<{
       if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
       return current;
     };
-    // A channel reader borrows the held Account observation (R3); source writes keep their fresh reads.
+    // Read publication borrows identity even when the independent source maintenance runs.
     const reobserveReadMode = async () => {
-      if (cleanupActiveSource !== false) return reobserveMode();
       const current = await readStorageContext('identity');
       if (current.mode !== context.mode) throw Object.assign(new Error('Account mode changed'), { code: 'account-mode-mismatch' });
       return current;
