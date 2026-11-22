@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import type { ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from './discussionExecutionAuthorization.testkit';
@@ -44,15 +46,29 @@ describe('approved Copy Machine read through Home authentication', () => {
                         ...resolved.headers, 'x-happier-account-stored-content-protocol': '2',
                     }, validateStatus: () => true });
                     if (kind === 'signed-account') {
-                        const otherPath = `/v1/machines/${randomUUID()}`;
-                        const other = await axios.get(`${origin}${otherPath}`, { headers: {
-                            ...createExternalActionAuthorizedRequestHeaders({ authorization,
-                                effectActionId: authorization.binding.actionId, target: authorization.binding.target,
-                                method: 'GET', path: otherPath, installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey }),
-                            'x-happier-account-stored-content-protocol': '2',
-                        }, validateStatus: () => true });
-                        expect({ status: other.status, refusal: other.data.authorizationRefusal })
-                            .toEqual({ status: 401, refusal: 'verification_purpose' });
+                        expect(result.status).toBe(200);
+                        const reviewedChild: ReviewedActionChildHttpProofV1 = {
+                            actionId: 'session.spawn_new', role: 'create_bot',
+                            inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', {}),
+                        };
+                        const refusedRequests = [
+                            { name: 'unrelated Machine', path: `/v1/machines/${randomUUID()}`,
+                                effectActionId: authorization.binding.actionId, refusal: 'verification_purpose' },
+                            { name: 'different Action', path, effectActionId: 'session.spawn_new', refusal: 'effect_family' },
+                            { name: 'attached reviewed child', path, effectActionId: authorization.binding.actionId,
+                                reviewedChild, refusal: 'reviewed_child' },
+                        ];
+                        for (const request of refusedRequests) {
+                            const response = await axios.get(`${origin}${request.path}`, { headers: {
+                                ...createExternalActionAuthorizedRequestHeaders({ authorization,
+                                    effectActionId: request.effectActionId, target: authorization.binding.target,
+                                    method: 'GET', path: request.path, reviewedChild: request.reviewedChild,
+                                    installationId: f.machine.installationId!, privateKey: f.keyPair.secretKey }),
+                                'x-happier-account-stored-content-protocol': '2',
+                            }, validateStatus: () => true });
+                            expect({ status: response.status, refusal: response.data.authorizationRefusal }, request.name)
+                                .toEqual({ status: 401, refusal: request.refusal });
+                        }
                     }
                     return { status: result.status, refusal: result.status === 200 ? null : result.data.authorizationRefusal,
                         error: result.status === 200 ? null : result.data.error };

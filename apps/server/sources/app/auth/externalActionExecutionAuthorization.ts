@@ -2423,8 +2423,7 @@ async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
     // not substitute the installed Account bearer used by other local callers.
     if ((root === 'template.instantiate' || root === 'template.updates.apply')
         && verified.effectActionId === root && !proof.reviewedChild
-        && method === 'GET' && proof.body === undefined
-        && proof.path === `/v1/machines/${encodeURIComponent(verified.binding.machineId)}`) {
+        && isExactExecutionMachineLookup(verified.binding.machineId, proof)) {
         return proof.routeInput === undefined || sameManagedInput(proof.routeInput, { id: verified.binding.machineId });
     }
     const restrictedPat = !('authentication' in verified.binding)
