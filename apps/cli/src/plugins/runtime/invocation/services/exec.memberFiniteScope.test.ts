@@ -6,7 +6,7 @@ import { withTempDir } from '@/testkit/fs/tempDir';
 import { runMemberAgentEffect } from '@/daemon/agentIsolation/runMemberNativeOperation';
 import { runWorkspaceEffectChild } from '@/workspaces/activation/workspaceEffectProcess';
 import { encodeBackgroundServiceProcessFrame } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
-import { createProjectNativeToolchainIoForHost } from './exec';
+import { createProjectNativeToolchainIoForHost, createStablePluginExecService } from './exec';
 import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { spawnMemberEffectWorker } from '@/daemon/agentIsolation/memberEffectWorker.testkit';
@@ -61,7 +61,7 @@ vi.mock('node:child_process', async importOriginal => {
 
 afterEach(() => { vi.unstubAllEnvs(); boundary.launches.length = 0; workspaceCheckoutNativeBoundary.reset(); });
 
-it.skipIf(process.platform !== 'linux').each(['workspace', 'member-agent', 'toolchain'] as const)(
+it.skipIf(process.platform !== 'linux').each(['workspace', 'member-agent', 'toolchain', 'sdk'] as const)(
     'keeps finite %s work outside the daemon service cgroup', async kind => {
         await withTempDir('member-finite-scope-', async directory => {
             boundary.systemdRunPath = join(directory, 'systemd-run');
@@ -75,7 +75,7 @@ it.skipIf(process.platform !== 'linux').each(['workspace', 'member-agent', 'tool
                 ? encodeBackgroundServiceProcessFrame({ kind: 'settled', id: 'finite' })
                 : Buffer.from(kind === 'member-agent' ? '{"done":true}\n' : 'finite-output');
             const emit = `process.stdout.write(Buffer.from(${JSON.stringify(output.toString('base64'))}, 'base64'));`;
-            const args = ['-e', kind === 'toolchain' ? emit : `process.stdin.once('data', () => { ${emit} }); process.stdin.resume();`];
+            const args = ['-e', kind === 'toolchain' || kind === 'sdk' ? emit : `process.stdin.once('data', () => { ${emit} }); process.stdin.resume();`];
             if (kind === 'workspace') {
                 expect(await runWorkspaceEffectChild({ launch: { command, args, env: {}, release() {} }, signal,
                     id: 'finite', effect: {}, services: {}, refusal: code => new Error(code) }))
@@ -83,10 +83,16 @@ it.skipIf(process.platform !== 'linux').each(['workspace', 'member-agent', 'tool
             } else if (kind === 'member-agent') {
                 expect(await runMemberAgentEffect({ launch: { command, args, env: {}, release() {} }, signal,
                     request: {}, readRecord: record => record })).toEqual({ done: true });
-            } else {
+            } else if (kind === 'toolchain') {
                 const io = createProjectNativeToolchainIoForHost({ resolveTool: async () => null });
                 expect(await io.run({ command, args, cwd: directory, env: {}, signal }))
                     .toMatchObject({ exitCode: 0, stdout: 'finite-output' });
+            } else {
+                const service = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+                    resolveExecutable: async () => ({ command }), resolvePath: async () => directory });
+                const result = await service.run({ executable: { kind: 'systemTool', id: 'finite-fixture' }, args });
+                expect(result.termination.observed).toMatchObject({ kind: 'exit', exitCode: 0 });
+                expect(Buffer.from(result.stdout).toString()).toBe('finite-output');
             }
             const launch = boundary.launches.find(value => value.args.includes(args[1]!));
             expect(launch?.command).toBe(boundary.systemdRunPath);

@@ -2034,8 +2034,7 @@ export function createStablePluginExecService(params: Readonly<{
                 } catch (error) {
                     fail('plugin_exec_spawn_failed', 'Process could not be started', error);
                 }
-                linuxProcessLaunchScope = process.platform === 'linux'
-                    && (managedCustody || options?.descendantDisposition === 'preserve-on-success')
+                linuxProcessLaunchScope = process.platform === 'linux' && !holderDecision.role
                     ? await prepareCgroupProcessLaunchScope() : null;
                 if (params.assertLaunchCurrent) {
                     await params.assertLaunchCurrent(options?.signal
