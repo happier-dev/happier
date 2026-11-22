@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { orderRuntimeObservations, prepareScopedUsageReplayBasis, prepareScopedUsageReplayContext, resolveScopedUsageContributions, selectScopedUsageReplayContext, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { orderRuntimeObservations, prepareScopedUsageReplayBasis, prepareScopedUsageReplayContext, resolveScopedUsageContributions, selectScopedUsageReplayContext, toScopedUsageReplayFact, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 import { buildUsageResultProjection } from './buildUsageResultProjection';
@@ -46,7 +46,7 @@ describe("resolveScopedUsageContributions", () => {
 
     it('selects ordinary replay history in two scans per population', () => {
         const facts = [row('baseline', 1, 'session_cumulative', 2), row('in-window', 2, 'turn_delta', 1),
-            { ...row('unrelated', 1, 'turn_delta', 1), sessionId: 'other-session' }];
+            { ...row('unrelated', 1, 'turn_delta', 1), sessionId: 'other-session' }].map(toScopedUsageReplayFact);
         const basis = prepareScopedUsageReplayBasis(facts);
         let visits = 0;
         const eligible = new Proxy(facts, {
@@ -346,7 +346,7 @@ describe("resolveScopedUsageContributions", () => {
         const after = row('after', 3, 'turn_delta', 5);
         const otherSession = { ...row('other', 1, 'turn_delta', 10), sessionId: 'other' };
         const rows = [legacy, before, after, otherSession];
-        const replay = prepareScopedUsageReplayContext(rows, { startMs: 2, endMs: 4 });
+        const replay = prepareScopedUsageReplayContext(rows.map(toScopedUsageReplayFact), { startMs: 2, endMs: 4 });
         const result = resolveScopedUsageContributions(rows, { startMs: 2, endMs: 4 }, replay);
         expect(result.totalContributions.map(row => [row.id, row.tokens.total])).toEqual([['legacy', 7], ['after', 5]]);
         expect(result.coverageReasons).toContain('missing_baseline');
