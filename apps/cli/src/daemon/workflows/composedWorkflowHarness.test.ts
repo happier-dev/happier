@@ -5,8 +5,10 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { createServer } from 'node:http';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
+import { randomUUID } from 'node:crypto';
 import { SessionPullRequestUpdateV1Schema } from '@happier-dev/channels-protocol/v1';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import {
@@ -63,7 +65,7 @@ import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals
 import { createMcpServerActionExecuteV1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { createDaemonApprovalExecutionOriginCurrentness } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import type { AvailableAutomationAccountEncryptionV1 } from '@/plugins/runtime/automations/automationAccountCurrentness';
-import type { StoredCredentials } from '@/persistence';
+import { writeDaemonState, type StoredCredentials } from '@/persistence';
 import type { AutomationDefinitionDetail, AutomationDefinitionReconcileRequest } from '@happier-dev/protocol';
 import { createAccountWorkflowTriggerActions } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -74,7 +76,7 @@ import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture }
 import { encodeBase64, encryptLegacy } from '@/api/encryption';
 import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { ApiMachineClient } from '@/api/apiMachine';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
@@ -174,11 +176,11 @@ import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/e
 import { createWorkflowDefinitionActions as createCliWorkflowDefinitionActions } from '@/session/actions/workflowDefinitions';
 import { createWorkflowRunActionOwner } from '@/session/actions/workflowRunActions';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { ExecutionRunHostBridge } from '@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
-import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
-import { createExecutionRunRpcActionExecutor } from '@/rpc/handlers/executionRuns/dispatchExecutionRunRpcAction';
-import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import { createInstalledProjectAgentLaunchFixture } from '@/daemon/testkit/installedProjectAgentLaunchFixture';
+import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
+import { completeExecutionRunServiceActionResult } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { workflowInvocationKey, WORKFLOW_CANCEL_REQUESTED_ABORT_REASON, WorkflowRuntimeInterruption } from './coordinator';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
@@ -353,11 +355,14 @@ async function sealDirectAccepted(input: Readonly<{
   runId: string;
   definition: WorkflowDefinitionV1;
   directory: string;
+  machineId?: string;
+  accountId?: string;
   deliverResult?: boolean;
   runCrypto?: WorkflowRunDataKeyV1;
   actionRequestAttributionV1?: ActionRequestAttributionV1;
   authenticatedStarterV1?: NonNullable<WorkflowAcceptedOriginV1['authenticatedStarterV1']>;
 }>): Promise<string> {
+  const acceptedMachineId = input.machineId ?? machineId;
   const runCrypto = input.runCrypto ?? { mode: 'plain' as const };
   const sealMode = runCrypto.mode === 'e2ee'
     ? { ...runCrypto, randomBytes: (length: number) => new Uint8Array(length).fill(3) } : runCrypto;
@@ -371,9 +376,9 @@ async function sealDirectAccepted(input: Readonly<{
     context: {
       source: { kind: 'inline' },
       inputs: {},
-      machineId,
+      machineId: acceptedMachineId,
       executionTarget: { kind: 'session' },
-      workspaceTarget: { project: { machineId, directory: input.directory, checkoutRootPath: input.directory } },
+      workspaceTarget: { project: { machineId: acceptedMachineId, directory: input.directory, checkoutRootPath: input.directory } },
       origin: { kind: 'direct', ...(input.deliverResult ? { originSessionId: sessionId } : {}),
         ...(input.authenticatedStarterV1 ? { authenticatedStarterV1: input.authenticatedStarterV1 } : {}),
         ...(input.actionRequestAttributionV1 ? { actionRequestAttributionV1: input.actionRequestAttributionV1 } : {}) },
@@ -384,12 +389,50 @@ async function sealDirectAccepted(input: Readonly<{
   if (!materialized.ok) throw new Error(JSON.stringify(materialized.error));
   return serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
     ...sealMode,
-    binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId: input.runId },
+    binding: { v: 1, purpose: 'accepted_snapshot', accountId: input.accountId ?? accountId, runId: input.runId },
     acceptedSnapshot: { ...materialized.snapshot, authorization },
   }));
 }
 
 type LeafOutcome = 'completed' | 'failed' | 'needs_attention';
+
+/** bce7392465a8's installed Machine recipe keeps native launch/requester owners
+ * real; only Home HTTP and the native Agent implementation are boundaries. */
+async function installedNativeWorkflowFixture() {
+  const homeServerIdentityId = 'srv_0123456789abcdefghijklmnopqrstuv';
+  const credentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'requester',
+    session: 'workflow-native' })).toString('base64url')}.signature`, encryption: null };
+  const installed = await createInstalledProjectAgentLaunchFixture({ prepareProject: false, preserveLaunchEnvironment: true,
+    serverId: 'server-1', serverUrl: `https://workflow-native-${randomUUID()}.test`,
+    homeServerIdentityId, accountActionCredentials: credentials,
+    agentIsolationEnabled: false, agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } });
+  const { f, rpc } = installed;
+  const daemonHttp = createServer((request, response) => {
+    if (request.url !== '/execution-run/admission') { response.writeHead(404).end(); return; }
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ admitted: true }));
+  });
+  await new Promise<void>(resolve => daemonHttp.listen(0, '127.0.0.1', resolve));
+  onTestFinished(() => new Promise<void>((resolve, reject) => daemonHttp.close(error => error ? reject(error) : resolve())));
+  const address = daemonHttp.address();
+  if (!address || typeof address === 'string') throw new Error('Missing fixture daemon');
+  writeDaemonState({ pid: process.pid, httpPort: address.port, startedAt: Date.now(),
+    startedWithCliVersion: 'fixture', controlToken: 'fixture-control-token' });
+  const rpcContext = { callerAuthority: 'present_user' as const, signal: f.signal, requesterSessionBootstrap: f.bootstrap,
+    machineAdmission: { actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
+      installationId: f.installation.installationId, role: 'manage' as const, encryptionMode: 'plain' as const },
+    verifyMachineAdmissionCurrent: f.bootstrap.isCurrent };
+  const executor: RpcActionExecutor = { execute: async (actionId, input, context) => {
+    const method = getActionSpec(actionId).bindings?.rpcMethod;
+    if (!method) throw new Error(`Missing native Action RPC: ${actionId}`);
+    const result = await rpc.invokeLocal(method, input, { signal: context?.signal ?? f.signal,
+      rpcContext: { ...rpcContext, callerAuthority: 'account_automation' },
+      ...(context ? { localActionContext: context } : {}) });
+    return completeExecutionRunServiceActionResult(actionId, result);
+  } };
+  return { credentials, directory: f.directory, machineId: 'machine', accountId: 'requester', executor, rpc, rpcContext,
+    localRootCustody: { serverIdentityId: homeServerIdentityId, accountId: 'requester', machineId: 'machine',
+      installationId: f.installation.installationId } };
+}
 
 it.each(['starter', 'session-fallback', 'causal', 'agent', 'trigger', 'foreign'] as const)(
   'FIX247 binds the ordinary Workflow Action requester from accepted origin (%s)', async cause => {
@@ -483,6 +526,8 @@ function workflowDaemonProcess(input: Readonly<{
   sessionInput?: ReturnType<typeof sessionInputBoundary>;
   machineAdmissionTransport?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['execution']['machineAdmissionTransport'];
   directory: string;
+  machineId?: string;
+  accountId?: string;
   encryption?: AvailableAutomationAccountEncryptionV1;
   credentials?: StoredCredentials;
   conversationSessionId?: string;
@@ -492,6 +537,7 @@ function workflowDaemonProcess(input: Readonly<{
   detachedRun?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['execution']['detachedRun'];
   action?: Parameters<typeof createProductionWorkflowRunCoordinator>[0]['execution']['action'];
 }>) {
+  const workflowMachineId = input.machineId ?? machineId;
   authorizedConversations.set(input.conversationSessionId ?? sessionId, input.directory);
   readinessCurrentness = input.encryption?.witness ?? currentness;
   const unusedRunActions = { execute: vi.fn(async () => ({ ok: false as const, errorCode: 'unused' })) };
@@ -499,7 +545,7 @@ function workflowDaemonProcess(input: Readonly<{
   const credentials = input.credentials ?? { token: 'token', encryption: null };
   const machineAdmissionTransport = input.machineAdmissionTransport
     ?? (async () => ({ status: 'accepted' as const, localId: 'local-1' }));
-  const sessionHost = createAdmittedWorkflowSessionHost({ credentials, serverId: 'server-1', machineId,
+  const sessionHost = createAdmittedWorkflowSessionHost({ credentials, serverId: 'server-1', machineId: workflowMachineId,
     workDepth: 0, originRunId: 'composed-workflow', machineAdmissionTransport,
     ...(input.action ? { action: input.action } : {}),
     ...(input.sessionStartup ? { sessionStartup: input.sessionStartup } : {}),
@@ -507,8 +553,8 @@ function workflowDaemonProcess(input: Readonly<{
   return createProductionWorkflowRunCoordinator({
     resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation', callerPermissionMode: 'yolo' }),
     token: 'token',
-    accountId,
-    machineId,
+    accountId: input.accountId ?? accountId,
+    machineId: workflowMachineId,
     resolveAccountEncryption: async () => input.encryption ?? { kind: 'available', witness: currentness },
     isAcceptedAuthorizationCurrent: async () => true,
     // Opened Account policy and exact-Machine availability are host boundaries;
@@ -525,7 +571,7 @@ function workflowDaemonProcess(input: Readonly<{
         { kind: 'workflow_run_leaf', leaf }, {
           caller: { kind: 'originless', runId, runDepth: workDepth,
             ...(originSessionId ? { runOriginSessionId: originSessionId } : {}) },
-          baseline: { machineId, directory }, ledSubtreeSessionIds: [],
+          baseline: { machineId: workflowMachineId, directory }, ledSubtreeSessionIds: [],
           roles: facts.role ? { [facts.role.roleId]: facts.role } : {},
           workDepthLimit: 4, callerPermissionCeiling: facts.permissionCeiling,
         }),
@@ -534,7 +580,7 @@ function workflowDaemonProcess(input: Readonly<{
       credentials, serverId: 'server-1', ...sessionHost, machineAdmissionTransport,
       resolveExistingSessionConversation: input.readActualConversation
         ? async params => await resolveWorkflowSessionConversation({ ...params, credentials: input.credentials ?? { token: 'token', encryption: null } })
-        : async () => ({ sessionId: input.conversationSessionId ?? sessionId, machineId, directory: input.directory, agentTarget }),
+        : async () => ({ sessionId: input.conversationSessionId ?? sessionId, machineId: workflowMachineId, directory: input.directory, agentTarget }),
       ...(input.sessionInput ? { sessionInput: input.sessionInput as never } : {}),
       detachedRun: input.detachedRun ?? { actionExecutor: unusedRunActions as never, buildActionContext: actionContext as never },
     },
@@ -542,7 +588,7 @@ function workflowDaemonProcess(input: Readonly<{
     // Git registration and SCM logic through the canonical workspace testkit.
     prepareAcceptedWorkspaceTarget: async () => ({
       ok: true,
-      workspaceTarget: { project: { machineId, directory: input.directory, checkoutRootPath: input.directory } },
+      workspaceTarget: { project: { machineId: workflowMachineId, directory: input.directory, checkoutRootPath: input.directory } },
     }),
     workspaceScm: createGitWorkflowWorkspaceTestDependencies(),
     onCommittedTransition: vi.fn(),
@@ -572,7 +618,7 @@ function openRowProgress(kit: WorkflowRunStorageTestkit, index: WorkflowRunInvoc
   const opened = openWorkflowProgressStoredEnvelopeV1({
     ...runCrypto,
     binding: {
-      v: 1, purpose: 'invocation_progress', accountId, runId: index.runId,
+      v: 1, purpose: 'invocation_progress', accountId: kit.run().ownerAccountId, runId: index.runId,
       recordId: index.id, sequence: index.sequence, parentRecordId: index.parentRecordId,
       memberOrdinal: index.memberOrdinal, attempt: index.attempt,
     },
@@ -1676,17 +1722,16 @@ it('retires the old Judge observation writer while reclaim preserves the late re
 });
 
 it('settles a detached Workflow danger refusal even when its native Agent swallows the tool error', async () => {
-  const directory = await projectDirectory();
-  vi.stubEnv('HAPPIER_HOME_DIR', directory);
-  reloadConfiguration();
+  const native = await installedNativeWorkflowFixture();
+  const { directory, machineId, accountId, credentials, executor } = native;
   const pluginId = 'acme.workflow-refusal';
   const runId = '41414141-4141-4141-8141-414141414164';
   const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
     ...retainedConversationDefaults(), permissionMode: 'default',
     agentTarget: { kind: 'agent', identity: { pluginId, localId: 'default' } } },
     blocks: [step('danger', { execution: { executionTarget: { kind: 'detached_run' }, conversation: { kind: 'fresh' } } })] };
-  const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
-  const kit = createWorkflowRunStorageTestkit({ runId, machineId, state: 'claimed', origin: { kind: 'direct' }, acceptedEnvelope });
+  const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory, machineId, accountId });
+  const kit = createWorkflowRunStorageTestkit({ runId, machineId, accountId, state: 'claimed', origin: { kind: 'direct' }, acceptedEnvelope });
   let context: import('@happier-dev/plugin-sdk/agents/runtime').AgentExecutionRunRuntimeContextV1 | undefined;
   let opened!: () => void;
   const nativeOpened = new Promise<void>(resolve => { opened = resolve; });
@@ -1717,7 +1762,6 @@ it('settles a detached Workflow danger refusal even when its native Agent swallo
   const { resolveExecutablePluginRuntimeRegistry } = await import('@/plugins/runtime/resolveExecutablePluginRuntimeRegistry');
   const { createActionSettingsProvider } = await import('@/settings/actionsSettingsProvider');
   const baseline = readCurrentContributionRegistry();
-  const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
   const admitted = await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: directory, controller: pluginReloadController,
     runtimeOptions: { scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } },
     plugins: [{ manifest: plugin.manifest, files: {
@@ -1740,19 +1784,10 @@ it('settles a detached Workflow danger refusal even when its native Agent swallo
     });
     vi.unstubAllEnvs(); reloadConfiguration();
   });
-  const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: admitted.registry });
-  const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog();
-  const manager = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: directory, sendAcp: async () => {},
-    machineId, happyHomeDir: directory, resolveExecutionRunProfileCatalog: () => ({ engineRegistry, profileCatalog }) });
-  const executor = createExecutionRunRpcActionExecutor({ manager, context: { sessionId: null, cwd: directory },
-    policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
-      reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
   const abort = new AbortController();
-  const pending = workflowDaemonProcess({ directory, storage: kit, detachedRun: { actionExecutor: executor,
+  const pending = workflowDaemonProcess({ directory, machineId, accountId, credentials, storage: kit, detachedRun: { actionExecutor: executor,
     // The private daemon ingress authenticates this root before stamping detached work.
-    buildActionContext: () => ({ surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: {
-      serverIdentityId: 'server-1', accountId, machineId, installationId: 'installation-1',
-    } }) } })({ runId, attempt: 1,
+    buildActionContext: () => ({ surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: native.localRootCustody }) } })({ runId, attempt: 1,
       expectedRevision: 0, accountCurrentness: currentness, acceptedEnvelope, signal: abort.signal });
   void pending.catch(() => undefined);
   try {
@@ -1767,28 +1802,32 @@ it('settles a detached Workflow danger refusal even when its native Agent swallo
     expect(openRowProgress(kit, leaf!)).toMatchObject({ reason: { code: 'approval_requester_unavailable' } });
     const execution = openRowProgress(kit, leaf!).execution;
     if (execution?.kind !== 'detached_run') throw new Error('Missing the failed native input');
-    expect(manager.get(execution.runId)).toMatchObject({ status: 'failed',
+    const observed = ExecutionRunGetResponseSchema.parse(await native.rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+      { runId: execution.runId }, { rpcContext: native.rpcContext }));
+    expect(observed.run).toMatchObject({ status: 'failed',
       error: { code: 'approval_requester_unavailable' }, inputTurns: { last: {
         state: 'failed', inputIds: [execution.localInputId],
       } } });
     expect(kit.run()).toMatchObject({ state: 'interrupted' });
   } finally {
     abort.abort(new WorkflowRuntimeInterruption());
-    await manager.dispose(); await pending.catch(() => undefined);
+    const execution = rowFor(kit, 'danger') ? openRowProgress(kit, rowFor(kit, 'danger')!).execution : undefined;
+    if (execution?.kind === 'detached_run') await native.rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+      { runId: execution.runId }, { rpcContext: native.rpcContext });
+    await pending.catch(() => undefined);
   }
 });
 
 it.each(['before-native-admission', 'active'] as const)('persists a delayed native permission through the reclaimed exact Workflow input (%s)', async phase => {
-  const directory = await projectDirectory();
-  vi.stubEnv('HAPPIER_HOME_DIR', directory);
-  reloadConfiguration();
+  const native = await installedNativeWorkflowFixture();
+  const { directory, machineId, accountId, credentials, executor } = native;
   const runId = '41414141-4141-4141-8141-414141414163';
   const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {
     ...retainedConversationDefaults(), permissionMode: 'default',
     agentTarget: { kind: 'agent', identity: { pluginId: 'acme.permission-reclaim', localId: 'default' } } },
     blocks: [step('judge', { execution: { executionTarget: { kind: 'detached_run' }, conversation: { kind: 'fresh' } } })] };
-  const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory });
-  const kit = createWorkflowRunStorageTestkit({ runId, machineId, state: 'claimed', origin: { kind: 'direct' }, acceptedEnvelope });
+  const acceptedEnvelope = await sealDirectAccepted({ runId, definition, directory, machineId, accountId });
+  const kit = createWorkflowRunStorageTestkit({ runId, machineId, accountId, state: 'claimed', origin: { kind: 'direct' }, acceptedEnvelope });
   let currentAttempt = 1;
   let permissionPersisted!: (requestId: string) => void;
   const persistedPermission = new Promise<string>(resolve => { permissionPersisted = resolve; });
@@ -1872,39 +1911,28 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     });
   });
   expect(admitted.registry.pluginDiagnosticsByPluginId['acme.permission-reclaim'] ?? []).toEqual([]);
-  const engineRegistry = await resolveCliEngineRegistry({ runtimeRegistry: admitted.registry });
-  const profileCatalog = await engineRegistry.resolveExecutionRunProfileCatalog();
-  const manager = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: directory, sendAcp: async () => {},
-    machineId, happyHomeDir: directory, resolveExecutionRunProfileCatalog: () => ({ engineRegistry, profileCatalog }) });
   let firstWaiting!: () => void;
   let reclaimedWaiting!: () => void;
   const firstObservation = new Promise<void>(resolve => { firstWaiting = resolve; });
   const reclaimedObservation = new Promise<void>(resolve => { reclaimedWaiting = resolve; });
-  const waitForInputTurn = manager.waitForInputTurn.bind(manager);
   let waitCount = 0;
-  vi.spyOn(manager, 'waitForInputTurn').mockImplementation((...args) => {
-    const waiting = waitForInputTurn(...args);
-    if (++waitCount === 1) firstWaiting();
-    else reclaimedWaiting();
-    return waiting;
-  });
-  const executor = createExecutionRunRpcActionExecutor({ manager, context: { sessionId: null, cwd: directory },
-    policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,
-      reviewBoundedTimeoutMs: null, maxTurns: null } }), isExecutionRunsEnabled: () => true });
   let latestContext: Parameters<typeof executor.execute>[2];
   const detachedRun: NonNullable<Parameters<typeof workflowDaemonProcess>[0]['detachedRun']> = {
     // The private daemon ingress authenticates this root before stamping detached work.
-    buildActionContext: () => ({ surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: {
-      serverIdentityId: 'server-1', accountId, machineId, installationId: 'installation-1',
-    } }),
+    buildActionContext: () => ({ surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: native.localRootCustody }),
     actionExecutor: { execute: (actionId, input, context) => {
       latestContext = context;
-      return executor.execute(actionId, input, context);
+      const waiting = executor.execute(actionId, input, context);
+      if (actionId === 'execution.run.get') {
+        if (++waitCount === 1) firstWaiting();
+        else reclaimedWaiting();
+      }
+      return waiting;
     } },
   };
   const interrupted = new AbortController();
   const claim = { runId, attempt: 1, expectedRevision: 0, accountCurrentness: currentness, acceptedEnvelope };
-  const first = workflowDaemonProcess({ directory, storage, detachedRun })({ ...claim, signal: interrupted.signal });
+  const first = workflowDaemonProcess({ directory, machineId, accountId, credentials, storage, detachedRun })({ ...claim, signal: interrupted.signal });
   void first.catch(() => undefined);
   let reclaimed: ReturnType<ReturnType<typeof workflowDaemonProcess>> | undefined;
   const reclaimAbort = new AbortController();
@@ -1921,7 +1949,7 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     currentAttempt = 2;
     interrupted.abort(new WorkflowRuntimeInterruption());
     await expect(first).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
-    reclaimed = workflowDaemonProcess({ directory, storage, detachedRun })({ ...claim,
+    reclaimed = workflowDaemonProcess({ directory, machineId, accountId, credentials, storage, detachedRun })({ ...claim,
       attempt: 2, expectedRevision: kit.run().revision, signal: reclaimAbort.signal });
     void reclaimed.catch(() => undefined);
     await Promise.race([reclaimedObservation, reclaimed.then(result => {
@@ -1929,6 +1957,10 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     })]);
     const context = latestContext;
     if (!context?.actionCaller || context.actionCaller.kind !== 'workflowRun') throw new Error('Missing current Workflow context');
+    // Settled observations deliberately accept a rebind without changing a
+    // native target. Scope-mismatch controls require an active native Run.
+    expect(ExecutionRunGetResponseSchema.parse(await native.rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_GET,
+      { runId: nativeRunId }, { rpcContext: native.rpcContext })).run.status).toBe('running');
     const { AgentStateRequestStore } = await import('@/agent/permissions/agentStateRequestStore');
     const foreignStore = new AgentStateRequestStore({ logPrefix: '[foreign invocation]', target: {
       scopeId: 'foreign-invocation', readState: () => ({}), updateState: () => { throw new Error('Foreign scope was mutated'); },
@@ -1953,7 +1985,8 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     })]);
     expect(projectWorkflowPermissionRequests(openRowProgress(kit, rowFor(kit, 'judge')!)))
       .toMatchObject([{ requestId, tool: 'Bash' }]);
-    await expect(manager.completePermissionRequest(nativeRunId, { requestId, approved: true })).resolves.toEqual({ ok: true });
+    await expect(native.rpc.invokeLocal(RPC_METHODS.DAEMON_EXECUTION_RUN_PERMISSION_RESPOND,
+      { runId: nativeRunId, requestId, approved: true }, { rpcContext: native.rpcContext })).resolves.toEqual({ ok: true });
     await expect(approval).resolves.toMatchObject({ kind: 'approval', status: 'approved' });
     expect(projectWorkflowPermissionRequests(openRowProgress(kit, rowFor(kit, 'judge')!))).toEqual([]);
     finishNative();
@@ -1963,7 +1996,10 @@ it.each(['before-native-admission', 'active'] as const)('persists a delayed nati
     expect(refusedWrites).toEqual([]);
   } finally {
     releaseProvision(); interrupted.abort(new WorkflowRuntimeInterruption()); reclaimAbort.abort(new WorkflowRuntimeInterruption());
-    await manager.dispose(); await first.catch(() => undefined); await reclaimed?.catch(() => undefined);
+    const execution = rowFor(kit, 'judge') ? openRowProgress(kit, rowFor(kit, 'judge')!).execution : undefined;
+    if (execution?.kind === 'detached_run') await native.rpc.invokeLocal(SESSION_RPC_METHODS.EXECUTION_RUN_STOP,
+      { runId: execution.runId }, { rpcContext: native.rpcContext });
+    await first.catch(() => undefined); await reclaimed?.catch(() => undefined);
     vi.unstubAllEnvs(); reloadConfiguration();
   }
 });
