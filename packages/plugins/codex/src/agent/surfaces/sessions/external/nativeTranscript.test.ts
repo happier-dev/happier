@@ -1,15 +1,20 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import { describe, expect, it } from 'vitest';
 
 import { pageCodexNativeTranscript } from './nativeTranscript.js';
 
 // Boundary: the native app-server JSON-RPC client. Paging, projection and the
 // unsupported-record diagnostic below it are the real owner code.
-function nativeClient(items: Record<string, unknown>[]) {
+function nativeClient(items: Record<string, unknown>[], timestamp: (index: number) => number | null = index => index + 1) {
   return {
     request: async (method: string, value: unknown) => {
       if (method !== 'thread/items/list') throw new Error(`unexpected ${method}`);
       const args = value as { sortDirection: string; limit: number };
-      const ordered = items.map((item, index) => ({ turnId: 'turn', item, startedAtMs: index + 1, completedAtMs: index + 1 }));
+      const ordered = items.map((item, index) => ({ turnId: 'turn', item, startedAtMs: timestamp(index), completedAtMs: timestamp(index) }));
       if (args.sortDirection === 'desc') ordered.reverse();
       const data = ordered.slice(0, args.limit);
       return { data, nextCursor: null, backwardsCursor: data.length ? 'head' : null };
@@ -36,6 +41,55 @@ describe('pageCodexNativeTranscript', () => {
     expect(page.items.map(item => item.raw)).toEqual(Array.from({ length: 4 }, () => ({
       role: 'user', content: { type: 'text', text: 'repeat this prompt' },
     })));
+  });
+
+  it('keeps untimed content without reporting an epoch timestamp', async () => {
+    const page = await pageCodexNativeTranscript({
+      client: nativeClient([
+        { id: 'question', type: 'userMessage', content: [{ type: 'text', text: 'question' }] },
+        { id: 'reply', type: 'agentMessage', text: 'answer' },
+      ], index => index === 0 ? null : 2),
+      home: '/codex-home', remoteSessionId: 'thread-1', direction: 'older', maxItems: 50, maxBytes: 512 * 1024,
+    });
+    expect(page.items).toMatchObject([
+      { raw: { role: 'user', content: { text: 'question' } } },
+      { createdAtMs: 2, raw: { role: 'agent' } },
+    ]);
+    expect(page.items[0]).not.toHaveProperty('createdAtMs');
+  });
+
+  it('uses the recorded native date without requiring every readable item to have one', async () => {
+    const sqliteHome = mkdtempSync(join(tmpdir(), 'happier-codex-native-history-'));
+    try {
+      const database = openSqliteDatabaseSync(join(sqliteHome, 'thread_history_1.sqlite'));
+      try {
+        database.exec(`
+          CREATE TABLE thread_items (
+            thread_id TEXT, turn_id TEXT, item_id TEXT, created_at_ms INTEGER,
+            PRIMARY KEY (thread_id, turn_id, item_id)
+          );
+          INSERT INTO thread_items VALUES ('thread-1', 'turn', 'dated', 1234);
+          INSERT INTO thread_items VALUES ('another-thread', 'turn', 'untimed', 5678);
+        `);
+      } finally {
+        database.close();
+      }
+      const page = await pageCodexNativeTranscript({
+        client: nativeClient([
+          { id: 'dated', type: 'userMessage', content: [{ type: 'text', text: 'question' }] },
+          { id: 'untimed', type: 'agentMessage', text: 'answer' },
+        ], () => null),
+        home: '/codex-home', sqliteHome, remoteSessionId: 'thread-1',
+        direction: 'older', maxItems: 50, maxBytes: 512 * 1024,
+      });
+      expect(page.items).toMatchObject([
+        { createdAtMs: 1234, raw: { role: 'user', content: { text: 'question' } } },
+        { raw: { role: 'agent', content: { data: { message: 'answer' } } } },
+      ]);
+      expect(page.items[1]).not.toHaveProperty('createdAtMs');
+    } finally {
+      rmSync(sqliteHome, { recursive: true, force: true });
+    }
   });
 
   it('preserves native subagent activity without inventing child completion', async () => {

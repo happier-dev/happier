@@ -1,3 +1,4 @@
+import type { ExternalSessionSourceDatesV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { resolveSessionIdPrefixScanMaxPages } from '@/session/query/sessionIdPrefixScanBudget';
 import { SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema, projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { resolveExternalHistoryImportV1FromMetadata, readNonAuthoritativeLinkedExternalSessionV1FromMetadata, resolveLinkedExternalSessionMetadataV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
@@ -411,6 +412,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
   remoteSessionId: string;
   source: ExternalSessionsSource;
   linkData?: PluginAgentExternalSessionLinkData;
+  sourceDates?: ExternalSessionSourceDatesV1;
   runtimeDescriptor?: RuntimeDescriptorV1 | null;
   titleHint?: string | null;
   directoryHint?: string | null;
@@ -803,6 +805,7 @@ export async function ensureExternalSessionLink(params: Readonly<{
     metadata,
     agentState: null,
     currentStorageState: 'machine_only',
+    ...(params.sourceDates ? { externalSourceDates: params.sourceDates } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.shouldCommit
       ? { shouldCommit: params.shouldCommit }

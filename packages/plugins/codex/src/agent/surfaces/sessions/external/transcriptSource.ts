@@ -1281,6 +1281,7 @@ async function readCodexNativeTranscriptIfNeeded(
         transport: { kind: 'stdio' }, initializeRequestOptions: requestOptions() });
       const activeClient = client;
       const page = await pageCodexNativeTranscript({ ...params, hasPaginatedRollout, home: home.codexHome,
+        sqliteHome: processEnv.CODEX_SQLITE_HOME,
         client: { request: (method, value) => {
           throwIfCodexExternalSessionInvocationStopped(params);
           return activeClient.request(method, value, requestOptions());

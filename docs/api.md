@@ -1594,6 +1594,11 @@ and never fall back to an unrestricted list. See
 - `GET /v2/sessions/active?limit=...`
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
+  In 0.3 development, the External Sessions link can supply `externalSourceDates`
+  on the first layout-1 `machine_only` creation. The server uses the available
+  source dates for creation and meaningful activity. A completed historical
+  snapshot orders by its latest published source item date, falling back to the
+  Session creation date when the published items have no source dates.
 - `POST /v1/machines/managed/actions/birth.get` (0.3 development) — closed
   `{ homeId, managedId }` request; returns `{ source }` with a unique Account-owned
   workflow Run, then a unique Session across active and archived Sessions, or null.

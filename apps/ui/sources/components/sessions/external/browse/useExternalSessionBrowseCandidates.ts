@@ -4,6 +4,7 @@ import { ExternalSessionsCandidatesListResponseSchema } from '@happier-dev/proto
 import type {
     ExternalSessionActivityV1,
     ExternalSessionCandidateThreadV1,
+    ExternalSessionSourceDatesV1,
     ExternalSessionsCandidatesListResponse} from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import type {
     ExternalSessionsAgentId,
@@ -28,6 +29,7 @@ export type ExternalSessionBrowseCandidate = Readonly<{
     title?: string;
     cwd?: string;
     messageCount?: number;
+    sourceDates?: ExternalSessionSourceDatesV1;
     updatedAtMs: number;
     activity?: ExternalSessionActivityV1;
     /** Present only for one of the Agent's internal threads. */
@@ -111,6 +113,10 @@ function mergeExternalSessionBrowseCandidate(
         title: hasCandidateTitle(next) ? next.title : current.title,
         cwd: next.cwd ?? current.cwd,
         messageCount: next.messageCount,
+        sourceDates: current.sourceDates && next.sourceDates ? {
+            createdAtMs: next.sourceDates.createdAtMs ?? current.sourceDates.createdAtMs,
+            updatedAtMs: Math.max(current.sourceDates.updatedAtMs ?? 0, next.sourceDates.updatedAtMs ?? 0) || undefined,
+        } : next.sourceDates ?? current.sourceDates,
         updatedAtMs: Math.max(current.updatedAtMs, next.updatedAtMs),
         activity: next.activity ?? current.activity,
         thread: next.thread ?? current.thread,
@@ -527,6 +533,10 @@ export function useExternalSessionBrowseCandidates(params: Readonly<{
                 title: candidate.title,
                 cwd: candidate.cwd,
                 messageCount: candidate.messageCount,
+                sourceDates: candidate.createdAtMs === undefined && candidate.updatedAtMs === 0 ? undefined : {
+                    createdAtMs: candidate.createdAtMs,
+                    updatedAtMs: candidate.updatedAtMs || undefined,
+                },
                 updatedAtMs: candidate.updatedAtMs,
                 activity: candidate.activity,
                 thread: candidate.thread,

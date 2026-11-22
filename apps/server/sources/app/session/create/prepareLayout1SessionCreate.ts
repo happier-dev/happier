@@ -1,3 +1,4 @@
+import type { ExternalSessionSourceDatesV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { asServerProtocolZod } from '@/app/api/utils/protocolComposableZodAdapter';
 import type { UsageSessionTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import * as z from 'zod/mini';
@@ -84,6 +85,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
     dataEncryptionKey: string | null;
     requestedEncryptionMode: "e2ee" | "plain" | undefined;
     requestedStorageState: "machine_only" | undefined;
+    externalSourceDates?: ExternalSessionSourceDatesV1;
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
     initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
@@ -111,6 +113,7 @@ export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 
     effectiveEncryptionMode: "e2ee" | "plain";
     requestedEncryptionMode: "e2ee" | "plain" | undefined;
     requestedStorageState: "machine_only" | undefined;
+    externalSourceDates?: ExternalSessionSourceDatesV1;
     organizationPlacement: SessionOrganizationPlacementInput | undefined;
     initialAccess?: SessionInitialAccessMaterializedV1;
     initialTriggers?: readonly SessionInitialTriggerAdmissionV1[];
@@ -285,6 +288,8 @@ export function prepareLayout1SessionCreate(
             effectiveEncryptionMode,
             requestedEncryptionMode: request.requestedEncryptionMode,
             requestedStorageState: request.requestedStorageState,
+            ...(request.requestedStorageState === "machine_only" && request.externalSourceDates
+                ? { externalSourceDates: request.externalSourceDates } : {}),
             organizationPlacement: request.organizationPlacement,
             initialAccess: request.initialAccess,
             ...(initialTriggers.data !== undefined ? { initialTriggers: initialTriggers.data } : {}),

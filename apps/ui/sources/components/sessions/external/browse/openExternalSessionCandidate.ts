@@ -108,6 +108,7 @@ export async function openExternalSessionCandidate(params: Readonly<{
         const request = {
             machineId: target.machineId, agentId, remoteSessionId: candidate.remoteSessionId,
             ...(candidate.linkData ? { linkData: candidate.linkData } : {}),
+            ...(candidate.sourceDates ? { sourceDates: candidate.sourceDates } : {}),
             ...(candidate.title ? { titleHint: candidate.title } : {}),
             ...(directoryHint ? { directoryHint } : {}),
             ...extras, source: effectiveSource,

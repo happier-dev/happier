@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
+import { SessionTranscriptSourceTimestampMsSchema } from '../messages/transcriptSourceTimestampV1.js';
 import { RuntimeDescriptorV1Schema } from '../metadata/runtimeDescriptorV1.js';
 import { NonBlankOpaqueIdentifierSchema } from '../../strings/opaqueIdentifier.js';
 import { PluginAgentExternalSessionLinkDataSchema } from '../../plugins/contributions/agentExternalSessions.js';
@@ -278,6 +279,12 @@ export type ExternalSessionCandidateDeleteResponse = z.infer<
   typeof ExternalSessionCandidateDeleteResponseSchema
 >;
 
+export const ExternalSessionSourceDatesV1Schema = lazyZodSchema(() => z.strictObject({
+  createdAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
+  updatedAtMs: z.optional(SessionTranscriptSourceTimestampMsSchema),
+}));
+export type ExternalSessionSourceDatesV1 = z.infer<typeof ExternalSessionSourceDatesV1Schema>;
+
 const ExternalSessionLinkEnsureCanonicalRequestSchema = lazyZodSchema(() => z.strictObject({
   machineId: z.string().check(z.minLength(1)),
   agentId: ExternalSessionsAgentIdSchema,
@@ -286,6 +293,7 @@ const ExternalSessionLinkEnsureCanonicalRequestSchema = lazyZodSchema(() => z.st
   directoryHint: z.optional(z.string().check(z.minLength(1), z.maxLength(10_000))),
   runtimeDescriptorV1: z.optional(RuntimeDescriptorV1Schema),
   linkData: z.optional(PluginAgentExternalSessionLinkDataSchema),
+  sourceDates: z.optional(ExternalSessionSourceDatesV1Schema),
   source: ExternalSessionsSourceSchema,
 }));
 

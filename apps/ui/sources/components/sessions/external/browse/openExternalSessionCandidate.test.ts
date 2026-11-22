@@ -65,10 +65,11 @@ describe('openExternalSessionCandidate', () => {
         boundary.ensure.mockResolvedValueOnce({ ok: true, sessionId: 'continued', created: true });
         const params = input();
         expect(await openExternalSessionCandidate({ ...params,
-            candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' } } })).toBe('opened');
+            candidate: { ...params.candidate, cwd: ' /repo/native cwd ', details: { cwd: '/legacy/should-not-win' },
+                sourceDates: { createdAtMs: 100, updatedAtMs: 200 } } })).toBe('opened');
         expect(params.openSession).toHaveBeenCalledWith('continued', params.resolveCurrentTarget(), undefined);
         expect(requests).toMatchObject([{ method: `machine-a:${RPC_METHODS.DAEMON_EXTERNAL_SESSION_LINK_ENSURE}`,
-            params: { directoryHint: '/repo/native cwd' } }]);
+            params: { directoryHint: '/repo/native cwd', sourceDates: { createdAtMs: 100, updatedAtMs: 200 } } }]);
         expect(boundary.ensure).toHaveBeenCalledOnce();
         expect(homes.requestsFor('/v2/account/settings').filter(request => request.input !== null)).toEqual([]);
     });

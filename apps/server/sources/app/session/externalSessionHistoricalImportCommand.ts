@@ -1068,6 +1068,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
             where: { id: command.claim.sessionId, accountId: params.actorUserId },
             select: {
                 id: true,
+                createdAt: true,
                 metadataVersion: true,
                 currentStorageState: true,
                 seq: true,
@@ -1557,9 +1558,21 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                     "Historical import cannot retract the current published ceiling.",
                 );
             }
+            const publishedAt = new Date();
+            const { _max: sourceTimes } = await tx.sessionMessage.aggregate({
+                where: { sessionId: session.id, seq: { lte: acceptedThroughServerSeq } },
+                _max: { sourceCreatedAt: true, sourceUpdatedAt: true },
+            });
+            const latestSourceMs = Math.max(
+                sourceTimes.sourceCreatedAt?.getTime() ?? -1,
+                sourceTimes.sourceUpdatedAt?.getTime() ?? -1,
+            );
             const publication: ExternalSessionMaterializationPublicationV1 = {
                 materializationPublicationId: randomUUID(),
-                materializedThroughSourceAt: Date.now(),
+                materializedThroughSourceAt: Math.min(
+                    publishedAt.getTime(),
+                    latestSourceMs < 0 ? session.createdAt.getTime() : latestSourceMs,
+                ),
                 publishedThroughServerSeq: acceptedThroughServerSeq,
             };
             const transitioned = await tx.session.updateMany({
@@ -1610,7 +1623,7 @@ async function executeExternalSessionHistoricalImportCommandWithCreateRaceRetry(
                 await stampViewerUnreadEntryInTx(tx, {
                     sessionId: session.id,
                     visibleSessionSeq,
-                    at: new Date(publication.materializedThroughSourceAt),
+                    at: publishedAt,
                 });
             }
             job = {

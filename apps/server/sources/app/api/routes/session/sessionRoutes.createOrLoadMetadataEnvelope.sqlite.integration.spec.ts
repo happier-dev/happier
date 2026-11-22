@@ -96,6 +96,37 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
         });
     }
 
+    it("preserves source dates only during external Session birth", async () => {
+        const owner = await createAccount("pk-external-source-dates");
+        await withApp(async (app) => {
+            const headers = {
+                "content-type": "application/json",
+                "x-test-user-id": owner.id,
+                "x-happier-account-stored-content-protocol": "2",
+            };
+            const tag = "external-dated-birth";
+            const createdAtMs = 1_600_000_000_000;
+            const updatedAtMs = 1_700_000_000_000;
+            const response = await app.inject({
+                method: "POST", url: "/v1/sessions", headers,
+                payload: { ...layoutOneBody, tag, currentStorageState: "machine_only", externalSourceDates: { createdAtMs, updatedAtMs } },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+            const id = response.json().session.id;
+            const row = await db.session.findUniqueOrThrow({ where: { id } });
+            expect(row.createdAt.getTime()).toBe(createdAtMs);
+            expect(row.meaningfulActivityAt?.getTime()).toBe(updatedAtMs);
+
+            const loaded = await app.inject({
+                method: "POST", url: "/v1/sessions", headers,
+                payload: { ...layoutOneBody, tag, currentStorageState: "machine_only",
+                    externalSourceDates: { createdAtMs: 1000, updatedAtMs: 2000 } },
+            });
+            expect(loaded.statusCode, loaded.body).toBe(200);
+            expect(loaded.json().session.createdAt).toBe(createdAtMs);
+        });
+    });
+
     async function withApp(run: (app: FastifyInstance) => Promise<void>) {
         await withAuthenticatedTestApp(
             (app) => sessionRoutes(app),

@@ -5,6 +5,7 @@ import type { AgentExternalSessionTranscriptItem } from '@happier-dev/plugin-sdk
 import type { CodexAppServerClient } from '../../../runtime/appServer/client.js';
 import { projectCodexNativeHistoryItem } from '../../../runtime/appServer/projection/historyItems.js';
 import { mapCodexProjectedEventsToExternalMessages } from '../../../rollout/projection/transcript.js';
+import { readCodexNativeHistoryTimestamps } from './readCodexNativeHistoryTimestamps.js';
 
 const TailSchema = z.lazy(() => z.object({ position: z.nullable(z.string()), anchor: z.nullable(z.string()), fingerprint: z.nullable(z.string()) }));
 const CursorSchema = z.lazy(() => z.object({
@@ -40,6 +41,7 @@ function fingerprint(entry: Entry): string { return createHash('sha256').update(
 export async function pageCodexNativeTranscript(params: Readonly<{
   client: Pick<CodexAppServerClient, 'request'>;
   home: string;
+  sqliteHome?: string;
   remoteSessionId: string;
   direction: 'older' | 'newer';
   cursor?: string;
@@ -88,6 +90,11 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       // A previously partial live item may settle in place; emit its same stable ids again.
       if (params.direction === 'newer' && fingerprint(prior) !== state.fingerprint) { state.skip -= 1; state.offset = 0; }
     }
+    const undated = page.data.slice(state.skip).filter(entry => entry.startedAtMs === null && entry.completedAtMs === null);
+    const indexedDates = params.sqliteHome && undated.length
+      ? readCodexNativeHistoryTimestamps({ sqliteHome: params.sqliteHome, threadId: params.remoteSessionId,
+        items: undated.map(entry => ({ turnId: entry.turnId, itemId: entry.item.id as string })) })
+      : undefined;
     const items: AgentExternalSessionTranscriptItem[] = [];
     let bytes = 0;
     let index = state.skip;
@@ -99,16 +106,16 @@ export async function pageCodexNativeTranscript(params: Readonly<{
       const entry = page.data[index]!;
       const key = identity(entry);
       const projected = projectCodexNativeHistoryItem(entry.item);
-      const createdAtMs = entry.startedAtMs ?? entry.completedAtMs ?? 0;
+      const createdAtMs = entry.startedAtMs ?? entry.completedAtMs ?? indexedDates?.get(key);
       const idForIndex = (action: number) => `codex:native:${params.remoteSessionId}:${key}:${action}`;
       const messages = projected === null
-        ? [createExternalSessionUnsupportedTranscriptItem({ agentId: 'codex', id: idForIndex(0), createdAtMs })]
-        : mapCodexProjectedEventsToExternalMessages({ projected,
-        createdAtMs, idForIndex });
+        ? [createExternalSessionUnsupportedTranscriptItem({ agentId: 'codex', id: idForIndex(0), createdAtMs: createdAtMs ?? 0 })]
+        : mapCodexProjectedEventsToExternalMessages({ projected, createdAtMs: createdAtMs ?? 0, idForIndex });
       if (params.direction === 'older') messages.reverse();
       if (offset > messages.length) throw new Error('Codex native history changed its partial item');
       for (; offset < messages.length; offset += 1) {
-        const item = messages[offset]!;
+        const { createdAtMs: projectedDate, ...content } = messages[offset]!;
+        const item = createdAtMs === undefined ? content : { ...content, createdAtMs: projectedDate };
         const size = Buffer.byteLength(JSON.stringify(item), 'utf8');
         if (items.length >= params.maxItems || bytes + size > params.maxBytes) {
           if (items.length === 0) throw new Error('Codex native transcript item exceeds the requested byte budget');

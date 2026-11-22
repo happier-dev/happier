@@ -239,7 +239,10 @@ describe("canonical transcript sequence writer on SQLite", () => {
         const finalized = await execute({ v: 1, kind: "finalize", claim: firstClaim, expectedRevision: 0,
             expectedAcceptedThroughServerSeq: 1,
         });
-        expect(finalized.kind).toBe("finalized");
+        expect(finalized).toMatchObject({
+            kind: "finalized",
+            publication: { materializedThroughSourceAt: 100 },
+        });
         if (finalized.kind !== "finalized") throw new Error("Expected published legacy history");
         await expect(execute({ v: 1, kind: "begin", claim: secondClaim, expectedRevision: 0,
             expectedPriorStableStorage: { state: "snapshot_complete", publication: finalized.publication },

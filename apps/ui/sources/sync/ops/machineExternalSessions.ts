@@ -191,7 +191,7 @@ function mapRuntimeDescriptorToReleasedShape(value: unknown): unknown {
 }
 
 function mapLinkEnsureToReleasedShape(input: ExternalSessionLinkEnsureRequest): unknown {
-    const { runtimeDescriptorV1, ...rest } = mapCanonicalAgentIdentityToReleasedProviderIdentity(input);
+    const { runtimeDescriptorV1, sourceDates: _sourceDates, ...rest } = mapCanonicalAgentIdentityToReleasedProviderIdentity(input);
     return {
         ...rest,
         ...(runtimeDescriptorV1 === undefined

@@ -1,3 +1,4 @@
+import { ExternalSessionSourceDatesV1Schema } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import { asServerProtocolZod } from '@/app/api/utils/protocolComposableZodAdapter';
 import { UsageSessionTimingV1Schema } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { z } from 'zod/mini';
@@ -32,6 +33,7 @@ export const SessionCreateRequestSchema = z.union([z.strictObject({
     dataEncryptionKey: z.nullish(z.string()),
     encryptionMode: z.optional(z.enum(['e2ee', 'plain'])),
     currentStorageState: z.optional(z.literal('machine_only')),
+    externalSourceDates: z.optional(asServerProtocolZod(ExternalSessionSourceDatesV1Schema)),
     organizationPlacement: z.optional(SessionOrganizationPlacementV1Schema),
     initialAccess: z.optional(SessionInitialAccessMaterializedV1Schema),
     initialTriggers: z.optional(z.array(SessionInitialTriggerAdmissionV1Schema)),

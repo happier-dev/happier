@@ -236,7 +236,10 @@ export async function insertLayout1SessionRowInTx(
         });
         if (!admission.ok || admission.value.sessionId !== null) throw new SessionCreationOriginError();
     }
-    const createdAt = new Date();
+    const now = new Date();
+    const sourceDates = prepared.externalSourceDates;
+    const activityMs = Math.min(now.getTime(), sourceDates?.updatedAtMs ?? sourceDates?.createdAtMs ?? now.getTime());
+    const createdAt = sourceDates ? new Date(Math.min(activityMs, sourceDates.createdAtMs ?? activityMs)) : now;
     const managedBirth = prepared.managedCreation ? await validateManagedCreationBirthInTx(tx, { accountId: prepared.accountId,
         birth: prepared.managedCreation }) : undefined;
     if (managedBirth === false) throw new SessionCreationOriginError();
@@ -262,8 +265,8 @@ export async function insertLayout1SessionRowInTx(
             agentState: prepared.agentState,
             ...(prepared.usageTimingV1 ? { usageTimingV1: prepared.usageTimingV1 } : {}),
             createdAt,
-            lastActiveAt: createdAt,
-            meaningfulActivityAt: createdAt,
+            lastActiveAt: now,
+            meaningfulActivityAt: sourceDates ? new Date(activityMs) : now,
             ...(prepared.requestedStorageState
                 ? { currentStorageState: prepared.requestedStorageState }
                 : {}),
@@ -274,7 +277,7 @@ export async function insertLayout1SessionRowInTx(
     const presetBirth = managedBirth ?? (prepared.enrolledManagedBirth
         ? await readEnrolledManagedSessionBirthInTx(tx, prepared.accountId, prepared.enrolledManagedBirth)
         : null);
-    if (presetBirth) await recordManagedPresetSessionBirthInTx(tx, presetBirth, createdAt);
+    if (presetBirth) await recordManagedPresetSessionBirthInTx(tx, presetBirth, now);
     // The owner is an ordinary recipient of their own Session key, so their
     // envelope lands in the one canonical tuple inside this same transaction. A
     // plain Session is genuinely keyless and writes nothing; a legacy-credential

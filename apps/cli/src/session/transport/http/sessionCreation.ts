@@ -1,3 +1,4 @@
+import type { ExternalSessionSourceDatesV1 } from '@happier-dev/protocol/sessions/external/daemonRpcV1';
 import axios from '@/api/client/credentialAxios';
 import { type AxiosResponse } from 'axios';
 import { V2SessionByIdResponseSchema } from '@happier-dev/protocol/sessions/control/contract';
@@ -118,6 +119,7 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
   metadata: Record<string, unknown>;
   agentState: Record<string, unknown> | null;
   currentStorageState?: 'machine_only';
+  externalSourceDates?: ExternalSessionSourceDatesV1;
   organizationPlacement?: SessionOrganizationPlacementV1;
   shouldCommit?: () => boolean;
   initialAccess?: SessionInitialAccessDraftV1;
@@ -214,7 +216,10 @@ export async function getOrCreateSessionByTag(params: Readonly<import('@happier-
     tag: params.tag,
     ...metadataEnvelopeFields,
     dataEncryptionKey: dataEncryptionKeyPayload,
-    ...(params.currentStorageState ? { currentStorageState: params.currentStorageState } : {}),
+    ...(params.currentStorageState ? {
+      currentStorageState: params.currentStorageState,
+      ...(params.externalSourceDates ? { externalSourceDates: params.externalSourceDates } : {}),
+    } : {}),
       ...(params.organizationPlacement ? { organizationPlacement: params.organizationPlacement } : {}),
       ...(params.teamCredentialBindings !== undefined ? { teamCredentialBindings: params.teamCredentialBindings } : {}),
     ...materializedInitialAccessFields,

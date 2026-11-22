@@ -276,6 +276,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
                 dataEncryptionKey: dataEncryptionKey ?? null,
                 requestedEncryptionMode,
                 requestedStorageState,
+                ...(layoutOneRequest.externalSourceDates ? { externalSourceDates: layoutOneRequest.externalSourceDates } : {}),
             organizationPlacement: layoutOneRequest.organizationPlacement,
             initialAccess: layoutOneRequest.initialAccess,
             initialTriggers: layoutOneRequest.initialTriggers,

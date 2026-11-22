@@ -269,6 +269,7 @@ export async function executeExternalSessionLinkEnsureAction(
             remoteSessionId: parsed.data.remoteSessionId,
             linkData: parsed.data.linkData,
             runtimeDescriptor: parsed.data.runtimeDescriptorV1,
+            sourceDates: parsed.data.sourceDates,
             titleHint: parsed.data.titleHint,
             directoryHint: parsed.data.directoryHint,
             source: validatedSource.source,
