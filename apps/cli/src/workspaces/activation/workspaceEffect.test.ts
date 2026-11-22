@@ -1,7 +1,25 @@
 import { expect, it } from 'vitest';
 import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { prepareWorkspaceCheckoutEffect } from './workspaceEffect';
+
+it('keeps plain folder attachment independent of unavailable SCM source custody', async () => {
+  // This real source-only runtime has declarations but no daemon source custody.
+  const registry = await resolveExecutablePluginRuntimeRegistry({
+    pluginIds: ['happier.scm.backend.git', 'happier.scm.forge.azure-devops'],
+  });
+  const input = { workspaceRefId: 'checkout', workspaceRoot: '/private/member', existingRootPath: '/private/member/checkout', registry,
+    request: { serverId: 'home', machineId: 'machine', source: { kind: 'workspace' as const, workspaceId: 'checkout' },
+      materialization: { kind: 'attach' as const } } };
+  try {
+    await expect(prepareWorkspaceCheckoutEffect(input)).resolves.toMatchObject({ effect: {
+      existingRootPath: input.existingRootPath, plugins: [], contributions: {},
+    } });
+    await expect(prepareWorkspaceCheckoutEffect({ ...input, request: { ...input.request, cloneSource: true } }))
+      .rejects.toThrow();
+  } finally { await registry.dispose(); }
+});
 
 it('prepares an all-files Sync without optional SCM contributions', async () => {
   const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: [] } });

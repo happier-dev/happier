@@ -52,6 +52,12 @@ export async function prepareWorkspaceCheckoutEffect(input: Readonly<{
     throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
   const admitted = await prepareAdmittedScmEffect({ registry: input.registry,
     ...(input.request.source.kind === 'repository' ? { providerId: input.request.source.selector.provider.id } : {}),
+  }).catch(error => {
+    if (!existing || input.request.materialization.kind !== 'attach' || input.request.cloneSource) throw error;
+    // Only the member can see whether this explicit attach has linked Git
+    // metadata. Capture SCM when available; an ordinary folder needs none.
+    // Linked metadata still fails closed in the native inspection below.
+    return { effect: { generation: input.registry.generation, plugins: [], contributions: {} }, assertCurrent() {} };
   });
   return { assertCurrent: admitted.assertCurrent, effect: {
     request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,

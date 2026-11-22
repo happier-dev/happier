@@ -15,6 +15,7 @@ import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccou
 import { runWorkspaceEffectWorker } from './workspaceEffectWorker';
 import { workspaceCheckoutNativeBoundary as boundary } from './workspaceCheckoutNative.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createWorkspaceEffectScmRegistry, prepareWorkspaceCheckoutEffect } from './workspaceEffect';
 import { preparePrivateProjectCheckout, admitPrivateProjectCheckoutDestination } from './privateProjectCheckout';
 import { createWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
@@ -336,6 +337,23 @@ it.skipIf(process.platform !== 'linux')('creates and reopens a worktree from the
         workspaceRoot, existingRootPath: rootPath, registry: fixture.registry });
       expect(await materializePrivateProjectCheckoutProcess({ ...nativeInput, effect: attach.effect })).toMatchObject({ rootPath, created: false });
       expect(effects).toBe(1);
+      const unavailable = await resolveExecutablePluginRuntimeRegistry({ pluginIds: ['happier.scm.backend.git'] });
+      try {
+        const withoutScm = await prepareWorkspaceCheckoutEffect({ request: attach.effect.request,
+          workspaceRefId: prepared.workspaceRefId, workspaceRoot, existingRootPath: rootPath, registry: unavailable });
+        await expect(materializePrivateProjectCheckoutProcess({ ...nativeInput, effect: withoutScm.effect }))
+          .rejects.toMatchObject({ code: 'workspace_private_checkout_required', details: { reason: 'workspace_git_metadata_shared' } });
+        const plainRoot = join(workspaceRoot, 'plain-folder');
+        await mkdir(plainRoot);
+        boundary.privateRoots.push(plainRoot);
+        const plainPrepared = preparePrivateProjectCheckout({ requesterIdentity, memberRoot, workspaceRefs: [], createId: () => 'plain-folder' });
+        const plain = await prepareWorkspaceCheckoutEffect({ request: { ...attach.effect.request, subdir: undefined,
+          source: { kind: 'workspace', workspaceId: plainPrepared.workspaceRefId } },
+          workspaceRefId: plainPrepared.workspaceRefId, workspaceRoot, existingRootPath: plainRoot, registry: unavailable });
+        expect(await materializePrivateProjectCheckoutProcess({ ...nativeInput, prepared: plainPrepared, effect: plain.effect }))
+          .toMatchObject({ rootPath: plainRoot, created: false });
+        expect(effects).toBe(1);
+      } finally { await unavailable.dispose(); }
       await withTempDir('foreign-git-worktree-', async foreignRoot => {
         await git('git', ['init', '-b', 'main'], { cwd: foreignRoot });
         await git('git', ['-c', 'user.name=Foreign fixture', '-c', 'user.email=foreign@example.invalid', 'commit', '--allow-empty', '-m', 'initial'], { cwd: foreignRoot });
