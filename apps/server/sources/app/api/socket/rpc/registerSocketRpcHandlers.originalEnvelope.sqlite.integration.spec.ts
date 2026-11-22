@@ -43,13 +43,17 @@ describe('retained original Action envelopes through the Home relay', () => {
             userId: fixture.account.id, machineId: input.receiverMachineId, verifiedMachineInstallationId: input.receiverInstallationId,
             accountStoredContentCompatibility: compatibility }, timeout: () => ({ emitWithAck: effect }) });
         const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id || room === `rpc:${fixture.account.id}:${method}` ? [daemon] : []);
-        const caller = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: fixture.account.id,
-            ...(input.controllerSocket ? { clientType: 'machine-scoped', machineId: fixture.machine.id,
-                verifiedMachineInstallationId: fixture.machine.installationId } : { clientType: 'user-scoped' }),
-            authTokenKind: 'account', authAuthority: 'present_user', accountStoredContentCompatibility: compatibility } }),
-        { handshake: { auth: { token: fixture.presentUserToken } } });
-        registerSocketRpcHandlers({ userId: fixture.account.id, socket: caller as unknown as Socket, io });
-        const invoke = async (envelope = input.envelope) => {
+        const connectCaller = (installationScoped: boolean) => {
+            const caller = Object.assign(createAuthenticatedFakeSocket({ id: randomUUID(), data: { userId: fixture.account.id,
+                ...(installationScoped ? { clientType: 'machine-scoped', machineId: fixture.machine.id,
+                    verifiedMachineInstallationId: fixture.machine.installationId } : { clientType: 'user-scoped' }),
+                authTokenKind: 'account', authAuthority: 'present_user', accountStoredContentCompatibility: compatibility } }),
+            { handshake: { auth: { token: fixture.presentUserToken } } });
+            registerSocketRpcHandlers({ userId: fixture.account.id, socket: caller as unknown as Socket, io });
+            return caller;
+        };
+        const caller = connectCaller(input.controllerSocket === true);
+        const invoke = async (sender: typeof caller, envelope = input.envelope) => {
             const requestId = randomUUID();
             const execution = ExternalActionMachineRpcExecutionV1Schema.parse({ v: 1, authorization: input.authorization,
                 effectActionId: input.effectActionId, target: input.authorization.binding.target, installationId: fixture.machine.installationId!,
@@ -57,14 +61,21 @@ describe('retained original Action envelopes through the Home relay', () => {
                     effectActionId: input.effectActionId, target: input.authorization.binding.target, installationId: fixture.machine.installationId!,
                     event: SOCKET_RPC_EVENTS.CALL, method, requestId, params: input.params, privateKey: fixture.keyPair.secretKey }) });
             const callback = vi.fn();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: input.params, requestId,
+            await triggerSocketHandler(sender, SOCKET_RPC_EVENTS.CALL, { method, params: input.params, requestId,
                 externalActionExecution: execution, originalActionEnvelope: envelope }, callback);
             return callback;
         };
-        expect(await invoke({ ...input.envelope, requestId: randomUUID() })).toHaveBeenCalledWith(
+        expect(await invoke(caller, { ...input.envelope, requestId: randomUUID() })).toHaveBeenCalledWith(
             expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+        if (input.controllerSocket) {
+            // A valid signed finite root still requires the receiving installation's socket.
+            expect(await invoke(connectCaller(false))).toHaveBeenCalledWith(expect.objectContaining({
+                ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+                failureCause: expect.objectContaining({ phase: 'rpc.admission.original_action' }),
+            }));
+        }
         expect(forwarded).toEqual([]);
-        expect(await invoke()).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
+        expect(await invoke(caller)).toHaveBeenCalledWith({ ok: true, result: { accepted: true } });
         expect(forwarded).toHaveLength(1);
         expect(forwarded[0]?.originalActionEnvelope).toEqual(input.envelope);
         expect(forwarded[0]?.machineAdmission?.actorAccountId).toBe(fixture.account.id);
