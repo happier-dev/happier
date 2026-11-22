@@ -86,7 +86,9 @@ export type ConnectedServiceQuotaSummary = Readonly<{
 export type ConnectedServiceQuotaAccountIdentity = Readonly<{
     /** Groups one provider's accounts (the service's `pluginId/localId`). */
     serviceGroupKey: string;
-    /** The name someone gave the account in Happier, else its display name; null when it has neither. */
+    /** The nickname someone chose in Happier, when present. */
+    profileLabel?: string | null;
+    /** The nickname if present, otherwise the name supplied by the provider. */
     accountLabel: string | null;
     /** The provider's email for the account, when it reports one. */
     accountEmail: string | null;
@@ -176,7 +178,8 @@ function resolveAccountIdentity(input: Readonly<{
 }>): ConnectedServiceQuotaAccountIdentity {
     return {
         serviceGroupKey: input.serviceGroupKey,
-        accountLabel: input.profileLabel?.trim() || input.displayName?.trim() || null,
+        ...(input.profileLabel ? { profileLabel: input.profileLabel } : {}),
+        accountLabel: input.profileLabel ?? (input.displayName?.trim() || null),
         accountEmail: input.email?.trim() || null,
         accountId: input.accountId,
     };

@@ -152,6 +152,7 @@ export function presentConnectedAccountName(input: Readonly<{
   serviceTitle: string;
   userLabel?: string | null;
   displayName?: string | null;
+  providerDisplayName?: string | null;
   email?: string | null;
   providerAccountId?: string | null;
   accountId?: string | null;
@@ -160,20 +161,24 @@ export function presentConnectedAccountName(input: Readonly<{
   const serviceTitle = input.serviceTitle;
   const email = nonEmptyText(input.email);
   const providerAccountId = nonEmptyText(input.providerAccountId);
-  const name = resolveConnectedAccountPrimaryNameV1(input);
+  const name = resolveConnectedAccountPrimaryNameV1({
+    ...input, displayName: input.providerDisplayName ?? input.displayName,
+  });
+  const isProviderName = nonEmptyText(input.providerDisplayName) !== null
+    && !nonEmptyText(input.userLabel) && !!name.name && !name.labelKind;
   const fallbackLabel = t('connectedServicesCollection.accountLabel', { service: serviceTitle });
   const primaryLabel = name.name ?? fallbackLabel;
   const primaryLabelKind = name.labelKind;
-  const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: primaryLabelKind, email, accountId: providerAccountId })
+  const shown = input.presentIdentity?.({ label: primaryLabel, labelKind: isProviderName ? 'providerName' : primaryLabelKind, email, accountId: providerAccountId })
     ?? { label: primaryLabel, email, accountId: providerAccountId };
   const shownPrimaryLabel = shown.label ?? fallbackLabel;
   const identityLabel = shown.email && shown.email !== shownPrimaryLabel
     ? shown.email
-    : !name.name ? abbreviateConnectedAccountId(shown.accountId) : null;
+    : shownPrimaryLabel === fallbackLabel ? abbreviateConnectedAccountId(shown.accountId) : null;
   return {
     primaryLabel: shownPrimaryLabel,
     ...(primaryLabelKind ? { primaryLabelKind } : {}),
-    serviceFallback: primaryLabel === fallbackLabel,
+    serviceFallback: shownPrimaryLabel === fallbackLabel,
     identityLabel,
     email: shown.email,
   };

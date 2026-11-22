@@ -82,7 +82,8 @@ export function buildUsagePopoverSession(params: Readonly<{
         const name = presentConnectedAccountName({
             serviceTitle: row?.serviceLabel
                 ?? resolveQualifiedConnectedServiceRegistryDisplayName(getConnectedServiceRegistrySnapshot(), account.account.service, t),
-            displayName: row?.accountLabel ?? null,
+            userLabel: row?.profileLabel,
+            providerDisplayName: row?.accountLabel,
             email: row?.accountEmail ?? null,
             accountId: account.account.accountId,
             presentIdentity: params.present,

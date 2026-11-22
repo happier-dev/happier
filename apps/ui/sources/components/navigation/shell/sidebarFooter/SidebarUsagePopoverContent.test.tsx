@@ -402,7 +402,7 @@ describe('SidebarUsagePopoverContent', () => {
             const hidden = options.hidden ?? false;
             const usage = buildUsageSummary({
                 live: buildUsageSummaryCache([
-                    summary('claude:work', 'Work', 42, 'leeroy@company.com'),
+                    { ...summary('claude:work', 'Work', 42, 'leeroy@company.com'), profileLabel: 'Work' },
                     summary('claude:personal', options.providerLabel ?? null, 6, options.providerLabel ? null : 'kevin@gmail.com'),
                     summary('claude:acct_9f2c8e71', null, 71),
                 ]),
@@ -422,6 +422,7 @@ describe('SidebarUsagePopoverContent', () => {
                         present: (input) => presentConnectedAccountIdentity({
                             hidden,
                             label: input.label ?? null,
+                            labelKind: input.labelKind,
                             email: input.email ?? null,
                             accountId: input.accountId ?? null,
                         }),
@@ -432,6 +433,17 @@ describe('SidebarUsagePopoverContent', () => {
                 />,
             );
         }
+
+        it.each([false, true])('presents the provider display name according to identity privacy (hidden=%s)', async hidden => {
+            const label = 'Synthetic Provider Name';
+            const screen = await renderView({ hidden, providerLabel: label });
+            try {
+                expect(screen.findByTestId('sidebar-usage-account-claude:personal-name')).toBeTruthy();
+                expect(screen.getTextContent().includes(label)).toBe(!hidden);
+            } finally {
+                await screen.unmount();
+            }
+        });
 
         it('shows freshness once in the header for all accounts and for the scoped session', async () => {
             const { SurfaceAsOfLabel } = await import('@/components/ui/surfaces/SurfaceAsOfLabel');

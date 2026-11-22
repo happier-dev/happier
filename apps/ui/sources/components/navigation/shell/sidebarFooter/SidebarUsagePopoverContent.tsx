@@ -306,11 +306,11 @@ export function SidebarUsagePopoverView(props: Readonly<{
     // told apart by the one naming owner instead of each row naming itself.
     const names = React.useMemo(() => presentConnectedAccountNames([
         ...sourceAccounts.map(({ provider, account }) => ({
-            key: account.key, serviceTitle: provider.serviceLabel, displayName: account.label,
+            key: account.key, serviceTitle: provider.serviceLabel, userLabel: account.profileLabel, providerDisplayName: account.label,
             email: account.email, accountId: account.accountId, presentIdentity: privacy.present,
         })),
         ...facts.accountsNeedingSignIn.map((account) => ({
-            key: account.key, serviceTitle: account.serviceLabel, displayName: account.accountLabel,
+            key: account.key, serviceTitle: account.serviceLabel, userLabel: account.profileLabel, providerDisplayName: account.accountLabel,
             email: account.accountEmail, accountId: account.accountId, presentIdentity: privacy.present,
         })),
     ]), [sourceAccounts, facts.accountsNeedingSignIn, privacy.present]);

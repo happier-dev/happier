@@ -60,7 +60,8 @@ export const HubUsageCardGrid = React.memo(function HubUsageCardGrid(props: Read
     const names = React.useMemo(() => presentConnectedAccountNames([...props.entries, ...facts.accountsNeedingSignIn].map((input) => ({
         key: input.key,
         serviceTitle: input.serviceLabel,
-        displayName: input.accountLabel ?? ('profileLabel' in input ? input.profileLabel : null) ?? null,
+        userLabel: input.profileLabel,
+        providerDisplayName: input.accountLabel,
         email: input.accountEmail ?? null,
         accountId: input.accountId ?? null,
         presentIdentity: present,

@@ -139,7 +139,8 @@ function RoutingHintBody(
         summaries.summaries.map((summary) => ({
           key: `${summary.service.pluginId}/${summary.service.localId}:${summary.profileId}`,
           serviceTitle: summary.serviceLabel,
-          displayName: summary.accountLabel ?? summary.profileLabel ?? null,
+          userLabel: summary.profileLabel,
+          providerDisplayName: summary.accountLabel,
           email: summary.accountEmail ?? null,
           accountId: summary.profileId,
           presentIdentity: present,

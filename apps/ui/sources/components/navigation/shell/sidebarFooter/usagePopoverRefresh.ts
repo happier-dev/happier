@@ -30,7 +30,7 @@ function presentFailedReads(
     // A usage record may fail even when its account has no limits row to supply a name.
     const catalogNames = failedKeys.some(key => !names.has(key))
         ? presentConnectedAccountNames((refresh.accountIdentities ?? []).map(account => ({
-            key: account.key, serviceTitle: account.serviceLabel, displayName: account.accountLabel,
+            key: account.key, serviceTitle: account.serviceLabel, userLabel: account.profileLabel, providerDisplayName: account.accountLabel,
             email: account.accountEmail, accountId: account.accountId, presentIdentity,
         })))
         : null;

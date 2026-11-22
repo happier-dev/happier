@@ -3,7 +3,7 @@ export const CONNECTED_ACCOUNT_IDENTITY_MASK = '•••';
 const MASK = CONNECTED_ACCOUNT_IDENTITY_MASK;
 
 /** Where a resolved account label came from; absent means a name. */
-export type ConnectedAccountIdentityLabelKind = 'email' | 'accountId';
+export type ConnectedAccountIdentityLabelKind = 'email' | 'accountId' | 'providerName';
 
 export type ConnectedAccountIdentityInput = Readonly<{
     label?: string | null;
@@ -62,9 +62,18 @@ export function presentConnectedAccountIdentity(input: Readonly<{
     accountId: string | null;
 }>): Readonly<{ label: string | null; email: string | null; accountId: string | null }> {
     if (!input.hidden) return { label: input.label, email: input.email, accountId: input.accountId };
+    const email = maskAccountEmail(input.email);
+    let label = input.label;
+    if (input.labelKind === 'providerName') {
+        label = email ?? maskAccountEmail(label);
+    } else if (input.labelKind === 'accountId') {
+        label = abbreviateConnectedAccountId(label);
+    } else {
+        label = maskIdentityLabel(label);
+    }
     return {
-        label: input.labelKind === 'accountId' ? abbreviateConnectedAccountId(input.label) : maskIdentityLabel(input.label),
-        email: maskAccountEmail(input.email),
+        label,
+        email,
         accountId: abbreviateConnectedAccountId(input.accountId),
     };
 }

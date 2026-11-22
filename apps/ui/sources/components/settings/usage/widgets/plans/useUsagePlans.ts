@@ -115,11 +115,8 @@ export function useUsagePlans(slice: UsageQueryResultSlice, refresh: UsageWidget
           return {
             key: account.key,
             serviceTitle: serviceLabelOf(account),
-            displayName:
-              summary?.accountLabel ??
-              summary?.profileLabel ??
-              account.accountLabel ??
-              null,
+            userLabel: summary?.profileLabel,
+            providerDisplayName: summary?.accountLabel ?? account.accountLabel,
             email: summary?.accountEmail ?? null,
             accountId: account.accountId,
             presentIdentity: present,

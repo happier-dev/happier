@@ -28,6 +28,7 @@ export type UsageAccountInput = Readonly<{
     legacyServiceId: string | null;
     /** The account's name (given in Happier, else its display name); null when it has none. */
     accountLabel: string | null;
+    profileLabel?: string | null;
     /** Raw identity for the one presenter (`useConnectedAccountIdentityPrivacy`); null when unknown. */
     accountEmail: string | null;
     accountId: string | null;
@@ -56,6 +57,7 @@ export type UsageWindowRow = Readonly<{
 export type UsageAccountRow = Readonly<{
     key: string;
     label: string | null;
+    profileLabel?: string | null;
     email: string | null;
     accountId: string | null;
     planLabel: string | null;
@@ -116,6 +118,7 @@ export function groupUsageByProvider(accounts: readonly UsageAccountInput[]): Us
                     return {
                         key: account.key,
                         label: account.accountLabel,
+                        ...(account.profileLabel ? { profileLabel: account.profileLabel } : {}),
                         email: account.accountEmail,
                         accountId: account.accountId,
                         planLabel: account.planLabel,

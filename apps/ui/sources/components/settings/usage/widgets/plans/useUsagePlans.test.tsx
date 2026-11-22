@@ -375,11 +375,12 @@ it.each([false, true])('keeps compact connected-account names distinct when ever
       await screen.unmount();
     }
     expect(compactText.get('leeroy-work')).not.toBe(compactText.get('leeroy-personal'));
-    expect(compactText.get('work')).toBe('Work');
-    expect(compactText.get('personal')).toBe('Personal');
+    expect(compactText.get('work')).toContain(hidden ? 'wo•••@e•••.com' : 'Work');
+    expect(compactText.get('personal')).toContain(hidden ? 'pe•••@e•••.com' : 'Personal');
     expect(names.get('leeroy-work')?.title).not.toBe(names.get('leeroy-personal')?.title);
     expect(new Set([...names.values()].map(name => name.title)).size).toBe(accounts.length);
     if (hidden) {
+      expect([...compactText.values()].join(' ')).not.toContain('Leeroy Brun');
       expect([...compactText.values()].join(' ')).not.toMatch(/work\.leeroy@example\.com|personal\.leeroy@example\.com/);
     } else {
       expect(compactText.get('leeroy-work')).toBe('Leeroy Brun · work.leeroy@example.com');
@@ -618,4 +619,71 @@ it('refreshes the displayed Usage Resource and creates no independent quota poll
     });
     expect(retired.getCurrent().projection.accounts.map(account => account.accountId)).toEqual(['work']);
   } finally { features.resolve(featureResponse()); }
+});
+
+it('hides provider display names in mounted Plans and Resets', async () => {
+  const hidden = true;
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const accounts = [
+    { accountId: 'test-a', displayName: 'Synthetic Provider Name', email: 'synthetic@example.com' },
+    { accountId: 'test-b', displayName: 'Separate Test Name', email: 'other@example.com' },
+  ];
+  const profile = AccountProfileSchema.parse({ id: 'named-plans', connectedAccountsV4: accounts.map(account => ({
+    ref: { service, accountId: account.accountId }, status: 'connected', authenticationModeId: 'manual',
+    revisionSemantics: 'revisioned', credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz',
+    configurationReady: false, configurationRevision: null, scopes: [],
+    displayName: account.displayName, providerIdentity: { email: account.email },
+  })) });
+  home = await serveAccountHomes({ homes: [{ key: 'names', serverUrl: 'https://usage-names.test', accountId: profile.id, profile }],
+    route: () => undefined });
+  const server = home.homes.names!;
+  publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+  const scope = { serverId: server.id, accountId: profile.id };
+  storage.setState({ profileScope: scope, settingsScope: scope, profile });
+  const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+  const previousHidden = storage.getState().localSettings.hideConnectedAccountIdentities;
+  storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: hidden }, { source: 'ui' });
+  try {
+    const quota = accounts.map(account => {
+      const recordKey = { providerId: 'openai', accountSubjectId: account.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      return ConnectedServiceQuotaGetResultV1Schema.parse({
+        source: { bindingKind: 'account', ref: { service, accountId: account.accountId } },
+        current: { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'openai',
+          accountSubject: { kind: 'providerSubject', id: account.accountId }, observedAtMs: Date.now(), fetchedAtMs: Date.now(),
+          staleAfterMs: 60_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', planLabel: 'pro', meters: [{ meterId: 'weekly',
+            label: 'Weekly', used: null, limit: null, usedPct: 40, utilizationPct: 40, unit: 'count',
+            status: 'ok', resetAtMs: Date.now() + 3_600_000, resetsAt: Date.now() + 3_600_000 }] },
+        pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
+      });
+    });
+    const query = normalizeUsageQuery({});
+    const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }, bundledUsageModelPriceCatalog).results[0]!;
+    const label = 'Synthetic Provider Name';
+    const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
+      freshness: 'fresh' as const, updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} };
+    const { UsageCapacityWidget } = await import('../UsageCapacityWidget');
+    const { UsageResetPlannerWidget } = await import('../UsageResetPlannerWidget');
+    const { WidgetPresentationProvider } = await import('@happier-dev/plugin-ui');
+    const mounted = await renderScreen(<InjectedAuthProvider credentials={credentials}>
+      <WidgetPresentationProvider value={{ size: 'small', footprint: { columns: 2, columnSpan: 1, rowSpan: 1, width: 'half', height: 'compact' },
+        geometry: { width: 320, height: 96 } }}>
+        <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId={server.id} testID="capacity" />
+        <UsageResetPlannerWidget id="usage_resets" model={model} slice={slice} query={query} serverId={server.id} testID="resets" />
+      </WidgetPresentationProvider>
+    </InjectedAuthProvider>);
+    try {
+      const text = mounted.getTextContent();
+      const rows = [0, 1].map(index => mounted.findHostByTestId('resets.timeline-values-row-' + index));
+      expect(rows.every(row => typeof row?.props.accessibilityLabel === 'string')).toBe(true);
+      expect.soft(text).not.toContain(label);
+      expect.soft(text).not.toContain('Separate Test Name');
+      expect.soft(rows.map(row => row?.props.accessibilityLabel).join(' ')).not.toContain(label);
+      expect(text).toContain('sy•••@e•••.com');
+      expect(text).not.toContain('synthetic@example.com');
+    } finally {
+      await mounted.unmount();
+    }
+  } finally {
+    storage.getState().applyLocalSettings({ hideConnectedAccountIdentities: previousHidden }, { source: 'ui' });
+  }
 });

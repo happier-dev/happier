@@ -273,6 +273,22 @@ describe('presentConnectedAccountNames', () => {
     }
   });
 
+  it('keeps the nickname and numbers generic labels when provider names are hidden', async () => {
+    const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
+    const entry = {
+      serviceTitle: 'ChatGPT', providerDisplayName: 'Provider Name',
+      presentIdentity: (identity: ConnectedAccountIdentityInput) => presentConnectedAccountIdentity({
+        ...identity, label: identity.label ?? null, email: identity.email ?? null, accountId: identity.accountId ?? null, hidden: true,
+      }),
+    };
+    const names = presentConnectedAccountNames([
+      { ...entry, key: 'b' }, { ...entry, key: 'a' }, { ...entry, key: 'c', userLabel: 'My nickname' },
+    ]);
+    expect(names.get('a')?.primaryLabel).toBe('ChatGPT account');
+    expect(names.get('b')?.primaryLabel).toBe('ChatGPT account 2');
+    expect(names.get('c')?.primaryLabel).toBe('My nickname');
+  });
+
   it('tells apart accounts that read as their service account by a stable order, never an id', async () => {
     const { presentConnectedAccountNames } = await import('./qualifiedConnectedAccountTargetPresentation');
     const entry = (key: string, extra: Readonly<{ serviceTitle?: string; email?: string }> = {}) => ({
