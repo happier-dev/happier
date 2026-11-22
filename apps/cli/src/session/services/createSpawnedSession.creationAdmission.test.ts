@@ -11,9 +11,10 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { markRpcRequestDisposition, socketRpcCodec } from '@happier-dev/sync-client';
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 import nacl from 'tweetnacl';
-import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeSchema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, ExternalActionMachineBootstrapV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { ConnectedAccountCatalogRowReadResponseV1Schema, ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
@@ -1015,7 +1016,7 @@ describe('canonical Session creation admission', () => {
           schedule: { kind: 'cron', scheduleExpr: '0 9 * * 0', everyMs: null, timezone: null } },
       }],
     });
-    const envelope = ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId: 'managed-trigger-template',
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'managed-trigger-template',
       input: { creation: input }, target: { kind: 'machine', machineId: 'machine-1' } });
     // Home's signed grant is the HTTP boundary; retain the real requester and
     // reviewed-child owners through the exact Session operand and continuation.
@@ -1037,7 +1038,7 @@ describe('canonical Session creation admission', () => {
         actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', actionRequestId: envelope.requestId,
         externalActionExecutionAuthorization: requester.authorization, externalActionTarget: envelope.target,
         originalActionEnvelope: envelope },
-      child: { action: 'session.spawn_new', role: 'create_bot', input },
+      child: { action: 'session.spawn_new', role: 'create_bot', input: projectNativeJsonValueForTransport(input) },
       admittedReview: { action: 'session.spawn_new', role: 'create_bot', surface: 'cli' },
       invocationServices: { sessionCreation: { beforeLaunch: async () => {},
         hostOnboarding: { templateName: 'Managed helper', templateVersion: '1.0.0' } } },
