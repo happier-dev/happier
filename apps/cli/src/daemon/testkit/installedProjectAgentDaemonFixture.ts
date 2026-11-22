@@ -57,7 +57,9 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
     & Partial<Pick<Parameters<typeof startDaemonSessionControlRuntime>[0], 'credentials' | 'externalActionAccountId' | 'agentIsolation' | 'managedProviderOperationAuthority'
       | 'releaseSessionOwnedNativeBindings' | 'getApiMachineForSessions' | 'onLocalServicesRoutesReady' | 'resolveServerFeaturesSnapshot' | 'currentMachineHost' | 'externalSessionHostOperationOwner' | 'runtimeActionExecute' | 'projectProviderModelsForAccount'>>
     & Pick<NonNullable<Parameters<typeof createInstalledProjectAgentLaunchFixture>[0]>, 'machineAccess' | 'accountActionCredentials' | 'serverId' | 'homeServerIdentityId' | 'accountSettings' | 'machineRpcMethods' | 'agentIsolationEnabled'>
-    & { additionalPluginIds?: readonly string[]; requesterCredentials?: StoredCredentials; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
+    & { additionalPluginIds?: readonly string[]; requesterCredentials?: StoredCredentials;
+      /** Authored runtime options, such as the Machine origin a daemon-placed Action needs. */
+      pluginRuntimeOptions?: Parameters<typeof createAuthoredAdmittedPluginRuntimeFixture>[0]['runtimeOptions']; ordinaryAccountSession?: boolean; retainIncompleteRequesterCustody?: boolean;
       /** Process-census boundary authors the runner before tracked authority is constructed. */
       runnerIdentity?: (happyHomeDir: string) => InstalledProjectAgentDaemonFixtureOwners['runner'];
     }): Promise<InstalledProjectAgentDaemonFixture> {
@@ -98,7 +100,8 @@ export async function createInstalledProjectAgentDaemonFixture(readControl: () =
   const plugin = bundledAgentId ? await createAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory,
     controller: runtimeController, runtimeOptions: { pluginIds: [`happier.agent.${bundledAgentId}`, ...(requesterOptions?.additionalPluginIds ?? [])] } })
     : await createAuthoredAdmittedPluginRuntimeFixture({ happyHomeDir: f.directory, controller: runtimeController,
-    ...(requesterOptions?.additionalPluginIds ? { runtimeOptions: { pluginIds: ['acme.project-launch', ...requesterOptions.additionalPluginIds] } } : {}),
+    ...(requesterOptions?.additionalPluginIds || requesterOptions?.pluginRuntimeOptions ? { runtimeOptions: { ...requesterOptions.pluginRuntimeOptions,
+      ...(requesterOptions.additionalPluginIds ? { pluginIds: ['acme.project-launch', ...requesterOptions.additionalPluginIds] } : {}) } } : {}),
     plugins: [authoredPlugin ?? { manifest: createPluginManifestV2Fixture({ id: 'acme.project-launch', contributes: { agents: [{ id: 'agent', title: 'Project launch Agent',
       runtime: { kind: 'custom' }, primary: 'sessions', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }] } }),
       files: { 'agent.mjs': `export function factory() { return { sessions: { open() { throw new Error('No Agent open at authorization'); } } }; }`,
