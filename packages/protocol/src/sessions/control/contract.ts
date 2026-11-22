@@ -417,6 +417,8 @@ export const V2SessionRecordSchema = lazyZodSchema(() => z.looseObject({
     displayProjectionV1: z.optional(SessionDisplayProjectionV1Schema),
     /** Owner detail only: Home-written inference selection witness, never caller metadata or current broker authority. */
     acceptedTeamCredentialBinding: z.optional(z.nullable(SessionTeamCredentialBindingIntentV1Schema)),
+    /** Owner detail only: the Session's Team context as Home holds it (a Fork child is created in it). */
+    primaryTeamId: z.optional(z.nullable(z.string().check(z.minLength(1)))),
     id: z.string().check(z.minLength(1)),
     /** Canonical immutable Session owner, absent on Homes predating this projection. */
     ownerAccountId: z.optional(z.string().check(z.minLength(1))),

@@ -6,8 +6,7 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { withCliApiToken } from '@/auth/cliApiToken';
 import { createForkSessionLifecycleActionHandler } from '../createForkSessionLifecycleActionHandler';
-import { SessionTeamCredentialBindingRejectedError } from '@/api/session/sessionCreationInitialAccess';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SessionInitialAccessServerError, SessionTeamCredentialBindingRejectedError } from '@/api/session/sessionCreationInitialAccess';
 
 // Home HTTP and account-encryption reads are the system boundary here; the
 // Fork lifecycle, its inheritance owner and the canonical Session creator run for real.
@@ -54,7 +53,7 @@ const BROKERED_TEAM_MODEL = {
   deliveryMode: 'brokered',
 } as const;
 
-function parentRow(acceptedTeamCredentialBinding: unknown) {
+function parentRow(acceptedTeamCredentialBinding: unknown, primaryTeamId?: string | null) {
   return {
     id: 'parent-session',
     seq: 3,
@@ -67,6 +66,7 @@ function parentRow(acceptedTeamCredentialBinding: unknown) {
     ...(acceptedTeamCredentialBinding !== undefined
       ? { acceptedTeamCredentialBinding }
       : {}),
+    ...(primaryTeamId !== undefined ? { primaryTeamId } : {}),
   };
 }
 
@@ -98,9 +98,9 @@ async function withHome<T>(run: () => Promise<T>): Promise<T> {
   }
 }
 
-async function forkByReplay(acceptedTeamCredentialBinding: unknown) {
+async function forkByReplay(acceptedTeamCredentialBinding: unknown, primaryTeamId?: string | null) {
   fetchSessionByIdCompatMock.mockResolvedValueOnce(
-    parentRow(acceptedTeamCredentialBinding),
+    parentRow(acceptedTeamCredentialBinding, primaryTeamId),
   );
   const spawnSession = vi
     .fn<ForkSpawnSession>()
@@ -172,12 +172,39 @@ describe('Fork child credential source', () => {
     });
   });
 
-  it('refuses with Home\'s typed cause, before any launch, when the share was withdrawn', async () => {
-    getOrCreateSessionByTagMock.mockRejectedValueOnce(new SessionTeamCredentialBindingRejectedError('access_removed'));
-    const { result, spawnSession } = await forkByReplay(BROKERED_TEAM_MODEL);
+  it('creates the child in its parent\'s Team context, which a team_context_required source needs', async () => {
+    const { result, spawnSession } = await forkByReplay(BROKERED_TEAM_MODEL, 'team-1');
 
-    expect(result).toMatchObject({ ok: false, errorCode: 'session_team_credential_binding_rejected' });
-    expect(result).not.toMatchObject({ errorCode: SPAWN_SESSION_ERROR_CODES.AGENT_SIGNED_OUT });
+    expect(result).toEqual({ ok: true, childSessionId: 'child-session' });
+    expect(getOrCreateSessionByTagMock.mock.calls[0]?.[0]).toMatchObject({
+      primaryTeamId: 'team-1',
+      teamCredentialBindings: [BROKERED_TEAM_MODEL],
+    });
+    expect(spawnSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('tells the caller Home\'s exact reason, before any launch, when the share was withdrawn', async () => {
+    getOrCreateSessionByTagMock.mockRejectedValueOnce(new SessionTeamCredentialBindingRejectedError('access_removed'));
+    const { result, spawnSession } = await forkByReplay(BROKERED_TEAM_MODEL, 'team-1');
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'session_team_credential_binding_rejected',
+      errorMessage: expect.any(String),
+      errorDetail: { kind: 'session_creation_team_credential_refused',
+        code: 'session_team_credential_binding_rejected', reason: 'access_removed' },
+    });
+    expect(spawnSession).not.toHaveBeenCalled();
+  });
+
+  it('tells the caller Home\'s exact reason when the person is no longer in the parent\'s Team', async () => {
+    getOrCreateSessionByTagMock.mockRejectedValueOnce(new SessionInitialAccessServerError('session_access_subject_ineligible', 403));
+    const { result, spawnSession } = await forkByReplay(BROKERED_TEAM_MODEL, 'team-1');
+
+    expect(result).toMatchObject({
+      ok: false,
+      errorDetail: { kind: 'session_creation_access_refused', code: 'session_access_subject_ineligible' },
+    });
     expect(spawnSession).not.toHaveBeenCalled();
   });
 
@@ -188,7 +215,7 @@ describe('Fork child credential source', () => {
       { v: 1, slot: { kind: 'provider_model' }, resourceId: null },
     ]) {
       getOrCreateSessionByTagMock.mockClear();
-      const { result, spawnSession } = await forkByReplay(accepted);
+      const { result, spawnSession } = await forkByReplay(accepted, accepted === null ? null : undefined);
 
       expect(result).toMatchObject({ ok: true });
       expect(getOrCreateSessionByTagMock.mock.calls[0]?.[0]).not.toHaveProperty(
@@ -197,6 +224,7 @@ describe('Fork child credential source', () => {
       expect(spawnSession.mock.calls[0]?.[0]).not.toHaveProperty(
         'teamCredentialBindings',
       );
+      expect(getOrCreateSessionByTagMock.mock.calls[0]?.[0]).not.toHaveProperty('primaryTeamId');
     }
   });
 });

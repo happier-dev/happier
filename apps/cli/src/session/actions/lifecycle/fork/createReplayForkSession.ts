@@ -9,6 +9,7 @@ import { createSpawnedSession } from '@/session/services/createSpawnedSession';
 import { createConnectedServiceForkLaunchContext } from '@/session/fork/connectedServiceForkLaunchContext';
 import { logger } from '@/ui/logger';
 import { isAuthenticationError } from '@/api/client/httpStatusError';
+import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
 import { readRuntimeDescriptorV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor-compat';
 import { buildForkSessionMetadata } from '@/session/fork/providerNativeForkDispatch';
 import { applyAgentAuthoredSessionStateUpdatesToMetadata } from '@/agent/runtime/state/agentAuthoredSessionStateUpdates';
@@ -142,6 +143,8 @@ export async function createReplayForkSession(params: Readonly<{
                 ? { approvalProfileTeamOrGroupDerived: params.inheritedForkOverrides.spawn.approvalProfileTeamOrGroupDerived } : {}),
             ...(params.inheritedForkOverrides.spawn.teamCredentialBindings
                 ? { teamCredentialBindings: params.inheritedForkOverrides.spawn.teamCredentialBindings } : {}),
+            ...(params.inheritedForkOverrides.spawn.primaryTeamId
+                ? { primaryTeamId: params.inheritedForkOverrides.spawn.primaryTeamId } : {}),
             replaySeededCreation: {
                 tag: managedForkDirectory?.sessionCreationTag ?? params.spawnNonce,
                 flavor: params.forkBackendResolution.replayFlavor,
@@ -190,6 +193,7 @@ export async function createReplayForkSession(params: Readonly<{
             ? error.message
             : 'Failed to create fork session';
         logger.debug('[API MACHINE] Failed to create fork session for replay', { errorCode, errorMessage });
-        return { ok: false, errorCode, errorMessage };
+        const errorDetail = readSessionCreationTerminalSpawnErrorDetail(error);
+        return { ok: false, errorCode, errorMessage, ...(errorDetail ? { errorDetail } : {}) };
     }
 }

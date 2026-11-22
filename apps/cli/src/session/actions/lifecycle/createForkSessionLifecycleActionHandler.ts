@@ -176,7 +176,10 @@ export function createForkSessionLifecycleActionHandler(params: Readonly<{
             parentMetadata,
             forkBackendResolution.backendTargetV2,
             parsed.data.approvalProfileId,
-            parentSession.acceptedTeamCredentialBinding,
+            {
+                acceptedTeamCredentialBinding: parentSession.acceptedTeamCredentialBinding,
+                primaryTeamId: parentSession.primaryTeamId,
+            },
         );
         // One shared fact, read by this gate and by the UI's fork-card
         // availability owner, so the modal can never offer a Native card this

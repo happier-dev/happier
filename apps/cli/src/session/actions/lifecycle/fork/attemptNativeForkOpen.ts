@@ -189,6 +189,7 @@ export async function attemptNativeForkOpen(params: Readonly<{
             errorCode: (result as { errorCode?: string }).errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
             errorMessage: (result as { errorMessage?: string }).errorMessage
                 ?? 'Failed to spawn native fork session',
+            ...(result.type === 'error' && result.errorDetail ? { errorDetail: result.errorDetail } : {}),
         };
     }
     if (result.sessionId === params.parentSessionId) {

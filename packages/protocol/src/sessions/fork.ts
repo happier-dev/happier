@@ -4,6 +4,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { LlmTaskRunnerConfigV1Schema } from '../llm/tasks/llmTaskRunnerConfigV1.js';
 import { SessionForkPointSchema, type SessionForkPoint } from './forkPoint.js';
 import { HappierReplayWireMaxSeedCharsSchema } from './replaySeedBudget.js';
+import { SpawnSessionErrorDetailSchema } from './spawnSession.js';
 import { ApprovalProfileIdV1Schema } from '../actions/approvalProfiles.js';
 
 /**
@@ -70,6 +71,8 @@ export const SessionForkRpcSuccessSchema = lazyZodSchema(() => z.strictObject({
 
 export const SessionForkRpcResultSchema = lazyZodSchema(() => z.union([
   SessionForkRpcSuccessSchema,
-  z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)), errorMessage: z.string().check(z.minLength(1)) }),
+  z.strictObject({ ok: z.literal(false), errorCode: z.string().check(z.minLength(1)), errorMessage: z.string().check(z.minLength(1)),
+    /** The creator's typed refusal (for example Home's Team credential reason), as a spawn carries it. */
+    errorDetail: z.optional(SpawnSessionErrorDetailSchema) }),
 ]));
 export type SessionForkRpcResult = z.infer<typeof SessionForkRpcResultSchema>;

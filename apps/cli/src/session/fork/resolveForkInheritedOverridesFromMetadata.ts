@@ -41,6 +41,7 @@ type ForkInheritedSpawnOverrides = {
   connectedServicesUpdatedAt?: number;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
   teamCredentialBindings?: SessionTeamCredentialBindingIntentV1[];
+  primaryTeamId?: string;
 };
 
 type ForkInheritedMetadataOverrides = Pick<
@@ -307,8 +308,11 @@ export function resolveForkInheritedOverridesFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
   agentTarget: BackendTargetRefV2 | null,
   requestedApprovalProfileId?: string | null,
-  /** The parent row's Home-accepted Team model source (owner detail; absent for other viewers). */
-  parentAcceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null,
+  /** The parent row as Home holds it (owner detail; absent for other viewers). */
+  parentRow?: Readonly<{
+    acceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null;
+    primaryTeamId?: string | null;
+  }>,
 ): {
   spawn: ForkInheritedSpawnOverrides;
   metadata: ForkInheritedMetadataOverrides;
@@ -370,13 +374,15 @@ export function resolveForkInheritedOverridesFromMetadata(
   } else if (model?.selection) {
     spawn.modelSelection = { v: 1, ref: model.selection, updatedAt: model.updatedAt };
   }
-  // The child starts on the same Team model source as its parent. Home admits
-  // it again at child creation with the checks any new Session gets, so a
-  // withdrawn share or expired source refuses with its own typed reason.
-  if (parentAcceptedTeamCredentialBinding?.slot.kind === 'provider_model'
-    && parentAcceptedTeamCredentialBinding.resourceId !== null) {
-    spawn.teamCredentialBindings = [parentAcceptedTeamCredentialBinding];
+  // The child starts in its parent's Team context and on the same Team model
+  // source. Home admits both again at child creation with the checks any new
+  // Session gets, so a withdrawn share, a Team the person left or a source that
+  // needs Team context refuses with its own typed reason.
+  const parentBinding = parentRow?.acceptedTeamCredentialBinding;
+  if (parentBinding?.slot.kind === 'provider_model' && parentBinding.resourceId !== null) {
+    spawn.teamCredentialBindings = [parentBinding];
   }
+  if (parentRow?.primaryTeamId) spawn.primaryTeamId = parentRow.primaryTeamId;
   const persistedProviderResumeState = readPersistedProviderResumeState(metadata ?? null);
   if (persistedProviderResumeState.binding) {
     spawn.providerBindingMetadataV1 = persistedProviderResumeState.binding;

@@ -274,6 +274,8 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                 const bindings = await readAcceptedSessionTeamCredentialProviderModelBindingsInTx(tx, launchFactIds);
                 const activations = await loadPendingActivationPublicationsInTx(tx, launchFactIds);
                 const owners = new Set(ownerIds);
+                // Owner detail: the Team context a Fork child is created in, as Home holds it.
+                const teamContexts = new Map(candidates.map(row => [row.id, row.primaryTeamId] as const));
                 const computerBindings = await readSessionComputerBindingsInTx(tx, {
                     accountId: userId, sessions: omitViewer ? [] : projected,
                 });
@@ -286,7 +288,8 @@ export async function readSessionDetails(input: SessionDetailInput & Readonly<{ 
                         const payload = runtimeManagedSubtree
                             ? parseProjectedSessionByIdResponse({ session: SessionRuntimeManagedSubtreeSnapshotRecordV1Schema.parse(session) })
                             : { session: assembleProjectedSessionRecord(owners.has(session.id) ? { ...session,
-                                ...(input.runtimeSnapshot ? {} : { acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null }),
+                                ...(input.runtimeSnapshot ? {} : { acceptedTeamCredentialBinding: binding?.status === 'fulfilled' ? binding.value : null,
+                                    primaryTeamId: teamContexts.get(session.id) ?? null }),
                                 pendingActivationAuthorization: activations.get(session.id), pendingExecutionRunIds: pendingRuns.get(session.id) ?? [],
                             } : { ...session, ...(computerBindings.has(session.id)
                                 ? { computerMachineBinding: computerBindings.get(session.id) } : {}) }) };

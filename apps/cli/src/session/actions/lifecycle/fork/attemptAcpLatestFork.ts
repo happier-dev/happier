@@ -95,6 +95,7 @@ export async function attemptAcpLatestFork(params: Readonly<{
                     ok: false,
                     errorCode: (result as { errorCode?: string })?.errorCode ?? SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
                     errorMessage: (result as { errorMessage?: string })?.errorMessage ?? 'Failed to spawn ACP fork session',
+                    ...(result.type === 'error' && result.errorDetail ? { errorDetail: result.errorDetail } : {}),
                 };
             }
 

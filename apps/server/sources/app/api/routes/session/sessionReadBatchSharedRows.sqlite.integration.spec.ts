@@ -87,6 +87,30 @@ describe('POST /v2/sessions/read-batch shared Session rows (SQLite integration)'
             expect(turnResults.get(id)).toMatchObject({ status: 'fulfilled', value: { status: 404 } });
         }
     });
+    // A Fork child is created in its parent's Team context; the owner's detail is where it reads it.
+    it('projects the Session Team context to its owner only', async () => {
+        const { owner, ids } = await seed();
+        const team = await db.team.create({ data: { name: 'fork-team-context' } });
+        await db.session.update({ where: { id: ids[0] }, data: { primaryTeamId: team.id } });
+        // A recipient reads the current owner-metadata layout (as in the direct-reads case below).
+        await db.session.updateMany({ where: { id: { in: ids } }, data: { metadataLayoutVersion: 1,
+            metadata: JSON.stringify({ v: 1 }), ownerMetadata: JSON.stringify({ t: 'plain', v: { v: 1 } }) } });
+        const recipient = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        await db.sessionGrant.create({ data: { sessionId: ids[0]!, createdByAccountId: owner.id, accountId: recipient.id,
+            accessLevel: 'view', principalKind: 'account' } });
+        const read = async (userId: string) => readSessionDetails({ userId, sessionIds: [ids[0]!, ids[1]!], accessProjectionVersion: 1,
+            authentication: readSessionAccessAuthenticationFromRequest({ authAuthority: 'present_user' }),
+            storedContentCompatibility: evaluateAccountStoredContentCompatibility(
+                parseAccountStoredContentCompatibilityHttpHeadersV1(currentAccountStoredContentCompatibilityHeaders)) });
+        const ownerDetails = await read(owner.id);
+        expect(ownerDetails.get(ids[0]!)).toMatchObject({ status: 'fulfilled', value: { status: 200, body: { session: { primaryTeamId: team.id } } } });
+        expect(ownerDetails.get(ids[1]!)).toMatchObject({ status: 'fulfilled', value: { status: 200, body: { session: { primaryTeamId: null } } } });
+        const recipientDetail = (await read(recipient.id)).get(ids[0]!);
+        expect(recipientDetail).toMatchObject({ status: 'fulfilled', value: { status: 200 } });
+        expect(recipientDetail?.status === 'fulfilled' ? recipientDetail.value.body : null)
+            .not.toHaveProperty('session.primaryTeamId');
+    });
+
     it('keeps independent direct reads available beside a Session the recipient cannot read', async () => {
         const { owner, ids } = await seed();
         const recipient = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
