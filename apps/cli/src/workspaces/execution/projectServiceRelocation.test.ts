@@ -399,6 +399,23 @@ describe('confirmed service relocation', () => {
     } finally { release(); }
     expect(effects).toEqual(['stop']);
   });
+  it.each([
+    { name: 'reported', reply: { status: 'failed' as const, reasonCode: 'agent_isolation_unavailable' }, cause: 'agent_isolation_unavailable' },
+    { name: 'thrown', reply: new RpcError('Start refused Authorization: Bearer synthetic-private-token', RPC_ERROR_CODES.FORBIDDEN),
+      cause: RPC_ERROR_CODES.FORBIDDEN },
+  ])('keeps a $name destination Start refusal as the cause of its uncertain outcome', async ({ reply, cause }) => {
+    const { effects, ports, request } = await harness();
+    ports.startService = async () => {
+      effects.push('start');
+      if (reply instanceof Error) throw reply;
+      return reply;
+    };
+    const result = await createProjectServiceRelocation(ports)(request);
+    // Native custody after dispatch stays unknown; only the refusal's code is retained.
+    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_uncertain', failureCause: { errorCode: cause } });
+    expect(JSON.stringify(result)).not.toContain('synthetic-private-token');
+    expect(effects).toEqual(['stop', 'prepare', 'start']);
+  });
   it('keeps an unknown new start on its exact target even when cancellation arrives during establishment', async () => {
     const { effects, ports, request } = await harness();
     const controller = new AbortController();

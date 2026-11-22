@@ -1,4 +1,4 @@
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
 import { LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { WorkspaceSyncPrepareBetweenRequestV1, WorkspaceSyncPrepareBetweenResultV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -43,6 +43,12 @@ export interface ProjectServiceRelocationPorts {
 async function failure(errorCode: string, error?: string): Promise<ActionExecuteResult> {
   if (error) return projectActionOperationFailure(Object.assign(new Error(error), { code: errorCode }), errorCode);
   return { ok: false, errorCode, error: errorCode };
+}
+
+/** Establishment after dispatch stays unknown; the Start refusal's code is kept as its cause. */
+function uncertainStart(cause: unknown): ActionExecuteResult {
+  return { ok: false, errorCode: 'outcome_uncertain', error: 'outcome_uncertain',
+    failureCause: projectActionFailureCauseV1(cause, 'dispatch', { allowUnknownErrorCode: true }) };
 }
 
 function isObservedWorkspaceTarget(target: ManagedTarget, workspace: WorkspaceRefV1, serverId: string): boolean {
@@ -160,6 +166,7 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
           progress('stopped', 'Service stopped');
           return failure(started.reasonCode ?? 'launcher_start_denied');
         }
+        if (started.status !== 'succeeded' && started.reasonCode) return uncertainStart({ code: started.reasonCode });
         if (started.status !== 'succeeded' || !started.currentTarget) return failure('outcome_uncertain');
         const binding = LocalServiceManagedServiceActionTargetV1Schema.safeParse(started.currentTarget);
         if (!binding.success) return failure('outcome_uncertain');
@@ -172,9 +179,9 @@ export function createProjectServiceRelocation(ports: ProjectServiceRelocationPo
           workspace: { serverId: selected.serverId, machineId: selected.machineId, workspaceId: selected.id, rootPath: selected.rootPath },
           declaration: selectedDeclaration, currentTarget: target } });
         return { ok: true, result: { status: 'moved', currentTarget: target } };
-      } catch {
+      } catch (error) {
         // Establishment may have taken effect, including cancellation after dispatch.
-        return failure('outcome_uncertain');
+        return uncertainStart(error);
       }
     } catch (error) {
       return signal?.aborted ? failure('cancelled') : await projectActionOperationFailure(error, 'service_relocation_failed');
