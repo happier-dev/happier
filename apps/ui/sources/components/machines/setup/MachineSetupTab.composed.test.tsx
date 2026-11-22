@@ -544,12 +544,13 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 // The Machine page owns this already-hydrated inventory before rendering a tab.
-async function publishManagedDevbox(serverId: string, role?: 'use', daemonState?: Machine['daemonState']) {
+async function publishManagedDevbox(serverId: string, role?: 'use', daemonState?: Machine['daemonState'], setup?: NonNullable<Machine['metadata']>['setup']) {
   const { storage } = await import('@/sync/domains/state/storage');
   const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
   const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
   const scope = { serverId, accountId: 'owner' };
   const machine = createMachineFixture({ id: 'devbox', isShared: role !== undefined, activeAt: Date.now(), ...(daemonState ? { daemonState } : {}),
+    ...(setup ? { metadata: { ...createMachineFixture().metadata!, setup }, metadataVersion: 2, daemonStateVersion: 2 } : {}),
     ...(role ? { access: { role, resourceMode: 'plain' as const, accessState: 'ready' as const, custodian: { accountId: 'owner', displayName: 'Owner' } } } : {}) });
   await act(async () => {
     storage.setState({ settingsScope: scope });
@@ -1002,14 +1003,15 @@ describe('Machine → Setup tab (P-M1)', () => {
     await act(async () => { checking = hook.getCurrent().check(); });
     await waitForHomeGovernance(() => expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan'))
       .toHaveLength(plansBefore + 1));
-    // Both mounted consumers must see the refusal when their post-run read starts.
-    // The already-started read captured success before this boundary changed.
+    // Settlement is pushed. It must not start a second Check while the explicit one is still open.
     refusePlans = outcome === 'succeeded';
     await act(async () => { finishRoot(); });
     await waitForHomeGovernance(() => expect(hook.getCurrent().operation?.snapshot.state).toBe(outcome));
     expect(hook.getCurrent().checkedAfterOperationId).toBeNull();
     holdPlan = null;
     await act(async () => { releasePlan(); await checking; });
+    expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan')).toHaveLength(plansBefore + 1);
+    await act(async () => { await hook.getCurrent().check(); });
     if (outcome === 'succeeded') {
       await waitForHomeGovernance(() => expect(hook.getCurrent().failure?.during).toBe('check'));
       expect(hook.getCurrent().checkedAfterOperationId).toBeNull();
@@ -1548,20 +1550,31 @@ describe('Machine → Setup tab (P-M1)', () => {
     const operationId = received.items[0]!.operationId;
     expect(await operations.handlers.getV2({ operationId, waitForTerminal: true }))
       .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } });
-    // The review becomes the Apply's own operation, followed by its read-only check.
+    // The review becomes the Apply's own operation in the same mounted row.
     phase = 'operation rows in place';
     await waitForHomeGovernance(() => expect(mounted.findByTestId('machine-setup-operation')).not.toBeNull());
     await waitForHomeGovernance(() => expect(mounted.findByTestId(stepRowId)).toBe(reviewedRow));
     expect(mounted.findByTestId('machine-setup-review')).toBeNull();
-    // Review uses the held baseline, and Apply prepares its effects once.
-    // The UI checks again when it observes the settled operation.
-    phase = 'post-Apply check';
-    await waitForHomeGovernance(() => expect(plans).toEqual([
+    phase = 'pushed attachment settlement';
+    await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 8, status: 'satisfied', recipes: [],
+      attachedPresets: [{ kind: 'accountPreset', presetId: 'other', presetRevision: 3, setupRevision: 1 },
+        { kind: 'accountPreset', presetId: 'build', presetRevision: 2, setupRevision: 2 }] } }, {
+      version: 1, revision: 8, exclusions: [], sources: [
+        { kind: 'accountPreset', presetId: 'other', presetRevision: 3, contentEncryptionMode: 'plain',
+          setup: { scripts: [{ body: 'echo other' }] } },
+        { kind: 'accountPreset', presetId: 'build', presetRevision: 2, setupRevision: 2, contentEncryptionMode: 'plain',
+          setup: { scripts: [{ body: 'echo new build' }] } },
+        { kind: 'direct', setup: { scripts: [{ body: 'echo direct' }] } },
+      ],
+    });
+    await waitForHomeGovernance(() => expect(mounted.tree.findAll(node => node.props?.testID === 'machine-setup-source:account:build'
+      && node.props.subtitle === t('machinePresets.setup.tab.presetFacts', { revision: 2, count: 0 })).length)
+      .toBeGreaterThan(0));
+    expect(plans).toEqual([
       { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset },
       { homeId: 'srv_build', machineId: 'devbox', mode: 'effects', candidatePreset, exclusions: [] },
-      { homeId: 'srv_build', machineId: 'devbox', mode: 'check' },
-    ]));
+    ]);
     expect(applied).toHaveLength(1);
     expect(harness.requests.some(request => request.path.includes('/actions/machines.provisioners.'))).toBe(false);
     await mounted.unmount();

@@ -3,6 +3,19 @@ import type { MachineMetadata } from '../types';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+function projectAttachedPresets(metadata: MachineMetadata): NonNullable<MachineSetupObservationV1['attachedPresets']> {
+    const attachedPresets: NonNullable<MachineSetupObservationV1['attachedPresets']> = [];
+    for (const source of metadata.setup?.sources ?? []) {
+        if (source.kind === 'accountPreset') attachedPresets.push({ kind: source.kind,
+            presetId: source.presetId, presetRevision: source.presetRevision,
+            ...(source.setupRevision === undefined ? {} : { setupRevision: source.setupRevision }) });
+        if (source.kind === 'bundledPreset') attachedPresets.push({ kind: source.kind, ref: {
+            pluginId: source.ref.pluginId, localId: source.ref.localId, revision: source.ref.revision,
+        } });
+    }
+    return attachedPresets;
+}
+
 /** Consume successful native Apply, whose interpreter already verified its effects. */
 export function projectMachineSetupAppliedObservation(
     previous: MachineSetupObservationV1 | undefined,
@@ -23,7 +36,8 @@ export function projectMachineSetupAppliedObservation(
     return { version: 1, desiredRevision: metadata?.setup?.revision ?? 0,
         status: recipes.every(recipe => recipe.status === 'satisfied') ? 'satisfied' : 'unverifiable', recipes,
         ...(previous?.updates ? { updates: previous.updates } : {}),
-        ...(previous?.attachedPresets ? { attachedPresets: previous.attachedPresets } : {}) };
+        ...(metadata ? { attachedPresets: projectAttachedPresets(metadata) }
+            : previous?.attachedPresets ? { attachedPresets: previous.attachedPresets } : {}) };
 }
 
 /** Project only facts already held by the daemon; the state publisher deduplicates. */
@@ -40,19 +54,10 @@ export function projectMachineSetupUpdatesObservation(
         ...(previous?.updates?.checkedAt !== undefined ? { checkedAt: previous.updates.checkedAt } : {}),
         ...updates,
     } : updates;
-    const attachedPresets: NonNullable<MachineSetupObservationV1['attachedPresets']> = [];
-    for (const source of metadata?.setup?.sources ?? []) {
-        if (source.kind === 'accountPreset') attachedPresets.push({ kind: source.kind,
-            presetId: source.presetId, presetRevision: source.presetRevision,
-            ...(source.setupRevision === undefined ? {} : { setupRevision: source.setupRevision }) });
-        if (source.kind === 'bundledPreset') attachedPresets.push({ kind: source.kind, ref: {
-            pluginId: source.ref.pluginId, localId: source.ref.localId, revision: source.ref.revision,
-        } });
-    }
     return {
         ...(previous ?? { version: 1, desiredRevision: metadata?.setup?.revision ?? 0,
             status: 'unverifiable', reason: 'required_fact_unavailable', recipes: [] }),
-        ...(metadata ? { attachedPresets } : {}),
+        ...(metadata ? { attachedPresets: projectAttachedPresets(metadata) } : {}),
         updates: published,
     };
 }

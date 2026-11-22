@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readRetainedManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
+import { projectManagedOpaqueSetupSourcesV1, readRetainedManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import {
   machineSetupSourceApplyOriginKeyV1,
   ManagedMachineActionOutputSchemasV1,
@@ -155,18 +155,38 @@ export function useMachineSetup(
     serverId, accountId: binding.accountId, machineId, runId,
   } : null);
   const progressOperation = runId ? nativeOperation : operation;
-  const checkedAfterOperationId = operationId !== null && operation !== null && isActionOperationTerminal(operation.snapshot.state)
+  const settledOperationId = operationId !== null && operation !== null && isActionOperationTerminal(operation.snapshot.state)
     ? operationId : null;
-  const plan = current?.key === scopeKey ? current.plan : null;
-  const sourcePresentations = React.useMemo(() => {
-    if (!current || current.key !== scopeKey) return null;
-    if (!retainedSetup) return current.sourcePresentations;
+  const settledOperation = React.useRef(settledOperationId);
+  settledOperation.current = settledOperationId;
+  const { plan, sourcePresentations } = React.useMemo((): Readonly<{
+    plan: MachineSetupPlanResultV1 | null;
+    sourcePresentations: readonly MachineSetupSourcePresentationV1[] | null;
+  }> => {
+    if (!current || current.key !== scopeKey) return { plan: null, sourcePresentations: null };
+    if (!retainedSetup) return current;
+    // Native Apply publishes the saved revision after its effects and desired write succeed.
+    // Use the Machine's opened copy when both pushes arrive. Old source-indexed Check facts belong to the old revision.
+    if (retainedSetup.revision > current.plan.desiredRevision && observation?.desiredRevision === retainedSetup.revision) {
+      const sources = projectManagedOpaqueSetupSourcesV1(retainedSetup.sources);
+      const presetNames = new Map(current.plan.sources.map((source, index) => {
+        const presentation = current.sourcePresentations[index];
+        return [machineSetupSourceApplyOriginKeyV1(source), presentation?.kind === 'opened' ? presentation.presetName : undefined];
+      }));
+      return {
+        plan: { desiredRevision: retainedSetup.revision, sources, exclusions: retainedSetup.exclusions, support: [],
+          sourceFacts: retainedSetup.sourceFacts, recipeTitles: current.plan.recipeTitles },
+        sourcePresentations: retainedSetup.sources.map((source, index) => ({ kind: 'opened', source,
+          presetName: presetNames.get(machineSetupSourceApplyOriginKeyV1(sources[index]!)) })),
+      };
+    }
     const retained = readRetainedManagedOpaqueSetupSourcesV1(current.plan.sources, retainedSetup.sources);
-    return current.sourcePresentations.map((presentation, index): MachineSetupSourcePresentationV1 => {
+    const sourcePresentations = current.sourcePresentations.map((presentation, index): MachineSetupSourcePresentationV1 => {
       const source = retained.get(machineSetupSourceApplyOriginKeyV1(current.plan.sources[index]!));
       return source ? { ...presentation, kind: 'opened', source } : presentation;
     });
-  }, [current, scopeKey, retainedSetup]);
+    return { plan: current.plan, sourcePresentations };
+  }, [current, scopeKey, retainedSetup, observation?.desiredRevision]);
 
   const context = React.useCallback(
     () =>
@@ -184,6 +204,7 @@ export function useMachineSetup(
   const check = React.useCallback((): Promise<void> => {
     const ctx = context();
     if (!binding?.isCurrent() || !ctx || !homeId) return Promise.resolve();
+    const checkedAfterOperationId = settledOperation.current;
     const reading = readCurrent.current;
     if (reading) return reading.scopeKey === scopeKey && reading.checkedAfterOperationId === checkedAfterOperationId
       ? reading.promise
@@ -244,10 +265,9 @@ export function useMachineSetup(
     })();
     readCurrent.current = { scopeKey, checkedAfterOperationId, promise };
     return promise;
-  }, [binding, context, homeId, machineId, scopeKey, serverId, checkedAfterOperationId]);
+  }, [binding, context, homeId, machineId, scopeKey, serverId]);
 
-  // Opening, reconnecting, or settling the displayed setup operation demands
-  // one check. Other publications do not start reads.
+  // Opening and reconnecting demand a Check. Apply settles through the Machine push.
   const demanded =
     input.active && input.online !== false && input.canCheck && !!binding && !!homeId;
   React.useEffect(() => {

@@ -701,7 +701,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             const code = written.status === 'conflict' ? 'plan_changed' : `machine_setup_content_${written.status}`;
             throw Object.assign(new Error(code), { code });
           }
-          if (result.ok && mode === 'apply' && reviewedRecipePlans.length) {
+          if (result.ok && mode === 'apply') {
             try { await params.apiMachine.publishMachineSetupApplied(reviewedRecipePlans.map(entry => entry.plan)); }
             catch (error) { logger.warn('[Machine setup] Applied inventory publication failed', error); }
           }
