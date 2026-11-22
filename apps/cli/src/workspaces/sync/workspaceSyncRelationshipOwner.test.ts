@@ -770,3 +770,39 @@ describe('WorkspaceSyncRelationshipOwner', () => {
     expect(harness.terminateRelationshipRuntime).toHaveBeenCalledWith(expect.objectContaining({ relationshipId: 'relationship_1' }));
   });
 });
+
+
+it.each(['project_workspace_changed', 'relationship_provenance_conflict', 'workspace_copy_not_worker', 'workspace_unavailable'] as const)(
+  'carries the real relationship owner refusal through the RPC mapping (%s)', async code => {
+    const { projectWorkspaceSyncRpcError } = await import('@/api/machine/workspaceSyncRpcErrors');
+    const { readRpcErrorCode } = await import('@happier-dev/protocol/rpcErrors');
+    const { RPC_METHODS } = await import('@happier-dev/protocol/rpc');
+    let failure: Promise<unknown>;
+    if (code === 'project_workspace_changed') {
+      const harness = createHarness({}, { workspaceRefs: [
+        { id: 'source_ref', projectKey: 'source-project', serverId: 'server_a', machineId: 'machine_source', rootPath: '/source', createdAtMs: 1 },
+        { id: 'target_ref', projectKey: 'another-project', serverId: 'server_a', machineId: 'machine_target', rootPath: '/target', createdAtMs: 1 },
+      ], relationships: [] });
+      failure = harness.owner.prepareCreate({ ...createInput, sourceWorkspaceRefId: 'source_ref',
+        targetWorkspaceRefId: 'target_ref', purpose: 'worker_clean_copy' });
+    } else if (code === 'relationship_provenance_conflict') {
+      const harness = createHarness({}, workerCopySnapshot());
+      failure = harness.owner.prepareCreate(createInput);
+    } else if (code === 'workspace_copy_not_worker') {
+      const harness = createHarness();
+      const prepared = await harness.owner.prepareCreate(createInput);
+      const expectedRelationship = await prepared.commit();
+      failure = harness.owner.stop(expectedRelationship.relationshipId, undefined, { expectedRelationship });
+    } else {
+      const initial = workerCopySnapshot();
+      const harness = createHarness({}, initial);
+      const expectedRelationship = initial.relationships[0]!;
+      failure = harness.owner.stop(expectedRelationship.relationshipId, undefined, { expectedRelationship,
+        removeTargetCopy: { workspaceRefId: 'source_ref', rootFingerprint: 'a'.repeat(64) } });
+    }
+    await expect(failure).rejects.toMatchObject({ code });
+    const projected: unknown = await failure.catch(error =>
+      projectWorkspaceSyncRpcError(error, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE));
+    expect(readRpcErrorCode(projected)).toBe(code);
+    expect(projected).toMatchObject({ failureCause: { errorCode: code } });
+  });
