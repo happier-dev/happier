@@ -9,6 +9,7 @@ vi.mock('@/text', async () => {
 });
 
 import { lightTheme } from '@/theme';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveExecutionRunAgentMarkId, resolveExecutionRunBackendLabel } from './resolveExecutionRunBackendLabel';
 
 const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{ id: 'review-bot', name: 'review-bot',
@@ -25,12 +26,16 @@ describe('resolveExecutionRunBackendLabel', () => {
         expect(resolveExecutionRunBackendLabel({
             kind: 'backend',
             backendId: 'codex',
-        })).toBe('t:agentInput.agent.codex');
+        })).toBe(resolveAgentCatalogTitle('codex'));
     });
     it('keeps a diagnostic configured id rather than granting an incomplete row title authority', () => {
         expect(resolveExecutionRunBackendLabel({ kind: 'backend', backendId: 'review-bot', configuredBackendId: 'review-bot' },
             { status: 'partial', reason: 'incomplete-inventory', record, diagnostics: [] }))
             .toBe('review-bot');
+    });
+
+    it('lets a retained Custom ACP finding render without an executable backend identity', () => {
+        expect(resolveExecutionRunBackendLabel({ kind: 'backend', backendId: 'custom-acp' })).toBeNull();
     });
 });
 

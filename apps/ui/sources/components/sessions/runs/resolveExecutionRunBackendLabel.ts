@@ -6,13 +6,21 @@ import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogPr
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
 
+function readExecutionRunDisplayTarget(backendTarget: BackendTargetRefV2Input | null | undefined) {
+    if (!backendTarget) return null;
+    try {
+        return readBackendTargetRefV2(backendTarget);
+    } catch {
+        return null;
+    }
+}
+
 export function resolveExecutionRunBackendLabel(
     backendTarget: BackendTargetRefV2Input | null | undefined,
     catalog?: AcpCatalogSnapshotV1 | null,
 ): string | null {
-    if (!backendTarget) return null;
-
-    const canonicalTarget = readBackendTargetRefV2(backendTarget);
+    const canonicalTarget = readExecutionRunDisplayTarget(backendTarget);
+    if (!canonicalTarget) return null;
 
     if (!canonicalTarget.configuredBackendId) {
         if (isBundledAgentId(canonicalTarget.backendId)) {
@@ -36,13 +44,7 @@ export function resolveExecutionRunAgentMarkId(
     backendTarget: BackendTargetRefV2Input | null | undefined,
     theme: Parameters<typeof hasAgentIconMark>[1],
 ): string | null {
-    if (!backendTarget) return null;
-    let canonicalTarget;
-    try {
-        canonicalTarget = readBackendTargetRefV2(backendTarget);
-    } catch {
-        return null;
-    }
-    if (canonicalTarget.configuredBackendId) return null;
+    const canonicalTarget = readExecutionRunDisplayTarget(backendTarget);
+    if (!canonicalTarget || canonicalTarget.configuredBackendId) return null;
     return hasAgentIconMark(canonicalTarget.backendId, theme) ? canonicalTarget.backendId : null;
 }
