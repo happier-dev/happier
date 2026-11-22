@@ -1,3 +1,4 @@
+import { ReviewScopeSchema } from '../reviews/scope.js';
 import * as zMini from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { WorkflowApprovedOperationV1Schema } from '../actions/approvedOperationV1.js';
@@ -122,6 +123,8 @@ export const WorkflowDefinitionArtifactHeaderV1Schema = lazyZodSchema(() => z.st
   /** Static authored step labels, written atomically with the definition for header-only cards. */
   previewSteps: z.optional(z.array(z.string())),
   previewAgents: z.optional(z.array(asProtocolZod(PluginContributionIdentityV1Schema))),
+  /** Explicit literal Review scopes in the authored graph; absent on older headers. */
+  previewReviewScopes: z.optional(z.array(ReviewScopeSchema)),
   excerpt: z.optional(z.string().check(z.maxLength(ARTIFACT_EXCERPT_MAX_CHARS_V1))),
 }));
 export type WorkflowDefinitionArtifactHeaderV1 = z.infer<typeof WorkflowDefinitionArtifactHeaderV1Schema>;

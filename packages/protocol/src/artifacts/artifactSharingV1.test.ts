@@ -1,3 +1,4 @@
+import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '../workflows/builtins/repositoryReview.js';
 import { describe, expect, it } from 'vitest';
 import { prepareArtifactHeaderForBodyV1, prepareArtifactHeaderForRevisionV1 } from './artifactHeaderRestorationV1.js';
 import { buildWidgetSurfaceArtifactIdV1, buildWidgetSurfaceArtifactHeaderV1 } from '../widgets/widgetSurfaceArtifactV1.js';
@@ -281,6 +282,15 @@ describe('Document sharing kind owner', () => {
     expect(getArtifactUseTargetV1({ ...resource, body: JSON.stringify({ v: 1, surface, items: [{ kind: 'widget', instance: safe }] }) }).canShare).toBe(true);
     expect(getArtifactUseTargetV1({ ...saved, body: JSON.stringify(safe.definition.definition) }))
       .toMatchObject({ canShare: true, publicLinkAllowed: true });
+  });
+  it('projects repository Review scopes for generic Workflow writes and revision restores', () => {
+    const header = { kind: 'workflow-definition.v1', definitionId: 'definition-1',
+      revision: { headerVersion: 1, bodyVersion: 1 }, metadata: { title: 'Routine' } };
+    const body = JSON.stringify({ kind: 'workflow-definition.v1', definition: REPOSITORY_REVIEW_WORKFLOW_V1 });
+    const written = prepareArtifactHeaderForBodyV1(header, body);
+    const restored = prepareArtifactHeaderForRevisionV1({ artifactId: 'definition-1', header, body,
+      expectedRevision: header.revision, nextRevision: { headerVersion: 2, bodyVersion: 2 } });
+    for (const projected of [written, restored]) expect(projected).toMatchObject({ previewReviewScopes: ['repository'] });
   });
   it('restores unknown stored Workflow body fields through the canonical header projection', () => {
     const header = { kind: 'workflow-definition.v1', definitionId: 'definition-1',

@@ -4265,6 +4265,17 @@ adapter or reverse-development-binary promise is added.
 
 ## Shared Workflow projections (0.3 development)
 
+Saved Workflow headers carry optional `previewReviewScopes`, using the existing
+Review scopes `changes` and `repository`. Saves and generic Artifact writes or
+revision restores derive this deduplicated fact from explicit literal
+`review.start` scopes in the authored graph. List rows project the header without
+opening the body. Newly written `[]` means no known literal scope; an absent
+field on an older header remains unknown and does not trigger a body read or
+backfill. Dynamic scopes and referenced Workflows are not inferred. The fact
+stays inside the existing encrypted Artifact header for E2EE Accounts. Matching
+Protocol, host and generated SDK readers update together under the unpublished
+0.3 direct cut; no migration or reverse-development reader adapter is added.
+
 Workflow start adds the closed source arm `{ kind: 'repo_file', path }`;
 accepted snapshots and Run detail retain `{ kind: 'repo_file', path, commit }`,
 and Discussion capture preserves that provenance. It uses the existing

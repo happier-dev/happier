@@ -1,3 +1,5 @@
+import { REVIEW_START_ACTION_ID_V1 } from '../actions/actionIds.js';
+import { ReviewScopeSchema, type ReviewScope } from '../reviews/scope.js';
 import type { WorkflowBlock, WorkflowDefinitionV1, WorkflowStep } from './workflowV1.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { walkWorkflowBlocks } from './workflowV1.js';
@@ -64,6 +66,17 @@ export function workflowDefinitionPreviewStepsV1(blocks: readonly WorkflowBlock[
     if (block.kind === 'step' || block.kind === 'wait' || block.kind === 'action' || block.kind === 'workflow') return [workflowBlockReferenceLabel(block)];
     return [];
   });
+}
+
+/** Explicit authored Review scopes only; dynamic inputs and nested Workflow references stay unknown. */
+export function workflowDefinitionPreviewReviewScopesV1(blocks: readonly WorkflowBlock[]): readonly ReviewScope[] {
+  const scopes = new Set<ReviewScope>();
+  for (const block of walkWorkflowBlocks(blocks)) {
+    if (block.kind !== 'action' || block.actionId !== REVIEW_START_ACTION_ID_V1 || block.input.scope?.kind !== 'literal') continue;
+    const scope = ReviewScopeSchema.safeParse(block.input.scope.value);
+    if (scope.success) scopes.add(scope.data);
+  }
+  return [...scopes];
 }
 
 /** Bounded by the Workflow's authored leaf steps. Uses literal targets and never opens nested Workflows. */

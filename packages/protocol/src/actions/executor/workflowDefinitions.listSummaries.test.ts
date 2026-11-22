@@ -1,6 +1,7 @@
+import { REPOSITORY_REVIEW_WORKFLOW_V1 } from '../../workflows/builtins/repositoryReview.js';
 import { describe, expect, it } from 'vitest';
 import { WorkflowDefinitionV1Schema } from '../../workflows/workflowV1.js';
-import { createWorkflowDefinitionActions } from './workflowDefinitions.js';
+import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { WorkflowDefinitionListRequestV1Schema, WorkflowDefinitionListResultV1Schema } from '../../workflows/actionsV1.js';
 import { listArtifactHeadersV1 } from '../../artifacts/artifactListSelectionV1.js';
 import { createWorkflowTriggerActions } from './workflowTriggerActions.js';
@@ -8,6 +9,67 @@ import { AutomationDefinitionListRequestSchema, type AutomationDefinitionListIte
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
 
 describe('workflow definition library summary read', () => {
+  it('saves static repository Review scopes in headers and lists them without opening definitions', async () => {
+    // Artifact persistence is the boundary; normalization, save and list projections remain real.
+    const rows = new Map<string, NonNullable<Awaited<ReturnType<WorkflowDefinitionArtifactOperations['read']>>>>();
+    let reads = 0;
+    const unused = (): never => { throw new Error('unexpected_operation'); };
+    const owner = createWorkflowDefinitionActions({ artifactStore: {
+      read: async id => { reads++; return rows.get(id) ?? null; },
+      list: async options => {
+        expect(options.includeBody).toBe(false);
+        return { items: [...rows.values()].map(({ body: _body, ...row }) => ({ ...row,
+          headerVersion: row.revision.headerVersion, bodyVersion: row.revision.bodyVersion, updatedAt: 1 })) };
+      },
+      create: async input => { rows.set(input.artifactId, { artifactId: input.artifactId,
+        header: JSON.parse(JSON.stringify(input.header)), body: input.body,
+        revision: { headerVersion: 1, bodyVersion: 1 }, ownerAccountId: 'owner', access: 'owner' }); },
+      update: async input => {
+        const revision = { headerVersion: input.expectedRevision.headerVersion + 1, bodyVersion: input.expectedRevision.bodyVersion + 1 };
+        rows.set(input.artifactId, { ...rows.get(input.artifactId)!, header: JSON.parse(JSON.stringify(input.header)), body: input.body, revision });
+        return { ok: true, revision };
+      }, delete: unused,
+    }, encodeListCursor: row => row.artifactId, readWorkflowTriggerSummaries: async () => new Map() });
+    const review = (scope: unknown) => WorkflowDefinitionV1Schema.parse({ version: 1,
+      inputs: [{ name: 'scope', valueType: 'string', required: true },
+        { name: 'reviewers', valueType: 'json', required: true }, { name: 'instructions', valueType: 'string', required: true }], blocks: [
+        { kind: 'action', id: 'review', actionId: 'review.start', input: { scope,
+          reviewers: { kind: 'input', name: 'reviewers' }, instructions: { kind: 'input', name: 'instructions' } } },
+      ] });
+    const changes = review({ kind: 'literal', value: 'changes' });
+    const ids = [1, 2, 3, 4].map(index => `11111111-1111-4111-8111-${String(index).padStart(12, '0')}`);
+    const definitions = [REPOSITORY_REVIEW_WORKFLOW_V1, changes,
+      WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [
+        { kind: 'wait', id: 'plain', document: { text: 'Hunt the repository', references: [], attachments: [] } },
+      ] }), review({ kind: 'input', name: 'scope' })];
+    for (const [index, definition] of definitions.entries()) {
+      await owner.create({ definitionId: ids[index]!, metadata: { title: 'Repository Hunt' }, definition }, undefined, { surface: 'ui' });
+    }
+    reads = 0;
+    const listed = WorkflowDefinitionListResultV1Schema.parse(await owner.list({}));
+    expect(listed.definitions).toMatchObject([
+      { definitionId: ids[0], previewReviewScopes: ['repository'] },
+      { definitionId: ids[1], previewReviewScopes: ['changes'] },
+      { definitionId: ids[2], previewReviewScopes: [] },
+      { definitionId: ids[3], previewReviewScopes: [] },
+    ]);
+    expect(reads).toBe(0);
+    const updated = await owner.update({ definitionId: ids[0]!, expectedRevision: { headerVersion: 1, bodyVersion: 1 },
+      metadata: { title: 'Still a Hunt title' }, definition: changes }, undefined, { surface: 'ui' });
+    await owner.edit({ definitionId: ids[0]!, expectedRevision: updated.revision,
+      ops: [{ kind: 'rename', name: 'Renamed' }] }, undefined, { surface: 'ui' });
+    reads = 0;
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({})).definitions[0])
+      .toMatchObject({ previewReviewScopes: ['changes'], metadata: { title: 'Renamed' } });
+    expect(reads).toBe(0);
+    // Headers from before this optional fact remain readable without a body-read backfill.
+    const legacy = rows.get(ids[0]!)!;
+    const { previewReviewScopes: _scope, ...header } = legacy.header;
+    rows.set(ids[0]!, { ...legacy, header });
+    expect(WorkflowDefinitionListResultV1Schema.parse(await owner.list({})).definitions[0])
+      .not.toHaveProperty('previewReviewScopes');
+    expect(reads).toBe(0);
+  });
   it('lists saved workflows from their headers, reading no bodies, and still opens a full definition through get', async () => {
     const definition = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, blocks: [
       { kind: 'wait', id: 'review', document: { text: 'Review the change', references: [], attachments: [] } },

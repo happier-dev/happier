@@ -19568,6 +19568,7 @@ export type WorkflowsActionResultById = {
                 pluginId: string;
                 localId: string;
             }[];
+            previewReviewScopes?: ('changes' | 'repository')[] | undefined;
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
             access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
@@ -19740,6 +19741,7 @@ export type WorkflowsActionResultById = {
                 pluginId: string;
                 localId: string;
             }[];
+            previewReviewScopes?: ('changes' | 'repository')[] | undefined;
             excerpt?: string | undefined;
             ownerAccountId?: string | undefined;
             access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
