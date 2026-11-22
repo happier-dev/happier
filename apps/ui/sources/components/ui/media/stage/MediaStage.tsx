@@ -45,7 +45,7 @@ import { canOpenFileInDefaultApp, saveFileUri } from '@/sync/runtime/files/saveF
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { SessionPaneLazyLoader } from '@/components/sessions/panes/SessionPaneLazyLoader';
 import type { MediaPlayerBodyProps } from '@/components/workspaces/files/file/MediaPlayerBody';
-import type { MediaPlayerVideoControls } from '@/components/workspaces/files/file/videoFrameAccess';
+import type { MediaPlayerFrame, MediaPlayerVideoControls } from '@/components/workspaces/files/file/videoFrameAccess';
 import { formatPlaybackTime } from '@/components/workspaces/files/file/filePageMediaFacts';
 import type { PdfViewerProps } from '../pdf/PdfViewerStates';
 import type { PdfZoom } from '../pdf/pdfZoom';
@@ -744,14 +744,15 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const opened = React.useRef(false);
   // A paused video frame is marked as a picture in its video's place (platform lab `media`): the frame holds
   // the slot until Done, Cancel or its copy lands in a Session, then the video returns at that moment.
-  const [heldFrame, setHeldFrame] = React.useState<Readonly<{ index: number; timeSeconds: number; item: MediaStageItem }> | null>(null);
+  const [heldFrame, setHeldFrame] = React.useState<Readonly<{ index: number; frame: MediaPlayerFrame; item: MediaStageItem }> | null>(null);
   const [videoControls, setVideoControls] = React.useState<MediaPlayerVideoControls | null>(null);
   const resumeAt = React.useRef<number | null>(null);
   const handleVideoControls = React.useCallback((controls: MediaPlayerVideoControls | null) => {
     setVideoControls(controls);
     if (controls && resumeAt.current !== null) { controls.seekTo(resumeAt.current); resumeAt.current = null; }
   }, []);
-  const item = heldFrame?.index === gallery.index ? heldFrame.item : gallery.currentItem;
+  const activeFrame = heldFrame?.index === gallery.index ? heldFrame : null;
+  const item = activeFrame?.item ?? gallery.currentItem;
   const stageItems = React.useMemo(() => heldFrame
     ? gallery.items.map((entry, index) => (index === heldFrame.index ? heldFrame.item : entry)) : gallery.items, [gallery.items, heldFrame]);
   const multiple = gallery.items.length > 1;
@@ -816,7 +817,8 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
   const capsuleLayout = useStageCapsuleLayout();
   const annotateShortcut = useKeyboardShortcutLabel('media.annotate');
   // Every picture: Done lands in place where the picture is editable, as a copy in a draft elsewhere (P2 U4).
-  const pictureAnnotatable = isPicture(item) && currentPreview !== null && phase === 'open';
+  const pictureAnnotatable = isPicture(item) && currentPreview !== null && phase === 'open'
+    && (!activeFrame || currentPreview.uri === activeFrame.frame.uri);
   const frameAnnotatable = item.kind === 'video' && videoControls !== null && phase === 'open';
   const annotatable = pictureAnnotatable || frameAnnotatable;
   // Reading a paused frame can take seconds on a long video: the entry shows progress and ignores a second press.
@@ -832,32 +834,33 @@ export function MediaStage(props: MediaStageProps & CustomModalInjectedProps) {
     setReadingFrame(false);
     if (!frame) return;
     const frameTime = formatPlaybackTime(frame.timeSeconds);
-    setHeldFrame({ index: gallery.index, timeSeconds: frame.timeSeconds, item: {
+    setHeldFrame({ index: gallery.index, frame, item: {
       kind: 'image', title: `${item.title} · ${frameTime}`, source: { enabled: true, source: { kind: 'uri', uri: frame.uri } },
       annotate: true, frameTime, ...(item.targetSession ? { targetSession: item.targetSession } : {}) } });
   }, [gallery.index, item, videoControls]);
   const enterAnnotate = React.useCallback(() => {
     if (frameAnnotatable) { void annotateFrame(); return; }
-    const size = sizes.current.get(gallery.index);
+    const size = activeFrame?.frame ?? sizes.current.get(gallery.index);
     if (!pictureAnnotatable || !size || !currentPreview) return;
     setImmersive(false);
     setReverted(false);
     void stageAnnotation.enter({ uri: currentPreview.uri, width: size.width, height: size.height });
-  }, [annotateFrame, currentPreview, frameAnnotatable, gallery.index, pictureAnnotatable, stageAnnotation]);
+  }, [activeFrame, annotateFrame, currentPreview, frameAnnotatable, gallery.index, pictureAnnotatable, stageAnnotation]);
   // Tray "Edit marks" (and a held video frame) opens straight into Annotate, once per item.
   const autoAnnotated = React.useRef<MediaStageItem | null>(null);
   React.useEffect(() => {
-    if (!item.annotate || autoAnnotated.current === item || !pictureAnnotatable || !sizes.current.get(gallery.index)) return;
+    // A decoded frame already has its dimensions. The image's later onLoad updates only the size ref.
+    if (!item.annotate || autoAnnotated.current === item || !pictureAnnotatable || (!activeFrame && !sizes.current.get(gallery.index))) return;
     autoAnnotated.current = item;
     enterAnnotate();
-  }, [enterAnnotate, gallery.index, item, pictureAnnotatable]);
+  }, [activeFrame, enterAnnotate, gallery.index, item, pictureAnnotatable]);
   // The held frame gives its slot back once its annotate session has ended (Done, Cancel or the copy landed).
   const frameAnnotated = React.useRef(false);
   React.useEffect(() => {
     if (!heldFrame) { frameAnnotated.current = false; return; }
     if (stageAnnotation.session) { frameAnnotated.current = true; return; }
     if (frameAnnotated.current && !stageAnnotation.choosingSession) {
-      resumeAt.current = heldFrame.timeSeconds;
+      resumeAt.current = heldFrame.frame.timeSeconds;
       setHeldFrame(null);
     }
   }, [heldFrame, stageAnnotation.choosingSession, stageAnnotation.session]);

@@ -3,12 +3,20 @@ import * as React from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { act, renderScreen, standardCleanup } from '@/dev/testkit';
 import { HeldVideoPlayer } from './HeldVideoPlayer';
+import { MediaStage } from '@/components/ui/media/stage/MediaStage';
+import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
 import type { MediaPlayerVideoControls } from './videoFrameAccess';
 
 const native = vi.hoisted(() => ({ listeners: new Map<string, (event: { isPlaying: boolean }) => void>(),
     play: vi.fn(), pause: vi.fn(), video: null as HTMLVideoElement | null, status: 'readyToPlay' as 'readyToPlay' | 'error' }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native-reanimated', async () =>
+    (await import('@/dev/testkit/mocks/reanimated')).createReanimatedModuleMock({ settleTimingCallbacks: true }));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+// Vitest resolves the native canvas. Keep the actual editor mounted with its graphics and font boundaries.
+vi.mock('@shopify/react-native-skia', async () =>
+    (await import('@/dev/testkit/mocks/skia')).createSkiaModuleMock().module);
+vi.mock('expo-asset', () => ({ Asset: { fromModule: () => ({ localUri: 'file:///inter.ttf' }) } }));
 // Expo playback/event delivery is the external video boundary.
 vi.mock('expo-video', async () => {
     const React = await import('react');
@@ -130,4 +138,31 @@ it('publishes editor playback intent while decoder priming events stay invisible
     await act(async () => { playback.play(); playback.pause(); });
     expect(changes).toEqual([true, false]);
     unsubscribe();
+});
+
+it('opens the editor after one Annotate press on a received video frame', async () => {
+    const video = document.createElement('video');
+    native.video = video;
+    Object.defineProperties(video, {
+        readyState: { value: 4 }, videoWidth: { value: 64 }, videoHeight: { value: 48 }, duration: { value: 3 },
+    });
+    vi.spyOn(video, 'play').mockResolvedValue();
+    vi.spyOn(video, 'pause').mockImplementation(() => {});
+    vi.spyOn<{ getContext(contextId: '2d'): CanvasRenderingContext2D | null }, 'getContext'>(HTMLCanvasElement.prototype, 'getContext')
+        .mockReturnValue({ drawImage: () => {} } as unknown as CanvasRenderingContext2D);
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID');
+    setReducedMotionPreferenceOverride(true);
+    try {
+        const screen = await renderScreen(<MediaStage initialIndex={0} onClose={() => {}} items={[
+            { kind: 'video', title: 'received.mp4', source: { enabled: true, source: { kind: 'uri', uri: 'blob:received' } } },
+        ]} />);
+        await vi.waitFor(() => expect(screen.findByTestId('media-stage-annotate')).not.toBeNull());
+        await screen.pressByTestIdAsync('media-stage-annotate');
+        await vi.waitFor(() => expect(screen.findByTestId('media-stage-image')).not.toBeNull());
+        // RN reports the intrinsic frame size after the held image has already rendered.
+        await act(async () => screen.findByTestId('media-stage-image')!.props.onLoad({ source: { width: 64, height: 48 } }));
+        await vi.waitFor(() => expect(screen.findByTestId('media-stage-annotate-done')).not.toBeNull());
+    } finally {
+        setReducedMotionPreferenceOverride(null);
+    }
 });
