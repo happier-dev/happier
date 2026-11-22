@@ -4,6 +4,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { ActionOperationFailureV1Schema, ManagedServiceFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
+import { buildEnsureCurrentUserLingerCommand } from '../../machineSetup/userLinger.js';
 import { runManagedMachineEnrollment } from './managedMachineEnrollment.js';
 
 const resource = { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'retained' } };
@@ -16,6 +17,8 @@ const machine = ManagedMachineFullV1Schema.parse({ id: correlation.managedId, ho
 const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: correlation.homeId,
   canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] },
   authority: 'trusted_enrollment' });
+
+const confirmLinger = { status: 0, stdout: 'linger_enabled\n', stderr: '' };
 
 function retryGuest(operation: AbortController | undefined, readyAtMs: number, standaloneSignal?: AbortSignal) {
   let statusReads = 0;
@@ -38,6 +41,7 @@ function retryGuest(operation: AbortController | undefined, readyAtMs: number, s
     native: { putFile: async () => {}, exec: async ({ command, signal }) => {
       signal?.throwIfAborted();
       if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+      if (command === buildEnsureCurrentUserLingerCommand()) return confirmLinger;
       // Genuine native CLI process boundary: the restarted daemon registers later.
       if (command.includes("'daemon' 'status'")) {
         statusReads++;
@@ -72,6 +76,7 @@ describe('retained native bootstrap readiness lifetime', () => {
       // public Action failure settlement both run unchanged beneath it.
       native: { putFile: async () => {}, exec: async ({ command }) => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+        if (command === buildEnsureCurrentUserLingerCommand()) return confirmLinger;
         commands.push(command);
         return command.includes(`'${step}'`)
           ? { status: 42, stdout: response === 'invalid' ? 'unrecognized service output' : response === 'native' ? '' : JSON.stringify({ ok: false,
@@ -87,7 +92,7 @@ describe('retained native bootstrap readiness lifetime', () => {
       { homeId: correlation.homeId, managedId: correlation.managedId, expectedIntentRevision: 1 },
       { surface: 'cli', authority: 'present_user', presentUserConfirmation: { actionId: 'machines.managed.bootstrap.retry' } });
     expect(failure).toMatchObject({ ok: false, errorCode: 'background_service_failed',
-      failureCause: { errorCode: 'background_service_failed' },
+      failureCause: { errorCode: null },
       details: { kind: 'managedService', step, exitStatus: 42 } });
     if (failure.ok) throw new Error('Expected failed activation');
     const { ok: _ok, ...operationFailure } = failure;
@@ -133,6 +138,7 @@ describe('retained native bootstrap readiness lifetime', () => {
       // an unchanged unit is a no-op; restart adopts the promoted payload.
       native: { putFile: async () => {}, exec: async ({ command }) => {
         if (command.startsWith('uname -s;')) return { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' };
+        if (command === buildEnsureCurrentUserLingerCommand()) return confirmLinger;
         if (command.includes("'restart'") || command.includes("'install'") || command.includes("'start'")) serviceCommands.push(command);
         if (command.includes("'restart'")) { runningPayload = currentPayload; runningPid = 8574; }
         return { status: 0, stderr: '', stdout: JSON.stringify({ daemon: { pid: runningPid, running: true, healthy: true,

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readNativeSshTaskCredentials, runNativeRemoteSshBootstrapTask } from './nativeTask';
 
 import type { SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
@@ -14,14 +14,13 @@ import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { promisify } from 'node:util';
-import { buildRemoteSelfDownloadFirstPartyInstallCommand } from '@happier-dev/cli-common/systemTasks';
-import { createHash } from 'node:crypto';
-import { pathToFileURL } from 'node:url';
 import { ManagedMachineEnrollmentIdentityV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { checkMachineSetupEffectPlan, applyMachineSetupEffectPlans, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
 import { MachineEffectInternalRequestSchema, MachineAdministratorEstablishFrameSchema } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { firstPartyRuntime } from '@happier-dev/cli-common';
 import { createCliPayloadFixture } from '../../../../../../packages/cli-common/src/systemTasks/testkit/createCliPayloadFixture.js';
+import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createNativeSshHomePayload, isNativeSshArchivePromotion, readNativeSshPayloadProcessResult } from './nativeSshHomePayload.testkit';
 
 const HOME_TARGET = {
     profileId: 'home-profile',
@@ -49,22 +48,12 @@ const HOME_TARGET = {
 
 const REMOTE_PUBLIC_KEY = Buffer.alloc(32, 3).toString('base64');
 const PAIRING_SECRET = Buffer.alloc(32, 7).toString('base64url');
-const VERIFIED_INSTALL_COMMAND = 'verified self-download install command';
-
-const resolveInstallPlan = async () => ({
-    binaryPath: '$HOME/.happier/cli/current/happier',
-    versionId: '1.2.3',
-    source: 'https://downloads.example.test/happier.tar.gz',
-    command: VERIFIED_INSTALL_COMMAND,
-});
 
 function readInstallationTextResult(command: string) {
     if (command.includes('uname -s')) {
         return { status: 0, stdout: JSON.stringify({ platform: 'linux', arch: 'x86_64' }), stderr: '' };
     }
-    if (command === VERIFIED_INSTALL_COMMAND) return { status: 0, stdout: '', stderr: '' };
-    if (command.includes('for version_path in')) return { status: 0, stdout: 'current=\nprevious=\n', stderr: '' };
-    return null;
+    return readNativeSshPayloadProcessResult(command);
 }
 
 async function prepareApprovalBoundary(serverUrl: string, runtimeOrigin = serverUrl) {
@@ -72,7 +61,7 @@ async function prepareApprovalBoundary(serverUrl: string, runtimeOrigin = server
     const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
     const { setServerProfileIdentityForUrl } = await import('@/sync/domains/server/serverProfiles');
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-    const { setRuntimeFetch, resetRuntimeFetch } = await import('@/utils/system/runtimeFetch');
+    const homePayload = createNativeSshHomePayload(serverUrl);
     const machineKey = new Uint8Array(32).fill(5);
     const publicKey = (await import('tweetnacl')).default.box.keyPair.fromSecretKey(machineKey).publicKey;
     const storedCredentials = {
@@ -92,7 +81,7 @@ async function prepareApprovalBoundary(serverUrl: string, runtimeOrigin = server
         }
         if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return Response.json({});
         if (target.pathname === '/v1/features') return Response.json(createRootLayoutFeaturesResponse({
-            capabilities: { serverIdentity: { serverIdentityId: HOME_TARGET.homeServerIdentityId } },
+            capabilities: { serverIdentity: { serverIdentityId: HOME_TARGET.homeServerIdentityId }, guestCli: homePayload.guestCli },
         }));
         if (target.pathname === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 0 });
         if (target.pathname === '/v1/account/encryption/currentness') return Response.json(currentness);
@@ -101,7 +90,7 @@ async function prepareApprovalBoundary(serverUrl: string, runtimeOrigin = server
             approvals.push({ url: String(url), authorization: new Headers(init?.headers).get('Authorization'), body: JSON.parse(String(init?.body)) });
             return Response.json({ success: true });
         }
-        throw new Error(`Unexpected approval path: ${target.pathname}`);
+        return homePayload.fetch(url);
     });
     const profile = await upsertAndActivateServer({ serverUrl });
     await setServerProfileIdentityForUrl(serverUrl, HOME_TARGET.homeServerIdentityId);
@@ -173,6 +162,9 @@ function createRemoteBootstrapSpec(overrides: Partial<SystemTaskSpec> = {}): Sys
 }
 
 describe('runNativeRemoteSshBootstrapTask', () => {
+    beforeEach(() => setRuntimeFetch(createNativeSshHomePayload(HOME_TARGET.applicationUrl).fetch));
+    afterEach(() => resetRuntimeFetch());
+
     it.each(['none', 'ask'] as const)('runs admitted dedicated %s CHECK and APPLY through native SSH', async (adminAccessAtCreation) => {
         const identity = ManagedMachineEnrollmentIdentityV1Schema.parse({
             kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation,
@@ -217,6 +209,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             cancelRequest: vi.fn(async () => undefined),
             exec: async request => {
                 commands.push(request.command);
+                const payloadCommand = readNativeSshPayloadProcessResult(request.command);
+                if (payloadCommand) return { exitCode: payloadCommand.status, stdout: payloadCommand.stdout, stderr: payloadCommand.stderr };
                 if (request.input) {
                     const [requestLine, credentialLine] = request.input.trimEnd().split('\n');
                     const frame = MachineEffectInternalRequestSchema.parse(JSON.parse(requestLine!));
@@ -248,7 +242,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 if (request.command.includes('/etc/os-release')) return { exitCode: 0, stdout: 'ubuntu\nnoble\namd64\n', stderr: '' };
                 if (request.command === 'id -u happier') return { exitCode: 0, stdout: '1001\n', stderr: '' };
                 if (request.command.includes('useradd --create-home')) return { exitCode: 0, stdout: '', stderr: '' };
-                if (request.command.includes(VERIFIED_INSTALL_COMMAND)) return { exitCode: 0, stdout: '', stderr: '' };
                 const installation = readInstallationTextResult(request.command);
                 if (installation) return { exitCode: installation.status, stdout: installation.stdout, stderr: installation.stderr };
                 if (request.command.includes('daemon status')) return { exitCode: 0,
@@ -260,12 +253,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                         machineRegistrationState: 'server-confirmed', machineId: 'native-dedicated-machine' } : {} }), stderr: '' };
             },
         } satisfies NativeSshModule;
-        const installPlacements: Array<string | undefined> = [];
         await expect(runNativeRemoteSshBootstrapTask({ taskId, nativeModule, spec,
-            resolveInstallPlan: async placement => {
-                installPlacements.push(placement.remoteHomeDir);
-                return { ...await resolveInstallPlan(), binaryPath: `${placement.remoteHomeDir ?? '$HOME'}/cli/current/happier` };
-            },
             events: { event: event => { events.push(event); } },
             prompt: async question => {
                 phases.push('prompt');
@@ -274,10 +262,11 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             },
         })).resolves.toMatchObject({ machineId: 'native-dedicated-machine' });
         expect(phases).toEqual(adminAccessAtCreation === 'ask' ? ['check', 'prompt', 'apply'] : ['check', 'apply']);
-        expect(installPlacements).toEqual(['/opt/happier']);
         expect(applied.has('docker-membership')).toBe(true);
         expect(administratorEstablished).toBe(adminAccessAtCreation === 'ask');
-        expect(commands.find(command => command.includes(VERIFIED_INSTALL_COMMAND))).toContain('runuser -u happier');
+        const promotion = commands.find(isNativeSshArchivePromotion);
+        expect(promotion).toContain('runuser -u happier');
+        expect(promotion).toContain('/opt/happier');
         const inventories = commands.filter(command => command.includes('for version_path in'));
         expect(inventories).toHaveLength(2);
         expect(inventories.every(command => command.includes('/opt/happier/cli/versions'))).toBe(true);
@@ -335,7 +324,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             taskId: 'task-a',
             nativeModule,
             spec: createRemoteBootstrapSpec(),
-            resolveInstallPlan,
         })).resolves.toEqual({
             machineId: 'machine-a',
         });
@@ -345,7 +333,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
     });
 
     // Remote shell fixtures (tar + /bin/sh) require a POSIX test host.
-    it.skipIf(process.platform === 'win32')('installs the remote CLI through the verified native self-download hook for fresh remotes', async () => {
+    it.skipIf(process.platform === 'win32')('promotes the verified Home archive and retains the previous CLI on fresh remotes', async () => {
         const nativeModule = {
             getAvailability: () => ({
                 available: true,
@@ -378,11 +366,8 @@ describe('runNativeRemoteSshBootstrapTask', () => {
         const payload = await createCliPayloadFixture();
         const archive = join(home, 'payload.tar.gz');
         await promisify(execFile)('tar', ['-czf', archive, '-C', dirname(payload.payloadRoot), basename(payload.payloadRoot)]);
-        const installCommand = buildRemoteSelfDownloadFirstPartyInstallCommand({
-            componentId: 'happier-cli', versionId: '1.2.3',
-            archive: { name: 'payload.tar.gz', url: pathToFileURL(archive).href },
-            expectedSha256: createHash('sha256').update(await readFile(archive)).digest('hex'),
-        });
+        const homePayload = createNativeSshHomePayload(HOME_TARGET.applicationUrl, new Uint8Array(await readFile(archive)));
+        setRuntimeFetch(homePayload.fetch);
         const commandRunner = {
             runJsonCommand: vi.fn(async ({ command }: { command: string }) => {
                 commands.push(command);
@@ -403,7 +388,7 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 }
                 return { ok: true, data: {} };
             }),
-            runTextCommand: vi.fn(async ({ command }: { command: string }) => {
+            runTextCommand: vi.fn(async ({ command, input }: { command: string; input?: string }) => {
                 commands.push(command);
                 if (command.includes('uname -s')) {
                     return {
@@ -412,10 +397,12 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                         stderr: '',
                     };
                 }
-                if (command === installCommand) {
+                if (isNativeSshArchivePromotion(command)) {
                     expect((await readdir(join(installRoot, 'versions'))).sort()).toEqual(['1.0.0', '1.1.0']);
                 }
-                const result = await promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, HOME: home } });
+                const run = promisify(execFile)('/bin/sh', ['-c', command], { env: { ...process.env, HOME: home } });
+                run.child.stdin?.end(input);
+                const result = await run;
                 return { status: 0, ...result };
             }),
         };
@@ -426,17 +413,11 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 nativeModule,
                 spec: createRemoteBootstrapSpec(),
                 commandRunner,
-                resolveInstallPlan: async () => ({
-                    binaryPath: '$HOME/.happier/cli/current/happier',
-                    versionId: '1.2.3',
-                    source: 'https://downloads.example.test/happier.tar.gz',
-                    command: installCommand,
-                }),
             })).resolves.toEqual({
                 machineId: 'machine-fresh',
             });
-            expect(commands).toContain(installCommand);
-            expect((await readdir(join(installRoot, 'versions'))).sort()).toEqual(['1.1.0', '1.2.3']);
+            expect(commands.some(isNativeSshArchivePromotion)).toBe(true);
+            expect((await readdir(join(installRoot, 'versions'))).sort()).toEqual(['1.1.0', homePayload.versionId]);
             expect(await readFile(join(installRoot, 'previous', 'happier'), 'utf8')).toBe('1.1.0');
         } finally { await payload.cleanup(); await rm(home, { recursive: true, force: true }); }
     });
@@ -496,7 +477,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
             nativeModule,
             spec: createRemoteBootstrapSpec(),
             commandRunner,
-            resolveInstallPlan,
             prompt: async () => ({ approved: true }),
             approveLocalAuthRequest,
         })).resolves.toEqual({
@@ -577,7 +557,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                 },
             }),
             commandRunner,
-            resolveInstallPlan,
         })).resolves.toEqual({
             machineId: 'machine-relay',
             relayRuntime: {
@@ -689,7 +668,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     },
                 }),
                 commandRunner,
-                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).resolves.toMatchObject({ machineId: 'machine-paired' });
             expect(boundary.approvals).toEqual([{
@@ -712,7 +690,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     },
                 }),
                 commandRunner,
-                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).rejects.toMatchObject({ code: 'home_identity_mismatch' });
             expect(boundary.approvals).toHaveLength(1);
@@ -814,7 +791,6 @@ describe('runNativeRemoteSshBootstrapTask', () => {
                     },
                 }),
                 commandRunner,
-                resolveInstallPlan,
                 prompt: async () => ({ approved: true }),
             })).resolves.toMatchObject({ machineId: 'machine-paired' });
 

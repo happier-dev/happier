@@ -1,17 +1,17 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NativeSshExecRequest, NativeSshModule } from '@happier-dev/ssh-native';
 import { computeSshHostKeyFingerprint } from '@happier-dev/protocol/ssh/hostTrust';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 
 import { runNativeRemoteSshBootstrapTask } from './nativeTask';
 import { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { createNativeSshHomePayload, isNativeSshArchivePromotion, readNativeSshPayloadProcessResult } from './nativeSshHomePayload.testkit';
 
 afterEach(() => { resetRuntimeFetch(); vi.unstubAllEnvs(); });
 
 const HOST_KEY = '[guest.example]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const OTHER_HOST_KEY = '[guest.example]:2222 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC';
 const fingerprint = (line: string) => computeSshHostKeyFingerprint(line.split(' ')[2]!);
-const INSTALL_COMMAND = 'install verified native CLI';
 const MANAGED_HOME_TARGET = resolveHomeTargetFromDescriptor({ authority: 'trusted_enrollment', descriptor: {
     v: 1, homeServerIdentityId: 'srv_home', canonicalServerUrl: 'https://home.example', revision: 1,
     endpoints: [{ kind: 'https', url: 'https://home.example' }],
@@ -53,12 +53,10 @@ function createNativeBoundary(input: Readonly<{ actualFingerprint?: string; fail
                 return { exitCode: 0, stdout: request.command.includes('.minisig') ? 'invalid signature'
                     : `${'c'.repeat(64)}  happier-v0.3.4-linux-x64.tar.gz\n`, stderr: '' };
             }
-            if (request.command.includes('for version_path in')) {
-                return { exitCode: 0, stdout: 'current=\nprevious=\n', stderr: '' };
-            }
-            if (request.command === INSTALL_COMMAND) {
-                phases.push('install');
-                return { exitCode: input.failInstall ? 1 : 0, stdout: '', stderr: '' };
+            const payloadCommand = readNativeSshPayloadProcessResult(request.command, input.failInstall ? 1 : 0);
+            if (payloadCommand) {
+                if (isNativeSshArchivePromotion(request.command)) phases.push('install');
+                return { exitCode: payloadCommand.status, stdout: payloadCommand.stdout, stderr: payloadCommand.stderr };
             }
             phases.push('remote-command');
             return { exitCode: 0, stdout: JSON.stringify({ ok: true, data: request.command.includes('auth status')
@@ -70,24 +68,23 @@ function createNativeBoundary(input: Readonly<{ actualFingerprint?: string; fail
     return { nativeModule, requests, phases };
 }
 
-const resolveInstallPlan = async () => ({ binaryPath: '$HOME/.happier/cli/current/happier', versionId: '1.2.3',
-    source: 'https://downloads.example/cli.tar.gz', command: INSTALL_COMMAND });
-
 describe('native SSH bootstrap host pinning', () => {
-    it('refuses a managed guest when native SSH cannot transfer the Home payload', async () => {
-        setRuntimeFetch(async () => Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } }));
+    beforeEach(() => setRuntimeFetch(createNativeSshHomePayload(MANAGED_HOME_TARGET.applicationUrl).fetch));
+
+    it('refuses a managed guest when Home has no archive for the native target', async () => {
+        setRuntimeFetch(async url => {
+            expect(String(url)).toBe('https://home.example/v1/features');
+            return Response.json({ capabilities: { guestCli: { source: 'home-payload', line: '0.3', channel: 'stable' } } });
+        });
         const boundary = createNativeBoundary();
         const spec = createSpec({ trustedHostKey: HOST_KEY });
-        let publicResolutions = 0;
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'managed-home-payload', ...boundary,
             spec: { ...spec, params: { ...spec.params, homeTarget: MANAGED_HOME_TARGET, managedEnrollment: {
                 homeId: 'srv_home', managedId: 'managed', requestId: 'request', expectedIntentRevision: 1,
                 controller: { machineId: 'controller', installationId: 'installation' },
                 resource: { contributionRef: { pluginId: 'test.provisioner', localId: 'vm' }, schemaVersion: 1, value: { nativeId: 'guest' } },
             } } },
-            resolveInstallPlan: async () => { publicResolutions++; return resolveInstallPlan(); },
         })).rejects.toMatchObject({ code: 'guest_payload_missing' });
-        expect(publicResolutions).toBe(0);
         expect(boundary.phases).not.toContain('install');
     });
 
@@ -127,9 +124,8 @@ describe('native SSH bootstrap host pinning', () => {
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-pin', ...boundary,
             spec: createSpec({ trustedHostKey: HOST_KEY,
                 ...(withEvidence ? { hostKeyEvidence: { hostKey: HOST_KEY, fingerprint: fingerprint(HOST_KEY) } } : {}) }),
-            resolveInstallPlan,
         })).resolves.toEqual({ machineId: 'native-pinned-machine' });
-        expect(boundary.requests.some(request => request.command === INSTALL_COMMAND)).toBe(true);
+        expect(boundary.requests.some(request => isNativeSshArchivePromotion(request.command))).toBe(true);
         expect(boundary.requests.some(request => request.command.includes('auth status'))).toBe(true);
         expect(boundary.requests.every(request => request.hostKeyVerification.decision === 'accept-once'
             && request.hostKeyVerification.fingerprintSha256 === fingerprint(HOST_KEY))).toBe(true);
@@ -140,7 +136,7 @@ describe('native SSH bootstrap host pinning', () => {
         const approveLocalAuthRequest = vi.fn(async () => undefined);
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-pin-substitution', ...boundary,
             spec: createSpec({ trustedHostKey: HOST_KEY, hostKeyEvidence: { hostKey: HOST_KEY, fingerprint: fingerprint(HOST_KEY) } }),
-            resolveInstallPlan, approveLocalAuthRequest,
+            approveLocalAuthRequest,
         })).rejects.toThrow('native_ssh_host_key_mismatch');
         expect(approveLocalAuthRequest).not.toHaveBeenCalled();
         expect(boundary.phases).toEqual([]);
@@ -153,7 +149,7 @@ describe('native SSH bootstrap host pinning', () => {
     ])('rejects inconsistent supplied trust before native execution: $code', async ({ code, ...ssh }) => {
         const boundary = createNativeBoundary();
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-pin-invalid', ...boundary,
-            spec: createSpec(ssh), resolveInstallPlan,
+            spec: createSpec(ssh),
         })).rejects.toMatchObject({ code });
         expect(boundary.requests).toEqual([]);
     });
@@ -162,7 +158,6 @@ describe('native SSH bootstrap host pinning', () => {
         const boundary = createNativeBoundary();
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-unpinned', ...boundary,
             spec: createSpec(withEvidence ? { hostKeyEvidence: { hostKey: HOST_KEY, fingerprint: fingerprint(HOST_KEY) } } : {}),
-            resolveInstallPlan,
         })).resolves.toEqual({ machineId: 'native-pinned-machine' });
         expect(boundary.requests.every(request => request.hostKeyVerification.decision === 'prompt')).toBe(true);
     });
@@ -170,7 +165,7 @@ describe('native SSH bootstrap host pinning', () => {
     it('settles the private installation hook after shared install and before remote enrollment', async () => {
         const boundary = createNativeBoundary();
         await runNativeRemoteSshBootstrapTask({ taskId: 'native-installed-hook', ...boundary,
-            spec: createSpec({ trustedHostKey: HOST_KEY }), resolveInstallPlan,
+            spec: createSpec({ trustedHostKey: HOST_KEY }),
             onInstalled: async () => { boundary.phases.push('installed'); },
         });
         expect(boundary.phases.slice(0, 3)).toEqual(['install', 'installed', 'remote-command']);
@@ -180,8 +175,8 @@ describe('native SSH bootstrap host pinning', () => {
         const boundary = createNativeBoundary({ failInstall: true });
         const onInstalled = vi.fn(async () => undefined);
         await expect(runNativeRemoteSshBootstrapTask({ taskId: 'native-install-failure', ...boundary,
-            spec: createSpec({ trustedHostKey: HOST_KEY }), resolveInstallPlan, onInstalled,
-        })).rejects.toMatchObject({ code: 'native_ssh_remote_cli_install_failed' });
+            spec: createSpec({ trustedHostKey: HOST_KEY }), onInstalled,
+        })).rejects.toMatchObject({ code: 'remote_command_failed' });
         expect(onInstalled).not.toHaveBeenCalled();
         expect(boundary.phases).toEqual(['install']);
     });
