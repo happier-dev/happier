@@ -1167,7 +1167,9 @@ export function describeApprovalActionFields(input: Readonly<{
       })) } : {}),
       ...(reference ? { reference } : {}),
       ...(values.length === 1 && typeof values[0] === 'boolean' ? { valueFormat: 'boolean' as const }
-        : codePaths.includes(field.path) ? { valueFormat: 'code' as const } : {}),
+        : codePaths.includes(field.path) ? { valueFormat: 'code' as const }
+        // An epoch moment (`expiresAt`) reads as a date and time; the exact literal stays in `value`.
+        : values.length === 1 && isApprovalTimestamp(field.path.split('.').at(-1), values[0]) ? { valueFormat: 'timestamp' as const } : {}),
       ...(entries ? { entries } : {}),
       ...(technical ? { technical: true as const } : {}),
     });

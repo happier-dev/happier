@@ -133,4 +133,15 @@ describe('Action arguments read by meaning', () => {
     expect(visible(presentation.rows).map((row) => row.path)).not.toContain('shareId');
     expect(presentation.rows.filter((row) => row.kind === 'value' && row.technical).map((row) => row.path)).toContain('shareId');
   });
+  it('reads an epoch moment as a date and time', () => {
+    const rows = describeApprovalActionFields({
+      actionId: 'artifact.public_link.create',
+      actionArgs: { artifactId: 'pricing-notes', expiresAt: 1795400000000, maxUses: 50, isConsentRequired: true, audience: 'anonymous' },
+    }).rows;
+    const row = (path: string) => rows.find((entry): entry is Extract<ApprovalActionFieldRow, { kind: 'value' }> =>
+      entry.kind === 'value' && entry.path === path);
+    // The exact literal stays; the client formats it as a date and time.
+    expect(row('expiresAt')).toMatchObject({ value: '1795400000000', valueFormat: 'timestamp' });
+    expect(row('maxUses')?.valueFormat).toBeUndefined();
+  });
 });
