@@ -89,6 +89,9 @@ import { ConnectedServiceRefreshCoordinator } from '@/daemon/connectedServices/r
 import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 import { createHttpTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { registerTeamRoutes } from '../../../server/sources/app/teams/registerTeamRoutes';
@@ -2171,6 +2174,48 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         expect(client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: { host: 'h', platform: 'p' } });
         expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 1);
         await client.shutdown();
+    });
+
+    it('reports the enrolled Machine’s Account-mode recovery when an unacknowledged conversion retires its RPC codec', async () => {
+        const machine: Machine = {
+            id: 'machine-1', encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy',
+            metadata: { host: 'host', platform: 'linux', happyCliVersion: '0.0.0', homeDir: '/home', happyHomeDir: '/home/.happier', happyLibDir: '/lib' },
+            metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+        };
+        const socket = createMachineSocket();
+        bindApiSessionSocketMock(mockIo, socket);
+        mockAccountGet(async url => {
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
+            if (url.includes('/v2/changes')) return { status: 200, data: {
+                changes: [{ cursor: 1, kind: 'machine', entityId: machine.id, changedAt: 1, hint: null }], nextCursor: 1,
+            } };
+            if (url.endsWith(`/v1/machines/${machine.id}`)) return { status: 200, data: { machine: {
+                id: machine.id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+                metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 1,
+            } } };
+            throw new Error(`unexpected url: ${url}`);
+        });
+        const client = await createRefreshingMachineClient('token', machine);
+        const rpc = client.getMachineRoleRpcHandlerManager();
+        const handler = vi.fn(() => ({ ok: true }));
+        rpc.registerHandler('fixture-work', handler);
+        const request = { method: `${machine.id}:fixture-work`, params: { t: 'plain', v: {} } };
+        try {
+            expect(client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready' });
+            client.onConnectedServicesProjection(async () => {});
+            client.connect();
+            await vi.waitFor(() => expect(socket.connect).toHaveBeenCalled());
+            socket.trigger('connect');
+            await vi.waitFor(() => expect(client.getMachineMetadataSnapshot()).toEqual({ status: 'locked' }));
+
+            expect(await rpc.handleRequest(request, undefined, 'authenticated_home_socket'))
+                .toMatchObject({ errorCode: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED });
+            expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
+            expect(handler).not.toHaveBeenCalled();
+        } finally {
+            await client.shutdown();
+        }
     });
 
     it('reports account settings version hints from /v2/changes to the refresh callback', async () => {

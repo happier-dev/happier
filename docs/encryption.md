@@ -3130,6 +3130,12 @@ Custody becomes historical only through this device:
   plain. A running daemon re-reads custody on its next fresh read and re-admits at
   its next reconnect or restart.
 
+An enrolled daemon that detects this refusal while refreshing its Machine
+snapshot retires its RPC codec. On the current authenticated Home transport it
+returns `account_mode_downgrade_unverified` as a content-free RPC refusal so the
+Machine's presentation can surface recovery. The retired codec cannot open or
+publish Machine content.
+
 Removing the keys stays the confirmed **Forget the old encryption key** Action.
 
 ### Device-local secret sealing

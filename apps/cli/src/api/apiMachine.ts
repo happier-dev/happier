@@ -151,7 +151,7 @@ import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutati
 import { recoverSessionMessageRepliesForMachine } from '@/session/services/sessionMessageReply';
 
 import { MachineMetadata, DaemonState, Machine, Update, UpdateMachineBody } from './types';
-import { callSocketRpc, isSocketIoAckTimeoutError, markRpcRequestDisposition, type RpcRequestDisposition, type SocketRpcContent } from '@happier-dev/sync-client';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, callSocketRpc, isAccountModeDowngradeUnverifiedError, isSocketIoAckTimeoutError, markRpcRequestDisposition, type RpcRequestDisposition, type SocketRpcContent } from '@happier-dev/sync-client';
 import type { SessionActionRpcTransport } from '@/session/actions/createCliActionDeps';
 import { readRpcErrorCode, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -6708,11 +6708,11 @@ export class ApiMachineClient {
         }
     }
 
-    private retireMachineContent(): void {
+    private retireMachineContent(refusal?: typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED): void {
         const serviceWatchesChanged = this.machineContentReady;
         this.heldOwnMachineChangeCursor = undefined;
         this.machineContentContext = { codec: this.machineContentCodec, ready: false };
-        this.rpcHandlerManager.retireEncryptionContext();
+        this.rpcHandlerManager.retireEncryptionContext(refusal);
         this.notifyMachineMetadataChanged({ serviceWatchesChanged });
     }
 
@@ -6768,7 +6768,9 @@ export class ApiMachineClient {
             const failure = classifyServerEndpointError(error);
             if (!failure.retryable
                 && previousContext === this.machineContentContext
-                && transportGeneration === this.activeTransportGeneration) this.retireMachineContent();
+                && transportGeneration === this.activeTransportGeneration) {
+                this.retireMachineContent(isAccountModeDowngradeUnverifiedError(error) ? ACCOUNT_MODE_DOWNGRADE_UNVERIFIED : undefined);
+            }
             logger.debug('[API MACHINE] Failed to refresh machine snapshot', {
                 error: serializeAxiosErrorForLog(error),
             });

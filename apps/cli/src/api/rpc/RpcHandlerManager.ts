@@ -16,7 +16,7 @@ import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessio
 import { SessionGoalControlFailureV1Schema, type SessionGoalControlFailureV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { createHash, randomUUID } from 'node:crypto';
 import { decodeBase64, encodeBase64, encrypt, decrypt } from '@/api/encryption';
-import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import type {
     RpcHandler,
     RpcHandlerMap,
@@ -225,7 +225,7 @@ export class RpcHandlerManager {
     private readonly scopePrefix: string;
     private readonly scopeKind: RpcHandlerConfig['scopeKind'];
     private readonly localMachineId: string | null;
-    private rpcContent: SocketRpcContent | null;
+    private rpcContent: SocketRpcContent | typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED | null;
     private readonly authorizeRequest: RpcHandlerConfig['authorizeRequest'];
     private readonly resolveSessionDecisionContext: RpcHandlerConfig['resolveSessionDecisionContext'];
     private readonly resolveSessionBrowserContent: RpcHandlerConfig['resolveSessionBrowserContent'];
@@ -297,8 +297,8 @@ export class RpcHandlerManager {
         this.rpcContent = this.createEncryptionContent(context);
     }
 
-    retireEncryptionContext(): void {
-        this.rpcContent = null;
+    retireEncryptionContext(refusal: typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED | null = null): void {
+        this.rpcContent = refusal;
     }
 
     private createEncryptionContent(context: Pick<RpcHandlerConfig, 'encryptionMode' | 'encryptionKey' | 'encryptionVariant'>): SocketRpcContent {
@@ -488,9 +488,12 @@ export class RpcHandlerManager {
     private async dispatchRequest(request: RpcRequest, diagnostic: RequestDiagnostic, requestStartedAtMs: number, hasDiagnosticTrace: boolean, source?: RpcRequestSource, localActionContext?: RpcLocalActionContext): Promise<unknown> {
         // Admission captures its reply codec; later key adoption only affects new requests.
         const admittedContent = this.rpcContent;
-        if (!admittedContent) {
-            diagnostic.outcomeCode = RPC_ERROR_CODES.UPDATE_REQUIRED;
-            return { error: 'RPC encryption material is unavailable', errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED };
+        if (!admittedContent || admittedContent === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED) {
+            // Only the current authenticated Home carrier receives the content-free custody refusal.
+            const errorCode = source === 'authenticated_home_socket' && admittedContent === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED
+                ? admittedContent : RPC_ERROR_CODES.UPDATE_REQUIRED;
+            diagnostic.outcomeCode = errorCode;
+            return { error: 'RPC encryption material is unavailable', errorCode };
         }
         // The same-OS-user local channel carries the packet in the plain codec: both ends already hold
         // the Session key and the hop never leaves the machine. Handlers keep the Session's content mode.
@@ -1460,7 +1463,7 @@ export class RpcHandlerManager {
         const prefixedMethod = this.getPrefixedMethod(method);
         const requestStartedAtMs = Date.now();
         // In-process admission fixes the content mode at invocation, like a dispatched call.
-        const admittedContentMode = this.rpcContent?.mode;
+        const admittedContentMode = this.rpcContent === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED ? undefined : this.rpcContent?.mode;
         const callerInputConstraints = options?.rpcContext?.callerInputConstraints
             ?? options?.localActionContext?.callerInputConstraints;
         // Admission and the native handler consume the same host-private authority.
