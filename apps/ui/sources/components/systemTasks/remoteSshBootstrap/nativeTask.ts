@@ -39,6 +39,7 @@ import {
 import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUrlCanonical';
 import { isLoopbackHostname } from '@/sync/domains/server/url/serverUrlClassification';
 import { randomUUID } from '@/platform/randomUUID';
+import { t } from '@/text';
 import { runtimeFetch } from '@/utils/system/runtimeFetch';
 import {
     NATIVE_SSH_BOOTSTRAP_TASK_KIND,
@@ -364,6 +365,9 @@ export async function approveNativeLocalAuthRequest(params: Readonly<{
         });
     } finally {
         await transportResolution.transport.close();
+    }
+    if (result === 'plain_pairing_disabled') {
+        throw new SystemTaskExecutionError(result, t('modals.terminalPlainPairingDisabled'));
     }
     if (result === 'not_found') {
         throw new SystemTaskExecutionError(

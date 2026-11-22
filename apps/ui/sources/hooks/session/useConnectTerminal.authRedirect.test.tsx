@@ -15,6 +15,8 @@ import {
 import { AccountEncryptionCurrentnessResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { approveTerminalPairing } from '@/auth/terminal/approveTerminalPairing';
+import { resolveHomeEnrollmentTransport } from '@/auth/enrollment/homeEnrollmentTransport';
 import type { IModal } from '@/modal';
 import type { NativeIrohModule } from '@happier-dev/iroh-native';
 import { buildTerminalConnectLinks } from '@happier-dev/cli-common/links';
@@ -541,6 +543,31 @@ describe('useConnectTerminal unauthenticated flow', () => {
         expect(reads.length).toBeGreaterThan(0);
         expect(reads.every(read => read.token === home.credentials?.token)).toBe(true);
         expect(boundary.requestsFor('/v1/features').length).toBeGreaterThan(0);
+    });
+
+    it('explains the Home policy refusal when an admitted Plain Account pairs a Machine', async () => {
+        const credentials = tokenCredentials();
+        const home = await addHome({ credentials, plaintextStorage: true, keylessAccounts: false });
+        const hook = await renderHook(home);
+        const p = pairing();
+        const target = await resolveHomeEnrollmentTransport(descriptor(home.url, home.identity));
+        expect(target.ok).toBe(true);
+        if (!target.ok) throw new Error(target.reason);
+        const ownerResult = await approveTerminalPairing({
+            target: target.transport,
+            targetCredentials: credentials,
+            requesterPublicKey: p.terminalPublicKey,
+            pairingContext: p,
+            supportsTokenOnly: true,
+        }).catch(() => 'unexpected_exception').finally(() => target.transport.close());
+        const approved = await hook.approveLink(link(p));
+
+        expect(approved).toBe(false);
+        expect(posts()).toHaveLength(0);
+        expect({ ownerResult, alert: modalAlertAsyncSpy.mock.lastCall?.[1] }).toEqual({
+            ownerResult: 'plain_pairing_disabled',
+            alert: 'modals.terminalPlainPairingDisabled',
+        });
     });
 
     it.each([

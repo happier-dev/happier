@@ -8179,6 +8179,10 @@ never choose or downgrade the material. Existing Account recovery credentials re
 own storage boundary, and terminal pairing still neither reads nor writes a raw or unbound legacy
 response.
 
+For an admitted Plain Account, terminal approval requires the target Home’s Plain storage and
+keyless Account features. If either is disabled, the approver returns `plain_pairing_disabled`
+before issuance. Enable both features on that Home and start a new pairing request.
+
 ## External Sessions secure refresh and publication
 
 In 0.3 development, historical import preparation uses the existing Session

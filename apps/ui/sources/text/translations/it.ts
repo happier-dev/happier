@@ -15941,6 +15941,7 @@ settingsSession: {
       `Sei sicuro di voler disconnettere ${service} dal tuo account?`,
     disconnect: "Disconnetti",
     failedToConnectTerminal: "Impossibile connettere il terminale",
+    terminalPlainPairingDisabled: "Questa Home non consente di associare macchine ad account senza crittografia. Chiedi all’amministratore della Home di abilitare l’archiviazione non crittografata e gli account senza chiavi, poi avvia di nuovo l’associazione.",
     cameraPermissionsRequiredToConnectTerminal:
       "Sono necessarie le autorizzazioni della fotocamera per connettere il terminale",
     failedToLinkDevice: "Impossibile collegare il dispositivo",

@@ -15556,6 +15556,7 @@ settingsSession: {
       `Czy na pewno chcesz rozłączyć ${service} ze swojego konta?`,
     disconnect: "Rozłącz",
     failedToConnectTerminal: "Nie udało się połączyć terminala",
+    terminalPlainPairingDisabled: "Ten Home nie pozwala parować maszyn z kontami bez szyfrowania. Poproś administratora Home o włączenie pamięci masowej bez szyfrowania i kont bez klucza, a potem ponownie rozpocznij parowanie.",
     cameraPermissionsRequiredToConnectTerminal:
       "Uprawnienia do kamery są wymagane do połączenia terminala",
     failedToLinkDevice: "Nie udało się połączyć urządzenia",

@@ -12851,6 +12851,7 @@ settingsSession: {
             `您確定要中斷 ${service} 與您帳戶的連線嗎？`,
         disconnect: '中斷連線',
         failedToConnectTerminal: '連線終端失敗',
+        terminalPlainPairingDisabled: '此 Home 不允許機器與未加密的帳戶配對。請讓 Home 管理員啟用明文儲存和無金鑰帳戶，然後重新開始配對。',
         cameraPermissionsRequiredToConnectTerminal: '連線終端需要相機權限',
         failedToLinkDevice: '連結裝置失敗',
         cameraPermissionsRequiredToScanQr: '掃描 QR Code 需要相機權限',

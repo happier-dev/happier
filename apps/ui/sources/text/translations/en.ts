@@ -18898,6 +18898,7 @@ const enModals = {
     `Are you sure you want to disconnect ${service} from your account?`,
   disconnect: 'Disconnect',
   failedToConnectTerminal: 'Failed to connect terminal',
+  terminalPlainPairingDisabled: 'This Home doesn’t allow Machines to pair with Plain Accounts. Ask your Home admin to enable Plain storage and keyless Accounts, then start pairing again.',
   cameraPermissionsRequiredToConnectTerminal:
     'Camera permissions are required to connect terminal',
   failedToLinkDevice: 'Failed to link device',

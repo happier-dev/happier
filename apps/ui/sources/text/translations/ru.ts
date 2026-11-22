@@ -15550,6 +15550,7 @@ settingsSession: {
       `Вы уверены, что хотите отключить ${service} от вашего аккаунта?`,
     disconnect: "Отключить",
     failedToConnectTerminal: "Не удалось подключить терминал",
+    terminalPlainPairingDisabled: "В этом Home машины нельзя привязать к аккаунтам без шифрования. Попросите администратора Home включить хранение без шифрования и аккаунты без ключей, затем начните привязку заново.",
     cameraPermissionsRequiredToConnectTerminal:
       "Для подключения терминала требуется доступ к камере",
     failedToLinkDevice: "Не удалось связать устройство",

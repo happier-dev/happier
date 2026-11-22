@@ -15601,6 +15601,7 @@ settingsSession: {
       `Veux-tu vraiment déconnecter ${service} de ton compte ?`,
     disconnect: "Déconnecter",
     failedToConnectTerminal: "Échec de la connexion du terminal",
+    terminalPlainPairingDisabled: "Ce Home ne permet pas d’associer des machines à des comptes sans chiffrement. Demandez à l’administrateur du Home d’activer le stockage non chiffré et les comptes sans clé, puis relancez l’association.",
     cameraPermissionsRequiredToConnectTerminal:
       "L’accès à la caméra est nécessaire pour connecter le terminal",
     failedToLinkDevice: "Échec de la liaison de l’appareil",

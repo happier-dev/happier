@@ -14765,6 +14765,7 @@ settingsSession: {
             `Segur que vols desconnectar ${service} del teu compte?`,
         disconnect: 'Desconnecta',
         failedToConnectTerminal: 'Ha fallat connectar el terminal',
+        terminalPlainPairingDisabled: 'Aquesta Home no permet vincular màquines amb comptes sense xifratge. Demana a l’administrador que habiliti l’emmagatzematge sense xifratge i els comptes sense clau, i torna a iniciar la vinculació.',
         cameraPermissionsRequiredToConnectTerminal: 'Es requereixen permisos de càmera per connectar el terminal',
         failedToLinkDevice: 'Ha fallat enllaçar el dispositiu',
         cameraPermissionsRequiredToScanQr: 'Es requereixen permisos de càmera per escanejar codis QR',

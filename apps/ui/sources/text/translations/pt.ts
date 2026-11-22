@@ -15837,6 +15837,7 @@ settingsSession: {
       `Tem certeza de que deseja desconectar ${service} da sua conta?`,
     disconnect: "Desconectar",
     failedToConnectTerminal: "Falha ao conectar terminal",
+    terminalPlainPairingDisabled: "Este Home não permite emparelhar máquinas com contas sem criptografia. Peça ao administrador do Home para ativar o armazenamento sem criptografia e as contas sem chave e, em seguida, reinicie o emparelhamento.",
     cameraPermissionsRequiredToConnectTerminal:
       "Permissões de câmera são necessárias para conectar terminal",
     failedToLinkDevice: "Falha ao vincular dispositivo",

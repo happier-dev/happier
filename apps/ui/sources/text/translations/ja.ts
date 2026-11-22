@@ -16005,6 +16005,7 @@ settingsSession: {
       `${service}をアカウントから切断してもよろしいですか？`,
     disconnect: "切断",
     failedToConnectTerminal: "ターミナルの接続に失敗しました",
+    terminalPlainPairingDisabled: "この Home では、暗号化なしのアカウントにマシンをペアリングできません。Home の管理者に暗号化なしのストレージと鍵なしアカウントを有効にしてもらい、ペアリングをやり直してください。",
     cameraPermissionsRequiredToConnectTerminal:
       "ターミナルの接続にはカメラの権限が必要です",
     failedToLinkDevice: "デバイスのリンクに失敗しました",

@@ -15727,6 +15727,7 @@ settingsSession: {
       `¿Seguro que quieres desconectar ${service} de tu cuenta?`,
     disconnect: "Desconectar",
     failedToConnectTerminal: "Falló al conectar terminal",
+    terminalPlainPairingDisabled: "Este Home no permite vincular máquinas con cuentas sin cifrado. Pide a la administración del Home que habilite el almacenamiento sin cifrado y las cuentas sin clave, y vuelve a iniciar la vinculación.",
     cameraPermissionsRequiredToConnectTerminal:
       "Se requieren permisos de cámara para conectar terminal",
     failedToLinkDevice: "Falló al vincular dispositivo",

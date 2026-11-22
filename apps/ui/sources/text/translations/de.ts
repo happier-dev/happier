@@ -15818,6 +15818,7 @@ settingsSession: {
             `Willst du wirklich trennen: ${service} von deinem Konto?`,
         disconnect: 'Trennen',
         failedToConnectTerminal: 'Das Terminal ließ sich nicht verbinden',
+        terminalPlainPairingDisabled: 'Auf diesem Home können Maschinen nicht mit unverschlüsselten Konten gekoppelt werden. Bitte die Home-Administration, unverschlüsselten Speicher und Konten ohne Schlüssel zu aktivieren, und starte dann die Kopplung erneut.',
         cameraPermissionsRequiredToConnectTerminal: 'Für die Verbindung mit dem Terminal ist die Kamera-Berechtigung nötig',
         failedToLinkDevice: 'Das Gerät ließ sich nicht verknüpfen',
         cameraPermissionsRequiredToScanQr: 'Zum Scannen von QR-Codes ist die Kamera-Berechtigung nötig',

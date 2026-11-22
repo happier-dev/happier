@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useAuth } from '@/auth/context/AuthContext';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -200,6 +201,11 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
                             supportsTokenOnly: parsed.supportsTokenOnly === true,
                             ...(signal ? { signal } : {}),
                         });
+                        if (result === 'plain_pairing_disabled') {
+                            throw createActionExecuteFailureError({
+                                ok: false, errorCode: result, error: result, effectAttempted: false,
+                            });
+                        }
                         if (result === 'approved_without_team_access') {
                             // The notice belongs to this local approval receipt. The Action still completed.
                             restrictedTeamAccessUnavailable = true;
@@ -263,7 +269,10 @@ export function useConnectTerminal(options?: UseConnectTerminalOptions) {
             return false;
         } catch (e) {
             setIsLoading(false);
-            await Modal.alertAsync(t('common.error'), t('modals.failedToConnectTerminal'), [{ text: t('common.ok') }]);
+            const message = parseActionExecuteFailure(e)?.errorCode === 'plain_pairing_disabled'
+                ? t('modals.terminalPlainPairingDisabled')
+                : t('modals.failedToConnectTerminal');
+            await Modal.alertAsync(t('common.error'), message, [{ text: t('common.ok') }]);
             options?.onError?.(e);
             return false;
         } finally {

@@ -15233,6 +15233,7 @@ settingsSession: {
       `您确定要断开 ${service} 与您账户的连接吗？`,
     disconnect: "断开连接",
     failedToConnectTerminal: "连接终端失败",
+    terminalPlainPairingDisabled: "此 Home 不允许机器与未加密的账户配对。请让 Home 管理员启用明文存储和无密钥账户，然后重新开始配对。",
     cameraPermissionsRequiredToConnectTerminal: "连接终端需要相机权限",
     failedToLinkDevice: "链接设备失败",
     cameraPermissionsRequiredToScanQr: "扫描二维码需要相机权限",

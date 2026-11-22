@@ -35,7 +35,7 @@ export async function approveTerminalPairing(params: Readonly<{
     targetCredentials: AuthCredentials;
     supportsTokenOnly: boolean;
     signal?: AbortSignal;
-}>): Promise<AuthApproveResult> {
+}>): Promise<AuthApproveResult | 'plain_pairing_disabled'> {
     params.signal?.throwIfAborted();
     const currentness = await resolveTerminalPairingCurrentness(params);
     const material = await resolveProvisioningMaterial(params.targetCredentials, currentness);
@@ -58,7 +58,7 @@ export async function approveTerminalPairing(params: Readonly<{
             }),
         ]);
         if (!plaintextStorageEnabled || !keylessAccountsEnabled) {
-            throw new Error('Token-only terminal pairing is not permitted by the target Home policy');
+            return 'plain_pairing_disabled';
         }
         sealedResponse = buildTerminalTokenOnlyResponseV3({
             terminalEphemeralPublicKey: params.requesterPublicKey,
