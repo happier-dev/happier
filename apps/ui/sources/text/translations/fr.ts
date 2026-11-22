@@ -17346,6 +17346,7 @@ settingsSession: {
             phase_compaction: "Compactage",
             phase_unknown: "Outil inconnu",
             linesKeptPartial: "partiel",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Lignes conservées",
             linesKeptMethod: "Comparaison des fichiers modifiés restés identiques ; les valeurs partielles sont un minimum.",
             phasesCaption: "Plein : travail, hachuré : attente.",

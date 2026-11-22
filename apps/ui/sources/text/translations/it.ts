@@ -17843,6 +17843,7 @@ settingsSession: {
             phase_compaction: "Compattazione",
             phase_unknown: "Strumento sconosciuto",
             linesKeptPartial: "parziale",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Righe conservate",
             linesKeptMethod: "Confronto dei file modificati rimasti invariati; i conteggi parziali sono un minimo.",
             phasesCaption: "Pieno è lavoro, tratteggiato è attesa.",

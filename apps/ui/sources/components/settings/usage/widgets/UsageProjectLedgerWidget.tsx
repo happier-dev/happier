@@ -107,7 +107,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     );
   const density = compact ? 'compact' : 'comfortable';
   const projectMarks = (row: UsageWorkProjectRow) => (
-    <UsageWorkMarks agentIds={row.agentIds} providers={row.providers} serverId={props.serverId} testID={props.testID} />
+    <UsageWorkMarks fitWidth agentIds={row.agentIds} providers={row.providers} serverId={props.serverId} testID={props.testID} />
   );
   // The amount alone in the figure column; a basis that differs from the whole's is said on the row's quiet line.
   const sameCurrency = (moneyBasis: UsageWorkProjectRow['moneyBasis']) => props.query.metric === 'cost' && moneyBasis !== null
@@ -238,7 +238,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               />
             ))}
             rowTrails={row.outcomes.map((outcome) => (
-              <UsageWorkMarks
+              <UsageWorkMarks fitWidth
                 agentIds={outcome.agentIds}
                 providers={outcome.providers}
                 serverId={props.serverId}
@@ -277,7 +277,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               <UsageWorkRowLead icon="git-branch" />
             ))}
             rowTrails={row.branches.map((branch) => (
-              <UsageWorkMarks
+              <UsageWorkMarks fitWidth
                 agentIds={branch.agentIds}
                 providers={branch.providers}
                 serverId={props.serverId}
@@ -391,7 +391,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               />
             ))}
             rowTrails={summary.branches.map((row) => (
-              <UsageWorkMarks
+              <UsageWorkMarks fitWidth
                 agentIds={row.agentIds}
                 providers={row.providers}
                 serverId={props.serverId}

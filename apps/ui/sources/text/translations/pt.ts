@@ -17580,6 +17580,7 @@ settingsSession: {
             phase_compaction: "Compactação",
             phase_unknown: "Ferramenta desconhecida",
             linesKeptPartial: "parcial",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Linhas mantidas",
             linesKeptMethod: "Comparação de arquivos alterados que permaneceram iguais; contagens parciais são um mínimo.",
             phasesCaption: "Preenchido é trabalho, hachurado é espera.",

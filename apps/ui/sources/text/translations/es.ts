@@ -17472,6 +17472,7 @@ settingsSession: {
             phase_compaction: "Compactación",
             phase_unknown: "Herramienta desconocida",
             linesKeptPartial: "parcial",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Líneas conservadas",
             linesKeptMethod: "Comparación de archivos modificados sin cambios posteriores; los valores parciales son un mínimo.",
             phasesCaption: "Relleno es trabajo, rayado es espera.",

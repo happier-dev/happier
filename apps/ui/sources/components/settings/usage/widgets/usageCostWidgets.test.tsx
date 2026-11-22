@@ -510,11 +510,11 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'unpriced.tokens')?.props.value).toBe(0);
   });
   it.each([
-    { historyComplete: true, rangeComplete: true, rowStatus: t('usage.board.sources.coverageAvailable') },
-    { historyComplete: true, rangeComplete: false, rowStatus: t('usage.board.sources.coverageAvailable') },
-    { historyComplete: false, rangeComplete: true, rowStatus: '' },
-    { historyComplete: undefined, rangeComplete: true, rowStatus: t('usage.board.sources.coverageUnknown') },
-  ])('uses capture coverage separately from range coverage (capture $historyComplete, range $rangeComplete)', async ({ historyComplete, rangeComplete, rowStatus }) => {
+    { historyComplete: true, rangeComplete: true, status: t('usage.board.sources.coverageAvailable') },
+    { historyComplete: true, rangeComplete: false, status: t('usage.board.sources.coverageAvailable') },
+    { historyComplete: false, rangeComplete: true, status: usagePartialHistoryLabel() },
+    { historyComplete: undefined, rangeComplete: true, status: t('usage.board.sources.coverageUnknown') },
+  ])('uses capture coverage separately from range coverage (capture $historyComplete, range $rangeComplete)', async ({ historyComplete, rangeComplete, status }) => {
     const props = mountedCosts();
     const accounting = { ...props.slice.accounting!, coverage: { status: rangeComplete ? 'complete' as const : 'partial' as const,
       reasons: rangeComplete ? [] : ['counter_discontinuity' as const], missingDimensions: [],
@@ -526,7 +526,9 @@ describe('one selected money basis across Usage bodies', () => {
     ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     if (historyComplete === false || !rangeComplete) expect(screen.getTextContent()).toContain(usagePartialHistoryLabel());
-    expect(screen.findByType(HappierDataRows).props.rows).toEqual([[usageAgentTitle('claude'), rowStatus]]);
+    // A single row's status is every row's status: said once, on the line right under it, never missing (acceptance 1122 #41).
+    expect(screen.findByType(HappierDataRows).props.rows).toEqual([[usageAgentTitle('claude'), '']]);
+    expect(screen.getTextContent().split(status)).toHaveLength(2);
   });
   it('renders witnessed source coverage and the canonical incomplete-range reasons instead of claiming a complete inventory', async () => {
     const props = mountedCosts();
@@ -579,10 +581,11 @@ describe('one selected money basis across Usage bodies', () => {
     const summaries = await mount([{ ...source, source: 'claude-sdk-result' }]);
     await summaries.pressByTestIdAsync('coverage.captures-header');
     expect(summaries.getTextContent()).toContain(`${usageAgentTitle('claude')}: ${usageSourceTitle('claude-sdk-result')}`);
-    const unknown = await rowsOf([{ ...source, source: 'acp-usage-update', captureKind: undefined }]);
-    expect(unknown[0]![1]).toBe(t('usage.board.sources.coverageAvailable'));
-    const logs = await rowsOf([{ ...source, source: 'codex-native-accounting', captureKind: 'from_logs' }]);
-    expect(logs[0]![1]).toBe(t('usage.board.sources.coverageAvailable'));
+    // An available capture says only what its source reported, whatever its capture kind (J-B20).
+    for (const reported of [{ ...source, source: 'acp-usage-update', captureKind: undefined }, { ...source, source: 'codex-native-accounting', captureKind: 'from_logs' as const }]) {
+      const screen = await mount([reported]);
+      expect(screen.getTextContent()).toContain(t('usage.board.sources.coverageAvailable'));
+    }
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
@@ -604,7 +607,9 @@ describe('one selected money basis across Usage bodies', () => {
       ])} />);
     const runtimeRows = runtime.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
     expect(runtimeRows.filter(([title]) => title === 'Codex')).toHaveLength(1);
-    expect(runtimeRows.find(([title]) => title === 'Codex')?.[1]).toContain(t('usage.board.sources.coverageUnknown'));
+    // Every row shares "Coverage unknown": it is said once, under the rows, not on each row (#41).
+    expect(runtimeRows.find(([title]) => title === 'Codex')?.[1]).not.toContain(t('usage.board.sources.coverageUnknown'));
+    expect(runtime.getTextContent().split(t('usage.board.sources.coverageUnknown'))).toHaveLength(2);
     expect(runtime.getTextContent()).not.toContain(t('usage.board.page.sourceAgentPromptUsage'));
     // One source across machines whose captures differ in status is still one row, its statuses counted in it (N8).
     const mixed = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
@@ -622,10 +627,41 @@ describe('one selected money basis across Usage bodies', () => {
     expect(mixedRows[0]![1]).not.toContain(';');
     expect(mixedRows[0]![1]).not.toContain(t('usage.board.sources.coverageUnknown'));
     const distinct = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
-      slice={coverageOf(Array.from({ length: 10 }, (_, index) => ({ ...source, source: `source-${index}` })))} />);
+      slice={coverageOf(Array.from({ length: 10 }, (_, index) => ({ ...source, source: `native:agent-${index}` })))} />);
     expect(distinct.findByType(HappierDataRows).props.rows.length).toBeLessThan(10);
     await distinct.pressByTestIdAsync('coverage.showAll.toggle');
     expect(distinct.findByType(HappierDataRows).props.rows).toHaveLength(10);
+  });
+  it('folds captures that name no Agent into one row and gives each row one status in one casing (acceptance 1122 #9, #41)', async () => {
+    const props = mountedCosts();
+    type CoverageSource = NonNullable<NonNullable<typeof props.slice.accounting>['coverage']>['sources'][number];
+    const source: Omit<CoverageSource, 'source'> = { path: 'native', status: 'available', eventCount: 1, captureKind: 'measured', asOfMs: 100, historyComplete: false };
+    const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
+      accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'partial' as const,
+        reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage" slice={coverageOf([
+      { ...source, source: 'accounting' },
+      { ...source, source: 'claude-sdk-result' },
+      { ...source, source: 'acp-prompt-usage', machineId: 'm1', historyComplete: undefined },
+      { ...source, source: 'acp-prompt-usage', machineId: 'm2', historyComplete: undefined },
+      { ...source, source: 'Usage Hunt Sparse R180 Fixture' },
+      { ...source, source: 'codex-native-accounting', historyComplete: undefined },
+    ])} />);
+    const rows = screen.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    // The page's rows are Agents; captures that name none are one row, last, with a plain name. A fixture is data.
+    expect(rows.map(([title]) => title)).toEqual([usageAgentTitle('claude'), 'Codex', t('usage.board.page.agentNotReported')]);
+    expect(screen.getTextContent()).not.toContain(usageSourceTitle('accounting', undefined, 'coverage'));
+    expect(screen.getTextContent()).not.toContain('Usage Hunt Sparse R180 Fixture');
+    await screen.pressByTestIdAsync('coverage.captures-header');
+    // Their capture names sit behind the same disclosure as every other row's.
+    expect(screen.getTextContent().toLowerCase())
+      .toContain(`${t('usage.board.page.agentNotReported')}: ${usageSourceTitle('accounting', undefined, 'coverage')}`.toLowerCase());
+    expect(screen.getTextContent()).toContain('Usage Hunt Sparse R180 Fixture');
+    // Mixed statuses: each row carries its own, status first, one sentence case ("Partial history", "Coverage unknown").
+    expect(rows[0]![1]).toBe(usagePartialHistoryLabel());
+    expect(rows[1]![1]).toBe(t('usage.board.sources.coverageUnknown'));
+    expect(rows[2]![1]).toBe(usagePartialHistoryLabel());
+    expect(screen.getTextContent()).not.toContain(t('usage.board.page.factIncomplete'));
   });
   it.each([7, 30].flatMap(days => (['auto', 'reported', 'estimated', 'api_equivalent'] as const)
     .map(costBasis => ({ days, costBasis, olderUnpriced: false }))).concat([

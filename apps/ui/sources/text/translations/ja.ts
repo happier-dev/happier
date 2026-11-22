@@ -17751,6 +17751,7 @@ settingsSession: {
             phase_compaction: "圧縮",
             phase_unknown: "不明なツール",
             linesKeptPartial: "部分的",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "保持された行",
             linesKeptMethod: "変更対象ファイルの一致比較。部分的な件数は下限値です。",
             phasesCaption: "塗りは作業中、斜線は待機中です。",

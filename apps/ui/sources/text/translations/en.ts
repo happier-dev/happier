@@ -20938,6 +20938,7 @@ const enUsage = {
       phase_compaction: "Compaction",
       phase_unknown: "Unknown tool",
       linesKeptPartial: "partial",
+      moreMarks: ({ count }: { count: number }) => `+${count}`,
       linesKept: "Lines kept",
       linesKeptMethod: "Unchanged changed-file comparison; partial counts are a lower bound.",
       phasesCaption: "Solid is working, hatched is waiting.",

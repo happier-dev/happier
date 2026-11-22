@@ -13,7 +13,7 @@ import { useOptionalCurrentUiContextReader } from '@/components/appShell/current
 import { useUsageWork } from './useUsageWork';
 import { resolveUsagePageInitialFilters } from '../usageRouteParams';
 import { resolveUsageWidgetPageInitialQuery } from '../usageWidgetPageContext';
-import { usagePeriodPhrase } from './usageBodyKit';
+import { UsageAgentMark, usagePeriodPhrase } from './usageBodyKit';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
 import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
@@ -40,6 +40,7 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageWidgetBodyModel } from '../useUsageWidgetResource';
 import { UsageProjectLedgerWidget } from './UsageProjectLedgerWidget';
+import { UsageWorkMarks } from './UsageWorkParts';
 import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
@@ -286,6 +287,22 @@ describe('Work and Coach widget bodies', () => {
     expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'ledger.projects-datum-1')?.props.datum.value).toContain('EUR 1.23456');
     await screen.pressByTestIdAsync('ledger.project.project-0.toggle');
     expect(screen.findByTestId('ledger.project.project-0.detail')).toBeTruthy();
+  });
+  it('keeps an identity mark strip on one line and folds what does not fit into "+n" (acceptance 1122 #46)', async () => {
+    const agentIds = Array.from({ length: 18 }, (_, index) => `agent-${index}`);
+    const screen = await renderScreen(<UsageWorkMarks fitWidth agentIds={agentIds} providers={[]} serverId="server" testID="marks" />);
+    const strip = () => screen.findByTestId('marks.marks');
+    const layout = async (width: number) => act(() => { strip().props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 16 } } }); });
+    const shown = () => screen.findAllByType(UsageAgentMark).length;
+    // A narrow row: as many marks as fit beside the count, the rest counted, never a second line.
+    await layout(160);
+    expect(shown()).toBeGreaterThan(0);
+    expect(shown()).toBeLessThan(agentIds.length);
+    expect(screen.getTextContent()).toContain(t('usage.board.work.moreMarks', { count: agentIds.length - shown() }));
+    // A row with room shows every mark and no count.
+    await layout(1000);
+    expect(shown()).toBe(agentIds.length);
+    expect(screen.getTextContent()).not.toContain('+');
   });
   it('never falls back to raw opaque Project or Session ids', async () => {
     const opaque = 'a'.repeat(64);

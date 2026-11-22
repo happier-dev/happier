@@ -66,18 +66,37 @@ export function usageWorkSessionOutcomeLine(
   return `${usageWorkPullRequestTitle(pullRequest)} · ${usageWorkPullRequestState(pullRequest)}`;
 }
 
-/** Agent marks, then the witnessed Provider marks: two identities, never one inferred from the other. */
+/**
+ * Agent marks, then the witnessed Provider marks: two identities, never one inferred from the other. A lead keeps the
+ * marks at their own width. With `fitWidth` (a row's trail, or the line under a name) the strip is one line that takes
+ * the width the row gives it: the marks that fit, then "+n" for the rest (acceptance 1122 #46). Until that width is
+ * known the line clips instead of wrapping, so nothing moves when the count appears.
+ */
 export function UsageWorkMarks(
   props: Pick<UsageWorkIdentities, 'agentIds' | 'providers'> &
-    Readonly<{ serverId: string; testID?: string }>,
+    Readonly<{ serverId: string; testID?: string; fitWidth?: boolean }>,
 ) {
-  if (props.agentIds.length === 0 && props.providers.length === 0) return null;
-  return (
-    <View style={styles.marks}>
-      {props.agentIds.map((agentId) => (
+  const { theme } = useUnistyles();
+  const metrics = usePageRowMetrics('list');
+  const [width, setWidth] = React.useState<number | null>(null);
+  const [countWidth, setCountWidth] = React.useState<number | null>(null);
+  const total = props.agentIds.length + props.providers.length;
+  if (total === 0) return null;
+  const gap = theme.space.s4;
+  const slot = ICON_SIZE.sm + gap;
+  const fits = !props.fitWidth || width === null || Math.floor((width + gap) / slot) >= total;
+  // The count takes its measured width (one mark's width until measured); each shown mark takes its slot.
+  const shown = fits ? total : Math.max(0, Math.floor((width - (countWidth ?? ICON_SIZE.sm)) / slot));
+  const agents = props.agentIds.slice(0, shown);
+  const providers = props.providers.slice(0, Math.max(0, shown - props.agentIds.length));
+  // The line takes the width its row gives it (beside a name, or under it on a narrow card), never its content's
+  // width: the marks sit on an absolutely placed strip so the count never feeds back into the width it is fit to.
+  const marks = (
+    <View style={props.fitWidth ? styles.marksFit : styles.marks}>
+      {agents.map((agentId) => (
         <UsageAgentMark key={agentId} agentId={agentId} serverId={props.serverId} />
       ))}
-      {props.providers.map((provider) => (
+      {providers.map((provider) => (
         <UsageWorkProviderMark
           key={`${provider.providerId}\u0000${provider.machineId ?? ''}`}
           {...provider}
@@ -85,6 +104,20 @@ export function UsageWorkMarks(
           testID={props.testID ? `${props.testID}.provider.${provider.providerId}` : undefined}
         />
       ))}
+      {fits ? null : (
+        <Text style={[styles.marksMore, { fontSize: metrics.subtitle.fontSize, lineHeight: metrics.subtitle.lineHeight }]} numberOfLines={1}
+          onLayout={(event) => setCountWidth(event.nativeEvent.layout.width)}>
+          {t('usage.board.work.moreMarks', { count: total - shown })}
+        </Text>
+      )}
+    </View>
+  );
+  if (!props.fitWidth) return marks;
+  return (
+    <View style={[styles.marksLine, { minHeight: Math.max(ICON_SIZE.sm, metrics.subtitle.lineHeight) }]}
+      testID={props.testID ? `${props.testID}.marks` : undefined}
+      onLayout={(event) => setWidth(event.nativeEvent.layout.width)}>
+      {marks}
     </View>
   );
 }
@@ -247,6 +280,10 @@ export function UsageWorkSessionRows(
 
 const styles = StyleSheet.create((theme) => ({
   marks: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s4 },
+  marksLine: { flexGrow: 1, alignSelf: 'stretch', minWidth: 0 },
+  marksFit: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, flexDirection: 'row', flexWrap: 'nowrap', overflow: 'hidden',
+    alignItems: 'center', gap: theme.space.s4 },
+  marksMore: { ...Typography.default(), color: theme.colors.text.secondary, flexShrink: 0 },
   lead: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
   sectionTitle: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
   sectionName: { ...Typography.default('semiBold'), color: theme.colors.text.primary },

@@ -17641,6 +17641,7 @@ settingsSession: {
             phase_compaction: "Kompaktierung",
             phase_unknown: "Unbekanntes Werkzeug",
             linesKeptPartial: "teilweise",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Behaltene Zeilen",
             linesKeptMethod: "Vergleich unveränderter geänderter Dateien; Teilwerte sind eine Untergrenze.",
             phasesCaption: "Gefüllt bedeutet Arbeit, schraffiert bedeutet Warten.",

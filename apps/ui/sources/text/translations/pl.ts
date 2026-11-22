@@ -17744,6 +17744,7 @@ settingsSession: {
         phase_compaction: "Kompaktowanie",
         phase_unknown: "Nieznane narzędzie",
         linesKeptPartial: "częściowe",
+        moreMarks: ({ count }: { count: number }) => `+${count}`,
         linesKept: "Zachowane wiersze",
         linesKeptMethod: "Porównanie zmienionych plików bez dalszych zmian; częściowe liczby są dolną granicą.",
         phasesCaption: "Pełne wypełnienie oznacza pracę, kreskowanie oczekiwanie.",

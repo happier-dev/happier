@@ -17116,6 +17116,7 @@ settingsSession: {
             phase_compaction: "上下文压缩",
             phase_unknown: "未知工具",
             linesKeptPartial: "部分",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "保留行数",
             linesKeptMethod: "对比保持不变的已修改文件；部分计数是下限。",
             phasesCaption: "实心表示工作，斜线表示等待。",

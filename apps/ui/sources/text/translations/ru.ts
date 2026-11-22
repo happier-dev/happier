@@ -17419,6 +17419,7 @@ settingsSession: {
             phase_compaction: "Сжатие контекста",
             phase_unknown: "Неизвестный инструмент",
             linesKeptPartial: "частично",
+            moreMarks: ({ count }: { count: number }) => `+${count}`,
             linesKept: "Сохранённые строки",
             linesKeptMethod: "Сравнение изменённых файлов без последующих изменений; частичные значения — нижняя граница.",
             phasesCaption: "Сплошная заливка — работа, штриховка — ожидание.",
