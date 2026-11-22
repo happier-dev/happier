@@ -15,8 +15,8 @@ describe('createElevenLabsEventMapper', () => {
       epoch: 1,
       sequence: 1,
       revision: 1,
-      eventId: 'elevenlabs:message:17:1',
-      itemId: 'elevenlabs:message:17',
+      eventId: 'elevenlabs:user:message:17:1',
+      itemId: 'elevenlabs:user:message:17',
       role: 'user',
       text: 'hello',
       provenance: 'live',
@@ -44,68 +44,81 @@ describe('createElevenLabsEventMapper', () => {
       .toMatchObject({ type: 'voice.transcript.final', sequence: 2, role: 'assistant', text: '...' });
   });
 
-  it("maps ElevenLabs' own correction event as a typed correction and drops exact duplicates", () => {
+  it('publishes both speakers on a shared provider event ID and corrects only the assistant', () => {
     const mapper = createElevenLabsEventMapper();
     mapper.beginConversation();
-    const first = { event_id: 9, role: 'agent', source: 'ai', message: 'old answer' };
-    expect(mapper.map(first)?.type).toBe('voice.transcript.final');
-    expect(mapper.map(first)).toBeNull();
+    // P3 wire capture (wizard/curtain turn), through the SDK's onMessage shape.
+    const user = { event_id: 88, role: 'user', source: 'user', message: 'Who vanished behind the curtain?' };
+    const assistant = { event_id: 88, role: 'agent', source: 'ai', message: 'The wizard vanished behind the curtain.' };
+    const userFinal = mapper.map(user);
+    const assistantFinal = mapper.map(assistant);
+    expect(userFinal).toMatchObject({
+      type: 'voice.transcript.final', role: 'user', sequence: 1, revision: 1, text: user.message,
+    });
+    expect(assistantFinal).toMatchObject({
+      type: 'voice.transcript.final', role: 'assistant', sequence: 2, revision: 1, text: assistant.message,
+    });
+    expect(assistantFinal?.itemId).not.toBe(userFinal?.itemId);
+    expect(assistantFinal?.eventId).not.toBe(userFinal?.eventId);
+    expect(mapper.map(assistant)).toBeNull();
 
-    // ElevenLabs never restates a corrected agent turn as a second
-    // `agent_response`; it publishes `agent_response_correction` carrying the
-    // whole corrected turn under the original turn's `event_id`.
+    // Exercise an interruption using the correction envelope and the same turn ID.
     const correction = {
       type: 'agent_response_correction',
       agent_response_correction_event: {
-        original_agent_response: 'old answer',
-        corrected_agent_response: 'corrected answer',
-        event_id: 9,
+        original_agent_response: assistant.message,
+        corrected_agent_response: 'The wizard vanished.',
+        event_id: 88,
       },
     };
-    expect(mapper.map(correction)).toEqual(expect.objectContaining({
+    const corrected = mapper.map(correction);
+    expect(corrected).toMatchObject({
       type: 'voice.transcript.corrected',
       epoch: 1,
-      sequence: 2,
+      sequence: 3,
       revision: 2,
-      eventId: 'elevenlabs:message:9:2',
-      itemId: 'elevenlabs:message:9',
+      itemId: assistantFinal?.itemId,
       role: 'assistant',
-      text: 'corrected answer',
-    }));
+      text: 'The wizard vanished.',
+    });
+    expect(corrected?.eventId).not.toBe(assistantFinal?.eventId);
     expect(mapper.map(correction)).toBeNull();
+    expect(mapper.map(user)).toBeNull();
   });
 
   it('refuses a provider identity too long to become a canonical transcript identity', () => {
     const mapper = createElevenLabsEventMapper();
     mapper.beginConversation();
 
-    // The canonical transcript id ceiling is 256 characters and the leaf composes
-    // `elevenlabs:message:<providerEventId>:<revision>` from it. An identity that cannot produce a
-    // canonical event is not usable transcript identity, so the message is dropped rather than
-    // published unvalidated.
+    // Exercise the longer role at the accepted provider-ID bound.
     expect(mapper.map({
       event_id: 'e'.repeat(300),
-      role: 'user',
-      source: 'user',
+      role: 'agent',
+      source: 'ai',
       message: 'hello',
     })).toBeNull();
 
     const longest = mapper.map({
       event_id: 'e'.repeat(200),
-      role: 'user',
-      source: 'user',
+      role: 'agent',
+      source: 'ai',
       message: 'hello',
     });
     expect(longest).not.toBeNull();
     expect(VoiceTranscriptCanonicalEventV1Schema.safeParse(longest).success).toBe(true);
   });
 
-  it('refuses a message claiming an item the other speaker already owns', () => {
+  it('keeps the idle reply on a shared event ID without publishing the silence placeholder', () => {
     const mapper = createElevenLabsEventMapper();
     mapper.beginConversation();
 
-    expect(mapper.map({ event_id: 4, role: 'user', source: 'user', message: 'mine' })?.role).toBe('user');
-    expect(mapper.map({ event_id: 4, role: 'agent', source: 'ai', message: 'not mine' })).toBeNull();
+    // P3 wire capture (idle turn).
+    expect(mapper.map({ event_id: 151, role: 'user', source: 'user', message: '...' })).toBeNull();
+    const idleReply = { event_id: 151, role: 'agent', source: 'ai', message: 'Are you still there?' };
+    expect(mapper.map(idleReply)).toMatchObject({
+      type: 'voice.transcript.final', role: 'assistant', sequence: 1, revision: 1, text: idleReply.message,
+    });
+    expect(mapper.map(idleReply)).toBeNull();
   });
 
   it('starts a fresh epoch for a replacement conversation', () => {

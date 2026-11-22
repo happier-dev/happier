@@ -3,12 +3,9 @@ import type { VoiceTranscriptCanonicalEvent } from '@happier-dev/plugin-sdk/voic
 
 /**
  * The canonical transcript id contract is 256 characters. The leaf composes
- * `elevenlabs:message:<providerEventId>` and the ladder then derives an event
- * identity from it, so the provider half is bounded well inside that ceiling —
- * an identity that cannot produce a canonical event is not usable transcript
- * identity, and the message is dropped rather than published unvalidated.
+ * `elevenlabs:<role>:message:<providerEventId>` and appends the ladder's revision
+ * for the event ID. The provider ID must leave room for those components.
  */
-const ITEM_ID_PREFIX = 'elevenlabs:message:';
 const MAX_PROVIDER_EVENT_ID_LENGTH = 200;
 
 function readRecord(value: unknown): Readonly<Record<string, unknown>> | null {
@@ -84,12 +81,10 @@ function readCorrectionObservation(
  */
 export function createElevenLabsEventMapper() {
   const ladder = createVoiceTranscriptLadderMapper();
-  const rolesByItemId = new Map<string, 'user' | 'assistant'>();
   let conversationStarted = false;
 
   const beginConversation = (): void => {
     conversationStarted = true;
-    rolesByItemId.clear();
     ladder.beginConversation();
   };
 
@@ -98,15 +93,11 @@ export function createElevenLabsEventMapper() {
     if (!record || !conversationStarted) return null;
     const observation = readCorrectionObservation(record) ?? readMessageObservation(record);
     if (!observation) return null;
-    const { role, text } = observation;
-    const itemId = `${ITEM_ID_PREFIX}${observation.providerEventId}`;
-    // Provider identity classification, not ladder ordering: a message claiming
-    // an item the other speaker already owns is not the same conversation item.
-    const knownRole = rolesByItemId.get(itemId);
-    if (knownRole !== undefined && knownRole !== role) return null;
+    const { role, text, providerEventId } = observation;
+    // ElevenLabs can use the same turn ID for the user transcript and the agent reply.
+    const itemId = `elevenlabs:${role}:message:${providerEventId}`;
     const event = ladder.map({ itemId, eventId: itemId, role, incoming: text, mode: 'final' });
     if (!event) return null;
-    rolesByItemId.set(itemId, role);
     // The ladder owns the revision; the leaf only spells the provider's
     // per-observation event identity, which ElevenLabs' wire does not carry
     // because a correction reuses the corrected turn's `event_id`.
