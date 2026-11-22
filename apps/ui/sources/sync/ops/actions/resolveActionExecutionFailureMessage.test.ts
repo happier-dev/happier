@@ -194,6 +194,11 @@ describe('Action failure presentation', () => {
         expect(resolveActionExecutionFailureMessage(failure, 'fallback')).toBe(expected);
         expect(resolveActionExecutionErrorMessage(new PluginError({ code: 'provider_unavailable', message: failure.message, remediation: { kind: 'retry' } }), 'fallback')).toBe(expected);
     });
+    it('names systemctl and its daemon PATH when the optional service adapter cannot discover units', () => {
+        const presented = presentActionExecutionFailure({ ok: false, errorCode: 'systemd_tool_unavailable' },
+            'Request failed', { closedCodesOnly: true });
+        expect(presented.reason).toMatch(/systemctl.*PATH/i);
+    });
     it('keeps the Docker sign-in instruction without interpreting its text', () => {
         expect(resolveActionExecutionFailureMessage({ ok: false, code: 'credential_unavailable', message: 'Sign in to Docker: run sbx login' }, 'fallback')).toBe('Sign in to Docker: run sbx login');
         const expected = t('session.startFailure.cause.credential_unavailable');

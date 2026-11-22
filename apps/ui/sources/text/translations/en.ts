@@ -8740,6 +8740,7 @@ const enErrors = {
   machineNativeProtocolInvalid: "This machine’s elevated helper returned an invalid or missing response. Update or repair its managed Happier CLI, then retry.",
   machineNativeCheckUnavailable: "A native prerequisite could not be checked. Review this machine’s setup diagnostics, resolve the unavailable prerequisite, then retry.",
   machineComposeDockerToolUnavailable: "To list Compose services, install Docker on this Machine and make it available on the Happier daemon’s PATH.",
+  machineSystemdToolUnavailable: "If this Machine uses systemd, make systemctl available on the Happier daemon’s PATH.",
   machineNativeCheckUnsupported: "A native prerequisite is unsupported on this machine. Review its setup diagnostics and choose a supported setup before retrying.",
   machineNativeEffectFailed: "The elevated native operation failed. Review this machine’s setup diagnostics, resolve the reported failure, then retry.",
   permissionDeniedReadOnlyMode:

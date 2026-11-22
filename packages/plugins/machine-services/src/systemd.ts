@@ -1,4 +1,4 @@
-import { PluginError, type Disposable, type PluginInvocationContext, type PluginProjectNativeAdapterRuntimeV1,
+import { isPluginError, PluginError, type Disposable, type PluginInvocationContext, type PluginProjectNativeAdapterRuntimeV1,
     type PluginCancellationOptions, type PluginProjectNativeFailureV1 } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeInstanceV1, ManagedServiceNativeLifecycleV1,
     ManagedServiceNativeObservationV1, ManagedServiceNativeLogReadV1, ManagedServiceNativeLogResultV1,
@@ -109,7 +109,15 @@ const lifecycle: ManagedServiceNativeLifecycleV1 = {
         const failures: PluginProjectNativeFailureV1[] = [];
         // One finite query per native manager, only on explicit discovery demand.
         for (const scope of ['user', 'system'] as const) {
-            const result = await command(scope, ['list-units', '--type=service', '--all', '--plain', '--no-legend', '--no-pager'], options, context);
+            let result: Awaited<ReturnType<typeof command>>;
+            try {
+                result = await command(scope, ['list-units', '--type=service', '--all', '--plain', '--no-legend', '--no-pager'], options, context);
+            } catch (error) {
+                if (isPluginError(error) && error.code === 'plugin_exec_system_tool_unavailable') {
+                    return { kind: 'unavailable', code: 'systemd_tool_unavailable' };
+                }
+                throw error;
+            }
             if (!result.successful) { failures.push({ kind: 'unavailable', code: `systemd_${scope}_discovery_unavailable` }); continue; }
             const lines = result.output.split(/\r?\n/u);
             if (result.truncated) {

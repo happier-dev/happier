@@ -6467,6 +6467,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         machineNativeProtocolInvalid: "此機器的提權輔助程式未傳回有效回應。請更新或修復其受管 Happier CLI，然後重試。",
         machineNativeCheckUnavailable: "無法檢查某項原生先決條件。請查看此機器的設定診斷，解決無法使用的先決條件後重試。",
         machineComposeDockerToolUnavailable: "若要列出 Compose 服務，請在這部機器上安裝 Docker，並確保 Happier 常駐程式可透過 PATH 執行它。",
+        machineSystemdToolUnavailable: "如果這部機器使用 systemd，請確保 Happier 常駐程式可透過 PATH 執行 systemctl。",
         machineNativeCheckUnsupported: "此機器不支援某項原生先決條件。請查看其設定診斷，選擇支援的設定後重試。",
         machineNativeEffectFailed: "提權原生操作失敗。請查看此機器的設定診斷，解決回報的故障後重試。",
         permissionDeniedReadOnlyMode: '被唯讀模式拒絕（寫入操作被拒絕）。',

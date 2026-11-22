@@ -7341,6 +7341,7 @@ export const zhHans: TranslationStructure = {
     machineNativeProtocolInvalid: "此机器的提权辅助程序未返回有效响应。请更新或修复其受管 Happier CLI，然后重试。",
     machineNativeCheckUnavailable: "无法检查某项原生先决条件。请查看此机器的设置诊断，解决不可用的先决条件后重试。",
     machineComposeDockerToolUnavailable: "要列出 Compose 服务，请在此机器上安装 Docker，并确保 Happier 守护进程可以通过 PATH 运行它。",
+    machineSystemdToolUnavailable: "如果此机器使用 systemd，请确保 Happier 守护进程可以通过 PATH 运行 systemctl。",
     machineNativeCheckUnsupported: "此机器不支持某项原生先决条件。请查看其设置诊断，选择受支持的设置后重试。",
     machineNativeEffectFailed: "提权原生操作失败。请查看此机器的设置诊断，解决报告的故障后重试。",
     permissionDeniedReadOnlyMode: "被只读模式拒绝（写入操作被拒绝）。",

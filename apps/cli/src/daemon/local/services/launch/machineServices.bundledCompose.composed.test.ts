@@ -61,6 +61,20 @@ else process.exitCode=19;
                 adapter, name: native.project, nativeResourceId: JSON.stringify([native.engineId, native.project]),
                 observation: { phase: 'running', readiness: 'ready' },
             }] });
+            if (process.platform === 'linux') {
+                const originalPath = process.env.PATH;
+                vi.stubEnv('PATH', root);
+                try {
+                    const partial = MachineServicesDiscoveryResultV1Schema.parse(await runtime.execute({
+                        actionId: 'machines.services.discovery', input: target, context,
+                    }));
+                    expect(partial).toMatchObject({ kind: 'snapshot', candidates: [{ adapter, name: native.project }],
+                        failures: [{ adapter: { pluginId: adapter.pluginId, localId: 'systemd' }, code: 'systemd_tool_unavailable' }],
+                    });
+                } finally {
+                    vi.stubEnv('PATH', originalPath);
+                }
+            }
             if (discovered.kind !== 'snapshot' || discovered.candidates.length !== 1) throw new Error('Expected one native Compose project');
             const candidate = discovered.candidates[0]!;
             expect(await runtime.execute({ actionId: 'machines.services.watch', context, input: { ...target,
