@@ -8,6 +8,7 @@ import { createArtifact, updateArtifact } from '@/app/artifacts/artifactWriteSer
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import * as privacyKit from 'privacy-kit';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
+import { listReviewsInTx } from './reviewListService';
 
 describe('durable Review lifecycle metadata', () => {
     const accountId = randomUUID();
@@ -30,26 +31,26 @@ describe('durable Review lifecycle metadata', () => {
             if (request.model === 'ReviewMetadata' && /^(?:create|update|upsert|delete)/.test(request.action)) writes.push(request.action);
         } });
         try {
-            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata }))).toBe(true);
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata }))).toBe(true);
             await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).resolves.toBeUndefined();
-            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(true);
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(true);
             expect(writes.length).toBeGreaterThan(0);
             expect(writes.length).toBeLessThanOrEqual(2);
             const settledWrites = writes.length;
-            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
+            expect(await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } }))).toBe(false);
             expect(writes.length - settledWrites).toBe(0);
         } finally { restore(); }
-        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata,
+        await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { ...metadata,
             projectSourceId: null, workflowId: null, subjectKind: 'comparison', sourceKind: 'direct',
             currentRoundOrdinal: 2, startedAt: 30 } }));
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({
             ...metadata, currentRoundOrdinal: 2, startedAt: new Date(30),
         });
         await expect(assertReviewRoundBinding({ reviewId, roundOrdinal: 1 })).rejects.toMatchObject({ code: 'invalid-params' });
-        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 2, state: 'failed', finishedAt: 40 } }));
+        await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 2, state: 'failed', finishedAt: 40 } }));
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({ state: 'failed', currentRoundOrdinal: 2 });
-        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { ...metadata, currentRoundOrdinal: 3, startedAt: 50 } }));
-        await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { currentRoundOrdinal: 3, state: 'cancelled', finishedAt: 60 } }));
+        await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { ...metadata, currentRoundOrdinal: 3, startedAt: 50 } }));
+        await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: accountId, metadata: { currentRoundOrdinal: 3, state: 'cancelled', finishedAt: 60 } }));
         expect(await db.reviewMetadata.findUnique({ where: { artifactId: reviewId } })).toMatchObject({ state: 'cancelled', currentRoundOrdinal: 3 });
     });
     it('commits sealed content and queryable round state through the existing Artifact writer', async () => {
@@ -72,5 +73,45 @@ describe('durable Review lifecycle metadata', () => {
         expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({
             ...metadata, currentRoundOrdinal: 2, startedAt: new Date(30),
         });
+    });
+    it('records the producing Workflow run and the Session position each round covered', async () => {
+        const artifactId = randomUUID();
+        const header = privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId: artifactId, title: 'Session review' }));
+        const body = privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }));
+        const session = await db.session.create({ data: { accountId, tag: randomUUID(), metadata: '{}', seq: 7 } });
+        const start = { projectSourceId: null, workflowId: 'workflow-1', subjectKind: 'comparison' as const,
+            sourceKind: 'workflow' as const, currentRoundOrdinal: 1, state: 'running' as const, startedAt: 10, finishedAt: null,
+            workflowRunId: 'run-1', sourceSessionId: session.id };
+        const directId = randomUUID();
+        await db.artifact.create({ data: { id: directId, accountId, kind: 'v1:other:review.v1',
+            header: Buffer.from('sealed-header'), body: Buffer.from('sealed-body'), dataEncryptionKey: Buffer.from('key') } });
+        expect(await inTx(tx => writeReviewRoundState(tx, { reviewId: directId, actorAccountId: accountId, metadata: start }))).toBe(true);
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId: directId } }))
+            .toMatchObject({ workflowRunId: 'run-1', sourceSessionId: session.id, sourceSessionSeq: 7 });
+        expect(await createArtifact({ actorUserId: accountId, artifactId, header, body,
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), reviewMetadata: start })).toMatchObject({ ok: true });
+        await db.session.update({ where: { id: session.id }, data: { seq: 12 } });
+        expect(await updateArtifact({ actorUserId: accountId, artifactId,
+            header: { bytes: header, expectedVersion: 1 }, body: { bytes: body, expectedVersion: 1 },
+            reviewMetadata: { currentRoundOrdinal: 1, state: 'completed', finishedAt: 20 } })).toMatchObject({ ok: true });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId } })).toMatchObject({ workflowRunId: 'run-1', sourceSessionSeq: 7 });
+        expect(await updateArtifact({ actorUserId: accountId, artifactId,
+            header: { bytes: header, expectedVersion: 2 }, body: { bytes: body, expectedVersion: 2 },
+            reviewMetadata: { ...start, currentRoundOrdinal: 2, startedAt: 30, workflowRunId: 'run-2' } })).toMatchObject({ ok: true });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId } }))
+            .toMatchObject({ workflowRunId: 'run-1', sourceSessionId: session.id, sourceSessionSeq: 12 });
+        const byRun = await inTx(tx => listReviewsInTx(tx, { actorAccountId: accountId, workflowRunId: 'run-1', limit: 5 }));
+        expect(byRun.items.map(item => [item.reviewId, item.sourceSessionSeq]).sort()).toEqual([[artifactId, 12], [directId, 7]].sort());
+        expect((await inTx(tx => listReviewsInTx(tx, { actorAccountId: accountId, workflowRunId: 'run-2', limit: 5 }))).items).toEqual([]);
+        expect((await inTx(tx => listReviewsInTx(tx, { actorAccountId: accountId, sourceSessionId: session.id, limit: 5 })))
+            .items.map(item => item.reviewId).sort()).toEqual([artifactId, directId].sort());
+
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const foreign = await db.session.create({ data: { accountId: stranger.id, tag: randomUUID(), metadata: '{}', seq: 3 } });
+        const refusedId = randomUUID();
+        expect(await createArtifact({ actorUserId: accountId, artifactId: refusedId, header, body,
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
+            reviewMetadata: { ...start, sourceSessionId: foreign.id } })).toMatchObject({ ok: false });
+        expect(await db.reviewMetadata.findUnique({ where: { artifactId: refusedId } })).toBeNull();
     });
 });

@@ -3,6 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 
 import { StoredJsonContentEnvelopeSchema } from '../../storage/storedJsonContentEnvelope.js';
+import { ScmCommitOidSchema } from '../../scm/commitPublication.js';
 import { ReviewFindingSeveritySchema, ReviewFindingScopeAttributionSchema } from '../reviewFindingClassification.js';
 import { ReviewFindingExtensionsSchema } from '../findingExtensions.js';
 import { ReviewFindingContentSchema } from '../ReviewFinding.js';
@@ -228,6 +229,8 @@ export const ReviewCommentEvidenceV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ kind: z.literal('reasoning'), message: z.string().check(z.minLength(1)) }),
   z.strictObject({ kind: z.literal('external'), url: z.string().check(z.url()), label: z.optional(z.string().check(z.minLength(1))) }),
   z.strictObject({ kind: z.literal('agentMessage'), sessionId: z.string().check(z.minLength(1)), messageId: z.string().check(z.minLength(1)) }),
+  /** The full commit that fixed the finding, written when its fix resolves the comment. */
+  z.strictObject({ kind: z.literal('commit'), sha: ScmCommitOidSchema }),
 ]));
 export type ReviewCommentEvidenceV1 = z.infer<typeof ReviewCommentEvidenceV1Schema>;
 

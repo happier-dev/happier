@@ -60,7 +60,7 @@ Record each verdict through the canonical ReviewComment Actions. Find the durabl
 Dismiss an invalid finding with reviews.comments.transition toState "dismissed" and a concrete reason. Uphold a valid finding with reviews.comments.setDisposition disposition "blocking". Every write must include the comment's reviewId, projectId or workspace scope, current expectedServerRevision, and a stable clientMutationId; transition also requires current expectedState. Reuse the same clientMutationId only when retrying the same request. On a CAS conflict, refetch the comment and reconsider the verdict instead of overwriting another writer. Do not claim a persisted verdict if the Action fails or a durable comment is unavailable.`;
 
 export const REVIEW_FINDINGS_VERIFY_AND_FIX_INSTRUCTIONS_V1 = `${REVIEW_FINDINGS_VERIFY_INSTRUCTIONS_V1}
-Fix upheld findings, validate the change, and record the resulting disposition with the same canonical Actions under fresh CAS. Report what was verified, fixed, dismissed, or could not be completed.`;
+Fix upheld findings, validate the change, and record the resulting disposition with the same canonical Actions under fresh CAS. When you commit a fix, resolve its comment with reviews.comments.transition toState "resolved" and evidence [{"kind":"commit","sha":"<full commit sha>"}]. Report what was verified, fixed, dismissed, or could not be completed.`;
 
 export const REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1 = `${REVIEW_FINDINGS_VERIFY_INSTRUCTIONS_V1}
 Report the verified verdicts and evidence only. Do not modify the code.`;

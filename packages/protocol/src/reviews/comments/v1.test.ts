@@ -404,6 +404,15 @@ describe('review comment mutation schemas', () => {
     }
   });
 
+  it('resolves a comment with the exact commit that fixed it', () => {
+    const sha = 'a'.repeat(40);
+    const resolve = (evidence: unknown) => ReviewCommentTransitionRequestV1Schema.safeParse({ commentId: 'comment-1',
+      projectId: 'project-1', toState: 'resolved', expectedState: 'open', expectedServerRevision: 1, evidence,
+      clientMutationId: 'mutation-commit' });
+    expect(resolve([{ kind: 'commit', sha }])).toMatchObject({ success: true, data: { evidence: [{ kind: 'commit', sha }] } });
+    expect(resolve([{ kind: 'commit', sha: 'abc1234' }]).success).toBe(false);
+  });
+
   it('requires evidence for resolving comments and emits append-only event rows', () => {
     const transition = ReviewCommentTransitionRequestV1Schema.parse({
       commentId: 'comment-1',

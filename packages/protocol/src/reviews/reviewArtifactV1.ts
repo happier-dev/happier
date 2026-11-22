@@ -45,13 +45,23 @@ export const ReviewMetadataV1Schema = z.strictObject({
   subjectKind: ReviewSubjectKindV1Schema, sourceKind: ReviewSourceKindV1Schema,
   state: ReviewRoundStateV1Schema, currentRoundOrdinal: z.number().check(z.int(), z.minimum(1)),
   startedAt: z.number(), finishedAt: z.nullable(z.number()),
+  /** The Workflow run that created this Review; later rounds keep it, like workflowId. */
+  workflowRunId: z.optional(z.nullable(z.string())),
+  /** The Session whose changes the current round reviews; the server records that Session's
+   * message seq at round start, so later turns are not covered by this round. */
+  sourceSessionId: z.optional(z.nullable(z.string())),
+  sourceSessionSeq: z.optional(z.nullable(z.number().check(z.int(), z.minimum(0)))),
 });
 export type ReviewMetadataV1 = z.infer<typeof ReviewMetadataV1Schema>;
 export const ReviewRoundSettlementMetadataV1Schema = z.strictObject({
   currentRoundOrdinal: z.number().check(z.int(), z.minimum(1)),
   state: z.enum(['completed', 'partial', 'failed', 'cancelled']), finishedAt: z.number(),
 });
-export const ReviewRoundStartMetadataV1Schema = z.strictObject({ ...ReviewMetadataV1Schema.shape, state: z.literal('running'), finishedAt: z.null() });
+const { workflowRunId: _workflowRunId, sourceSessionId: _sourceSessionId, sourceSessionSeq: _sourceSessionSeq,
+  ...reviewRoundStartIdentityShape } = ReviewMetadataV1Schema.shape;
+/** The writer names the run and source Session; only the server reads the Session's position. */
+export const ReviewRoundStartMetadataV1Schema = z.strictObject({ ...reviewRoundStartIdentityShape, state: z.literal('running'), finishedAt: z.null(),
+  workflowRunId: z.optional(z.string().check(z.minLength(1))), sourceSessionId: z.optional(z.string().check(z.minLength(1))) });
 /** Explicit non-content mutation projection; settlement cannot overwrite source identity. */
 export const ReviewMetadataWriteV1Schema = z.union([ReviewRoundStartMetadataV1Schema, ReviewRoundSettlementMetadataV1Schema]);
 export type ReviewMetadataWriteV1 = z.infer<typeof ReviewMetadataWriteV1Schema>;
@@ -116,7 +126,7 @@ export interface ReviewArtifactTransportV1 {
   update(input: Readonly<{ artifactId: string; expectedRevision: Revision; header: Readonly<Record<string, unknown>>; body: string; reviewMetadata: ReviewMetadataWriteV1; signal?: AbortSignal }>): Promise<Readonly<{ ok: true; revision: Revision } | { ok: false; errorCode: string }>>;
 }
 export type ReviewRoundStartV1 = Readonly<{ reviewId: string; title: string; subjectKind: ReviewSubjectKindV1;
-  sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; comparisonId?: string;
+  sourceKind: ReviewSourceKindV1; projectSourceId?: string; workflowId?: string; workflowRunId?: string; comparisonId?: string;
   comparisonCapture?: ReviewRoundComparisonCaptureV1;
   reviewerIds: readonly string[]; reviewerDisplayNames?: Readonly<Record<string, string>>; startedAt: number; newRound?: boolean; signal?: AbortSignal }>;
 export type ReviewRoundSettlementV1 = Readonly<ReviewRoundBindingV1 & {
@@ -134,6 +144,12 @@ export function openReviewArtifactV1(row: Omit<Opened, 'revision'>): ReviewArtif
 function content(record: ReviewArtifactV1) {
   const { rounds, ...header } = record;
   return { header, body: JSON.stringify({ v: 1, rounds }) };
+}
+/** The Session whose changes a captured comparison reviews: its Session selector, else the capturing Session. */
+export function resolveReviewSourceSessionIdV1(capture: ReviewRoundComparisonCaptureV1 | undefined): string | undefined {
+  const source = capture?.input.source;
+  if ((source?.kind === 'session' || source?.kind === 'turnCheckpoint') && source.sessionId) return source.sessionId;
+  return capture?.input.sessionId;
 }
 function refused(code: string): never { throw Object.assign(new Error(code), { code }); }
 
@@ -158,9 +174,12 @@ export function createReviewRecordPortV1(transport: ReviewArtifactTransportV1) {
         return name ? [[id, name]] : [];
       }));
       const comparisonId = input.comparisonCapture?.input.comparisonId ?? input.comparisonId;
+      const sourceSessionId = resolveReviewSourceSessionIdV1(input.comparisonCapture);
       const reviewMetadata: ReviewMetadataWriteV1 = { projectSourceId: input.projectSourceId ?? null,
         workflowId: input.workflowId ?? null, subjectKind: input.subjectKind, sourceKind: input.sourceKind,
-        state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null };
+        state: 'running', currentRoundOrdinal: ordinal, startedAt: input.startedAt, finishedAt: null,
+        ...(input.workflowRunId ? { workflowRunId: input.workflowRunId } : {}),
+        ...(sourceSessionId ? { sourceSessionId } : {}) };
       const next: ReviewArtifactV1 = { kind: REVIEW_ARTIFACT_KIND_V1, v: 1, reviewId: input.reviewId,
         title: previous?.title ?? input.title, rounds: [...previous?.rounds ?? [], { ordinal,
           ...(comparisonId ? { comparisonId } : {}),

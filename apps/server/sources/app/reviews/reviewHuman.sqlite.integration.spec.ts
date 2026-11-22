@@ -299,7 +299,7 @@ describe('Review requested-person HTTP flow', () => {
             expect(await changes()).toEqual(changedVerdictChanges);
             expect((await post(person.id, 'verdicts', { roundOrdinal: 1, verdict: 'request_changes', expectedRevision: 1,
                 content: { t: 'plain', v: prose } })).json()).toMatchObject({ error: 'review_verdict_revision_mismatch' });
-            await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { projectSourceId: null, workflowId: null,
+            await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: owner.id, metadata: { projectSourceId: null, workflowId: null,
                 subjectKind: 'comparison', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 2, startedAt: 3, finishedAt: null } }));
             const renewed = await app.inject({ method: 'GET', url: `/v1/reviews/${reviewId}/human`, headers: headers(person.id) });
             expect(renewed.json()).toMatchObject({ roundOrdinal: 2, needsYou: { requestedVerdict: true, reason: 'review_needs_you' } });
@@ -385,7 +385,7 @@ describe('Review requested-person HTTP flow', () => {
             expect(outstanding.json().needsYou).toMatchObject({ requestedVerdict: true, needsYou: true });
             expect((await post(alice.id, 'verdicts', { roundOrdinal: 1, verdict: 'comment' })).json().needsYou)
                 .toMatchObject({ requestedVerdict: false, needsYou: false });
-            await inTx(tx => writeReviewRoundState(tx, { reviewId, metadata: { projectSourceId: null, workflowId: null,
+            await inTx(tx => writeReviewRoundState(tx, { reviewId, actorAccountId: owner.id, metadata: { projectSourceId: null, workflowId: null,
                 subjectKind: 'comparison', sourceKind: 'direct', state: 'running', currentRoundOrdinal: 2, startedAt: 3, finishedAt: null } }));
             const renewedRequests = await db.reviewRequestedReviewer.findMany({ where: { reviewId, roundOrdinal: 2 },
                 select: { principal: true, required: true } });

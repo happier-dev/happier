@@ -3702,11 +3702,19 @@ model ReviewMetadata {
     currentRoundOrdinal Int
     startedAt DateTime
     finishedAt DateTime?
+    /// The Workflow run that produced the current round; null for direct rounds.
+    workflowRunId String?
+    /// The Session whose changes the current round reviews, and that Session's
+    /// message seq when the round started: later turns are not covered by it.
+    sourceSessionId String?
+    sourceSessionSeq Int?
 
     @@index([projectSourceId, state, artifactId])
     @@index([workflowId, startedAt, artifactId])
     @@index([state, startedAt, artifactId])
     @@index([finishedAt, artifactId])
+    @@index([workflowRunId])
+    @@index([sourceSessionId, state, startedAt, artifactId])
 }
 
 model Artifact {

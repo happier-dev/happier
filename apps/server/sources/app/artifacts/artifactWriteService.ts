@@ -1123,7 +1123,8 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
         throw error;
     });
 
-    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata });
+    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata,
+        actorAccountId: params.actorUserId, authentication: params.authentication });
 
     if (params.preparedBlob?.candidate) {
         await tx.artifactBlob.create({ data: params.preparedBlob.row });
@@ -1612,7 +1613,8 @@ export async function updateArtifactTx(
         };
     }
 
-    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata });
+    if (params.reviewMetadata) await writeReviewRoundState(tx, { reviewId: params.artifactId, metadata: params.reviewMetadata,
+        actorAccountId: params.actorUserId, authentication: params.authentication });
 
     if (params.preparedBlob?.candidate) {
         await tx.artifactBlob.create({ data: params.preparedBlob.row });

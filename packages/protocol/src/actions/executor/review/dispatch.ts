@@ -365,10 +365,13 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           // Retain admitted ordinary reviewer prompts so Workflow leaves do not reread the source.
           const records = deps.reviewRecords?.(ctx);
           if (!records) return { ok: false, errorCode: 'review_record_unavailable', error: 'review_record_unavailable' };
+          const composedRunId = globalThis.crypto.randomUUID();
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
             subjectKind,
             sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
             ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
+            // The Workflow run a person watches: the calling run, else the run composed below.
+            workflowRunId: ctx.actionCaller?.kind === 'workflowRun' ? ctx.actionCaller.runId : composedRunId,
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
@@ -406,7 +409,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             // Core admission already parsed these JSON operands.
             parent: { actionId, input: parsed.data as JsonObject }, context: workflowContext,
             child: { action: 'workflow.run.start', role: 'workflow.run.start', input: {
-              runId: globalThis.crypto.randomUUID(), source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
+              runId: composedRunId, source: { kind: 'inline', definition: built.definition }, inputs: built.inputs,
             } as JsonObject },
             execute: (input, context, childId) => executeHostChild(childId, input, context),
           });
@@ -546,7 +549,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
           subjectKind,
           sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
-          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
+          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId, workflowRunId: ctx.actionCaller.runId } : {}),
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput),

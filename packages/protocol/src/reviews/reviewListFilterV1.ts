@@ -11,6 +11,7 @@ export const ReviewListFilterV1Schema = lazyZodSchema(() => z.strictObject({
     projectSourceId: z.optional(Id), subjectKind: z.optional(ReviewSubjectKindV1Schema),
     sourceKind: z.optional(ReviewSourceKindV1Schema), state: z.optional(ReviewRoundStateV1Schema),
     workflowId: z.optional(Id), needsDecision: z.optional(z.boolean()), sharedWithTeamId: z.optional(Id),
+    workflowRunId: z.optional(Id), sourceSessionId: z.optional(Id),
 }));
 export type ReviewListFilterV1 = z.infer<typeof ReviewListFilterV1Schema>;
 export const ReviewListFilterV1StoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(ReviewListFilterV1Schema));
