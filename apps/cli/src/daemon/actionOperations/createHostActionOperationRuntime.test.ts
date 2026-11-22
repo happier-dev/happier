@@ -273,8 +273,11 @@ describe('finite host operation custody', () => {
       errorCode: 'outcome_unknown', details: { requiredFact: 'nativeExecutionResult', remedy: expect.stringMatching(/\S/) } } } });
   });
 
-  it('names the refusing Domain member in both the live result and the retained operation', async () => {
-    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+  it.each([
+    { operationMachine: 'controller', refusingMachine: 'serving-origin' },
+    { operationMachine: 'only-serving-machine', refusingMachine: 'only-serving-machine' },
+  ])('names the refusing Domain member $refusingMachine in the live and retained operation', async ({ operationMachine, refusingMachine }) => {
+    const runtime = createHostActionOperationRuntime({ machineId: operationMachine, serverId: 'home',
       resolveAccountId: async () => 'owner', generateOperationId: () => 'domain-result' });
     const result = await runtime.observeExecution({ actionId: 'deployments.domains.add',
       input: { serverId: 'home', environmentId: 'environment', domainId: 'domain', targetLinkId: 'link',
@@ -282,10 +285,10 @@ describe('finite host operation custody', () => {
         contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 },
       execute: async () => ({ ok: false, errorCode: 'machine_admin_access_required', error: 'machine_admin_access_required',
         details: { environmentId: 'environment', domainId: 'domain', step: 'native_execution',
-          machineId: 'serving-origin', requiredFact: 'nativeExecutionResult' } }) });
+          machineId: refusingMachine, requiredFact: 'nativeExecutionResult' } }) });
     const error = { errorCode: 'machine_admin_access_required', details: {
-      environmentId: 'environment', domainId: 'domain', remedy: expect.stringContaining('serving-origin'),
-      operation: { serverId: 'home', machineId: 'controller', operationId: 'domain-result' },
+      environmentId: 'environment', domainId: 'domain', remedy: expect.stringContaining(refusingMachine),
+      operation: { serverId: 'home', machineId: operationMachine, operationId: 'domain-result' },
     } };
     expect(result).toMatchObject({ ok: false, ...error });
     const operation = await runtime.handlers.getV2({ operationId: 'domain-result' });
