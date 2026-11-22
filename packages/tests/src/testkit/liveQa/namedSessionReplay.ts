@@ -97,7 +97,7 @@ export function readNamedFixtureMachineId(status: StackCommandResult, accountId:
     return machineId;
 }
 
-async function stackCommand(args: string[], overrides?: NodeJS.ProcessEnv, signal?: AbortSignal) {
+async function stackCommand(args: string[], overrides?: Readonly<Record<string, string>>, signal?: AbortSignal) {
     signal?.throwIfAborted();
     return await new Promise<StackCommandResult>((resolveResult, reject) => {
         const child = spawn(process.execPath, [join(root, 'apps/stack/scripts/repo_local.mjs'), 'stack', ...args], {
