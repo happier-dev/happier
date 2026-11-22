@@ -3399,6 +3399,9 @@ through native open; setup review reuses that occurrence and its worker
 reservation. One-time consent and Skip do not persist Trust, while Until it changes
 uses the approving Account's existing Trust writer and remeasures that same
 producer. Cancellation cannot revive the original startup through a late decision.
+If the startup occurrence has already settled or retires during Setup review,
+native launch returns the current typed Setup consent refusal. The review owner
+releases the worker reservation when it can no longer publish and receive a decision.
 Detached Runs carry admitted requester/bootstrap context through their backend
 parameters, not daemon-global credentials; the existing Run controller owns setup
 review and Action Operations projects it. These are development-source contracts,

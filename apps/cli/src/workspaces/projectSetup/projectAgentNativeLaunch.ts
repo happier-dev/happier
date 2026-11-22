@@ -195,7 +195,11 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                         }
                     })() });
                 await assertCurrent(signal);
-                if (!result.ok) return fail(result.errorCode);
+                if (!result.ok) {
+                    const outcome = prepared.outcome;
+                    return fail(result.errorCode, outcome.kind === 'pendingApproval' && result.errorCode === outcome.code
+                        ? pending(outcome) : undefined);
+                }
                 if (result.result && typeof result.result === 'object' && 'kind' in result.result && result.result.kind === 'not_accepted') {
                     return fail('project_worker_not_accepted');
                 }

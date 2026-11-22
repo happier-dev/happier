@@ -277,7 +277,11 @@ export function createActionOperationRunner(deps: Readonly<{
         && joinEarlierActive(candidate.input)) : undefined;
       const controller = new AbortController();
       const retainedReview = createActionOperationSetupReview({ signal: controller.signal,
-        publish: details => { deps.store.updateSetupReview(operationId, details); } });
+        publish: details => {
+          if (active.get(operationId)?.controller !== controller) return false;
+          const snapshot = deps.store.updateSetupReview(operationId, details);
+          return snapshot?.setupReview !== undefined;
+        } });
       const operationReview: ActionOperationReviewContinuation = {
         waitForResume: (details, producer) => {
           if (!canRetainProjectSetupReviewV1(action.actionId)) return Promise.reject(new Error('action_operation_unavailable'));
@@ -640,6 +644,7 @@ export function createActionOperationRunner(deps: Readonly<{
           // coordinator. Its retired AbortController cannot clean up an unknown
           // native instance; do not advertise a cancellation owner that is gone.
           if (action.actionId === 'projects.service.relocate') deps.store.updateCancellation(operationId, 'unsupported');
+          retainedReview.retire();
           active.delete(operationId);
           // Retired pending creation observes birth once; transport failure is
           // still uncertainty and must not replace the original pending reply.

@@ -243,8 +243,9 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
     prepareAgentNativeLaunch: missingCustody.prepareAgentNativeLaunch });
   const scope = { accountId: f.bootstrap.attribution.accountId, machineId: 'machine', sessionId: 'session' };
   let coldOperationId: string | undefined;
-  const launchWithOperation = async (concurrent = false) => {
+  const launchWithOperation = async (concurrent = false, afterSettlement = false) => {
     let authorized: Awaited<ReturnType<typeof launch>> | undefined;
+    let launchAfterSettlement: (() => Promise<Awaited<ReturnType<typeof launch>>>) | undefined;
     const result = await operationRuntime.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'original-cold-start' },
       sessionId: 'session', rpcContext: ingress, execute: async operation => {
         coldOperationId = operation.operationAcceptance?.operationId;
@@ -261,14 +262,18 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
           prepareAgentNativeLaunch: retained.prepareAgentNativeLaunch });
         const authorize = () => authorizePluginExecLaunchForHost(retainedService, { executable, cwd },
           { agentIsolation: null, nativeLaunch: issueAgentNativeLaunchQualifierForHost(retainedService) });
-        if (concurrent) {
+        if (afterSettlement) launchAfterSettlement = authorize;
+        else if (concurrent) {
           const launches = await Promise.all([authorize(), authorize()]);
           authorized = launches[0];
           await launches[1].release();
         } else authorized = await authorize();
-        return { ok: true, result: {} };
+        return { ok: true, result: { type: 'success', disposition: 'created', sessionId: 'session',
+          executionTarget: { serverId: 'session-home', machineId: 'machine' }, organizationPlacement: { folderId: null, tagIds: [] },
+          initialInput: { status: 'notRequested' } } };
       } });
     if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+    if (launchAfterSettlement) return await launchAfterSettlement();
     if (!authorized) throw new Error('Original launch did not complete');
     return authorized;
   };
@@ -558,6 +563,17 @@ it('diagnoses the pending preparation phase and cancellation source without exce
   expect(diagnostic?.[1]).toMatchObject({ pendingPhase: 'setup_review', abortSources: expect.arrayContaining(['operation']),
     abortReason: 'abort' });
   expect(diagnostic?.[1]).not.toHaveProperty('error');
+});
+
+it('settles native preparation when the retained startup can no longer publish Setup review', async () => {
+  const h = await harness({ setup: true, trusted: false });
+  let refusal: unknown;
+  void h.launchWithOperation(false, true).catch(error => { refusal = error; });
+  await expect.poll(() => h.operation()?.state).toBe('succeeded');
+  await expect.poll(() => refusal).toMatchObject({ code: 'project_setup_consent_required',
+    details: { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: expect.any(String) } });
+  expect(h.operation()?.setupReview).toBeUndefined();
+  expect(h.spawned).toHaveLength(0);
 });
 
 it('executes trusted cold setup inside the original startup reservation before authorizing the Agent', async () => {
