@@ -55,7 +55,7 @@ describe('machine add commands', () => {
         const cli = join(fixture.payloadRoot, 'happier');
         const original = readFileSync(cli, 'utf8');
         // The executable is the process boundary; self-install runs the real promotion owner.
-        writeFileSync(cli, original.replace('#!/bin/sh\n', `#!/bin/sh\nif [ "$1" = setup ]; then printf '%s\\n' "$@" > '${calls}'; exit 0; fi\n`));
+        writeFileSync(cli, original.replace('#!/bin/sh\n', `#!/bin/sh\nif [ "$1" = setup ] || [ "$1" = machine ] || [ "$1" = machine-enroll ]; then printf '%s\\n' "$@" > '${calls}'; exit 0; fi\n`));
         const archivePath = join(root, 'payload.tar.gz');
         execFileSync('tar', ['-czf', archivePath, '-C', dirname(fixture.payloadRoot), basename(fixture.payloadRoot)]);
         let archive = readFileSync(archivePath);
@@ -81,12 +81,23 @@ describe('machine add commands', () => {
             const tools = join(root, 'tools'); mkdirSync(tools);
             const actualTar = execFileSync('/bin/sh', ['-c', 'command -v tar'], { encoding: 'utf8' }).trim();
             writeFileSync(join(tools, 'tar'), `#!/bin/sh\nprintf extracted > '${extracted}'\nexec '${actualTar}' "$@"\n`, { mode: 0o755 });
-            const run = (homeDir: string) => promisify(execFile)(shell, ['-c', command], {
+            const run = (homeDir: string, handoff = command) => promisify(execFile)(shell, ['-c', handoff], {
                 env: { ...process.env, HOME: homeDir, PATH: `${tools}:${process.env.PATH}` },
             });
             await run(join(root, 'first-home'));
             expect(readFileSync(calls, 'utf8')).toBe(`setup\n--home-url\n${homeUrl}\n`);
             expect(existsSync(extracted)).toBe(true);
+            rmSync(calls); rmSync(extracted);
+            const sshCommand = buildMachineAddCommand({
+                descriptor: null, fallbackHomeUrl: homeUrl, guestCli, os: 'linux', kind: 'sshMachine',
+                sshDraft: { ...createDefaultSshCredentialsDraft(), host: 'build-box', username: 'operator' },
+            });
+            if (!sshCommand) throw new Error('Expected copied Home-payload Over SSH command');
+            await run(join(root, 'ssh-home'), sshCommand);
+            expect(readFileSync(calls, 'utf8').split('\n').filter(Boolean)).toEqual([
+                'machine', 'enroll', '--home-url', homeUrl, '--ssh-host', 'build-box',
+                '--ssh-user', 'operator', '--ssh-auth', createDefaultSshCredentialsDraft().authMode, '--yes',
+            ]);
             rmSync(calls); rmSync(extracted);
             // A checked install subshell must propagate both extraction and promotion failures.
             for (const step of ['tar', 'chmod']) {
@@ -105,7 +116,7 @@ describe('machine add commands', () => {
             await expect(run(join(root, 'second-home'))).rejects.toThrow();
             expect(existsSync(calls)).toBe(false);
             expect(existsSync(extracted)).toBe(false);
-            expect(requests).toEqual(Array(4).fill('/v1/runtime/guest-cli/payloads/linux/x64'));
+            expect(requests).toEqual(Array(5).fill('/v1/runtime/guest-cli/payloads/linux/x64'));
         } finally {
             server.closeAllConnections();
             await new Promise<void>(resolve => server.close(() => resolve()));

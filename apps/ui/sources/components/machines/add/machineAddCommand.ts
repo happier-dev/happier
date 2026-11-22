@@ -126,7 +126,11 @@ export function buildMachineAddCommand(input: MachineAddCommandInput, target = r
     const descriptorPath = input.os === 'windows' ? '$happierHomeDescriptor' : '"$happier_home_descriptor"';
     const action = input.kind === 'joinHome' ? 'setup' : 'machine-enroll';
     const quotedArgs = args.map((arg, index) => descriptorJson && index === 1 ? descriptorPath : quoteShellValue(arg, input.os));
-    if (target.kind === 'https' && target.renderPayloadCommand) return target.renderPayloadCommand([action, ...quotedArgs].join(' '));
+    if (target.kind === 'https' && target.renderPayloadCommand) {
+        // A Home payload invokes the binary directly, without the installer's action mapping.
+        const cliCommand = input.kind === 'joinHome' ? 'setup' : 'machine enroll';
+        return target.renderPayloadCommand([cliCommand, ...quotedArgs].join(' '));
+    }
     const command = (input.os === 'windows' ? buildHappierCliInstallAndRunPowershellCommand : buildHappierCliInstallAndRunCommand)({
         appVariant: resolveAppVariant({ appVariant: config.variant, envAppEnv: process.env.APP_ENV, envExpoPublicAppEnv: process.env.EXPO_PUBLIC_APP_ENV }) ?? 'production',
         distTagOverride: config.cliNpmDistTag,
