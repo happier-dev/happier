@@ -116,8 +116,8 @@ async function installSourceMachineActionReceiver() {
     const serverIdentityId = account.serverIdentityId;
     if (!serverIdentityId) throw new Error('Expected the source Home identity');
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
-        // The receiving Account allows linking; only a destination consequence requires review.
-
+        // The receiving host uses the real Account Automation index over the Home HTTP boundary.
+        actionAutomations: (await import('@/sync/ops/actions/actionAutomations')).createUiActionAutomationPortV1(account),
         sessionHandoffTargetReplacementApprovalPreflight: ({ targetMachineId, targetPath, workspaceAction, activatesExactMirror,
             destinationIntent, replaceRelationshipId, serverId, operationId, signal }) => preflightWorkspaceDestinationReplacement({
             targetMachineId, targetPath: targetPath ?? '', serverId: serverId ?? '', operationId,
