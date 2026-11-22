@@ -842,6 +842,7 @@ export async function fetchAndApplySessionById(params: Readonly<{
         accountMode,
         accountCurrentness,
         readAccountMaterial: params.readAccountMaterial,
+        ownerMetadataAdmission: 'stored',
         ownerMetadataEnvelope: row.ownerMetadata,
         credentials: params.credentials,
         composerOptionsInput: params.composerOptionsInput,

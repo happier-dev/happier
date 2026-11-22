@@ -1,5 +1,5 @@
 import {
-    openManagedMachinePresetRecipientProjectionV1,
+    openAdmittedManagedMachinePresetRecipientProjectionV1,
     type ManagedMachinePresetContentV1,
     type ManagedMachinePresetRecipientProjectionV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -90,7 +90,7 @@ export function captureManagedMachinePresetPlainCustodyV1(params: Readonly<{
             mode: 'plain' as const,
             open: ({ presetId, mode, projection }: ProjectionOpenParams) => {
                 assertCurrent();
-                return mode === 'plain' ? openManagedMachinePresetRecipientProjectionV1({ presetId, mode, projection }) : null;
+                return mode === 'plain' ? openAdmittedManagedMachinePresetRecipientProjectionV1({ presetId, mode, projection }) : null;
             },
             dispose: () => {},
         });
@@ -133,8 +133,8 @@ export async function captureManagedMachinePresetCustodyV1(params: Readonly<{
                 assertCurrent();
                 if (disposed) return null;
                 return mode === 'plain'
-                    ? openManagedMachinePresetRecipientProjectionV1({ presetId, mode, projection })
-                    : openManagedMachinePresetRecipientProjectionV1({
+                    ? openAdmittedManagedMachinePresetRecipientProjectionV1({ presetId, mode, projection })
+                    : openAdmittedManagedMachinePresetRecipientProjectionV1({
                         presetId, mode, projection, accountId: params.account.accountId, accountKey,
                     });
             },
@@ -277,7 +277,7 @@ export function openManagedMachinePresetRecipientProjectionAtCustodyV1(params: R
     projection: ManagedMachinePresetRecipientProjectionV1;
     custody?: ManagedMachinePresetCustodyV1 | null;
 }>): ManagedMachinePresetContentV1 | null {
-    if (params.mode === 'plain') return openManagedMachinePresetRecipientProjectionV1({
+    if (params.mode === 'plain') return openAdmittedManagedMachinePresetRecipientProjectionV1({
         presetId: params.presetId, mode: 'plain', projection: params.projection,
     });
     return params.custody?.open({ presetId: params.presetId, mode: params.mode, projection: params.projection }) ?? null;

@@ -93,14 +93,23 @@ export const StoredProjectAccountRowContentV1Schema = createStoredReadSchema(Pro
 
 /** Opened private payloads must belong to the exact requested physical row. */
 export function assertProjectAccountRowPayloadBindingV1(key: ProjectAccountRowKeyV1, input: unknown): ProjectAccountRowPayloadV1 {
-    const payload = StoredProjectAccountRowPayloadV1Schema.parse(input);
-    if (buildProjectAccountRowPhysicalKeyV1(payload.key) !== buildProjectAccountRowPhysicalKeyV1(key)) {
+    return assertAdmittedProjectAccountRowPayloadBindingV1(key, StoredProjectAccountRowPayloadV1Schema.parse(input));
+}
+
+export function assertAdmittedProjectAccountRowPayloadBindingV1(
+    key: ProjectAccountRowKeyV1, payload: ProjectAccountRowPayloadV1,
+): ProjectAccountRowPayloadV1 {
+    if (formatProjectAccountRowPhysicalKeyV1(payload.key) !== buildProjectAccountRowPhysicalKeyV1(key)) {
         throw new Error('Project Account row identity mismatch');
     }
     return payload;
 }
 export function assertProjectAccountRowContentForModeV1(input: unknown, mode: 'plain' | 'e2ee'): ProjectAccountRowContentV1 {
-    const content = StoredProjectAccountRowContentV1Schema.parse(input);
+    return assertAdmittedProjectAccountRowContentForModeV1(StoredProjectAccountRowContentV1Schema.parse(input), mode);
+}
+export function assertAdmittedProjectAccountRowContentForModeV1(
+    content: ProjectAccountRowContentV1, mode: 'plain' | 'e2ee',
+): ProjectAccountRowContentV1 {
     if ((mode === 'plain' && content.t !== 'plain') || (mode === 'e2ee' && (content.t !== 'encrypted'
         || !isAccountScopedBlobCiphertextForKind({ kind: PROJECT_ACCOUNT_ROW_BLOB_KIND_V1, ciphertext: content.c })))) {
         throw new Error('Project Account row mode mismatch');
@@ -108,7 +117,10 @@ export function assertProjectAccountRowContentForModeV1(input: unknown, mode: 'p
     return content;
 }
 export function buildProjectAccountRowPhysicalKeyV1(input: ProjectAccountRowKeyV1): string {
-    const key = ProjectAccountRowKeyV1Schema.parse(input);
+    return formatProjectAccountRowPhysicalKeyV1(ProjectAccountRowKeyV1Schema.parse(input));
+}
+
+function formatProjectAccountRowPhysicalKeyV1(key: ProjectAccountRowKeyV1): string {
     if (key.kind === 'relationship-graph') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}graph`;
     if (key.kind === 'workspace-ref') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}ref/${encodeURIComponent(key.serverId)}/${encodeURIComponent(key.id)}`;
     if (key.kind === 'services-organization') return `${PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1}services/${encodeURIComponent(key.serverId)}`;

@@ -2,7 +2,8 @@ import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext, type 
 import {
     PROJECT_ACCOUNT_ROW_BLOB_KIND_V1,
     ProjectAccountRowPayloadV1Schema,
-    assertProjectAccountRowContentForModeV1,
+    assertAdmittedProjectAccountRowContentForModeV1,
+    assertAdmittedProjectAccountRowPayloadBindingV1,
     assertProjectAccountRowPayloadBindingV1,
     type ProjectAccountRowContentV1,
     type ProjectAccountRowKeyV1,
@@ -41,9 +42,12 @@ export function createProjectAccountRowCipherV1(options: Readonly<{
             }) };
         },
         open(key: ProjectAccountRowKeyV1, input: ProjectAccountRowContentV1): ProjectAccountRowPayloadV1 {
-            const content = assertProjectAccountRowContentForModeV1(input, options.mode);
-            return assertProjectAccountRowPayloadBindingV1(key, content.t === 'plain' ? content.v
-                : openAccountScopedBlobCiphertext({ kind: PROJECT_ACCOUNT_ROW_BLOB_KIND_V1, material: material(), ciphertext: content.c })?.value);
+            const content = assertAdmittedProjectAccountRowContentForModeV1(input, options.mode);
+            if (content.t === 'plain') return assertAdmittedProjectAccountRowPayloadBindingV1(key, content.v);
+            const opened = openAccountScopedBlobCiphertext({
+                kind: PROJECT_ACCOUNT_ROW_BLOB_KIND_V1, material: material(), ciphertext: content.c,
+            });
+            return assertProjectAccountRowPayloadBindingV1(key, opened?.value);
         },
     };
 }

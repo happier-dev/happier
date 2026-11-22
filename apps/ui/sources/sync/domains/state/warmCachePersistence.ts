@@ -940,6 +940,12 @@ export function loadPluginUiProjectionWarmCacheEntries(
 // are immutable. The exported presentation symbol alone is not admission.
 const publishedPluginUiProjectionEntries = new WeakSet<PluginUiProjectionCacheEntryV1>();
 
+function isPublishedPluginUiProjectionRecord(entries: Record<string, PluginUiProjectionCacheEntryV1>): boolean {
+    const platform = resolvePluginUiProjectionPlatform();
+    return Object.values(entries).every(entry => publishedPluginUiProjectionEntries.has(entry)
+        && entry[PLUGIN_UI_PROJECTION_PRESENTATION]?.platform === platform);
+}
+
 function publishPluginUiProjectionPresentations(
     entries: Record<string, PluginUiProjectionCacheEntryV1>,
     previous?: Record<string, PluginUiProjectionCacheEntryV1> | null,
@@ -982,6 +988,11 @@ function publishPluginUiProjectionPresentations(
 /** Exact-scope hydration runs before the credential/Sync owner publishes consumers. */
 export function preparePluginUiProjectionWarmCacheEntries(serverId: string, accountId: string): void {
     const key = buildScopedKey(PLUGIN_UI_PROJECTION_WARM_CACHE_PREFIX, serverId, accountId);
+    // Every credential binding of this scope calls here (one per mounted reader). Once the held
+    // value is this owner's publication, re-reading the whole stored record only re-proves it;
+    // readers still compare stored bytes, and other bytes they admit are prepared on the next call.
+    const held = key ? warmCacheSavedValueByKey.get(key)?.value : undefined;
+    if (held && isPublishedPluginUiProjectionRecord(held as Record<string, PluginUiProjectionCacheEntryV1>)) return;
     const entries = loadPluginUiProjectionWarmCacheEntries(serverId, accountId);
     const published = publishPluginUiProjectionPresentations(entries, entries);
     const cached = key ? warmCacheSavedValueByKey.get(key) : undefined;

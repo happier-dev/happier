@@ -409,6 +409,7 @@ function readSessionListRowOwnerMetadata(params: Readonly<{
         access: normalizeSessionAccessProjection(params.row, { allowLegacy: true }),
         accountMode: params.accountCurrentness?.mode,
         accountCurrentness: params.accountCurrentness,
+        ownerMetadataAdmission: 'stored',
         ownerMetadataEnvelope: params.row.ownerMetadata,
         credentials: params.credentials,
         previousProjection: params.previousProjection,

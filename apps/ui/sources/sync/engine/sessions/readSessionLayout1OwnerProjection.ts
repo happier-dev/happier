@@ -1,5 +1,12 @@
-import { openSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectAdmittedSessionOwnerCompatibilityViewV1, StoredSessionSharedMetadataV1Schema, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { openAdmittedSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataEnvelopeV1, openSessionOwnerMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
+import {
+    projectAdmittedSessionOwnerCompatibilityViewV1,
+    StoredSessionSharedMetadataV1Schema,
+    validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1,
+    validateSessionOwnerMetadataEnvelopeForAccountModeV1,
+    type SessionOwnerMetadataEnvelopeV1,
+    type SessionSharedMetadataV1,
+} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { projectAccountEncryptionIdentity, sameAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
@@ -120,12 +127,14 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
     accountCurrentness?: AccountEncryptionCurrentnessResponse | AccountEncryptionIdentity;
     /** The containing finite Account read has already bound this material to its identity. */
     readAccountMaterial?: () => AccountScopedCryptoMaterial | null;
-    ownerMetadataEnvelope: unknown;
     credentials: AuthCredentials;
     composerOptionsInput?: ComposerOptionsInputV1 | null;
     composerOptionsGrant?: ApiTokenGrantV1 | null;
     previousProjection?: SessionOwnerMetadataProjection | null;
-}>): SessionLayout1OwnerMetadataRead {
+}> & (
+    | Readonly<{ ownerMetadataAdmission: 'stored'; ownerMetadataEnvelope: SessionOwnerMetadataEnvelopeV1 | null | undefined }>
+    | Readonly<{ ownerMetadataAdmission?: undefined; ownerMetadataEnvelope: unknown }>
+)): SessionLayout1OwnerMetadataRead {
     if (!params.access) return { kind: 'unavailable', reason: 'access_unavailable' };
     if (params.composerOptionsInput !== undefined) {
         if (params.composerOptionsInput !== null) {
@@ -138,7 +147,9 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
         if (params.accountMode !== 'plain' || params.access.role === 'recipient' || params.ownerMetadataEnvelope == null) {
             return { kind: 'composer', ownerMetadataView: null, composerOptionsInput: null };
         }
-        const opened = openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: params.ownerMetadataEnvelope, material: null });
+        const opened = params.ownerMetadataAdmission === 'stored'
+            ? openAdmittedSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: params.ownerMetadataEnvelope, material: null })
+            : openSessionOwnerMetadataEnvelopeV1({ accountMode: 'plain', envelope: params.ownerMetadataEnvelope, material: null });
         if (!opened.ok) return { kind: 'unavailable', reason: opened.reason };
         return { kind: 'composer', ownerMetadataView: null, composerOptionsInput: projectComposerOptionsInputV1(opened.ownerMetadata.runtime, params.composerOptionsGrant ?? null) };
     }
@@ -157,10 +168,13 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
 
     if (params.previousProjection?.canReuse?.(params)) return params.previousProjection;
 
-    const validated = validateSessionOwnerMetadataEnvelopeForAccountModeV1({
-        accountMode: params.accountMode,
-        envelope: params.ownerMetadataEnvelope,
-    });
+    const validated = params.ownerMetadataAdmission === 'stored'
+        ? validateAdmittedSessionOwnerMetadataEnvelopeForAccountModeV1({
+            accountMode: params.accountMode, envelope: params.ownerMetadataEnvelope,
+        })
+        : validateSessionOwnerMetadataEnvelopeForAccountModeV1({
+            accountMode: params.accountMode, envelope: params.ownerMetadataEnvelope,
+        });
     if (!validated.ok) {
         return { kind: 'unavailable', reason: validated.reason };
     }
@@ -185,8 +199,7 @@ export function readSessionLayout1OwnerMetadata(params: Readonly<{
         ? validated.envelope.v
         : material ? openSessionOwnerMetadataV1({ material, ciphertext: validated.envelope.c }) : null;
     if (!ownerMetadata) return { kind: 'unavailable', reason: 'invalid_ciphertext' };
-    // Plain inputs still pass the strict envelope/owner reader every time. Retain
-    // equal admitted facts afterwards; encrypted ciphertext reuse remains separate.
+    // Reuse equal plain owner facts only under the same captured Account authority.
     if (validated.envelope.t === 'plain' && params.previousProjection?.ownerMetadataEnvelope.t === 'plain'
         && params.previousProjection.isCurrentAuthority?.(params)
         && JSON.stringify(params.previousProjection.ownerMetadata) === JSON.stringify(ownerMetadata)) return params.previousProjection;

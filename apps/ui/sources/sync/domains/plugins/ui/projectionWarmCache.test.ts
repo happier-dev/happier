@@ -4,10 +4,13 @@ import { PluginUiTargetedContributionsV1Schema } from '@happier-dev/protocol/plu
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const store = new Map<string, string>();
+// Storage reads at the MMKV boundary: each one copies the whole retained record into JS.
+const storageReads = new Map<string, number>();
 
 vi.mock('react-native-mmkv', () => {
     class MMKV {
         getString(key: string) {
+            storageReads.set(key, (storageReads.get(key) ?? 0) + 1);
             return store.get(key);
         }
 
@@ -220,6 +223,34 @@ it('publishes retained presentation before reads and observes replacement, platf
     } finally {
         normalize.mockRestore();
     }
+});
+
+it('prepares a retained scope once per process, not once per credential binding, and re-prepares bytes it did not write', async () => {
+    await prepareWarmCacheEncryptionKey();
+    store.clear();
+    forgetPluginUiProjectionAdmissionSnapshots(ACCOUNT_A);
+    const key = `plugin-ui-projection-warm-cache-v1:${ACCOUNT_A.serverId}:${ACCOUNT_A.accountId}`;
+    const input = { scope: ACCOUNT_A, targetKey: TARGET_KEY, machineId: MACHINE_ID, platform: projectionNormalizer.resolvePluginUiProjectionPlatform() };
+    savePluginUiProjectionAdmissionSnapshot({ ...input, projection: projectionAtGeneration('bind-once-a', 1) });
+    const olderBytes = store.get(key)!;
+    savePluginUiProjectionAdmissionSnapshot({ ...input, projection: projectionAtGeneration('bind-once-a', 2) });
+    preparePluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
+    const prepared = readPluginUiProjectionAdmissionSnapshot(input);
+    expect(prepared).not.toBeNull();
+
+    // Workload: 213 credential bindings of one scope during an 8-swipe Session list scroll (iOS, 2026-11-12).
+    const readsBefore = storageReads.get(key) ?? 0;
+    for (let index = 0; index < 213; index += 1) preparePluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
+    expect(storageReads.get(key) ?? 0).toBe(readsBefore);
+    expect(readPluginUiProjectionAdmissionSnapshot(input)).toBe(prepared);
+
+    // Bytes another writer left behind are still observed by readers, and the next binding prepares them.
+    store.set(key, olderBytes);
+    expect(readPluginUiProjectionAdmissionSnapshot(input)).toBeNull();
+    preparePluginUiProjectionWarmCacheEntries(ACCOUNT_A.serverId, ACCOUNT_A.accountId);
+    const restored = readPluginUiProjectionAdmissionSnapshot(input);
+    expect(restored).not.toBeNull();
+    expect(restored).not.toBe(prepared);
 });
 
 function managedSourceCustody(immutableGenerationId: string): PluginSourceCustodyV1 {

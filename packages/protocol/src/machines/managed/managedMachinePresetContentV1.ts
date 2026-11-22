@@ -481,8 +481,20 @@ function openEncryptedPresetContent(
   if (!accountId.success) return null;
   const envelope = envelopes.data.find(item => item.accountId === accountId.data);
   if (!envelope) return null;
+  return openEncryptedPresetContentForRecipient({ ...params, envelope: envelope.envelope }, readStoredPayload);
+}
+
+function openEncryptedPresetContentForRecipient(
+  params: Readonly<{
+    presetId: string;
+    content: Readonly<{ t: 'encrypted'; c: string }>;
+    envelope: ManagedMachinePresetRecipientV1['envelope'];
+    accountKey: Uint8Array;
+  }>,
+  readStoredPayload: boolean,
+): Readonly<{ dataKey: Uint8Array; content: ManagedMachinePresetContentV1 }> | null {
   const dataKey = openEncryptedDataKeyEnvelopeV1({
-    envelope: decodeBase64(envelope.envelope.encryptedDataKey),
+    envelope: decodeBase64(params.envelope.encryptedDataKey),
     recipientSecretKeyOrSeed: params.accountKey,
   });
   if (!dataKey || dataKey.length !== tweetnacl.secretbox.keyLength) return null;
@@ -1605,21 +1617,34 @@ export function openManagedMachinePresetRecipientProjectionV1(
   params: ManagedMachinePresetRecipientProjectionOpenParamsV1,
 ): ManagedMachinePresetContentV1 | null {
   const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse(params.projection);
-  if (!projection.success) return null;
+  return projection.success
+    ? openAdmittedManagedMachinePresetRecipientProjectionV1({ ...params, projection: projection.data })
+    : null;
+}
+
+type AdmittedManagedMachinePresetRecipientProjectionOpenParamsV1 =
+  ManagedMachinePresetRecipientProjectionOpenParamsV1 & Readonly<{ projection: ManagedMachinePresetRecipientProjectionV1 }>;
+
+/** Open an admitted response while validating the private body at its first readable boundary. */
+export function openAdmittedManagedMachinePresetRecipientProjectionV1(
+  params: AdmittedManagedMachinePresetRecipientProjectionOpenParamsV1,
+): ManagedMachinePresetContentV1 | null {
+  const { projection } = params;
   if (params.mode === 'plain') {
-    return openManagedMachinePresetContentV1({
-      presetId: params.presetId,
-      mode: 'plain',
-      content: projection.data.content,
-    });
+    return projection.content.t === 'plain'
+      ? openManagedMachinePresetContentV1({ presetId: params.presetId, mode: 'plain', content: projection.content })
+      : null;
   }
-  if (projection.data.content.t !== 'encrypted' || projection.data.recipientEnvelope === null) return null;
-  return openManagedMachinePresetContentV1({
-    presetId: params.presetId,
-    mode: 'e2ee',
-    content: projection.data.content,
-    recipients: [{ accountId: params.accountId, envelope: projection.data.recipientEnvelope }],
-    accountId: params.accountId,
-    accountKey: params.accountKey,
-  });
+  if (projection.content.t !== 'encrypted' || projection.recipientEnvelope === null
+    || !(params.accountKey instanceof Uint8Array) || !id().safeParse(params.accountId).success) return null;
+  try {
+    return openEncryptedPresetContentForRecipient({
+      presetId: parsePresetId(params.presetId),
+      content: projection.content,
+      envelope: projection.recipientEnvelope,
+      accountKey: params.accountKey,
+    }, true)?.content ?? null;
+  } catch {
+    return null;
+  }
 }

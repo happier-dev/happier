@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import tweetnacl from 'tweetnacl';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -1098,6 +1098,19 @@ describe('managed machine preset content envelope', () => {
 
     expect(projection).toEqual({ content: sealed.content, recipientEnvelope: sealed.recipients[1]!.envelope });
     expect(projection).not.toHaveProperty('recipients');
+    const admitted = ManagedMachinePresetRecipientProjectionV1Schema.parse(projection);
+    const parseAgain = vi.spyOn(ManagedMachinePresetRecipientProjectionV1Schema, 'safeParse');
+    try {
+      const openAdmitted = managedPresetContent.openAdmittedManagedMachinePresetRecipientProjectionV1;
+      const input = { presetId: 'preset-reader-projection', mode: 'e2ee' as const, projection: admitted,
+        accountId: 'member', accountKey: memberSecret };
+      expect(openAdmitted(input)).toEqual(content);
+      expect(openAdmitted({ ...input, presetId: 'different-preset' })).toBeNull();
+      expect(openAdmitted({ ...input, accountKey: ownerSecret })).toBeNull();
+      expect(parseAgain).not.toHaveBeenCalled();
+    } finally {
+      parseAgain.mockRestore();
+    }
     expect(openManagedMachinePresetRecipientProjectionV1({
       presetId: 'preset-reader-projection',
       mode: 'e2ee',

@@ -31,6 +31,10 @@ describe('Project Account row cipher admission', () => {
         for (const retained of [read.row, ...list.rows]) {
             if (retained.content === null) throw new Error('The graph cannot be a tombstone');
             const opened = cipher.open(retained.key, retained.content);
+            if (retained.content.t !== 'plain') throw new Error('Expected admitted plain content');
+            expect(opened).toBe(retained.content.v);
+            expect(() => cipher.open({ kind: 'services-organization', serverId: 'other' }, retained.content!))
+                .toThrow('Project Account row identity mismatch');
             expect(opened).toEqual({ key, value: { relationships: [relationship] } });
             if (!('relationships' in opened.value)) throw new Error('The retained row must remain a graph');
             expect(getWorkspaceSyncWorkerCopyV1(opened.value.relationships[0]!)).toBeNull();

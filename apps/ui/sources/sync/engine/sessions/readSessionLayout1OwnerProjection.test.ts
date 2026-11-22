@@ -35,6 +35,22 @@ const credentials = {
 };
 
 describe('readSessionLayout1OwnerMetadata', () => {
+    it('retains the admitted owner body from a stored Session envelope and still checks Account mode', () => {
+        const envelope = createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata);
+        if (envelope.t !== 'plain') throw new Error('Expected plain owner metadata');
+        const params = {
+            access: normalizeSessionAccessProjection({ share: null }, { allowLegacy: true }),
+            credentials,
+            ownerMetadataEnvelope: envelope,
+            ownerMetadataAdmission: 'stored' as const,
+        };
+        const read = readSessionLayout1OwnerMetadata({ ...params, accountMode: 'plain' });
+        if (read.kind !== 'owner') throw new Error('Expected admitted owner');
+        expect(read.ownerMetadata).toBe(envelope.v);
+        expect(readSessionLayout1OwnerMetadata({ ...params, accountMode: 'e2ee' }))
+            .toEqual({ kind: 'unavailable', reason: 'account_mode_mismatch' });
+    });
+
     it('projects an admitted encrypted owner without reparsing its private body and preserves normalized mixed metadata', () => {
         const flatMetadata = {
             path: '/mixed/worktree', host: 'owner-host',
