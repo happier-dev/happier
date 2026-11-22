@@ -28,7 +28,7 @@ import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings
 import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
-import { readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCode,
+import { createTeamCredentialLaunchFailureCause, readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCode,
   type TeamCredentialLaunchFailurePhase, SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
 
 export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
@@ -133,11 +133,10 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
     this.details = reason === 'connected_services_default_settings_invalid' || reason === 'connected_account_purpose_catalog_unavailable'
       ? { v: 1, source: 'account_default', reason, phase: 'purpose_binding', ...(catalogReason ? { catalogReason } : {}) }
       : { v: 1, source: 'team_credential' };
-    this.failureCause = {
-      code: this.code === 'connected_services_default_unavailable' ? reason : this.code,
-      phase: 'authentication', failureReason: 'unknown',
-      ...(this.details.source === 'account_default' ? { connectedServicesDefault: this.details } : {}),
-    };
+    this.failureCause = this.code === 'connected_services_default_unavailable'
+      ? { code: reason, phase: 'authentication', failureReason: 'unknown',
+          ...(this.details.source === 'account_default' ? { connectedServicesDefault: this.details } : {}) }
+      : createTeamCredentialLaunchFailureCause(this.code, phase);
   }
 }
 

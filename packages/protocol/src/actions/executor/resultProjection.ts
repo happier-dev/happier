@@ -99,7 +99,7 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
 function readCarriedActionFailureCause(error: unknown): ActionFailureCauseV1 | undefined {
   try {
     const record: Readonly<Record<string, unknown>> = isPluginError(error) ? error.data : readRecord(error);
-    if (record.failureCause !== undefined) return readActionFailureCauseV1(record.failureCause);
+    if (record.failureCause !== undefined) return projectActionFailureCauseV1(record);
     // Observed on the loaded 0.2 daemon: details carries the same closed cause
     // with an actionException discriminator. No exception text enters this projection.
     const { kind, ...legacyCause } = readRecord(record.details);
@@ -254,8 +254,10 @@ function classifyActionExecutorThrownError(
       // Ordinary exceptions can carry vendor codes; only the closed native
       // classifier or a typed failure above can give them public authority.
       : error instanceof Error && !isRpcError(error) ? readUnexpectedActionErrorDiagnosticV1(error).errorCode : protocolCode;
-  const message =
-    error instanceof Error
+  // A runtime carrier authors the public cause. Its raw exception prose stays private.
+  const message = hasOwn(readRecord(errorRecord.failureCause), 'actionCause')
+    ? ''
+    : error instanceof Error
       ? error.message
       : typeof error === 'string'
         ? error

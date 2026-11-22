@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import { normalizeActionExecutorThrownError, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ConnectedServicesDefaultUnavailableError } from '@/session/services/spawnConnectedServicesDefaults';
+import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import fastify from 'fastify';
 import { serializerCompiler } from 'fastify-type-provider-zod';
 import { normalizeSpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
@@ -372,5 +375,30 @@ describe('Session launch cause transport', () => {
     expect(result.launchError?.message).toMatch(/select.*connected account profile/i);
     expect(result.launchError?.message).toMatch(/configure.*default profile/i);
     expect(JSON.stringify(result)).not.toContain('upstream-private-auth-diagnostic');
+  });
+
+  it.each([
+    ['default catalog refusal', new ConnectedServicesDefaultUnavailableError('provider_catalog_unavailable', 'resource_catalog')],
+    ['default resource refusal', new ConnectedServicesDefaultUnavailableError('resource_unavailable', 'resource_catalog')],
+    ['launch catalog refusal', new SessionTeamCredentialLaunchUnavailableError('provider_catalog_unavailable', 'resource_catalog')],
+  ] as const)('settles a Team credential %s without exception prose or credential details', (_name, refusal) => {
+    Object.assign(refusal, {
+      message: 'PRIVATE_PROVIDER_RESPONSE',
+      details: { ...refusal.details, credentialId: 'private-credential-id', teamId: 'private-team-id' },
+    });
+    const result = settleActionOutput('session.spawn_new', {
+      ok: false, ...normalizeActionExecutorThrownError(refusal, 'dispatch'),
+    });
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'action_failed',
+      error: 'action_failed',
+      failureCause: {
+        phase: 'providers.team_credential.resource_catalog',
+        errorClass: 'Error',
+        errorCode: refusal.code,
+        httpStatus: null,
+      },
+    });
   });
 });
