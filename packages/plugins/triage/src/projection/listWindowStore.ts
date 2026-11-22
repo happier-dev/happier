@@ -89,6 +89,7 @@ export type TriageListWindowErrorV1 = Readonly<{
 export type TriageListWindowUnreadableSourceV1 = Readonly<{
     sourceInstanceId: string;
     message: string;
+    diagnostics?: readonly string[];
 }> & Partial<TriageListInvocationErrorV1>;
 
 export type TriageListWindowSnapshotV1 = Readonly<{
@@ -467,6 +468,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             unreadable.push(Object.freeze({
                 sourceInstanceId, message: state.error.message,
                 code: state.error.code,
+                ...(state.error.diagnostics === undefined ? {} : { diagnostics: state.error.diagnostics }),
                 ...(state.error.requestId === undefined ? {} : { requestId: state.error.requestId }),
                 ...(state.error.retryable === undefined ? {} : { retryable: state.error.retryable }),
             }));

@@ -2172,6 +2172,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // already names the saved views in the list's own place, and its one Retry re-reads the Account too.
   const outageSpeaksForAccount = state.kind === 'unavailable' && state.retryable;
   const accountNotice = accountNoticeLabel === null || (editingSources && sourcesUnreachable) || outageSpeaksForAccount ? null : (
+    <>
     <Status
       tone="warning"
       label={accountNoticeLabel}
@@ -2185,6 +2186,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         />
       )}
     />
+    {marks.readFailure === null ? null : <ActionFailureDetails code={marks.readFailure.code}
+      requestId={readPluginErrorRequestIdV1(marks.readFailure)} detail={marks.readFailure.data.message} showReason={false} />}
+    </>
   );
 
   /**

@@ -1,7 +1,7 @@
 import { CORPUS_USER_MARKS_COLLECTION } from '../../corpus/collections/definitions.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, type PluginError } from '@happier-dev/plugin-sdk';
 import { usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginSurfaceActivity, usePluginUiDataClientOrNull } from '@happier-dev/plugin-ui';
 
 import type { TriageListLoadMoreV1 } from '../../projection/listWindowStore.js';
@@ -61,6 +61,7 @@ export type TriageMountedPinsV1 = Readonly<{
   busyKey: string | null;
   /** Why Pin/Unpin is unavailable, in words, or `null` when it works. */
   unavailableReason: string | null;
+  readFailure: PluginError | null;
   /** One restrained confirmation of the last settled write. */
   notice: TriagePinNoticeV1 | null;
   setPinned: (row: TriageListDisplayRowV1) => void;
@@ -134,6 +135,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
   const [more, setMore] = useState(false);
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [unavailableReason, setUnavailableReason] = useState<string | null>(null);
+  const [readFailure, setReadFailure] = useState<PluginError | null>(null);
   const [notice, setNotice] = useState<TriagePinNoticeV1 | null>(null);
   const [demand, setDemand] = useState<TriagePinsDemandV1>(FIRST_PAGE_V1);
   /** Whether a read is running; the demand says whether it is an append. */
@@ -183,6 +185,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
           setPins(Object.freeze(collected));
           setMore(true);
           setUnavailableReason(null);
+          setReadFailure(null);
           setAppendFailed(request.appending);
           setReading(false);
           return;
@@ -204,9 +207,13 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
           setMore(true);
           setUnavailableReason(null);
         }
+        const failure = isPluginError(error) ? error : null;
+        setReadFailure(page === 0 ? failure : null);
         setAppendFailed(request.appending);
         setReading(false);
-        await presentTriageMountedUiActionFailure(hostApi, error, text);
+        for (const diagnostic of failure?.diagnostics ?? [{ code: 'triage_pin_read_failed', severity: 'error' as const }]) {
+          hostApi.diagnostic(diagnostic);
+        }
         return;
       }
       if (cursor === undefined) break;
@@ -214,6 +221,7 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     setPins(Object.freeze(collected));
     setMore(cursor !== undefined);
     setUnavailableReason(null);
+    setReadFailure(null);
     setAppendFailed(false);
     setReading(false);
   }, [hostApi, text, transport, readiness.pending, readiness.ready]);
@@ -312,8 +320,9 @@ export function useTriagePinnedEntries(): TriageMountedPinsV1 {
     loadMorePins,
     busyKey,
     unavailableReason: readiness.pending ? null : unavailableReason,
+    readFailure: readiness.pending ? null : readFailure,
     notice,
     setPinned,
     retry,
-  }), [busyKey, loadMore, loadMorePins, more, notice, pins, retry, setPinned, unavailableReason, readiness.pending]);
+  }), [busyKey, loadMore, loadMorePins, more, notice, pins, readFailure, retry, setPinned, unavailableReason, readiness.pending]);
 }

@@ -530,7 +530,7 @@ async function mountSurface(
     instanceId: string,
     context: Parameters<typeof createSurfaceContextFixture>[0] = {},
     options: Readonly<{ subPath?: string; tasksDestination?: boolean; launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; recordSurfaceOpens?: boolean; directAccountData?: boolean;
-        dragDropRequests?: PluginUiUpdateEntityDragDropRequestV1[] }> = {},
+        dragDropRequests?: PluginUiUpdateEntityDragDropRequestV1[]; notifications?: string[] }> = {},
 ): Promise<PluginUiTestkit> {
     // Mounting starts the window's first cycle, so the whole mount is driven
     // inside `act` — otherwise the render the cycle causes lands after the
@@ -593,6 +593,7 @@ async function mountSurface(
                 overlays: true,
             }),
             handlers: {
+                notify: async ({ message }) => { options.notifications?.push(message); },
                 ...(options.dragDropRequests === undefined ? {} : {
                     updateEntityDragDrop: async ({ request }: Readonly<{ request: PluginUiUpdateEntityDragDropRequestV1 }>) => {
                         options.dragDropRequests?.push(request);
@@ -948,9 +949,14 @@ describe('the mounted PRs & Issues surface', () => {
         const harness = createHarness();
         harness.state.savedViewsUnavailable = true;
         harness.state.pinsUnavailable = true;
-        const shell = await mountSurface(renderShellSurface, harness, `account-retry-${surface}`, sourceContextFixture(harness));
+        const notifications: string[] = [];
+        const shell = await mountSurface(renderShellSurface, harness, `account-retry-${surface}`, sourceContextFixture(harness), { notifications });
         await settleWindow('view', shell);
         await expect(shell.getByText('Happier cannot reach your account right now, so pins and saved views cannot be changed.')).resolves.toBeDefined();
+        expect(notifications).toEqual([]);
+        expect(document.body.textContent).not.toContain('server_unavailable');
+        await shell.press(await shell.getByRole('button', { name: 'Details' }));
+        expect(document.body.textContent).toContain('server_unavailable');
         const retryCommand = harness.publishedContexts.at(-1)?.commands?.find(command => {
             if (command.command.kind !== 'executeAction') return false;
             const parsed = TriageMountedUiInputV1Schema.safeParse(command.command.input);
@@ -1655,15 +1661,11 @@ describe('the mounted PRs & Issues surface', () => {
             'Middle change',
             'Older change',
         ]);
-        // The source owner qualifies the connection name with its source;
-        // the shared Status announces that failure as one live region.
         const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
-        expect(statusLines, JSON.stringify(statusLines))
-            .toContain(`Example forge · ${LABEL_B} could not be reached. Their entries may be missing or out of date.`);
+        expect(statusLines, JSON.stringify(statusLines)).toContain('Showing the last known list. 1 source needs attention.');
+        expect(statusLines.filter(line => line?.includes('Showing the last known list'))).toHaveLength(1);
+        await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
-        // One cause, one voice: the notice names the connection and why, so the toolbar does not repeat it as
-        // "Showing the last known list".
-        await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
         // The healthy connection is never named as a failure, and the published
         // closed classification stays a machine word.
         await expect(shell.queryByText(`${LABEL_A} could not be read`)).resolves.toBeUndefined();
@@ -1714,9 +1716,8 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
     }, 120_000);
 
-    it('lets the host band speak alone while the Run on Machine cannot answer, and retries in the shared word', async () => {
-        // UI4 D1/D2: one outage, one voice. While the host says its Machine cannot answer, the list's own failure
-        // line and Refreshing step aside; when the list does speak, its retry is the same word as the host's.
+    it('lets the host band speak alone while the Run on Machine cannot answer', async () => {
+        // While the host names the Machine outage, the list's own notice and Refreshing step aside.
         const harness = createHarness();
         const context = sourceContextFixture(harness);
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list-host-outage', context);
@@ -1724,10 +1725,9 @@ describe('the mounted PRs & Issues surface', () => {
         harness.state.sourceBFails = true;
         await settleWindow('manual', shell);
         const failureLine = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes(LABEL_B) === true);
+            .find(element => element.textContent?.includes('1 source needs attention.'));
         await vi.waitFor(() => expect(failureLine()).toBeDefined());
-        await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
-        await expect(shell.queryByRole('button', { name: 'Try again' })).resolves.toBeUndefined();
+        await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await act(async () => { await shell.updateSurface({ ...context, machineConnectionPending: false, machineExecutionReady: false }); });
         expect(failureLine()).toBeUndefined();
         await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
@@ -1778,11 +1778,9 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
     });
 
-    it('names one shared cause once when every connection fails for it, still naming each connection', async () => {
+    it('names a shared Machine outage once beside its retained rows', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
-        const connectionA = `Example forge · ${LABEL_A}`;
-        const connectionB = `Example forge · ${LABEL_B}`;
         await settleWindow('view', shell);
         await loadRemainingPage(shell);
 
@@ -1796,12 +1794,9 @@ describe('the mounted PRs & Issues surface', () => {
         await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
         const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
         expect(statusLines, JSON.stringify(statusLines))
-            .toContain(`${connectionA} and ${connectionB} could not be read. Their entries may be missing or out of date. ${offline}`);
-        // REQ-01 holds: both connections are still named, in the one heading.
-        const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes(offline));
-        expect(warning?.textContent).toContain(LABEL_A);
-        expect(warning?.textContent).toContain(LABEL_B);
+            .toContain(`${offline} Showing the last known list. 2 sources need attention.`);
+        expect(statusLines.join(' ')).not.toContain('could not be read');
+        await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         expect(document.body.textContent?.split(offline)).toHaveLength(2);
         await expect(shell.queryByText('Some sources could not be read')).resolves.toBeUndefined();
         await expect(shell.queryByText('Could not be reached just now.')).resolves.toBeUndefined();
@@ -1818,8 +1813,6 @@ describe('the mounted PRs & Issues surface', () => {
     it('keeps different connection causes in Manage sources behind the compact failure line', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
-        const connectionA = `Example forge · ${LABEL_A}`;
-        const connectionB = `Example forge · ${LABEL_B}`;
         await settleWindow('view', shell);
         await loadRemainingPage(shell);
 
@@ -1832,9 +1825,9 @@ describe('the mounted PRs & Issues surface', () => {
 
         const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
         expect(statusLines, JSON.stringify(statusLines))
-            .toContain(`${connectionA} and ${connectionB} could not be read. Their entries may be missing or out of date.`);
+            .toContain('Happier could not reach a machine for these sources. Showing the last known list. 2 sources need attention.');
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
-            .find(element => element.textContent?.includes(`${connectionA} and ${connectionB} could not be read.`));
+            .find(element => element.textContent?.includes('2 sources need attention.'));
         expect(warning).toBeDefined();
         expect(warning?.textContent).not.toContain(offlineA);
         expect(warning?.textContent).not.toContain(offlineB);

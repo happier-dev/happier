@@ -126,6 +126,7 @@ export type TriageSourceUnreadableV1 = Readonly<{
     displayName: string;
     /** What the store could say about the invocation that did not settle. */
     reason: string;
+    diagnostics?: readonly string[];
 }> & Partial<TriageListInvocationErrorV1>;
 
 /**
@@ -151,6 +152,7 @@ export function projectTriageUnreadableSourceHealth(
             sourceInstance,
             displayName: readTriageSourceDisplayName(snapshot, sourceInstance),
             reason: unread.message,
+            ...(unread.diagnostics === undefined ? {} : { diagnostics: unread.diagnostics }),
             ...(unread.code === undefined ? {} : { code: unread.code }),
             ...(unread.requestId === undefined ? {} : { requestId: unread.requestId }),
             ...(unread.retryable === undefined ? {} : { retryable: unread.retryable }),

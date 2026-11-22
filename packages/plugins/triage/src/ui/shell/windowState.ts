@@ -2,7 +2,7 @@ import { formatHappierAsOfTime } from '@happier-dev/plugin-ui';
 import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_LIST_NO_FILTERS_V1, type SurfaceFilterSelectionV1, type TriageListWindowV1 } from '../../projection/listWindow.js';
-import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { UNREADABLE_IN_THIS_PASS_V1, type TriageListWindowErrorV1, type TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
 import { TRIAGE_PR_VIEW_INVENTORY_V1, type TriageListViewInventoryV1 } from '../list/viewInventory.js';
 import { planTriageViewSourceSelectionV1 } from '../filters/plan.js';
 import { createTriageNameListFormatter } from './nameList.js';
@@ -60,6 +60,11 @@ const SOURCE_FAILURE_TRANSLATION_KEYS_V1: Readonly<Record<TriageSourceFailureV1[
   unsupportedContract: 'plugins.triage.surface.failure.unsupportedContract',
 });
 
+function isMachineUnreachable(error: Partial<Pick<TriageListWindowErrorV1, 'code' | 'diagnostics'>>): boolean {
+  const machineRequired = 'plugin_action_machine_required';
+  return error.code === machineRequired || error.diagnostics?.includes(machineRequired) === true;
+}
+
 /** One configured connection that could not be read, named. */
 export type TriageListSourceFailureV1 = Readonly<{
   sourceInstanceId: string;
@@ -83,6 +88,7 @@ export type TriageListSourceFailureV1 = Readonly<{
    * code and the reason together. Connections that all carry one key failed for one cause, which is said once.
    */
   sharedCauseKey?: string;
+  machineUnreachable?: true;
   /** Whether the connection's owner has to change something (sign in, allow it, install it) before a read can work. */
   needsConnectionChange?: boolean;
 }>;
@@ -101,7 +107,7 @@ export type TriageListSourceFailureV1 = Readonly<{
  * not read, which is what `core/SURFACE.md` §6.2 row 4 asks for.
  */
 export type TriageListShellFailureV1 =
-  Readonly<{ kind: 'sources'; sources: readonly TriageListSourceFailureV1[] }>;
+  Readonly<{ kind: 'sources'; sources: readonly TriageListSourceFailureV1[]; retainedRows?: true }>;
 
 /**
  * Why no list could be assembled, as the reader needs it: whether pressing
@@ -229,6 +235,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
       ...(entry.code === undefined ? {} : { code: entry.code }),
       ...(entry.requestId === undefined ? {} : { requestId: entry.requestId }),
       ...(entry.retryable === undefined ? {} : { retryable: entry.retryable }),
+      ...(isMachineUnreachable(entry) ? { machineUnreachable: true as const } : {}),
       sharedCauseKey: `${entry.code ?? ''}\n${entry.retryable ?? ''}\n${reason}`,
       needsConnectionChange: entry.retryable === false && entry.code !== 'timeout',
     }));
@@ -436,8 +443,24 @@ export function readTriageListFailureLine(
   text: TriageTextResolverV1 = ENGLISH_TEXT,
   locale?: string,
 ): TriageListFailureLineV1 {
-  const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
   const first = failure.sources[0];
+  const machineUnreachable = first !== undefined && failure.sources.every((source) => source.machineUnreachable === true);
+  if (failure.retainedRows === true || machineUnreachable) {
+    const count = failure.sources.length;
+    const attention = count === 1
+      ? text('plugins.triage.surface.sources.attention.one', '1 source needs attention.')
+      : text('plugins.triage.surface.sources.attention.other', '{count} sources need attention.').replace('{count}', String(count));
+    const machineReason = machineUnreachable
+      ? first.reason !== SOURCE_FAILURE_COPY_V1.transient && failure.sources.every((source) => source.sharedCauseKey === first.sharedCauseKey)
+        ? first.reason
+        : text('plugins.triage.surface.sourcesUnreachable.reason', 'Happier could not reach a machine for these sources.')
+      : null;
+    const retained = failure.retainedRows === true
+      ? `${text('plugins.triage.surface.lastKnown', 'Showing the last known list')}.`
+      : null;
+    return Object.freeze({ label: [machineReason, retained, attention].filter(Boolean).join(' '), recovery: 'manageSources' });
+  }
+  const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
   const lineReason = (source: TriageListSourceFailureV1) => source.lineReason ?? source.reason;
   const oneReason = first !== undefined && failure.sources.every((source) => lineReason(source) === lineReason(first))
     && !(first.retryable === false && lineReason(first) === SOURCE_FAILURE_COPY_V1.transient);
@@ -612,8 +635,12 @@ export function resolveTriageListShellState(
         options.inventory ?? (options.tasks === true
           ? { includesSource: () => true, includesKind: () => true } : TRIAGE_PR_VIEW_INVENTORY_V1)),
       wholeScanFailure?.sources ?? []);
-    const failure = viewHealth.selectedFailures.length === 0 ? null
-      : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures });
+    const failedIds = new Set(viewHealth.selectedFailures.map(source => source.sourceInstanceId));
+    const retainedRows = failedIds.size > 0 && window.rows.some(row => row.observations.some(observation =>
+      failedIds.has(observation.sourceInstanceId)));
+    const failure = failedIds.size === 0 ? null
+      : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures,
+        ...(retainedRows ? { retainedRows: true as const } : {}) });
     const readingSources = viewHealth.body.coverage === 'partial'
       && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
     if (window.rows.length === 0 && failure === null && readingSources) return Object.freeze({ kind: 'initial' });
@@ -635,8 +662,7 @@ export function resolveTriageListShellState(
   // looked. Claiming it earlier would accuse the user of not configuring
   // something we have not yet read.
   if (snapshot.error !== undefined) {
-    const machineUnavailable = [snapshot.error.code, ...(snapshot.error.diagnostics ?? [])].some(code =>
-      code === 'plugin_action_machine_required');
+    const machineUnavailable = isMachineUnreachable(snapshot.error);
     return Object.freeze({
       kind: options.durableStateReachable !== true ? 'unavailable'
         : machineUnavailable ? 'sourcesUnreachable' : 'readFailed',
