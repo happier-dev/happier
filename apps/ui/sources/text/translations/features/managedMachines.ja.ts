@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "プリセットを読み込み中…",
         loadFailed: "プリセットを読み込めませんでした。もう一度お試しください。",
         keyPendingTitle: "共有されたプリセット",
-        keyPendingReason: "チーム管理者がHappierを開くと、使えるようになります。",
+        keyPendingReason: "チーム管理者がHappierを開くと使えます。",
         archiveFailed: "このプリセットをアーカイブできませんでした。",
         ownerPersonal: "自分",
         futureOnly: "変更は新しいマシンに適用されます。既存のマシンは選択を維持します。",

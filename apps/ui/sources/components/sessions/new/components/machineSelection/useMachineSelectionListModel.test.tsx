@@ -16,6 +16,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerScopedMachine, ServerScopedMachineGroup } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import type { ManagedMachineSelectionOffer } from './managedMachineSelection';
 import { buildManagedMachineSelectionOffers } from './managedMachineSelection';
+import { ITEM_STATUS_SUBTITLE_MAX_LINES } from '@/components/ui/lists/itemTextClamp';
 
 import type {
     BuildMachineSelectionListModelParams,
@@ -719,6 +720,24 @@ describe('useMachineSelectionListModel', () => {
         await rendered.rerender({ ...base, managedMachines: [{ ...offer, id: 'managed-machine:server-b:one-off', homeId: 'server-b' }] });
         oldOption.onSelect?.();
         expect(onSelect).not.toHaveBeenCalled();
+        await rendered.unmount();
+    });
+
+    it('lets an unavailable offer state its whole reason as a status line instead of cutting it to one line', async () => {
+        const fixture = createFixture();
+        const base = buildParams(fixture, makeHandlers());
+        const usable: ManagedMachineSelectionOffer = { id: 'managed-machine:server-a:one-off', homeId: 'server-a', title: 'One-off', onSelect: vi.fn() };
+        const waiting: ManagedMachineSelectionOffer = { id: 'managed-machine:server-a:preset:shared', homeId: 'server-a', title: 'Shared',
+            disabled: true, unavailableText: 'Du kannst sie nutzen, sobald jemand aus der Teamverwaltung Happier offen hat.' };
+        const rendered = await renderHook(
+            (props: BuildMachineSelectionListModelParams) => useMachineSelectionListModel(props),
+            { initialProps: { ...base, managedMachines: [usable, waiting] } },
+        );
+        const section = rendered.getCurrent().rootStep.sections.find((candidate) => candidate.id === 'managed-machines');
+        if (section?.kind !== 'static') throw new Error('expected a managed recipe section');
+        const [usableOption, waitingOption] = section.options;
+        expect(waitingOption).toMatchObject({ disabled: true, subtitle: waiting.unavailableText, subtitleLines: ITEM_STATUS_SUBTITLE_MAX_LINES });
+        expect(usableOption?.subtitleLines).toBeUndefined();
         await rendered.unmount();
     });
 

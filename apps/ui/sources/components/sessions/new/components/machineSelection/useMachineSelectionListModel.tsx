@@ -72,6 +72,7 @@ import { foldOfflineWorkers, useOfflineWorkerSectionState } from './foldOfflineW
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { getMachineDisplayName, isMachineDisplayNamePending, resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { ITEM_STATUS_SUBTITLE_MAX_LINES } from '@/components/ui/lists/itemTextClamp';
 import { Typography } from '@/constants/Typography';
 import { useMachinePresenceSnapshot } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import {
@@ -818,9 +819,11 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     subtitle: offer.unavailableText ?? (purpose === 'finite'
                         ? [offer.subtitle, t('managedMachines.picker.createdOnRun')].filter(Boolean).join(' · ')
                         : offer.subtitle),
-                    // The drawn line names the provider first (lab m-pick); an unavailable offer says only why.
-                    ...(offer.unavailableText === undefined && offer.subtitleLine ? { subtitleContent: offer.subtitleLine(
-                        purpose === 'finite' ? t('managedMachines.picker.createdOnRun') : undefined) } : {}),
+                    // The drawn line names the provider first (lab m-pick); an unavailable offer says only why,
+                    // and that reason is the row's status: it takes the status allowance instead of being cut.
+                    ...(offer.unavailableText !== undefined ? { subtitleLines: ITEM_STATUS_SUBTITLE_MAX_LINES }
+                        : offer.subtitleLine ? { subtitleContent: offer.subtitleLine(
+                            purpose === 'finite' ? t('managedMachines.picker.createdOnRun') : undefined) } : {}),
                     // A preset carries its provider's mark; "One-off machine…" reads as making a new one.
                     icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : MANAGED_PRESET_GLYPH} size={24} color={theme.colors.text.secondary} />,
                     ...(offer.id === inheritedPresetOptionId ? { rightAccessory: (
@@ -968,6 +971,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     ?? (temporaryComputers.length === 1
                         ? t('newSession.temporaryComputer.subtitle')
                         : t('newSession.temporaryComputer.platformSubtitle')),
+                ...(candidate.unavailableText !== undefined ? { subtitleLines: ITEM_STATUS_SUBTITLE_MAX_LINES } : {}),
                 accessibilityLabel: artifactTarget
                     ? `${t('newSession.temporaryComputer.title')}. ${describeRunnerArtifactTarget(artifactTarget)}`
                     : t('newSession.temporaryComputer.title'),
