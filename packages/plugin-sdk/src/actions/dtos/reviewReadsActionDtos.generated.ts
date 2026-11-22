@@ -6,6 +6,7 @@
 export type ReviewReadsActionInputById = {
     readonly "reviews.list": {
         limit: number;
+        reviewIds?: string[] | undefined;
         cursor?: string | undefined;
         spaceId?: string | undefined;
         spaceMembershipMode?: 'filter_or_manual' | 'manual_only' | undefined;

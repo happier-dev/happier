@@ -2927,6 +2927,13 @@ with distinct earlier Review/run counts and separate current/previous appearance
 Without an accessible predecessor, novelty remains unknown. Each Review keeps its
 own decisions; a matching identity never transfers acceptance or dismissal. UI, CLI, MCP and Voice consume the
 canonical Action schemas and the existing Home/Account scope binding.
+
+Team Shared Reviews keeps the Artifact list's order and sharing labels. It
+passes only that page's IDs to the optional `reviewIds` field in `reviews.list`
+for Review facts. Omitting the selection preserves the ordinary Review list.
+The request stays closed, so this unreleased 0.3 selection uses matching client
+and server source.
+
 Public review-comment Actions also project named Voice bindings from their
 canonical declarations; generic Voice `action_execute` reaches the same schemas,
 revision checks and approval policy. The internal publication-dispatch claim

@@ -52,7 +52,7 @@ export async function listReviewsInTx(tx: Tx, input: ReviewListRequestV1 & { act
     const { actorAccountId, ...request } = input;
     const parsed = ReviewListRequestV1Schema.parse(request);
     const { needsDecision: _needsDecision, sharedWithTeamId: _team, cursor: _cursor,
-        limit: _limit, spaceId: _space, spaceMembershipMode: _mode, ...metadata } = parsed;
+        limit: _limit, spaceId: _space, spaceMembershipMode: _mode, reviewIds, ...metadata } = parsed;
     const smart: Prisma.ArtifactWhereInput = { reviewMetadata: { is: metadata },
         ...(parsed.needsDecision === undefined ? {} : { reviewComments: {
             [parsed.needsDecision ? 'some' : 'none']: reviewNeedsDecisionWhere(),
@@ -63,6 +63,7 @@ export async function listReviewsInTx(tx: Tx, input: ReviewListRequestV1 & { act
         : parsed.spaceMembershipMode === 'filter_or_manual' ? { reviewMetadata: { isNot: null }, OR: [smart, membership] }
         : { reviewMetadata: { isNot: null }, ...membership };
     const conditions: Prisma.ArtifactWhereInput[] = [selection];
+    if (reviewIds !== undefined) conditions.push({ id: { in: reviewIds } });
     if (parsed.cursor) {
         let decoded: unknown;
         try { decoded = JSON.parse(Buffer.from(parsed.cursor, 'base64url').toString('utf8')); }

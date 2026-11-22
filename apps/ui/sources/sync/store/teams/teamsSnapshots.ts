@@ -28,6 +28,7 @@ import type { TeamSharedMachineListItem } from '@/sync/ops/teams/teamSharedMachi
 import type { TeamPage } from '@/sync/engine/teams/loadTeamPageRange';
 import type { SavedSecretCatalogResultV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 import { snapshotReferenceSelectionKey } from '@/sync/domains/scope/snapshotReferenceSelectionKey';
 import { CredentialCatalogPublication } from './credentialCatalogPublication';
@@ -256,7 +257,10 @@ function createTeamObservations<Data>() {
 export const teamSharedMachineObservations = createTeamObservations<readonly TeamSharedMachineListItem[]>();
 export const teamSharedMachinePoolObservations = createTeamObservations<readonly MachinePoolViewV1[]>();
 export const teamSharedSavedSecretPages = createTeamObservations<TeamPage<SavedSecretCatalogResultV1>>();
-export const teamSharedArtifactPages = createTeamObservations<TeamPage<ArtifactActionResultV1<'artifact.list'>['items'][number]>>();
+export type TeamSharedArtifactRow = ArtifactActionResultV1<'artifact.list'>['items'][number] & Readonly<{
+    review?: ReviewListResponseV1['items'][number];
+}>;
+export const teamSharedArtifactPages = createTeamObservations<TeamPage<TeamSharedArtifactRow>>();
 export const teamSharedDiscussionPages = createTeamObservations<TeamPage<DiscussionOpenedSummaryV1>>();
 export const teamDirectorySourcePages = createTeamObservations<TeamPage<TeamDirectorySourceSummaryV1>>();
 export const teamInvitationPages = createTeamObservations<TeamPage<TeamInvitationRowV1>>();

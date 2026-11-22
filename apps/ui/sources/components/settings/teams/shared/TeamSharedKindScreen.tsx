@@ -13,7 +13,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { useTeamSharedArtifacts } from '@/components/artifacts/useTeamSharedArtifacts';
 import { reviewRowFact, ReviewRowFactText } from '@/components/reviews/list/reviewRowFact';
-import { useReviewList } from '@/components/reviews/useReviewList';
 import { workflowReferenceHeaderTitle } from '@/components/workflows/presentation/workflowReferenceHeaderTitles';
 import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
 import { useTeamSharedDiscussions } from '@/components/discussions/useTeamSharedDiscussions';
@@ -426,15 +425,8 @@ function ArtifactsList({
     enabled: true,
     pageSize: PAGE_SIZE,
   });
-  // A shared Review reads as it does in Reviews: its fact from the Review list owner, the same Team filter.
-  const reviews = useReviewList(
-    { sharedWithTeamId: context.address.teamId, limit: PAGE_SIZE },
-    { scope: context.scope, enabled: kind === 'reviews' },
-  );
-  const reviewItems = reviews.items;
   const serverId = context.address.serverId;
   const rows = React.useMemo(() => {
-    const reviewById = new Map(reviewItems?.map((item) => [item.reviewId, item]) ?? []);
     const now = Date.now();
     return list.rows.map((row): KindRow => {
       // A workflow's name is authored in its definition metadata; other kinds carry a header title.
@@ -443,7 +435,7 @@ function ArtifactsList({
         : typeof row.header.title === 'string' ? row.header.title : null;
       const title = authored?.trim() ? authored : t('teams.overview.shared.untitled');
       const scope = scopeLine(row.sharedWithTeamScope);
-      const review = kind === 'reviews' ? reviewById.get(row.artifactId) : undefined;
+      const review = row.review;
       return {
         key: row.artifactId,
         title,
@@ -457,7 +449,7 @@ function ArtifactsList({
             : artifactViewRoute(row.artifactId),
       };
     });
-  }, [kind, list.rows, reviewItems, serverId]);
+  }, [kind, list.rows, serverId]);
   return <KindList icon={icon} state={pagedState(list, rows)} />;
 }
 

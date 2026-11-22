@@ -48,6 +48,7 @@ const { t } = await import('@/text');
 const { formatShortRelativeTimeAt } = await import('@/utils/time/formatShortRelativeTime');
 
 const NOW = Date.UTC(2026, 10, 21, 12);
+const FIRST_PAGE_FILLERS = Array.from({ length: 49 }, (_, index) => `review-filler-${index}`);
 
 async function addHome(): Promise<string> {
   const serverId = await harness.addHome({
@@ -70,28 +71,34 @@ function answerArtifacts(
   serverId: string,
   header: Record<string, unknown>,
   id: string,
+  continuation?: Readonly<{ id: string; title: string }>,
 ) {
   harness.answer(serverId, '/v1/artifacts', {
-    body: {
-      items: [
-        createPlainArtifactHttpFixture(
-          {
-            id,
-            title: null,
-            header: { ...header, title: null },
-            rawHeader: header,
-            isDecrypted: true,
-            headerVersion: 1,
-            bodyVersion: 1,
-            seq: 1,
-            createdAt: NOW - 2 * 60 * 60 * 1000,
-            updatedAt: NOW,
-          },
-          'account-ada',
-        ),
-      ],
-      hasUnclassified: false,
-      coverage: { status: 'complete', unclassifiedCount: 0 },
+    select: (_input, request) => {
+      const next = new URL(request.url).searchParams.has('cursor') ? continuation : undefined;
+      const ids = next ? [next.id] : continuation ? [id, ...FIRST_PAGE_FILLERS] : [id];
+      return {
+        body: {
+          items: ids.map(artifactId =>
+            createPlainArtifactHttpFixture(
+              {
+                id: artifactId,
+                title: null,
+                header: { ...header, title: null },
+                rawHeader: continuation ? { ...header, reviewId: artifactId, ...(next ? { title: next.title } : {}) } : header,
+                isDecrypted: true,
+                headerVersion: 1,
+                bodyVersion: 1,
+                seq: 1,
+                createdAt: NOW - 2 * 60 * 60 * 1000,
+                updatedAt: NOW,
+              },
+              'account-ada',
+            )),
+          hasUnclassified: false,
+          coverage: { status: 'complete', unclassifiedCount: 0 },
+        },
+      };
     },
   });
 }
@@ -134,9 +141,10 @@ describe('Team shared Artifact rows', () => {
     expect(screen.getTextContent()).not.toContain(
       t('teams.overview.shared.untitled'),
     );
+    expect(harness.requestsFor('/v1/reviews/list')).toEqual([]);
   });
 
-  it('reads a shared Review row as the Reviews collection does: its fact and its age', async () => {
+  it('reads Review facts for the exact Artifact page, including later pages', async () => {
     const serverId = await addHome();
     const reviewId = 'review-1';
     answerArtifacts(
@@ -148,35 +156,41 @@ describe('Team shared Artifact rows', () => {
         title: 'Relay handshake',
       },
       reviewId,
+      { id: 'review-2', title: 'Queue repair' },
     );
     harness.answer(serverId, 'POST /v1/reviews/list', {
-      body: {
-        items: [
-          {
-            reviewId,
-            projectSourceId: null,
-            workflowId: null,
-            subjectKind: 'repository',
-            sourceKind: 'direct',
-            state: 'completed',
-            currentRoundOrdinal: 1,
-            startedAt: 1,
-            finishedAt: 2,
-            createdAt: NOW - 2 * 60 * 60 * 1000,
-            updatedAt: NOW,
-            counts: { total: 3, needsDecision: 2 },
-            needsYou: {
-              reviewId,
-              roundOrdinal: 1,
-              reason: 'review_needs_you',
-              needsYou: true,
-              requestedVerdict: false,
-              pendingDecisions: true,
-              canSubmitVerdict: false,
-            },
+      select: (input) => {
+        const ids = (input as { reviewIds?: readonly string[] }).reviewIds;
+        const selected = ids?.includes('review-2') ? 'review-2' : reviewId;
+        const count = selected === reviewId ? 2 : 3;
+        return {
+          body: {
+            items: [{
+              reviewId: selected,
+              projectSourceId: null,
+              workflowId: null,
+              subjectKind: 'repository',
+              sourceKind: 'direct',
+              state: 'completed',
+              currentRoundOrdinal: 1,
+              startedAt: 1,
+              finishedAt: 2,
+              createdAt: NOW - 2 * 60 * 60 * 1000,
+              updatedAt: NOW,
+              counts: { total: 3, needsDecision: count },
+              needsYou: {
+                reviewId: selected,
+                roundOrdinal: 1,
+                reason: 'review_needs_you',
+                needsYou: true,
+                requestedVerdict: false,
+                pendingDecisions: true,
+                canSubmitVerdict: false,
+              },
+            }],
+            cursor: null,
           },
-        ],
-        cursor: null,
+        };
       },
     });
     const screen = await renderScreen(
@@ -195,8 +209,15 @@ describe('Team shared Artifact rows', () => {
       ),
     );
     expect(screen.getTextContent()).toContain(formatShortRelativeTimeAt(NOW - 2 * 60 * 60 * 1000, NOW));
-    expect(
-      harness.requestsFor('/v1/reviews/list').map((request) => request.input),
-    ).toContainEqual(expect.objectContaining({ sharedWithTeamId: 'team-1' }));
+    await screen.pressByTestIdAsync('team-shared-kind-more');
+    await vi.waitFor(() => {
+      expect(screen.getTextContent()).toContain('Queue repair');
+      expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.glanceToDecide', { count: 3 }));
+    });
+    expect(harness.requestsFor('/v1/reviews/list').map((request) => request.input))
+      .toEqual([
+        expect.objectContaining({ reviewIds: [reviewId, ...FIRST_PAGE_FILLERS] }),
+        expect.objectContaining({ reviewIds: ['review-2'] }),
+      ]);
   });
 });

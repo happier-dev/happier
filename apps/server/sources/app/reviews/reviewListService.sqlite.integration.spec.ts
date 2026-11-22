@@ -179,6 +179,9 @@ describe('Review metadata demand', () => {
         } while (cursor);
         expect(new Set(seen)).toEqual(new Set(expected));
         expect(seen).toHaveLength(3);
+        const exact = await inTx(tx => listReviewsInTx(tx, { actorAccountId: reader.id, reviewIds: [expected[2]!], limit: 1 }));
+        expect(exact.items.map(row => row.reviewId)).toEqual([expected[2]]);
+        expect(exact.cursor).toBeNull();
         const admitDetail = (reviewId: string) => inTx(tx => resolveReviewAccessInTx(tx, {
             actorAccountId: reader.id, reviewId, includeDetail: true,
         }));
@@ -186,6 +189,8 @@ describe('Review metadata demand', () => {
         await db.teamMembership.update({ where: { id: member.id }, data: { status: 'suspended' } });
         const after = await inTx(tx => listReviewsInTx(tx, { actorAccountId: reader.id, projectSourceId: team.id, limit: 10 }));
         expect(after.items.map(row => row.reviewId)).toEqual([expected[0]]);
+        expect(await inTx(tx => listReviewsInTx(tx, { actorAccountId: reader.id, reviewIds: [expected[2]!], limit: 1 })))
+            .toEqual({ items: [], cursor: null });
         const [accountReview, ...memberReviews] = expected;
         expect(await admitDetail(accountReview!)).toMatchObject({ level: 'view' });
         for (const reviewId of memberReviews) expect(await admitDetail(reviewId)).toBeNull();

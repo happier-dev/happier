@@ -12,6 +12,7 @@ const timestamp = z.number().check(z.int(), z.minimum(0));
 /** Structural selection only. Sealed title/content search stays within demanded results. */
 export const ReviewListRequestV1Schema = z.strictObject({
   ...ReviewListFilterV1Schema.shape,
+  reviewIds: z.optional(z.array(id).check(z.minLength(1))),
   limit: ordinal,
   cursor: z.optional(id),
   spaceId: z.optional(id),
