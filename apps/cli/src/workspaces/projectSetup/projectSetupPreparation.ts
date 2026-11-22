@@ -31,7 +31,7 @@ import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from '.
 import { readLiteralCommandExecutedFiles, type LiteralCommandFileFactV1 } from './literalCommandFiles';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { isManagedDevcontainerChildProjectionCurrentV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
+import { projectWorkspaceRefV1, resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { readProjectDefinitionFile, readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { createProjectSetupTrustClient, type ProjectCheckoutTeardownConsent, type ProjectSetupTrustClientInput } from './projectSetupTrust';
 import { createProjectSetupSuccessStore, type ProjectSetupSuccessBasis } from './projectSetupSuccess';
@@ -185,9 +185,10 @@ function associationMatches(input: ProjectSetupPreparationInput): boolean {
     const workspace = WorkspaceRefV1Schema.safeParse(input.workspace);
     const associated = WorkspaceRefV1Schema.safeParse(input.projectAssociation.workspace);
     const project = QualifiedProjectTrustProjectV1Schema.safeParse(input.projectAssociation.project);
-    return workspace.success && associated.success
-        && typeof workspace.data.projectKey === 'string' && workspace.data.projectKey.length > 0
-        && project.success && project.data.serverId === workspace.data.serverId && project.data.projectId === workspace.data.projectKey
+    if (!workspace.success || !associated.success || !project.success) return false;
+    const expectedProject = projectWorkspaceRefV1(workspace.data);
+    return project.data.serverId === expectedProject.serverId
+        && project.data.projectId === expectedProject.projectKey
         && (['id', 'serverId', 'machineId', 'rootPath', 'projectKey'] as const)
             .every(field => workspace.data[field] === associated.data[field]);
 }

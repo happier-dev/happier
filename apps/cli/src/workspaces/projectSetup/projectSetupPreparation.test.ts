@@ -85,6 +85,18 @@ describe('current Project setup effect and preparation admission', () => {
             } };
         });
     }
+    it('inspects Setup for a retained Workspace whose own id is its Project anchor', async () => {
+        const { input } = await fixture({ version: 1 });
+        const { projectKey: _projectKey, ...workspace } = input.workspace;
+        const project = { serverId: workspace.serverId, projectId: workspace.id };
+        const request = { ...input, workspace, projectAssociation: { workspace, project } };
+
+        await expect(inspectProjectSetupReadiness(request)).resolves.toMatchObject({ kind: 'notRequired' });
+        await expect(inspectProjectSetupReadiness({
+            ...request, projectAssociation: { workspace, project: { ...project, projectId: 'other-project' } },
+        })).resolves.toEqual({ kind: 'needsReview', code: 'project_workspace_association_mismatch' });
+    });
+
     async function reviewed(input: ProjectSetupPreparationInput) {
         const result = await reviewProjectSetupEffect(input);
         expect(result).toMatchObject({ kind: 'reviewed' });
