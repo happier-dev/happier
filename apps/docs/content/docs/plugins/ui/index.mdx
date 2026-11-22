@@ -864,6 +864,11 @@ reads and release watches when the host marks their surface inactive. They keep
 the last ready snapshot, ignore late callbacks, and re-read when activity resumes.
 Providers without a host activity fact keep their existing live behavior.
 
+In 0.3 development source, `SessionStateV1.hasExplicitStopHold` is `true` when
+the Session has a recorded explicit Stop hold. Use it to show the held state
+before confirming a Send. With an ordinary process exit or an unavailable hold
+record, the field is absent.
+
 In 0.3 development source, title-only readers can skip transcript activity and
 select just the title. Keep the selector stable across renders:
 

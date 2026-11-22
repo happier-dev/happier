@@ -3,6 +3,7 @@ import type { MachineDisplayRenderable } from '@/sync/domains/machines/machineDi
 import { SessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { V2SessionByIdNotFoundSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { PluginUiSessionStateV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -349,6 +350,27 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
         const mounted = mountSurface();
         try {
             expect(await mounted.api.readSession(base.id)).toMatchObject({ compaction: { status: 'unknown' } });
+        } finally { mounted.dispose(); }
+    });
+
+    it('reports an explicit Stop hold on a mounted Session read and omits it after ordinary process exit', async () => {
+        const inactive = waitingSession({ active: false, agentState: null });
+        const held = {
+            ...inactive,
+            id: 'held-session',
+            metadata: writeSessionExplicitStopV1ToMetadata(inactive.metadata!, {
+                v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: NOW,
+            }),
+        };
+        storage.getState().applySessions([inactive, held]);
+        const mounted = mountSurface();
+        try {
+            await expect(mounted.api.readSession(held.id, { includeActivity: false })).resolves.toMatchObject({
+                sessionId: held.id, hasExplicitStopHold: true,
+            });
+            const ended = await mounted.api.readSession(inactive.id, { includeActivity: false });
+            expect(ended).toMatchObject({ sessionId: inactive.id });
+            expect(ended).not.toHaveProperty('hasExplicitStopHold');
         } finally { mounted.dispose(); }
     });
 

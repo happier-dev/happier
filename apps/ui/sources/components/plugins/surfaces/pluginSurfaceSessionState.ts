@@ -45,6 +45,7 @@ import {
 import { listSessionPendingPermissions } from '@/sync/ops/sessionPendingPermissions';
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NativePermissionChoiceV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
+import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -99,6 +100,7 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
     const { awareness } = status;
     const agentId = readSessionPresentationAgentId(session);
     const ownerMetadata = readSessionOwnerMetadataView(session);
+    const explicitStop = readSessionExplicitStopV1FromMetadata(ownerMetadata);
     const capabilityAgentId = resolveAgentIdFromSessionMetadata(ownerMetadata);
     const agentTarget = resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata ?? session.metadata, agentId,
         readExternalSessionLink(ownerMetadata ?? session.metadata));
@@ -162,6 +164,7 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
         } } : {}),
         lifecycle: awareness.lifecycle,
         runtime: awareness.runtime,
+        ...(explicitStop && !('status' in explicitStop) ? { hasExplicitStopHold: true } : {}),
         operational: awareness.operational.primary,
         workStatus,
         ...(awareness.workspace ? { workspace: awareness.workspace } : {}),

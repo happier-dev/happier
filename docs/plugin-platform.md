@@ -12685,6 +12685,13 @@ Those owners preserve report-aware settlement and offline priority; a plugin
 does not classify host Session facts independently. Existing watches digest the
 complete snapshot, so reports-only Work changes invalidate the same subscription.
 
+In unreleased 0.3, the mounted Session snapshot includes
+`hasExplicitStopHold: true` when the Session owner metadata contains the explicit
+Stop hold used by Send admission. Ordinary process exit leaves the field absent.
+The snapshot carries only the flag. Watches pick up hold changes through the
+existing snapshot digest. The closed DTO and its SDK reader load together on the
+0.3 development cut.
+
 The public `useSessionState` and `useSessionStates` hooks can select the serializable facts their mounted
 consumer needs with a stable `select` function. It retains the selected snapshot
 when those facts are equal, so a list following Work facts does not render again

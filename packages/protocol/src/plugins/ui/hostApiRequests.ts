@@ -341,6 +341,8 @@ export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.strictObject({
   })),
   lifecycle: SessionAwarenessLifecycleV1Schema,
   runtime: SessionAwarenessRuntimeV1Schema,
+  /** A recorded explicit Stop hold, independent of runner lifecycle. */
+  hasExplicitStopHold: z.optional(z.literal(true)),
   operational: SessionAwarenessOperationalPrimaryV1Schema,
   workStatus: z.strictObject({
     state: z.string(),
