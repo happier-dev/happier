@@ -458,7 +458,8 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
-  it('retains a copied Environment after binding failure and recovers only in its variables', async () => {
+  it.each(['partial', 'confirmed', 'refused', 'cancelled'] as const)('settles a reviewed copy (%s)', async outcome => {
+    const { ActionConfirmationReviewFacts } = await import('@/components/approvals/ActionConfirmationReview');
     const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
     const { createDeploymentSecretVariableBindingV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
     const serverId = await homes.addHome({ name: 'Duplicate', serverUrl: 'https://duplicate-environment.test', accountId: 'alice',
@@ -483,7 +484,7 @@ describe('Environment draft Machine Home', () => {
         createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0,
-        execute: input => {
+        execute: (input, transport) => {
           if (typeof input === 'object' && input !== null && 'mode' in input) {
             authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
             const preview = DeploymentEnvironmentCreatePreviewV1Schema.parse({ kind: 'preview',
@@ -497,13 +498,26 @@ describe('Environment draft Machine Home', () => {
                   included: ['definition:stored', 'retainPreviousDeployments:copy', 'ownServer'], omitted: [] } } });
             return preview;
           }
+          if (outcome !== 'partial') {
+            if (!transport.invocation.presentUserConfirmation) {
+              return { errorCode: 'action_interactive_review_required',
+                details: { review: { actionArgs: input, preview: { summary: 'Set the copied bindings' } }, reviewDigest: 'R'.repeat(43) } };
+            }
+            expect(transport.invocation.presentUserConfirmation.reviewDigest).toBe('R'.repeat(43));
+            if (outcome === 'refused') return { errorCode: 'deployment_conflict' };
+            creates++;
+            return { ok: true, environmentId: 'copied-environment', revision: 1 };
+          }
           creates++;
           const partial = DeploymentTemplateInstantiationPartialV1Schema.parse({ kind: 'partial', phase: 'bindings',
             errorCode: 'action_forbidden', environmentId: 'copied-environment', revision: 1, savedSecrets: [] });
           return partial;
         }, failure: result => {
           const partial = DeploymentTemplateInstantiationPartialV1Schema.safeParse(result);
-          return partial.success ? { errorCode: partial.data.errorCode, error: partial.data.errorCode, details: partial.data } : null;
+          if (partial.success) return { errorCode: partial.data.errorCode, error: partial.data.errorCode, details: partial.data };
+          if (result && typeof result === 'object' && 'errorCode' in result && typeof result.errorCode === 'string')
+            return { ...result, errorCode: result.errorCode, error: result.errorCode };
+          return null;
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope,
         [createMachineFixture({ id: 'runtime', installationId: 'runtime-installation', activeAt: Date.now() })]);
@@ -526,7 +540,36 @@ describe('Environment draft Machine Home', () => {
       expect(copyReview).toContain('Kept for rollback');
       expect(copyReview).toContain('A machine');
       expect(copyReview).not.toMatch(/definition:stored|retainPreviousDeployments:copy|ownServer/);
+      const reviewTitle = header().props.primaryAction.title;
       await act(async () => header().props.primaryAction.onPress());
+      if (outcome !== 'partial') {
+        await waitForHomeGovernance(async () => { await act(async () => {});
+          expect(screen.findAllByType(ActionConfirmationReviewFacts)[0]?.props.preview).toMatchObject({ summary: 'Set the copied bindings' }); });
+        expect(creates).toBe(0);
+        expect(saved).toEqual([]);
+        if (outcome === 'cancelled') {
+          await act(async () => header().props.cancelAction.onPress());
+          await waitForHomeGovernance(() => expect(screen.findAllByType(ActionConfirmationReviewFacts)).toHaveLength(0));
+          expect(header().props.primaryAction.loading).toBe(false);
+          expect(creates).toBe(0);
+          await screen.unmount();
+          return;
+        }
+        expect(header().props.primaryAction.title).not.toBe(reviewTitle);
+        await act(async () => header().props.primaryAction.onPress());
+        if (outcome === 'confirmed') {
+          await waitForHomeGovernance(() => expect(saved).toEqual([['copied-environment', undefined]]));
+          expect(creates).toBe(1);
+        } else {
+          await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.draft.refused')).not.toBeNull());
+          await screen.pressByTestIdAsync('project-deployments.draft.refused.details');
+          expect(screen.getTextContent()).toContain('deployment_conflict');
+          expect(creates).toBe(0);
+          expect(saved).toEqual([]);
+        }
+        await screen.unmount();
+        return;
+      }
       await waitForHomeGovernance(() => expect(creates, 'controller created exactly one copy').toBe(1));
       await waitForHomeGovernance(async () => { await act(async () => {});
         expect(header().props.primaryAction.loading, 'copy settled with recovery').toBe(false); });

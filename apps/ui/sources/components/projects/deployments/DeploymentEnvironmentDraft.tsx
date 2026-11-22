@@ -505,12 +505,16 @@ export const DeploymentEnvironmentDraft = React.memo(
       setTargetKey(next);
     };
 
-    const saveAction = {
-      title: partial
+    const saveTitle = partial
         ? t('projects.deployments.openEnvironment')
+        : props.copyFrom
+        ? stepReview ? t('projects.deployments.creationReview.createCopy')
+          : prepared ? t('projects.deployments.creationReview.reviewAndCreateCopy') : t('newApp.deploy.review')
         : prepared
         ? t('projects.deployments.creationReview.create')
-        : t('projects.deployments.saveEnvironment'),
+        : t('projects.deployments.saveEnvironment');
+    const saveAction = {
+      title: saveTitle,
       onPress: () => {
         void save();
       },
@@ -599,13 +603,14 @@ export const DeploymentEnvironmentDraft = React.memo(
               onChangeText: setName,
               onCommit: () => setName((current) => current.trim()),
             }}
-            description={t(partial ? 'projects.deployments.partialProgressBody' : props.copyFrom ? 'projects.deployments.copy.description' : 'projects.deployments.draftDescription')}
+            description={stepReview?.summary ?? t(partial ? 'projects.deployments.partialProgressBody' : props.copyFrom ? 'projects.deployments.copy.description' : 'projects.deployments.draftDescription')}
             {...(props.phone ? {} : { primaryAction: saveAction })}
             cancelAction={partial ? {
               title: t('common.close'), onPress: props.onDiscard, testID: 'project-deployments.draft.close',
-            } : prepared ? {
+            } : prepared || stepReview ? {
               title: t('common.back'),
-              onPress: () => setPrepared(null),
+              onPress: backStep,
+              disabled: saving && !stepReview,
               testID: 'project-deployments.draft.back',
             } : {
               title: t('common.discard'),

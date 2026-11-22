@@ -8,6 +8,8 @@ export type DeploymentCreationReviewCopy = Readonly<{
   title: string;
   description: string;
   create: string;
+  createCopy: string;
+  reviewAndCreateCopy: string;
   buildsOn: (params: { machine: string }) => string;
   deploysFrom: (params: { machine: string }) => string;
   keepsPrevious: (params: { count: number }) => string;
@@ -23,6 +25,8 @@ export const deploymentCreationReviewTranslations = {
     description:
       'Check these before you create it.',
     create: 'Create environment',
+    createCopy: 'Create copy',
+    reviewAndCreateCopy: 'Review and create copy',
     buildsOn: ({ machine }) => `Builds on ${machine}`,
     deploysFrom: ({ machine }) => `Deploys run from ${machine}`,
     keepsPrevious: ({ count }) =>
