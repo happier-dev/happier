@@ -31,6 +31,7 @@ export type AgentSignInTerminalViewProps = Readonly<{
     session: MachineAgentSignInSession;
     /** Signed in: the account the agent's own probe reported, when it names one. */
     accountLabel: string | null;
+    sharedUserWarning?: string | null;
     deviceCode?: string | null;
     /** The live machine terminal running the agent's own login (the container mounts it). */
     terminal: React.ReactNode;
@@ -89,6 +90,7 @@ function SidePanel(props: AgentSignInTerminalViewProps) {
             </View>
             {/* A failed start opened no browser; a failed check after one did. */}
             {session.phase !== 'failed' || session.authUrl ? <Text style={styles.lead}>{t('machineAgents.panelLead')}</Text> : null}
+            <SharedUserWarning warning={props.sharedUserWarning} testID={testID} />
             <DeviceCode value={props.deviceCode} onCopy={handlers.onCopyDeviceCode} testID={testID} />
             {session.authUrl ? <AuthUrl url={session.authUrl} onOpen={handlers.onOpenUrl} testID={testID} /> : null}
             {session.phase === 'failed' ? (
@@ -133,6 +135,7 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
             ) : (
                 <>
                     {session.phase !== 'failed' || session.authUrl ? <Text style={styles.sheetLead}>{t('machineAgents.phoneLead', { agent: props.agentTitle, machine: props.machineName })}</Text> : null}
+                    <SharedUserWarning warning={props.sharedUserWarning} testID={testID} />
                     <DeviceCode value={props.deviceCode} onCopy={handlers.onCopyDeviceCode} testID={testID} />
                     {session.authUrl ? (
                         <RoundButton testID={`${testID}.openUrl`} title={t('machineAgents.openSignInPage')} onPress={() => handlers.onOpenUrl(session.authUrl!)} />
@@ -185,6 +188,15 @@ function SignInFailureLine(props: Readonly<{ agentTitle: string; failure: string
                 title={message}
                 action={{ label: t('machineAgents.checkAgain'), onPress: props.onCheckAgain, testID: `${props.testID}.checkAgain` }}
             />
+        </HappierBodyEdgeContext.Provider>
+    );
+}
+
+function SharedUserWarning(props: Readonly<{ warning?: string | null; testID: string }>) {
+    if (!props.warning) return null;
+    return (
+        <HappierBodyEdgeContext.Provider value>
+            <SurfaceStateCard testID={`${props.testID}.sharedUserWarning`} size="line" kind="warning" title={props.warning} />
         </HappierBodyEdgeContext.Provider>
     );
 }

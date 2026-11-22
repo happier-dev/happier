@@ -10,7 +10,7 @@ import {
 import type { RpcHandlerRegistrar } from '../rpc/types';
 import { prepareAgentSignIn, probeAgentSignInStatus } from '@/capabilities/cliAuth/agentSignIn';
 import { projectIdentityFreeSignIn } from '@/capabilities/cliAuth/identityFreeSignIn';
-import { selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { resolveHostRequesterTerminalPlacementForHost, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import type { MachineTerminalRpcHandlerDeps } from './rpcHandlers.terminal';
 
 export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
@@ -26,7 +26,16 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       const selection = await params.deps.readSignInConnectedDefaultSelection(request.agentId, context);
       return { ...status, credentialSource: selection === 'native' ? status.credentialSource : selection };
     };
-    if (context?.machineAdmission?.role !== 'use') return await readCredentialSource(await probeAgentSignInStatus(request.agentId));
+    if (context?.machineAdmission?.role !== 'use') {
+      const status = await readCredentialSource(await probeAgentSignInStatus(request.agentId));
+      if (context?.machineAdmission?.role !== 'manage') return status;
+      const home = params.deps?.resolveHostHomeServerIdentityId
+        ? await params.deps.resolveHostHomeServerIdentityId(context.signal).catch(() => null)
+        : context.callerInputAuthorization?.binding.serverIdentityId ?? null;
+      const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
+      const placement = resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => params.deps?.agentIsolation?.read() });
+      return placement === 'person' ? { ...status, signInScope: 'machineOwner' as const } : status;
+    }
     const snapshot = params.deps?.agentIsolation?.read();
     const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
     const readNativeStatus = async () => {

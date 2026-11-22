@@ -1,4 +1,4 @@
-import type { MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
+import type { MachineCliSignInAuthentication, MachineCliSignInRow } from '@/agents/machineAgents/signIn/useAgentSignIn';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 
@@ -12,13 +12,13 @@ type SignInTarget = Pick<MachineCliSignInRow, 'title' | 'authentication'>;
  */
 export function describeMachineSignInScope(
   input: Readonly<{
-    row: SignInTarget;
+    scope: MachineCliSignInAuthentication['signInScope'] | null;
+    account: string;
     /** The Machine's own OS user, when the scope is that user and the Machine published its name. */
     hostUser: string | null;
   }>,
 ): string | null {
-  const scope = input.row.authentication?.signInScope;
-  const account = input.row.authentication?.connectedServices[0]?.title ?? input.row.title;
+  const { scope, account } = input;
   if (scope === 'machineOwner' && input.hostUser)
     return t('machinePresets.setup.tab.signInSharedUser', { user: input.hostUser, account });
   if (scope === 'machineOwner' || scope === 'sharedAgent')
@@ -34,7 +34,8 @@ export async function confirmMachineSignInScope(
     hostUser: string | null;
   }>,
 ): Promise<boolean> {
-  const warning = describeMachineSignInScope(input);
+  const warning = describeMachineSignInScope({ scope: input.row.authentication?.signInScope,
+    account: input.row.authentication?.connectedServices[0]?.title ?? input.row.title, hostUser: input.hostUser });
   if (!warning) return true;
   return Modal.confirm(
     t('machinePresets.setup.tab.signInConfirmTitle', {

@@ -309,7 +309,7 @@ export function resolveHostRequesterAgentExecutionIdentity(identity: HostRequest
         separationRequired: identity.kind === 'isolated' && identity.separationRequired };
 }
 
-/** All requesters consume the Machine placement policy. Requester custody and
+/** Agent execution consumes the Machine placement policy. Requester custody and
  * person/administration authority remain independent of execution placement. */
 export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
     identity: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
@@ -318,6 +318,19 @@ export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
 }>): 'daemon' | 'sharedAgent' | 'member' {
     return resolveMachineAgentExecutionPlacementV1({ policy: input.snapshot ?? { enabled: false },
         platform: input.platform ?? process.platform });
+}
+
+/** A terminal opened by a person with full Machine control uses their person placement. */
+export function resolveHostRequesterTerminalPlacementForHost(input: Readonly<{
+    identity: HostRequesterExecutionIdentity;
+    readPolicy: () => Pick<HostAgentIsolationLaunchSnapshot, 'enabled' | 'memberProvisioning'> | undefined;
+    platform?: NodeJS.Platform;
+}>): 'person' | 'daemon' | 'sharedAgent' | 'member' | undefined {
+    if (input.identity.kind === 'owner_person') return 'person';
+    if (input.identity.kind === 'unknown') return undefined;
+    return resolveHostRequesterAgentPlacementForHost({
+        identity: input.identity, snapshot: input.readPolicy(), platform: input.platform,
+    });
 }
 
 /**

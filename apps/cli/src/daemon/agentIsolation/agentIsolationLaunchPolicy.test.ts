@@ -3,7 +3,7 @@ import { logger } from '@/ui/logger';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createAgentIsolationOperationContext, createAgentIsolationSessionContext } from './agentIsolationSessionContext';
-import { admitAgentIsolationLaunchForHost, resolveHostRequesterAgentPlacementForHost, isHostRequesterUnrestrictedOwner, retainVerifiedExternalActionRequester, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
+import { admitAgentIsolationLaunchForHost, resolveHostRequesterAgentPlacementForHost, resolveHostRequesterTerminalPlacementForHost, isHostRequesterUnrestrictedOwner, retainVerifiedExternalActionRequester, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createActionExecutor } from '@happier-dev/protocol';
@@ -26,6 +26,14 @@ import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploy
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 
 describe('held Agent isolation launch admission', () => {
+    it('keeps admitted people in person terminals while Agents use the configured member placement', () => {
+        const requester = { serverId: 'home', accountId: 'manager', machineId: 'machine', installationId: 'installation' };
+        const readPolicy = () => ({ enabled: true, memberProvisioning: 'linuxUsersV1' as const });
+        const placement = (identity: Parameters<typeof resolveHostRequesterTerminalPlacementForHost>[0]['identity']) =>
+            resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy, platform: 'linux' });
+        expect(placement({ kind: 'owner_person', requester })).toBe('person');
+        expect(placement({ kind: 'isolated', requester, separationRequired: true })).toBe('member');
+    });
     it.each(['owner', 'member'] as const)('uses verified receiving custody for the signed %s Session Action without relabeling its authority', accountId => {
         const origin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: 'source-session', starterDepth: 0, turnDepth: 0 },
             sourceTurnId: 'source-turn', callerPermissionMode: null, requestId: 'approved-terminal' };

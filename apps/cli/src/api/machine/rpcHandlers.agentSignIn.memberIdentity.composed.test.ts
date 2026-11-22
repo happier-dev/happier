@@ -165,12 +165,12 @@ async function fixture() {
       return child;
     };
     os.execFile = os.spawn;
-    const invoke = async () => {
+    const invoke = async (role: 'use' | 'manage' = 'use') => {
       const admissions = f.admissionChecks();
       const result = AgentSignInStatusResponseSchema.parse(await f.rpcHandlerManager.handleRequest({
         method: `machine:${AGENT_SIGN_IN_STATUS_RPC_METHOD}`, params: { agentId }, callerAuthority: 'present_user',
         machineAdmission: { actorAccountId: 'member-a', custodianAccountId: 'requester', machineId: f.machineId,
-          installationId: f.installation.installationId, role: 'use', encryptionMode: 'plain' },
+          installationId: f.installation.installationId, role, encryptionMode: 'plain' },
       }));
       expect(f.admissionChecks() - admissions).toBe(1);
       return result;
@@ -187,4 +187,6 @@ async function fixture() {
     expect(await invoke()).toMatchObject({ status: 'unknown', signInScope: 'member' });
     expect(observed).toHaveLength(2);
     expect(f.memberSetupLaunches()).toBe(setupLaunches);
+    expect(await invoke('manage')).toMatchObject({ signInScope: 'machineOwner' });
+    expect(observed).toHaveLength(2);
   });

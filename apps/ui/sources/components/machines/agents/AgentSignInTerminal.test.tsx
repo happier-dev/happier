@@ -64,7 +64,8 @@ describe('Agent sign-in terminal lifecycle on web', () => {
         return await renderScreen(<AgentSignInTerminal {...props} />);
     }
 
-    function fixture(machineId: string, signedIn = true, machineOverrides: Parameters<typeof createMachineFixture>[0] = {}) {
+    function fixture(machineId: string, signedIn = true, machineOverrides: Parameters<typeof createMachineFixture>[0] = {},
+        signInScope?: 'machineOwner' | 'member') {
         const ensure = createDeferred<DaemonTerminalEnsureResponse>();
         const stream = createDeferred<DaemonTerminalStreamReadResponse>();
         const laterStream = createDeferred<DaemonTerminalStreamReadResponse>();
@@ -92,12 +93,23 @@ describe('Agent sign-in terminal lifecycle on web', () => {
                 { terminalId: acquiredTerminalId, terminalKey: `provider-login:${machineId}:codex`, cwd: '/fixture', ended: false, exit: null },
             ] : [] };
             if (method === 'daemon.agents.signIn.status') return { status: signedIn ? 'signedIn' : 'signedOut', accountLabel: 'fixture@example.invalid', checkedAt: Date.now(),
-                nativeLogin: 'login_terminal', connectedServices: [] };
+                nativeLogin: 'login_terminal', connectedServices: [], signInScope };
             if (method === 'capabilities.detect') return { capabilities: {} };
             throw new Error(`Unexpected fixture RPC ${method}`);
         });
         return { ensure, stream, target: { serverId, machineId, agentId: 'codex', agentTitle: 'Codex', machineName: 'Fixture' } };
     }
+
+    it.each(['machineOwner', 'member'] as const)('shows the shared-user warning only for a shared sign-in (%s)', async signInScope => {
+        const { target, ensure } = fixture(`scope-${signInScope}`, false, {}, signInScope);
+        ensure.resolve({ ok: true, terminalId: 'scope-terminal', reused: false });
+        const screen = await renderTerminal({ ...target, layout: 'pane', onClose: () => {} });
+        await waitForHomeGovernance(() => expect(screen.find((node) => Boolean(node.props.session)).props.session.phase).toBe('waiting'));
+        await waitForHomeGovernance(() => expect(boundary.rpc.mock.calls.some(([request]) => request.method === 'daemon.agents.signIn.status')).toBe(true));
+        if (signInScope === 'machineOwner') expect(screen.findByTestId('agent-sign-in.sharedUserWarning')).not.toBeNull();
+        else expect(screen.findByTestId('agent-sign-in.sharedUserWarning')).toBeNull();
+        await screen.unmount();
+    });
 
     it('keeps Cancel mounted until a late acquisition is closed', async () => {
         const { ensure, target } = fixture('cancel-during-ensure');

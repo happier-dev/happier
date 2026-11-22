@@ -44,7 +44,7 @@ function publish(entry: Entry, patch: Partial<MachineAgentSignInSession>, accoun
   entry.state = { ...entry.state, ...patch };
   for (const listener of entry.listeners) listener();
 }
-function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSignal): Promise<AgentSignInStatusResponse | null> {
+function readAuthentication(entry: Entry, target: BoundTarget, signal?: AbortSignal): Promise<AgentSignInStatusResponse | null> {
   if (entry.checking) return entry.checking;
   const abort = new AbortController(); entry.probeAbort = abort;
   const retire = target.lifetime.onRetire(() => abort.abort());
@@ -61,21 +61,10 @@ function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSignal): Pr
         entry.authentication = retained;
         for (const listener of entry.authenticationListeners) listener();
       }
-      const accountLabel = result.accountLabel ?? null;
-      if (result.status === 'signedIn') {
-        const wasSignedIn = entry.state.phase === 'signedIn';
-        publish(entry, { phase: 'signedIn', failure: null }, accountLabel);
-        if (!wasSignedIn) fireAndForget(refreshMachineAgents({ serverId: target.serverId,
-          machineId: target.machineId, accountLifetime: target.lifetime, force: true }), { tag: 'AgentSignIn.refreshInventory' });
-      } else if (entry.state.terminalKey && !entry.terminalExited) {
-        publish(entry, { phase: 'waiting', failure: null }, accountLabel);
-      } else publish(entry, {}, accountLabel);
       return result;
     } catch (error) {
-      if (!abort.signal.aborted && target.lifetime.isCurrent()) {
-        publish(entry, { phase: 'failed', failure: error instanceof Error ? error.message : 'sign_in_status_unavailable' });
-      }
-      return null;
+      if (abort.signal.aborted || !target.lifetime.isCurrent()) return null;
+      throw error;
     } finally {
       retire.dispose(); signal?.removeEventListener('abort', abortFromSignal);
       if (entry.probeAbort === abort) entry.probeAbort = null;
@@ -83,6 +72,28 @@ function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSignal): Pr
     }
   })();
   entry.checking = checking; return checking;
+}
+
+async function checkAgain(entry: Entry, target: BoundTarget, signal?: AbortSignal): Promise<AgentSignInStatusResponse | null> {
+  try {
+    const result = await readAuthentication(entry, target, signal);
+    if (!result || signal?.aborted || !target.lifetime.isCurrent()) return null;
+    const accountLabel = result.accountLabel ?? null;
+    if (result.status === 'signedIn') {
+      const wasSignedIn = entry.state.phase === 'signedIn';
+      publish(entry, { phase: 'signedIn', failure: null }, accountLabel);
+      if (!wasSignedIn) fireAndForget(refreshMachineAgents({ serverId: target.serverId,
+        machineId: target.machineId, accountLifetime: target.lifetime, force: true }), { tag: 'AgentSignIn.refreshInventory' });
+    } else if (entry.state.terminalKey && !entry.terminalExited) {
+      publish(entry, { phase: 'waiting', failure: null }, accountLabel);
+    } else publish(entry, {}, accountLabel);
+    return result;
+  } catch (error) {
+    if (!signal?.aborted && target.lifetime.isCurrent()) {
+      publish(entry, { phase: 'failed', failure: error instanceof Error ? error.message : 'sign_in_status_unavailable' });
+    }
+    return null;
+  }
 }
 async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
   if (entry.opening) return await entry.opening;
@@ -110,6 +121,8 @@ async function start(entry: Entry, target: BoundTarget, signal?: AbortSignal) {
       if (!target.lifetime.isCurrent()) return;
       if ('terminalKey' in result) {
         publish(entry, { phase: 'waiting', terminalKey: result.terminalKey });
+        // The daemon reports the OS-user scope. Existing credentials do not settle this new login.
+        void readAuthentication(entry, target, abort.signal).catch(() => undefined);
       } else publish(entry, { phase: 'failed', failure: 'errorCode' in result ? result.errorCode : 'agent_login_unsupported' });
       return result;
     } catch (error) {
@@ -246,7 +259,7 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     reportTerminalExit: async (terminalId: string) => {
       if (!entry || !boundTarget?.lifetime.isCurrent() || !entry.state.terminalKey || entry.terminalId !== terminalId || entry.terminalExited) return;
       entry.terminalExited = true;
-      await entry.checking;
+      await entry.checking?.catch(() => null);
       if (!entry.state.terminalKey || !boundTarget.lifetime.isCurrent() || entry.terminalId !== terminalId || entry.state.phase === 'signedIn') return;
       const result = await checkAgain(entry, boundTarget);
       if (boundTarget.lifetime.isCurrent() && entry.state.terminalKey && entry.terminalId === terminalId && result?.status !== 'signedIn') {

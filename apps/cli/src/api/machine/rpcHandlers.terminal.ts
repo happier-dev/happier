@@ -42,7 +42,7 @@ import {
 } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 import { openServiceShellTerminal } from './serviceShellTerminal';
-import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterAgentPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutionIdentity, resolveHostRequesterTerminalPlacementForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { createTerminalPtySessionManager, type TerminalPtySessionManager, type TerminalPtyCustody } from '@/terminal/pty/sessions';
 import { byteStreamHoldEndsAtMs, readByteStreamHeld } from '@/terminal/pty/byteStreamHold';
 import { createNodePtyProvider } from '@/terminal/pty/provider';
@@ -247,14 +247,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       && identity.requester.accountId === context?.machineAdmission?.custodianAccountId
       ? undefined : params.deps?.agentIsolation;
 
-  const resolveTerminalPlacement = (identity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
-    // A person's admitted shell retains person placement; only Agent/member
-    // identities consume the Machine's Agent isolation policy.
-    return identity.kind === 'isolated'
-      ? resolveHostRequesterAgentPlacementForHost({ identity,
-        snapshot: resolveTerminalAgentIsolation(identity, context)?.read(), platform: params.deps?.platform })
-      : undefined;
-  };
+  const resolveTerminalPlacement = (identity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) =>
+    resolveHostRequesterTerminalPlacementForHost({
+      identity,
+      readPolicy: () => resolveTerminalAgentIsolation(identity, context)?.read(),
+      platform: params.deps?.platform,
+    });
 
   const resolveMachineShellAvailability = async (context?: RpcHandlerContext,
     selectedIdentity?: HostRequesterExecutionIdentity): Promise<DaemonTerminalShellAvailabilityV1> => {
@@ -832,7 +830,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.open', homeServerIdentityId);
     }
-    if (requesterIdentity.kind !== 'owner_person'
+    if (placement !== 'person'
       && placement !== 'daemon' && !params.deps?.nativeOperationRuntime) return unavailableIdentityTransport();
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
@@ -854,7 +852,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (!warm) launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
         nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
         sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.open' });
-      if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
+      if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {
@@ -1032,7 +1030,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (requesterIdentity.kind === 'isolated' && requesterIdentity.separationRequired) return unavailableIdentityTransport();
       return await runServiceShell({ ...parsed.data, launch: parsed.data.launch }, context, 'machines.terminal.restart', homeServerIdentityId);
     }
-    if (requesterIdentity.kind !== 'owner_person'
+    if (placement !== 'person'
       && placement !== 'daemon' && !params.deps?.nativeOperationRuntime) return unavailableIdentityTransport();
 
     const cwd = await resolveTerminalCustody(parsed.data, context, requesterIdentity);
@@ -1051,7 +1049,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       launch.launchProcess = await prepareAssociatedTerminalLaunch({ launchProcess: launch.launchProcess,
         nativeSignIn: parsed.data.launch?.kind === 'agent_login', context, requesterAccountId: requesterIdentity.requester.accountId,
         sessionId, terminalKey: parsed.data.terminalKey, actionId: 'machines.terminal.restart' });
-      if (requesterIdentity.kind !== 'owner_person' && placement !== 'daemon') {
+      if (placement !== 'person' && placement !== 'daemon') {
         if (!context) return unavailableIdentityTransport();
         nativeOperation = await prepareTerminalNativeOperation(context, requesterIdentity, parsed.data.terminalKey, sessionId);
         if (!nativeOperation || placement === 'member' && !nativeOperation.memberIdentity) {

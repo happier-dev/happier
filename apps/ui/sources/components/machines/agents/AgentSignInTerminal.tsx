@@ -7,10 +7,12 @@ import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTer
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import { useMachineTerminalSession } from '@/hooks/machine/useMachineTerminalSession';
 import { useMachine } from '@/sync/domains/state/storage';
+import { useMachineField } from '@/sync/store/hooks';
 import { t } from '@/text';
 import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
+import { describeMachineSignInScope } from '@/components/machines/setup/machineSignInScope';
 
 import { AgentSignInTerminalView } from './AgentSignInTerminalView';
 import { MachineAgentMark } from './MachineAgentMark';
@@ -40,6 +42,7 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
     const target = { serverId: props.serverId, machineId: props.machineId, agentId: props.agentId };
     const signIn = useAgentSignIn(target);
     const machine = useMachine(props.machineId);
+    const hostUser = useMachineField(props.machineId, 'metadata', 'username', { serverId: props.serverId });
     const presence = useMachinePresenceSummary(props.serverId, props.machineId);
     const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const notifiedExitTerminalRef = React.useRef<string | null>(null);
@@ -108,6 +111,7 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
             machineName={props.machineName}
             session={signIn}
             accountLabel={signIn.accountLabel}
+            sharedUserWarning={describeMachineSignInScope({ scope: signIn.signInScope, account: props.agentTitle, hostUser })}
             deviceCode={signIn.phase === 'waiting' && deviceCode?.terminalId === signIn.terminalId ? deviceCode.code : null}
             terminal={terminal}
             handlers={{
