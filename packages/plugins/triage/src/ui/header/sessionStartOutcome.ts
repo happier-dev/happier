@@ -1,3 +1,5 @@
+import type { TriageSessionHandoffResultV1 } from '@happier-dev/triage-protocol/v1';
+
 import type { TriageStartEntrySessionResultV1 } from '../../actions/entrySessionProtocol.js';
 import type { TriageEntrySessionStartPhaseV1 } from '../../sessions/entrySessionStartController.js';
 import type { TriageNewSessionFailureV1 } from './newSessionSeedCommand.js';
@@ -159,6 +161,48 @@ function settledNotice(
   }
 }
 
+type FailedHandoffSend = Extract<
+  Extract<TriageSessionHandoffResultV1, { kind: 'sendResult' }>['result'],
+  { status: 'failed' }
+>;
+
+function describeFailedHandoffSend(result: FailedHandoffSend): TriageEntrySessionNoticeV1 {
+  switch (result.code) {
+    case 'resume_failed': {
+      const detail = result.errorDetail;
+      const diagnostics = detail === undefined ? [] : [
+        'code' in detail ? detail.code : detail.kind,
+        'reason' in detail && typeof detail.reason === 'string' ? detail.reason : undefined,
+        'uxDiagnostic' in detail ? detail.uxDiagnostic?.code : undefined,
+        detail.kind === 'spawn_failure' ? detail.errno : undefined,
+        ...(detail.kind === 'launch_error' ? [
+          detail.subtype, detail.rpcErrorCode, detail.failureCause?.code, detail.failureCause?.reason, detail.failureCause?.failureReason,
+          detail.spawnFailure?.reason, detail.spawnFailure?.errno, detail.profileRefusal?.reason,
+          detail.agentIsolationRefusal?.reason, detail.currentnessFailure?.reason,
+        ] : []),
+        ...(detail.kind === 'provider_error' ? [detail.providerError.code, detail.providerError.reason,
+          detail.providerError.savedSecretReason] : []),
+      ];
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.handoffResumeFailed',
+        'Your message was not delivered because the Session could not resume. Send it again when the Session is available.',
+        { codes: [result.code, ...diagnostics].filter((code): code is string => typeof code === 'string') },
+      );
+    }
+    case 'session_input_turn_failed': {
+      const issue = result.runtimeIssueV1;
+      return notice(
+        'warning',
+        'plugins.triage.surface.session.handoffTurnFailed',
+        'The turn failed in the selected Session. Check the Session before sending again.',
+        { codes: [result.code, issue?.code, issue?.failureCause?.code, issue?.failureCause?.reason, issue?.failureCause?.failureReason]
+          .filter((code): code is string => typeof code === 'string') },
+      );
+    }
+  }
+}
+
 export function describeTriageEntrySessionPhaseV1(
   phase: TriageEntrySessionStartPhaseV1,
 ): TriageEntrySessionNoticeV1 | null {
@@ -184,17 +228,19 @@ export function describeTriageEntrySessionPhaseV1(
         case 'cancelled': return null;
         case 'composed':
           return notice('muted', 'plugins.triage.surface.session.handoffComposed', 'Added this entry to the Session draft.');
-        case 'sendResult':
-          if (typeof result.result !== 'object' || result.result === null || !('status' in result.result)) {
+        case 'sendResult': {
+          const send = result.result;
+          if (typeof send !== 'object' || send === null || 'kind' in send || !('status' in send)) {
             return notice('warning', 'plugins.triage.surface.session.handoffReceipt', 'Check the selected Session for this action’s delivery result.');
           }
-          switch (result.result.status) {
+          switch (send.status) {
             case 'rejected':
               return Object.freeze({
                 ...notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.'),
-                ...(typeof result.result.code === 'string' ? { failureCode: result.result.code } : {}),
+                ...(typeof send.code === 'string' ? { failureCode: send.code } : {}),
               });
             case 'failed':
+              return describeFailedHandoffSend(send);
             case 'cancelled':
               return notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.');
             case 'held':
@@ -202,6 +248,7 @@ export function describeTriageEntrySessionPhaseV1(
             default:
               return notice('muted', 'plugins.triage.surface.session.handoffSent', 'Sent this action’s input to the selected Session.');
           }
+        }
         case 'uncertain':
           return notice('warning', 'plugins.triage.surface.session.handoffUncertain',
             result.phase === 'link' ? 'The Session link could not be confirmed. Press again to resume the same request.'

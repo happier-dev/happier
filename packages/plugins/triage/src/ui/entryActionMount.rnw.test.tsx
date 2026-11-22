@@ -24,6 +24,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
     TriageConfiguredSourceInstanceV1Schema,
+    type TriageSessionHandoffAuthoredResultV1,
     type TriageConfiguredSourceInstanceV1,
     type TriageScanResultV1,
 } from '@happier-dev/triage-protocol/v1';
@@ -296,6 +297,7 @@ function createHarness(options: Readonly<{
     readCatalogFailure?: () => PluginError | undefined;
     comparisonRead?: () => Promise<unknown>;
     comparisonOpen?: () => Promise<unknown>;
+    sendResult?: Extract<TriageSessionHandoffAuthoredResultV1, { kind: 'sendResult' }>['result'];
     sessionBoundary?: Pick<TriageEntrySessionDepsV1, 'execute' | 'prepareReviewWorkspace'>;
 }> = {}): Harness {
     const descriptor = options.issue === true
@@ -469,7 +471,7 @@ function createHarness(options: Readonly<{
             return TriageRunConfiguredActionResultV1Schema.parse({
                 v: 1,
                 handoff: { kind: 'sendResult', session: pickedSession,
-                    result: { status: 'accepted', localId: 'native-receipt' } },
+                    result: options.sendResult ?? { status: 'accepted', localId: 'native-receipt' } },
             });
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
@@ -1479,8 +1481,8 @@ describe('the entry action controls on the mounted detail header', () => {
     }, 60_000);
 
     /** The Start split's second half (lab t1 `tasks-start`), behind the row's one ⋯. */
-    function oneClickHarness(): Harness {
-        const harness = createHarness();
+    function oneClickHarness(options?: Parameters<typeof createHarness>[0]): Harness {
+        const harness = createHarness(options);
         harness.setActions([{
             actionId: 'fix',
             label: 'Direct fix',
@@ -1530,8 +1532,50 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(newSessionSeeds).toEqual([expect.objectContaining({ teamModelFromSessionId: 'session-investigation' })]);
     }, 60_000);
 
-    it('sends the entry to the Session the reader picks, creating none', async () => {
-        const harness = oneClickHarness();
+    it.each([
+        {
+            name: 'delivered input with a reply',
+            result: {
+                status: 'replied', localId: 'native-receipt',
+                outcome: { kind: 'answer', text: 'Done.', messageRef: {
+                    kind: 'session', session: { serverId: 'server-a', sessionId: 'session-picked' }, messageId: 'reply-1',
+                } },
+            },
+            notice: 'Sent this action’s input to the selected Session.',
+        },
+        {
+            name: 'accepted input',
+            result: { status: 'accepted', localId: 'native-receipt' },
+            notice: 'Sent this action’s input to the selected Session.',
+        },
+        {
+            name: 'held input',
+            result: { status: 'held', localId: 'native-receipt', code: 'autonomous_check_in' },
+            notice: 'This action’s input is held in the selected Session.',
+        },
+        {
+            name: 'refused resume',
+            result: {
+                status: 'failed', code: 'resume_failed', localId: 'native-receipt',
+                admissionResult: { status: 'accepted', localId: 'native-receipt' },
+                errorDetail: { kind: 'spawn_failure', reason: 'process_limit', errno: 'EAGAIN' },
+            },
+            notice: 'Your message was not delivered because the Session could not resume. Send it again when the Session is available.',
+            details: /resume_failed[\s\S]*process_limit[\s\S]*EAGAIN/u,
+        },
+        {
+            name: 'failed turn',
+            result: { status: 'failed', code: 'session_input_turn_failed', localId: 'native-receipt' },
+            notice: 'The turn failed in the selected Session. Check the Session before sending again.',
+            details: /session_input_turn_failed/u,
+        },
+    ] satisfies ReadonlyArray<{
+        name: string;
+        result: NonNullable<Parameters<typeof createHarness>[0]>['sendResult'];
+        notice: string;
+        details?: RegExp;
+    }>)('shows $name for the Session the reader picks, creating none', async ({ result, notice, details }) => {
+        const harness = oneClickHarness({ sendResult: result });
         pickedSession = { serverId: 'server-a', sessionId: 'session-picked' };
         const shell = await mountShell(harness);
         await openTheRow(shell);
@@ -1554,6 +1598,12 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(harness.configuredRequests[0]?.handoff.evidence).toEqual([
             { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
         ]);
+        await expect(shell.getByText(notice)).resolves.toBeDefined();
+        if (details !== undefined) {
+            expect(document.body.textContent).not.toMatch(details);
+            await pressAction(shell, 'Details');
+            expect(document.body.textContent).toMatch(details);
+        }
     }, 60_000);
 
     it.each([
