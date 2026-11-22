@@ -363,11 +363,19 @@ describe('buildSessionModelPickerSections', () => {
         const selected = {
             agentTargetKey: 'agent:happier.agent.codex/codex',
             providerConnectionId: null,
-            modelId: 'gpt-6-luna',
+            modelId: 'gpt-5.1-codex',
         } as const;
+        const nativeModels = [{ value: 'gpt-5.4', label: 'gpt-5.4' }];
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: selected.agentTargetKey, nativeModels, providerGroups: [],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected,
+        });
+        expect(sections.find(section => section.id === 'current-selection-recovery')?.options[0]).toMatchObject({
+            disabled: true, description: t('common.unavailable'), unavailableReason: t('common.unavailable'),
+        });
         expect(buildSessionModelSelectedTriggerPresentation({ declarationContext: { kind: 'account' },
             agentTargetKey: selected.agentTargetKey,
-            nativeModels: [],
+            nativeModels,
             providerGroups: [],
             hiddenNativeModelKeys: new Set<string>(),
             providerProjectionAuthoritative: true,
@@ -375,8 +383,23 @@ describe('buildSessionModelPickerSections', () => {
             fallbackLabel: t('agentInput.model.unavailable'),
             fieldLabel: t('newSession.selectModelTitle'),
         })).toMatchObject({
-            subtitle: t('agentInput.model.unavailable'),
-            detail: t('agentInput.model.unavailable'),
+            subtitle: t('common.unavailable'),
+            detail: t('common.unavailable'),
+        });
+    });
+    it('keeps a missing connected-account selection on the Provider recovery path', () => {
+        const selected = {
+            source: 'connected_account' as const,
+            purpose: { consumer: { pluginId: 'example.gateway', localId: 'gateway' }, purpose: 'inference' },
+            endpointTemplateId: 'responses', agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'missing',
+        };
+        const sections = buildSessionModelPickerSections({ declarationContext: { kind: 'account' },
+            agentTargetKey: selected.agentTargetKey, nativeModels: [], providerGroups: [],
+            hiddenNativeModelKeys: new Set(), providerProjectionAuthoritative: true, selected,
+        });
+        expect(sections.find(section => section.id === 'current-selection-recovery')?.options[0]).toMatchObject({
+            disabled: true, description: t('settingsProviders.detail.deletedDescription'),
+            unavailableReason: t('agentInput.model.unavailable'),
         });
     });
     it('announces an equal-name source once using the same identity as its heading', () => {

@@ -394,8 +394,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
                     ? t(presentProviderError(recovery.error).descriptionKey)
                     : isTeamCredentialProviderModelPickerValue(selectedValue)
                         ? teamDescription ?? t('teams.credentials.detail.notFound')
-                        : readSessionModelRefProviderConnectionId(selectedValue) === null
-                            ? t('agentInput.model.unavailable')
+                        : !isSessionModelRefSourceBound(selectedValue)
+                            ? t('common.unavailable')
                             : t('settingsProviders.detail.deletedDescription'),
                 ...(accessibilityLabel ? { accessibilityLabel } : {}),
                 disabled: !(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource),
@@ -404,7 +404,8 @@ export function buildSessionModelPickerSections(input: Readonly<{
                     : teamResource ? teamCredentialUnavailableReason(teamResource,
                         isTeamCredentialProviderModelPickerValue(selectedValue) ? selectedValue.deliveryMode : undefined, true)
                         ?? t('agentInput.model.unavailable')
-                        : t('agentInput.model.unavailable'),
+                        : !isTeamCredentialProviderModelPickerValue(selectedValue) && !isSessionModelRefSourceBound(selectedValue)
+                            ? t('common.unavailable') : t('agentInput.model.unavailable'),
                 ...(teamResource && retainedTeamModelEligible && input.onRecoverTeamCredentialResource
                     ? { onActivate: () => input.onRecoverTeamCredentialResource?.(teamResource) }
                     : {}),
@@ -511,7 +512,8 @@ export function buildSessionModelSelectedTriggerPresentation(input: Readonly<{
         : undefined;
     return {
         subtitle: selectedSection.id === 'current-selection-recovery' && selectedOption.label === selected.modelId
-            ? input.fallbackLabel
+            ? providerSelection && !isSessionModelRefSourceBound(providerSelection)
+                ? t('common.unavailable') : input.fallbackLabel
             : selectedOption.label,
         ...(detail ? { detail } : {}),
         ...(accessibilityLabel ? { accessibilityLabel } : {}),
