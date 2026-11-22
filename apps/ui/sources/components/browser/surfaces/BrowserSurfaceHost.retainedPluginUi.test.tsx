@@ -26,6 +26,13 @@ import { createBrowserViewState, openBrowserTarget } from '@/sync/domains/browse
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
+import { BrowserMobileSurfaceScreen } from './BrowserMobileSurfaceScreen';
+import * as machineTransport from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { storage } from '@/sync/domains/state/storage';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import type { LocalServicePreviewSnapshot } from '@/sync/domains/local/services/preview/store';
+import { getLocalServicePreviewState } from '@/sync/domains/local/services/preview/sharedStore';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
@@ -47,11 +54,14 @@ installTerminalRouteCommonModuleMocks();
 await initializeTerminalRouteRuntimeForTests();
 
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
+let previewAccessReads = 0;
 beforeEach(async () => {
+    previewAccessReads = 0;
     connection = await restoreServerAccountForTest({ serverUrl: 'https://retained-plugin-ui.example.test',
         serverIdentityId: 'srv_retained_plugin', request: async input => {
             const path = new URL(String(input)).pathname;
             if (path.endsWith('/preview/phone-preview/access')) {
+                previewAccessReads++;
                 return Response.json({ v: 1, kind: 'server_preview', previewId: 'phone-preview', machineId: 'machine-1',
                     accessUrl: 'https://phone-preview.example.test/', expiresAt: 2_000_000_000_000 });
             }
@@ -221,6 +231,80 @@ function PhoneWorkspace(props: Readonly<{ shown: boolean; pane: { current?: AppP
 }
 
 describe('retained Browser through the external plugin-UI Action API', () => {
+    it('keeps the registered phone preview and access while hidden, and releases demand on Close', async () => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime || !connection) throw new Error('Expected Account');
+        const serverId = connection.serverId;
+        const previous = storage.getState();
+        storage.setState({ sessions: { 'session-1': createSessionFixture({ id: 'session-1', serverId,
+            computerMachineBinding: { homeId: serverId, machineId: 'machine-1' } }) } });
+        const pane: { current?: AppPaneScopeApi } = {};
+        const store = createRetainedPresentationSlotsStore();
+        const projection = { phase: 'current', machineId: 'machine-1', serverId, accountLifetime: lifetime,
+            interactionEnabled: true, platform: 'web', pluginUiProjection: null, pluginBrowserProjection: null } as const;
+        function Scene(props: Readonly<{ shown: boolean }>) {
+            pane.current = useAppPaneScope('session:phone-demand');
+            return <PluginSurfaceFocusEligibilityProvider active={props.shown}>
+                <BrowserMobileSurfaceScreen sessionId="session-1" scopeId="session:phone-demand"
+                    pluginProjection={projection} keepAliveAboveRouter presentationSlotId="phone-demand-slot" />
+            </PluginSurfaceFocusEligibilityProvider>;
+        }
+        const render = (shown: boolean) => <AppPaneProvider><RetainedPresentationSlotsProvider store={store}>
+            <Scene shown={shown} />
+        </RetainedPresentationSlotsProvider></AppPaneProvider>;
+        const target = { kind: 'localServicePreview', targetId: 'phone-target', sessionId: 'session-1',
+            machineId: 'machine-1', display: { title: 'Preview', addressLabel: 'localhost:5173' } } as const;
+        const key = { serverId, machineId: 'machine-1', accountId: lifetime.scope.accountId };
+        const snapshot = { generatedAt: 100, refreshState: 'idle', diagnostics: [], previews: [{
+            previewId: 'phone-preview', accessUrl: 'https://phone-preview.example.test/', expiresAt: null, diagnostics: [],
+            resource: { previewId: 'phone-preview', sessionId: 'session-1', machineId: 'machine-1',
+                owner: { kind: 'session', id: 'session-1' }, target: { scheme: 'http', host: 'localhost', port: 5173 },
+                initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host', browserTarget: target },
+        }] } satisfies LocalServicePreviewSnapshot;
+        let previewReads = 0;
+        // Machine RPC is the external transport boundary; domain parsing and stores stay real.
+        const transport = vi.spyOn(machineTransport, 'machineRpcWithServerScope').mockImplementation(async <Response,>(input: Parameters<typeof machineTransport.machineRpcWithServerScope>[0]) => {
+            if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT) {
+                previewReads++;
+                return { protocolVersion: 1, snapshot: { v: 1, machineId: 'machine-1', ...snapshot,
+                    resources: snapshot.previews.map(row => row.resource) } } as Response;
+            }
+            return { error: 'unavailable' } as Response;
+        });
+        const screen = await renderScreen(render(true), { createNodeMock: () => ({
+            measureInWindow: (publish: (x: number, y: number, width: number, height: number) => void) => publish(0, 0, 640, 480),
+        }) });
+        try {
+            await flushHookEffects();
+            expect(previewReads).toBe(0);
+            await act(async () => pane.current!.openDetailsTab(createBrowserViewDetailsTab({
+                browserSessionId: 'phone-browser', viewId: 'phone-view', target,
+                currentUrl: 'https://phone-preview.example.test/',
+            }), { intent: 'pinned' }));
+            await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('browser-keepalive-placeholder-phone-demand-slot'), 'onLayout'));
+            await flushHookEffects({ cycles: 40 });
+            expect(previewReads).toBe(1);
+            expect(getLocalServicePreviewState(key).previewIds).toEqual(['phone-preview']);
+            const page = screen.findAllByType('iframe')[0];
+            expect(page).toBeDefined();
+            const acquired = previewAccessReads;
+            expect(acquired).toBeGreaterThan(0);
+            await screen.update(render(false));
+            await flushHookEffects();
+            expect(getLocalServicePreviewState(key).previewIds).toEqual(['phone-preview']);
+            expect(screen.findAllByType('iframe')[0]).toBe(page);
+            await screen.update(render(true));
+            await flushHookEffects();
+            expect(screen.findAllByType('iframe')[0]).toBe(page);
+            expect(previewReads).toBe(1);
+            expect(previewAccessReads).toBe(acquired);
+            await act(async () => screen.findByType(BrowserShell).props.onCloseTab());
+            await flushHookEffects();
+            expect(screen.findAllByType('iframe')).toHaveLength(0);
+            expect(getLocalServicePreviewState(key).previewIds).toEqual([]);
+        } finally { await screen.unmount(); transport.mockRestore(); storage.setState(previous, true); }
+    });
+
     it('preserves the admitted page while phone Browser switches to Chat and back with membership intact', async () => {
         const pane: { current?: AppPaneScopeApi } = {};
         const parent: { current?: AppPaneScopeApi } = {};

@@ -339,7 +339,7 @@ export function BrowserDetailsSurface(props: Readonly<{
             keepAliveAboveRouter={props.keepAliveAboveRouter ?? true}
             visible={props.visible ?? props.active ?? true}
             active={props.active ?? true}
-            localServicePreviewState={localServicePreviewState}
+            localServicePreviewState={props.localServicePreviewState}
             localServicePreviewServerId={props.localServicePreviewServerId === undefined ? liveFeed.localServicePreviewServerId : props.localServicePreviewServerId}
             pluginUiProjection={props.pluginUiProjection}
             pluginAccountLifetime={props.pluginAccountLifetime}

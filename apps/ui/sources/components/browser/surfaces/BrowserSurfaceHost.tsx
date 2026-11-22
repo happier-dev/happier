@@ -381,10 +381,14 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
     const browserMachineName = useMachineDisplayNamesById(machineIds)[browserMachineId ?? ''] ?? null;
     const focusedView = selectActiveBrowserView(surfaceState.browserState, props.browserSessionId)
         ?? (presenceSessionId ? selectActiveBrowserView(surfaceState.browserState, presenceSessionId) : null);
+    // A retained runtime outlives its route feed; subscribe here unless the
+    // caller explicitly supplies a preview snapshot.
     const previewController = useLocalServicePreviewStateController({
         machineId: focusedView?.target.kind === 'localServicePreview' ? focusedView.target.machineId : null,
         serverId: props.localServicePreviewServerId,
         enabled: props.localServicePreviewState === undefined,
+        presentationPolicy: props.keepAliveAboveRouter === true && typeof props.presentationSlotId === 'string'
+            ? 'retained' : 'presented',
     });
     const localServicePreviewState = props.localServicePreviewState === undefined ? previewController.state : props.localServicePreviewState;
     const openExternalFacts = { localServiceTargets: props.localServiceTargets, launchpadRows: props.launchpadRows,

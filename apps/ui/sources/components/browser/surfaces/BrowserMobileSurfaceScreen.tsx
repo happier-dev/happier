@@ -60,14 +60,15 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
     });
     const pluginProjection = props.pluginProjection ?? scopedPluginProjection;
     // Assemble the live workspace-ranked launchpad feed so the mobile new-tab page shows running
-    // services + recents (not only URL entry). The shared bootstrap also resolves the preview
-    // state used to seed access URLs when a launchpad row is opened.
+    // services + recents (not only URL entry). Preview custody belongs to each opened tab.
     const hostProps = useBrowserSurfaceHostProps({
         accountLifetime: pluginProjection.accountLifetime,
         scope: 'sessionMobile',
         sessionId: props.sessionId,
         machineId,
         serverId,
+        // The tab runtime owns preview demand; the route feed only supplies launchpad rows.
+        localServicePreviewState: null,
         pluginUiProjection: pluginProjection.pluginUiProjection,
         pluginBrowserProjection: pluginProjection.pluginBrowserProjection,
     });
@@ -103,7 +104,6 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
                 }}
                 openScope="sessionMobile"
                 platform={resolveBrowserSurfacePlatform()}
-                localServicePreviewState={hostProps.localServicePreviewState}
                 localServicePreviewServerId={hostProps.localServicePreviewServerId}
                 launchpadRows={hostProps.launchpadRows}
                 localServiceTargets={hostProps.localServiceTargets}
