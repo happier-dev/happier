@@ -166,6 +166,12 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
     }
   };
   const run = acquiredEnv => Promise.resolve().then(() => action(acquiredEnv, cancellation.signal));
+  const runInherited = async inheritedEnv => {
+    const { withWorkspaceBuildResources, assertInheritedWorkspaceBuildResources } = await import('./workspace_build_admission.mjs');
+    if (requireInherited) assertInheritedWorkspaceBuildResources({ locks, env: inheritedEnv });
+    return await withWorkspaceBuildResources({ locks, env: inheritedEnv, signal: cancellation.signal,
+      admittedResourceWait: !requireInherited }, run);
+  };
   const modernInherited = env.HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT === root
     && env.HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE === machine
     && env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT;
@@ -194,12 +200,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       // A compiler leaf is a phase of the admitted workload. Its standalone
       // class does not replace the parent's reservation or require admission
       // again (for example, a UI typecheck's declaration/compiler phases).
-      const { withWorkspaceBuildResources, assertInheritedWorkspaceBuildResources } = await import('./workspace_build_admission.mjs');
-      if (requireInherited) assertInheritedWorkspaceBuildResources({ locks, env });
-      // This is already-admitted work, not a capacity waiter. Preserve the
-      // canonical resource owner's finite wait when no other writer is held.
-      return await withWorkspaceBuildResources({ locks, env, signal: cancellation.signal,
-        admittedResourceWait: !requireInherited }, run);
+      return await runInherited(env);
     }
     if (requireInherited) {
       throw Object.assign(new Error('producer requires inherited native admission'),
@@ -228,7 +229,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       ...(durationClass && Number.isFinite(p99DurationMs) && p99DurationMs > 0 ? { durationClass, p99DurationMs } : {}),
       cpuCost,
       pid: process.pid, arrivedAt,
-      repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true,
+      repoDir, cacheBaseDir, noWait, locks, projects, judgment, acceptsDeclarationStall: true, acceptsInheritedGrant: true,
       ...(typeof entry === 'string' && typeof component === 'string' ? { component, entry } : {}),
       // The routed run this preparation step belongs to; the broker ranks a preparation class by it.
       ...(env.HAPPIER_ADMISSION_PREPARES_CLASS ? { preparesClass: env.HAPPIER_ADMISSION_PREPARES_CLASS } : {}) };
@@ -313,6 +314,19 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               slotServer.listen(response.slotAddress, ready);
             });
             control.write(JSON.stringify({ kind: 'ready' }) + '\n');
+          }
+          if (response.kind === 'admitted' && response.inheritedSlot !== undefined) {
+            priorityScope?.dispose();
+            priorityScope = null;
+            const inheritedEnv = { ...env, HAPPIER_HEAVYWEIGHT_ADMISSION_ROOT: root,
+              HAPPIER_HEAVYWEIGHT_ADMISSION_MACHINE: machine,
+              HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: String(response.inheritedSlot),
+              HAPPIER_HEAVYWEIGHT_ADMISSION_FLOOR_KIB: String(response.floorKiB),
+              HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED: '0' };
+            delete inheritedEnv.HAPPIER_ADMISSION_DURATION_CLASS;
+            delete inheritedEnv.HAPPIER_ADMISSION_DURATION_P99_MS;
+            applyWorkerLimit(inheritedEnv, response.workers, className);
+            return await runInherited(inheritedEnv);
           }
           if (response.kind === 'admitted' && !payload) {
             if (response.slotId && response.admittedAt !== undefined) {

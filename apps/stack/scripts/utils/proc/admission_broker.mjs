@@ -1305,27 +1305,27 @@ export function createAdmissionBroker({ root,
     peer.once('close', () => enqueue(() => release(slot)));
     return slot;
   }
-  function hasAdmittedAncestor(pid) {
-    const activeOwners = new Set();
+  function admittedAncestor(pid) {
+    const activeOwners = new Map();
     for (const slot of slots.values()) {
-      if (slot.admitted || slot.recovered) activeOwners.add(slot.pid);
+      if (slot.admitted || slot.recovered) activeOwners.set(slot.pid, slot);
     }
-    if (activeOwners.size === 0) return false;
+    if (activeOwners.size === 0) return;
     // The process tree is authoritative even when a launcher dropped the
     // inherited markers. Only the live slot listener can own a grant.
     while (pid > 1) {
       let status;
       try { status = readFileSync(`/proc/${pid}/status`, 'utf8'); }
       catch (error) {
-        if (error.code === 'ENOENT' || error.code === 'ESRCH') return false;
+        if (error.code === 'ENOENT' || error.code === 'ESRCH') return;
         throw error;
       }
       const parent = Number(/^PPid:\s+(\d+)$/m.exec(status)?.[1]);
-      if (!Number.isSafeInteger(parent) || parent === pid) return false;
-      if (activeOwners.has(parent)) return true;
+      if (!Number.isSafeInteger(parent) || parent === pid) return;
+      const slot = activeOwners.get(parent);
+      if (slot) return slot;
       pid = parent;
     }
-    return false;
   }
 
   function accept(socket) {
@@ -1418,8 +1418,12 @@ export function createAdmissionBroker({ root,
         || !Array.isArray(request.locks ?? []) || (request.locks ?? []).some(lock => typeof lock?.path !== 'string')) {
         send(socket, { kind: 'refused', reason: 'HSTACK_INVALID_ADMISSION' }); socket.end(); return;
       }
-      if (hasAdmittedAncestor(request.pid)) {
-        send(socket, { kind: 'refused', reason: 'HSTACK_ADMISSION_INHERITANCE_REQUIRED' });
+      const parentSlot = admittedAncestor(request.pid);
+      if (parentSlot) {
+        send(socket, request.acceptsInheritedGrant === true
+          ? { kind: 'admitted', inheritedSlot: parentSlot.pid, floorKiB: parentSlot.floorKiB,
+            workers: parentSlot.workers ?? parentSlot.cpuCores }
+          : { kind: 'refused', reason: 'HSTACK_ADMISSION_INHERITANCE_REQUIRED' });
         socket.end();
         return;
       }

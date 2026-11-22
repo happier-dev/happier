@@ -384,57 +384,34 @@ test('current admission clients retain duration metadata across broker successio
   await task;
 });
 
-test('an admitted parent’s nested process is refused before it can queue for a second slot', { ...linux, timeout: 10_000 }, async t => {
+test('a nested compilation inherits the live parent grant while unrelated work queues', { ...linux, timeout: 10_000 }, async t => {
   const { root, broker, sampleResources } = await fixture(t);
-  await (await acquire(root, 100, t)).admit();
-  const sendAcquire = String.raw`
-    import { createConnection } from 'node:net';
-    import { once } from 'node:events';
-    import { createInterface } from 'node:readline';
-    const [socketPath, repoDir] = process.argv.slice(1);
-    const socket = createConnection(socketPath);
-    const lines = createInterface({ input: socket });
-    const response = once(lines, 'line');
-    await once(socket, 'connect');
-    socket.write(JSON.stringify({ kind: 'acquire', className: 'compilation-ui', cpuCost: 'host',
-      floorKiB: 100, pid: process.pid, repoDir, cacheBaseDir: repoDir }) + '\n');
-    process.stdout.write((await response)[0]);
-    socket.destroy();
-  `;
-  const nestedDecision = async () => {
-    const child = spawn(process.execPath, ['--input-type=module', '-e', sendAcquire, brokerAddress(root), root], {
-      env: {}, stdio: ['ignore', 'pipe', 'inherit'],
-    });
-    t.after(() => child.kill());
-    let output = '';
-    child.stdout.setEncoding('utf8').on('data', text => { output += text; });
-    const [status] = await once(child, 'close');
-    assert.equal(status, 0);
-    return JSON.parse(output);
-  };
-  const assertRefused = async currentBroker => {
-    const decision = await nestedDecision();
-    assert.equal(decision.kind, 'refused');
-    assert.equal(decision.reason, 'HSTACK_ADMISSION_INHERITANCE_REQUIRED');
+  const holder = await (await acquire(root, 100, t, { className: 'compilation-ui' })).admit();
+  const unrelated = await acquire(root, 100, t);
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 1);
+  const clientPath = fileURLToPath(new URL('./admission_client.mjs', import.meta.url));
+  const runChild = async currentBroker => {
+    const child = spawn(process.execPath, [clientPath, '--run', `--root=${root}`, '--class=compilation', '--floor-kib=100',
+      '--machine=fixture', `--repo=${root}`, '--failure-id=nested', '--', process.execPath, '-p',
+      'JSON.stringify([process.env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT, process.env.GOMAXPROCS])'],
+    { env: {}, signal: t.signal, stdio: ['ignore', 'pipe', 'pipe'] });
+    let output = '', diagnostics = '';
+    child.stdout.setEncoding('utf8').on('data', value => { output += value; });
+    child.stderr.setEncoding('utf8').on('data', value => { diagnostics += value; });
+    assert.deepEqual(await once(child, 'close'), [0, null], diagnostics);
+    assert.deepEqual(JSON.parse(output), [String(process.pid), String(holder.admitted.workers)]);
+    assert.doesNotMatch(diagnostics, /waiting for admission/);
     assert.equal(currentBroker.status().activeCount, 1);
-    assert.equal(currentBroker.status().waitingCount, 0);
   };
-  await assertRefused(broker);
+  await runChild(broker);
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 1);
+  unrelated.socket.destroy();
   await broker.close();
   const successor = createAdmissionBroker({ root, oldLockPath: join(root, 'old-admission.lock'), sampleResources });
   t.after(() => successor.close());
   await successor.start();
-  await assertRefused(successor);
-
-  const clientPath = fileURLToPath(new URL('./admission_client.mjs', import.meta.url));
-  const child = spawn(process.execPath, [clientPath, '--run', `--root=${root}`, '--class=compilation-ui', '--floor-kib=100',
-    '--machine=fixture', `--repo=${root}`, '--failure-id=nested', '--', process.execPath, '-e', 'process.exitCode = 2'],
-  { env: {}, signal: t.signal, stdio: ['ignore', 'ignore', 'pipe'] });
-  let diagnostic = '';
-  child.stderr.setEncoding('utf8').on('data', value => { diagnostic += value; });
-  assert.deepEqual(await once(child, 'close'), [1, null]);
-  assert.match(diagnostic, /HSTACK_ADMISSION_INHERITANCE_REQUIRED/);
-  assert.doesNotMatch(diagnostic, /HSTACK_ADMISSION_UNAVAILABLE|waiting for admission/);
+  await runChild(successor);
+  assert.equal(successor.status().waitingCount, 0);
 });
 
 test('an admitted command reports its run time, excluding its queue wait, once for its dispatcher', linux, async t => {
