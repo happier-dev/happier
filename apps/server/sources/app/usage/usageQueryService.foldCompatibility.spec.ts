@@ -26,6 +26,7 @@ import { createMuseEventProjection } from '../../../../../packages/plugins/muse/
 import { projectPiSessionStatsUsage } from '../../../../../packages/plugins/pi/src/agent/runtime/rpc/usage';
 import { createOpenCodeServerRuntime } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/runtime';
 import type { OpenCodeServerClient } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/openCodeServerClient';
+import { createContextFixture } from '../../../../../packages/plugins/opencode/src/agent/runtime/server/assembly.managedServices.testkit';
 
 type Query = ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>;
 type Row = UsageAnalyticsSnapshot['rows'][number];
@@ -138,8 +139,6 @@ function runtimeRow(index: number, observedAt: number, agentId: string, event: A
 }
 
 async function openCodeRuntimeRows(): Promise<Row[]> {
-    const signal = new AbortController().signal;
-    const noop = () => undefined;
     const client = {
         sessionUpdatePermissions: async () => undefined,
         agentsList: async () => [],
@@ -149,21 +148,13 @@ async function openCodeRuntimeRows(): Promise<Row[]> {
             signal.addEventListener('abort', () => resolve(), { once: true })),
     } satisfies Partial<OpenCodeServerClient>;
     const controller = createOpenCodeServerRuntime({
-        ctx: {
-            abort: { signal, compose: signals => AbortSignal.any(signals) },
-            logger: { debug: noop, info: noop, warn: noop, error: noop },
-            sessions: { current: { permissions: { requestDecision: async () => ({ status: 'cancelled' }) } },
-                writeStateField: async () => undefined },
-            storage: { daemonSession: { get: async () => undefined, set: async () => undefined } },
-            config: { values: {} }, env: { list: () => ({}) },
-            exec: { systemTools: { resolve: async () => { throw new Error('Unexpected provider launch'); } } },
-            managedServices: { dependencies: {} as never,
-                supervise: async () => { throw new Error('Unexpected provider launch'); } },
-            ui: { askQuestions: async () => { throw new Error('Unexpected provider question'); } },
-            experimental: { telemetry: { emit: noop } },
-        },
+        ctx: createContextFixture({
+            managedServerBaseUrl: 'http://opencode.test',
+            systemToolResolveError: new Error('Unexpected provider launch'),
+        }),
         directory: tmpdir(), happierSessionId: 'session', providerModelId: 'gpt-5.4',
-        client: client as OpenCodeServerClient,
+        // This native HTTP boundary supplies only the resume and event methods exercised here.
+        client: client as unknown as OpenCodeServerClient,
         mcpRegistration: Promise.resolve({ requiredHappier: { status: 'ready' }, registeredServers: [] }),
         mcpProjection: { registrations: [], requiredHappierServerName: null, requiredHappierConfigurationPresent: false },
     });
@@ -228,8 +219,16 @@ async function codexNativeRows(): Promise<Row[]> {
             } }, timestamp: new Date(start + day * dayMs + 2).toISOString() })),
         ];
         await writeFile(join(directory, 'rollout.jsonl'), records.map(record => JSON.stringify(record)).join('\n') + '\n');
+        const unavailable = async () => { throw new Error('Codex accounting fixture uses local files'); };
         const capture = await createCodexExternalSessionsContribution({ env: { CODEX_HOME: homePath } }).readAccounting?.({
             source: { kind: 'codexHome', home: 'user', homePath }, signal: new AbortController().signal,
+            managedEndpointRead: unavailable,
+            exec: {
+                agentCli: { checkReadiness: unavailable }, systemTools: { resolve: unavailable },
+                prepareNativeSocketDirectory: unavailable, withSpawnAdmission: unavailable,
+                run: unavailable, spawn: unavailable, clients: { spawn: unavailable, connectJsonRpc: unavailable },
+            },
+            ripgrep: { run: unavailable },
         });
         if (!capture?.ok || capture.value.outcome !== 'advanced' || capture.value.observations.length !== 2) {
             throw new Error('Expected two native Codex counter observations');
@@ -253,8 +252,9 @@ function runtimeCounters(provider: 'pi' | 'codex'): Row[] {
             : buildCodexAppServerTokenCountObservationInput({ observedAtMs: observedAt, modelId: 'gpt-5.4',
                 notificationParams: { tokenUsage: { total: { inputTokens: total - 10, outputTokens: 10, totalTokens: total } } } })
                 ?.runtimeObservation;
-        if (!event) throw new Error(`Expected ${provider} runtime counters`);
-        return runtimeRow(day + 1, observedAt, provider, event);
+        const observed = event && ('observationId' in event ? event : { ...event, observationId: `fixture-codex-${day}` });
+        if (!observed) throw new Error(`Expected ${provider} runtime counters`);
+        return runtimeRow(day + 1, observedAt, provider, observed);
     });
 }
 
@@ -365,7 +365,8 @@ describe('accounting fold compatibility', () => {
         const reference = new Map<string, UsageAnalyticsSnapshot>();
         for (const query of input.queries) {
             const current = prepareUsageAnalyticsSnapshot(captured, query);
-            const { startMs, endMs } = query.dateRange!;
+            const { startMs, endMs } = query.dateRange ?? {};
+            if (startMs === undefined || endMs === undefined) throw new Error('Expected a bounded parity fixture query');
             const reports = captured.legacyReports.filter(report => report.updatedAt.getTime() < endMs);
             const rows = captured.rows.filter(row => row.observedAt.getTime() < endMs);
             const evidenceRows = normalizeUsageAnalyticsEvidenceRows(rows.map(toScopedUsageEvidenceRow), reports);
