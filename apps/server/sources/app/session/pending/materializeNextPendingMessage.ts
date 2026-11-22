@@ -9,6 +9,7 @@ import {
     fenceExactCurrentPublisherAuthorityInTx,
 } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
 import { markPendingStateChangedRecipients } from "@/app/session/pending/markPendingStateChangedRecipients";
+import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
 import {
     inTx,
     type Tx,
@@ -178,6 +179,46 @@ async function blockPendingExecutionRunTargetMismatchInTx(params: {
         badgeAttentionChanged: false,
         deliveryState: params.noopDeliveryState,
     };
+}
+
+/**
+ * A publisher whose Machine access was withdrawn starts no new turn. Its unclaimed
+ * input stays the person's unsent words, held with the access reason, so the
+ * runner has nothing left to admit and the access-loss end can proceed.
+ */
+async function holdWithdrawnPublisherPendingInputInTx(params: {
+    tx: Tx;
+    authority: CurrentSessionPublisherAuthority;
+    sessionId: string;
+    targetExecutionRunId: string | null;
+    noopDeliveryState: PendingMaterializationDeliveryState;
+}): Promise<PendingMaterializationPublications> {
+    const where = { sessionId: params.sessionId, targetExecutionRunId: params.targetExecutionRunId,
+        status: "queued", deliveryState: null, providerAction: null } as const;
+    const held = await params.tx.sessionPendingMessage.findMany({ where, select: { localId: true } });
+    const blocked = pendingDeliveryStatusToPersistence({ status: "blocked", reason: "session_input_target_unavailable" });
+    await params.tx.sessionPendingMessage.updateMany({
+        where: { ...where, localId: { in: held.map(row => row.localId) } },
+        data: { deliveryState: blocked.deliveryState, deliveryBlockedReason: blocked.deliveryBlockedReason },
+    });
+    for (const { localId } of held) {
+        await reconcilePendingActivationAuthorizationForRemovedRequestInTx({ tx: params.tx, sessionId: params.sessionId, requestId: localId });
+    }
+    const pendingBlockedCount = await params.tx.sessionPendingMessage.count({
+        where: { sessionId: params.sessionId, targetExecutionRunId: null, status: "queued", deliveryState: "blocked" },
+    });
+    const publisherFence = await params.tx.session.updateMany({
+        where: { id: params.sessionId, active: true, archivedAt: null, lastActiveAt: params.authority.committedFence },
+        data: { pendingBlockedCount, pendingVersion: { increment: 1 } },
+    });
+    if (publisherFence.count !== 1) throw new PublisherAuthorityLostError();
+    const session = await params.tx.session.findUniqueOrThrow({
+        where: { id: params.sessionId },
+        select: { pendingCount: true, pendingBlockedCount: true, pendingVersion: true },
+    });
+    const recipientCursorsPending = await markPendingStateChangedRecipients({ tx: params.tx, sessionId: params.sessionId, ...session });
+    return { ok: true, didMaterialize: false, ...session, pendingStateChanged: true,
+        recipientCursorsPending: [...recipientCursorsPending], badgeAttentionChanged: false, deliveryState: params.noopDeliveryState };
 }
 
 async function resolvePendingProviderRejoinInTx(params: {
@@ -622,6 +663,15 @@ async function materializePendingTargetInTx(
             }
 
             const localId = nextPending.localId;
+            // Starting a turn is a new admission (owner ruling 2026-11-20, RU2 item 1): the turn
+            // admitted before a withdrawal finishes, but the publisher's current Machine access
+            // decides the next one. A rejoin above settles an already-claimed row and skips this.
+            const { accountId: publisherAccountId, machineId: publisherMachineId } = params.publisherAuthority;
+            if (!await hasCurrentSessionScopedMachineAccessInTx({ tx, accountId: publisherAccountId,
+                machineId: publisherMachineId, sessionId })) {
+                return await holdWithdrawnPublisherPendingInputInTx({ tx, authority: params.publisherAuthority,
+                    sessionId, targetExecutionRunId: params.targetExecutionRunId, noopDeliveryState });
+            }
             if (!await isSessionInputTargetCurrentForPublisherInTx(tx, nextPending.inputAdmissionReceipt, params.publisherAuthority)) {
                 return { ok: false, error: "forbidden" } as const;
             }

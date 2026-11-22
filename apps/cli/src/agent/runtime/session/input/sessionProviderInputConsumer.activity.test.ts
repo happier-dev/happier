@@ -93,6 +93,7 @@ describe('Session input live-work observation', () => {
   it('requires fresh known Pending state and an exact committed idle tail', async () => {
     let tail = idleTail();
     let pendingCount = 0;
+    let pendingBlockedCount = 0;
     let known = false;
     const consumer = createSessionProviderInputConsumer({
       messageQueue: new MessageQueue2<string>(() => 'mode'),
@@ -100,7 +101,7 @@ describe('Session input live-work observation', () => {
         waitForMetadataUpdate: async () => false,
         readRuntimeActivitySnapshotTail: () => tail,
         readPendingQueueStateForLiveWork: async () => known
-          ? { known: true, pendingCount, pendingBlockedCount: pendingCount, pendingVersion: 1 }
+          ? { known: true, pendingCount, pendingBlockedCount, pendingVersion: 1 }
           : { known: false },
       },
     });
@@ -108,6 +109,10 @@ describe('Session input live-work observation', () => {
     known = true;
     pendingCount = 1;
     await expect(consumer.readLiveWork()).resolves.toMatchObject({ session: 'settled', input: 'active' });
+    // Held rows wait for their person (for example after Machine access was withdrawn), not for this runner.
+    pendingBlockedCount = 1;
+    await expect(consumer.readLiveWork()).resolves.toMatchObject({ session: 'settled', input: 'settled' });
+    pendingBlockedCount = 0;
     pendingCount = 0;
     await expect(consumer.readLiveWork()).resolves.toMatchObject({ session: 'settled', input: 'settled' });
     tail = { ...tail, custody: { identity: { mutationKey: 'runtime-activity:s1', admissionOrder: 2 },

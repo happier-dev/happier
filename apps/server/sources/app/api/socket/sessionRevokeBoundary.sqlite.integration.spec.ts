@@ -9,7 +9,7 @@ import { eventRouter, type ClientConnection } from '@/app/events/eventRouter';
 import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
-import { enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery } from '@/app/session/pending/pendingMessageService';
+import { discardPendingMessage, enqueuePendingMessage, materializeNextPendingMessage, resolveAcceptedPendingDelivery, restorePendingMessage } from '@/app/session/pending/pendingMessageService';
 import { applySessionTurnMutation } from '@/app/session/sessionWriteService';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
@@ -133,5 +133,117 @@ describe('Machine withdrawal at the admitted reply boundary', () => {
             expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id, localId: 'next-input' } })).toBe(0);
             expect.soft(await presence.closePublisher({ socket })).toMatchObject({ status: 'closed' });
         } finally { eventRouter.removeConnection(requester.id, connection); }
+    });
+
+    it('keeps queued input unsent after withdrawal while the running turn finishes; access-holders still start turns', async () => {
+        const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
+            metadata: encodePlainMachineStoredContent({ host: 'revoke-queue', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/requester', happyHomeDir: '/home/requester/.happier' }),
+            daemonState: encodePlainMachineStoredContent({ status: 'running' }), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            installationId: randomUUID(), operationProtocolCapabilities: {
+                requesterExecutionIsolation: { protocolVersions: [1] },
+                sessionInputAdmission: { protocolVersions: [1, 2, 3] },
+            }, operationProtocolCapabilitiesRevision: 1 } });
+        expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            machineId: machine.id, principal: { kind: 'account', accountId: requester.id }, level: 'view' })))
+            .toMatchObject({ kind: 'saved' });
+        const authentication = createPresentUserSessionAccessAuthentication();
+        const connections: Array<{ accountId: string; connection: ClientConnection }> = [];
+        // Socket.IO is the transport boundary; access, publisher, Pending and transcript owners stay real.
+        const openPublisher = async (accountId: string) => {
+            const session = await db.session.create({ data: { accountId, tag: randomUUID(),
+                encryptionMode: 'plain', metadata: '{}', active: false } });
+            await db.accessKey.create({ data: { accountId, machineId: machine.id, sessionId: session.id, data: 'binding' } });
+            const binding = { accountId, machineId: machine.id, sessionId: session.id };
+            const admitted = await resolveSessionScopedSocketBinding({ userId: accountId, ...binding });
+            if (!admitted.ok) throw new Error('Publisher admission failed');
+            const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'session-scoped',
+                sessionScopedBinding: admitted.binding } }), { disconnect: () => { socket.connected = false; } });
+            const connection: ClientConnection = { connectionType: 'session-scoped', userId: accountId,
+                machineId: machine.id, sessionId: session.id, socket: socket as unknown as Socket };
+            const presence = createSessionPublisherPresence();
+            sessionUpdateHandler(accountId, connection.socket, connection, { presence, binding });
+            eventRouter.addConnection(accountId, connection);
+            connections.push({ accountId, connection });
+            // The runner's first activity report registers this socket as the Session's current publisher.
+            await getSocketHandler(socket, 'session-runtime-activity-snapshot')({ sessionId: session.id,
+                mutationId: randomUUID(), snapshot: { state: 'active', activeCount: 1 } }, () => {});
+            const send = (localId: string) => enqueuePendingMessage({ actorUserId: accountId, sessionId: session.id,
+                targetMachineId: machine.id, localId, authentication, requestedAction: { v: 1, kind: 'enqueue' },
+                content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: `words of ${localId}` } } } });
+            const materialize = () => presence.runAsCurrentPublisher({ socket, operation: publisherAuthority => materializeNextPendingMessage({
+                actorUserId: accountId, sessionId: session.id, publisherAuthority,
+                deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' }) });
+            const accept = async (localId: string) => {
+                const turnId = randomUUID();
+                expect(await applySessionTurnMutation({ actorUserId: accountId, authentication, mutation: { v: 1,
+                    sessionId: session.id, mutationId: randomUUID(), action: 'begin', turnId, observedAt: Date.now() } }))
+                    .toMatchObject({ ok: true });
+                expect(await presence.runAsCurrentPublisher({ socket, operation: publisherAuthority => resolveAcceptedPendingDelivery({
+                    actorUserId: accountId, sessionId: session.id, localId, publisherAuthority, acceptedTurn: { kind: 'newTurn', turnId },
+                    acceptedDelivery: { t: 'plain', v: { v: 1, acceptedAtMs: Date.now(), delivery: { kind: 'newTurn', turnId } } },
+                }) })).toMatchObject({ ok: true });
+            };
+            const rows = () => db.sessionPendingMessage.findMany({ where: { sessionId: session.id },
+                orderBy: { position: 'asc' }, select: { localId: true, status: true, deliveryState: true, deliveryBlockedReason: true, content: true } });
+            return { session, send, materialize, accept, rows };
+        };
+        eventRouter.clearIo();
+        try {
+            const guest = await openPublisher(requester.id);
+            const control = await openPublisher(requester.id);
+            const owner = await openPublisher(custodian.id);
+            for (const publisher of [guest, control]) {
+                expect(await publisher.send('running')).toMatchObject({ ok: true });
+                expect(await publisher.materialize()).toMatchObject({ ok: true, didMaterialize: true });
+                await publisher.accept('running');
+                expect(await publisher.send('queued-1')).toMatchObject({ ok: true });
+                expect(await publisher.send('queued-2')).toMatchObject({ ok: true });
+            }
+            expect(await owner.send('owner-queued')).toMatchObject({ ok: true });
+
+            // Withdraw while every running turn is still open; it is admitted work and is not touched.
+            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: machine.id, principal: { kind: 'account', accountId: requester.id } })))
+                .toMatchObject({ kind: 'removed' });
+
+            // The next turn is a new admission: nothing materializes, and both queued messages keep their words.
+            expect(await guest.materialize()).toMatchObject({ ok: true, didMaterialize: false, pendingCount: 2, pendingBlockedCount: 2 });
+            expect(await guest.materialize()).toMatchObject({ ok: true, didMaterialize: false });
+            const held = (await guest.rows()).filter(row => row.localId !== 'running');
+            expect(held.map(({ localId, status, deliveryState, deliveryBlockedReason }) => ({ localId, status, deliveryState, deliveryBlockedReason })))
+                .toEqual(['queued-1', 'queued-2'].map(localId => ({ localId, status: 'queued', deliveryState: 'blocked',
+                    deliveryBlockedReason: 'session_input_target_unavailable' })));
+            expect(held.map(row => row.content)).toEqual(['queued-1', 'queued-2'].map(localId =>
+                ({ t: 'plain', v: { role: 'user', content: { type: 'text', text: `words of ${localId}` } } })));
+            expect(await db.sessionMessage.count({ where: { sessionId: guest.session.id, localId: { in: ['queued-1', 'queued-2'] } } })).toBe(0);
+            // Discarding and restoring the held words re-queues them unblocked; the same admission holds them again.
+            for (const localId of ['queued-1', 'queued-2']) {
+                expect(await discardPendingMessage({ actorUserId: requester.id, sessionId: guest.session.id,
+                    localId, authentication })).toMatchObject({ ok: true });
+            }
+            expect(await restorePendingMessage({ actorUserId: requester.id, sessionId: guest.session.id,
+                localId: 'queued-1', authentication })).toMatchObject({ ok: true });
+            expect((await guest.rows()).find(row => row.localId === 'queued-1')).toMatchObject({ status: 'queued', deliveryState: null });
+            expect(await guest.materialize()).toMatchObject({ ok: true, didMaterialize: false });
+            expect((await guest.rows()).find(row => row.localId === 'queued-1')).toMatchObject({ status: 'queued',
+                deliveryState: 'blocked', deliveryBlockedReason: 'session_input_target_unavailable' });
+            expect(await db.sessionMessage.count({ where: { sessionId: guest.session.id, localId: 'queued-1' } })).toBe(0);
+
+            // The Machine owner's own queued input still starts its turn.
+            expect(await owner.materialize()).toMatchObject({ ok: true, didMaterialize: true });
+
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+                machineId: machine.id, principal: { kind: 'account', accountId: requester.id }, level: 'view' })))
+                .toMatchObject({ kind: 'saved' });
+            // A publisher whose access is current materializes both queued messages in order.
+            expect(await control.materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: 'queued-1' } });
+            await control.accept('queued-1');
+            expect(await control.materialize()).toMatchObject({ ok: true, didMaterialize: true, message: { localId: 'queued-2' } });
+        } finally {
+            for (const { accountId, connection } of connections) eventRouter.removeConnection(accountId, connection);
+        }
     });
 });

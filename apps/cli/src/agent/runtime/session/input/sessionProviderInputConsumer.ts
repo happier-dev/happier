@@ -284,7 +284,7 @@ export function createSessionProviderInputConsumer<Mode, Message>(
     const pending = opts.session.getPendingQueueState?.();
     // `settledAt` is re-stamped with the clock by any read that could not prove a settled fact
     // (an observer's own re-read), so it is not a change. The host's committed settlement time is.
-    const { settledAt: _restamped, ...facts } = observedActivity ?? readLiveWorkFacts(hasAcceptedInputCustody() || (pending?.known && pending.pendingCount > 0)
+    const { settledAt: _restamped, ...facts } = observedActivity ?? readLiveWorkFacts(hasAcceptedInputCustody() || (pending?.known && countMaterializablePendingRows(pending) > 0)
       ? 'active' : pending?.known ? 'settled' : 'unknown');
     return JSON.stringify({ ...facts,
       settlementObservedAt: opts.session.readRuntimeActivitySnapshotTail?.().settlement?.committedProjection.observedAt });
@@ -511,7 +511,8 @@ export function createSessionProviderInputConsumer<Mode, Message>(
         if (opts.session.readPendingQueueStateForLiveWork) {
           const pending = await opts.session.readPendingQueueStateForLiveWork();
           pendingKnown = pending.known;
-          pendingActive = pending.known && pending.pendingCount > 0;
+          // Held (blocked) rows wait for their person, not for this runner.
+          pendingActive = countMaterializablePendingRows(pending) > 0;
         }
       } catch {
         // An old empty observation cannot prove current Pending settlement.
