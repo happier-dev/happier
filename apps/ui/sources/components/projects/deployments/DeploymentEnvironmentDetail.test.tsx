@@ -611,6 +611,8 @@ function controllerFor(
     onListEnvironments?: () => void;
     listEnvironments?: DeploymentReadTransportV1['listEnvironments'];
     listDomains?: DeploymentReadTransportV1['listDomains'];
+    /** A read that has not answered yet (the serving receipt still loading). */
+    readReceipt?: DeploymentReadTransportV1['readReceipt'];
   }>,
 ) {
   const detail = input.detail ?? environmentDetailForHome();
@@ -651,8 +653,8 @@ function controllerFor(
             ...(entry.historyTitle ? { title: entry.historyTitle } : {}) };
         }), nextCursor: null },
     }),
-    readReceipt: async (_scope, _environmentId, id) => ({ ok: true,
-      value: retained.find(row => row.deployment.id === id) ?? (id === receipt.deployment.id ? receipt : serving) }),
+    readReceipt: input.readReceipt ?? (async (_scope, _environmentId, id) => ({ ok: true,
+      value: retained.find(row => row.deployment.id === id) ?? (id === receipt.deployment.id ? receipt : serving) })),
   };
   return {
     controller: createDeploymentReadControllerV1({ scope, transport }),
@@ -2011,6 +2013,19 @@ describe('Project deployments page', () => {
       expect(text).toContain('An agent (your session)');
       expect(text).not.toMatch(/\bYou\b/);
       expect(text).not.toContain('by you');
+    } finally { controller.retire(); }
+  });
+
+  // PAGE-ACCEPT-176 R12-D3: the headline facts appeared only once the serving receipt answered, inserting 48 px above
+  // Definition. What the Environment read already knows (health, rollout) holds the strip's place from the first paint.
+  it('keeps the headline facts in place while the serving receipt still reads', async () => {
+    const { controller, detail } = controllerFor({ readReceipt: () => new Promise(() => {}) });
+    try {
+      const screen = await renderScreen(<DeploymentEnvironmentDetail controller={controller}
+        environmentId={detail.environment.id} demand={shown} accountId="account-owner" serverId={scope.serverId}
+        phone={false} deploy={null} review={noReview} onOpenReceipt={() => {}} />);
+      await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.environment.serving.loading')).not.toBeNull());
+      expect(screen.findByTestId('project-deployments.environment.facts.health')).not.toBeNull();
     } finally { controller.retire(); }
   });
 

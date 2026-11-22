@@ -1101,6 +1101,14 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroup>
                 </ItemGroupDefaultSurfaceProvider>
               )}
+              {/* While the serving receipt reads, what the Environment read already knows (health, rollout) holds the
+                  facts strip's place, so nothing moves when the receipt answers (PAGE-ACCEPT-176 R12-D3). */}
+              {!activeReceipt && activeId && active.snapshot.status !== 'unavailable' ? (
+                <ItemGroup header="none" surface="none" style={styles.factsGroup}>
+                  <FactStrip testID="project-deployments.environment.facts" layout="columns" narrow={props.phone}
+                    facts={overviewPendingFacts(detail)} />
+                </ItemGroup>
+              ) : null}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
               {arrival.agentActions === 'primary' ? environmentAgentActions : null}
               {/* The kept order (pfc-redesign r4 dEnvOv KEEP item 3, owner-approved 11-13): Definition and Needs a
@@ -1627,9 +1635,20 @@ function deploymentServices(content: DeploymentContentV1): readonly DeploymentSe
   });
 }
 
+/**
+ * The same strip while the serving receipt reads: what the Environment read knows, and a quiet "—" in the cells the
+ * receipt fills (its services, what is kept), so a phone's two-per-row strip keeps its rows when the receipt answers.
+ */
+function overviewPendingFacts(detail: DeploymentEnvironmentDetailV1): FactStripFact[] {
+  const facts = overviewFacts(detail, 0, null);
+  const pending = (key: string, label: string): FactStripFact => ({ key, label, value: '—' });
+  return [facts[0]!, pending('services', t('projects.deployments.servicesTitle')), ...facts.slice(1),
+    ...(detail.content.retainPreviousDeployments > 0 ? [pending('kept', t('projects.deployments.keptForRollback'))] : [])];
+}
+
 /** The four headline facts under the serving version (lab `fc-facts`): health, services, rollout, rollback. */
 function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: number, kept: number | null,
-  servingState: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
+  servingState?: DeploymentReceiptHeaderV1['state']): FactStripFact[] {
   const health = detail.healthAggregate;
   const facts: FactStripFact[] = [{
     key: 'health',

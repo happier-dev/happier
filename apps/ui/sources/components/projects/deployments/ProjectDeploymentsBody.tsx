@@ -512,7 +512,9 @@ const ProjectDeploymentsPage = React.memo(
         : null;
     // An open Environment stands beside the Services column. A bare Project route keeps its own collection and title.
     const hasDetail = environmentId !== null || selection.drafting === true || selection.defaults === true;
-    const besideList = props.workspaceRef == null && shellColumnVisible && items.length > 0 && hasDetail;
+    // An open Environment means the Project has one, so the page stands beside the column from the first paint rather
+    // than in a split with an empty rail until its list answers (PAGE-ACCEPT-176 R12-D3: the detail pane's 0.14 shift).
+    const besideList = props.workspaceRef == null && shellColumnVisible && hasDetail && (items.length > 0 || environmentId !== null);
     const openHostProject = () => router.push(projectSourceRoute(props.sourceId));
     const detail =
       selection.defaults ? <ProjectDeploymentDefaultsSettings key={`defaults:${props.serverId}:${props.accountId}:${props.sourceId}`}

@@ -79,6 +79,33 @@ describe('Environment detail in a split pane', () => {
         }
     });
 
+    // PAGE-ACCEPT-176 R12-D3: beside the Services column an open Environment stood in a split layout with an empty rail
+    // until the Project's list answered, then the layout flipped to the Environment alone (the detail pane's 0.14 shift).
+    it('opens an Environment beside the Services column alone from the first paint, before the list answers', async () => {
+        const detail = createDeploymentEnvironmentDetailV1();
+        const pending = new Promise<never>(() => {});
+        const controller = createDeploymentReadControllerV1({ scope: { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' },
+            transport: {
+                listEnvironments: async () => pending,
+                readEnvironment: async () => ({ ok: true, value: detail }),
+                readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+                listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+            } });
+        const navigation = { push: () => {}, replace: () => {}, back: () => {} };
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+            <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <DestinationInstanceContext.Provider value={{ tabId: 'pane-a', ref: { kind: 'route', params: { deploymentEnvironment: detail.environment.id } } as never,
+                    pathname: '/deployments/source-app', focused: true, visible: true, isFocused: () => true, navigation }}>
+                    <Page controller={controller} />
+                </DestinationInstanceContext.Provider>
+            </AppShellColumnContext.Provider>
+        </AccountNoticeInvestigationBoundary>);
+        try {
+            expect(screen.findByTestId('project-deployments.layout')).toBeNull();
+            expect(screen.findByTestId('project-deployments.rail')).toBeNull();
+        } finally { await screen.unmount(); controller.retire(); }
+    });
+
     it('withholds the Environment count until the first collection response', async () => {
         const { CollectionList } = await import('@/components/ui/lists/collection/CollectionList');
         const detail = createDeploymentEnvironmentDetailV1();
