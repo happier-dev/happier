@@ -71,7 +71,7 @@ import {
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
 import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { asProtocolZod } from "../plugins/actions/internalProtocolZodAdapter.js";
-import { TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
+import { TeamCredentialConnectedAccountSourceBindingV1Schema, TeamCredentialSourceBindingV1Schema } from '../teams/credentials/sourceBindingV1.js';
 import { ProviderAccountUsageSnapshotV1Schema } from '../connect/providerAccountUsagePrimitives.js';
 import { TeamCredentialResourceTestApplicationRequestV1Schema } from '../teams/credentials/externalProviderApiV1.js';
 import { TeamCredentialResourceCatalogEntryV1Schema } from '../teams/credentials/resourceV1.js';
@@ -163,6 +163,10 @@ export const DaemonProviderTeamCredentialBrokerEligibilityRequestV1Schema = lazy
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
     scope: z.literal('source_any'),
+  })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
+    scope: z.literal('source_credential'),
+    source: TeamCredentialConnectedAccountSourceBindingV1Schema,
   })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(DaemonProviderTeamCredentialBrokerEligibilityRequestBaseV1Schema, {
     scope: z.literal('action_purpose'),

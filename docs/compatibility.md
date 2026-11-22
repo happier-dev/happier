@@ -746,6 +746,15 @@ release wire epoch, migration or compatibility adapter changes. The inspected
 0.2 frontier `008450323b7baf3a499de4d80042046cd7d89bd3` has no
 `connect/connectedAccountUiProjectionV1.ts` counterpart.
 
+The closed Team broker eligibility RPC adds `source_credential` for
+administration of an exact Connected Account binding with no Provider purpose.
+It observes qualified credential readiness on the custodian's Machine without
+acquiring credential material. Provider model and Action eligibility retain
+their existing request variants. Load the matching Home and daemon to use the
+new discovery scope. An older daemon rejects it and the Home projects broker
+readiness as unverified. Stored bindings and responses retain their shapes.
+The inspected 0.2 frontier `ce25c7f23218` has no Team broker eligibility RPC.
+
 ## Session authoring open (unreleased 0.3)
 
 The optional `seed.permissionMode` uses the canonical Agent permission intent.

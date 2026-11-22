@@ -4495,6 +4495,8 @@ export async function startDaemon(
           connectedAccountPurposeBindingRuntime.resolveBindingIntent,
         resolveManagedPurposeBindingIntentSelection:
           connectedAccountPurposeBindingRuntime.resolveBindingIntentSelection,
+        observeConnectedAccountTargetAvailability:
+          connectedAccountPurposeBindingRuntime.observeTargetAvailability,
         ...(externalActionAccountId ? { teamCredentialNativeSource: {
           controllerAccountId: externalActionAccountId,
           async readResource(resourceId: string, signal: AbortSignal) {

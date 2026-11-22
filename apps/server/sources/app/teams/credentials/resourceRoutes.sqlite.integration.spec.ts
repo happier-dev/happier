@@ -723,6 +723,55 @@ describe("Team credential resource routes (SQLite integration)", () => {
         }
     });
 
+    it("projects a current owner-only Boat share from exact credential readiness", async () => {
+        const owner = await createAccount();
+        const team = await db.team.create({ data: { name: "Boat credential readiness" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
+        const service = { pluginId: "happier.machine.boat", localId: "boat-account" };
+        const account = { service, accountId: "boat-account" };
+        const credential = await db.serviceAccountToken.create({ data: {
+            accountId: owner.id, servicePluginId: service.pluginId, serviceLocalId: service.localId,
+            qualifiedServiceDigest: createQualifiedConnectedAccountServiceDigest(service),
+            connectedAccountId: account.accountId, qualifiedIdentityDigest: createQualifiedConnectedAccountIdentityDigest(account),
+            authenticationModeId: "token", token: Buffer.from("constructed-test-credential"),
+            metadata: { v: 4, storage: "stored_envelope_v1", credentialRevision: createConnectedServiceCredentialRevision(), values: {} },
+        } });
+        const broker = await db.machine.create({ data: {
+            id: `boat-broker-${owner.id}`, accountId: owner.id, metadata: "{}", kind: "persistent", active: true,
+            operationProtocolCapabilities: { providerBrokerIngress: { protocolVersions: [1] } },
+            operationProtocolCapabilitiesRevision: 1,
+        } });
+        const source = { v: 1, kind: "connected_account", target: { kind: "account", account }, credentialIncarnation: credential.id };
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: owner.id, displayName: "Boat share",
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed", brokerMachineId: broker.id,
+            sourceBindingJson: JSON.stringify(source),
+        } });
+        const previousPresence = app.machineDaemonPresence;
+        const previousRpc = app.forwardRpcForUser;
+        app.machineDaemonPresence = { in: () => ({ fetchSockets: async () => [{
+            data: { clientType: "machine-scoped", userId: owner.id, machineId: broker.id },
+        }] }) };
+        app.forwardRpcForUser = async request => {
+            const params = request.params as { scope?: string };
+            return { ok: true, result: params.scope === "source_credential"
+                ? { status: "eligible" }
+                : { status: "unavailable", reason: "source_unavailable" } };
+        };
+        try {
+            const point = await post("/v1/teams/credential-resources/get", owner.id, { resourceId: resource.id });
+            const list = await post("/v1/teams/credential-resources/list", owner.id, { teamId: team.id });
+            const ready = { id: resource.id, readiness: { kind: "available" }, recoveryAction: null };
+            expect(point.statusCode, point.body).toBe(200);
+            expect(point.json()).toMatchObject(ready);
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json().resources).toContainEqual(expect.objectContaining(ready));
+        } finally {
+            app.machineDaemonPresence = previousPresence;
+            app.forwardRpcForUser = previousRpc;
+        }
+    });
+
     it.each(["connected_account", "connected_pool"] as const)("preserves reconnect-required source health in generic and exact %s catalogs", async kind => {
         const owner = await createAccount();
         const recipient = await createAccount();

@@ -72,6 +72,8 @@ import type { ProviderModelSettingsMutationIntent } from '@/providers/connection
 import { setProviderExperimentalConfirmationV1 } from '@happier-dev/protocol/providers/settings/operationsV1';
 import { getProviderExperimentalConfirmationCatalogSourceKeyV1 } from '@happier-dev/protocol/providers/settings/v1';
 import { createTeamCredentialNativeProviderSourceFixture } from '@/providers/broker/teamCredentialNativeProviderSource.testkit';
+import { createPurposeTargetResolver } from '@/daemon/connectedServices/purposeBindings/resolveTarget';
+import { PLUGIN_MANIFEST as boatManifest } from '../../../../../packages/plugins/machine-boat/src/manifest';
 
 import {
   createRuntimeProviderModelManagementServices,
@@ -821,24 +823,37 @@ describe('runtime provider model-management composition', () => {
   });
 
 
-  it('admits an Action purpose through the real eligibility RPC without a model Provider', async () => {
+  it('reports a current Boat share as eligible without a Provider model family', async () => {
     const fixture = await createManagedRunLaunchFixture();
     let sourceAvailable = true;
     const unexpected = async (): Promise<never> => { throw new Error('Eligibility must not materialize credentials or mutate bindings'); };
+    const { id: localId, authentication } = boatManifest.contributes.connectedAccountDescriptors[0]!;
+    const service = { pluginId: boatManifest.id, localId };
+    const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+      ref: { service, accountId: 'selected-source' }, status: 'connected',
+      authenticationModeId: authentication.defaultModeId, revisionSemantics: 'revisioned',
+      credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+      configurationReady: true, configurationRevision: null, scopes: [],
+    });
+    const resolveTarget = createPurposeTargetResolver({
+      available: true,
+      resolveService: async () => ({ service, authentication }),
+      listAccounts: async () => sourceAvailable ? [profile] : [],
+    });
     const purposes = createConnectedAccountPurposeBindingOwner({
       store: { read: async () => ({ v: 1, bindings: [] }), update: unexpected, subscribe: () => ({ dispose() {} }) },
       selectTarget: unexpected, materializeAccount: unexpected, projectTargetAccounts: unexpected,
       assertTargetAccountMaterializable: unexpected,
-      resolveTarget: async target => sourceAvailable && target.kind === 'account'
-        ? { account: target.account, displayName: 'Cloud source' } : null,
+      resolveTarget,
     });
     const registry = { ...fixture.lease.registry, contributes: { ...fixture.lease.registry.contributes,
-      providersByContributionKey: new Map<string, ResolvedProviderContribution>() } };
+      providersByContributionKey: createBrokerProviderRegistry().providersByContributionKey } };
     const services = createRuntimeProviderModelManagementServices({ machineId: fixture.machineId,
       featureGate: { isEnabled: () => true },
       getAccountSettingsSnapshot: (): never => { throw new Error('Action eligibility must not read the personal model catalog'); },
       acquireRuntimeLease: async () => ({ ...fixture.lease, registry }),
       resolveManagedPurposeBindingIntentSelection: purposes.resolveBindingIntentSelection,
+      observeConnectedAccountTargetAvailability: async (target, signal) => (await resolveTarget(target, signal, true)) !== null,
       modelSettingsMutation: unexpected,
     });
     const rpc = new RpcHandlerManager({ scopePrefix: fixture.machineId, encryptionMode: 'plain', logger: () => {} });
@@ -851,15 +866,23 @@ describe('runtime provider model-management composition', () => {
         ...createLegacyProfileMigrationRpcServices({ credentials: { token: 'custodian', encryption: null } }),
       } });
     const source = { v: 1, kind: 'connected_account', target: { kind: 'account',
-      account: { service: { pluginId: 'example.cloud', localId: 'cloud' }, accountId: 'selected-source' } },
+      account: profile.ref },
       credentialIncarnation: 'credential-1' };
     const request = { machineId: fixture.machineId, teamId: 'team', resourceId: 'resource',
       expectedResourceRevision: 1, source, scope: 'action_purpose',
-      purpose: { consumer: { pluginId: 'example.cloud', localId: 'machine' }, purpose: 'cloud-api' } };
+      purpose: { consumer: { pluginId: service.pluginId, localId: 'boat' }, purpose: 'cloud-api' } };
     try {
       await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, request))
         .resolves.toEqual({ status: 'eligible' });
+      const { purpose: _purpose, ...base } = request;
+      const sourceRequest = { ...base, scope: 'source_credential' };
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, sourceRequest))
+        .resolves.toEqual({ status: 'eligible' });
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, { ...base, scope: 'source_any' }))
+        .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
       sourceAvailable = false;
+      await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, sourceRequest))
+        .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
       await expect(rpc.invokeLocal(RPC_METHODS.DAEMON_PROVIDERS_TEAM_CREDENTIAL_BROKER_ELIGIBILITY, request))
         .resolves.toEqual({ status: 'unavailable', reason: 'source_unavailable' });
     } finally { await fixture.cleanup(); }

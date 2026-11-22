@@ -692,6 +692,9 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   >[0]['openTeamDirect'];
   teamCredentialNativeSource?: import('@/providers/modelManagement/nativeProviderSource').TeamCredentialNativeSourceContext;
   listProviderConnectedAccountProfiles?: Parameters<typeof createRuntimeProviderModelManagementServices>[0]['listProviderConnectedAccountProfiles'];
+  observeConnectedAccountTargetAvailability?: Parameters<
+    typeof createRuntimeProviderModelManagementServices
+  >[0]['observeConnectedAccountTargetAvailability'];
   createAgentCatalogObservation?: (
     infrastructure: Pick<
       Parameters<typeof createAgentProviderCatalogObservationService>[0],
@@ -1195,6 +1198,7 @@ export async function bootstrapMachineSyncRuntime(
       happyHomeDir: configuration.happyHomeDir,
       featureGate: providerFeatureGate,
       listProviderConnectedAccountProfiles: params.listProviderConnectedAccountProfiles,
+      observeConnectedAccountTargetAvailability: params.observeConnectedAccountTargetAvailability,
       ...(params.connectedAccountUsage ? { connectedAccountUsage: params.connectedAccountUsage } : {}),
       ...(params.createAgentCatalogObservation ? { observeConnectedAccountSourceModels: request =>
         agentCatalogObservation!.observe(request) } : {}),

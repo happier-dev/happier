@@ -325,6 +325,7 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
   invokeConnectedAccountNativeModels?: InvokeConnectedAccountNativeModels;
   observeConnectedAccountSourceModels?: ObserveConnectedAccountSourceModels;
   listProviderConnectedAccountProfiles?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['listCoordinatorAccounts'];
+  observeConnectedAccountTargetAvailability?: import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').DaemonConnectedAccountPurposeBindingRuntime['observeTargetAvailability'];
   readConnectedAccountCatalogCustodianMachineId?: (signal: AbortSignal) => string | undefined | Promise<string | undefined>;
   readModelProjection?: ProviderRuntimeModelProjectionReader;
   openTeamDirect?: Parameters<typeof createRuntimeProviderServices>[0]['openTeamDirect'];
@@ -1414,6 +1415,13 @@ export function createRuntimeProviderModelManagementServices(input: Readonly<{
       ? await (async () => {
           let lease: PluginRuntimeRegistryLease | undefined;
           try {
+            if (request.scope === 'source_credential') {
+              const available = await input.observeConnectedAccountTargetAvailability?.(
+                request.source.target, signal ?? new AbortController().signal,
+              );
+              return available ? { status: 'eligible' as const }
+                : { status: 'unavailable' as const, reason: 'source_unavailable' as const };
+            }
             if (request.scope === 'action_purpose') {
               if (request.source.kind === 'provider_connection' || !sourceSelection) {
                 return { status: 'unavailable' as const, reason: 'source_unavailable' as const };

@@ -206,7 +206,9 @@ async function readTeamCredentialBrokerSourceEligibility(
                 resourceId: input.resourceId,
                 expectedResourceRevision: input.resourceRevision,
                 source: input.source,
-                scope: 'source_any' as const,
+                scope: input.source.kind === 'connected_account' && !input.source.providerPurpose
+                    ? 'source_credential'
+                    : 'source_any',
             },
         });
         if (!rpc.ok) return { machineId, eligibility: null };
@@ -292,11 +294,8 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
         source: NonNullable<TeamCredentialResourceSummary['source']>,
         machineIds: readonly string[],
     ) => await Promise.all([...new Set(machineIds)].map(machineId => {
-        // `source_any` asks only whether this exact source can be materialized
-        // on the Machine. Resource policy and audience are enforced by the
-        // Home before this projection, so resources sharing one immutable
-        // source binding share the Machine-local observation instead of
-        // multiplying the same RPC by resource count.
+        // Home enforces resource policy and audience before this projection.
+        // Resources with the same immutable source share one Machine observation.
         const key = `${resource.custodianAccountId}\u0000${machineId}\u0000${JSON.stringify(source)}`;
         const existing = brokerEligibilityPromises.get(key);
         if (existing) return existing;

@@ -13,15 +13,17 @@ import { ProviderConnectionIdSchema, ProviderLocalIdSchema } from '../../provide
 /** One owning ServiceAccountToken row pins a qualified credential lifetime. */
 export const TeamCredentialSourceCredentialIncarnationV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1)));
 
+export const TeamCredentialConnectedAccountSourceBindingV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  kind: z.literal('connected_account'),
+  target: QualifiedConnectedAccountPurposeBindingAccountTargetV1Schema,
+  credentialIncarnation: TeamCredentialSourceCredentialIncarnationV1Schema,
+  providerPurpose: z.optional(QualifiedConnectedAccountPurposeV1Schema),
+}));
+
 /** Canonical closed source identity shared by resource and broker schemas. */
 export const TeamCredentialSourceBindingV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-  z.strictObject({
-    v: z.literal(1),
-    kind: z.literal('connected_account'),
-    target: QualifiedConnectedAccountPurposeBindingAccountTargetV1Schema,
-    credentialIncarnation: TeamCredentialSourceCredentialIncarnationV1Schema,
-    providerPurpose: z.optional(QualifiedConnectedAccountPurposeV1Schema),
-  }),
+  TeamCredentialConnectedAccountSourceBindingV1Schema,
   z.strictObject({
     v: z.literal(1),
     kind: z.literal('connected_pool'),

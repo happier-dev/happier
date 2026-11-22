@@ -119,6 +119,7 @@ export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
     ConnectedAccountPurposeBindingOwner['materializeRequestAuthBearer'];
   resolveBindingIntent: ConnectedAccountPurposeBindingOwner['resolveBindingIntent'];
   resolveBindingIntentSelection: ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection'];
+  observeTargetAvailability(target: QualifiedConnectedAccountPurposeBindingTargetV1, signal: AbortSignal): Promise<boolean>;
   /**
    * Lists exact Account targets and explicitly declared native choices for
    * one purpose already authorized by the caller. Group selection remains
@@ -923,6 +924,9 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       bindingOwner.materializeRequestAuthBearer,
     resolveBindingIntent: bindingOwner.resolveBindingIntent,
     resolveBindingIntentSelection: bindingOwner.resolveBindingIntentSelection,
+    async observeTargetAvailability(target, signal) {
+      return (await resolveTarget(target, signal, true)) !== null;
+    },
     listActionFormConnectedAccountOptions,
     async listCoordinatorAccounts(signal = new AbortController().signal, demandedService?: QualifiedConnectedAccountRef['service']) {
       signal.throwIfAborted();
