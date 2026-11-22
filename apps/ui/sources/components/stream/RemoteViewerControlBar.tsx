@@ -11,7 +11,7 @@ import {
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { GlassLivePictureBackdropContext } from '@/components/ui/glass/livePictureBackdrop';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
-import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
+import { CORE_CAPSULE_HOST, useCoreCapsuleColors } from '@/components/ui/status/capsuleHost';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { t } from '@/text';
 
@@ -59,13 +59,16 @@ export function useRemoteViewerHandBackOffer(offer: RemoteViewerHandBack | null)
 function RemoteViewerBarSurface(props: React.ComponentProps<RemoteViewerControlBarHost['Surface']>) {
     const handBack = React.useContext(BarHandBackContext);
     const { theme } = useUnistyles();
+    const colors = useCoreCapsuleColors();
     const Surface = CORE_CAPSULE_HOST.Surface;
     const Text = CORE_CAPSULE_HOST.Text;
     const Button = CORE_CAPSULE_HOST.Button;
     return <Surface {...props}>
-        {handBack ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: controlBarSpacing(theme).gap }}
+        {/* The surface is a capsule: the row keeps the bar's own inset clear of its rounded ends. */}
+        {handBack ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: controlBarSpacing(theme).gap,
+            paddingHorizontal: controlBarSpacing(theme).inset, paddingTop: controlBarSpacing(theme).gap }}
             testID={`${props.testID}-hand-back-row`}>
-            <View style={{ flex: 1, minWidth: 0 }}><Text role="title" numberOfLines={1}>{handBack.title}</Text></View>
+            <View style={{ flex: 1, minWidth: 0 }}><Text role="title" color={colors.text} numberOfLines={1}>{handBack.title}</Text></View>
             <Button emphasis="primary" title={handBack.label} onPress={handBack.onPress} testID={`${props.testID}-hand-back`} />
         </View> : null}
         {props.children}
