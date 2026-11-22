@@ -100,7 +100,10 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
     const captureRef = React.useRef<View>(null);
     const mapperRef = React.useRef<ReturnType<typeof createLiveStreamGestureMapper> | null>(null);
     if (!mapperRef.current) mapperRef.current = createLiveStreamGestureMapper();
-    const [cursor, setCursor] = React.useState<InputPoint>({ x: (props.viewport?.width ?? 1) / 2, y: (props.viewport?.height ?? 1) / 2 });
+    // The pointer is held where the gesture owner keeps it, on the picture (0–1 of the content) under its view;
+    // it is drawn from the current picture each render, so a picture that settles later never leaves it behind.
+    const [cursorView, setCursorView] = React.useState<Readonly<{ pointer: InputPoint; transform: HappierLiveStreamViewTransform }>>(
+        { pointer: { x: 0.5, y: 0.5 }, transform: { scale: 1, x: 0, y: 0 } });
     const [dragTrail, setDragTrail] = React.useState<readonly InputPoint[]>([]);
     const pendingTap = React.useRef<{ action: Extract<HappierLiveStreamInputGesture, { kind: 'tap' }>; timer: ReturnType<typeof setTimeout> } | null>(null);
     const pendingFrame = React.useRef<number | null>(null);
@@ -141,9 +144,9 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
     latestContext.current = context;
     const publishVisuals = React.useCallback((result: ReturnType<NonNullable<typeof mapperRef.current>['map']>) => {
         const current = latestContext.current;
-        const point = { x: (current.content.x + result.pointer.x * current.content.width) * result.transform.scale + result.transform.x,
-            y: (current.content.y + result.pointer.y * current.content.height) * result.transform.scale + result.transform.y };
-        setCursor(previous => previous.x === point.x && previous.y === point.y ? previous : point);
+        setCursorView(previous => previous.pointer.x === result.pointer.x && previous.pointer.y === result.pointer.y
+            && previous.transform.scale === result.transform.scale && previous.transform.x === result.transform.x
+            && previous.transform.y === result.transform.y ? previous : { pointer: result.pointer, transform: result.transform });
         setDragTrail(previous => result.trail.length ? result.trail.map(position => ({
             x: position.x * current.viewport.width * result.transform.scale + result.transform.x,
             y: position.y * current.viewport.height * result.transform.scale + result.transform.y,
@@ -378,7 +381,10 @@ export function HappierLiveStreamInputLayer(props: Readonly<{
             testID={`${props.testID}-capture`}
         >
             {props.renderDragTrail?.(dragTrail)}
-            {props.renderCursor?.(cursor)}
+            {props.renderCursor?.({
+                x: (content.x + cursorView.pointer.x * content.width) * cursorView.transform.scale + cursorView.transform.x,
+                y: (content.y + cursorView.pointer.y * content.height) * cursorView.transform.scale + cursorView.transform.y,
+            })}
         </View>
     );
 }

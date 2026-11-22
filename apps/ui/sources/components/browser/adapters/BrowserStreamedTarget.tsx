@@ -129,7 +129,8 @@ const supportsBrowserInput = (kind: LiveStreamInputGesture['kind']): boolean => 
 /**
  * Where a `contain`-fitted frame of `frame` size is drawn inside `viewport`. `maxScale` caps the fit
  * (a picture that must not be drawn larger than its own pixels passes `1 / devicePixelRatio`).
- * `align: 'top'` keeps the frame against the top edge, as a page reads; `center` letterboxes evenly.
+ * `align: 'top'` keeps the frame against the top edge, as a page reads, while it spans the viewport; a frame held
+ * at its cap is smaller than the viewport both ways, so it centres like a picture. `center` letterboxes evenly.
  */
 export function containRect(
     viewport: Readonly<{ width: number; height: number }>,
@@ -140,10 +141,11 @@ export function containRect(
     if (!frame || !(frame.width > 0 && frame.height > 0) || !(viewport.width > 0 && viewport.height > 0)) {
         return { x: 0, y: 0, width: viewport.width, height: viewport.height };
     }
-    const scale = Math.min(viewport.width / frame.width, viewport.height / frame.height, maxScale);
+    const fit = Math.min(viewport.width / frame.width, viewport.height / frame.height);
+    const scale = Math.min(fit, maxScale);
     const width = frame.width * scale;
     const height = frame.height * scale;
-    return { x: (viewport.width - width) / 2, y: align === 'top' ? 0 : (viewport.height - height) / 2, width, height };
+    return { x: (viewport.width - width) / 2, y: align === 'top' && scale === fit ? 0 : (viewport.height - height) / 2, width, height };
 }
 
 /** A kept last frame is not the live page: it recedes while the status capsule says why (lab ST). */
@@ -382,7 +384,10 @@ export function BrowserStreamedTarget(props: Readonly<{
     const pageShape = input?.viewport ?? frameSize;
     // A page someone else sized reads like a page: across the pane, from the top. Below it the inset stays;
     // the page itself scrolls through the forwarded wheel and swipe, so the pane needs no scroller of its own.
-    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape, Number.POSITIVE_INFINITY, 'top'), pageSize: frameSize } : null;
+    // Never larger than the page itself: its own CSS size once the daemon reports it, else one frame pixel per
+    // device pixel (as the Computer viewer holds a window). A smaller page sits whole in the middle, sharp.
+    const pageCap = input?.viewport ? 1 : 1 / PixelRatio.get();
+    const pageRect = pictureUp && viewport ? { ...containRect(viewport, pageShape, pageCap, 'top'), pageSize: frameSize } : null;
     const controlling = input?.viewerInput?.controlling === true;
     const sendInput = input?.sendInput;
     // The controlling viewer's screen sets the page's size; everyone else letterboxes it.

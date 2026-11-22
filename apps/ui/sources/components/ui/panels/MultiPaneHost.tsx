@@ -35,8 +35,9 @@ import type { RightPaneSurface } from '@/components/appShell/panes/rightPanePlac
 
 // A pane floating over the main content (overlay presentation) rounds the one edge that shows.
 const PANE_OVERLAY_CORNER_RADIUS_PX = 16;
-// The soft scrim (Details over the transcript while the side column stays, lab FB1) is the theme's soft
-// scrim at a share of its strength: the page reads as behind, not shut.
+// The soft scrim (Details over the transcript while the side column stays, labs FB1 and browser Q) is the
+// theme's canvas veil at a share of its strength: the covered transcript fades toward the canvas, so the
+// strip left showing reads as behind, not shut, and never as crisp text cut mid-word.
 const SOFT_SCRIM_SHARE = 0.6;
 // The pre-boundary Escape owner closes Details before Right when both docked
 // columns are present. Keep that user-visible precedence inside the one pane
@@ -408,7 +409,7 @@ export const MultiPaneHost = React.memo((props: MultiPaneHostProps) => {
                             animatedStyle={{
                                 position: 'absolute', top: 0, right: 0, bottom: 0, left: 0,
                                 zIndex: overlayZIndexBase,
-                                backgroundColor: theme.colors.overlay.scrimSoft,
+                                backgroundColor: props.detailsScrim === 'soft' ? theme.colors.overlay.scrimWizard : theme.colors.overlay.scrimSoft,
                                 opacity: detailsPresence.progress.interpolate({ inputRange: [0, 1], outputRange: [0, props.detailsScrim === 'soft' ? SOFT_SCRIM_SHARE : 1] }),
                             }}
                         />

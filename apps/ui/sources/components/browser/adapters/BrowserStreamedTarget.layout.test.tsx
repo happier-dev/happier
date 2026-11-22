@@ -17,7 +17,7 @@ import {
 } from './BrowserStreamedTarget';
 
 /** A frame the player has drawn: a 1280×800 desktop page the agent's viewer sized, watched from a narrow pane. */
-function watchedRuntime(): BrowserStreamedSurfaceRuntime {
+function watchedRuntime(viewport = { width: 1280, height: 800, deviceScaleFactor: 1 }): BrowserStreamedSurfaceRuntime {
   return {
     machineName: 'NLDW4',
     playerState: {
@@ -36,7 +36,7 @@ function watchedRuntime(): BrowserStreamedSurfaceRuntime {
       sourceId: 'source_1',
       streamId: 'stream_1',
       send: () => {},
-      viewport: { width: 1280, height: 800, deviceScaleFactor: 1 },
+      viewport,
     },
   };
 }
@@ -65,5 +65,23 @@ describe('BrowserStreamedTarget page placement', () => {
     const rect = rects.filter(Boolean).at(-1);
     expect(rect).toMatchObject({ x: 0, y: 0, width: 380 });
     expect(rect?.height).toBeCloseTo(237.5);
+  });
+
+  it('draws a page smaller than the pane at its own size, centred, never blown up (DESIGN-ACCEPT-138 fix 21)', async () => {
+    const rects: (BrowserStreamedPageRect | null)[] = [];
+    const screen = await renderScreen(
+      <BrowserStreamedTarget
+        runtime={watchedRuntime({ width: 390, height: 500, deviceScaleFactor: 3 })}
+        agentName="Agent"
+        onPageRectChange={rect => { rects.push(rect); }}
+        testID="stream"
+      />,
+    );
+    await act(async () => {
+      screen.findHostByTestId('stream-live')?.props.onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 598, height: 760 } },
+      });
+    });
+    expect(rects.filter(Boolean).at(-1)).toMatchObject({ x: 104, y: 130, width: 390, height: 500 });
   });
 });

@@ -5,6 +5,25 @@ import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { HappierLiveStreamInputLayer } from './LiveStreamInputLayer.js';
 import type { HappierLiveStreamInputGesture } from './inputGesture.js';
 
+describe('live stream viewer cursor', () => {
+    it('stays on the drawn picture when the picture settles after the layer mounted', async () => {
+        const positions: { x: number; y: number }[] = [];
+        const layer = (content: { x: number; y: number; width: number; height: number }) => <HappierLiveStreamInputLayer
+            inputAccepted supports={() => true} onGesture={() => {}} testID="viewer"
+            viewport={{ width: 591, height: 759 }} content={content}
+            renderCursor={position => { positions.push(position); return null; }} />;
+        // Before the page's shape is known the picture stands in for the whole stage; then the page arrives
+        // as a 591×374 band at the top (the live desktop pane, DESIGN-ACCEPT-138 fix 6).
+        const mounted = mountThroughReactNativeWeb(layer({ x: 0, y: 0, width: 591, height: 759 }));
+        try {
+            await mounted.render(layer({ x: 0, y: 0, width: 591, height: 374 }));
+            const last = positions[positions.length - 1]!;
+            expect(last.y).toBeLessThanOrEqual(374);
+            expect(last).toEqual({ x: 295.5, y: 187 });
+        } finally { mounted.unmount(); }
+    });
+});
+
 describe('live stream keyboard focus', () => {
     it('preserves native Space, navigation and editing keys while sending printable Unicode as text', () => {
         const gestures: HappierLiveStreamInputGesture[] = [];
