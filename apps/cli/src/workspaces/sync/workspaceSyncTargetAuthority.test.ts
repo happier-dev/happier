@@ -5160,3 +5160,109 @@ describe('workspace sync target bootstrap authority', () => {
     }
   });
 });
+// Same-Account source composition: only receipt persistence and finite transport
+// are boundaries; the executor, target preflight, bootstrap and filesystem are real.
+describe('Add a machine reviewed target diagnosis', () => {
+  it.each(['unchanged', 'directory timestamp', 'replaced root', 'absent review', 'product bootstrap creates root'] as const)(
+    'confirms an own-Machine exact replica with %s', async change => {
+      const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
+      const { projectWorkspaceSyncRpcError } = await import('@/api/machine/workspaceSyncRpcErrors');
+      const { utimes } = await import('node:fs/promises');
+      const fixture = await mkdtemp(join(tmpdir(), 'add-machine-reviewed-target-'));
+      const alphaRoot = join(fixture, 'alpha');
+      const betaRoot = join(fixture, 'beta');
+      await mkdir(alphaRoot);
+      const absentAtReview = change === 'absent review' || change === 'product bootstrap creates root';
+      if (!absentAtReview) await mkdir(betaRoot);
+      await writeFile(join(alphaRoot, 'payload.txt'), 'source bytes');
+      if (!absentAtReview) await writeFile(join(betaRoot, 'old.txt'), 'reviewed target');
+      const harness = createAuthorityHarness({
+        getProjectSnapshot: () => snapshot(alphaRoot, betaRoot, { mode: 'mirror_exactly' }),
+        materializeRemoteSeed: async ({ operationId, canonicalRoot }) =>
+          await materializeLocalWorkspaceSyncSeed({ operationId, activeServerDir: fixture,
+            sourcePath: alphaRoot, targetPath: canonicalRoot,
+            workspaceTransfer: { includeIgnoredMode: 'include_selected', ignoredIncludeGlobs: [] },
+            registry: createScmBackendRegistry([]) }),
+      });
+      let reviewed = false;
+      const executor = createActionExecutor({
+        sessionHandoffTargetReplacementApprovalPreflight: async args =>
+          await harness.authority.preflightHandoffTargetReplacementHere({ v: 1,
+            serverId: 'server-1', machineId: args.targetMachineId,
+            operationId: args.operationId, targetPath: betaRoot,
+            destinationIntent: args.destinationIntent, activatesExactMirror: args.activatesExactMirror }),
+        presentUserActionConfirmation: async request => {
+          expect(request.preview).toMatchObject({ handoffTargetReplacementApproval: {
+            canonicalRoot: betaRoot,
+            consequences: [...(absentAtReview ? [] : ['replace_nonempty_workspace_target']), 'delete_target_only_files_during_exact_mirror'],
+          } });
+          reviewed = true;
+          if (absentAtReview) {
+            // The real review preflight must leave the selected path absent.
+            await expect(fileSystem.lstat(betaRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+          }
+          if (change === 'product bootstrap creates root') {
+            // Constructed interleaving: run the actual product bootstrap creation
+            // step before confirmation. This does not assert Add a machine calls it here.
+            const preparation = await workspaceSyncTargetBootstrap({
+              rootPath: betaRoot, relationshipId: 'preparation', endpointRole: 'beta',
+              targetWorkspaceRefId: 'workspace-beta', policyDigest: contentPolicy.policyDigest,
+              contentSelection: 'all_files', createIfMissing: true, targetBootstrap: 'use_existing',
+              materializationDirectory: harness.materializationDirectory, rootOwnershipManager: harness.rootOwnershipManager,
+            });
+            await preparation.release();
+          }
+          if (change === 'directory timestamp') await utimes(betaRoot, new Date(1), new Date(2));
+          if (change === 'replaced root') {
+            await rename(betaRoot, join(fixture, 'original-beta'));
+            await mkdir(betaRoot);
+            await writeFile(join(betaRoot, 'old.txt'), 'replacement target');
+          }
+          return true;
+        },
+        workspaceSyncRelationshipCreate: async args => {
+          const prepared = await harness.authority.prepareBootstrapHere(prepareRequest({
+            transientRelationship: snapshot(alphaRoot, betaRoot, { mode: 'mirror_exactly' }).relationships[0],
+            ...approvalBinding(args.targetReplacementApproval!),
+          })).catch((error: unknown) => {
+            // Captured Phase D cleanup envelope: primary is this real bootstrap
+            // refusal; cleanup's unavailable peer must not replace its identity.
+            const aggregate = Object.assign(new AggregateError([error,
+              Object.assign(new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' }),
+            ], error instanceof Error ? error.message : 'Workspace Sync preparation failed', { cause: error }),
+            { code: 'approval_stale' });
+            throw projectWorkspaceSyncRpcError(aggregate, RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE);
+          });
+          expect(prepared.state).toBe('ready');
+          return { v: 1, relationshipId, created: true, controllerMachineId: 'machine-a',
+            sourceWorkspaceRefId: 'workspace-alpha', targetWorkspaceRefId: 'workspace-beta',
+            status: { relationshipId, controllerMachineId: 'machine-a', state: 'conflicted',
+              alphaPath: alphaRoot, betaPath: betaRoot, mode: 'mirror_exactly',
+              endpointStates: { alpha: null, beta: null }, conflictCount: 0, lastCycleObservedAtMs: null } };
+        },
+      });
+      try {
+        const outcome = await executor.execute('workspace.sync.relationship.create', {
+          v: 1, sourceWorkspaceRefId: 'workspace-alpha', targetMachineId: 'machine-b', targetPath: betaRoot,
+          mode: 'mirror_exactly', destinationIntent: 'materialize_from_source_workspace', contentPolicy,
+        }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: 'server-1', runtimeAccountId: 'owner', actionRequestId: handoffOperationId });
+        expect(reviewed).toBe(true);
+        if (change === 'replaced root' || change === 'product bootstrap creates root') {
+          expect(outcome).toMatchObject({ ok: false, errorCode: 'approval_stale', failureCause: {
+            phase: 'workspace_sync.target_bootstrap.approval', errorCode: 'approval_stale',
+            nativeErrorReason: change === 'replaced root' ? 'root_fingerprint.component_unavailable' : 'root_fingerprint.absence_vs_presence',
+          } });
+          if (change === 'replaced root') await expect(readFile(join(betaRoot, 'old.txt'), 'utf8')).resolves.toBe('replacement target');
+        } else {
+          expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
+          if (!absentAtReview) await expect(readFile(join(betaRoot, 'payload.txt'), 'utf8')).resolves.toBe('source bytes');
+          else await expect(fileSystem.lstat(betaRoot)).resolves.toMatchObject({});
+        }
+      } finally {
+        await harness.authority.releaseAllRetainedBootstraps();
+        await harness.cleanup();
+        await rm(fixture, { recursive: true, force: true });
+      }
+    });
+});

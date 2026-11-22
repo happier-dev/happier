@@ -671,12 +671,26 @@ export async function workspaceSyncTargetBootstrap(
       if (requiredConsequences.length > 0 || input.targetReplacementApproval) {
         await input.targetReplacementApprovalTarget?.assertCurrent();
         const approval = input.targetReplacementApproval;
-        if (!approval
-          || approval.canonicalRoot !== (input.targetReplacementApprovalTarget?.canonicalRoot ?? canonicalRoot)
-          || approval.rootFingerprint !== approvalFingerprint
-          || approval.consequences.length !== requiredConsequences.length
+        let mismatch: string | undefined;
+        if (!approval) mismatch = 'approval_absent';
+        else if (approval.canonicalRoot !== (input.targetReplacementApprovalTarget?.canonicalRoot ?? canonicalRoot)) {
+          mismatch = 'canonical_root';
+        } else if (approval.rootFingerprint !== approvalFingerprint) {
+          // The proof stores a hash, so a previous present object's device,
+          // inode and birthtime cannot be recovered individually. Canonical
+          // absence has its own known hash and is distinguishable without state.
+          mismatch = !existingBeforeFence
+            || approval.rootFingerprint === computeWorkspaceSyncAbsentRootFingerprint(canonicalRoot)
+            ? 'root_fingerprint.absence_vs_presence' : 'root_fingerprint.component_unavailable';
+        } else if (approval.consequences.length !== requiredConsequences.length
           || !requiredConsequences.every((consequence, index) => approval.consequences[index] === consequence)) {
-          throw bootstrapError('approval_stale', 'Workspace target replacement approval is stale');
+          mismatch = 'consequences';
+        }
+        if (mismatch) {
+          throw Object.assign(bootstrapError('approval_stale', 'Workspace target replacement approval is stale'), {
+            failureCause: { phase: 'workspace_sync.target_bootstrap.approval', errorClass: 'Error',
+              errorCode: 'approval_stale', httpStatus: null, nativeErrorReason: mismatch },
+          });
         }
       }
     }

@@ -1020,3 +1020,26 @@ function input(overrides: Partial<Parameters<typeof workspaceSyncTargetBootstrap
     ...overrides,
   };
 }
+
+
+it.each(['approval_absent', 'canonical_root', 'consequences'] as const)(
+  'classifies the stale approval operand without exposing target facts (%s)', async reason => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-approval-reason-'));
+    const target = join(fixture, 'target');
+    await mkdir(target);
+    await writeFile(join(target, 'existing.txt'), 'keep');
+    const approval = await replacementApproval(target);
+    try {
+      await expect(workspaceSyncTargetBootstrap(input({ rootPath: target,
+        materializationDirectory: join(fixture, 'staging'), targetBootstrap: 'materialize_from_source_workspace',
+        ...(reason === 'approval_absent' ? {} : { targetReplacementApproval: {
+          ...approval,
+          ...(reason === 'canonical_root' ? { canonicalRoot: join(fixture, 'another') } : { consequences: [] }),
+        } }),
+      }))).rejects.toMatchObject({ code: 'approval_stale', failureCause: {
+        phase: 'workspace_sync.target_bootstrap.approval', errorCode: 'approval_stale', nativeErrorReason: reason,
+      } });
+      await expect(readFile(join(target, 'existing.txt'), 'utf8')).resolves.toBe('keep');
+      await expect(access(join(fixture, 'staging'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(fixture, { recursive: true, force: true }); }
+  });
