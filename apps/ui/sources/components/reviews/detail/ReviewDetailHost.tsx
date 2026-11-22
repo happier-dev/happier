@@ -35,6 +35,11 @@ import { useReviewQuestionRuns, type ReviewRoundRunRead } from './useReviewQuest
 import { ExecutionRunRow } from '@/components/sessions/runs/ExecutionRunRow';
 import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
+import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
+import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
+import { filterReviewChangesComments } from './reviewChangesComments';
 import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { formatReviewerSet } from '@/components/sessions/reviews/findings/reviewFindingsMerge';
 import { ReviewFindingsList, type ReviewFindingsRowSelection } from './ReviewFindingsList';
@@ -254,6 +259,8 @@ export function ReviewDetailHost(props: Readonly<{
   const [submitOpen, setSubmitOpen] = React.useState(false);
   const [peopleOpen, setPeopleOpen] = React.useState(false);
   const selectionKey = JSON.stringify([scope?.serverId, scope?.accountId, artifact.id, selectedRound]);
+  const [changesReviewer, setChangesReviewer] = React.useState<Readonly<{ key: string; engineId: string | null }>>({ key: selectionKey, engineId: null });
+  const selectedChangesReviewer = changesReviewer.key === selectionKey ? changesReviewer.engineId : null;
   const [selection, setSelection] = React.useState<Readonly<{ key: string; ids: ReadonlySet<string> }>>({ key: selectionKey, ids: NO_SELECTED_FINDINGS });
   const selectedFindingIds = selection.key === selectionKey ? selection.ids : NO_SELECTED_FINDINGS;
   const selectedRowIds = React.useMemo(() => [...selectedFindingIds], [selectedFindingIds]);
@@ -343,9 +350,13 @@ export function ReviewDetailHost(props: Readonly<{
         findingsCount: read.findingsCount, ...(read.run.finishedAtMs === undefined ? {} : { finishedAtMs: read.run.finishedAtMs }) }] : [];
     }),
   }), [activeTab, comments.comments, human?.verdicts, questionRuns.runs, record, round?.runs]);
-  const roundComments = React.useMemo(() => comments.comments.filter(comment =>
-    comment.appearances?.some(appearance => appearance.roundOrdinal === selectedRound)
-      || comment.roundOrdinal === selectedRound), [comments.comments, selectedRound]);
+  const allRoundComments = React.useMemo(() => filterReviewChangesComments(comments.comments,
+    { roundOrdinal: selectedRound, reviewerId: null }), [comments.comments, selectedRound]);
+  const changesReviewers = React.useMemo(() => [...new Set(allRoundComments.flatMap(comment =>
+    comment.engineId ? [comment.engineId] : []))], [allRoundComments]);
+  const roundComments = React.useMemo(() => selectedChangesReviewer === null ? allRoundComments
+    : filterReviewChangesComments(allRoundComments, { roundOrdinal: selectedRound, reviewerId: selectedChangesReviewer }),
+  [allRoundComments, selectedChangesReviewer, selectedRound]);
   const viewCommands = useCurrentUiContextLocalCommands([
     { key: 'review.detail.tab', title: t('runPage.review.findings'), description: 'Open a Review tab with {tab: findings | changes | runs | activity}.', invoke: input => {
       if (!isJsonObject(input)) return false;
@@ -356,6 +367,10 @@ export function ReviewDetailHost(props: Readonly<{
     { key: 'review.detail.round', title: t('reviewWalkthrough.detail.rounds'), description: 'Open a saved Review round with {ordinal: number}.', invoke: input => {
       if (!isJsonObject(input) || typeof input.ordinal !== 'number' || !record?.rounds.some(round => round.ordinal === input.ordinal)) return false;
       setSelected(input.ordinal); setOpenFinding(null); setPeopleOpen(false);
+    } },
+    { key: 'review.detail.filter_reviewer', title: t('reviewWalkthrough.start.whoReviews'), description: 'Filter Changes comments by reviewer engine with {engineId: string}, or show all with {engineId: null}.', invoke: input => {
+      if (!isJsonObject(input) || (input.engineId !== null && (typeof input.engineId !== 'string' || !changesReviewers.includes(input.engineId)))) return false;
+      setChangesReviewer({ key: selectionKey, engineId: input.engineId });
     } },
     { key: 'review.detail.open_finding', title: t('runPage.review.findings'), description: 'Open a finding with {commentId: string}, or close it with {commentId: null}.', invoke: input => {
       if (!isJsonObject(input) || (input.commentId !== null && (typeof input.commentId !== 'string' || !findingById.has(input.commentId)))) return false;
@@ -603,8 +618,23 @@ export function ReviewDetailHost(props: Readonly<{
           onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(findings.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
       </> : null}
       {activeTab === 'changes' && scope ? (
+        <>
+        {changesReviewers.length > 1 ? <View style={{ paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }}>
+          <SegmentedTabBar role="radiogroup" presentation="pills" segmentSizing="content"
+            accessibilityLabel={t('reviewWalkthrough.start.whoReviews')}
+            overflow={{ label: t('reviewWalkthrough.start.whoReviews') }}
+            tabs={[{ id: 'all', label: t('common.all'), testID: 'review-changes:reviewer:all' },
+              ...changesReviewers.map((engineId, index) => {
+                const agentId = resolveAgentIdFromFlavor(engineId);
+                return { id: `reviewer:${engineId}`, label: agentId ? resolveAgentCatalogTitle(agentId)
+                  : t('reviewWalkthrough.detail.reviewerRun', { count: index + 1 }), testID: `review-changes:reviewer:${engineId}` };
+              })]}
+            activeTabId={selectedChangesReviewer === null ? 'all' : `reviewer:${selectedChangesReviewer}`}
+            onSelectTab={id => { void viewCommands.invoke('review.detail.filter_reviewer', { engineId: id === 'all' ? null : id.slice('reviewer:'.length) }); }} />
+        </View> : null}
         <ReviewChangesHost reviewId={record.reviewId} roundOrdinal={selectedRound} scope={scope} capture={capture}
           comments={roundComments} view={changesView} onSelectView={setChangesView} onOpenComment={openComment} />
+        </>
       ) : null}
       {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs} /> : null}
       {activeTab === 'activity' ? (
