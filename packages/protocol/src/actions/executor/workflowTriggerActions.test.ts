@@ -903,6 +903,61 @@ describe('trigger source display provenance', () => {
       .toMatchObject({ ok: true, result: { sets: [] } });
   });
 
+  it('opens Workflow definitions only for actual backup freshness misses', async () => {
+    const backup = capturedBackup();
+    const f = fixture(backup);
+    const encryption = {
+      kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+      material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+        material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }),
+    } satisfies AvailableAutomationAccountEncryptionV1;
+    const actions = createAccountWorkflowTriggerActions({
+      automations: f.deps.automations, resolveWorkflow: f.deps.resolveWorkflow,
+      resolveEncryption: async () => encryption, randomBytes: length => new Uint8Array(length).fill(3),
+      newId: () => crypto.randomUUID(),
+    });
+    const inline = WorkflowDefinitionV1Schema.parse({ version: 1, defaults: {}, inputs: backup.inputs,
+      blocks: [{ kind: 'workflow', id: 'nestedBackup', workflowRef: workflow,
+        input: { backupTarget: { kind: 'input', name: 'backupTarget' } } }] });
+    const now = Date.now();
+    const target = { serverId: 'home', environmentId: 'env', machineId: project.machineId,
+      installationId: 'installation', targetLinkId: 'runtime', deploymentId: 'deployment', configRevision: 1 };
+    const saved = [];
+    for (let index = 0; index < 13; index++) {
+      const { set } = await actions.add({ target: { kind: 'inline', definition: inline }, project,
+        inputs: { backupTarget: { ...target, expectedRevision: 4 } }, trigger });
+      const row = f.rows.get(set.automationId)!;
+      const schedule = row.triggers.find(item => item.kind === 'schedule')!;
+      if (schedule.kind !== 'schedule') throw new Error('Expected a saved schedule');
+      const dueAt = now - 60_000;
+      const past = index === 0 || index === 12;
+      f.rows.set(row.id, { ...row, triggers: [{ ...schedule, nextRunAt: past ? null : now + 60_000 }],
+        scheduleOccurrences: past ? [{ triggerId: schedule.id, triggerRevision: schedule.revision, scheduledFor: dueAt,
+          startedAt: null, held: index === 0 }] : [] });
+      saved.push({ row, schedule, dueAt });
+    }
+    expect(new Set(saved.map(({ row }) => row.id)).size).toBe(13);
+    const executor = f.executor(actions);
+    const read = (automationId: string) => executor.execute('workflow.trigger.list', { backupFreshness: { automationId } }, ownCaller);
+    const before = f.definitionReads();
+    const results = await Promise.all(saved.map(({ row }) => read(row.id)));
+    expect(f.definitionReads() - before).toBe(1);
+    for (const quiet of results.slice(0, 12)) {
+      expect(quiet).toMatchObject({ ok: true, result: { sets: [], backupEnvironments: [] } });
+    }
+    const { row, schedule, dueAt } = saved[12]!;
+    expect(results[12]).toMatchObject({ ok: true, result: {
+      sets: [{ automationId: row.id, missedSchedules: [{ triggerId: schedule.id, dueAt }] }],
+      backupEnvironments: [{ serverId: target.serverId, environmentId: target.environmentId }],
+    } });
+    const missed = f.rows.get(row.id)!;
+    f.rows.set(row.id, { ...missed, scheduleOccurrences: missed.scheduleOccurrences!.map(occurrence => ({
+      ...occurrence, startedAt: now,
+    })) });
+    expect(await read(row.id)).toMatchObject({ ok: true, result: { sets: [], backupEnvironments: [] } });
+    expect(f.definitionReads() - before).toBe(1);
+  });
+
   it('uses exact trigger occurrences for missed backups, keeping other starts and approval holds separate', async () => {
     const f = fixture();
     const added = await f.actions.add({ target: { kind: 'inline', definition }, project, trigger });

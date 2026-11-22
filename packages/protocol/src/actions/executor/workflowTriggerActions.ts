@@ -690,8 +690,24 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       health: 'available', target: value.target, context: value.context, destinations,
     } };
   };
+  const readMissedSchedules = (row: AutomationDefinitionDetail, now: number) => {
+    const occurrences = row.scheduleOccurrences;
+    if (!row.enabled || occurrences === undefined) return [];
+    return row.triggers.flatMap(trigger => {
+      if (trigger.kind !== 'schedule' || !trigger.enabled) return [];
+      const occurrence = occurrences.find(item => item.triggerId === trigger.id && item.triggerRevision === trigger.revision);
+      const dueAt = trigger.nextRunAt !== null && trigger.nextRunAt < now
+        ? Math.max(trigger.nextRunAt, occurrence?.scheduledFor ?? 0) : occurrence?.scheduledFor;
+      if (dueAt === undefined || dueAt >= now) return [];
+      if (occurrence?.scheduledFor === dueAt && (occurrence.startedAt !== null || occurrence.held)) return [];
+      return [{ triggerId: trigger.id, dueAt, lastRunAt: null }];
+    });
+  };
   const projectedDefinition = async (row: AutomationDefinitionDetail, reviewed?: Readonly<{ target: TriggerTargetV1; context: WorkflowTriggerContextV1;
-    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection, sourceUnavailable = false): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
+    project?: WorkflowProjectTargetV1 }>, prepared?: PreparedTriggerProjection, options?: Readonly<{
+      sourceUnavailable?: boolean;
+      missedSchedules?: WorkflowTriggerSetV1['missedSchedules'];
+    }>): Promise<Readonly<{ set: WorkflowTriggerSetV1; definition?: WorkflowDefinitionV1;
       children?: ReadonlyMap<string, WorkflowDefinitionV1> }>> => {
     const triggers: WorkflowTriggerSetV1['triggers'] = [];
     for (const trigger of row.triggers) {
@@ -726,18 +742,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     // The storage label every executable set is created with is not a name anyone chose: readers name
     // such a Workflow by what it runs. A 0.2 Automation or a named observation keeps its own name.
     const name = workflowTriggerDisplayNameV1({ name: row.name });
-    const now = Date.now();
-    const missedSchedules = row.enabled && row.scheduleOccurrences !== undefined ? triggers.flatMap(trigger => {
-      if (trigger.kind !== 'schedule' || !trigger.enabled) return [];
-      const occurrence = row.scheduleOccurrences!.find(item => item.triggerId === trigger.id && item.triggerRevision === trigger.revision);
-      const dueAt = trigger.nextRunAt !== null && trigger.nextRunAt < now
-        ? Math.max(trigger.nextRunAt, occurrence?.scheduledFor ?? 0) : occurrence?.scheduledFor;
-      if (dueAt === undefined || dueAt >= now) return [];
-      if (occurrence?.scheduledFor === dueAt && (occurrence.startedAt !== null || occurrence.held)) return [];
-      return [{ triggerId: trigger.id, dueAt, lastRunAt: null }];
-    }) : [];
     const base = { automationId: row.id, ...(name === undefined ? {} : { name }), updatedAt: row.updatedAt,
-      ...(row.scheduleOccurrences === undefined ? {} : { missedSchedules }),
+      ...(row.scheduleOccurrences === undefined ? {} : {
+        missedSchedules: options?.missedSchedules ?? readMissedSchedules(row, Date.now()),
+      }),
       revision: row.templateVersion, enabled: row.enabled, triggers, scopeSessionId: row.scopeSessionId ?? null,
       ...(row.templateCiphertext !== undefined && !row.observationOnly ? { legacy: { editable: false as const, reason: 'created_in_0_2' as const } } : {}) };
     if (row.observationOnly) return { set: { ...base, observationOnly: row.observationOnly, health: 'available' } };
@@ -757,7 +765,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       }
       const value = reviewed ?? await opened(row, true);
       // Source selection already resolved this reference. Still open through the Account codec before disclosure.
-      if (sourceUnavailable) refuse('source_unavailable');
+      if (options?.sourceUnavailable) refuse('source_unavailable');
       const targetProject = reviewed?.project ?? (row.assignments.length !== 1 ? undefined : project(row, value.context));
       // Retained templates are readable even when their settings cannot become a current Workflow.
       const prepared = await prepareTriggerProjection(value, row.scopeSessionId, await resolveTarget(value.target, !base.legacy));
@@ -1125,7 +1133,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       if ('backupFreshness' in input) {
         const row = await read(input.backupFreshness.automationId);
         if (row.scheduleOccurrences === undefined) refuse('source_unavailable');
-        const value = await projectedDefinition(row);
+        const missedSchedules = readMissedSchedules(row, Date.now());
+        if (!missedSchedules.length) return { sets: [], backupEnvironments: [] };
+        const value = await projectedDefinition(row, undefined, undefined, { missedSchedules });
         if (value.set.health !== 'available') refuse('source_unavailable');
         return { sets: [value.set], backupEnvironments: backupTargets(value).environments };
       }
@@ -1171,7 +1181,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           }));
         }
         const projected = await Promise.allSettled([...new Map(rows.map(row => [row.id, row])).values()]
-          .map(row => projectedDefinition(row, undefined, undefined, true)));
+          .map(row => projectedDefinition(row, undefined, undefined, { sourceUnavailable: true })));
         return { sets: projected.flatMap(result => {
           if (result.status === 'rejected') throw result.reason;
           return isWorkflowTriggerSourceGoneV1(result.value.set) ? [result.value.set] : [];

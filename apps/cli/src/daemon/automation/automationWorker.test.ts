@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import os from 'node:os';
+import { performance } from 'node:perf_hooks';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { setTimeout as pauseForHttp } from 'node:timers/promises';
@@ -967,6 +968,42 @@ describe('automationWorker', () => {
     }
   });
 
+  it('shares one Account settings read across backup freshness checks on each assignment snapshot', async () => {
+    const now = Date.now();
+    process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
+    process.env.HAPPIER_HOME_DIR = join(os.tmpdir(), `happier-backup-freshness-${now}-${Math.random()}`);
+    reloadCapacityConfiguration();
+    const credentials: StoredCredentials = { token: 'backup-freshness-account', encryption: null };
+    const assignments = Array.from({ length: 12 }, (_, index) => ({ machineId: 'machine-1',
+      automationId: `backup-freshness-${index}`, nextClaimAt: null, executionRecipeVersion: 2 as const }));
+    const settingsReads = () => mockGet.mock.calls.filter(([url]) => url.endsWith('/v2/account/settings')).length;
+    mockGet.mockClear().mockImplementation(async (url: string) => {
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+      if (url.endsWith('/worker/assignments')) return { data: { assignments, settings: DEFAULT_WORKER_SETTINGS } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
+      throw createAxios404(url);
+    });
+    migrationBoundary.get.mockImplementation(async ({ automationId }: { automationId: string }) => ({
+      id: automationId, name: 'Future schedule', description: null, enabled: true, targetType: null,
+      existingSessionId: null, templateVersion: 1, lastRunAt: null, createdAt: now, updatedAt: now,
+      workflowDefinitionId: null, scopeSessionId: null, assignments: [], triggers: [], scheduleOccurrences: [],
+    } satisfies AutomationDefinitionDetail));
+    const worker = startCapacityAutomationWorker({ token: credentials.token, credentials, machineId: 'machine-1' });
+    try {
+      await worker.refreshAssignments();
+      await waitForCondition(() => migrationBoundary.get.mock.calls.length >= assignments.length);
+      expect(settingsReads()).toBe(1);
+      const initialDefinitionIds = migrationBoundary.get.mock.calls.map(([input]) => input.automationId);
+      expect(initialDefinitionIds.sort()).toEqual(assignments.map(row => row.automationId).sort());
+
+      await worker.catchUp();
+      await waitForCondition(() => migrationBoundary.get.mock.calls.length >= 2 * assignments.length);
+      expect(settingsReads()).toBe(2);
+    } finally {
+      worker.stop();
+    }
+  });
+
   it.each([
     { retainedCount: 0, pastDeadline: 'none' },
     { retainedCount: 11, pastDeadline: 'none' },
@@ -974,7 +1011,7 @@ describe('automationWorker', () => {
     { retainedCount: 12, pastDeadline: 'assignment' },
     { retainedCount: 12, pastDeadline: 'direct-lease' },
   ] as const)('makes no assignment reads or claims during three settled idle minutes with $retainedCount retained assignments after $pastDeadline deadline recovery, then reads once for a real push', async ({ retainedCount, pastDeadline }) => {
-    vi.useFakeTimers();
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
     let worker: ReturnType<typeof startAutomationWorker> | undefined;
     try {
       process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
@@ -994,10 +1031,16 @@ describe('automationWorker', () => {
       // fields are not part of the worker assignment response.
       let directRunClaimDeadlines = pastDeadline === 'direct-lease'
         ? [{ runId: 'expired-direct-run', nextClaimAt: now - 60_000 }] : [];
-      mockGet.mockImplementation(async () => ({ data: {
-        assignments: rows, directRunClaimDeadlines, settings: DEFAULT_WORKER_SETTINGS,
-      } }));
-      mockPost.mockImplementation(async () => {
+      mockGet.mockClear().mockImplementation(async (url: string) => {
+        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (url.endsWith('/worker/assignments')) {
+          return { data: { assignments: rows, directRunClaimDeadlines, settings: DEFAULT_WORKER_SETTINGS } };
+        }
+        throw createAxios404(url);
+      });
+      const assignmentReads = () => mockGet.mock.calls.filter(([url]) => url.endsWith('/worker/assignments'));
+      const settingsReads = () => mockGet.mock.calls.filter(([url]) => url.endsWith('/v2/account/settings'));
+      mockPost.mockClear().mockImplementation(async () => {
         // Another machine settled the due work. The next authoritative read
         // removes its deadline; success must retire the null-claim cooldown.
         rows = rows.map(row => ({ ...row, nextClaimAt: null }));
@@ -1021,20 +1064,26 @@ describe('automationWorker', () => {
 
       await worker.refreshAssignments();
 
-      await settleRequestDispatch();
-      await vi.advanceTimersByTimeAsync(250);
-      expect(mockPost).toHaveBeenCalledTimes(pastDeadline === 'none' ? 0 : 1);
       const assignmentReadRecords = () => mockDebug.mock.calls
         .filter(([message]) => message === '[DAEMON AUTOMATION] Assignments refreshed').map(([, data]) => data);
-      mockGet.mockClear();
+      const initialSnapshots = pastDeadline === 'none' ? 1 : 2;
+      await vi.advanceTimersByTimeAsync(250);
+      await waitForCondition(() => assignmentReadRecords().length >= initialSnapshots
+        && migrationBoundary.get.mock.calls.length >= retainedCount * initialSnapshots);
+      expect(mockPost).toHaveBeenCalledTimes(pastDeadline === 'none' ? 0 : 1);
+      expect(assignmentReads()).toHaveLength(initialSnapshots);
+      const readsBeforeIdle = mockGet.mock.calls.length;
+      const lifecycleReadsBeforeIdle = mockLifecycleGet.mock.calls.length;
       mockPost.mockClear();
       mockDebug.mockClear();
-      expect(vi.getTimerCount()).toBe(0);
       await vi.advanceTimersByTimeAsync(180_000);
-      expect(mockGet).not.toHaveBeenCalled();
+      expect(mockGet).toHaveBeenCalledTimes(readsBeforeIdle);
+      expect(mockLifecycleGet).toHaveBeenCalledTimes(lifecycleReadsBeforeIdle);
       expect(mockPost).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
 
+      const assignmentsBeforePush = assignmentReads().length;
+      const settingsBeforePush = settingsReads().length;
       rows = [...rows, { machineId: 'machine-1', automationId: 'pushed-assignment', nextClaimAt: null, executionRecipeVersion: 2 }];
       worker.handleServerUpdate({
         id: 'assignment-push', seq: 1, createdAt: Date.now(),
@@ -1042,11 +1091,15 @@ describe('automationWorker', () => {
           enabled: true, updatedAt: Date.now() },
       } satisfies Update);
       await vi.advanceTimersByTimeAsync(250);
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      await waitForCondition(() => migrationBoundary.get.mock.calls.length >= retainedCount * initialSnapshots + rows.length);
+      expect(assignmentReads()).toHaveLength(assignmentsBeforePush + 1);
       expect(assignmentReadRecords()).toEqual([expect.objectContaining({ wakeReason: 'socket-assignment-updated' })]);
       expect(mockPost).not.toHaveBeenCalled();
+      expect(settingsReads()).toHaveLength(settingsBeforePush + 1);
+      const readsAfterPush = mockGet.mock.calls.length;
       await vi.advanceTimersByTimeAsync(180_000);
-      expect(mockGet).toHaveBeenCalledTimes(1);
+      expect(mockGet).toHaveBeenCalledTimes(readsAfterPush);
+      expect(mockLifecycleGet).toHaveBeenCalledTimes(lifecycleReadsBeforeIdle + 1);
       expect(mockPost).not.toHaveBeenCalled();
       expect(vi.getTimerCount()).toBe(0);
 

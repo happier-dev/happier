@@ -1,4 +1,4 @@
-import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createBackupFreshnessObserver } from '@/deployments/backups/freshnessObserver';
 import { randomBytes } from 'node:crypto';
 import { backfillAutomationManagedTargetsV1 } from '@happier-dev/protocol/actions/executor/workflowTriggerAccountHost';
@@ -26,6 +26,8 @@ import type { Update } from '@/api/types';
 import { readStoredCredentials, sameStoredCredentials, type StoredCredentials } from '@/persistence';
 import { DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE, isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationApiV3';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createSnapshotActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { invalidateActiveAutomationRun } from './automationRunInvalidation';
 import type { sendSessionMessage } from '@/session/services/sendSessionMessage';
 import type { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
@@ -199,12 +201,28 @@ export function startAutomationWorker(params: {
         : {}),
     });
   let maxActiveRunsPerMachine = DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE;
-  const observeBackupFreshness = createBackupFreshnessObserver({ credentials: params.credentials,
-    serverId: configuration.activeServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl(),
-    machineId: params.machineId, signal: workerCancellation.signal }, actionExecutor);
-  const publishBackupFreshness = (automationId: string) => {
-    void observeBackupFreshness(automationId).catch(error => {
-      if (!workerCancellation.signal.aborted) logAutomationWarn('Backup freshness notice unavailable', error, { automationId });
+  const freshnessHome = { serverId: configuration.activeServerId, serverHttpBaseUrl: resolveServerHttpBaseUrl() };
+  const publishBackupFreshness = (automationIds: readonly string[]) => {
+    const signal = workerCancellation.signal;
+    if (!automationIds.length || signal.aborted) return;
+    void runWithServerHttpBaseUrl(freshnessHome.serverHttpBaseUrl, async () => {
+      const credentials = await readStoredCredentials();
+      if (!credentials || !sameStoredCredentials(params.credentials, credentials) || signal.aborted) return;
+      // All checks in this wake use the same Account policy. A later wake reads it afresh.
+      const settings = await bootstrapAccountSettingsContext({ credentials, signal, mode: 'blocking', publication: 'invocation' });
+      if (signal.aborted) return;
+      const executor = createCliActionExecutorFromCredentials({
+        credentials,
+        machineId: params.machineId,
+        actionsSettingsProvider: createSnapshotActionSettingsProvider(() => settings),
+        ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}),
+      });
+      const observe = createBackupFreshnessObserver({ ...freshnessHome, credentials, machineId: params.machineId, signal }, executor);
+      await Promise.all(automationIds.map(automationId => observe(automationId).catch(error => {
+        if (!signal.aborted) logAutomationWarn('Backup freshness notice unavailable', error, { automationId });
+      })));
+    }).catch(error => {
+      if (!signal.aborted) logAutomationWarn('Backup freshness settings unavailable', error);
     });
   };
   const sourceObservers = createAutomationRunLifecycleObservers({
@@ -440,9 +458,7 @@ export function startAutomationWorker(params: {
             maxActiveRunsPerMachine = response.settings.maxActiveRunsPerMachine;
             wakeCapacityWaiters();
             assignments.replace(response.assignments);
-            for (const automationId of new Set(response.assignments.map(assignment => assignment.automationId))) {
-              publishBackupFreshness(automationId);
-            }
+            publishBackupFreshness([...new Set(response.assignments.map(assignment => assignment.automationId))]);
             directRunClaimDeadlines.clear();
             // Omission never installs a fallback poll for an older server.
             for (const deadline of response.directRunClaimDeadlines ?? []) {
@@ -872,7 +888,7 @@ export function startAutomationWorker(params: {
       const body = update?.body;
       if (!body || typeof body !== 'object') return;
       if ((body.t === 'automation-upsert' || body.t === 'automation-run-updated') && body.automationId !== null) {
-        publishBackupFreshness(body.automationId);
+        publishBackupFreshness([body.automationId]);
       }
       if (body.t === 'automation-upsert' || body.t === 'automation-delete') {
         scheduleAssignmentsRefreshSoon('socket-run-source-changed');
