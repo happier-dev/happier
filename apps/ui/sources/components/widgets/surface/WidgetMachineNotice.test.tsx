@@ -89,6 +89,27 @@ describe('WidgetMachineNoticeBoundary', () => {
         }
     });
 
+    it('skips notice reads on unrelated Account settings publications', async () => {
+        const preferredLanguage = storage.getState().settings.preferredLanguage;
+        const notice = vi.fn(() => ({ sentence: 'Machine unavailable' }));
+        const screen = await renderScreen(
+            <WidgetMachineNoticeBoundary testID="widget"><Lending notice={notice} /></WidgetMachineNoticeBoundary>,
+        );
+        try {
+            await flushHookEffects({ cycles: 2 });
+            expect(screen.findByTestId('widget-machine-notice')).not.toBeNull();
+            notice.mockClear();
+            await act(async () => {
+                storage.getState().applySettingsLocal({ preferredLanguage: preferredLanguage === 'en' ? 'fr' : 'en' });
+            });
+            expect(storage.getState().settings.preferredLanguage).not.toBe(preferredLanguage);
+            expect(notice).not.toHaveBeenCalled();
+        } finally {
+            await screen.unmount();
+            storage.getState().applySettingsLocal({ preferredLanguage });
+        }
+    });
+
     it('keeps the body usable and says it once: in the failure state that claims it, or else as one line with one action', async () => {
         let mounts = 0;
         function MixedBody(props: Readonly<{ failed: boolean }>) {

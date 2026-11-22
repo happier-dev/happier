@@ -79,6 +79,6 @@ export function WidgetMachineNoticeBoundary(props: Readonly<{ testID: string; ch
 // The body lends a live controller query whose inputs can be held in refs.
 const MACHINE_NOTICE_INPUTS = {
     machines: true, machineListByServerId: true, machineListStatusByServerId: true,
-    settings: true, profileScope: true,
+    settings: ['machineAdministrationTargetsLocalV1'], profileScope: true,
 } satisfies StorageSubscriptionScope;
 const bodyStyle = { flexGrow: 1, minWidth: 0 } as const;
