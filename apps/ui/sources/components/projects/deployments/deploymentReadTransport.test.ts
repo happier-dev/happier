@@ -497,6 +497,22 @@ describe('deployment scoped read transport', () => {
             { artifactIds: [detail.environment.contentArtifactId, latest.contentArtifactId, active.deployment.contentArtifactId, domain.contentArtifactId] },
         ]);
         expect(reads.filter(request => request.path.startsWith(`${root}/`))).toEqual([]);
+        respond({ currentDeployments: [active.deployment] });
+        const servingBody = JSON.stringify(active.content);
+        const parse = vi.spyOn(JSON, 'parse');
+        let bodyParses: number;
+        try {
+            expect(await readItem()).toMatchObject({ liveAddress: 'https://app.example.test/',
+                currentDeployment: { id: active.deployment.id, commitSubject: 'Older serving commit' } });
+            bodyParses = parse.mock.calls.filter(([value]) => value === servingBody).length;
+        } finally { parse.mockRestore(); }
+        expect(bodyParses).toBe(1);
+        respond({ currentDeployments: [active.deployment],
+            servingDeployments: [{ ...active.deployment, contentBodyVersion: 2 }] });
+        const mismatchedVersion = await readItem();
+        expect(mismatchedVersion.currentDeployment).toMatchObject({ commitSubject: 'Older serving commit' });
+        expect(mismatchedVersion).not.toHaveProperty('liveAddress');
+        respond();
         const controller = createDeploymentReadControllerV1({ scope: lifetime.scope, transport });
         const collection = controller.acquireCollection({}, { mounted: true, visible: true, focused: true });
         try {

@@ -439,15 +439,16 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (!opened.ok) coverage = 'partial';
                 const current = currentByEnvironment.get(environment.id);
                 let currentDeployment: DeploymentEnvironmentCollectionV1['items'][number]['currentDeployment'] = null;
+                let currentReceiptContent: ReturnType<typeof readDeploymentReceiptArtifactV1> | undefined;
                 if (current && hasDeploymentReceiptContentV1(current.receipt)) {
                     const receiptHeader = contents[page.items.length + current.index];
                     const artifact = receiptHeader?.status === 'fulfilled' ? receiptHeader.value : null;
                     const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, artifact);
                     if (projection.ok) {
-                        const opened = readDeploymentReceiptArtifactV1(current.receipt, artifact);
+                        currentReceiptContent = readDeploymentReceiptArtifactV1(current.receipt, artifact);
                         currentDeployment = { ...current.receipt, title: projection.title, steps: projection.steps,
-                            ...(opened.ok ? projectDeploymentReceiptSourceFactsV1(opened.content) : {}) };
-                        if (!opened.ok) coverage = 'partial';
+                            ...(currentReceiptContent.ok ? projectDeploymentReceiptSourceFactsV1(currentReceiptContent.content) : {}) };
+                        if (!currentReceiptContent.ok) coverage = 'partial';
                     } else coverage = 'partial';
                 } else if (current) currentDeployment = current.receipt;
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
@@ -458,7 +459,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                         const active = servingById.get(runtimeTargetLink.activeDeploymentId);
                         if (active && hasDeploymentReceiptContentV1(active.receipt)) {
                             const read = contents[servingOffset + active.index];
-                            const opened = readDeploymentReceiptArtifactV1(active.receipt, read?.status === 'fulfilled' ? read.value : null);
+                            const sameReceipt = current?.receipt.id === active.receipt.id
+                                && current.receipt.contentArtifactId === active.receipt.contentArtifactId
+                                && current.receipt.contentHeaderVersion === active.receipt.contentHeaderVersion
+                                && current.receipt.contentBodyVersion === active.receipt.contentBodyVersion;
+                            const opened = (sameReceipt ? currentReceiptContent : undefined)
+                                ?? readDeploymentReceiptArtifactV1(active.receipt, read?.status === 'fulfilled' ? read.value : null);
                             if (opened.ok) {
                                 const receipt = { deployment: active.receipt, content: opened.content,
                                     facts: projectDeploymentReceiptUrlFactsV1(opened.content) };
