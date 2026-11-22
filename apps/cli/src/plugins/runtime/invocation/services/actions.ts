@@ -427,7 +427,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const selectedActionInputClaimed = { current: false };
     const confirmedSource = params.seed.approvalContext;
     const confirmedTargets = confirmedSource?.sessionTargetsV1?.targets;
-    const claimSend = params.seed.presentUserIntent === 'confirmed' && confirmedTargets?.length === 1
+    // A contributed child can inherit the UI origin for its own approval
+    // policy. Only the pressed Action owns the confirmed Send grant.
+    const claimSend = params.seed.surface === 'ui'
+        && params.seed.presentUserIntent === 'confirmed' && confirmedTargets?.length === 1
         ? createConfirmedSessionSendClaimV1(confirmedTargets[0], (admitted, destination) =>
             areServerProfileIdentifiersEquivalent(admitted, destination, identifier =>
                 identifier === confirmedSource?.serverId || identifier === confirmedSource?.serverIdentityId

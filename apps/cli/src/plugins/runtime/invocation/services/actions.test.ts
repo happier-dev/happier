@@ -309,7 +309,10 @@ describe('plugin invocation ActionsService', () => {
         expect(sends).toBe(0);
     });
 
-    it('spends the confirmed daemon Session Send authority only once', async () => {
+    it.each([
+        { surface: 'ui', first: 'accepted' },
+        { surface: 'plugin', first: 'held' },
+    ] as const)('spends the confirmed daemon Session Send authority at most once on $surface', async ({ surface, first }) => {
         const address = { serverId: 'bound-home', sessionId: 'pressed-session' };
         const pluginId = 'example.session-author';
         const resolveSessionReference: NonNullable<ActionExecutorDeps['resolveSessionReference']> = async ({ sessionId }) => ({
@@ -318,8 +321,9 @@ describe('plugin invocation ActionsService', () => {
         const sessionTargetsV1 = await resolveActionSessionTargets({
             ...createUnavailableActionTransportDeps(), resolveSessionReference,
         }, {
-            actionId: 'session.message.send', declaration: { field: 'sessionId', cardinality: 'one' },
-            input: { sessionId: address.sessionId }, context: { surface: 'plugin', authority: 'account_automation',
+            actionId: 'action.invoke', declaration: { field: 'input.sessionId', cardinality: 'one' },
+            input: { action: { pluginId, localId: 'send' }, input: { sessionId: address.sessionId } },
+            context: { surface: 'ui', authority: 'present_user',
                 serverId: address.serverId, expectedSessionAddress: address },
         });
         if (!sessionTargetsV1 || 'ok' in sessionTargetsV1) throw new Error('Expected a host-admitted Session');
@@ -330,7 +334,7 @@ describe('plugin invocation ActionsService', () => {
                 occurrenceId: 'confirmed-session-send',
                 sourceCustody: { kind: 'development', registeredRootId: 'session-send-root' },
                 resolveCurrentPluginMaterializationRef: createPluginActionCallerMaterializationFixture(pluginId).resolveCurrentPluginMaterializationRef,
-                surface: 'ui', signal: new AbortController().signal, isOccurrenceCurrent: () => true,
+                surface, signal: new AbortController().signal, isOccurrenceCurrent: () => true,
                 presentUserIntent: 'confirmed',
                 approvalContext: { serverId: address.serverId, runtimeAccountId: 'bound-account', sessionTargetsV1 },
             },
@@ -345,7 +349,7 @@ describe('plugin invocation ActionsService', () => {
         const send = (idempotencyKey: string) => service.execute('session.message.send', {
             sessionId: address.sessionId, message: 'Continue this Session', idempotencyKey,
         }, { sessionAddress: address });
-        await expect(send('daemon-first-send')).resolves.toMatchObject({ status: 'accepted' });
+        await expect(send('daemon-first-send')).resolves.toMatchObject({ status: first });
         await expect(send('daemon-second-send')).resolves.toMatchObject({ status: 'held' });
     });
 
