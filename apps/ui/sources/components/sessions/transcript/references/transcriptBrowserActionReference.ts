@@ -124,6 +124,7 @@ function resolveVerb(actionId: string): TranscriptBrowserActionVerb {
         return AUTOMATION_VERBS[actionId.slice('browser.automation.'.length)] ?? 'look';
     }
     switch (actionId) {
+        case 'browser.workspace.open':
         case 'browser.view.open':
         case 'browser.target.set':
         case 'browser.navigate':

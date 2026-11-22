@@ -1637,6 +1637,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     requesterActionsSettings: "設定 → 操作",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} 已離線。請求將等待；確認之前不會寫入任何內容。`,
     staleFailure: "請求發出後，其目標已發生變化，因此未執行任何操作。",
+    staleSessionChanged: "發出請求的工作階段已停止或已變更，因此未執行任何操作。",
     conflictFailure: "審閱後它已變更，因此未套用任何內容。請查看目前版本後重試。",
     transientFailureTitle: '伺服器忙碌中',
     transientFailure: "伺服器忙碌中，因此未做任何變更。請重試。",
@@ -6454,6 +6455,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     errors: {
         networkError: '發生網路錯誤',
         machineNotAnswering: '那台機器沒有回應。請等它恢復連線後再試。',
+        requesterCredentialDisclosureRequired: "尚不支援設定同步到他人的機器，或將服務移到他人的機器。未傳送任何內容。",
+        sessionHeldByPerson: "有人停止了此工作階段。訊息會等待，直到有人繼續它。",
+        custodianOnly: "只有這台機器的擁有者才能在這裡執行此操作。",
         workspaceUnavailableOnMachine: '那台機器上沒有可用的專案資料夾。請確認資料夾仍然存在，然後再試。',
         serverError: '發生Home錯誤',
         unknownError: '發生未知錯誤',
@@ -9832,7 +9836,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "此服務尚未準備好開啟。"
                   : '此服務尚未準備好開啟，請查看「服務」。',
-                browserViewUnavailable: "Happier 無法開啟應用程式內的瀏覽器檢視，請稍後再試。",
+                browserViewUnavailable: "瀏覽器無法在這裡開啟，請稍後再試。",
                 startFailedTitle: "服務未能啟動",
                 startFailed: "服務在就緒前已停止。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}在就緒前已停止。`,
@@ -9922,8 +9926,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             sessionNotOwned: '在這台機器上，你只能錄製到自己的工作階段中。沒有錄製任何內容。',
             sessionUnavailable: '此工作階段目前無法在這台機器上保存錄製（可能已結束），因此沒有錄製任何內容。',
             notSavedTitle: '錄製未儲存',
+            notInConversationTitle: "錄製未加入對話",
             notSavedGone: '錄製已停止，但無法儲存到此工作階段，因此已遺失。',
-            notSavedInFiles: '錄製已停止，並保存在此工作階段的檔案中，但無法加入對話。',
+            notSavedInFiles: "錄製已停止，並已儲存在此工作階段的檔案中。",
             notSavedBody: '錄製已停止，但無法儲存。',
             stopTitle: '無法停止錄製',
             stopBody: '可能仍在錄製。請稍後再試。',

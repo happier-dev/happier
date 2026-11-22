@@ -1760,6 +1760,7 @@ const enApprovals = {
   decisionAuthorityError:
     'This sign-in cannot approve requests. Sign in to this Home with your account recovery key, or approve from another device with an account sign-in.',
   staleFailure: "Its target changed after this was asked, so nothing was run.",
+  staleSessionChanged: "The Session that asked was stopped or changed, so nothing ran.",
   conflictFailure: "It changed after this was reviewed, so nothing was applied. Review the current version and try again.",
   transientFailureTitle: 'Server busy',
   transientFailure: "The server was busy, so nothing was changed. Try again.",
@@ -8727,6 +8728,9 @@ const enSettingsFeatures = {
 const enErrors = {
   networkError: 'Network error occurred',
   machineNotAnswering: 'That Machine isn’t answering. Try again once it’s back online.',
+  requesterCredentialDisclosureRequired: "Setting up a Sync to, or moving a Service to, a machine that belongs to another person isn’t available yet. Nothing was sent.",
+  sessionHeldByPerson: "A person stopped this Session. The message waits until someone resumes it.",
+  custodianOnly: "Only this machine’s owner can do this here.",
   workspaceUnavailableOnMachine: 'The project’s folder isn’t available on that Machine. Check that the folder is still there, then try again.',
   serverError: 'Home error occurred',
   unknownError: 'An unknown error occurred',
@@ -13815,7 +13819,7 @@ const enLocalServices = {
       previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}): string => servicesActionOffered
         ? "This service isn’t ready to open."
         : 'This service isn’t ready to open; check Services.',
-      browserViewUnavailable: "Happier couldn’t open its in-app browser view. Try again in a moment.",
+      browserViewUnavailable: "The Browser couldn’t open here. Try again in a moment.",
       startFailedTitle: "Service couldn’t start",
       startFailed: "The service stopped before it was ready.",
       namedStartFailed: ({ service }: { service: string }): string => `${service} stopped before it was ready.`,
@@ -13909,8 +13913,9 @@ const enBrowserRecording = {
     sessionNotOwned: 'You can only record into your own Sessions on this machine. Nothing was recorded.',
     sessionUnavailable: 'This Session can’t keep recordings on this machine right now (it may have ended), so nothing was recorded.',
     notSavedTitle: 'Recording not saved',
+    notInConversationTitle: "Recording not added to the conversation",
     notSavedGone: 'The recording stopped, but it couldn’t be saved to this Session, so it’s gone.',
-    notSavedInFiles: 'The recording stopped and is in this Session’s files, but it couldn’t be added to the conversation.',
+    notSavedInFiles: "The recording stopped and is saved in this Session’s files.",
     notSavedBody: 'The recording stopped, but it couldn’t be saved.',
     stopTitle: 'Couldn’t stop the recording',
     stopBody: 'It may still be recording. Try again in a moment.',

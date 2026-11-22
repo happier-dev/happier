@@ -403,6 +403,31 @@ function settledConfidentialFill(result: unknown) {
         execution: { executedAtMs: 3, effectAttempted: true, ok: true, result } });
 }
 
+describe('runtime refusal outcome', () => {
+    it('says the asking Session was stopped or changed when a stale approval names that reason', () => {
+        expect(presentRecordedApprovalFailure({ errorCode: 'approval_stale', error: 'approval_stale',
+            details: { reason: 'session_changed' } }).reason).toBe(t('approvals.staleSessionChanged'));
+        expect(presentRecordedApprovalFailure({ errorCode: 'approval_stale', error: 'approval_stale',
+            details: { reason: 'home_changed' } }).reason).toBe(t('approvals.staleFailure'));
+    });
+
+    it('says why an approved Browser open failed, from the refusal\'s own reason, with no raw code as the reason', () => {
+        const request = ApprovalRequestV1Schema.parse({ v: 1, status: 'failed', createdAtMs: 1, updatedAtMs: 2,
+            createdBy: { surface: 'agent', sessionId: 'session' }, requestedSurface: 'agent',
+            actionId: 'browser.workspace.open', actionArgs: { scopeId: 'session',
+                target: { kind: 'externalUrl', targetId: 'agent-target', url: 'https://en.wikipedia.org/wiki/Price_point' } },
+            summary: 'Open en.wikipedia.org in the Browser', decision: { kind: 'approve', decidedAtMs: 2 },
+            execution: { executedAtMs: 3, ok: false, errorCode: 'runtime_action_disabled',
+                error: 'runtime_action_disabled:browser:browser_view_unavailable' } });
+        const failure = readApprovalExecutionFailure(request);
+        if (!failure) throw new Error('Missing failed open');
+        const outcome = presentApprovalFailureOutcome(request, failure);
+        expect(outcome.reason).toBe(t('localServices.actions.failure.browserViewUnavailable'));
+        // The executor's own words stay in Technical details.
+        expect(outcome.technicalDetails.map(line => line.value)).toContain('runtime_action_disabled:browser:browser_view_unavailable');
+    });
+});
+
 describe('confidential fill outcome', () => {
     it('names a refused entry by what happened, not as an unexplained failed Action', () => {
         const request = settledConfidentialFill({ status: 'refused', code: 'target_changed' });

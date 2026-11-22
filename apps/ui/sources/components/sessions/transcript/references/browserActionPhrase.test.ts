@@ -106,6 +106,12 @@ describe('browser tool row phrase', () => {
         expect(say(openCall('completed', { ok: false, error: { code: 'browser_view_unavailable', message: 'unavailable' } }))).toBe(failed);
     });
 
+    it('names a workspace Browser open as the page it opens, not as using the browser', () => {
+        const tool: ToolCall = { ...openCall('running'), input: { actionId: 'browser.workspace.open', input: { scopeId: 'scope_1',
+            target: { kind: 'externalUrl', targetId: 'agent-target', url: 'https://en.wikipedia.org/wiki/Price_point' } } } };
+        expect(say(tool)).toBe('browserTool.present.opened:{"page":"en.wikipedia.org/wiki/Price_point"}');
+    });
+
     it('tells the outcome in the past once the call completed', () => {
         expect(say(openCall('completed', { ok: true, result: { browserSessionId: 'browser_session_1', viewId: 'browser_view_1' } })))
             .toBe('browserTool.opened:{"page":"en.wikipedia.org/wiki/Checkout"}');

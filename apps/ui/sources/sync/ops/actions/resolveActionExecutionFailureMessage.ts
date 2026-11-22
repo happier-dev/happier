@@ -91,6 +91,20 @@ export function describeMachineNativeFailureCode(code: unknown, details?: unknow
     }
 }
 
+/**
+ * A runtime family's refusal carries its typed reason inside the envelope's error, in the one format Protocol's
+ * `createRuntimeActionDisabledResult` writes (`runtime_action_disabled:<family>:<reason>`); a host-side opener may
+ * write the bare reason. Closed decode only: anything else is not a reason and reads as nothing.
+ */
+export function readRuntimeActionDisabledReason(value: unknown): Readonly<{ family: string | null; reason: string }> | null {
+    const record = asRecord(value);
+    if ((record?.errorCode ?? record?.code) !== 'runtime_action_disabled' || typeof record?.error !== 'string') return null;
+    const namespaced = /^runtime_action_disabled:([a-z][A-Za-z0-9_.]*):([a-z][a-z0-9_]*(?::[a-z][a-z0-9_]*)*)$/u.exec(record.error);
+    if (namespaced) return { family: namespaced[1], reason: namespaced[2] };
+    return /^[a-z][a-z0-9_]*$/u.test(record.error) && record.error !== 'runtime_action_disabled'
+        ? { family: null, reason: record.error } : null;
+}
+
 type FailurePresentationOptions = Readonly<{ safeToRetry?: boolean; notAppliedMessage?: string; closedCodesOnly?: boolean;
     serviceCommand?: Readonly<{ service: string; machine: string }> }>;
 
@@ -121,6 +135,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
     if (!record) return null;
     if (options?.closedCodesOnly) return readFailureFallbackMessage({
         errorCode: record.errorCode ?? record.code ?? record.rpcErrorCode,
+        // Only the runtime refusal's closed reason is read from it; its text never becomes the sentence here.
+        error: record.error,
         details: record.details,
         failureCause: record.failureCause,
     }, options);
@@ -148,6 +164,10 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return resolveSessionSpawnNewResultFailureMessage(childSession);
     }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
+    // A runtime family's refusal is read by its typed reason, not by the family-wide wrapper code. A bare reason
+    // code (a Service flow's own refusal) keeps its caller's named copy.
+    const runtimeRefusal = readRuntimeActionDisabledReason(record);
+    if (runtimeRefusal?.reason === 'browser_view_unavailable') return t('localServices.actions.failure.browserViewUnavailable');
     const installationReplacement = readDeploymentInstallationReplacementRefusalV1(code, record.details);
     if (installationReplacement) return installationReplacement.remedy;
     const stalePluginViewMessage = typeof code === 'string' ? resolvePluginSurfaceStaleReasonMessage(code) : null;
@@ -203,6 +223,11 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
     if (code === 'agent_isolation_unavailable') return t('errors.agentIsolationUnavailable');
+    // Sync and Service moves to another person's Machine wait for an owner-decided consent step; none exists yet.
+    if (code === 'requester_credential_disclosure_required') return t('errors.requesterCredentialDisclosureRequired');
+    // A person's Stop holds a Send; it waits in Pending until a person resumes the Session (docs/pending-delivery.md).
+    if (code === 'held_by_person') return t('errors.sessionHeldByPerson');
+    if (code === 'custodian_only') return t('errors.custodianOnly');
     if (code === 'sandbox_unavailable') return resolveReasonCopy({ kind: 'browserFrame', reasonCode: code }).body;
     if (code === 'profile_exists') return t('browserShell.profile.management.profileExists');
     if (code === 'profile_not_found') return t('browserShell.profile.management.profileNotFound');
@@ -271,7 +296,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     }
     if (options?.closedCodesOnly) return null;
     // An error text that only repeats its code ("target_unavailable") is not a sentence: the caller's fallback speaks.
-    const error = typeof record.error === 'string' ? record.error.trim() : '';
+    // A runtime refusal's error is its reason code, not a sentence.
+    const error = typeof record.error === 'string' && !runtimeRefusal ? record.error.trim() : '';
     if (error.length > 0 && error !== code) return error;
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
     if (errorMessage.length > 0 && errorMessage !== code) return errorMessage;

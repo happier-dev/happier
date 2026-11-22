@@ -10,7 +10,7 @@ import { isLocalServiceActionRefusedByPolicy, resolveReasonCopy } from '@/sync/d
 import { t } from '@/text';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import { resolveLocalServiceStartFailure, type LocalServiceOutputRecovery } from '@/sync/domains/local/services/serviceFailure';
-import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, readRuntimeActionDisabledReason } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /**
  * The ONE outcome path for every local-service action (tunnels audit §9.2).
@@ -60,14 +60,8 @@ export function readLocalServiceActionFailureReason(result: unknown): string | n
     const details = asRecord(record?.details);
     let code = readNonEmptyString(details?.reasonCode) ?? readNonEmptyString(readRpcErrorCode(result))
         ?? readNonEmptyString(record?.code) ?? readNonEmptyString(record?.reasonCode) ?? readNonEmptyString(record?.errorCode);
-    if (code === 'runtime_action_disabled' && typeof record?.error === 'string') {
-        const prefix = 'runtime_action_disabled:localServices:';
-        if (record.error.startsWith(prefix)) code = readNonEmptyString(record.error.slice(prefix.length)) ?? code;
-        else {
-            const browserReason = /^runtime_action_disabled:browser:([a-z][a-z0-9_]*)$/u.exec(record.error);
-            if (browserReason) code = browserReason[1];
-        }
-    }
+    const runtimeRefusal = code === 'runtime_action_disabled' ? readRuntimeActionDisabledReason(record) : null;
+    if (runtimeRefusal && (runtimeRefusal.family === 'localServices' || runtimeRefusal.family === 'browser')) code = runtimeRefusal.reason;
     // The Action envelope namespaces the daemon's refusal; the direct preview
     // opener already carries that same producer code. Neither carries prose.
     const previewReason = code && /^local_services_preview_refused:([a-z][a-z0-9_]*)$/u.exec(code);

@@ -15459,7 +15459,7 @@ const sessionRemotePermissionGrantTranslations = { pt: {
             addAction: 'Adicionar uma ação',
             noActionsToAdd: 'Cada ação já tem a sua própria escolha aqui.',
             emptyTitle: 'Nenhuma ação permitida ainda',
-            emptyReason: 'Adicione uma ação para escolher se é executada ou pergunta nesta sessão.',
+            emptyReason: "Ainda nada aqui substitui as suas definições.",
             loadingTitle: 'Carregando ações permitidas',
             unavailableTitle: 'Ações permitidas indisponíveis',
             unavailableReason: 'O Happier não conseguiu ler as escolhas desta sessão, então cada ação pergunta como de costume.',

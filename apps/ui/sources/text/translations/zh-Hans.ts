@@ -2170,6 +2170,7 @@ export const zhHans: TranslationStructure = {
     decisionError: "更新审批失败。",
     decisionAuthorityError: "此登录方式无法批准请求。请使用账户恢复密钥登录此 Home，或在已登录账户的另一台设备上批准。",
     staleFailure: "请求发出后，其目标已发生变化，因此未执行任何操作。",
+    staleSessionChanged: "发起请求的会话已停止或已更改，因此未执行任何操作。",
     conflictFailure: "审核之后它已发生变化，因此未应用任何内容。请查看当前版本后重试。",
     transientFailureTitle: '服务器正忙',
     transientFailure: "服务器正忙，因此未做任何更改。请重试。",
@@ -7328,6 +7329,9 @@ export const zhHans: TranslationStructure = {
   errors: {
     networkError: "发生网络错误",
     machineNotAnswering: '那台机器没有响应。请等它恢复在线后再试。',
+    requesterCredentialDisclosureRequired: "尚不支持设置同步到他人的机器，或将服务移到他人的机器。未发送任何内容。",
+    sessionHeldByPerson: "有人停止了此会话。消息会等待，直到有人恢复它。",
+    custodianOnly: "只有这台机器的所有者才能在这里执行此操作。",
     workspaceUnavailableOnMachine: '那台机器上没有可用的项目文件夹。请确认文件夹仍然存在，然后再试。',
     serverError: "发生Home错误",
     unknownError: "发生未知错误",
@@ -11695,7 +11699,7 @@ export const zhHans: TranslationStructure = {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "此服务尚未准备好打开。"
                   : '此服务尚未准备好打开，请查看“服务”。',
-                browserViewUnavailable: "Happier 无法打开应用内浏览器视图，请稍后再试。",
+                browserViewUnavailable: "浏览器无法在这里打开，请稍后再试。",
                 startFailedTitle: "服务未能启动",
                 startFailed: "服务在就绪前已停止。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}在就绪前已停止。`,
@@ -11785,8 +11789,9 @@ export const zhHans: TranslationStructure = {
       sessionNotOwned: '在这台机器上，你只能录制到自己的会话中。没有录制任何内容。',
       sessionUnavailable: '此会话目前无法在这台机器上保存录制（可能已结束），因此没有录制任何内容。',
       notSavedTitle: '录制未保存',
+      notInConversationTitle: "录制未添加到对话中",
       notSavedGone: '录制已停止，但无法保存到此会话，因此已丢失。',
-      notSavedInFiles: '录制已停止，并保存在此会话的文件中，但无法添加到对话中。',
+      notSavedInFiles: "录制已停止，并已保存在此会话的文件中。",
       notSavedBody: '录制已停止，但无法保存。',
       stopTitle: '无法停止录制',
       stopBody: '可能仍在录制。请稍后重试。',

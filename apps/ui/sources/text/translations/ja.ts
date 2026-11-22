@@ -2339,6 +2339,7 @@ export const ja: TranslationStructure = {
     decisionError: "承認を更新できませんでした。",
     decisionAuthorityError: "このログインではリクエストを承認できません。アカウントの復旧キーでこのHomeにログインするか、アカウントでログイン済みの別の端末から承認してください。",
     staleFailure: "依頼後に対象が変更されたため、何も実行されませんでした。",
+    staleSessionChanged: "依頼したセッションが停止または変更されたため、何も実行されませんでした。",
     conflictFailure: "レビュー後に変更されたため、何も適用されませんでした。現在のバージョンを確認して、もう一度お試しください。",
     transientFailureTitle: 'サーバーがビジー状態です',
     transientFailure: "サーバーがビジー状態だったため、何も変更されていません。もう一度お試しください。",
@@ -7916,6 +7917,9 @@ localTailscale: {
   errors: {
     networkError: "ネットワークエラーが発生しました",
     machineNotAnswering: 'そのマシンは応答していません。オンラインに戻ったらもう一度お試しください。',
+    requesterCredentialDisclosureRequired: "別の人のマシンへの同期の設定や、そこへのサービスの移動はまだ利用できません。何も送信されていません。",
+    sessionHeldByPerson: "このセッションは人によって停止されました。誰かが再開するまでメッセージは待機します。",
+    custodianOnly: "ここでこれを行えるのはこのマシンの所有者だけです。",
     workspaceUnavailableOnMachine: 'そのマシンではプロジェクトのフォルダを利用できません。フォルダがまだあるか確認してから、もう一度お試しください。',
     serverError: "Homeエラーが発生しました",
     unknownError: "不明なエラーが発生しました",
@@ -12357,7 +12361,7 @@ localTailscale: {
                 previewNotReady: ({ servicesActionOffered = false }: { servicesActionOffered?: boolean } = {}) => servicesActionOffered
                   ? "このサービスはまだ開けません。"
                   : 'このサービスはまだ開けません。「サービス」を確認してください。',
-                browserViewUnavailable: "Happier がアプリ内ブラウザビューを開けませんでした。しばらくしてからもう一度お試しください。",
+                browserViewUnavailable: "ここではブラウザーを開けませんでした。しばらくしてからもう一度お試しください。",
                 startFailedTitle: "サービスを起動できませんでした",
                 startFailed: "サービスは準備が整う前に停止しました。",
                 namedStartFailed: ({ service }: { service: string }): string => `${service}は準備が整う前に停止しました。`,
@@ -12447,8 +12451,9 @@ localTailscale: {
       sessionNotOwned: 'このマシンでは自分のセッションにのみ録画できます。何も録画されていません。',
       sessionUnavailable: 'このセッションは現在このマシンに録画を保存できません（終了している可能性があります）。何も録画されていません。',
       notSavedTitle: '録画は保存されませんでした',
+      notInConversationTitle: "録画は会話に追加されませんでした",
       notSavedGone: '録画は停止しましたが、このセッションに保存できなかったため失われました。',
-      notSavedInFiles: '録画は停止し、このセッションのファイルにありますが、会話に追加できませんでした。',
+      notSavedInFiles: "録画は停止し、このセッションのファイルに保存されています。",
       notSavedBody: '録画は停止しましたが、保存できませんでした。',
       stopTitle: '録画を停止できませんでした',
       stopBody: 'まだ録画中の可能性があります。少し待ってからもう一度お試しください。',

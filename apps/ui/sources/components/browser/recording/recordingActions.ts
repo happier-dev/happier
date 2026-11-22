@@ -36,7 +36,9 @@ export function presentRecordingStopOutcome(answer: unknown): void {
         return;
     }
     const saveFailure = RecordingSaveFailureV1Schema.safeParse((answer as { saveFailure?: unknown }).saveFailure).data;
-    Modal.alert(t('browserRecording.failure.notSavedTitle'), saveFailure === 'workspace_write_failed'
+    // A recording kept in the Session's files was saved; only its place in the conversation is missing.
+    Modal.alert(t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle'
+        : 'browserRecording.failure.notSavedTitle'), saveFailure === 'workspace_write_failed'
         ? t('browserRecording.failure.notSavedGone')
         : saveFailure === 'transcript_attach_failed'
             ? t('browserRecording.failure.notSavedInFiles')

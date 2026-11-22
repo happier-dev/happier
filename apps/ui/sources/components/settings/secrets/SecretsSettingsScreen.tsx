@@ -294,7 +294,8 @@ export const SecretsSettingsScreen = React.memo(function SecretsSettingsScreen()
                 confirmDeletion: (warning?: SavedSecretUnreadableReferencesWarningV1) => Modal.confirm(
                     t('secretsSettings.deleteConfirmTitle', { name: confirmation.name ?? t('secrets.catalog.unavailableName') }),
                     warning ? t('secretsSettings.deleteUnreadableReferencesBody', { count: warning.count })
-                        : confirmation.shared ? t('secretsSettings.deleteNoteShared') : t('secretsSettings.deleteNote'),
+                        // The one destructive wording; a shared Secret also says who else loses it, which the page note told before.
+                        : confirmation.shared ? t('secretsSettings.deleteNoteShared') : t('approvals.irreversibleNote'),
                     { cancelText: t('common.cancel'), confirmText: t('common.delete'), destructive: true },
                 ),
                 onApprovalSucceeded: () => {

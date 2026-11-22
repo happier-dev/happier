@@ -13,6 +13,24 @@ import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, reso
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('says what a typed refusal means and what the person can do, never its code', () => {
+        const say = (failure: Record<string, unknown>) => resolveActionExecutionFailureMessage({ ok: false, ...failure }, 'fallback');
+        expect(say({ errorCode: 'requester_credential_disclosure_required', error: 'requester_credential_disclosure_required' }))
+            .toBe(t('errors.requesterCredentialDisclosureRequired'));
+        // A Send held by a person's Stop: the sender's receipt carries the hold as its cause.
+        expect(say({ errorCode: 'held_by_person' })).toBe(t('errors.sessionHeldByPerson'));
+        expect(say({ errorCode: 'session_input_target_unavailable', failureCause: { phase: 'session.message.send',
+            errorClass: 'Error', errorCode: 'held_by_person', httpStatus: null } })).toBe(t('errors.sessionHeldByPerson'));
+        // A Machine guest refused by a Service Action: the refusal names its typed reason under the runtime wrapper.
+        expect(say({ errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:localServices:local_services_launcher_request_failed',
+            failureCause: { phase: 'localServices', errorClass: 'RpcError', errorCode: 'custodian_only', httpStatus: null } }))
+            .toBe(t('errors.custodianOnly'));
+        expect(say({ errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_view_unavailable' }))
+            .toBe(t('localServices.actions.failure.browserViewUnavailable'));
+        // A runtime refusal's error is a code, not a sentence: an unknown reason keeps the caller's line.
+        expect(say({ errorCode: 'runtime_action_disabled', error: 'runtime_action_disabled:browser:browser_future_reason' })).toBe('fallback');
+    });
+
     it('presents the deployment installation refusal from the HTTP failure envelope', () => {
         const details = { reason: 'machine_installation_replaced', requiredFact: 'installationId=retired-installation',
             remedy: 'This Machine was reinstalled. Create a new Environment on the current installation and add its required secrets.' };

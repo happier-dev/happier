@@ -58,7 +58,8 @@ describe('recording failure presentation', () => {
       });
       const { title, body, buttons } = shown();
       expect({ title, body, buttons }).toEqual({
-        title: t('browserRecording.failure.notSavedTitle'),
+        // A recording kept in the Session's files was saved: only its place in the conversation is missing.
+        title: t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle' : 'browserRecording.failure.notSavedTitle'),
         body: t(key),
         buttons: undefined,
       });

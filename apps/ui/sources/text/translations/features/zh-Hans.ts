@@ -15349,7 +15349,7 @@ const sessionRemotePermissionGrantTranslations = { 'zh-Hans': {
             addAction: '添加操作',
             noActionsToAdd: '每个操作在这里都已有自己的选择。',
             emptyTitle: '尚未允许任何操作',
-            emptyReason: '添加操作，选择它在此会话中直接运行还是先询问。',
+            emptyReason: "这里还没有覆盖你设置的内容。",
             loadingTitle: '正在加载已允许的操作',
             unavailableTitle: '已允许的操作不可用',
             unavailableReason: 'Happier 无法读取此会话的选择，因此每个操作照常询问。',

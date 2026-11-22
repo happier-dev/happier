@@ -8,6 +8,7 @@ import type { ApprovalRequest} from '@happier-dev/protocol/approvals/approvalReq
 import type { TargetActionApprovalRequestV1} from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ExecutionRunHostActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/executionRunHostActionApprovalRequestV1';
 import { ApprovalExecutionV1Schema, ApprovalRequestPublicSettlementSchema, resolveApprovalExecutor, type ApprovalExecutionV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalStaleReason';
 import { TeamInvitationCreateResultV1Schema, TeamInvitationReissueResultV1Schema } from '@happier-dev/protocol/teams';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -29,7 +30,7 @@ import { t } from '@/text';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
-import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure, readRuntimeActionDisabledReason } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { WorkflowActionFailureV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
@@ -55,7 +56,13 @@ export function presentApprovalFailure(
     reason: string;
     code: string | null;
 }> {
-    if (isApprovalDecisionStale(error)) return { reason: t('approvals.staleFailure'), code: null };
+    if (isApprovalDecisionStale(error)) {
+        // The stale fact the executor named: the asking Session stopped or changed reads as that, not a moved target.
+        const stale = ApprovalStaleFailureDetailsSchema.safeParse(typeof error === 'object' && error !== null && 'details' in error
+            ? error.details : undefined);
+        return { reason: t(stale.success && stale.data.reason === 'session_changed' ? 'approvals.staleSessionChanged' : 'approvals.staleFailure'),
+            code: null };
+    }
     const code = typeof error === 'object' && error !== null
         ? 'errorCode' in error ? error.errorCode : 'code' in error ? error.code : null
         : error;
@@ -104,8 +111,10 @@ export function presentApprovalFailure(
     // above. Keep it with the cause; raw thrown transport prose stays excluded.
     const publicReason = typeof error === 'object' && error !== null && !(error instanceof Error)
         && 'error' in error && error.error === reason ? reason : undefined;
+    // A runtime family's refusal carries its typed reason in its error; the presenter reads that reason, never the text.
+    const runtimeRefusal = readRuntimeActionDisabledReason(error) ? { error: (error as { error: string }).error } : null;
     return { reason: presentActionExecutionFailure({ ok: false,
-        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause,
+        errorCode: diagnosticCode ?? 'approval_execution_failed', failureCause, ...runtimeRefusal,
         ...(publicReason ? { message: publicReason } : {}) }, reason).reason, code: diagnosticCode };
 }
 
