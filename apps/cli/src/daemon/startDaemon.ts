@@ -2610,6 +2610,7 @@ export async function startDaemon(
       resolveExecutionRunLiveBrokerAuthority,
       readRequesterNativeOfferedModel,
       withSessionConfigOptionEnvironment,
+      withSessionAccountContext,
       providerAccountUsageStore,
       resolveProviderAccountUsageStore,
       flushProviderAccountUsagePersistence,
@@ -3845,6 +3846,7 @@ export async function startDaemon(
         resolveExecutionRunLiveBrokerAuthority,
         readRequesterNativeOfferedModel,
         withSessionConfigOptionEnvironment,
+        withSessionAccountContext,
         onActivationRejected: async event => { await guardSessionRestoration?.onActivationRejected(event); },
         readRequesterSessionCredentialBindings: async () => {
           const installation = readInstallationIdentityIfExistsSync();

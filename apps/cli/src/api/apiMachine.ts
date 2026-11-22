@@ -177,6 +177,7 @@ import { OpenProjectInputV1Schema, OpenProjectResultV1Schema, ProjectOpenSyncMat
 import { WorkspaceSyncPrepareBetweenRequestV1Schema, WorkspaceSyncPrepareBetweenResultV1Schema, type WorkspaceSyncPrepareBetweenRequestV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { decodeBase64 } from './encryption';
+import type { RequesterSessionAccountContextCustody } from '@/daemon/sessionEncryption/requesterSessionAccountContextCustody';
 import { resolveWorkspaceSyncTransportAddress } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { readWorkspaceSyncChildMachineFacts } from '@/workspaces/sync/workspaceSyncTargetAuthority';
 import { readWorkspaceSyncSourceAdmissionV1, deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/actions/externalActionApi';
@@ -589,6 +590,8 @@ export type ApiMachineClientLifecycleDependencies = Readonly<{
     agentIsolation?: MachineRpcHandlerDeps['agentIsolation'];
     readMachineEffectiveCores?: MachineRpcHandlerDeps['readMachineEffectiveCores'];
     requesterSessionRuntime?: MachineRpcHandlerDeps['requesterSessionRuntime'];
+    /** Machine core's requester custody: a guest Session's reads run as that Session's own Account. */
+    withSessionAccountContext?: RequesterSessionAccountContextCustody['withSessionAccountContext'];
     requesterBootstrapBoundary?: MachineRpcHandlerDeps['requesterBootstrapBoundary'];
     managedActivity?: Pick<ManagedActivityRpcOwner, 'activity' | 'admissionDrain'>;
     /** Same installed lifecycle owners. Policy and installation remain ApiMachine-owned. */
@@ -794,15 +797,25 @@ export class ApiMachineClient {
             if (!runtime || !await readAcceptedManagedWorkspaceRef(runtime, workspace, signal)) return null;
             return ensureAcceptedManagedWorkspaceTarget({ workspace, requesterAccountId: accountId, openTarget, signal });
         },
+        // A Session's workspace is read as the Session's own Account. Requester custody
+        // decides that Account: a guest Session resolves its requester context (a
+        // withdrawn guest is refused by it); only a Session it attributes to no other
+        // Account is read with the installed Account. The installed credential is never
+        // a fallback for a guest's Session.
         readRetainedSessionWorkspace: async (sessionId, signal) => {
-            const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
-            if (!runtime) return null;
+            const custody = this.lifecycleDependencies.withSessionAccountContext;
+            if (!custody) return null;
             const { readOwnSessionMachineWorkspace } = await import('@/session/machineControlLocality');
-            return await readOwnSessionMachineWorkspace({
-                sessionId, signal, credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
-                machineId: this.machine.id, currentMachineHost: this.machine.metadata?.host ?? '',
-                currentMachineHomeDir: this.machine.metadata?.homeDir ?? '',
-            }).catch(() => null);
+            return await custody(sessionId, async requester => {
+                const runtime = requester ? requester.bootstrap
+                    : await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
+                if (!runtime) return null;
+                return await readOwnSessionMachineWorkspace({
+                    sessionId, signal, credentials: runtime.credentials, serverHttpBaseUrl: runtime.serverHttpBaseUrl,
+                    machineId: this.machine.id, currentMachineHost: this.machine.metadata?.host ?? '',
+                    currentMachineHomeDir: this.machine.metadata?.homeDir ?? '',
+                }).catch(() => null);
+            }, undefined, signal);
         },
         // Filesystem effects consume the receiving connection's authenticated
         // Home, like generic Machine admission, not an advisory saved descriptor.

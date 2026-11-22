@@ -172,6 +172,7 @@ export function createDaemonMachineBootstrapRuntime(
     workspaceSyncHandoffAdapter?: WorkspaceSyncHandoffAdapter;
     workspaceSync?: ApiMachineClientLifecycleDependencies['workspaceSync'];
     openManagedProjectWorkspace?: ApiMachineClientLifecycleDependencies['openManagedProjectWorkspace'];
+    withSessionAccountContext?: ApiMachineClientLifecycleDependencies['withSessionAccountContext'];
     onMachineMetadataChanged?: ApiMachineClientLifecycleDependencies['onMachineMetadataChanged'];
     onProjectOperationInspection?: ApiMachineClientLifecycleDependencies['onProjectOperationInspection'];
     createWorkspaceSyncRuntime?: (input: Readonly<{
@@ -541,6 +542,7 @@ export function createDaemonMachineBootstrapRuntime(
               : {}),
             ...(workspaceSync ? { workspaceSync } : {}),
             ...(params.openManagedProjectWorkspace ? { openManagedProjectWorkspace: params.openManagedProjectWorkspace } : {}),
+            ...(params.withSessionAccountContext ? { withSessionAccountContext: params.withSessionAccountContext } : {}),
             ...(workspaceRuntime?.createProjectFiniteRuntime
               ? { createProjectFiniteRuntime: workspaceRuntime.createProjectFiniteRuntime }
               : {}),

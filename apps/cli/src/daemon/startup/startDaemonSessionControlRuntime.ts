@@ -103,7 +103,7 @@ import { readTrackedSessionMaterializedStateObservationBinding } from '../sessio
 import { rm } from 'node:fs/promises';
 import { isAbsolute, join, relative } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
-import { createRequesterSessionAccountContextCustody, findTrackedSessionByHappySessionId } from '../sessionEncryption/requesterSessionAccountContextCustody';
+import { createRequesterSessionAccountContextCustody, findTrackedSessionByHappySessionId, type RequesterSessionAccountContextCustody } from '../sessionEncryption/requesterSessionAccountContextCustody';
 
 import { createSessionStartupReadinessHandler } from './sessionStartupReadiness';
 import { projectRequesterAgentStartPolicyV1, readRequesterAgentStartPolicyV1 } from '../sessionEncryption/requesterAgentStartPolicy';
@@ -1476,6 +1476,8 @@ export async function startDaemonSessionControlRuntime(
     executeGuardLeftBehindAction: ReturnType<typeof createGuardLeftBehindActionExecutor>;
     readRequesterNativeOfferedModel: NonNullable<MachineRpcHandlerDeps['readRequesterNativeOfferedModel']>;
     withSessionConfigOptionEnvironment: NonNullable<MachineRpcHandlerDeps['withSessionConfigOptionEnvironment']>;
+    /** Machine core's requester custody, for Machine-level reads of a Session's own workspace. */
+    withSessionAccountContext: RequesterSessionAccountContextCustody['withSessionAccountContext'];
     materializeSessionProcessEnvironment: SessionConnectedAccountProcessEnvironmentProducer;
     resolveExecutionRunLiveBrokerAuthority: NonNullable<MachineRpcHandlerDeps['resolveExecutionRunLiveBrokerAuthority']>;
     guardSources: Required<Pick<import('../guard/readGuardFacts').ReadGuardFactsDependencies, 'readBrowsers' | 'readServices' | 'readServiceTargets'>>;
@@ -15950,6 +15952,7 @@ export async function startDaemonSessionControlRuntime(
     executeGuardLeftBehindAction,
     readRequesterNativeOfferedModel,
     withSessionConfigOptionEnvironment,
+    withSessionAccountContext,
     async materializeSessionProcessEnvironment(input: SessionConnectedAccountProcessEnvironmentInput) {
       const context = await resolveSessionAccountContext(input.sessionId);
       try {
