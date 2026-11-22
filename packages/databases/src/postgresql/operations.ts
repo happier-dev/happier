@@ -21,6 +21,7 @@ import { admitPostgresqlWorkbenchStatement } from './statement.js';
 import { fitDatabaseOperationResult } from '../resultEnvelope.js';
 import { databaseRowsBindingV1 } from '../rows.js';
 import { quotePostgresqlIdentifier } from './identifiers.js';
+import { POSTGRESQL_STATISTICS_ENABLE_SQL_V1 } from './setup.js';
 import { compilePostgresqlStatsV1, type PostgresqlStatsCompilationV1 } from './stats.js';
 import { statsNativeRowsV1, statsOperationResultV1, statsSize, type DatabaseStatsExecutionContextV1, type DatabaseStatsNativeRowV1 } from '../stats.js';
 export { quotePostgresqlIdentifier } from './identifiers.js';
@@ -221,7 +222,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
     };
     if (kind !== 'table') {
         const definition = await query({ text: 'SELECT pg_catalog.pg_get_viewdef($1::regclass,true)', values: [qualified(relation)] });
-        result.viewDefinition = scalar(definition.rows[0]!, 0);
+        return { ...result, viewDefinition: scalar(definition.rows[0]!, 0) };
     }
     return result;
 }
@@ -387,7 +388,15 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
             const row = result.rows[0];
             return { ok: true, operation: input.operation, status: !row ? 'activity_ended' : row[0] === 't' ? 'signal_sent' : 'signal_failed' };
         }
-        case 'stats.enable': return unavailable('statistics_setup_requires_target_support');
+        case 'stats.enable': {
+            if (input.target.kind !== 'managed_deployment' && input.target.kind !== 'manual') {
+                return unavailable('statistics_setup_requires_target_support');
+            }
+            const setup = (await query({ text: POSTGRESQL_STATISTICS_ENABLE_SQL_V1.probe, values: [] })).rows[0];
+            if (setup?.[0] !== 't') return { ok: true, operation: input.operation, status: 'restart_required' };
+            if (setup[1] !== 't') await query({ text: POSTGRESQL_STATISTICS_ENABLE_SQL_V1.install, values: [] });
+            return { ok: true, operation: input.operation, status: 'enabled' };
+        }
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
             const plan = compilePostgresqlStatsV1(input.request, options.stats);

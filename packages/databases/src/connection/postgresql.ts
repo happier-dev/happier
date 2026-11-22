@@ -130,6 +130,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             ...(terminalError ? { cause: postgresqlFailureCause(terminalError) } : {}), reason: 'Reopen the database connection' };
         const signalsBackend = input.operation === 'activity.cancel';
         const write = input.operation === 'edits.apply'
+            || input.operation === 'stats.enable'
             || (input.operation === 'statement.run' && input.mode === 'write')
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
         let transaction = false;
@@ -165,6 +166,10 @@ export async function openPostgresqlConnection(connectionString: string, signal?
             if (error instanceof PostgresqlOperationError) return error.failure;
             if (error instanceof PostgresqlInputError) return { ok: false, status: 'failed', code: error.code, reason: error.reason };
             const failureCause = postgresqlFailureCause(error);
+            if (input.operation === 'stats.enable' && failureCause.code === '42501') {
+                return { ok: false, status: 'unavailable', code: 'database_statistics_extension_privilege_required',
+                    reason: 'Use a database login that can install pg_stat_statements, or ask your database administrator to enable it.' };
+            }
             if (input.operation === 'stats.read' && failureCause.code === '42501' && executionOptions.stats) {
                 return statsOperationResultV1('postgresql', input.request,
                     { status: 'unavailable', reason: 'visibility_restricted' }, [], executionOptions.stats);

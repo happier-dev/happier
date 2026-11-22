@@ -36,7 +36,7 @@ export function isStatsSetupReason(reason: Unavailable['reason']): boolean {
 function describeReason(
   translate: PluginTranslate,
   reason: Unavailable['reason'],
-  ownServer: boolean,
+  targetKind: DatabaseTargetV1['kind'] | undefined,
 ): string {
   switch (reason) {
     case 'extension_missing':
@@ -46,7 +46,11 @@ function describeReason(
         'This needs PostgreSQL’s pg_stat_statements extension. Add it to this database and this list fills in.',
       );
     case 'preload_restart_required':
-      if (ownServer) return composePreloadGuidance(translate);
+      if (targetKind === 'deployment_service') return composePreloadGuidance(translate);
+      if (targetKind === 'managed_deployment') return translate(
+        'plugins.database.insights.setup.providerPreload',
+        'This needs pg_stat_statements loaded when PostgreSQL starts. Enable it in your database provider’s settings or ask its administrator.',
+      );
       return translate(
         'plugins.database.insights.setup.preload',
         'This needs pg_stat_statements loaded when postgres starts. Add the setting below and restart postgres, and this list fills in.',
@@ -102,12 +106,15 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
               setNotice(null);
               onRetry?.();
             } else {
-              setNotice({ text: composePreloadGuidance(t) });
+              setNotice({ text: describeReason(t, 'preload_restart_required', target.kind) });
             }
           } else if ((!execution.ok && execution.failureCause?.errorCode === 'machine_manage_required')
             || (settled.status === 'success' && !settled.result.ok && settled.result.code === 'database_statistics_manage_required')) {
             setNotice({ text: t('plugins.database.insights.setup.manageRequired',
               'Ask a manager of this Environment’s database Machine to enable statistics.') });
+          } else if (settled.status === 'success' && !settled.result.ok
+            && settled.result.code === 'database_statistics_extension_privilege_required' && settled.result.reason) {
+            setNotice({ text: settled.result.reason });
           } else {
             setNotice({ text: 'message' in settled ? settled.message
               : t('plugins.database.insights.setup.enableFailed', 'Statistics could not be enabled.') });
@@ -132,7 +139,9 @@ export function InsightsSetup(
   const setup = isStatsSetupReason(props.observation.reason);
   const descriptor = props.descriptor;
   const ownServer = descriptor?.target.kind === 'deployment_service';
-  const canEnable = ownServer && props.observation.reason === 'extension_missing'
+  const canUseOwnLogin = (descriptor?.target.kind === 'managed_deployment' || descriptor?.target.kind === 'manual')
+    && descriptor.access?.canWrite === true;
+  const canEnable = (ownServer || canUseOwnLogin) && props.observation.reason === 'extension_missing'
     && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
   const remediation = props.observation.remediation;
   return (
@@ -150,7 +159,7 @@ export function InsightsSetup(
               'No statement statistics',
             )
       }
-      description={describeReason(translate, props.observation.reason, ownServer)}
+      description={describeReason(translate, props.observation.reason, descriptor?.target.kind)}
       {...(remediation || canEnable || props.onRetry
         ? {
             body: (

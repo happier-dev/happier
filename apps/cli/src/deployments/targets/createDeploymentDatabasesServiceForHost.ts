@@ -16,7 +16,6 @@ import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automat
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
 import { DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { enableOwnServerPostgresqlStatisticsForHost } from './ownServer/dataRoleBootstrap';
 import { withOwnServerDataQueryNativeForHost } from './ownServer/dataQueryNative';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
@@ -396,9 +395,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             return { targets, completeness };
         },
         async resolve(request, operation) {
-            if (request.operation === 'stats.enable') {
+            if (request.operation === 'stats.enable' && request.target.kind === 'deployment_service') {
                 if (operation !== 'write' || !DatabaseStatsEnableInputV1Schema.safeParse(request).success) return refuse('target_mismatch');
-                const { target, admission, selected, summary } = await admitTarget(request, 'read');
+                const { target, admission, summary } = await admitTarget(request, 'read');
+                if (target.kind !== 'deployment_service') return refuse('target_mismatch');
                 const { host, context, detail, placement } = admission;
                 const authorization = context.externalActionExecutionAuthorization?.binding;
                 const scope = authorization?.deploymentReadAdmission;
@@ -406,18 +406,15 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                     || !scope || !('databaseTarget' in scope) || scope.access !== 'write'
                     || formatQualifiedPluginActionId(scope.action) !== DATABASE_STATS_ENABLE_ACTION_ID_V1
                     || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
-                const engine = selected?.engine ?? 'postgresql';
+                const engine = 'postgresql';
                 const connection = {
                     engine,
                     async execute(operand: DatabaseOperationInputV1, signal = input.seed.signal): Promise<DatabaseOperationResultV1> {
                         if (!sameStrictJsonValue(operand, request)) return setupUnavailable('database_statistics_setup_operand_mismatch', 'Use the reviewed statistics setup for this database.');
-                        if (target.kind !== 'deployment_service') return setupUnavailable('database_statistics_setup_requires_provider',
-                            'Use your database provider’s settings or ask its administrator to enable statistics.');
                         if (authorization.admittedMachineRole !== 'manage') return setupUnavailable('database_statistics_manage_required',
                             'Ask a manager of this Environment’s database Machine to enable statistics.');
                         access(admission, 'write', target, true);
                         await host.assertCurrent(context);
-                        if (readInstallationIdentityIfExistsSync()?.installationId !== placement.installationId) return refuse('target_mismatch');
                         const mounted = await acquireOwnServerMountedDataServiceForHost({ ...host, ensureServiceObservations: input.ensureEnvironmentServices },
                             { ...target.environment, expectedRevision: detail.environment.revision, targetLinkId: target.targetLinkId,
                                 deploymentId: target.deploymentId, service: target.serviceId, machineId: host.machineId,
@@ -437,7 +434,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
                 };
                 return { descriptor: { target, engine, label: target.database,
                     automationSubject: readAutomationDatabaseSubjectV1(host.serverId, target), origin: { label: detail.content.name },
-                    capabilities: target.kind === 'deployment_service' ? builtinDatabaseCapabilities('postgresql') : [], access: summary, placement }, connection };
+                    capabilities: builtinDatabaseCapabilities(engine), access: summary, placement }, connection };
             }
             const admitted = await admitTarget(request, operation);
             if (admitted.target.kind === 'deployment_service') {

@@ -62,7 +62,8 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
             engine === 'mysql' ? nativeMysqlImage! : nativePostgresqlImage!);
         const database = pg ? 'postgres' : 'native_fixture';
         try {
-            const installation = await readOrCreateInstallationIdentity();
+            // The signed stats request and mounted deployment use a fixture identity without a daemon identity record.
+            const installation = await readOrCreateInstallationIdentity(statsSetup ? join(homeDir, 'stats-fixture-identity.json') : undefined);
             const accountId = 'custody-account';
             const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`, encryption: null };
             const detail = createDeploymentEnvironmentDetailV1();

@@ -245,11 +245,16 @@ describe('Database Insights surfaces', () => {
     }
   });
 
-  it('enables statistics on the reviewed database and rereads once through a new connection demand', async () => {
+  it.each(['deployment_service', 'managed_deployment', 'manual'] as const)('enables statistics on the reviewed %s and rereads once', async kind => {
     const environment = { serverId: 'home', environmentId: 'prod', projectSourceId: 'billing' };
     const selected: DatabaseDescriptorV1 = {
       ...descriptor,
-      target: { kind: 'deployment_service', environment, deploymentId: 'deploy', targetLinkId: 'link', serviceId: 'db', database: 'billing' },
+      target: kind === 'deployment_service'
+        ? { kind, environment, deploymentId: 'deploy', targetLinkId: 'link', serviceId: 'db', database: 'billing' }
+        : kind === 'managed_deployment'
+          ? { kind, environment, targetLinkId: 'link', contribution: { pluginId: 'fixture.provider', contributionId: 'postgres' },
+              platformProjectId: 'billing', branchId: 'production', database: 'billing' }
+          : { ...scope, kind, savedSecretId: 'fixture' },
       capabilities: [{ operation: 'stats.enable', available: true }],
       access: { canRead: true, canWrite: true },
     };
@@ -280,7 +285,10 @@ describe('Database Insights surfaces', () => {
           {renderPage(context)}
         </PluginUiHostPresentationScope>
       ),
-      launchInput: projectNativeJsonValueForTransport({ scope: { kind: 'environment', environment }, descriptor: selected }),
+      launchInput: projectNativeJsonValueForTransport({
+        scope: kind === 'manual' ? scope : { kind: 'environment', environment },
+        descriptor: selected,
+      }),
       subPath: 'insights',
       surfaceContext: pageContext(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),

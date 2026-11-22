@@ -2,6 +2,15 @@ import type { PostgresqlCompiledStatement, PostgresqlNativeResult } from './oper
 import type { PostgresqlStatsCompilationV1 } from './stats.js';
 import { statsNativeRowsV1, statsText } from '../stats.js';
 
+/** Fixed statements shared by the admitted deployment admin and credential-backed connections. */
+export const POSTGRESQL_STATISTICS_ENABLE_SQL_V1 = {
+    probe: `SELECT EXISTS (
+        SELECT FROM pg_catalog.regexp_split_to_table(pg_catalog.current_setting('shared_preload_libraries'), ',') AS library(name)
+        WHERE pg_catalog.btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
+    ) AS preloaded, EXISTS (SELECT FROM pg_catalog.pg_extension WHERE extname = 'pg_stat_statements') AS installed`,
+    install: 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements',
+} as const;
+
 /** Native facts held for one demand; the connection owner constructs its binding basis. */
 export type PostgresqlSetupFactsV1 = Readonly<{
     database: string; databaseOid: string; currentUser: string;

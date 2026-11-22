@@ -68,3 +68,45 @@ it('reports native statistics prerequisites and visibility restrictions while ke
         await rm(directory, { recursive: true, force: true });
     }
 }, 30000);
+
+const managed = {
+    kind: 'managed_deployment', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
+    targetLinkId: 'selected-link', contribution: { pluginId: 'fixture.provider', contributionId: 'postgres' },
+    platformProjectId: 'provider-project', branchId: 'branch', database: 'postgres',
+} as const;
+
+it.each([
+    [managed, true], [managed, false], [target, true], [target, false],
+] as const)('enables statistics through the selected PostgreSQL login (%j, preloaded: %s)', async (selected, preloaded) => {
+    const directory = await mkdtemp(join(tmpdir(), 'dbw-pg-enable-'));
+    const data = join(directory, 'data');
+    const psql = (sql: string) => run(join(binaries, 'psql'), ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1',
+        '-h', directory, '-U', 'fixture', '-d', 'postgres', '-c', sql]);
+    let started = false;
+    try {
+        await run(join(binaries, 'initdb'), ['-D', data, '-A', 'trust', '-U', 'fixture', '--no-locale', '-E', 'UTF8']);
+        await run(join(binaries, 'pg_ctl'), ['-D', data, '-l', join(directory, 'postgres.log'),
+            '-o', `-c listen_addresses='' -c shared_preload_libraries='${preloaded ? 'pg_stat_statements' : ''}' -k ${directory}`, '-w', 'start']);
+        started = true;
+        await psql('CREATE ROLE stats_writer LOGIN; GRANT pg_read_all_settings TO stats_writer');
+        const installed = async () => (await psql("SELECT extowner::regrole FROM pg_extension WHERE extname = 'pg_stat_statements'")).stdout.trim();
+        const enable = async (login: string) => {
+            const connection = await openPostgresqlConnection(`postgresql://${login}@localhost/postgres?host=${encodeURIComponent(directory)}`);
+            try {
+                return await connection.execute({ operation: 'stats.enable', target: selected });
+            } finally { await connection.close(); }
+        };
+        if (preloaded) {
+            const denied = await enable('stats_writer');
+            expect(denied).toMatchObject({ ok: false, status: 'unavailable', code: 'database_statistics_extension_privilege_required' });
+            expect(await installed()).toBe('');
+        }
+        expect(await enable('fixture')).toEqual({
+            ok: true, operation: 'stats.enable', status: preloaded ? 'enabled' : 'restart_required',
+        });
+        expect(await installed()).toBe(preloaded ? 'fixture' : '');
+    } finally {
+        if (started) await run(join(binaries, 'pg_ctl'), ['-D', data, '-m', 'immediate', '-w', 'stop']);
+        await rm(directory, { recursive: true, force: true });
+    }
+}, 30000);

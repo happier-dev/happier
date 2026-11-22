@@ -1,3 +1,4 @@
+import { POSTGRESQL_STATISTICS_ENABLE_SQL_V1 } from '@happier-dev/databases/postgresql';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OwnServerDataQueryNative } from './dataQueryNative';
 import { assertOwnServerDataQuerySupportedEngine, ownServerReadOnlyRoleGuardSql, ownServerWriteRoleGuardSql, type OwnServerDataEngine } from './dataRoleGuard';
@@ -25,14 +26,11 @@ export async function enableOwnServerPostgresqlStatisticsForHost(input: Readonly
 }>, native: OwnServerDataQueryNative): Promise<'enabled' | 'restart_required'> {
     const result = await runOwnServerPostgresqlAdmin(input, `BEGIN;
 SET LOCAL search_path = information_schema;
-SELECT EXISTS (
-    SELECT FROM regexp_split_to_table(current_setting('shared_preload_libraries'), ',') AS library(name)
-    WHERE btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
-) AS preloaded, EXISTS (SELECT FROM pg_extension WHERE extname = 'pg_stat_statements') AS installed \\gset
+${POSTGRESQL_STATISTICS_ENABLE_SQL_V1.probe} \\gset
 \\if :preloaded
 \\if :installed
 \\else
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+${POSTGRESQL_STATISTICS_ENABLE_SQL_V1.install};
 \\endif
 COMMIT;
 SELECT 'enabled';
