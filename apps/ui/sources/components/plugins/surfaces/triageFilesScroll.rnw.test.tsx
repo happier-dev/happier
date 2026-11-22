@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act } from 'react';
 import { Button, ScrollArea, Text, defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { TriageChangedFilesList, TriageDetailPageScrollProvider, TriageDetailPanel } from '@happier-dev/triage-sources/ui';
 import { afterEach, expect, it, vi } from 'vitest';
 
@@ -67,14 +67,14 @@ function FilesFixture({ nextPage }: Readonly<{ nextPage: () => Promise<typeof FI
     );
 }
 
-const mounted: Awaited<ReturnType<typeof createPluginUiTestkit>>[] = [];
+const mounted: PluginUiTestkit[] = [];
 afterEach(async () => {
     await act(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); });
 });
 
 async function mountFiles() {
     const nextPage = createDeferred<typeof FIRST_PAGE>();
-    let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+    let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'files-scroll', mountNonce: 'files-scroll-mount' },
