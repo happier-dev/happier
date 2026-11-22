@@ -41,7 +41,8 @@ import type { AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/co
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { withReachabilityJoinCredential } from '../reachability/prepareReachabilityJoinCredential';
-import { createManagedPresetHydrator, type ManagedPresetHydrator } from '../managed/presetHydration';
+import { createManagedPresetHydrator } from '../managed/presetHydration';
+import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { hydrateManagedOpaqueSetupSourcesV1, projectManagedOpaqueSetupSourcesV1,
   readRetainedManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 
@@ -94,7 +95,8 @@ async function resolveHomeMachineSetupCopies(sources: MachineSetupSourceApplyV1,
 async function resolveLocalMachineSetupSources(params: Readonly<{
   sources: MachineSetupSourceApplyV1;
   resolved: HomeSetupCopyResult | null;
-  hydrator: ManagedPresetHydrator;
+  runtime: Pick<NonNullable<Awaited<ReturnType<ApiMachineClient['resolveMachineSetupRuntime']>>>, 'credentials' | 'serverHttpBaseUrl'>;
+  context: RpcActionExecutorContext;
   retained?: ReadonlyMap<string, MachineSetupSourceV1[number]>;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ sources: MachineSetupSourceV1; resolvedSources: MachineSetupResolvedSourceV1;
@@ -121,8 +123,12 @@ async function resolveLocalMachineSetupSources(params: Readonly<{
     if (!parsed.success || !sameStrictJsonValue(resolved.sources, requested)) return null;
     return finish(parsed.data);
   }
+  // Home selects the actor's recipient envelope; installed custody still owns native effects.
+  const requester = readRequesterAccountActionTransportContext(params.context.externalActionExecutionAuthorization);
+  const hydrator = createManagedPresetHydrator({ credentials: requester?.credentials ?? params.runtime.credentials,
+    serverUrl: params.runtime.serverHttpBaseUrl });
   const opened = await hydrateManagedOpaqueSetupSourcesV1({ sources: requested, resolvedSources: resolved.sources,
-    open: async source => await params.hydrator.openRecipientProjection({ presetId: source.presetId,
+    open: async source => await hydrator.openRecipientProjection({ presetId: source.presetId,
       mode: source.mode, projection: source.projection, signal: params.signal }) });
   if (!opened) return null;
   let index = 0;
@@ -208,8 +214,7 @@ export function createMachineSetupPlanAction(params: Readonly<{
         const { presetContent: _content, ...reference } = source;
         return reference;
       });
-      const resolved = await resolveLocalMachineSetupSources({ sources: references, resolved: admitted,
-        hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
+      const resolved = await resolveLocalMachineSetupSources({ sources: references, resolved: admitted, runtime, context,
         signal: signal ?? context.signal, ...(retained ? { retained } : {}) });
       if (!resolved) return { failure: fail('machine_setup_response_invalid') };
       if (!await runtime.isCurrent()) return { failure: machineSetupTargetUnavailable('installed_runtime', 'runtime_closed') };
@@ -455,8 +460,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
             managedContinuation !== undefined, async body => await request('/v1/machines/setup/resolve', {
               homeId: input.homeId, machineId: input.machineId, ...body,
             }, cancellationSignal, input.candidatePreset !== undefined));
-          const opened = await resolveLocalMachineSetupSources({ sources: wireSources, resolved,
-            hydrator: createManagedPresetHydrator({ credentials: runtime.credentials, serverUrl: runtime.serverHttpBaseUrl }),
+          const opened = await resolveLocalMachineSetupSources({ sources: wireSources, resolved, runtime, context,
             signal: cancellationSignal, ...(retained ? { retained } : {}) });
           if (!opened) return fail('machine_setup_response_invalid');
           sources = opened.sources;

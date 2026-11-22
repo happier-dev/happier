@@ -15,6 +15,15 @@ import { createMachineSetupEffectPlan } from '@happier-dev/cli-common/machineSet
 import { hydrateManagedOpaqueSetupSourcePresentationsV1 } from '@happier-dev/cli-common/machines/managed';
 import { openManagedMachinePresetRecipientProjectionV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import { installPackage } from '../../../../../packages/plugins/machine-recipes/src/installPackage';
+import { randomBytes } from 'node:crypto';
+import tweetnacl from 'tweetnacl';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { computeAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
+import { sealAccountSettingsV2RawContent } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
+import { libsodiumPublicKeyFromSecretKey } from '@/api/encryption';
+import { projectManagedMachinePresetForRecipientV1, transitionManagedMachinePresetContentEncryptionModeV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import type { StoredCredentials } from '@/persistence';
+import { configuration } from '@/configuration';
 
 describe('admitted Machine setup snapshot lifetime', () => {
   beforeEach(() => {
@@ -22,6 +31,80 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each(['owner', 'member', 'plain-member', 'wrong-recipient'] as const)('opens the Home-selected preset with its admitted %s custody', async principal => {
+    const { createRequesterCurrentnessSocketHarness } = await import('@/testkit/backends/requesterCurrentnessSocketHarness');
+    const { admitRequesterAccountActionContext } = await import('@/daemon/sessionEncryption/requesterAccountActionProjection');
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'e2ee' });
+    const channel = await createRequesterCurrentnessSocketHarness();
+    onTestFinished(() => channel.close());
+    const memberSecret = new Uint8Array(32).fill(51);
+    const mode = principal === 'plain-member' ? 'plain' : 'e2ee';
+    const member: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'bob', tokenEpoch: 0,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+      encryption: mode === 'plain' ? null : { type: 'dataKey', machineKey: memberSecret,
+        publicKey: tweetnacl.box.keyPair.fromSecretKey(memberSecret).publicKey }, credentialProvenance: 'stored_session' };
+    // The negative carries a valid owner envelope, so borrowing the owner's
+    // key after requester decryption fails would incorrectly accept it.
+    const credentials = principal === 'owner' || principal === 'wrong-recipient' ? fixture.credentials : member;
+    const accountId = principal === 'owner' || principal === 'wrong-recipient' ? 'alice' : 'bob';
+    const publicKey = credentials.encryption ? libsodiumPublicKeyFromSecretKey(resolveAccountContentSecretKey(credentials.encryption)) : undefined;
+    const currentness = { mode, version: 1, settingsVersion: 1, signingKeyFingerprint: null,
+      contentKeyFingerprint: mode === 'plain' ? null : computeAccountEncryptionMigrateKeyFingerprintV1(tweetnacl.box.keyPair.fromSecretKey(memberSecret).publicKey), updatedAt: 1 };
+    const boundaryGet = vi.mocked(axios.get).getMockImplementation()!;
+    vi.mocked(axios.get).mockImplementation(async (url, config) => {
+      const token = config?.headers?.Authorization;
+      if (token !== `Bearer ${member.token}`) return boundaryGet(url, config);
+      if (String(url).endsWith('/v1/account/profile')) return { status: 200, data: { id: 'bob' } };
+      if (String(url).endsWith('/v1/account/encryption/currentness')) return { status: 200, data: currentness };
+      if (String(url).endsWith('/v2/account/settings')) return { status: 200, data: { version: 1,
+        content: sealAccountSettingsV2RawContent({ credentials: member, raw: {}, envelopeKind: mode === 'plain' ? 'plain' : 'encrypted', randomBytes }) } };
+      return boundaryGet(url, config);
+    });
+    const contextFor = async (actionId: 'machines.setup.plan' | 'machines.setup.apply') => {
+      const context = fixture.context(actionId);
+      if (principal === 'owner') return context;
+      const admitted = await admitRequesterAccountActionContext({ authorization: {
+        ...context.externalActionExecutionAuthorization!, binding: { ...context.externalActionExecutionAuthorization!.binding, accountId: 'bob', accountEncryptionMode: mode } },
+        credentials: member, serverId: configuration.activeServerId, serverIdentityId: 'srv_home',
+        serverHttpBaseUrl: configuration.apiServerUrl, isCurrent: async () => true });
+      expect(admitted).not.toBeNull();
+      if (!admitted) throw new Error('Expected admitted member custody');
+      onTestFinished(() => admitted.dispose());
+      return { ...context, externalActionExecutionAuthorization: admitted.authorization,
+        machineAdmission: { ...context.machineAdmission!, actorAccountId: 'bob' } };
+    };
+    const presetId = 'shared-team-preset';
+    const content = { t: 'plain' as const, v: { v: 1 as const, name: 'Shared setup', setup: {} } };
+    const sealed = mode === 'plain' ? { content, recipients: [] } : publicKey && transitionManagedMachinePresetContentEncryptionModeV1({ presetId, fromMode: 'plain', toMode: 'e2ee',
+      source: { content, recipientEnvelope: null }, accountId, targetContentPublicKey: publicKey, randomBytes });
+    if (!sealed) throw new Error('Expected encrypted Team preset');
+    const source = { kind: 'accountPresetOpaque' as const, presetId, presetRevision: 2, setupRevision: 1, contentEncryptionMode: mode };
+    const direct = { kind: 'direct' as const, setup: {} };
+    const projection = projectManagedMachinePresetForRecipientV1({ ...sealed,
+      recipientAccountId: principal === 'wrong-recipient' ? 'alice' : accountId });
+    // Only Home HTTP is substituted. Admission, Account custody and preset opening are real.
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => ({ status: 200,
+      data: typeof body === 'object' && body !== null && 'purpose' in body
+        ? { purpose: 'creationOrigin' }
+        : { sources: [{ ...source, presetContent: projection }, direct] } }));
+    onTestFinished(() => post.mockRestore());
+    const result = await fixture.machineSetupPlan({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      sources: [source, direct], mode: 'effects' }, context: await contextFor('machines.setup.plan') });
+    expect(fixture.rootLaunches).toEqual([]);
+    expect(fixture.metadataWrites).toEqual([]);
+    if (principal === 'wrong-recipient') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'credential_unavailable' });
+      return;
+    }
+    expect(result).toMatchObject({ sources: [source, direct], recipePlans: [] });
+    const plan = MachineSetupPlanResultV1Schema.parse(result);
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, recipePlans: plan.recipePlans ?? [] },
+      context: await contextFor('machines.setup.apply') })).toMatchObject({ operationId: expect.any(String) });
+    expect(fixture.machine.metadata?.setup?.sources).toEqual([
+      { kind: 'accountPreset', presetId, presetRevision: 2, setupRevision: 1, contentEncryptionMode: mode, setup: {} }, direct,
+    ]);
   });
   it('refuses a Setup review that names a service outside Happier-managed custody', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain' });
