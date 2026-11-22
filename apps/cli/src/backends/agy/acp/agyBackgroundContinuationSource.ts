@@ -190,14 +190,19 @@ export function createAgyBackgroundContinuationSource(
       for (const update of unadmittedUpdates.splice(0)) deliver(open, update);
     };
 
+    /** Agy folds a task that settles during a prompt into that prompt's turn. */
+    const trackForegroundToolCall = (update: SessionUpdate) => {
+      const toolCallId = toolCallIdOf(update);
+      if (!toolCallId) return;
+      if (!backgroundTasks.has(toolCallId)) recordToolCall(foregroundToolCalls, toolCallId, update);
+      else if (isTerminalToolStatus(update.status)) backgroundTasks.delete(toolCallId);
+    };
+
     /** A prompt that starts before buffered updates were admitted absorbs them, as Agy folds the resumed work into it. */
     const releaseUnadmittedUpdates = () => {
       if (unadmittedUpdates.length === 0) return;
       const released = unadmittedUpdates.splice(0);
-      for (const update of released) {
-        const taskId = toolCallIdOf(update);
-        if (taskId && isTerminalToolStatus(update.status)) backgroundTasks.delete(taskId);
-      }
+      for (const update of released) trackForegroundToolCall(update);
       host.releaseClaimedUpdates(released);
     };
 
@@ -205,13 +210,9 @@ export function createAgyBackgroundContinuationSource(
       if (foregroundToolCalls.size > 0) retainBackgroundTasks(foregroundToolCalls);
     };
 
-    /** Agy folds a task that settles during a prompt into that prompt's turn. */
     const observeForegroundUpdate = (update: SessionUpdate) => {
       releaseUnadmittedUpdates();
-      const toolCallId = toolCallIdOf(update);
-      if (!toolCallId) return;
-      if (!backgroundTasks.has(toolCallId)) recordToolCall(foregroundToolCalls, toolCallId, update);
-      else if (isTerminalToolStatus(update.status)) backgroundTasks.delete(toolCallId);
+      trackForegroundToolCall(update);
     };
 
     return {

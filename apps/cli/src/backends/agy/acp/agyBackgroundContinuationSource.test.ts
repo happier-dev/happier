@@ -310,7 +310,7 @@ describe('createAgyBackgroundContinuationSource', () => {
 });
 
 describe('createAgyBackgroundContinuationSource while the host refuses admission', () => {
-  it('hands claimed updates back to generic handling when the next prompt starts first', async () => {
+  it('hands claimed updates to the prompt that starts first and keeps following the calls they started', async () => {
     const released: SessionUpdate[] = [];
     const host: AcpProviderTurnSourceHost = {
       sessionId: SESSION_ID,
@@ -327,22 +327,27 @@ describe('createAgyBackgroundContinuationSource while the host refuses admission
     const buildStarted: SessionUpdate = { sessionUpdate: 'tool_call', toolCallId: 'call_build', status: 'in_progress' };
     const buildSettled: SessionUpdate = { sessionUpdate: 'tool_call_update', toolCallId: 'call_build', status: 'completed' };
     const generationEnded: SessionUpdate = { sessionUpdate: 'usage_update' };
+    const testsStarted: SessionUpdate = { sessionUpdate: 'tool_call', toolCallId: 'call_tests', status: 'in_progress' };
+    const testsSettled: SessionUpdate = { sessionUpdate: 'tool_call_update', toolCallId: 'call_tests', status: 'completed' };
 
     expect(source.claimLiveUpdate?.(buildStarted, { foregroundActive: true })).toBe(false);
     await source.catchUp({ foregroundActive: false });
     expect(host.registerContinuation).toHaveBeenCalledWith({ id: 'call_build', parentToolCallId: 'call_build' });
 
-    expect(source.claimLiveUpdate?.(buildSettled, { foregroundActive: false })).toBe(true);
-    expect(source.claimLiveUpdate?.(generationEnded, { foregroundActive: false })).toBe(true);
-    expect(host.beginContinuation).toHaveBeenCalledTimes(2);
+    for (const update of [buildSettled, generationEnded, testsStarted]) {
+      expect(source.claimLiveUpdate?.(update, { foregroundActive: false })).toBe(true);
+    }
+    expect(host.beginContinuation).toHaveBeenCalledTimes(3);
     expect(released).toEqual([]);
 
     await source.catchUp({ foregroundActive: true });
-    expect(released).toEqual([buildSettled, generationEnded]);
+    expect(released).toEqual([buildSettled, generationEnded, testsStarted]);
 
     await source.catchUp({ foregroundActive: false });
+    expect(host.registerContinuation).toHaveBeenLastCalledWith({ id: 'call_tests', parentToolCallId: 'call_tests' });
     expect(source.claimLiveUpdate?.(buildSettled, { foregroundActive: false })).toBe(false);
-    expect(host.beginContinuation).toHaveBeenCalledTimes(2);
+    expect(source.claimLiveUpdate?.(testsSettled, { foregroundActive: false })).toBe(true);
+    expect(host.beginContinuation).toHaveBeenCalledTimes(4);
     await source.dispose();
   });
 });
