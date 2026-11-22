@@ -191,6 +191,7 @@ type _AuthorFormFieldKeysAreCurated = Assert<IsEqual<keyof FormProps['hints']['f
   | 'listSeparator'
   | 'maxSelections'
   | 'options'
+  | 'optionsDraftDependencies'
   | 'visibleWhen'
   | 'visibleWhenContextSlot'
   | 'requiredWhen'
