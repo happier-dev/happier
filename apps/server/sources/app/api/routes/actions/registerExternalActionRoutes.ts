@@ -817,7 +817,7 @@ export function registerExternalActionRoutes(
                         ...(body.data.sessionActionSource ? { sessionActionSource: body.data.sessionActionSource } : {}),
                         ...('sessionActionOrigin' in principal ? { sessionActionOrigin: principal.sessionActionOrigin } : {}),
                     }))) return sendExternalActionHttpError(reply, 'target_unavailable', body.data.envelope.requestId);
-            const admission = handoffContinuation
+            const admission: Awaited<ReturnType<typeof resolveExternalActionExecutionMachineAdmissionInTx>> | null = handoffContinuation
                 ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffContinuation.binding)
                 : !requesterOperationRead && continuation?.admission ? continuation.admission.machineAdmission
                 : handoffPreflight ? await readAdmittedExternalActionHandoffMachineInTx(db, handoffPreflight.binding)
