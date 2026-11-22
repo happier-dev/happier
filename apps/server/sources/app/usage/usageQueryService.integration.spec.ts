@@ -622,7 +622,13 @@ describe("usageQueryService scoped aggregation", () => {
         expect(updated.totals.tokens.total).toBe(120);
         expect(updated.costFacts).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "reported", amountUsd: 1.2 })]));
         await db.usageEvent.createMany({ data: buildUsageEvent({ ...owner, observedAt: "2026-07-02T10:00:00Z", scope: "turn_delta", totalTokens: 80 }) });
-        expect((await querySession(owner.accountId, owner.sessionId)).totals.tokens.total).toBe(80);
+        const mixed = await querySession(owner.accountId, owner.sessionId, { breakdowns: ["source"] });
+        expect(mixed.totals.tokens.total).toBe(120);
+        expect(mixed.totals.cost.reportedUsd).toBe(1.2);
+        expect(mixed.breakdowns?.source).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: "codex_app_server", tokens: expect.objectContaining({ total: 80 }) }),
+            expect.objectContaining({ key: "legacy_usage_report", tokens: expect.objectContaining({ total: 40 }) }),
+        ]));
     });
 
     it("subtracts the pre-range baseline before totals, model filtering and activity", async () => {
