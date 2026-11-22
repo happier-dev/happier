@@ -17,8 +17,9 @@ export async function handleAuthStatus(argv: string[] = [], signal?: AbortSignal
   const credentials = readiness.credentials;
 
   if (json && !credentials) {
+    // credentialState separates a fresh Machine (`missing`) from rejected credentials (`invalid`).
     await printJsonEnvelope({ ok: false, kind: 'auth_status', error: {
-      code: 'not_authenticated', ...(readiness.credentialReason ? { reason: readiness.credentialReason } : {}),
+      code: 'not_authenticated', credentialState: readiness.credentialState, ...(readiness.credentialReason ? { reason: readiness.credentialReason } : {}),
     } });
     return;
   }
@@ -56,7 +57,9 @@ export async function handleAuthStatus(argv: string[] = [], signal?: AbortSignal
     }
 
     if (json) {
-      await printJsonEnvelope({ ok: false, kind: 'auth_status', error: { code: 'not_authenticated' } });
+      await printJsonEnvelope({ ok: false, kind: 'auth_status', error: {
+        code: 'not_authenticated', credentialState: readiness.credentialState,
+      } });
       return;
     }
 

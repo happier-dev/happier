@@ -232,7 +232,7 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
 
       const record = parsed as {
         ok?: boolean;
-        error?: { code?: unknown };
+        error?: { code?: unknown; credentialState?: unknown };
         data?: {
           authenticated?: unknown;
           accountId?: unknown;
@@ -246,7 +246,8 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
       if (record.ok === false) {
         const errorCode = typeof record.error?.code === 'string' ? record.error.code.trim() : '';
         if (errorCode === 'not_authenticated') {
-          return { authenticated: false, machineId: null };
+          // Older CLIs omit the state; callers then treat the credentials as unclassified, not fresh.
+          return { authenticated: false, credentialState: readCredentialState(record.error), machineId: null };
         }
         throw new SystemTaskExecutionError(
           errorCode || 'auth_status_unavailable',

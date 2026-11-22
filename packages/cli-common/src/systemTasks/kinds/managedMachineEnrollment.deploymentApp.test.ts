@@ -3,9 +3,12 @@ import { DeploymentAppEnrollmentCorrelationV1Schema } from '@happier-dev/protoco
 import { resolveHomeTargetFromDescriptor } from '../../homeTarget/homeTarget.js';
 import { runManagedMachineEnrollment } from './managedMachineEnrollment.js';
 
-it.each(['fresh', 'retained', 'wrong-home', 'wrong-account', 'unregistered-wrong-home', 'unregistered-wrong-account'] as const)('enrolls only the admitted App identity (%s)', async scenario => {
-  const retained = scenario !== 'fresh';
-  const wrongHome = scenario.endsWith('wrong-home');
+it.each(['fresh', 'retained', 'wrong-home', 'wrong-account', 'unregistered-wrong-home', 'unregistered-wrong-account',
+  'rejected-no-home', 'unclassified-no-home'] as const)('enrolls only the admitted App identity (%s)', async scenario => {
+  // Rejected or unclassified credentials still need the recorded Home; only a positive `missing` is fresh.
+  const guardedUnauthenticated = scenario === 'rejected-no-home' || scenario === 'unclassified-no-home';
+  const retained = scenario !== 'fresh' && !guardedUnauthenticated;
+  const wrongHome = scenario.endsWith('wrong-home') || guardedUnauthenticated;
   const wrongAccount = scenario.endsWith('wrong-account');
   const unregistered = scenario.startsWith('unregistered-');
   const enrollment = DeploymentAppEnrollmentCorrelationV1Schema.parse({ source: 'deploymentApp', homeId: 'srv_app_home',
@@ -53,6 +56,12 @@ it.each(['fresh', 'retained', 'wrong-home', 'wrong-account', 'unregistered-wrong
             pairingAuthentication: 'v3', remoteProfileId: 'app-home' }), stderr: '' };
         }
         const credentialsPresent = retained || registered;
+        if (invocation.includes('auth status') && !credentialsPresent) {
+          // The real CLI envelope for an unauthenticated guest: no `data`, the credential state rides on the error.
+          const credentialState = scenario === 'fresh' ? 'missing' : scenario === 'rejected-no-home' ? 'invalid' : undefined;
+          return { status: 1, stderr: '', stdout: JSON.stringify({ v: 1, ok: false, kind: 'auth_status',
+            error: { code: 'not_authenticated', ...(credentialState ? { credentialState } : {}) } }) };
+        }
         const status = { accountId: credentialsPresent ? wrongAccount ? 'other-account' : 'account' : null, authenticated: credentialsPresent, credentialState: credentialsPresent ? 'valid' : 'missing',
           machineRegistrationState: registered ? 'server-confirmed' : 'unknown', machineId: registered ? 'app-machine' : null,
           services: [], service: { installed: false }, daemon: { running: true, healthy: registered },

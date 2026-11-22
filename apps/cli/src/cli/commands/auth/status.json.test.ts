@@ -47,12 +47,13 @@ describe('happier auth status --json', () => {
             v: number;
             ok: boolean;
             kind: string;
-            error?: { code?: string };
+            error?: { code?: string; credentialState?: string };
           };
           expect(parsed.v).toBe(1);
           expect(parsed.ok).toBe(false);
           expect(parsed.kind).toBe('auth_status');
           expect(parsed.error?.code).toBe('not_authenticated');
+          expect(parsed.error?.credentialState).toBe('missing');
           expect(process.exitCode).toBe(1);
         } finally {
           output.restore();
@@ -277,12 +278,13 @@ describe('happier auth status --json', () => {
             v: number;
             ok: boolean;
             kind: string;
-            error?: { code?: string };
+            error?: { code?: string; credentialState?: string };
           };
           expect(parsed.v).toBe(1);
           expect(parsed.ok).toBe(false);
           expect(parsed.kind).toBe('auth_status');
           expect(parsed.error?.code).toBe('not_authenticated');
+          expect(parsed.error?.credentialState).toBe('invalid');
           expect(process.exitCode).toBe(1);
         } finally {
           await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));

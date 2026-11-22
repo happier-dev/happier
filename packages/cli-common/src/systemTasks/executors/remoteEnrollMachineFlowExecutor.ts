@@ -40,7 +40,10 @@ export function normalizeRemoteBootstrapCliJsonResult(value: unknown, authStatus
         : !isRecord(value.error) || typeof value.error.code !== 'string' || !value.error.code.trim())) {
       throw new SystemTaskExecutionError('invalid_cli_response', 'Remote bootstrap command returned an invalid auth status envelope.');
     }
-    if (isRemoteBootstrapUnauthenticatedCliResult(value)) return { ok: true, data: { authenticated: false } };
+    if (isRemoteBootstrapUnauthenticatedCliResult(value)) {
+      return { ok: true, data: { authenticated: false,
+        credentialState: isRecord(value.error) ? value.error.credentialState : undefined } };
+    }
   }
   // Daemon and service commands also produce plain JSON objects, not CLI envelopes.
   return { ok: value.ok !== false, data: isRecord(value.data) ? value.data : value };
