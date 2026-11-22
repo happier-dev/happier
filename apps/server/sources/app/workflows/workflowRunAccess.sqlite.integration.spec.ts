@@ -353,9 +353,9 @@ describe("Workflow Run live Team access (real SQLite)", () => {
                 keySidecarBytes: Buffer.byteLength(JSON.stringify(full.keyCensusByRunId), "utf8"),
                 rootSidecarBytes: Buffer.byteLength(JSON.stringify(full.rootProgressByRunId), "utf8"),
                 heldSidecarBytes: Buffer.byteLength(JSON.stringify(full.heldProgressByRunId), "utf8") }));
-            for (const invalid of [{ projection: "membership" }, { ...request, targetSessionId: "target" },
-                { ...request, originDiscussionId: "discussion" }, { ...request, underSessionId: "lead" },
-                { ...request, invocationProvenance: [] }]) {
+            for (const invalid of [{ projection: "unknown" }, { ...request, targetSessionId: "" },
+                { ...request, originDiscussionId: "" }, { ...request, underSessionId: "" },
+                { ...request, invocationProvenance: [{ runId: f.runId }] }]) {
                 const response = await app.inject({ method: "POST", url: "/v3/automations/runs/workflow-storage",
                     headers: { "x-test-user-id": f.viewer.id }, payload: { operation: "list", request: invalid, pageByteLimit: 1_000_000 } });
                 expect(response.statusCode).toBe(400);

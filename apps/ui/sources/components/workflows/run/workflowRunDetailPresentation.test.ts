@@ -376,7 +376,7 @@ describe('managed workflow Run presentation', () => {
         const recovery = projectWorkflowInvocationRecovery({ run: createWorkflowRunSummaryFixture({ state: 'failed' }),
             invocation, progress, machineHomeDirectory: null });
         expect(recovery.failureCause).toMatchObject({ kind: 'reported_failure', code: 'session_start_refused',
-            headline: null, runtimeIssue: progress.reason!.runtimeIssueV1 });
+            headline: t('errors.agentStoppedWithError'), runtimeIssue: progress.reason!.runtimeIssueV1 });
         expect(recovery.failureCause?.kind === 'reported_failure' && recovery.failureCause.message)
             .toContain('startup-request-1');
     });

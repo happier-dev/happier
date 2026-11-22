@@ -1385,7 +1385,7 @@ describe('workflow editor body', () => {
         expect(screen.getTextContent()).toContain('workflows.page.inspector.repeatTimes');
         await screen.pressByTestIdAsync('workflow-editor-loop-repeat-summary');
         const source = dropdownField(screen, 'workflow-editor-inspector-loop-repeat-count-input-0-value');
-        const input = source.props.items.find((item) => item.category === 'workflows.condition.fromRun')!;
+        const input = source.props.items.find((item) => item.category === 'workflows.inputs.title')!;
         await act(async () => { source.props.onSelect(input.id as string); });
         expect(changed.mock.calls[0]?.[0].blocks[0].repetition.count.kind).toBe('input');
     });
@@ -1847,13 +1847,10 @@ describe('workflow editor body', () => {
         const screen = await renderBody(harness, { draft, onChange: changed, selectedBlockId: 'implement' });
 
         const source = dropdownField(screen, 'workflow-editor-step-implement-input-0-value');
-        const folder = source.props.items.find((item) => item.category === 'workflows.condition.whereItWorks')!;
+        const reference = { kind: 'workspace', producer: { blockId: 'analyze', scope: { kind: 'current' } }, field: 'directory' };
+        const folder = source.props.items.find((item) => item.id === JSON.stringify(reference))!;
         await act(async () => { source.props.onSelect(folder.id as string); });
-        expect(changed.mock.calls[0]?.[0].blocks[1].input).toEqual([{
-            kind: 'workspace',
-            producer: { blockId: 'analyze', scope: { kind: 'current' } },
-            field: 'directory',
-        }]);
+        expect(changed.mock.calls[0]?.[0].blocks[1].input).toEqual([reference]);
     });
 
     it('offers Run now and Save as separate commands; Run now never saves', async () => {
@@ -3657,6 +3654,8 @@ describe('workflow editor body', () => {
         await screen.pressByTestIdAsync('workflow-editor-redo');
         expect(draft.blocks[0]?.name).toBe('Inspect the change');
         await act(async () => { field().props.onFocus(); field().props.onChangeText('Cancelled edit'); });
+        // The Node renderer has no DOM KeyboardEvent constructor. React Native's payload here is a plain object.
+        vi.stubGlobal('KeyboardEvent', class extends Event {});
         await act(async () => { field().props.onKeyPress({ nativeEvent: { key: 'Escape' }, preventDefault: () => {} }); field().props.onBlur(); });
         expect(draft.blocks[0]?.name).toBe('Inspect the change');
         await screen.pressByTestIdAsync('workflow-editor-undo');

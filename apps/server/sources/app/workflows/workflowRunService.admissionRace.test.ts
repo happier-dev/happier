@@ -20,7 +20,10 @@ const transactions = await vi.hoisted(async () => {
 
 // Only the interactive database transports are replaced. Admission, envelope
 // validation, Account fences and transaction recovery all use their real owners.
-vi.mock("@/storage/db", () => ({ db: transactions.wrapDb({}) }));
+vi.mock("@/storage/db", async importOriginal => ({
+    ...await importOriginal<typeof import("@/storage/db")>(),
+    db: transactions.wrapDb({}),
+}));
 vi.mock("@/storage/prisma", async importOriginal => ({
     ...await importOriginal<typeof import("@/storage/prisma")>(),
     withSqliteReadSnapshot: transactions.readSnapshot,
@@ -55,6 +58,7 @@ beforeEach(async () => {
             sourceArtifactId: null,
             visibleTeamId: null,
             originSessionId: null,
+            managedCreationId: null,
             state: "queued",
             revision: 0,
             attempt: 0,
@@ -83,6 +87,7 @@ beforeEach(async () => {
             session: { findMany: async () => [] },
             sessionFollowEdge: { findMany: async () => [] },
             automationTrigger: { findMany: async () => [] },
+            workflowRunInvocation: { groupBy: async () => [] },
             automationRun: {
                 findUnique: vi.fn(async () => mocks.transactionAttempts === 1 ? null : winner),
                 findMany: vi.fn(async (args: { where: unknown }) => {

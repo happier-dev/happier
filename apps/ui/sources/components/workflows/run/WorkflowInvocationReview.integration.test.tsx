@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
+import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -241,6 +243,7 @@ async function harness(options: Readonly<{ humanAnswer?: boolean; emptyResult?: 
         const path = new URL(String(url)).pathname;
         if (path === '/v1/user/profiles') return json({ users: [{ id: 'answering-person', name: 'Ada Chen', firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null }] });
         if (path === '/health') return json({});
+        if (path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return json(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
         if (path === '/v1/features') return json({ features: { automations: { enabled: true }, workflows: { enabled: boundary.workflowsEnabled } }, capabilities: {
             accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
                 currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION, declarationTransport: 'http-header-and-socket-auth-v1' },
@@ -751,10 +754,10 @@ describe('Review through the real Account Action owner and HTTP storage boundary
     it.each(['view', 'owner', 'edit'] as const)('Run controls consume the effective %s access through the real detail read', async (access) => {
         const h = await harness({ runScreen: true, access });
         await vi.waitFor(() => expect(h.screen.findByTestId('workflow-run-outcome')).not.toBeNull());
-        for (const id of ['workflow-run-pause', 'workflow-run-cancel']) {
-            if (access === 'view') expect(h.screen.findAllHostsByTestId(id), id).toHaveLength(0);
-            else expect(h.screen.findHostByTestId(id), id).not.toBeNull();
-        }
+        const pauseOffered = h.screen.findHostByTestId('workflow-run-pause') !== null
+            || h.screen.findAllByType(ItemRowActions).some(menu => menu.props.actions.some((action: { id: string }) => action.id === 'workflow-run-pause'));
+        expect(pauseOffered).toBe(access !== 'view');
+        expect(h.screen.findHostByTestId('workflow-run-cancel') !== null).toBe(access !== 'view');
         expect(h.operations.filter(op => ['pause', 'cancel', 'resume', 'invocations.complete_review'].includes(String(op.operation)))).toHaveLength(0);
     });
     it('refuses Plan admission after effective edit access is revoked while the seeded editor is open', async () => {
