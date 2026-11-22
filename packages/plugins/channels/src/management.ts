@@ -4175,6 +4175,12 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
       kind: 'ready', endpoint, allowedPrincipalIds: [principal.id],
       ...(endpoints.sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes: endpoints.sharedEndpointInputModes }),
     }, context);
+    if (binding.kind === 'stale') {
+      throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection changed or became unavailable during attachment.', true);
+    }
+    if (binding.kind === 'unavailable' && binding.reason === 'providerUnavailable') {
+      throw pluginError('channels_pr_link_provider_not_ready', 'The selected PR conversation provider became unavailable during attachment.', true);
+    }
     if (binding.kind !== 'created') throw pluginError('channels_pr_link_binding_not_ready', 'The PR binding could not be attached.', true);
     if (request.target !== undefined) await disableSessionPullRequestTriggerBindings({ sessionId: request.sessionId, triggerId: request.target.triggerId, triggerRevision: request.target.triggerRevision, exceptBindingId: binding.binding.id }, context);
     bindingsById.set(binding.binding.id, binding.binding);

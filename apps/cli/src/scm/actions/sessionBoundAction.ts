@@ -1,9 +1,9 @@
-import { ActionRefusalDiagnosticV1Schema, createActionRefusalDetailsV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionRefusalDiagnosticV1Schema, createActionRefusalDetailsV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from '@/session/actions/cliActionDeps/machineTransport';
 import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
 import { executeCapturedMachineAction } from '@/api/machine/capturedMachineAction';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { isServerProfileHomeIdentity } from '@/server/serverProfiles';
@@ -11,7 +11,8 @@ import { admitScmRemotePolicy } from '@happier-dev/protocol/scm/remotePolicy';
 import { admitScmCommitPolicy, admitScmCommitUndoLast } from '@happier-dev/protocol/scm/capabilities';
 import { ScmBackendDescribeResponseSchema, ScmRemoteRequestSchema, ScmCommitCreateRequestSchema } from '@happier-dev/protocol/scm';
 import type { ScmCapabilities } from '@happier-dev/protocol/scm';
-import { ScmPullRequestOpenOrReuseResponseSchema } from '@happier-dev/protocol/scm/pullRequests';
+import { ScmPullRequestOpenOrReuseResponseSchema, type ScmPullRequestOpenOrReuseResponse } from '@happier-dev/protocol/scm/pullRequests';
+import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ResolvedSessionPullRequestBindingInputV1 } from '@/session/actions/createCliActionDeps';
 import { createTargetedActionRpcRequestV1, ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import type { ScmCommitCreateActionInput, ScmRemotePushActionInput } from '@happier-dev/protocol/actions/scmGitActionSpecs';
@@ -106,7 +107,7 @@ export function createSessionBoundScmAction(
     } : {};
     const attachSuccessfulPullRequest = async (response: unknown) => {
       const sessionId = normalizeStringValue(context.defaultSessionId);
-      if (actionId !== 'scm.pullRequest.openOrReuse' || !sessionId) return response;
+      if (actionId !== SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 || !sessionId) return response;
       const parsed = ScmPullRequestOpenOrReuseResponseSchema.safeParse(response);
       if (!parsed.success || !parsed.data.success || !parsed.data.pullRequest) return response;
       const pr = parsed.data.pullRequest;
@@ -117,12 +118,25 @@ export function createSessionBoundScmAction(
         if (result.kind !== 'attached') throw Object.assign(new Error('target_unavailable'), { code: 'target_unavailable', details: createActionRefusalDetailsV1('target_unavailable', 'channels_operation_mismatch') });
         return response;
       } catch (error) {
-        const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-          ? error.code : 'target_unavailable';
+        const code = readActionErrorCodeV1(error) ?? 'target_unavailable';
         const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
         const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details && typeof details === 'object' ? Reflect.get(details, 'diagnostic') : undefined);
-        return { ok: false, errorCode: code, error: code, details: { pullRequest: pr, scmEffectCommitted: true,
-          ...(diagnostic.success ? { code, diagnostic: diagnostic.data } : {}) } };
+        const reason = diagnostic.success ? `${code}/${diagnostic.data.reason}` : code;
+        const message = `The pull request is open. Its link to this Session could not be confirmed (${reason}). Link the existing pull request to this Session.`;
+        const nativeOutcome = parsed.data.outcome;
+        return {
+          ...parsed.data,
+          outcome: {
+            v: 1,
+            kind: 'effect_applied_with_warning',
+            errorCode: nativeOutcome?.kind === 'effect_applied_with_warning' ? nativeOutcome.errorCode : SCM_OPERATION_ERROR_CODES.COMMAND_FAILED,
+            effect: { kind: 'pull_request', url: pr.url, number: pr.number },
+            nextActions: nativeOutcome?.nextActions ?? [],
+            ...(nativeOutcome?.repositoryState ? { repositoryState: nativeOutcome.repositoryState } : {}),
+            ...(nativeOutcome?.recoveryStash ? { recoveryStash: nativeOutcome.recoveryStash } : {}),
+            message: nativeOutcome?.message ? `${nativeOutcome.message} ${message}` : message,
+          },
+        } satisfies ScmPullRequestOpenOrReuseResponse;
       }
     };
     const inputRecord = input && typeof input === 'object' && !Array.isArray(input)

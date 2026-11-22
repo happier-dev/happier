@@ -11340,6 +11340,12 @@ analytics field. A cancellation result requires a genuine cancellation signal
 and refreshed repository state; declaring the schema does not establish that
 every process adapter can produce it.
 
+In unreleased 0.3 source, when `scm.pullRequest.openOrReuse` opens or reuses a
+GitHub PR and the Session link cannot be confirmed, the Action returns
+`effect_applied_with_warning` with the existing PR and the link refusal. The
+remaining operation is attaching that PR to the Session. Channels distinguishes
+a changed or missing connection from an unavailable provider during attachment.
+
 `scm/operationState.ts` owns the repository operation shape. Git's sequencer
 and unmerged index determine merge, rebase, revert and cherry-pick state,
 unresolved paths and available controls. Stash-apply conflicts do not invent

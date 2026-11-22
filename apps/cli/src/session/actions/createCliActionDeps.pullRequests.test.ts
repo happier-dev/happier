@@ -20,7 +20,7 @@ import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots'
 import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
 import { createTargetActionHostBindingResolver } from '@/plugins/runtime/hostAccess/resolve';
 import { createPluginInvocationServiceBinding, createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_FIXED_ROW_ID, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
+import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_FIELD, CHANNEL_STATE_RECORD_KIND } from '../../../../../packages/plugins/channels/src/collections';
 import { MemoryCollection } from '../../../../../packages/plugins/channels/src/testkit/memoryCollection';
 
 const boundary = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), rpc: vi.fn() }));
@@ -89,8 +89,9 @@ describe('CLI session pull request binding', () => {
         context: { surface: reason === 'caller_fallback_unsupported' ? 'agent' : 'cli', defaultSessionId: sessionId,
           externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
         executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
-      })).toMatchObject({ ok: false, errorCode: 'target_unavailable', details: { scmEffectCommitted: true,
-        code: 'target_unavailable', diagnostic: { reason } } });
+      })).toMatchObject({ success: true, pullRequest, outcome: { kind: 'effect_applied_with_warning',
+        effect: { kind: 'pull_request', number: 42, url: pullRequest.url },
+        message: expect.stringContaining(reason) } });
     });
   it('lists Session triggers with unavailable PR links when the Session Machine is offline', async () => {
     boundary.rpc.mockRejectedValue(new Error('Machine offline'));
@@ -168,19 +169,28 @@ describe('CLI session pull request binding', () => {
     await expect(deps.scmActionExecute!({ actionId: 'scm.pullRequest.openOrReuse', input: { cwd: '/repo' },
       context: { defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId: 'scm-machine' } },
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
-    })).resolves.toMatchObject({ ok: false, errorCode: 'denied', details: { scmEffectCommitted: true, pullRequest: { number: 42 } } });
+    })).resolves.toMatchObject({ success: true, pullRequest, outcome: { kind: 'effect_applied_with_warning',
+      effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it('composes native open and explicit rejoin through registered Channels and Triage without refresh placement', async () => {
+  it.each(['current', 'provider retired', 'connection changed'] as const)(
+    'composes native open in a Team Session with a fresh repository and %s binding authority', async (authority) => {
+    const ordinaryRead = boundary.get.getMockImplementation()!;
+    boundary.get.mockImplementation(async (url: string) => {
+      const response = await ordinaryRead(url);
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) {
+        const metadata = JSON.parse(response.data.session.metadata);
+        response.data.session.metadata = JSON.stringify({ ...metadata, teamShareStatementV1: { v: 1, teamIds: ['team-muse'] } });
+      }
+      return response;
+    });
     const controller = new AbortController();
     const linkedSession = { serverId: 'srv_plugin_testkit', sessionId };
     const widgetSurface = { serverId: linkedSession.serverId, accountId: 'original-account', owner: { kind: 'companion', sessionId } } as const;
     const definition = { kind: 'installed', surface: { pluginId: TRIAGE_PLUGIN.manifest.id, localId: 'session-pull-request' } } as const;
     const credentialRef = { service: { pluginId: GITHUB_PLUGIN.manifest.id, localId: 'github-account' }, accountId: '99' };
     const state = new MemoryCollection<Record<string, JsonValue>>();
-    await state.put({ id: CHANNEL_STATE_FIXED_ROW_ID.connectionIdentityKey,
-      [CHANNEL_STATE_FIELD.recordKind]: CHANNEL_STATE_RECORD_KIND.connectionIdentityKey, v: 1,
-      payload: { connectionIdentityKey: 'A'.repeat(43) } }, { expectedRevision: 'absent' });
+    let providerRetired = false;
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
     const hostBoundary: PluginActionsHostExecutor = { async execute(actionId, rawInput, context) {
@@ -191,8 +201,24 @@ describe('CLI session pull request binding', () => {
       }
       if (actionId === 'account.profile.get') return { ok: true, result: { id: widgetSurface.accountId, timestamp: 1,
         name: null, firstName: null, lastName: null, username: null, avatar: null } };
-      if (actionId === 'session.transcript.get') return { ok: true, result: { ok: true, projection: 'externalShareableV1',
-        sessionId, items: [], scannedThroughSeq: 0, hasMore: false } };
+      if (actionId === 'session.transcript.get') {
+        // Both effects happen at genuine host boundaries after the audience
+        // resolved, while Channels is establishing the Session baseline.
+        if (rawInput && typeof rawInput === 'object' && 'cursor' in rawInput && rawInput.cursor === 'tail') {
+          if (authority === 'provider retired') providerRetired = true;
+          if (authority === 'connection changed') {
+            const connection = [...state.rows.values()].find(row =>
+              row.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.connection);
+            if (!connection) throw new Error('Expected an acknowledged fresh connection');
+            const payload = connection.value.payload;
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('Expected a connection payload');
+            await state.put({ ...connection.value, payload: { ...payload, configurationRevision: 2 } },
+              { expectedRevision: connection.revision });
+          }
+        }
+        return { ok: true, result: { ok: true, projection: 'externalShareableV1',
+          sessionId, items: [], scannedThroughSeq: 0, hasMore: false } };
+      }
       if (actionId === 'session.targets.resolve') return { ok: true, result: { coverage: 'complete', addresses: [linkedSession], error: null } };
       if (actionId === 'session.status.get') return { ok: true, result: { session: {
         id: sessionId, createdAt: 1, updatedAt: 1, active: false, activeAt: 1, encryption: null,
@@ -231,7 +257,12 @@ describe('CLI session pull request binding', () => {
     const declarations = [CHANNELS_MANIFEST, TRIAGE_PLUGIN.manifest, GITHUB_PLUGIN.manifest].map(manifest => ({
       manifest: normalizePluginManifestV2(manifest), occurrenceId: createPluginRuntimeOccurrenceId(manifest.id), sourceCustody: createManagedPluginSourceCustody(manifest.id),
     }));
-    const targeted = createManifestTargetedContributionsService({ readCurrentDeclarations: () => ({ declarations }), subscribeToCatalogChanges: () => () => {} });
+    const targeted = createManifestTargetedContributionsService({
+      readCurrentDeclarations: () => ({ declarations: providerRetired
+        ? declarations.filter(row => row.manifest.id !== GITHUB_PLUGIN.manifest.id)
+        : declarations }),
+      subscribeToCatalogChanges: () => () => {},
+    });
     const providerMaterialization = createPluginActionCallerMaterializationFixture(GITHUB_PLUGIN.manifest.id);
     const triageMaterialization = createPluginActionCallerMaterializationFixture(TRIAGE_PLUGIN.manifest.id);
     const provider = await createPluginTestkit({ manifest: GITHUB_PLUGIN.manifest, module: GITHUB_PLUGIN,
@@ -292,8 +323,8 @@ describe('CLI session pull request binding', () => {
       const result = await registry.invoke({ pluginId: CHANNELS_MANIFEST.id, localId, input, surface: 'cli',
         invocationAuthority: 'present_user', signal: controller.signal,
         requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
-      if (result.status !== 'executed') throw new Error(result.status === 'deferred'
-        ? `deferred:${result.artifactId}` : `${result.status}:${result.code}`);
+      if (result.status === 'deferred') throw new Error(`deferred:${result.artifactId}`);
+      if (result.status !== 'executed') return { ok: false, errorCode: result.code, error: result.code };
       return result.value;
     };
     let nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true, pullRequest, result: 'created', nextAction: { kind: 'none' } });
@@ -321,6 +352,16 @@ describe('CLI session pull request binding', () => {
       executeCanonicalAction: async () => ({ ok: false, errorCode: 'unavailable', error: 'unavailable' }),
     });
     try {
+      if (authority !== 'current') {
+        const cause = authority === 'provider retired' ? 'channels_pr_link_provider_not_ready' : 'channels_pr_link_connection_not_ready';
+        expect(await open()).toMatchObject({ success: true, pullRequest, result: 'created',
+          outcome: { kind: 'effect_applied_with_warning',
+            effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining(cause) } });
+        expect(await invokeCore('session-pull-request-binding-v1', { kind: 'list', sessionId }))
+          .toEqual({ kind: 'links', sessionId, pullRequestLinks: [] });
+        expect(adds).toBe(0);
+        return;
+      }
       expect(await open()).toBe(nativeResponse);
       expect(adds).toBe(1); expect(attaches).toBe(1);
       expect(instances[0]?.bindings.session).toEqual({ kind: 'value', value: linkedSession });
