@@ -30,6 +30,7 @@ packages:
   - packages/databases
   - packages/triage-sources
   - packages/forge-ci
+  - packages/plugins/machine-ssh
   - packages/plugins/[a-z]*
   - packages/peer-mediation
   - packages/transfers

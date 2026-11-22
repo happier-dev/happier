@@ -1,3 +1,4 @@
+import { REMOTE_HOST_SSH_PROVISIONER } from '@happier-dev/cli-common/ssh';
 import { resolveRetainedMachineProvisioner } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { createExternalActionRequesterServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 import { projectManagedMachineRolePurposeBindingsV1, readManagedMachineRoleCredentialConfigurationsV1,
@@ -334,6 +335,8 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
     // reviewed facts neither select roles nor require Account catalog membership.
     const contribution = resolveRetainedMachineProvisioner(params.input.runtimeRegistry.contributes.machineProvisioners, machine.launch);
     if (!contribution) throw new ManagedMachineControllerError('provider_unavailable');
+    const remoteHostWorkspace = contribution.identity.pluginId === REMOTE_HOST_SSH_PROVISIONER.pluginId
+        && contribution.identity.localId === REMOTE_HOST_SSH_PROVISIONER.localId;
     const bootstrapCredentialKind = contribution.definition.bootstrapCredential?.kind
         ?? (contribution.definition.bootstrapTransport ? undefined : 'ssh');
     let retainedBootstrapCredential: Promise<BootstrapCredentialValue> | undefined;
@@ -448,7 +451,27 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
                     } } : {}),
                     ...(io?.managedNativeCredentials
                         ? { managedNativeCredentials: io.managedNativeCredentials } : {}),
-                    ...(bootstrapCredentialKind
+                    ...(remoteHostWorkspace && (role === 'exec' || role === 'putFile' || role === 'stream')
+                        ? { readBootstrapCredential: async (registerRawForRedaction?: (value: string) => void) => {
+                            assertBootstrapCredentialAccount(params, machine);
+                            const choices = machine.launch.choices;
+                            const remoteHostId = choices && typeof choices === 'object' && !Array.isArray(choices) ? choices.remoteHostId : undefined;
+                            if (typeof remoteHostId !== 'string') throw new ManagedMachineControllerError('credential_unavailable');
+                            const [{ createCliRemoteHostStore }, { runWithServerHttpBaseUrl }, { establishRemoteHostWorkspaceSshTrust }] = await Promise.all([
+                                import('@/settings/remoteHosts/remoteHostStore'), import('@/api/client/serverHttpBaseUrl'), import('./enrollmentSshTrust'),
+                            ]);
+                            return runWithServerHttpBaseUrl(params.input.serverUrl, () => createCliRemoteHostStore({
+                                credentials: params.input.credentials, signal,
+                            }).readWorkspaceSshBinding(remoteHostId, connection => establishRemoteHostWorkspaceSshTrust({
+                                ...connection, signal, attaching: params.action === 'machines.managed.acquire' && !machine.resource,
+                                correlation: { homeId: machine.homeId, managedId: machine.id, controller: params.input.controller,
+                                    requestId: params.options.requestId, expectedIntentRevision: machine.intentRevision },
+                                operationId: params.options.context?.operationAcceptance?.operationId,
+                                requesterEnrollmentAccountId: readManagedMachineRequesterEnrollmentAccountIdV1(machine),
+                                ...createManagedBootstrapProgress(params, machine),
+                            }), params.input.runtimeRegistry.secretSources, registerRawForRedaction));
+                        } }
+                        : bootstrapCredentialKind
                         ? { readBootstrapCredential: async () => {
                             const retained = await readRetainedBootstrapCredential();
                             return new TextEncoder().encode(retained.value);

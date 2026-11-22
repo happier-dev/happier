@@ -51,3 +51,9 @@ export {
   type OpenSshCommandResult,
   type OpenSshExecutionErrorCode,
 } from './openSshRunner.js';
+
+export {
+  REMOTE_HOST_SSH_PROVISIONER,
+  parseRemoteHostWorkspaceBindingV1,
+  type RemoteHostWorkspaceBindingV1,
+} from './remoteHostWorkspaceBinding.js';

@@ -78,6 +78,54 @@ describe('managed configurator uses the exact Home Action front door', () => {
         expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
     });
 
+    it.each(['acquired', 'session_holder_unavailable'] as const)('uses the saved SSH host for one existing-workspace acquire (%s)', async outcome => {
+        const homeId = 'srv_ssh_attach';
+        const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://ssh.attach.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const contribution = { pluginId: 'happier.machine.ssh', localId: 'ssh' };
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const hostId = 'saved-host';
+        const descriptor = {
+            schemaVersion: 1,
+            launchSchema: defineProtocolObject({ remoteHostId: defineProtocolString() }, { policy: 'closed' }).jsonSchema,
+            workspaceAttachment: { when: { op: 'truthy' as const, path: 'remoteHostId' } },
+        };
+        await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.provisioners.options', tokenEpoch: 0, execute: input => {
+                expect(input).toEqual({ homeId, controller, contribution, selectors: { remoteHostId: hostId } });
+                return createMachineProvisionerOptionsFixture({ base: { launch: {} }, dimensions: {
+                    size: [], location: [], duration: [], network: [], image: [
+                        { id: 'another-host', title: 'Another server', assignments: [{ path: 'remoteHostId', value: 'another-host' }] },
+                        { id: hostId, title: 'Saved server', assignments: [{ path: 'remoteHostId', value: hostId }] },
+                    ],
+                } });
+            } });
+        const admitted = await answerExternalActionAccountForHome(harness, serverId, { ...controller,
+            actionId: 'machines.managed.acquire', tokenEpoch: 0, execute: input => {
+                expect(input).toEqual({
+                    selection: { kind: 'one-off', homeId, controller,
+                        launch: { provider: contribution, name: 'Saved server', choices: { remoteHostId: hostId }, schemaVersion: 1 },
+                        attachWorkspace: true, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
+                    enrollmentIdentity: { kind: 'existingUser', role: 'adopted' },
+                });
+                return { managedId: 'attached-ssh' };
+            }, failure: () => outcome === 'acquired' ? null : { errorCode: outcome, error: outcome } });
+        harness.answer(serverId, '/v1/machines', { body: [admitted.machine] });
+
+        const actions = await import('@/components/settings/remoteHosts/attachRemoteHostWorkspace').catch(() => null);
+        expect(actions, 'Remote Hosts has no adapter to the existing workspace acquire').not.toBeNull();
+        const result = await actions!.attachRemoteHostWorkspace({
+            scope: { serverId, accountId: 'owner' }, homeId, controller, contribution, descriptor, hostId,
+            signal: new AbortController().signal,
+            onApprovalPending: () => { throw new Error('Unexpected approval request'); },
+        });
+        expect(result).toEqual(outcome === 'acquired'
+            ? { kind: 'attached', managedId: 'attached-ssh', controller }
+            : { kind: 'unsupported_platform' });
+        expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    });
+
     it('starts the stopped attached workspace once and clears pending on settle', async () => {
         const homeId = 'srv_start_workspace';
         const serverId = await harness.addHome({ name: 'Compute', serverUrl: 'https://start-workspace.test',

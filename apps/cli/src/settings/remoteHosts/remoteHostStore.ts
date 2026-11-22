@@ -1,3 +1,4 @@
+import type { RemoteHostWorkspaceBindingV1 } from '@happier-dev/cli-common/ssh';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import axios from '@/api/client/credentialAxios';
 import { randomBytes } from 'node:crypto';
@@ -25,7 +26,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { readAccountSettingsV2Raw, replaceAccountSettingsV2RawForOwnerCutover } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { normalizeCliAccountSettingsHistoryAfterTransfer } from '@/settings/accountSettings/accountSettingsHistoryNormalization';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
-import { readSavedSecretCatalogForOperation } from "@/settings/secrets/savedSecretCatalogRead";
+import { acquireSavedSecretMaterializerForOperation, readSavedSecretCatalogForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import { prepareSavedSecretResourceCreateForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
 import { createSavedSecretMaterializerFromSnapshotV1, readSavedSecretRevisionsFromSnapshotV1 } from '@/settings/secrets/savedSecretCatalog';
 import { deriveSettingsSecretsReadKeysForCredentials } from '@/settings/secrets/settingsSecretsKey';
@@ -242,6 +243,32 @@ function createCapturedStore(input: Readonly<{
     const current = await readStorageContext();
     return current.mode === admitted.mode ? catalog : { status: 'unavailable', reason: 'account-mode-mismatch' };
   };
+  const readWorkspaceSshBinding = async (hostId: string,
+    establishSshHostTrust: (connection: Pick<RemoteHostWorkspaceBindingV1, 'target' | 'port'>) => Promise<string>,
+    secretSources: Parameters<typeof acquireSavedSecretMaterializerForOperation>[0]['secretSources'],
+    registerRawForRedaction?: (value: string) => void,
+  ): Promise<Uint8Array> => {
+    const unavailable = () => Object.assign(new Error('The Remote Host SSH binding is unavailable'), { code: 'credential_unavailable' });
+    const catalog = await readCatalogForOperation();
+    const ssh = catalog.status === 'ready' ? catalog.hosts.find(host => host.id === hostId)?.ssh : undefined;
+    if (!ssh || ssh.authMode === 'agent') throw unavailable();
+    const ref = ssh.authMode === 'password' ? ssh.passwordSecretRef : ssh.identityPrivateKeySecretRef;
+    if (!ref) throw unavailable();
+    const connection = { target: ssh.target, ...(ssh.port == null ? {} : { port: ssh.port }) };
+    const knownHostsPath = await establishSshHostTrust(connection);
+    const { context, snapshot } = await readReferences([ref]);
+    try {
+      const materializer = await acquireSavedSecretMaterializerForOperation({ snapshot, operationContext: context,
+        references: [{ ref }], signal: input.signal, secretSources });
+      const secret = materializer.resolve(ref);
+      if (secret.status !== 'ready') throw unavailable();
+      registerRawForRedaction?.(secret.value);
+      const binding: RemoteHostWorkspaceBindingV1 = { v: 1, ...connection, authMode: ssh.authMode, knownHostsPath, credential: secret.value };
+      return new TextEncoder().encode(JSON.stringify(binding));
+    } finally {
+      if (!input.operationContext) context.withdrawCatalog();
+    }
+  };
   const mutateHosts = async (value: SaveInput | Address, remove: boolean): Promise<MutationResult> => {
     const hostId = 'host' in value ? value.host.id : value.hostId;
     try {
@@ -286,7 +313,7 @@ function createCapturedStore(input: Readonly<{
         : { status: 'unavailable', reason: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'remote_host_operation_failed' };
     }
   };
-  return { assertCurrent, readRow, readStorageContext, readCatalog, readCatalogForOperation,
+  return { assertCurrent, readRow, readStorageContext, readCatalog, readCatalogForOperation, readWorkspaceSshBinding,
     saveHost: (value: SaveInput) => mutateHosts(value, false), removeHost: (value: Address) => mutateHosts(value, true) };
 }
 

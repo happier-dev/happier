@@ -182,6 +182,13 @@ live and saved acknowledgements, and retain partial/unknown updates as
 unconfirmed. Cleanup and pre-resume preparation consume the same host owner;
 do not create a policy store, poller or second reconciliation loop.
 
+## Existing Remote Host credentials in development
+
+In 0.3 development source, admitted daemon roles for a Remote Host-backed
+resource use the existing bootstrap credential lease. The controller fills the
+lease with the connection envelope for the configured Remote Host. See the
+[envelope schema and credential handling rules](https://github.com/happier-dev/happier/blob/v0.3/packages/plugin-sdk/README.md#remote-host-backed-machine-provisioner-resources-03-development-source).
+
 ## Guest-host key installation in development
 
 In unreleased 0.3 source, an admitted daemon SSH acquire installer obtains the

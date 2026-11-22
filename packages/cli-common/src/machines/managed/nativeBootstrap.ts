@@ -106,13 +106,15 @@ export async function resolveManagedNativeGuestStartup(carrier: NativeCarrier, e
         daemonStartup: carrier.daemonStartup } };
 }
 
+export const MANAGED_NATIVE_GUEST_PLATFORM_COMMAND = 'uname -s; uname -m; printf "%s\\n" "$HOME"';
+
 /** The one guest platform probe (enrollment and Session holder bootstrap). */
 export async function probeManagedNativeGuestPlatform(
     exec: ManagedNativeBootstrapIO['exec'],
     signal?: AbortSignal,
     forSessionHolder?: 'session-holder',
 ): Promise<ManagedGuestPlatform> {
-    const platform = await exec({ command: 'uname -s; uname -m; printf "%s\\n" "$HOME"', signal });
+    const platform = await exec({ command: MANAGED_NATIVE_GUEST_PLATFORM_COMMAND, signal });
     if (platform.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native guest platform could not be observed.');
     const [os, arch, home] = platform.stdout.trim().split(/\r?\n/u);
     let platformIdentity: Omit<ManagedGuestPlatform, 'home'>;

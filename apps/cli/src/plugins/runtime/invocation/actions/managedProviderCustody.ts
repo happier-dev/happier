@@ -29,7 +29,7 @@ export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
   contribution: Readonly<{ pluginId: string; localId: string; occurrenceId: string }>;
   role: MachineProvisionerRoleV1;
   /** Owned bytes from this exact row's retained SavedSecret; never an SDK selector. */
-  readBootstrapCredential?(): Promise<Uint8Array>;
+  readBootstrapCredential?: import('@happier-dev/protocol/actions/executor/types').ManagedBootstrapCredentialInvocationBinding['readBootstrapCredential'];
   /** Acquire installer's generated guest-host identity from that same retained resource. */
   readGuestHostCredential?(): Promise<Uint8Array>;
   managedSshHostTrust?: import('@happier-dev/protocol/actions/executor/types').HostReviewedChildInvocationServicesV1['managedSshHostTrust'];

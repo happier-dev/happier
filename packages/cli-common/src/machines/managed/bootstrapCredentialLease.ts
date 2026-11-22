@@ -29,7 +29,7 @@ export function createManagedBootstrapCredentialByteService(input: Readonly<{
         if (!input.isCurrent() || !input.binding || !await input.binding.isCurrent()) throw input.unavailable();
         assertActive();
     };
-    const materialize = (readCredential: (() => Promise<Uint8Array>) | undefined): Promise<ManagedBootstrapCredentialByteLease> => {
+    const materialize = (readCredential: ManagedBootstrapCredentialInvocationBinding['readBootstrapCredential'] | undefined): Promise<ManagedBootstrapCredentialByteLease> => {
         if (!readCredential) return Promise.reject(input.unavailable());
         let bytes: Uint8Array | null = null;
         let materialization: Promise<ManagedBootstrapCredentialByteLease> | null = null;
@@ -43,7 +43,7 @@ export function createManagedBootstrapCredentialByteService(input: Readonly<{
         materialization = (async () => {
             try {
                 await admitAcquisition();
-                bytes = await readCredential();
+                bytes = await readCredential(input.registerRawForRedaction);
                 assertActive();
                 if (bytes.byteLength === 0) throw input.unavailable();
                 input.registerRawForRedaction?.(new TextDecoder().decode(bytes));

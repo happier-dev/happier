@@ -3,7 +3,7 @@ import { buildSshAskpassEnv } from './sshAskpass.js';
 
 export type OpenSshAuth =
   | Readonly<{ mode: 'agent' }>
-  | Readonly<{ mode: 'keyFile'; privateKeyPath: string }>
+  | Readonly<{ mode: 'keyFile'; privateKeyPath: string; identitiesOnly?: boolean }>
   | Readonly<{ mode: 'passwordPrompt' }>
   | Readonly<{ mode: 'password'; password: string }>;
 
@@ -80,6 +80,7 @@ function buildOpenSshTransportArgs(params: Readonly<{
   args.push('-o', 'StrictHostKeyChecking=yes');
 
   if (params.auth.mode === 'keyFile') {
+    if (params.auth.identitiesOnly) args.push('-o', 'IdentitiesOnly=yes', '-o', 'IdentityAgent=none');
     args.push('-i', params.auth.privateKeyPath);
   }
 
@@ -152,6 +153,7 @@ export function buildOpenScpCommand(params: Readonly<{
   remotePath: string;
   direction?: 'upload' | 'download';
   recursive?: boolean;
+  preserveAttributes?: boolean;
   sshConfigFile?: string;
   knownHostsPath?: string;
   knownHostsMode?: OpenSshKnownHostsMode;
@@ -185,7 +187,7 @@ export function buildOpenScpCommand(params: Readonly<{
     : [`${target}:${params.remotePath}`, params.localPath];
   return {
     command: params.scpBin,
-    args: [...args, ...(params.recursive === false ? [] : ['-r']), ...endpoints],
+    args: [...args, ...(params.preserveAttributes ? ['-p'] : []), ...(params.recursive === false ? [] : ['-r']), ...endpoints],
     ...(env ? { env } : {}),
     redactedLabel: `${params.scpBin} ${direction === 'upload' ? '… ' + target + ':…' : target + ':… …'}`,
   };

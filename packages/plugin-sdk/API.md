@@ -2387,7 +2387,17 @@
 | `./machine-provisioners/lima` | `putLimaGuestFile` | value | daemon |
 | `./machine-provisioners/lima` | `runLimaCommand` | value | daemon |
 | `./machine-provisioners/lima` | `validateLimaStore` | value | daemon |
+| `./machine-provisioners/ssh` | `MANAGED_NATIVE_GUEST_PLATFORM_COMMAND` | value | daemon |
+| `./machine-provisioners/ssh` | `OpenSshAuth` | type | daemon |
+| `./machine-provisioners/ssh` | `REMOTE_HOST_SSH_PROVISIONER` | value | daemon |
+| `./machine-provisioners/ssh` | `SSH_PASSWORD_ENV` | value | daemon |
+| `./machine-provisioners/ssh` | `buildOpenScpCommand` | value | daemon |
+| `./machine-provisioners/ssh` | `buildOpenSshCommand` | value | daemon |
+| `./machine-provisioners/ssh` | `createHappierTempDir` | value | daemon |
+| `./machine-provisioners/ssh` | `materializeSshIdentityPrivateKeyToTempFile` | value | daemon |
 | `./machine-provisioners/ssh` | `observeMachineProvisionerSshHost` | value | any |
+| `./machine-provisioners/ssh` | `parseRemoteHostWorkspaceBindingV1` | value | daemon |
+| `./machine-provisioners/ssh` | `removeHappierTempDirAsync` | value | daemon |
 | `./machine-provisioners/ssh` | `resolveMachineProvisionerSshBootstrap` | value | any |
 | `./managed-services` | `ManagedDependenciesService` | type | daemon |
 | `./managed-services` | `ManagedDependencyContribution` | type | any |

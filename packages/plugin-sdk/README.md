@@ -9,6 +9,40 @@ The [public authoring example](examples/public-authoring/README.md) demonstrates
 `/manifest` text resolver. The [manifest guide](../../apps/docs/content/docs/plugins/manifest/index.mdx#localized-labels-03-development-source)
 describes fallback behavior and older-host compatibility.
 
+## Remote-Host-backed machine provisioner resources (0.3 development source)
+
+A Remote-Host-backed resource carries the Remote Host record ID in the launch and
+resource schemas. Daemon roles for that resource call
+`context.services.machineProvisioners.materializeBootstrapCredential({ kind: 'bytes' })`
+after admission. The controller establishes SSH host trust and resolves the
+SavedSecret for the admitted record before opening the lease. File leases carry
+the same bytes on native hosts.
+
+The connection envelope is a versioned UTF-8 JSON object with these fields.
+
+| Field | Contract |
+| --- | --- |
+| `v` | Integer `1` |
+| `target` | The SSH destination from the Remote Host record |
+| `port` | Optional integer from 1 through 65535. Omitting it uses the OpenSSH default. |
+| `authMode` | `keyfile` or `password` |
+| `knownHostsPath` | The controller's app-managed known_hosts path, after host trust is established |
+| `credential` | The selected SavedSecret value, an SSH private key or password as specified by `authMode` |
+
+Use the controller's known_hosts path with strict host-key checking. Dispose of
+the lease and any SSH identity file when the invocation ends. Carry these
+connection fields between controller and plugin only through the lease. Keep
+the credential out of command arguments, Action inputs and outputs, logs, and
+transcripts. Use a private identity file or the OpenSSH askpass process
+environment as appropriate.
+
+Import `parseRemoteHostWorkspaceBindingV1` from
+`@happier-dev/plugin-sdk/machine-provisioners/ssh` to read the lease. That same
+entry provides the OpenSSH command builders, askpass environment key, guest
+platform probe, and temporary identity and transfer-file helpers. Use
+`context.services.exec` to run the assembled invocations. The parser and helpers
+share the controller's existing implementations.
+
 ## Durable native-tool data (0.3 development source)
 
 Daemon invocations can call `context.services.fs.getPluginDataDirectory({ relativePath: 'my-configuration/native-state' })`

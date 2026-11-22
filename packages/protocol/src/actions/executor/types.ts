@@ -1429,7 +1429,7 @@ export type PluginSettingsAdministrationActionRequest = Readonly<{
 /** Private, finite invocation custody. Never serialized as an Action operand. */
 export type ManagedBootstrapCredentialInvocationBinding = Readonly<{
   role: import('../../plugins/contributions/machineProvisioners.js').MachineProvisionerRoleV1;
-  readBootstrapCredential(): Promise<Uint8Array>;
+  readBootstrapCredential(registerRawForRedaction?: (value: string) => void): Promise<Uint8Array>;
   readGuestHostCredential?(): Promise<Uint8Array>;
   isCurrent(): boolean | Promise<boolean>;
 }>;

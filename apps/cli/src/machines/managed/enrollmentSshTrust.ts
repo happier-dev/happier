@@ -1,3 +1,4 @@
+import { resolveDefaultKnownHostsPath, type RemoteHostWorkspaceBindingV1 } from '@happier-dev/cli-common/ssh';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -12,6 +13,38 @@ type SshHost = Readonly<Omit<Extract<ManagedBootstrapCarrierV1, { kind: 'ssh' }>
 type SshTrustIdentity = Pick<ManagedEnrollmentCorrelationV1, 'homeId' | 'managedId'>
     | Readonly<{ homeId: string; presetId: string; operationId: string }>;
 
+type TrustTask = Omit<Parameters<typeof createManagedBootstrapTaskRunner>[0], 'readResponseOwner'> & Readonly<{
+    correlation: ManagedEnrollmentCorrelationV1;
+    operationId?: string;
+    requesterEnrollmentAccountId?: string;
+}>;
+
+async function runSshTrustTask(input: TrustTask, resolve: (signal: AbortSignal) => ReturnType<
+    typeof import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap')['resolveLiveRemoteHostTrust']
+>) {
+    const taskRunner = createManagedBootstrapTaskRunner({ ...input, readResponseOwner: () => input.operationId && input.requesterEnrollmentAccountId ? {
+        correlation: input.correlation, operationId: input.operationId, readTaskId: taskRunner.readTaskId,
+    } : undefined });
+    await taskRunner.run({ run: async ctx => {
+        ctx.emit({ type: 'progress', stepId: 'ssh.trust', message: 'Verifying SSH host trust' });
+        await settleRemoteSshHostTrust(ctx, await resolve(ctx.signal));
+        return { trusted: true };
+    } });
+}
+
+export async function establishRemoteHostWorkspaceSshTrust(input: TrustTask
+    & Readonly<Pick<RemoteHostWorkspaceBindingV1, 'target' | 'port'> & { attaching: boolean }>): Promise<string> {
+    const knownHostsPath = resolveDefaultKnownHostsPath(configuration.happyHomeDir);
+    // Only the attended attach uses the trust prompt. Every carrier checks this
+    // same store at connection time, so a changed key requires Remote Hosts trust.
+    if (!input.attaching) return knownHostsPath;
+    const { resolveLiveRemoteHostTrust } = await import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap');
+    await runSshTrustTask(input, signal => resolveLiveRemoteHostTrust({
+        ssh: { target: input.target, port: input.port, auth: 'agent', knownHostsPath }, knownHostsMode: 'app', signal,
+    }));
+    return knownHostsPath;
+}
+
 /** Resource acquisition owns first-use trust through the same managed operation question as enrollment. */
 export async function runManagedSessionSshTrust(input: Readonly<{
     correlation: ManagedEnrollmentCorrelationV1;
@@ -24,15 +57,7 @@ export async function runManagedSessionSshTrust(input: Readonly<{
     if (input.carrier.kind !== 'ssh') return;
     const carrier = input.carrier;
     const trustedHostKey = readManagedSshTrustedHostKey(carrier, input.guestHostPublicKey);
-    const taskRunner = createManagedBootstrapTaskRunner({ ...input, readResponseOwner: () => input.operationId && input.requesterEnrollmentAccountId ? {
-        correlation: input.correlation, operationId: input.operationId, readTaskId: taskRunner.readTaskId,
-    } : undefined });
-    await taskRunner.run({ run: async ctx => {
-        ctx.emit({ type: 'progress', stepId: 'ssh.trust', message: 'Verifying SSH host trust' });
-        const resolution = await resolveManagedSshHostTrust({ ...input, carrier, trustedHostKey, signal: ctx.signal });
-        await settleRemoteSshHostTrust(ctx, resolution);
-        return { trusted: true };
-    } });
+    await runSshTrustTask(input, signal => resolveManagedSshHostTrust({ ...input, carrier, trustedHostKey, signal }));
 }
 
 /** The admitted resource or preparation operation, rather than its reusable network address, owns trust. */

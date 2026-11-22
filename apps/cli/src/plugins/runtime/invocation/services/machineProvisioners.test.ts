@@ -1,3 +1,4 @@
+import { REMOTE_HOST_SSH_PROVISIONER, parseRemoteHostWorkspaceBindingV1 } from '@happier-dev/cli-common/ssh';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -43,6 +44,33 @@ it('requires host-owned SSH trust and preserves decline before bootstrap credent
         await lifetime.complete();
         await expect(declined.establishSshHostTrust(host)).rejects.toMatchObject({ code: 'plugin_service_unavailable' });
     } finally { await lifetime.complete(); }
+});
+
+it('registers the raw SSH credential for redaction and zeroes the Remote Host envelope on settlement', async () => {
+    const lifetime = createPluginInvocationLifetime();
+    const credential = 'fixture SSH password';
+    const payload = { v: 1, target: 'guest@host.example', port: 37022,
+        authMode: 'password', knownHostsPath: '/fixture/known_hosts', credential };
+    const bytes = new TextEncoder().encode(JSON.stringify(payload));
+    const redact = vi.fn();
+    const { pluginId } = REMOTE_HOST_SSH_PROVISIONER;
+    const service = createMachineProvisionersInvocationService({ seed: {
+        plugin: { id: pluginId, version: '0' }, contribution: { id: 'exec', qualifiedId: `${pluginId}/exec` },
+        occurrenceId: 'occurrence', correlationId: 'ssh-exec', surface: 'plugin', signal: lifetime.signal,
+        isOccurrenceCurrent: () => true, retainCleanup: lifetime.retainCleanup,
+        managedBootstrapCredential: { role: 'exec', isCurrent: () => true, readBootstrapCredential: async registerRaw => {
+            registerRaw?.(credential);
+            return bytes;
+        } },
+    }, registerRawForRedaction: redact })!;
+    try {
+        const lease = await service.materializeBootstrapCredential({ kind: 'bytes' });
+        expect(lease.kind).toBe('bytes');
+        if (lease.kind !== 'bytes') throw new Error('Expected a byte lease');
+        expect(parseRemoteHostWorkspaceBindingV1(lease.bytes)).toEqual(payload);
+        expect(redact).toHaveBeenCalledWith(credential);
+    } finally { await lifetime.complete(); }
+    expect(bytes.every(byte => byte === 0)).toBe(true);
 });
 
 it('waits for native snapshot observation under the admitted invocation cancellation without opening an SSH key', async () => {
