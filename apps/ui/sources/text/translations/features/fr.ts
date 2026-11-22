@@ -13783,7 +13783,7 @@ const fr: SecretsSettingsCopy = {
     copyRefused: "Impossible de copier la valeur. Affichez-la à nouveau pour réessayer.",
     copyUnrecorded: "La valeur est peut-être dans le presse-papiers, mais cette copie n'a pas pu être enregistrée.",
     historyTitle: "Historique d'affichage",
-    historyEmpty: "Personne n'a affiché cette valeur.",
+    historyEmpty: "Pas encore affichée",
     historyUnavailable: "Impossible de charger l'historique.",
     historyRevealed: "Affiché",
     historyRevealedCopied: "Affiché et copié",

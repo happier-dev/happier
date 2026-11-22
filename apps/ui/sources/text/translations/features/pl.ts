@@ -13790,7 +13790,7 @@ const pl: SecretsSettingsCopy = {
     copyRefused: "Nie udało się skopiować wartości. Pokaż ją ponownie, aby spróbować.",
     copyUnrecorded: "Wartość może być w schowku, ale tego kopiowania nie udało się zapisać.",
     historyTitle: "Historia odsłonięć",
-    historyEmpty: "Nikt nie odsłonił tej wartości.",
+    historyEmpty: "Jeszcze nie odsłonięto",
     historyUnavailable: "Nie udało się wczytać historii.",
     historyRevealed: "Odsłonięto",
     historyRevealedCopied: "Odsłonięto i skopiowano",

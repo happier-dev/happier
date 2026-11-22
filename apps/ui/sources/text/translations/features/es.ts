@@ -13663,7 +13663,7 @@ const es: SecretsSettingsCopy = {
     copyRefused: "No se pudo copiar el valor. Vuelve a mostrarlo para intentarlo.",
     copyUnrecorded: "Es posible que el valor esté en el portapapeles, pero esta copia no se pudo registrar.",
     historyTitle: "Historial de revelaciones",
-    historyEmpty: "Nadie ha mostrado este valor.",
+    historyEmpty: "Aún no se ha mostrado",
     historyUnavailable: "No se pudo cargar el historial.",
     historyRevealed: "Mostrado",
     historyRevealedCopied: "Mostrado y copiado",

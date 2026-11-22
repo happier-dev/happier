@@ -451,6 +451,14 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 </Text>
             ) : null}
             <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
+                {/* Cancel leads and the primary closes the row, as every other form in the app. */}
+                <RoundButton
+                    testID="saved-secret-access-cancel"
+                    display="secondary"
+                    title={t('common.cancel')}
+                    disabled={saving || props.approvalPending}
+                    onPress={props.onClose}
+                />
                 <RoundButton
                     testID="saved-secret-access-save"
                     title={target.kind === 'personal' ? t('secretsSettings.share') : t('common.save')}
@@ -475,13 +483,6 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                         }}
                     />
                 ) : null}
-                <RoundButton
-                    testID="saved-secret-access-cancel"
-                    display="secondary"
-                    title={t('common.cancel')}
-                    disabled={saving || props.approvalPending}
-                    onPress={props.onClose}
-                />
             </View></RoundButtonSizeScope>
         </View>
     );

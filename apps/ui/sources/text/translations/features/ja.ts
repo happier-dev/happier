@@ -13712,7 +13712,7 @@ const ja: SecretsSettingsCopy = {
     copyRefused: "値をコピーできませんでした。もう一度表示してからお試しください。",
     copyUnrecorded: "値はクリップボードにある可能性がありますが、このコピーは記録できませんでした。",
     historyTitle: "表示履歴",
-    historyEmpty: "この値を表示した人はいません。",
+    historyEmpty: "まだ表示されていません",
     historyUnavailable: "履歴を読み込めませんでした。",
     historyRevealed: "表示",
     historyRevealedCopied: "表示してコピー",

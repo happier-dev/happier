@@ -13768,7 +13768,7 @@ const de: SecretsSettingsCopy = {
     copyRefused: "Der Wert konnte nicht kopiert werden. Zeige ihn erneut an, um es noch einmal zu versuchen.",
     copyUnrecorded: "Der Wert ist eventuell in der Zwischenablage, aber dieses Kopieren konnte nicht festgehalten werden.",
     historyTitle: "Anzeigeverlauf",
-    historyEmpty: "Niemand hat diesen Wert angezeigt.",
+    historyEmpty: "Noch nicht angezeigt",
     historyUnavailable: "Der Verlauf konnte nicht geladen werden.",
     historyRevealed: "Angezeigt",
     historyRevealedCopied: "Angezeigt und kopiert",

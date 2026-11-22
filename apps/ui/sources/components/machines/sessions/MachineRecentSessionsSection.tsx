@@ -8,7 +8,7 @@ import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { useMachineRecentSessions } from '@/sync/store/sessionListMachineRecent';
 import { t } from '@/text';
-import { getSessionName, getSessionSubtitle } from '@/utils/sessions/sessionUtils';
+import { getSessionName, getSessionSubtitleOnItsMachine } from '@/utils/sessions/sessionUtils';
 
 /** The five most recent sessions on this machine (Project work); absent when it has none. */
 export const MachineRecentSessionsSection = React.memo(function MachineRecentSessionsSection(props: Readonly<{
@@ -29,7 +29,8 @@ export const MachineRecentSessionsSection = React.memo(function MachineRecentSes
                     key={session.id}
                     title={getSessionName(session, props.serverId)}
                     icon={<Icon name="chat-circle-dots" />}
-                    subtitle={getSessionSubtitle(session, props.serverId)}
+                    // This page names the Machine; a row says only what tells it apart (its folder).
+                    subtitle={getSessionSubtitleOnItsMachine(session, props.serverId) ?? undefined}
                     onPress={() => navigateToSession(session.id, { serverId: props.serverId })}
                     showChevron
                 />

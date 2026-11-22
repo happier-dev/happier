@@ -2385,12 +2385,23 @@ describe('a no-folder session', () => {
         expect(getSessionSubtitle(first)).toBe('MacBook Pro');
     });
 
+    it('says nothing more for a no-folder session on its own Machine page, and keeps the path of a folder session', async () => {
+        const { getSessionSubtitle, getSessionSubtitleOnItsMachine } = await import('./sessionUtils');
+        storage.setState({
+            machines: { 'machine-a': createMachineFixture({ id: 'machine-a', metadata: { displayName: 'MacBook Pro' } as never }) },
+        });
+        expect(getSessionSubtitleOnItsMachine(createBaseSession({ id: 'chat-4', metadata: managedMetadata }))).toBeNull();
+        const folder = createBaseSession({ id: 'chat-5', metadata: { path: '/Users/u/workspace/shop', homeDir: '/Users/u' } as never });
+        expect(getSessionSubtitleOnItsMachine(folder)).toBe(getSessionSubtitle(folder));
+    });
+
     it('never prints the hydrating placeholder as a machine name: the Session keeps the host it published', async () => {
         const { getSessionSubtitle } = await import('./sessionUtils');
         // The presence shell a heartbeat leaves for a machine this device never read (another Home, offline).
         const { buildMachineActivityPlaceholder } = await import('@/sync/domains/machines/machineActivity');
-        storage.setState({ machines: { 'machine-a': buildMachineActivityPlaceholder({ id: 'machine-a', active: false, activeAt: 1 }) } });
-        const session = createBaseSession({ id: 'chat-3', metadata: { ...managedMetadata, host: 'studio.local' } });
+        const machineId = 'machine-never-read';
+        storage.setState({ machines: { [machineId]: buildMachineActivityPlaceholder({ id: machineId, active: false, activeAt: 1 }) } });
+        const session = createBaseSession({ id: 'chat-3', metadata: { ...managedMetadata, machineId, host: 'studio.local' } });
         expect(getSessionSubtitle(session)).toBe('studio.local');
     });
 });

@@ -94,7 +94,7 @@ export const en = {
     copyRefused: "Couldn't copy the value. Reveal it again to try.",
     copyUnrecorded: "The value may be on your clipboard, but this copy couldn't be recorded.",
     historyTitle: "Reveal history",
-    historyEmpty: "No one has revealed this value.",
+    historyEmpty: "Not revealed yet",
     historyUnavailable: "History couldn't load.",
     historyRevealed: "Revealed",
     historyRevealedCopied: "Revealed and copied",

@@ -13652,7 +13652,7 @@ const zhHant: SecretsSettingsCopy = {
     copyRefused: "無法複製該值。請重新顯示後再試。",
     copyUnrecorded: "該值可能已在剪貼簿中，但這次複製未能記錄。",
     historyTitle: "顯示歷史",
-    historyEmpty: "還沒有人顯示過此值。",
+    historyEmpty: "尚未顯示",
     historyUnavailable: "無法載入歷史。",
     historyRevealed: "已顯示",
     historyRevealedCopied: "已顯示並複製",

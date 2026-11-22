@@ -13764,7 +13764,7 @@ const ca: SecretsSettingsCopy = {
     copyRefused: "No s'ha pogut copiar el valor. Torna'l a mostrar per provar-ho.",
     copyUnrecorded: "Potser el valor és al porta-retalls, però aquesta còpia no s'ha pogut registrar.",
     historyTitle: "Historial de revelacions",
-    historyEmpty: "Ningú ha mostrat aquest valor.",
+    historyEmpty: "Encara no s’ha mostrat",
     historyUnavailable: "No s'ha pogut carregar l'historial.",
     historyRevealed: "Mostrat",
     historyRevealedCopied: "Mostrat i copiat",

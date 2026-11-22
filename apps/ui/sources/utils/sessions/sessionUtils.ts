@@ -749,6 +749,14 @@ export function formatSessionWorkContext(parts: Readonly<{ agentLabel: string | 
 }
 
 /** Returns the session path for the subtitle on existing path-oriented surfaces. */
+/**
+ * A session's subtitle on its own Machine's page: its folder, never the Machine the page already names. A no-folder
+ * session has nothing more to say there, so it gets no subtitle.
+ */
+export function getSessionSubtitleOnItsMachine(session: SessionDisplayNameSource, serverId?: string | null): string | null {
+    return readSessionDirectoryKind(readDisplayOwnerMetadata(session)) === 'managed' ? null : getSessionSubtitle(session, serverId);
+}
+
 export function getSessionSubtitle(session: SessionDisplayNameSource, serverId?: string | null): string {
     const ownerMetadata = readDisplayOwnerMetadata(session);
     if (readSessionDirectoryKind(ownerMetadata) === 'managed') {

@@ -13790,7 +13790,7 @@ const ru: SecretsSettingsCopy = {
     copyRefused: "Не удалось скопировать значение. Покажите его снова, чтобы повторить.",
     copyUnrecorded: "Значение, возможно, в буфере обмена, но это копирование не удалось записать.",
     historyTitle: "История показов",
-    historyEmpty: "Никто не показывал это значение.",
+    historyEmpty: "Ещё не показывали",
     historyUnavailable: "Не удалось загрузить историю.",
     historyRevealed: "Показано",
     historyRevealedCopied: "Показано и скопировано",

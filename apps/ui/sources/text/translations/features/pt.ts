@@ -13758,7 +13758,7 @@ const pt: SecretsSettingsCopy = {
     copyRefused: "Não foi possível copiar o valor. Mostre-o novamente para tentar.",
     copyUnrecorded: "O valor pode estar na área de transferência, mas esta cópia não pôde ser registrada.",
     historyTitle: "Histórico de revelações",
-    historyEmpty: "Ninguém revelou este valor.",
+    historyEmpty: "Ainda não revelado",
     historyUnavailable: "Não foi possível carregar o histórico.",
     historyRevealed: "Revelado",
     historyRevealedCopied: "Revelado e copiado",

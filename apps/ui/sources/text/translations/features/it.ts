@@ -13771,7 +13771,7 @@ const it: SecretsSettingsCopy = {
     copyRefused: "Impossibile copiare il valore. Mostralo di nuovo per riprovare.",
     copyUnrecorded: "Il valore potrebbe essere negli appunti, ma questa copia non è stata registrata.",
     historyTitle: "Cronologia visualizzazioni",
-    historyEmpty: "Nessuno ha mostrato questo valore.",
+    historyEmpty: "Non ancora mostrato",
     historyUnavailable: "Impossibile caricare la cronologia.",
     historyRevealed: "Mostrato",
     historyRevealedCopied: "Mostrato e copiato",
