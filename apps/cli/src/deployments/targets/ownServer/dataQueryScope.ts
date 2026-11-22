@@ -76,21 +76,31 @@ export async function readOwnServerDataServiceDeploymentForHost(host: OwnServerD
     return { receipt, basis };
 }
 
-/** Exact indexed mounted-service acquisition, shared by reviewed role bootstrap
- * and query. Native labels and neighboring services never supply authority. */
 export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServiceHost,
-    selector: OwnServerDataServiceSelector, context: ActionExecutorContext,
-    preparedEnvironment?: DataEnvironment) {
+    selector: OwnServerDataServiceSelector, context: ActionExecutorContext, preparedEnvironment?: DataEnvironment) {
+    const { prepared: use, ...scope } = await acquireOwnServerMountedDataServiceForHost(host, selector, context, preparedEnvironment,
+        environment => {
+            const role = selector.role ?? 'readOnlyPassword';
+            const use = environment.content.bindings.find(binding => binding.purpose === 'dataRole'
+                && 'service' in binding && binding.service === selector.service && binding.role === role);
+            if (!use || use.purpose !== 'dataRole') return refuse(role === 'write' ? 'write_role_setup_required' : 'read_role_setup_required');
+            return use;
+        });
+    return { ...scope, use };
+}
+
+/** Exact indexed mounted-service acquisition for queries and fixed setup effects.
+ * Native labels and neighboring services never supply authority. */
+export async function acquireOwnServerMountedDataServiceForHost<Prepared>(host: OwnServerDataServiceHost,
+    selector: Omit<OwnServerDataServiceSelector, 'role'>, context: ActionExecutorContext,
+    preparedEnvironment: DataEnvironment | undefined, prepare: (environment: DataEnvironment) => Prepared) {
     const environment = preparedEnvironment ?? await host.readEnvironment({ environmentId: selector.environmentId,
         targetLinkId: selector.targetLinkId, context });
     if (environment.environment.revision !== selector.expectedRevision) return refuse('target_mismatch');
     const { basis } = await readOwnServerDataServiceDeploymentForHost(host, selector, context, environment);
     if (!basis.services.includes(selector.service)) return refuse('target_mismatch');
     const definition = resolveOwnServerDataQueryDefinitionForHost(environment.content, selector.service, basis.bindings);
-    const role = selector.role ?? 'readOnlyPassword';
-    const use = environment.content.bindings.find(binding => binding.purpose === 'dataRole'
-        && 'service' in binding && binding.service === selector.service && binding.role === role);
-    if (!use || use.purpose !== 'dataRole') return refuse(role === 'write' ? 'write_role_setup_required' : 'read_role_setup_required');
+    const prepared = prepare(environment);
     await host.ensureServiceObservations?.({ environmentId: selector.environmentId, composeService: selector.service });
     const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
         serverId: host.serverId, environmentId: selector.environmentId });
@@ -114,6 +124,6 @@ export async function acquireOwnServerDataServiceForHost(host: OwnServerDataServ
         if (containers?.length !== 1 || containers[0]!.service !== selector.service
             || containers[0]!.composeProject !== projection.physicalProjectName) return refuseUnconfirmedNativeDataService('container');
         context.signal?.throwIfAborted();
-        return { environment, definition, use, handle, containerId: containers[0]!.id, dispose: () => lease!.release() };
+        return { environment, definition, prepared, handle, containerId: containers[0]!.id, dispose: () => lease!.release() };
     } catch (error) { await lease?.release(); throw error; }
 }

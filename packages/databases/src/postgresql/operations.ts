@@ -387,16 +387,7 @@ async function executeDialectOperation(input: DatabaseOperationInputV1, query: P
             const row = result.rows[0];
             return { ok: true, operation: input.operation, status: !row ? 'activity_ended' : row[0] === 't' ? 'signal_sent' : 'signal_failed' };
         }
-        case 'stats.enable': {
-            if (input.target.kind === 'worktree' || input.target.kind === 'manual') return unavailable('statistics_setup_requires_target_support');
-            const result = await query({ text: `SELECT EXISTS (
-                SELECT FROM pg_catalog.regexp_split_to_table(pg_catalog.current_setting('shared_preload_libraries'), ',') AS library(name)
-                WHERE pg_catalog.btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
-            )`, values: [] });
-            if (result.rows[0]?.[0] !== 't') return { ok: true, operation: input.operation, status: 'restart_required' };
-            await query({ text: 'CREATE EXTENSION IF NOT EXISTS pg_stat_statements', values: [] });
-            return { ok: true, operation: input.operation, status: 'enabled' };
-        }
+        case 'stats.enable': return unavailable('statistics_setup_requires_target_support');
         case 'stats.read': {
             if (!options.stats) return unavailable('Statistics require native connection setup facts');
             const plan = compilePostgresqlStatsV1(input.request, options.stats);

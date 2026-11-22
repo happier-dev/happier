@@ -6,6 +6,47 @@ import { postgresqlWriteRoleGuardSql } from '@happier-dev/deployment-protocol';
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 const mysqlIdentifier = (value: string) => `\`${value.replaceAll('`', '``')}\``;
 
+function runOwnServerPostgresqlAdmin(input: Readonly<{ database: string; port?: number; signal: AbortSignal }>,
+    sql: string, native: OwnServerDataQueryNative, loopback?: true) {
+    const database = `dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
+    // The setup effect binds both libpq host fields to the selected container.
+    // Kept role bootstraps retain their existing administrator socket defaults.
+    const conninfo = loopback ? `${database} host=127.0.0.1 hostaddr=127.0.0.1` : database;
+    return native.run({ argv: ['sh', '-c',
+        'PGPASSWORD="${POSTGRES_PASSWORD:-}" exec psql -X -q -v ON_ERROR_STOP=1 --username="${POSTGRES_USER:-postgres}" --dbname="$1" --port="$2" -At -f -',
+        'happier-postgresql-admin', conninfo, String(input.port ?? 5432)], stdin: Buffer.from(sql), env: {}, signal: input.signal });
+}
+
+/** The reviewed Enable Action supplies the exact database and this function supplies all SQL.
+ * The built-in information_schema keeps extension installation out of writable app schemas.
+ * Stats discovery reads the installed namespace from pg_extension. */
+export async function enableOwnServerPostgresqlStatisticsForHost(input: Readonly<{
+    database: string; port?: number; signal: AbortSignal;
+}>, native: OwnServerDataQueryNative): Promise<'enabled' | 'restart_required'> {
+    const result = await runOwnServerPostgresqlAdmin(input, `BEGIN;
+SET LOCAL search_path = information_schema;
+SELECT EXISTS (
+    SELECT FROM regexp_split_to_table(current_setting('shared_preload_libraries'), ',') AS library(name)
+    WHERE btrim(library.name, ' "') IN ('pg_stat_statements', '$libdir/pg_stat_statements')
+) AS preloaded, EXISTS (SELECT FROM pg_extension WHERE extname = 'pg_stat_statements') AS installed \\gset
+\\if :preloaded
+\\if :installed
+\\else
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+\\endif
+COMMIT;
+SELECT 'enabled';
+\\else
+ROLLBACK;
+SELECT 'restart_required';
+\\endif
+`, native, true);
+    const status = result.stdout.trim();
+    if (result.exitCode !== 0 || result.stdoutTruncated || (status !== 'enabled' && status !== 'restart_required'))
+        return refuse('database_statistics_setup_failed');
+    return status;
+}
+
 /** Called only from the reviewed bindings writer. Administrator credentials stay
  * inside the selected container; queries never obtain this setup command. */
 export async function bootstrapOwnServerReadOnlyDataRoleForHost(input: Readonly<{
@@ -15,12 +56,10 @@ export async function bootstrapOwnServerReadOnlyDataRoleForHost(input: Readonly<
     assertOwnServerDataQuerySupportedEngine(engine);
     const passwordBase64 = Buffer.from(input.password).toString('base64');
     const run = async (sql: string) => {
-        const postgres = engine === 'postgresql';
-        const command = postgres
-            ? 'PGPASSWORD="${POSTGRES_PASSWORD:-}" exec psql -X -v ON_ERROR_STOP=1 --username="${POSTGRES_USER:-postgres}" --dbname="$1" --port="$3" -At -f -'
-            : 'MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-${MARIADB_ROOT_PASSWORD:-}}" exec "$2" --user=root --host=127.0.0.1 --database="$1" --port="$3" --batch --raw --skip-column-names';
-        const result = await native.run({ argv: ['sh', '-c', command, 'happier-data-role', postgres ? `dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'` : input.database,
-            postgres ? 'psql' : 'mysql', String(input.port ?? (postgres ? 5432 : 3306))], stdin: Buffer.from(sql), env: {}, signal: input.signal });
+        const result = engine === 'postgresql' ? await runOwnServerPostgresqlAdmin(input, sql, native)
+            : await native.run({ argv: ['sh', '-c',
+                'MYSQL_PWD="${MYSQL_ROOT_PASSWORD:-${MARIADB_ROOT_PASSWORD:-}}" exec mysql --user=root --host=127.0.0.1 --database="$1" --port="$2" --batch --raw --skip-column-names',
+                'happier-data-role', input.database, String(input.port ?? 3306)], stdin: Buffer.from(sql), env: {}, signal: input.signal });
         if (result.stdoutTruncated) return refuse('read_role_unavailable');
         if (result.exitCode !== 0) return refuse(result.exitCode === 127 ? 'unsupported_action' : 'read_role_unavailable');
         return result.stdout.trim();
@@ -102,9 +141,7 @@ export async function bootstrapOwnServerWriteDataRoleForHost(input: Readonly<{
     const passwordBase64 = Buffer.from(input.password).toString('base64');
     const port = String(input.port ?? 5432);
     const database = `dbname='${input.database.replaceAll('\\', '\\\\').replaceAll("'", "\\'")}'`;
-    const setup = await native.run({ argv: ['sh', '-c',
-        'PGPASSWORD="${POSTGRES_PASSWORD:-}" exec psql -X -v ON_ERROR_STOP=1 --username="${POSTGRES_USER:-postgres}" --dbname="$1" --port="$2" -At -f -',
-        'happier-data-role', database, port], stdin: Buffer.from(`BEGIN;
+    const setup = await runOwnServerPostgresqlAdmin(input, `BEGIN;
 SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname='happier_rw') AS role_exists \\gset
 \\if :role_exists
 SET LOCAL ROLE happier_rw;
@@ -136,7 +173,7 @@ RESET ROLE;
 SELECT convert_from(decode('${passwordBase64}','base64'),'UTF8') AS role_password \\gset
 ALTER ROLE happier_rw PASSWORD :'role_password';
 COMMIT;
-`), env: {}, signal: input.signal });
+`, native);
     if (setup.stdoutTruncated || setup.exitCode !== 0) return refuse(setup.exitCode === 127 ? 'unsupported_action' : 'write_role_unavailable');
     // This fixed readiness statement is bootstrap's login proof, not a query transport.
     const ready = await native.run({

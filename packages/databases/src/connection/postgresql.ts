@@ -129,7 +129,7 @@ export async function openPostgresqlConnection(connectionString: string, signal?
         if (closed || terminalError) return { ok: false, status: 'failed', code: 'database_connection_unavailable',
             ...(terminalError ? { cause: postgresqlFailureCause(terminalError) } : {}), reason: 'Reopen the database connection' };
         const signalsBackend = input.operation === 'activity.cancel';
-        const write = input.operation === 'edits.apply' || input.operation === 'stats.enable'
+        const write = input.operation === 'edits.apply'
             || (input.operation === 'statement.run' && input.mode === 'write')
             || (input.operation === 'statement.explain' && input.accessMode === 'write');
         let transaction = false;

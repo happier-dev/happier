@@ -36,6 +36,7 @@ export function isStatsSetupReason(reason: Unavailable['reason']): boolean {
 function describeReason(
   translate: PluginTranslate,
   reason: Unavailable['reason'],
+  ownServer: boolean,
 ): string {
   switch (reason) {
     case 'extension_missing':
@@ -45,6 +46,7 @@ function describeReason(
         'This needs PostgreSQL’s pg_stat_statements extension. Add it to this database and this list fills in.',
       );
     case 'preload_restart_required':
+      if (ownServer) return composePreloadGuidance(translate);
       return translate(
         'plugins.database.insights.setup.preload',
         'This needs pg_stat_statements loaded when postgres starts. Add the setting below and restart postgres, and this list fills in.',
@@ -74,6 +76,11 @@ function describeReason(
   }
 }
 
+function composePreloadGuidance(translate: PluginTranslate): string {
+  return translate('plugins.database.insights.setup.composePreload',
+    'Add pg_stat_statements to shared_preload_libraries in the PostgreSQL command in Compose, then redeploy this Environment.');
+}
+
 function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTargetV1; onRetry?: (() => void) | undefined }>) {
   const t = usePluginTranslation();
   const input = projectNativeJsonValueForTransport({ target, operation: 'stats.enable' });
@@ -95,9 +102,12 @@ function EnableStatistics({ target, onRetry }: Readonly<{ target: DatabaseTarget
               setNotice(null);
               onRetry?.();
             } else {
-              setNotice({ text: t('plugins.database.insights.setup.restartRequired',
-                'Add pg_stat_statements to shared_preload_libraries and restart PostgreSQL before retrying.') });
+              setNotice({ text: composePreloadGuidance(t) });
             }
+          } else if ((!execution.ok && execution.failureCause?.errorCode === 'machine_manage_required')
+            || (settled.status === 'success' && !settled.result.ok && settled.result.code === 'database_statistics_manage_required')) {
+            setNotice({ text: t('plugins.database.insights.setup.manageRequired',
+              'Ask a manager of this Environment’s database Machine to enable statistics.') });
           } else {
             setNotice({ text: 'message' in settled ? settled.message
               : t('plugins.database.insights.setup.enableFailed', 'Statistics could not be enabled.') });
@@ -121,9 +131,8 @@ export function InsightsSetup(
   const translate = usePluginTranslation();
   const setup = isStatsSetupReason(props.observation.reason);
   const descriptor = props.descriptor;
-  const canEnable = (descriptor?.target.kind === 'deployment_service' || descriptor?.target.kind === 'managed_deployment')
-    && props.observation.reason === 'extension_missing'
-    && descriptor.access?.canWrite === true
+  const ownServer = descriptor?.target.kind === 'deployment_service';
+  const canEnable = ownServer && props.observation.reason === 'extension_missing'
     && descriptor.capabilities.some(capability => capability.operation === 'stats.enable' && capability.available);
   const remediation = props.observation.remediation;
   return (
@@ -141,7 +150,7 @@ export function InsightsSetup(
               'No statement statistics',
             )
       }
-      description={describeReason(translate, props.observation.reason)}
+      description={describeReason(translate, props.observation.reason, ownServer)}
       {...(remediation || canEnable || props.onRetry
         ? {
             body: (

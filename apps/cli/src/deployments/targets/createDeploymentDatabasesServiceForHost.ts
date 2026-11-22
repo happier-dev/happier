@@ -6,13 +6,21 @@ import {
     type DatabaseDescriptorV1,
     type DatabaseManagedDeploymentTargetV1,
     type DatabaseOperationClassV1,
+    type DatabaseFailureV1,
     type DatabaseOperationInputV1,
+    type DatabaseOperationResultV1,
+    DatabaseStatsEnableInputV1Schema,
     type DatabaseTargetsListInputV1,
 } from '@happier-dev/plugin-sdk/database';
 import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { builtinDatabaseCapabilities } from '@happier-dev/databases/capabilities';
+import { DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { enableOwnServerPostgresqlStatisticsForHost } from './ownServer/dataRoleBootstrap';
+import { withOwnServerDataQueryNativeForHost } from './ownServer/dataQueryNative';
 import { openOwnServerDatabaseConnectionForHost } from './ownServer/databaseConnection';
-import { readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
+import { acquireOwnServerMountedDataServiceForHost, readOwnServerDataServiceDeploymentForHost, resolveOwnServerDataQueryDefinitionForHost } from './ownServer/dataQueryScope';
 import { decideDatabaseAccessV1, resolveDatabaseRequesterKindV1, summarizeDatabaseAccessV1 } from '@happier-dev/databases';
 import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
 import { normalizeStrictJsonValue, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -61,6 +69,7 @@ export type DeploymentDatabasesHostInput = Readonly<{
     completeDiagnosticScope?(scope: Readonly<{ pluginId: string; occurrenceId: string; correlationId: string }>): void;
 }>;
 
+const setupUnavailable = (code: string, reason: string): DatabaseFailureV1 => ({ ok: false, status: 'unavailable', code, reason });
 const refuse = (code: string): never => { throw new PluginError({ code }); };
 type EnvironmentScope = Extract<DatabaseTargetsListInputV1['scope'], { kind: 'environment' }>;
 
@@ -181,13 +190,16 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
     };
 
     const access = (admission: Awaited<ReturnType<typeof readEnvironment>>, operation: DatabaseOperationClassV1,
-        target?: DatabaseOperationInputV1['target']) => {
+        target?: DatabaseOperationInputV1['target'], machineSetup = false) => {
         const environment = admission.detail.environment;
         const requester = resolveDatabaseRequesterKindV1({ agentCaller: isAgentCaller(admission.context), authority: admission.context.authority });
         if (!requester) return refuse('deployment_target_role_unavailable');
         const binding = admission.context.externalActionExecutionAuthorization?.binding;
         let person = { mayWrite: environment.capabilities.editData, editingOff: environment.dataEditorMode === 'off' };
-        if (operation === 'write' && binding) {
+        if (machineSetup) {
+            // The setup branch has already consumed Home's exact Machine Manage admission.
+            person = { mayWrite: true, editingOff: false };
+        } else if (operation === 'write' && binding) {
             const scope = binding.deploymentReadAdmission;
             if (!scope || !('databaseTarget' in scope) || scope.access !== 'write'
                 || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
@@ -384,6 +396,49 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             return { targets, completeness };
         },
         async resolve(request, operation) {
+            if (request.operation === 'stats.enable') {
+                if (operation !== 'write' || !DatabaseStatsEnableInputV1Schema.safeParse(request).success) return refuse('target_mismatch');
+                const { target, admission, selected, summary } = await admitTarget(request, 'read');
+                const { host, context, detail, placement } = admission;
+                const authorization = context.externalActionExecutionAuthorization?.binding;
+                const scope = authorization?.deploymentReadAdmission;
+                if (!authorization || authorization.machineId !== host.machineId || authorization.installationId !== placement.installationId
+                    || !scope || !('databaseTarget' in scope) || scope.access !== 'write'
+                    || formatQualifiedPluginActionId(scope.action) !== DATABASE_STATS_ENABLE_ACTION_ID_V1
+                    || !sameStrictJsonValue(scope.databaseTarget, target)) return refuse('target_mismatch');
+                const engine = selected?.engine ?? 'postgresql';
+                const connection = {
+                    engine,
+                    async execute(operand: DatabaseOperationInputV1, signal = input.seed.signal): Promise<DatabaseOperationResultV1> {
+                        if (!sameStrictJsonValue(operand, request)) return setupUnavailable('database_statistics_setup_operand_mismatch', 'Use the reviewed statistics setup for this database.');
+                        if (target.kind !== 'deployment_service') return setupUnavailable('database_statistics_setup_requires_provider',
+                            'Use your database provider’s settings or ask its administrator to enable statistics.');
+                        if (authorization.admittedMachineRole !== 'manage') return setupUnavailable('database_statistics_manage_required',
+                            'Ask a manager of this Environment’s database Machine to enable statistics.');
+                        access(admission, 'write', target, true);
+                        await host.assertCurrent(context);
+                        if (readInstallationIdentityIfExistsSync()?.installationId !== placement.installationId) return refuse('target_mismatch');
+                        const mounted = await acquireOwnServerMountedDataServiceForHost({ ...host, ensureServiceObservations: input.ensureEnvironmentServices },
+                            { ...target.environment, expectedRevision: detail.environment.revision, targetLinkId: target.targetLinkId,
+                                deploymentId: target.deploymentId, service: target.serviceId, machineId: host.machineId,
+                                installationId: placement.installationId }, context, detail, () => undefined);
+                        try {
+                            if (mounted.definition.database !== target.database) return refuse('target_mismatch');
+                            if (mounted.definition.engine !== 'postgresql') return setupUnavailable('database_statistics_setup_unsupported_engine',
+                                'This database engine does not support PostgreSQL statistics.');
+                            const effectSignal = AbortSignal.any([input.seed.signal, signal, mounted.handle.retirementSignal]);
+                            const status = await withOwnServerDataQueryNativeForHost({ ...mounted,
+                                operationId: input.seed.correlationId, signal: effectSignal }, native =>
+                                enableOwnServerPostgresqlStatisticsForHost({ ...mounted.definition, signal: effectSignal }, native));
+                            return { ok: true, operation: 'stats.enable', status };
+                        } finally { await mounted.dispose(); }
+                    },
+                    async close() {},
+                };
+                return { descriptor: { target, engine, label: target.database,
+                    automationSubject: readAutomationDatabaseSubjectV1(host.serverId, target), origin: { label: detail.content.name },
+                    capabilities: target.kind === 'deployment_service' ? builtinDatabaseCapabilities('postgresql') : [], access: summary, placement }, connection };
+            }
             const admitted = await admitTarget(request, operation);
             if (admitted.target.kind === 'deployment_service') {
                 const { target, admission, summary } = admitted;

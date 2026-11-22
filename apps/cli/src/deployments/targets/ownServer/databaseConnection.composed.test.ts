@@ -7,8 +7,9 @@ import { OwnServerDeploymentInputBasisV1Schema } from '@happier-dev/deployments/
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretLaunchAdmissionResultV1Schema, computeEnvironmentSecretLaunchAdmissionDigestV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_STATS_ENABLE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
+import { DatabaseStatsEnableInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions';
@@ -36,13 +37,15 @@ import { createNativeDatabaseContainerFixture, nativeMysqlImage, nativePostgresq
 
 afterEach(() => vi.restoreAllMocks());
 
-for (const shape of ['acquisition-refusals', 'held-read', 'postgresql', 'postgresql-private', 'mysql'] as const) {
+for (const shape of ['acquisition-refusals', 'held-read', 'postgresql', 'postgresql-private', 'mysql', 'stats-preloaded', 'stats-unloaded'] as const) {
 const engine = shape === 'mysql' ? 'mysql' : 'postgresql';
 const acquisitionRefusals = shape === 'acquisition-refusals';
 const heldRead = shape === 'held-read';
-const localPostgres = shape === 'postgresql' || heldRead;
+const statsSetup = shape === 'stats-preloaded' || shape === 'stats-unloaded';
+const localPostgres = shape === 'postgresql' || statsSetup || heldRead;
 it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nativeMysqlImage : shape === 'postgresql-private' && !nativePostgresqlImage)(
     acquisitionRefusals ? 'recovers the selected cold database service before enforcing native container custody'
+        : statsSetup ? `admits only fixed PostgreSQL statistics setup with Machine Manage (${shape})`
         : heldRead ? 'commits a bounded writer while an idle Statements reader stays open'
         : `opens the exact native ${shape} deployment through installed custody and excludes competing effects during operations`, async () => {
     await withConfiguredDaemonTestHome({ prefix: 'happier-native-database-', env: {
@@ -54,7 +57,7 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
             homeConnectionDescriptor: { v: 1, homeServerIdentityId: 'srv_native_database', revision: 1,
                 canonicalServerUrl: 'https://home.test', endpoints: [{ kind: 'https', url: 'https://home.test' }] },
         } } });
-        const pg = localPostgres ? await createNativePostgresqlFixture(join(homeDir, 'postgres')) : null;
+        const pg = localPostgres ? await createNativePostgresqlFixture(join(homeDir, 'postgres'), statsSetup ? shape === 'stats-preloaded' : undefined) : null;
         const container = localPostgres || acquisitionRefusals ? null : await createNativeDatabaseContainerFixture(engine,
             engine === 'mysql' ? nativeMysqlImage! : nativePostgresqlImage!);
         const database = pg ? 'postgres' : 'native_fixture';
@@ -76,7 +79,7 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
             detail.content.bindings = [variable, use];
             detail.content.template = { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
                 definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` }, services: ['database'],
-                data: [{ engine: engine === 'postgresql' ? 'postgres' : 'mysql', service: 'database', version: engine === 'mysql' ? '8.4' : '17', variables: { database: 'DB_NAME' }, port: engine === 'mysql' ? 3306 : 5432 }] };
+                data: [{ engine: engine === 'postgresql' ? 'postgres' : 'mysql', service: 'database', version: engine === 'mysql' ? '8.4' : '17', variables: { database: 'DB_NAME' }, port: statsSetup && pg ? pg.port : engine === 'mysql' ? 3306 : 5432 }] };
             const target = { kind: 'deployment_service' as const, environment: { serverId: 'home', projectSourceId: detail.environment.projectSourceId,
                 environmentId: detail.environment.id }, targetLinkId: link.id, deploymentId: `deployment-${shape}`, serviceId: 'database', database };
             link.activeDeploymentId = target.deploymentId;
@@ -113,7 +116,11 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                         runtimeFacts: () => ({ freshness: 'current', observedAt: 1, configuration: { name: 'database', replicas: 1,
                             resources: { cpus: null, memory: null }, restartPolicy: null, healthcheck: 'absent', mounts: [],
                             ports: pg ? [{ target: 5432, published: pg.port, bindAddress: '127.0.0.1', protocol: 'tcp' }] : [] } }),
-                        async nativeDocker() { return { engineId: 'fixture-pg-engine', async run(args) {
+                        async nativeDocker() { return { engineId: 'fixture-pg-engine', async run(args, _signal, stdin) {
+                            if (statsSetup && pg && args[0] === 'exec' && stdin) {
+                                expect(args).toEqual(['exec', '-i', 'native-pg', 'sh', '-s']);
+                                return pg.runContainerShell(stdin);
+                            }
                             expect(args).toEqual(['context', 'inspect', '--format', '{{json .Endpoints.docker.Host}}']);
                             return { exitCode: 0, stdout: JSON.stringify('unix:///var/run/docker.sock') };
                         }, ...(container ? { openStream: container.openStream } : {}) }; },
@@ -185,7 +192,7 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                 const signal = actionCancellation.signal;
                 // D26: finite deployment reads use the shared engine without loading
                 // the optional workbench. The admitted runtime above has no plugins.
-                if (!acquisitionRefusals) {
+                if (!acquisitionRefusals && !statsSetup) {
                     const internalSize = await createDeploymentDataSizeActionForHost({ serverId: 'home', machineId: 'machine-a',
                         credentials, serverHttpBaseUrl: 'https://home.test', async assertCurrent() {},
                         async readEnvironment() { return detail; }, async readReceipt() { return receipt; } })(sizeInput,
@@ -207,16 +214,85 @@ it.skipIf(localPostgres ? !nativePostgresqlAvailable : shape === 'mysql' ? !nati
                         await mountService();
                     },
                 };
-                const createService = (signal: AbortSignal, recover = false) => createDeploymentDatabasesServiceForHost({
-                    ...(recover ? recovery : {}), seed: { plugin: { id: action.pluginId, version: '0.0.0' },
-                    contribution: { id: action.localId, qualifiedId: DATABASE_STATEMENT_RUN_ACTION_ID_V1 }, occurrenceId: 'native',
-                    correlationId: 'native-real-pg', surface: 'cli', signal, approvalContext: { authority: 'present_user', signal,
-                        externalActionExecutionAuthorization: authorization, externalActionTarget: machineTarget,
-                        originalActionEnvelope: envelope }, isOccurrenceCurrent: () => true },
+                const createService = (signal: AbortSignal, recover = false, correlationId = 'native-real-pg', invocation = { action, id: DATABASE_STATEMENT_RUN_ACTION_ID_V1 as string, authorization, envelope }) => createDeploymentDatabasesServiceForHost({
+                    ...(recover ? recovery : {}), seed: { plugin: { id: invocation.action.pluginId, version: '0.0.0' },
+                    contribution: { id: invocation.action.localId, qualifiedId: invocation.id }, occurrenceId: 'native',
+                    correlationId, surface: 'cli', signal, approvalContext: { authority: 'present_user', signal,
+                        externalActionExecutionAuthorization: invocation.authorization, externalActionTarget: machineTarget,
+                        originalActionEnvelope: invocation.envelope }, isOccurrenceCurrent: () => true },
                     contributes: { deploymentTargets: [], activationTargets: [] }, targetRegistrations: [], createServices: owners.createServices,
                     resolveInvocationHostPolicy: owners.resolveInvocationHostPolicy, readHost: async () => ({ serverId: 'home', machineId: 'machine-a',
                         installationId: installation.installationId, credentialOwnerAccountId: accountId, credentials, serverHttpBaseUrl: 'https://home.test',
                         async assertCurrent() {}, async readEnvironment() { return detail; }, async readReceipt() { return receipt; } }) });
+                if (statsSetup && pg) {
+                    const setupAction = parseQualifiedPluginActionId(DATABASE_STATS_ENABLE_ACTION_ID_V1)!;
+                    const setup = { operation: 'stats.enable' as const, target };
+                    const setupEnvelope = { ...envelope, requestId: 'native-statistics-enable', input: { action: setupAction, input: setup } };
+                    const forRole = async (role: 'use' | 'manage', editor: 'allowed' | 'not_an_editor' | 'editing_off') => {
+                        const setupRoot = ExternalActionExecutionAuthorizationV1Schema.parse({ ...root, binding: {
+                            ...root.binding, accountId: role === 'use' ? 'machine-grantee' : accountId, admittedMachineRole: role,
+                            deploymentDatabaseEditor: editor, requestId: setupEnvelope.requestId,
+                            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(setupEnvelope),
+                            deploymentReadAdmission: projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, setupEnvelope.input),
+                        } });
+                        const projected = await projectExternalActionRequesterHttpAuthorization({ authorization: setupRoot,
+                            serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.test', target: machineTarget,
+                            installationId: installation.installationId, privateKey: Buffer.from(installation.privateKey, 'base64url'), rootAdmitted: true });
+                        if (!projected) throw new Error('Expected signed PostgreSQL setup custody');
+                        return createService(signal, false, setupEnvelope.requestId, { action: setupAction, id: DATABASE_STATS_ENABLE_ACTION_ID_V1,
+                            authorization: projected, envelope: setupEnvelope });
+                    };
+                    const executeSetup = async (owner: ReturnType<typeof createService>) => {
+                        const opened = await owner.resolve(setup, 'write');
+                        try { return await opened.connection.execute(setup); }
+                        finally { await opened.connection.close(); }
+                    };
+                    for (const editor of ['allowed', 'not_an_editor'] as const) {
+                        const grantee = await forRole('use', editor);
+                        await expect.soft(executeSetup(grantee)).resolves.toMatchObject({
+                            ok: false, status: 'unavailable', code: 'database_statistics_manage_required',
+                        });
+                    }
+                    const enableEffects = async () => (await pg.execute('SELECT count(*) FROM native_setup_effects')).stdout.trim();
+                    await pg.execute(`CREATE TABLE native_setup_effects(tag text);
+                        CREATE FUNCTION count_statistics_setup() RETURNS event_trigger LANGUAGE plpgsql AS $$
+                        BEGIN INSERT INTO public.native_setup_effects VALUES (tg_tag); END $$;
+                        CREATE EVENT TRIGGER count_statistics_setup ON ddl_command_end WHEN TAG IN ('CREATE EXTENSION')
+                        EXECUTE FUNCTION count_statistics_setup();`);
+                    const manager = await forRole('manage', 'editing_off');
+                    const expectExtension = async (count: number) => {
+                        const actual = await pg.execute("SELECT count(*) FROM pg_extension WHERE extname = 'pg_stat_statements'");
+                        expect.soft(actual.stdout).toMatch(new RegExp(`^ +${count}$`, 'mu'));
+                        expect.soft(await enableEffects()).toMatch(new RegExp(`^ +${count}$`, 'mu'));
+                    };
+                    await expectExtension(0);
+                    const wanted = { ok: true, operation: 'stats.enable', status: shape === 'stats-preloaded' ? 'enabled' : 'restart_required' };
+                    await expect.soft(executeSetup(manager)).resolves.toEqual(wanted);
+                    const count = shape === 'stats-preloaded' ? 1 : 0;
+                    await expectExtension(count);
+                    await expect.soft(executeSetup(manager)).resolves.toEqual(wanted);
+                    await expectExtension(count);
+                    if (shape === 'stats-preloaded') {
+                        await pg.execute('SET ROLE happier_ro; SELECT count(*) FROM information_schema.pg_stat_statements');
+                    }
+
+                    const ddl = 'DROP TABLE native_items';
+                    expect(DatabaseStatsEnableInputV1Schema.safeParse({ ...setup, sql: ddl }).success).toBe(false);
+                    const setupConnection = await manager.resolve(setup, 'write').catch(() => null);
+                    expect.soft(setupConnection).not.toBeNull();
+                    if (setupConnection) {
+                        try {
+                            expect(await setupConnection.connection.execute({ operation: 'statement.run', target,
+                                mode: 'write', executionMode: 'transaction', statements: [{ sql: ddl, parameters: [] }] }))
+                                .toMatchObject({ ok: false, code: 'database_statistics_setup_operand_mismatch' });
+                            expect(await setupConnection.connection.execute({ ...setup, sql: ddl } as typeof setup))
+                                .toMatchObject({ ok: false, code: 'database_statistics_setup_operand_mismatch' });
+                        } finally { await setupConnection.connection.close(); }
+                    }
+                    expect((await pg.execute("SELECT to_regclass('native_items') IS NOT NULL")).stdout).toMatch(/^ +t$/mu);
+                    expect(secretReads).toBe(0);
+                    return;
+                }
                 const service = createService(signal);
                 const executeAdmin = pg ? (sql: string) => pg.execute(sql) : (sql: string) => container!.execute(sql);
                 if (engine === 'postgresql') {

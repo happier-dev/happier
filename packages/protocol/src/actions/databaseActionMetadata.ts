@@ -107,7 +107,7 @@ const databaseActionDeclarations = {
     [database.DATABASE_STATS_ENABLE_ACTION_ID_V1]: {
         ...targetWrite, title: 'Enable database statistics', placementBindings: ['secondary'], approvalScope: 'environment',
         confirmation: { title: 'Enable statistics for this database?', mountedReview: 'exact_input',
-            body: 'Runs CREATE EXTENSION IF NOT EXISTS pg_stat_statements on this database. If PostgreSQL has not loaded the library, it must be configured and restarted before you retry.' },
+            body: 'Runs CREATE EXTENSION IF NOT EXISTS pg_stat_statements on this database. If PostgreSQL has not loaded the library, edit the PostgreSQL command in Compose and redeploy this Environment before retrying.' },
     },
     [database.DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1]: { ...read, title: 'List database findings' },
     [database.DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1]: { ...read, title: 'Read database finding' },
