@@ -1816,4 +1816,55 @@ describe('editor workflow composer', () => {
         expect(alert).toHaveBeenCalledTimes(1);
         expect(workspace?.state.groups['group:1'].activeTabId).toBe(editorTabId);
     });
+
+    it.each([true, false])('returns focus to the field edited before Run now → Start when the editor is shown again (focused=%s, S10)', async (fieldFocused) => {
+        // The browser document is the platform focus boundary; the editor, composer and tab retention stay real.
+        const focus = vi.fn();
+        const field = { getAttribute: (name: string) => name === 'data-testid' ? 'workflow-editor-name' : null,
+            focus, isConnected: true, getClientRects: () => [{}], getBoundingClientRect: () => ({ width: 200, height: 32 }), closest: () => null };
+        const body = { getAttribute: () => null };
+        const activeElement = fieldFocused ? field : body;
+        const doc = { activeElement, body, documentElement: {}, querySelectorAll: () => [field] };
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { workflows: true, inbox: false, friends: false, externalSessions: false } });
+        let workspace: WorkspaceNavigationContextValue | undefined;
+        let editorTabId = '';
+        const source = { kind: 'new' as const };
+        const screen = await renderScreen(<AppPaneProvider><WorkspaceProvider enabled catalog={catalog}>{navigation => {
+            workspace = navigation;
+            const group = navigation.state.groups[navigation.state.focusedGroupId];
+            editorTabId ||= group.activeTabId;
+            return <>{group.tabIds.map(tabId => {
+                const tab = navigation.state.tabs[tabId];
+                const visible = tabId === group.activeTabId;
+                return <DestinationInstanceHost key={tabId} tabId={tab.id} ref={tab.target} pathname={tabId === editorTabId ? '/workflows/new' : `/workflows/runs/${tab.target.params.runId}`}
+                    focused={visible} visible={visible} navigation={navigation.navigationForTab(tab.id)}>
+                    {tabId === editorTabId ? <WorkflowEditorHostScreen source={source} /> : <View testID="admitted-run" />}
+                </DestinationInstanceHost>;
+            })}</>;
+        }}</WorkspaceProvider></AppPaneProvider>, {
+            createNodeMock: () => ({ getBoundingClientRect: () => ({ left: 600, top: 100, width: 160, height: 40 }),
+                addEventListener: () => {}, removeEventListener: () => {}, scrollTo: () => {},
+                measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        await act(async () => {
+            const editor = screen.root.findByType(WorkflowEditorBody);
+            editor.props.onChange({ ...editor.props.draftStore.get(), name: 'Edited name', blocks: [{ kind: 'wait', id: 'review',
+                document: { text: 'Check status', references: [], attachments: [] } }] });
+        });
+        await act(async () => { screen.root.findByType(WorkflowEditorBody).props.onChangeProjectTarget?.({ machineId: 'machine-1', directory: '/repo' }); });
+        vi.stubGlobal('document', doc);
+        try {
+            await screen.pressByTestIdAsync('workflow-editor-run-now');
+        } finally { vi.unstubAllGlobals(); }
+        runStart.mockImplementation(async (request) => ({ admission: 'created', run: createWorkflowRunSummaryFixture({ id: request.runId, origin: { kind: 'direct' } }) }));
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(false));
+        await screen.pressByTestIdAsync('workflow-run-inputs-run');
+        await vi.waitFor(() => expect(screen.findByTestId('admitted-run')).not.toBeNull());
+        vi.stubGlobal('document', { ...doc, activeElement: body });
+        try {
+            await act(async () => { workspace?.activateTab('group:1', editorTabId); });
+        } finally { vi.unstubAllGlobals(); }
+        expect(focus).toHaveBeenCalledTimes(fieldFocused ? 1 : 0);
+    });
 });

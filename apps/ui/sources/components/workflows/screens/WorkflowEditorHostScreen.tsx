@@ -25,6 +25,7 @@ import { t, tLoose } from '@/text';
 import { getWorkflowContextChipDefinition } from '../workflowComposerControlPlacements';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
+import { useNavigationFocusReturn, type NavigationFocusReturnCapture } from '@/utils/navigation/useNavigationFocusReturn';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
@@ -324,6 +325,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
 }>): React.ReactElement {
     const mountedRef = useMountedRef();
     const router = useRouter();
+    const navigateWithFocusReturn = useNavigationFocusReturn();
+    const runFocusReturnRef = React.useRef<NavigationFocusReturnCapture | null>(null);
     const openSection = useOpenAppSection();
     const destinationInstanceKey = useDestinationInstanceKey();
     const nativeEditorRoute = Platform.OS !== 'web' && destinationInstanceKey === null;
@@ -1031,11 +1034,19 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             setTestRun({ runId: admitted.run.id, definition: testedDefinition });
             return;
         }
-        router.pushRetainingCurrent(createWorkflowRunRoute(admitted.run.id, lifetime.scope.serverId) as never);
+        // The retained editor gives focus back to the field the person left from when shown again.
+        const focusReturn = runFocusReturnRef.current;
+        runFocusReturnRef.current = null;
+        const openRun = () => router.pushRetainingCurrent(createWorkflowRunRoute(admitted.run.id, lifetime.scope.serverId) as never);
+        if (focusReturn) focusReturn.navigate(openRun);
+        else openRun();
     }, [accountLifetime, captureSourceGeneration, draftStore, executionTarget, pendingRunId, projectTarget, router, runAsTargets, runNow, planReview, reviewedRunSeed, ownedPlanOriginId, reportBack, saved?.definitionId, testSource]);
 
     const handleRunNow = React.useCallback(() => {
         if (draftStore.get() === null || testSourcePending || runNow.isPending(pendingRunId ?? '')) return;
+        // Remember the field focused before the review takes focus; Start's navigation carries it.
+        runFocusReturnRef.current?.cancel();
+        runFocusReturnRef.current = navigateWithFocusReturn.capture();
         if (runNow.hasUnsettledAdmission(pendingRunId ?? '')) {
             setInputSheetOpen(true);
             return;
@@ -1043,7 +1054,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // Every Run is reviewed in the composer, including a no-input recipe.
         setTestSource(null);
         setInputSheetOpen(true);
-    }, [draftStore, pendingRunId, runNow, testSourcePending]);
+    }, [draftStore, navigateWithFocusReturn, pendingRunId, runNow, testSourcePending]);
 
     const handleTestRun = React.useCallback(() => {
         if (saved === null || testSourcePending || runNow.isPending(pendingRunId ?? '')) return;
@@ -1086,6 +1097,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const reportShown = runRetained !== null ? runRetained.input.onComplete?.kind === 'originating_session' : reportBack;
     const dismissInputSheet = React.useCallback(() => {
         if (planPendingRef.current) return;
+        runFocusReturnRef.current?.cancel();
+        runFocusReturnRef.current = null;
         clearRefusal();
         setInputSheetOpen(false);
     }, [clearRefusal]);
