@@ -1051,6 +1051,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                         const detachedContextLeaseFactory = hasDetachedInteractionIdentity
                             ? createNativeAgentExecutionRunContextLeaseFactory({
                                 lease: runtimeLease,
+                                backendTarget: options.backendTarget,
                                 onToolNormalizationSource: options.onToolNormalizationSource,
                                 runId: options.runId!,
                                 controllerOccurrenceId: options.controllerOccurrenceId!,

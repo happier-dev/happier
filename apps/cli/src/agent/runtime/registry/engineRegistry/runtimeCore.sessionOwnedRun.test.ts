@@ -38,6 +38,7 @@ import { resetInMemoryAccountSettingsContextForTests } from '@/settings/accountS
 import { createManifestAgentCatalogEntry } from '@/plugins/projection/registry/agentCliMetadata';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
+import { AgentStateRequestStore } from '@/agent/permissions/agentStateRequestStore';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { createPluginInteractionsService } from '@/plugins/runtime/invocation/services/interactions';
@@ -253,6 +254,72 @@ describe('resolveBackendRuntimeCore Session-owned Execution Run scope', () => {
       await expect(runtime.waitForTurnCompletion?.()).rejects.toMatchObject({ executionRunErrorCode: 'execution_run_interaction_unavailable' });
       expect(state.requests).toEqual({});
     } finally { await runtime.dispose(); await permissions.abortPendingRequestsAndFlush('test cleanup'); }
+  });
+
+  it('binds native consent to the configured backend of a detached Run', async () => {
+    const { backend, agent } = createContributions(['newTurn', 'steer', 'followUp']);
+    let state: AgentState = {};
+    const store = new AgentStateRequestStore({ logPrefix: '[DetachedConsent]', target: {
+      scopeId: 'detached-consent', readState: () => state,
+      async updateState(update) { state = update(state); },
+    } });
+    const backendTarget = { kind: 'configuredAcpBackend', backendId: 'qa-inbox-1120-ready294-native' } as const;
+    const offer = { requirementId: 'native-consent', source: 'acp', choices: [
+      { id: 'allow', label: 'Allow once', decision: 'approved', scope: 'once', response: { approved: true } },
+      { id: 'deny', label: 'Deny', decision: 'denied', scope: 'once', response: { approved: false } },
+    ] } as const;
+    // The Agent is the only runtime substitution. The retained adapter, native
+    // interaction service, scoped response target and request store are real.
+    const factory: AgentSessionExecutionRunRuntimeFactoryV1 = {
+      async open() { throw new Error('Expected the retained conversation'); },
+      async openConversation(_request, context) {
+        let publish: ((event: AgentExecutionRunConversationEventV1) => void) | undefined;
+        return {
+          watch(listener) { publish = listener; return { dispose() { publish = undefined; } }; },
+          async send(input) {
+            publish?.({ kind: 'input-accepted', inputIds: input.inputIds, delivery: input.delivery });
+            publish?.({ kind: 'turn-start', turnId: input.delivery.turnId, startedBy: 'host' });
+            const permissions = context.executionRun.services.permissions;
+            if (!permissions) throw new Error('Expected the detached permissions service');
+            await permissions.requestDecision({ requestId: 'acp-consent', toolName: 'Bash', source: 'acp',
+              input: { command: 'echo detached-consent' }, nativeChoices: offer });
+            publish?.({ kind: 'turn-complete', turnId: input.delivery.turnId });
+            return { status: 'admitted' };
+          },
+          async dispose() {},
+        };
+      },
+    };
+    const adapter = await resolveBackendRuntimeCore({
+      backend, agent, runtimeRegistry: null, executionSurfaces: createEmptyBackendExecutionSurfaces(),
+      runtimeOwner: { backendId: AGENT_ID,
+        selected: { kind: 'plugin_engine', ownerId: AGENT_ID, provenance: 'external', pluginId: AGENT_ID }, candidates: [] },
+      nativeAgentRuntime: { sessions: {
+        async open() { throw new Error('Detached Run cannot open a Session'); }, executionRunContextV1: factory,
+      } },
+      nativeAgentRuntimeIdentity: { pluginId: AGENT_ID, pluginVersion: '1.0.0', agentId: AGENT_ID,
+        localAgentId: AGENT_ID, occurrenceId: 'detached-consent-lease', isCurrent: () => true },
+    });
+    const runtime = adapter?.runtimeCore.createExecutionRunBackend({ scope: 'detached', cwd: '/repo',
+      runId: 'detached-consent', controllerOccurrenceId: 'detached-controller', callId: 'detached-call', sidechainId: 'detached-sidechain',
+      backendTarget, backendId: AGENT_ID, permissionMode: 'default', getPermissionRequestStore: () => store,
+      start: { intent: 'agent', runClass: 'long_lived', retentionPolicy: 'resumable', ioMode: 'streaming' },
+    });
+    if (!runtime) throw new Error('Expected a native Run adapter');
+    try {
+      await runtime.provisionRuntime();
+      const delivery = runtime.deliverInput('detached-consent', { text: 'Request consent' }, {
+        localId: 'detached-input',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        effectiveCallerPermissionMode: 'default',
+      });
+      void delivery.catch(() => undefined);
+      await vi.waitFor(() => expect(store.listOutstandingRequests()).toEqual([expect.objectContaining({
+        nativeChoices: offer,
+        responseTarget: expect.objectContaining({ sessionId: null, runId: 'detached-consent',
+          controllerOccurrenceId: 'detached-controller', backendId: backendTarget.backendId }),
+      })]));
+    } finally { await runtime.dispose(); }
   });
 
   it('continues Discuss on the same current detached summary Run after refinement', async () => {

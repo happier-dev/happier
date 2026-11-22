@@ -34,6 +34,7 @@ import { randomUUID } from 'node:crypto';
 import { callSessionMcpTool } from '@/cli/commands/toolsSessionMcp';
 import { createExecutionRunHostBackendFromSessionRuntime } from './sessionAdapter';
 import { buildExecutionRunConfiguration } from './runtime/openInputs';
+import { resolveExecutionRunRuntimeBackendId } from './backendTargets';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import type { CreateCliExecutionRunBackendParams, EngineResolutionAgent } from '@/agent/runtime/registry/engineRegistryTypes';
@@ -244,6 +245,7 @@ export function createRunScopedWorkStateService(signal: AbortSignal): WorkStateS
  */
 export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonly<{
     lease: NativeAgentRuntimeLeaseIdentity;
+    backendTarget?: CreateCliExecutionRunBackendParams['backendTarget'];
     onToolNormalizationSource?: CreateCliExecutionRunBackendParams['onToolNormalizationSource'];
     runId: string;
     controllerOccurrenceId: string;
@@ -279,6 +281,10 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
     const runId = readRequiredString(params.runId, 'a run id');
     const callId = readRequiredString(params.callId, 'a call id');
     const sidechainId = readRequiredString(params.sidechainId, 'a sidechain id');
+    // A configured ACP Run is bound to its saved backend, independently of the Agent lease.
+    const runBackendId = params.backendTarget === undefined
+        ? params.lease.agentId
+        : resolveExecutionRunRuntimeBackendId(params.backendTarget);
     let readMcpToolContext: () => McpToolPolicyContext | null = () => null;
     const permissionHandler = createExecutionRunPermissionHandler({
         permissionMode: params.permissionMode,
@@ -313,7 +319,7 @@ export function createNativeAgentExecutionRunContextLeaseFactory(params: Readonl
                 runId,
                 callId,
                 sidechainId,
-                backendId: params.lease.agentId,
+                backendId: runBackendId,
                 runtimeKind: 'native_agent_session',
                 permissionMode: params.permissionMode,
                 providerRequestId,
