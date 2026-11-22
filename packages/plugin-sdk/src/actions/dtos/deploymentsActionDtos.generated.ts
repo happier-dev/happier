@@ -14572,7 +14572,7 @@ export type DeploymentsActionResultById = {
                 };
             };
             targetKind: string;
-            state: 'configured' | 'deployed' | 'none' | 'provisioned';
+            state: 'configured' | 'deployed' | 'detached' | 'none' | 'provisioned';
             machines: string[];
             members: {
                 machineId: string;
@@ -15196,7 +15196,7 @@ export type DeploymentsActionResultById = {
                 };
             };
             targetKind: string;
-            state: 'configured' | 'deployed' | 'none' | 'provisioned';
+            state: 'configured' | 'deployed' | 'detached' | 'none' | 'provisioned';
             machines: string[];
             members: {
                 machineId: string;
@@ -15617,7 +15617,7 @@ export type DeploymentsActionResultById = {
                 };
             };
             targetKind: string;
-            state: 'configured' | 'deployed' | 'none' | 'provisioned';
+            state: 'configured' | 'deployed' | 'detached' | 'none' | 'provisioned';
             machines: string[];
             members: {
                 machineId: string;

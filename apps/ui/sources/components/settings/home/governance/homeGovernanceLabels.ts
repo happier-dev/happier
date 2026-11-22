@@ -1,3 +1,4 @@
+import { HomeGovernanceErrorV1Schema } from '@happier-dev/protocol/home/governance';
 import type {
     AccountStatusV1,
     HomeAdmissionModeV1,
@@ -171,7 +172,7 @@ export function accountErasureFailureNotice(error: unknown): Readonly<{ title: s
     if (error instanceof HappyError && (error.code === 'account_erasure_transition_cleanup_pending'
         || error.code === 'account_erasure_upload_pending'
         || error.code === 'account_erasure_deployment_cleanup_required')) {
-        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code });
+        return homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code: error.code, details: error.details });
     }
     if (error instanceof HappyError
         && (error.code === 'home_owner_transfer_required' || error.code === 'team_owner_transfer_required')) {
@@ -210,8 +211,16 @@ function homeGovernanceFailureBody(failure: HomeDomainFailure, effect: 'read' | 
             return t('homeGovernance.errorErasureTransitionCleanupPending');
         case 'account_erasure_upload_pending':
             return t('homeGovernance.errorErasureUploadPending');
-        case 'account_erasure_deployment_cleanup_required':
-            return t('homeGovernance.errorErasureDeploymentCleanupRequired');
+        case 'account_erasure_deployment_cleanup_required': {
+            const parsed = HomeGovernanceErrorV1Schema.safeParse(failure.details);
+            if (!parsed.success || !('blocker' in parsed.data)) return t('homeGovernance.errorErasureDeploymentCleanupRequired');
+            const blocker = parsed.data.blocker;
+            const message = t(`homeGovernance.erasureDeploymentBlocker.${blocker.reason}`);
+            const reference = blocker.targetLinkId
+                ? [blocker.targetKind, blocker.targetLinkId].filter(Boolean).join(' ')
+                : blocker.deploymentId ?? blocker.environmentId ?? blocker.projectSourceId ?? blocker.artifactId;
+            return reference ? `${message} (${reference})` : message;
+        }
         case 'home_policy_widening_unconfirmed':
             return t('homeGovernance.signInPolicy.errorWideningUnconfirmed');
         case 'home_claim_refused':

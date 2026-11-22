@@ -45,6 +45,16 @@ describe('accountErasureFailureNotice', () => {
         expect(notice.body).toBe('homeGovernance.errorErasureDeploymentCleanupRequired');
         expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code }))).toEqual(notice);
     });
+    it('names the target and teardown recovery on both erasure surfaces', () => {
+        const code = 'account_erasure_deployment_cleanup_required';
+        const details = { error: code, blocker: {
+            reason: 'teardown_incomplete', environmentId: 'environment-id', targetLinkId: 'target-id', targetKind: 'vercel',
+        } };
+        const notice = homeGovernanceFailureNotice({ kind: 'conflict', retryable: true, code, details });
+        expect(notice.body).toBe('homeGovernance.erasureDeploymentBlocker.teardown_incomplete (vercel target-id)');
+        expect(accountErasureFailureNotice(new HappyError(code, true, { status: 409, kind: 'server', code, details }))).toEqual(notice);
+    });
+
     it('explains an upload refusal on both erasure surfaces without claiming retirement', () => {
         const failure = { kind: 'conflict', retryable: true, code: 'account_erasure_upload_pending' } as const;
         const notice = homeGovernanceFailureNotice(failure);

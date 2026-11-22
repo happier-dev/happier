@@ -65,11 +65,26 @@ export const HomeGovernanceErrorCodeV1Schema = lazyZodSchema(() => z.enum([
 
 export type HomeGovernanceErrorCodeV1 = z.infer<typeof HomeGovernanceErrorCodeV1Schema>;
 
+export const AccountErasureDeploymentBlockerV1Schema = lazyZodSchema(() => z.strictObject({
+  reason: z.enum(['running_work', 'provider_resource', 'teardown_incomplete',
+    'source_sharing', 'environment_dependencies', 'content_sharing', 'graph_dependencies']),
+  environmentId: z.optional(z.string().check(z.minLength(1))),
+  targetLinkId: z.optional(z.string().check(z.minLength(1))),
+  targetKind: z.optional(z.string().check(z.minLength(1))),
+  deploymentId: z.optional(z.string().check(z.minLength(1))),
+  projectSourceId: z.optional(z.string().check(z.minLength(1))),
+  artifactId: z.optional(z.string().check(z.minLength(1))),
+}));
+export type AccountErasureDeploymentBlockerV1 = z.infer<typeof AccountErasureDeploymentBlockerV1Schema>;
+
 export const HomeGovernanceErrorV1Schema = lazyZodSchema(() => z.union([z.strictObject({
   error: z.enum(HomeGovernanceErrorCodeV1Schema.options.filter((value): value is Exclude<(typeof HomeGovernanceErrorCodeV1Schema.options)[number], 'account_erasure_managed_resources_review_required'> => !(['account_erasure_managed_resources_review_required'] as readonly string[]).includes(value))),
 }), z.strictObject({
   error: z.literal('account_erasure_managed_resources_review_required'),
   resources: z.array(ManagedResourceDependencyV1Schema),
+}), z.strictObject({
+  error: z.literal('account_erasure_deployment_cleanup_required'),
+  blocker: AccountErasureDeploymentBlockerV1Schema,
 })]));
 
 export type HomeGovernanceErrorV1 = z.infer<typeof HomeGovernanceErrorV1Schema>;

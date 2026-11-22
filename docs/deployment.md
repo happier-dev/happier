@@ -10,12 +10,15 @@ Erasure itself deletes no deployment rows.
 Only a solely Account-owned, dependency-closed graph is purged. Source ownership
 and audience come from the Source owner; receipt occupancy and native absence
 come from the existing receipt and teardown owners. A tombstoned Environment
-still needs complete teardown evidence for its targets. A running workload or
-retained provider resource still needs cleanup. Live controller custody,
-in-progress work, foreign or Team ownership, shared content, or incoming foreign
-lineage refuses the purge without deleting part of the graph. The HTTP 409 code is
-`account_erasure_deployment_cleanup_required`; finish teardown or resolve the
-shared dependencies before retrying.
+still needs complete teardown evidence for targets Happier manages. Explicit
+Detach and keep running ends Happier’s custody. The detached link and its Receipts
+are history, and Account erasure can proceed without deleting the resource at its
+provider. Queued or running work, incomplete teardown and provider resources
+still managed by Happier need cleanup. The purge protects foreign and Team-owned
+data, shared content and incoming foreign lineage. The HTTP 409 response
+`account_erasure_deployment_cleanup_required` carries a typed blocker and its
+owned deployment, Environment, target, Source or Artifact reference when
+available. Both erasure surfaces show the next action for that blocker.
 
 Settled Receipts belong to their Environment's history. Erasing the requester
 clears their attribution. Erasing the Account that owns a settled Receipt's

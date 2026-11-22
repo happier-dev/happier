@@ -16,7 +16,7 @@ import { publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx } 
 import { withdrawEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readDeploymentTeardownSubjectsInTx } from './deploymentTeardownSubjects';
 import { readLatestDeploymentTeardownInTx, hasCurrentDeploymentTeardownProofInTx } from './deploymentTeardownProof';
-import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader } from './deploymentTargetLinkService';
+import { loadDeploymentTargetRowsInTx, projectDeploymentTargetHeader, readDeploymentTargetLinkState } from './deploymentTargetLinkService';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { publishSavedSecretUsageChangesInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { prepareDeploymentAppMachineRevocationInTx } from './deploymentAppRevocation';
@@ -28,6 +28,10 @@ type DispositionInput = Pick<DeploymentEnvironmentDeleteInputV1,
 type Link = NonNullable<Awaited<ReturnType<Tx['deploymentTargetLink']['findUnique']>>> & {
     machines: Awaited<ReturnType<Tx['deploymentTargetLinkMachine']['findMany']>>;
 };
+
+function targetDisposition(now: Date, detachKeepRunning?: boolean) {
+    return { deletedAt: now, ...(detachKeepRunning ? { detachedAt: now, state: 'detached' } : {}), revision: { increment: 1 } };
+}
 
 const teardownRequired = () => ({ ok: false as const, error: 'deployment_teardown_required' as const });
 
@@ -42,13 +46,30 @@ function readAcknowledgement(value: string, digest: string) {
 /** Current proof is shared with Source custody; disposition additionally requires its supplied receipt ids. */
 export async function hasCompleteTeardownInTx(tx: Tx, link: Link, teardownDeploymentIds: readonly string[] | undefined,
     runtimeTargetLinkId: string | null, knownLinks?: readonly DeploymentTargetLinkHeaderV1[]) {
+    return hasCompleteTeardownProofInTx(tx, link, teardownDeploymentIds, runtimeTargetLinkId,
+        await readLatestDeploymentTeardownInTx(tx, link), knownLinks);
+}
+
+/** Native absence and released management custody are separate facts. */
+export async function readDeploymentTargetCleanupBlockerInTx(tx: Tx, link: Link, runtimeTargetLinkId: string | null) {
+    const state = readDeploymentTargetLinkState(link);
     const teardown = await readLatestDeploymentTeardownInTx(tx, link);
+    const { latest } = teardown;
+    if (latest?.operation === 'teardown' && latest.startedAt && latest.state !== 'succeeded') return 'teardown_incomplete' as const;
+    if (state === 'detached') return null;
+    if (state === 'provisioned' || state === 'deployed') return 'provider_resource' as const;
+    return await hasCompleteTeardownProofInTx(tx, link, undefined, runtimeTargetLinkId, teardown) ? null : 'teardown_incomplete' as const;
+}
+
+async function hasCompleteTeardownProofInTx(tx: Tx, link: Link, teardownDeploymentIds: readonly string[] | undefined,
+    runtimeTargetLinkId: string | null, teardown: Awaited<ReturnType<typeof readLatestDeploymentTeardownInTx>>,
+    knownLinks?: readonly DeploymentTargetLinkHeaderV1[]) {
     const subjects = await readDeploymentTeardownSubjectsInTx(tx, link, teardown.accepted, runtimeTargetLinkId, knownLinks);
     if (link.machines.length > 0 && subjects.length === 0) return true;
     if (!teardown.latest) return link.state === 'configured' && !link.activeDeploymentId;
     const { proof } = teardown;
     if (!proof || link.activeDeploymentId
-        || link.state !== (proof.retainedProviderResource ? 'provisioned' : 'configured')) return false;
+        || link.state !== 'detached' && link.state !== (proof.retainedProviderResource ? 'provisioned' : 'configured')) return false;
     // Signed settlement advances once; canonical unlink/delete advances once
     // more. Only a retained read consumes that disposition, never new admission.
     const dispositionRevision = teardownDeploymentIds === undefined && link.deletedAt !== null ? 1 : 0;
@@ -129,7 +150,7 @@ export async function unlinkDeploymentTargetInTx(tx: Tx, actorAccountId: string,
     await withdrawEnvironmentSecretGrantsInTx(tx, { environmentId: loaded.row.id,
         ...(!selected ? { withdrawnInstallations: installations([link]), retainedInstallations: retained } : {}) });
     const changed = await tx.deploymentTargetLink.updateMany({ where: { id: link.id, revision: link.revision },
-        data: { deletedAt: now, ...(input.detachKeepRunning ? { detachedAt: now } : {}), revision: { increment: 1 } } });
+        data: targetDisposition(now, input.detachKeepRunning) });
     if (changed.count !== 1) throw new Error('Locked deployment link changed during disposition');
     const environment = await tx.deploymentEnvironment.updateMany({ where: { id: loaded.row.id, revision: loaded.row.revision },
         data: { ...(selected ? { runtimeTargetLinkId: null } : {}), revision: { increment: 1 } } });
@@ -199,7 +220,7 @@ export async function removeAdmittedDeploymentEnvironmentInTx(tx: Tx, input: Rea
     await disableDeploymentEnvironmentAutomationsInTx(tx, environment.id);
     await withdrawEnvironmentSecretGrantsInTx(tx, { environmentId: environment.id });
     await tx.deploymentTargetLink.updateMany({ where: { environmentId: environment.id, deletedAt: null, detachedAt: null },
-        data: { deletedAt: now, ...(input.detachKeepRunning ? { detachedAt: now } : {}), revision: { increment: 1 } } });
+        data: targetDisposition(now, input.detachKeepRunning) });
     const changed = await tx.deploymentEnvironment.updateMany({ where: { id: environment.id, revision: environment.revision },
         data: { deletedAt: now, runtimeTargetLinkId: null, telemetryMachineId: null, telemetryTokenHash: null, revision: { increment: 1 } } });
     if (changed.count !== 1) throw new Error('Locked deployment Environment changed during deletion');

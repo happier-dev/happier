@@ -55,12 +55,18 @@ export async function hasCurrentManagedDataTargetLinkInTx(tx: Tx, environmentId:
         pluginId: { not: null } }, select: { id: true } })) !== null;
 }
 
+/** The detach timestamp is the decision recorded by older Links. */
+export function readDeploymentTargetLinkState(row: Readonly<{ state: string; detachedAt: Date | null }>) {
+    return row.detachedAt ? 'detached' : row.state;
+}
+
 export function projectDeploymentTargetHeader(row: Prisma.DeploymentTargetLinkGetPayload<{ include: { machines: true } }>) {
+    const state = readDeploymentTargetLinkState(row);
     return DeploymentTargetLinkHeaderV1Schema.parse({
         v: 1, id: row.id, environmentId: row.environmentId, revision: row.revision, role: row.role,
         source: row.sourceKind === 'plugin'
             ? { kind: 'plugin', contribution: { pluginId: row.pluginId, localId: row.contributionLocalId } }
-            : { kind: row.sourceKind, id: row.hostTargetId }, targetKind: row.targetKind, state: row.state,
+            : { kind: row.sourceKind, id: row.hostTargetId }, targetKind: row.targetKind, state,
         machines: row.machines.map(member => member.machineId),
         members: row.machines.map(member => ({ machineId: member.machineId, installationId: member.installationId, state: member.state })),
         ...(row.activeDeploymentId ? { activeDeploymentId: row.activeDeploymentId } : {}),

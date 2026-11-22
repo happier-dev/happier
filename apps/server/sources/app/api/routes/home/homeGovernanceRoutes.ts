@@ -24,7 +24,7 @@ import {
     setHomeRoleInTx,
 } from "@/app/home/governance/homeGovernanceService";
 import { signOutHomeAccountEverywhereInTx } from "@/app/home/governance/homeAccountSignOutEverywhere";
-import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
+import { accountErasureFailureResponse, deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 import { readTeamOperationAuthenticationFromRequest } from "@/app/teams/actorContext";
 import { inReadSnapshot, inTx } from "@/storage/inTx";
 
@@ -369,9 +369,7 @@ export function homeGovernanceRoutes(app: Fastify): void {
                 // terminal-disable commit, so this route adds no second wake.
                 return await reply.send({ status: "deleted" as const });
             }
-            const error = result.code === "account_erasure_managed_resources_review_required"
-                ? { error: result.code, resources: [...result.resources] }
-                : { error: result.code };
+            const error = accountErasureFailureResponse(result, request.body.accountId === request.userId);
             return await reply.code(homeGovernanceErrorHttpStatusV1(result.code)).send(error);
         },
     );

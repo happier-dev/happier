@@ -54,6 +54,7 @@ export async function deleteCurrentAccount(credentials: Pick<AuthCredentials, 't
             status: response.status,
             kind: response.status === 403 ? 'auth' : 'server',
             code,
+            ...(parsed.success ? { details: parsed.data } : {}),
         });
     }
     const parsed = AccountErasureResponseV1Schema.safeParse(payload);

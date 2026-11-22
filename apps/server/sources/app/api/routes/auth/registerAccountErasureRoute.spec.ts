@@ -20,6 +20,12 @@ describe("registerAccountErasureRoute", () => {
     afterEach(async () => {
         vi.restoreAllMocks();
         await db.uploadedFile.deleteMany();
+        await db.deployment.deleteMany();
+        await db.deploymentTargetLink.deleteMany();
+        await db.deploymentEnvironment.deleteMany();
+        await db.projectSource.deleteMany();
+        await db.artifact.deleteMany();
+        await db.machine.deleteMany();
         await db.account.deleteMany();
     });
 
@@ -74,6 +80,32 @@ describe("registerAccountErasureRoute", () => {
             statusCode: 409, body: { error: "home_owner_transfer_required" },
         });
         expect(await db.account.findUnique({ where: { id: "last-owner" } })).not.toBeNull();
+        expect(disconnect).not.toHaveBeenCalled();
+    });
+
+    it("returns the owned provider target that blocks cleanup", async () => {
+        const account = await createAccount("provider-owner");
+        const machine = await db.machine.create({ data: { id: "controller", accountId: account.id, metadata: "{}" } });
+        const source = await db.projectSource.create({ data: {
+            createdByAccountId: account.id, name: "Deploy", audience: [], attachments: [],
+        } });
+        const artifact = await db.artifact.create({ data: { id: "definition", accountId: account.id, header: new Uint8Array(),
+            body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        const environment = await db.deploymentEnvironment.create({ data: {
+            projectSourceId: source.id, createdByAccountId: account.id, controllerMachineId: machine.id, protection: "production",
+            purpose: "standard", deployerMode: "managers", ...content,
+        } });
+        const target = await db.deploymentTargetLink.create({ data: {
+            environmentId: environment.id, createdByAccountId: account.id, role: "runtime", sourceKind: "plugin",
+            pluginId: "happier.deploy.vercel", contributionLocalId: "runtime", targetKind: "vercel", state: "deployed", ...content,
+        } });
+        const disconnect = vi.fn();
+        expect(await erase(account.id, disconnect)).toEqual({ statusCode: 409, body: {
+            error: "account_erasure_deployment_cleanup_required", blocker: {
+                reason: "provider_resource", environmentId: environment.id, targetLinkId: target.id, targetKind: "vercel",
+            },
+        } });
         expect(disconnect).not.toHaveBeenCalled();
     });
 

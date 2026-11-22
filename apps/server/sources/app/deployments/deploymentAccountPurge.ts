@@ -1,13 +1,16 @@
+import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/artifacts/deploymentArtifactKindsV1';
+import type { AccountErasureDeploymentBlockerV1 } from '@happier-dev/protocol/home/governance';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { sourceFromRow, sourceOwner } from '@/app/projects/sources/projectSourceService';
 import { readProjectSourceContentReferencesInTx } from '@/app/projects/sources/projectSourceContentReferences';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
-import { hasCompleteTeardownInTx } from './deploymentDispositionService';
+import { readDeploymentTargetCleanupBlockerInTx } from './deploymentDispositionService';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import { clearErasedAccountDeploymentEnvironmentReferencesInTx } from '@/app/automations/automationDeploymentEnvironment';
 
-const refused = () => ({ status: 'rejected' as const, code: 'account_erasure_deployment_cleanup_required' as const });
+const refused = (reason: AccountErasureDeploymentBlockerV1['reason'], scope: Omit<AccountErasureDeploymentBlockerV1, 'reason'> = {}) =>
+    ({ status: 'rejected' as const, code: 'account_erasure_deployment_cleanup_required' as const, blocker: { reason, ...scope } });
 type PurgeDecision = ReturnType<typeof refused> | Readonly<{ status: 'ok' }>;
 
 async function forIds(values: readonly string[], mutate: (ids: string[]) => Promise<unknown>, fixedBindings = 0): Promise<void> {
@@ -26,12 +29,14 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const busy = deploymentInProgressStates();
     // A requester can still have an in-flight operation on another Source.
     // Settled authorship is history and adds no Source to this Account's scope.
-    if (await tx.deployment.findFirst({ where: { requestedByAccountId: accountId, state: { in: busy } },
-        select: { id: true } })) return refused();
+    const requested = await tx.deployment.findFirst({ where: { requestedByAccountId: accountId, state: { in: busy } },
+        orderBy: { id: 'asc' }, select: { id: true } });
+    if (requested) return refused('running_work', { deploymentId: requested.id });
     const artifacts = await tx.artifact.findMany({ where: { accountId }, select: { id: true } });
-    // The database clears settled Receipt references when their Artifact is
-    // erased. Only Receipts still holding work add Sources to the closure.
+    // The database clears settled Receipt references when their Artifact is erased.
     const references = await readProjectSourceContentReferencesInTx(tx, { artifactIds: artifacts.map(row => row.id), receiptStates: busy });
+    const runningContent = references.find(ref => ref.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1);
+    if (runningContent) return refused('running_work', { artifactId: runningContent.contentArtifactId });
     const authored = await tx.deploymentEnvironment.findMany({ where: { createdByAccountId: accountId },
         select: { projectSourceId: true } });
     const ownedSources = await tx.projectSource.findMany({ where: { createdByAccountId: accountId } });
@@ -85,32 +90,38 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     for (const source of sources) {
         if (!source.deploymentDefaults && source.deploymentEnvironments.length === 0) continue;
         const parsed = sourceFromRow(source);
-        if (!parsed.success) return refused();
+        const scope = source.createdByAccountId === accountId ? { projectSourceId: source.id } : {};
+        if (!parsed.success) return refused('graph_dependencies', scope);
         const owner = sourceOwner(parsed.data);
         if (owner.kind !== 'account' || owner.accountId !== accountId || source.createdByAccountId !== accountId
-            || parsed.data.audience.some(grant => grant.principal.kind !== 'account' || grant.principal.accountId !== accountId)) return refused();
+            || parsed.data.audience.some(grant => grant.principal.kind !== 'account' || grant.principal.accountId !== accountId)) return refused('source_sharing', scope);
     }
     for (const row of environments) {
         const pending = readDeploymentPendingContent(row);
-        if (!pending.ok || pending.pendingDeploy) return refused();
-        // Source continuity treats a non-deleted Environment as live controller
-        // custody, even if its last receipt settled and no workload is selected.
-        if (row.createdByAccountId !== accountId || !row.deletedAt || row.runtimeTargetLinkId
-            || [row.controllerMachineId, row.buildMachineId, row.edgeMachineId, row.telemetryMachineId]
+        if (row.createdByAccountId !== accountId) return refused('environment_dependencies');
+        const scope = { environmentId: row.id };
+        const running = row.deployments.find(receipt => busy.includes(receipt.state));
+        if (running || pending.ok && pending.pendingDeploy) return refused('running_work', {
+            ...scope, ...(running ? { deploymentId: running.id } : {}),
+        });
+        if (!pending.ok) return refused('graph_dependencies', scope);
+        if (row.runtimeTargetLinkId && !linkSet.has(row.runtimeTargetLinkId)) return refused('graph_dependencies', scope);
+        if ([row.controllerMachineId, row.buildMachineId, row.edgeMachineId, row.telemetryMachineId]
                 .some(id => id && !machineIds.has(id))
             || row.automations.some(automation => automation.accountId !== accountId || automation.enabled) || row.machineSecretGrants.length
             || row.principals.some(principal => principal.createdByAccountId !== accountId
                 || principal.principalKind !== 'account' || principal.principalId !== accountId)
-            || row.domains.some(domain => domain.createdByAccountId !== accountId || !domain.deletedAt || !linkSet.has(domain.targetLinkId))
-            || row.deployments.some(receipt => busy.includes(receipt.state))) return refused();
+            || row.domains.some(domain => domain.createdByAccountId !== accountId || !domain.deletedAt || !linkSet.has(domain.targetLinkId)))
+            return refused('environment_dependencies', scope);
         for (const link of row.targetLinks) {
-            if (link.createdByAccountId !== accountId
-                || link.state === 'provisioned'
-                || link.machineId && !machineIds.has(link.machineId)
+            if (link.createdByAccountId !== accountId) return refused('environment_dependencies', scope);
+            const target = { ...scope, targetLinkId: link.id, targetKind: link.targetKind };
+            if (link.machineId && !machineIds.has(link.machineId)
                 || link.machines.some(member => !machineIds.has(member.machineId))
                 || link.predecessorTargetLinkId && !linkSet.has(link.predecessorTargetLinkId)
-                || link.activeDeploymentId && !receiptSet.has(link.activeDeploymentId)
-                || !await hasCompleteTeardownInTx(tx, link, undefined, row.runtimeTargetLinkId)) return refused();
+                || link.activeDeploymentId && !receiptSet.has(link.activeDeploymentId)) return refused('graph_dependencies', target);
+            const blocker = await readDeploymentTargetCleanupBlockerInTx(tx, link, row.runtimeTargetLinkId);
+            if (blocker) return refused(blocker, target);
         }
     }
     // Incoming lineage and private content references must close over this
@@ -120,70 +131,70 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
         const rows = await tx.artifact.findMany({ where: { id: { in: [...ids] } }, include: {
             grants: true, keyEnvelopes: true, publicShare: true, signedInLink: true, templateAcceptedVersions: true,
         } });
-        if (rows.length !== ids.length) return refused();
+        if (rows.length !== ids.length) return refused('graph_dependencies');
         const ownedIds: string[] = [];
         for (const row of rows) {
             if (row.accountId !== accountId) {
                 // Drop the retired Receipt's reference to a foreign Artifact.
                 // Its bytes and ownership remain with that Artifact's Account.
-                if (definitionArtifactIds.has(row.id)) return refused();
+                if (definitionArtifactIds.has(row.id)) return refused('environment_dependencies');
                 continue;
             }
             if (row.publicShare || row.signedInLink || row.templateAcceptedVersions.length
                 || row.grants.some(grant => grant.principalKind !== 'account' || grant.accountId !== accountId)
-                || row.keyEnvelopes.some(envelope => envelope.recipientAccountId !== accountId)) return refused();
+                || row.keyEnvelopes.some(envelope => envelope.recipientAccountId !== accountId)) return refused('content_sharing', { artifactId: row.id });
             ownedIds.push(row.id);
         }
         const refs = await readProjectSourceContentReferencesInTx(tx, { artifactIds: ownedIds, receiptStates: busy });
-        if (refs.some(ref => !sourceIds.has(ref.projectSourceId))) return refused();
+        if (refs.some(ref => !sourceIds.has(ref.projectSourceId))) return refused('graph_dependencies');
         purgeArtifactIds.push(...ownedIds);
     }
     for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1 })) {
         for (const field of ['previewTemplateEnvironmentId', 'previewCompanionOfEnvironmentId'] as const) {
             if ((await tx.deploymentEnvironment.findMany({ where: { [field]: { in: [...ids] } }, select: { id: true } }))
-                .some(row => !environmentSet.has(row.id))) return refused();
+                .some(row => !environmentSet.has(row.id))) return refused('graph_dependencies');
         }
     }
     for (const ids of portableQueryChunks({ values: linkIds, bindingsPerValue: 1 })) {
         if ((await tx.deploymentTargetLink.findMany({ where: { predecessorTargetLinkId: { in: [...ids] } }, select: { id: true } }))
-            .some(row => !linkSet.has(row.id))) return refused();
+            .some(row => !linkSet.has(row.id))) return refused('graph_dependencies');
         for (const field of ['runtimeTargetLinkId', 'previewTargetLinkId'] as const) {
             if ((await tx.deploymentEnvironment.findMany({ where: { [field]: { in: [...ids] } }, select: { id: true } }))
-                .some(row => !environmentSet.has(row.id))) return refused();
+                .some(row => !environmentSet.has(row.id))) return refused('graph_dependencies');
         }
         if ((await tx.deployment.findMany({ where: { targetLinkId: { in: [...ids] } }, select: { id: true } }))
-            .some(row => !receiptSet.has(row.id))) return refused();
+            .some(row => !receiptSet.has(row.id))) return refused('graph_dependencies');
         if ((await tx.deploymentDomain.findMany({ where: { targetLinkId: { in: [...ids] } }, select: { environmentId: true } }))
-            .some(row => !environmentSet.has(row.environmentId))) return refused();
+            .some(row => !environmentSet.has(row.environmentId))) return refused('graph_dependencies');
     }
     for (const ids of portableQueryChunks({ values: receiptIds, bindingsPerValue: 1 })) {
         for (const field of ['predecessorDeploymentId', 'rollbackOfDeploymentId', 'promotedFromDeploymentId'] as const) {
             if ((await tx.deployment.findMany({ where: { [field]: { in: [...ids] } }, select: { id: true } }))
-                .some(row => !receiptSet.has(row.id))) return refused();
+                .some(row => !receiptSet.has(row.id))) return refused('graph_dependencies');
         }
         if ((await tx.deploymentTargetLink.findMany({ where: { activeDeploymentId: { in: [...ids] } }, select: { id: true } }))
-            .some(row => !linkSet.has(row.id))) return refused();
+            .some(row => !linkSet.has(row.id))) return refused('graph_dependencies');
     }
     for (const ids of portableQueryChunks({ values: [...sourceIds], bindingsPerValue: 1 })) {
         if ((await tx.deploymentEnvironment.findMany({ where: { previewRepositoryId: { in: [...ids] } }, select: { id: true } }))
-            .some(row => !environmentSet.has(row.id))) return refused();
+            .some(row => !environmentSet.has(row.id))) return refused('graph_dependencies');
     }
     for (const row of environments) {
         if (row.previewTemplateEnvironmentId && !environmentSet.has(row.previewTemplateEnvironmentId)
             || row.previewCompanionOfEnvironmentId && !environmentSet.has(row.previewCompanionOfEnvironmentId)
             || row.previewRepositoryId && !sourceIds.has(row.previewRepositoryId)
-            || row.previewTargetLinkId && !linkSet.has(row.previewTargetLinkId)) return refused();
+            || row.previewTargetLinkId && !linkSet.has(row.previewTargetLinkId)) return refused('graph_dependencies');
     }
     for (const row of receipts) {
         if (!linkSet.has(row.targetLinkId)
-            || [row.predecessorDeploymentId, row.rollbackOfDeploymentId, row.promotedFromDeploymentId].some(id => id && !receiptSet.has(id))) return refused();
+            || [row.predecessorDeploymentId, row.rollbackOfDeploymentId, row.promotedFromDeploymentId].some(id => id && !receiptSet.has(id))) return refused('graph_dependencies');
     }
     if (input.preflight) return { status: 'ok' as const };
     // All references are admitted as one graph. Break cycles, then remove
     // leaves before owners. No external side effects occur inside this Tx.
     await clearErasedAccountDeploymentEnvironmentReferencesInTx(tx, { accountId, environmentIds });
     await forIds(environmentIds, ids => tx.deploymentEnvironment.updateMany({ where: { id: { in: ids } }, data: {
-        previewTemplateEnvironmentId: null, previewCompanionOfEnvironmentId: null, previewTargetLinkId: null } }), 4);
+        runtimeTargetLinkId: null, previewTemplateEnvironmentId: null, previewCompanionOfEnvironmentId: null, previewTargetLinkId: null } }), 5);
     await forIds(linkIds, ids => tx.deploymentTargetLink.updateMany({ where: { id: { in: ids } }, data: { activeDeploymentId: null, predecessorTargetLinkId: null } }), 3);
     await forIds(receiptIds, ids => tx.deployment.updateMany({ where: { id: { in: ids } }, data: {
         predecessorDeploymentId: null, rollbackOfDeploymentId: null, promotedFromDeploymentId: null } }), 3);

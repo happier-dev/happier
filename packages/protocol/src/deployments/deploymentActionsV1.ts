@@ -290,7 +290,7 @@ export const DeploymentTargetLinkMemberV1Schema = lazyZodSchema(() => z.extend(D
 export const DeploymentTargetLinkMetadataV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1), id: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
   revision: DeploymentRevisionV1Schema, role: z.enum(['runtime', 'data']), source: DeploymentTargetSourceV1Schema,
-  targetKind: DeploymentIdentifierV1Schema, state: z.enum(['none', 'configured', 'provisioned', 'deployed']),
+  targetKind: DeploymentIdentifierV1Schema, state: z.enum(['none', 'configured', 'provisioned', 'deployed', 'detached']),
   machines: z.array(DeploymentIdentifierV1Schema),
   members: z.array(DeploymentTargetLinkMemberV1Schema),
   machineId: z.optional(DeploymentIdentifierV1Schema), installationId: z.optional(DeploymentIdentifierV1Schema),

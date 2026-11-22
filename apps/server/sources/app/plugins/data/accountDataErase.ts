@@ -2,6 +2,7 @@ import { refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/
 import { recordHomeAdministrationEventInTx } from "@/app/home/audit/homeAdministrationEvents";
 import { PluginIdSchema } from '@happier-dev/protocol/plugins/plugin-id';
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
+import type { AccountErasureDeploymentBlockerV1, HomeGovernanceErrorV1 } from "@happier-dev/protocol/home/governance";
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from "@/app/machines/managed/managedRead";
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './collections/sharingStorage';
@@ -500,6 +501,7 @@ export type DeleteAccountForErasureResult =
     | Readonly<{ status: "deleted" }>
     | Readonly<{ status: "already-deleted" }>
     | Readonly<{ status: "failed"; code: "account_erasure_managed_resources_review_required"; resources: readonly ManagedResourceDependencyV1[] }>
+    | Readonly<{ status: "failed"; code: "account_erasure_deployment_cleanup_required"; blocker: AccountErasureDeploymentBlockerV1 }>
     | Readonly<{
         status: "failed";
         code:
@@ -512,10 +514,21 @@ export type DeleteAccountForErasureResult =
             // A live, staffed Team would lose its last owner. Team ownership is
             // decided by its own owner; this composition only refuses to erase.
             | "team_owner_transfer_required"
-            | "account_erasure_deployment_cleanup_required"
             | "home_governance_forbidden"
             | "home_account_not_found";
     }>;
+
+export function accountErasureFailureResponse(result: Extract<DeleteAccountForErasureResult, { status: "failed" }>,
+    includeDeploymentReferences = true): HomeGovernanceErrorV1 {
+    switch (result.code) {
+        case "account_erasure_managed_resources_review_required":
+            return { error: result.code, resources: [...result.resources] };
+        case "account_erasure_deployment_cleanup_required":
+            return { error: result.code, blocker: includeDeploymentReferences ? result.blocker : { reason: result.blocker.reason } };
+        default:
+            return { error: result.code };
+    }
+}
 
 /**
  * Who admitted this erasure.
@@ -863,6 +876,7 @@ export async function deleteAccountForErasure(input: Readonly<{
     if (preflight.status === "already-deleted") return { status: "already-deleted" };
     if (preflight.status === "rejected") {
         if (preflight.code === "account_erasure_managed_resources_review_required") return { status: "failed", code: preflight.code, resources: preflight.resources };
+        if (preflight.code === "account_erasure_deployment_cleanup_required") return { status: "failed", code: preflight.code, blocker: preflight.blocker };
         return { status: "failed", code: preflight.code };
     }
     // The actor was admitted above; Phase C finishes this admitted invocation.
@@ -976,7 +990,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         if (deploymentCleanup.status === "rejected") {
             // The owner validates closure before its first mutation. Earlier
             // erasure cleanup may have committed retirement already.
-            return { status: "failed", code: deploymentCleanup.code };
+            return { status: "failed", code: deploymentCleanup.code, blocker: deploymentCleanup.blocker };
         }
         await tx.artifact.deleteMany({ where: { accountId: input.accountId } });
         await tx.uploadedFile.deleteMany({ where: { accountId: input.accountId } });

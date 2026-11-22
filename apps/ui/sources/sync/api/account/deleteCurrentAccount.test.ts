@@ -38,6 +38,12 @@ describe('deleteCurrentAccount', () => {
       status: 409,
     });
   });
+  it('preserves the deployment blocker returned by Home', async () => {
+    const code = 'account_erasure_deployment_cleanup_required';
+    const details = { error: code, blocker: { reason: 'provider_resource', targetLinkId: 'target', targetKind: 'vercel' } };
+    serverFetch.mockResolvedValueOnce(Response.json(details, { status: 409 }));
+    await expect(deleteCurrentAccount({ token: 'signed' })).rejects.toMatchObject({ code, status: 409, details });
+  });
   it('preserves the Home transaction timeout through the Action failure projection', async () => {
     // Captured Account deletion refusal: the generic Home error is outside the erasure result union.
     serverFetch.mockResolvedValue(Response.json({ error: 'database_transaction_timeout', statusCode: 503 }, { status: 503 }));

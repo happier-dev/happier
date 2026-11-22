@@ -1,6 +1,6 @@
 import { homeGovernanceErrorHttpStatusV1 } from '@happier-dev/protocol/home/governance';
 import { ACCOUNT_ERASURE_HTTP_PATH_V1, AccountErasureErrorV1Schema, AccountErasureRequestV1Schema, AccountErasureResponseV1Schema } from '@happier-dev/protocol/auth/accountErasure';
-import { deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
+import { accountErasureFailureResponse, deleteAccountForErasure } from "@/app/plugins/data/accountDataErase";
 import { requirePresentUser } from "@/app/api/utils/requirePresentUser";
 import { type Fastify } from "../../types";
 export function registerAccountErasureRoute(app: Fastify): void {
@@ -26,9 +26,7 @@ export function registerAccountErasureRoute(app: Fastify): void {
             }
             const result = await deleteAccountForErasure({ accountId: request.userId, managedResourceDispositions: request.body.managedResourceDispositions });
             if (result.status === "failed") {
-                const error = result.code === "account_erasure_managed_resources_review_required"
-                    ? { error: result.code, resources: [...result.resources] }
-                    : { error: result.code };
+                const error = accountErasureFailureResponse(result);
                 return await reply.code(homeGovernanceErrorHttpStatusV1(result.code)).send(error);
             }
             if (result.status === "disabled_pending_completion") return await reply.send(result);

@@ -220,10 +220,14 @@ describe('Environment deletion client over the Action owner', () => {
         expect(homes.requestsFor('/v1/artifacts')).toHaveLength(0);
     });
 
-    it('projects an absent active deployment as null for disposition reviews', async () => {
+    it.each([
+        { state: 'configured', activeDeploymentId: undefined, detachedAtMs: undefined },
+        { state: 'detached', activeDeploymentId: 'retained-receipt', detachedAtMs: 1 },
+        { state: 'deployed', activeDeploymentId: 'retained-receipt', detachedAtMs: 1 },
+    ] as const)('disposition review shows no managed deployment for $state', async target => {
         const f = await setup();
         const detail = { ...f.detail, targetLinks: f.detail.targetLinks.map(item => ({ ...item,
-            targetLink: { ...item.targetLink, activeDeploymentId: undefined } })) };
+            targetLink: { ...item.targetLink, ...target } })) };
         const hook = await renderHook(() => useDeploymentEnvironmentDeletion({ environmentId: detail.environment.id,
             lifetime: f.lifetime, snapshot: { status: 'ready', value: detail, failure: null }, actions: f.actions,
             controller: null, demand: shown }));

@@ -40,7 +40,7 @@ export function selectDeploymentRuntimeTargetLinkV1(
         targetLinks: readonly Readonly<{ targetLink: DeploymentTargetLinkHeaderV1 }>[] }>,
 ): DeploymentTargetLinkHeaderV1 | null {
     return detail.targetLinks.find(({ targetLink }) => targetLink.id === detail.environment.runtimeTargetLinkId
-        && targetLink.detachedAtMs === undefined && targetLink.deletedAtMs === undefined)?.targetLink ?? null;
+        && targetLink.state !== 'detached' && targetLink.detachedAtMs === undefined && targetLink.deletedAtMs === undefined)?.targetLink ?? null;
 }
 
 /** Backups capture the same runtime data target and its one serving deployment. */

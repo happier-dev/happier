@@ -256,7 +256,7 @@ it('admits explicit detach without changing workload custody, and deletes all li
     expect(await inTx(tx => deleteDeploymentEnvironmentInTx(tx, f.owner.id, { ...f.base, detachKeepRunning: true })))
         .toMatchObject({ ok: true, environmentId: f.environment.id, revision: 2, detached: true });
     expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
-        .toMatchObject({ state: 'deployed', activeDeploymentId: active.id, detachedAt: expect.any(Date) });
+        .toMatchObject({ state: 'detached', activeDeploymentId: active.id, detachedAt: expect.any(Date) });
     expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } })).deletedAt).toBeInstanceOf(Date);
 });
 
@@ -307,9 +307,10 @@ it.each([false, true])('requires complete signed teardown including retained-pro
     expect(await db.deployment.findUnique({ where: { id: later.id } })).not.toBeNull();
     const fresh = await settle(members);
     const freshLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
-    expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...input,
-        expectedTargetLinkRevision: freshLink.revision, teardownDeploymentId: fresh })))
-        .toMatchObject({ ok: true, detached: false });
+    const detach = !retainedProviderResource;
+    expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...input, expectedTargetLinkRevision: freshLink.revision,
+        ...(detach ? { detachKeepRunning: true, teardownDeploymentId: undefined } : { teardownDeploymentId: fresh }) })))
+        .toMatchObject({ ok: true, detached: detach });
     const retiredLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id }, include: { machines: true } });
     expect(await inTx(tx => hasCompleteTeardownInTx(tx, retiredLink, undefined, null)),
         'a real signed cleanup remains complete after canonical unlink').toBe(true);

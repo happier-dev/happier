@@ -175,7 +175,8 @@ export function useDeploymentEnvironmentDeletion(options: DeploymentEnvironmentD
             teardownPreparation: 'controllerPrepared' as const,
             retainedTargets: detail?.targetLinks.map(({ targetLink }) => ({ id: targetLink.id, role: targetLink.role,
                 targetKind: targetLink.targetKind, state: targetLink.state, machines: targetLink.machines,
-                activeDeploymentId: targetLink.activeDeploymentId ?? null })) ?? [],
+                activeDeploymentId: targetLink.state === 'detached' || targetLink.detachedAtMs !== undefined
+                    ? null : targetLink.activeDeploymentId ?? null })) ?? [],
             detach: { managementAndAlertsCease: true as const, runningSecretBytesMayRemain: true as const,
                 rotateUpstreamToInvalidate: true as const, ongoingCosts: 'unknown' as const },
         },
