@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { SessionInputAdmissionResultV1Schema, type SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { getCurrentAuth } from '@/auth/context/currentAuth';
 
 import type { ActionExecutorContext} from '@happier-dev/protocol/actions/executor/types';
@@ -214,7 +215,7 @@ function readServerId(
 
 export type ApprovalDecisionOptions = Readonly<{
     /** The canonical execution receipt, distinct from recording the decision. */
-    onExecution?: (execution: ApprovalExecutionV1 | null) => void;
+    onExecution?: (execution: ApprovalExecutionV1 | null, delivery?: SessionInputAdmissionResultV1) => void;
     /** The deciding person's reduced operands, admitted by the requested Action. */
     narrowedInput?: unknown;
     /** A resource proposal's turned-down items, as the person last saw them (plan 60 AGW-8). */
@@ -368,7 +369,10 @@ export function useApprovalDecisionHandler(
             // when its effect failed. Wake every Artifact projection and expose
             // that receipt before presenting the typed failure.
             if (serverId) publishHomeAccountChange(serverId, [artifact.id], { changeKinds: ['artifact'] });
-            options?.onExecution?.(execution?.success ? execution.data : null);
+            const delivery = typeof outcome === 'object' && outcome !== null && 'delivery' in outcome
+                ? SessionInputAdmissionResultV1Schema.safeParse(outcome.delivery) : null;
+            if (delivery?.success) options?.onExecution?.(execution?.success ? execution.data : null, delivery.data);
+            else options?.onExecution?.(execution?.success ? execution.data : null);
             if (execution?.success) assertApprovalExecutionSucceeded(execution.data);
             // A storage proposal remembers what the person turned down; best effort, the decision stands.
             if (builtInApproval) void recordResourceProposalDeclines(builtInApproval, decision, narrowedInput, options?.declinedItems, serverId);

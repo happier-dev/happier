@@ -1694,6 +1694,44 @@ describe('ApprovalDetailScreen', () => {
     expect(JSON.parse(homes.artifacts(account.serverId).readPlainBody(currentArtifact.id) ?? 'null').decision?.kind).not.toBe('reject');
   });
 
+  it.each(['rejected', 'accepted'] as const)('retains the ORIGINAL %s result delivery beside successful execution', async deliveryStatus => {
+    const artifact = await createDaemonRoutedApprovalArtifact('session.stop');
+    const request = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
+    const execution = { executedAtMs: 3, ok: true, result: {} } as const;
+    const settled = ApprovalRequestV2Schema.parse({ ...request, automaticChecks: undefined, status: 'executed', updatedAtMs: 3,
+      decision: { kind: 'approve', decidedAtMs: 2 }, execution });
+    const cause = { phase: 'session.message.input_schema', errorClass: 'Error', errorCode: 'target_unavailable', httpStatus: null } as const;
+    const delivery = deliveryStatus === 'rejected' ? { status: 'rejected', code: 'session_input_target_unavailable', failureCause: cause }
+      : { status: 'accepted', localId: 'approval-result:original' };
+    currentArtifact = artifact;
+    remoteArtifact = { ...artifact, header: buildApprovalRequestArtifactHeaderV1(settled), body: JSON.stringify(settled) };
+    daemonReply = { ok: true, result: { status: 'executed', execution, delivery } };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={artifact.id} />);
+    await screen.pressByTestIdAsync('approvals.approve');
+    await vi.waitFor(() => expect(approvalItem(screen, 'approvals.status')?.props.detail).toBe('approvals.status.executed'));
+    if (deliveryStatus === 'rejected') {
+      expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
+      const { presentActionFailureOutcome } = await import('@/components/tools/shell/approvals/approvalFailureOutcome');
+      const failure = presentActionFailureOutcome({ errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable', failureCause: cause });
+      expect(approvalItem(screen, 'approvals.result-delivery')?.props.subtitle).toBe(failure.reason);
+      await screen.pressByTestIdAsync('approvals.technical-details.header');
+      expect(screen.getTextContent()).toContain(cause.phase);
+      expect(screen.getTextContent()).toContain(cause.errorCode);
+      // Delivery retries leave the executed Artifact unchanged. A fresh read of that
+      // success must not replace the original result-delivery receipt on this view.
+      await act(async () => {
+        commitRemoteArtifact(remoteArtifact);
+        const refreshed = await sync.fetchArtifactWithBody(artifact.id);
+        if (!refreshed) throw new Error('Expected the original Artifact projection');
+        storage.getState().updateArtifact(refreshed);
+      });
+      expect(approvalItem(screen, 'approvals.result-delivery')?.props.detail).toBe('session.askRecord.notSent');
+      expect(screen.getTextContent()).toContain(cause.phase);
+    } else expect(approvalItem(screen, 'approvals.result-delivery')).toBeUndefined();
+    await screen.unmount();
+  });
+
   it('preserves and presents the typed Workflow refusal from a settled Setup approval', async () => {
     await prepareApprovalFixture();
     const request = ApprovalRequestV2Schema.parse({

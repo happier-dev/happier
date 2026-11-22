@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SessionInputAdmissionResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useRouter, type Href } from 'expo-router';
@@ -76,7 +77,7 @@ import {
   useApprovalDecisionHandler,
   type ApprovalDecisionOptions,
 } from '@/components/tools/shell/approvals/useApprovalDecisionHandler';
-import { presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
+import { presentActionFailureOutcome, presentActionFailureTechnicalDetails, presentApprovalFailureOutcome } from '@/components/tools/shell/approvals/approvalFailureOutcome';
 import { useRetargetNavigationFocusReturnIntent } from '@/keyboard/focusReturn';
 import { useApprovalSessionReading } from './useApprovalSessionReading';
 import { useSessionAudienceContext } from '@/hooks/teams/useSessionAudienceContext';
@@ -149,11 +150,14 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     : null;
   const [isDeciding, setIsDeciding] = React.useState(false);
   const [recordedAnswer, setRecordedAnswer] = React.useState<Readonly<{
-    artifactId: string; decision: 'approve' | 'reject' | 'cancel';
+    artifactId: string; decision: 'approve' | 'reject' | 'cancel'; delivery?: SessionInputAdmissionResultV1;
   }> | null>(null);
   const recordedDecision = recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.decision : null;
-  const setRecordedDecision = React.useCallback((decision: 'approve' | 'reject' | 'cancel') => {
-    setRecordedAnswer({ artifactId: props.artifactId, decision });
+  const setRecordedDecision = React.useCallback((decision: 'approve' | 'reject' | 'cancel', delivery?: SessionInputAdmissionResultV1) => {
+    // Preserve the original decision's delivery; a later retry or Artifact refresh
+    // describes a different attempt and cannot rewrite this receipt.
+    setRecordedAnswer(current => ({ artifactId: props.artifactId, decision,
+      delivery: (current?.artifactId === props.artifactId ? current.delivery : undefined) ?? delivery }));
     props.onDecisionRecorded?.(decision);
   }, [props.artifactId, props.onDecisionRecorded]);
   const decisionInFlightRef = React.useRef(false);
@@ -482,7 +486,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
             : decision === 'approve' ? { ...computerChoice.decisionOptions, ...bindingChoice.decisionOptions } : undefined;
           if (!await decideActionApproval(decision, {
             ...options,
-            onExecution: () => setRecordedDecision(decision),
+            onExecution: (_execution, delivery) => setRecordedDecision(decision, delivery),
           })) {
             throw new Error('approval_decision_failed');
           }
@@ -551,6 +555,9 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         : parsed.kind === 'built_in' ? resolveApprovalDisplayStatus(parsed.request, builtInExecutionFailure)
           : parsed.request.status;
   const statusLabel = formatApprovalStatusLabel(displayStatus);
+  const originalDelivery = recordedAnswer?.artifactId === props.artifactId ? recordedAnswer.delivery : undefined;
+  const deliveryFailure = originalDelivery?.status === 'rejected'
+    ? presentActionFailureOutcome({ errorCode: originalDelivery.code, error: originalDelivery.code, failureCause: originalDelivery.failureCause }) : null;
   const executionFailureResult = builtInExecutionFailure ?? (parsed.kind === 'host_action'
     || parsed.request.status !== 'failed' && parsed.request.status !== 'outcome_unknown'
     || parsed.request.execution?.ok !== false
@@ -563,8 +570,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   // The same outcome the composer card reads, so one failed request names itself alike on both.
   const failureOutcome = parsed.kind === 'built_in' && builtInExecutionFailure
     ? presentApprovalFailureOutcome(parsed.request, builtInExecutionFailure) : null;
-  const failureTechnicalDetails = failureOutcome?.technicalDetails ?? (executionFailure?.code
-    ? presentActionFailureTechnicalDetails({ errorCode: executionFailure.code, error: executionFailure.code }) : []);
+  const failureTechnicalDetails = [
+    ...(failureOutcome?.technicalDetails ?? (executionFailure?.code
+      ? presentActionFailureTechnicalDetails({ errorCode: executionFailure.code, error: executionFailure.code }) : [])),
+    ...(deliveryFailure?.technicalDetails.map(line => ({ ...line, key: `delivery-${line.key}` })) ?? []),
+  ];
   const failureHeadline = failureOutcome?.headline ?? t('detailPages.approval.failureTitle');
   // A confidential entry that did not happen is said here, from its durable record, in the entry's own words.
   const recordedFill = parsed.kind === 'built_in' ? readConfidentialFillSettlement(parsed.request) : null;
@@ -577,7 +587,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     : fillNotEntered ? undefined : executionFailure.reason;
   // One Technical details disclosure per page: the failure's code joins the arguments' own lines when
   // the Details card is shown, and otherwise sits with the failure.
-  const failureCodeInDetails = Boolean(executionFailure?.code && shownActionFields && shownActionFields.rows.length > 0
+  const failureCodeInDetails = Boolean((executionFailure?.code || deliveryFailure) && shownActionFields && shownActionFields.rows.length > 0
     && !confidentialAction && !proposal && !projectCommand && !deploymentReview && !computerAction && !docEditProposal);
   // Only human-facing facts belong in page chrome. Target requests retain their
   // Action name in summary; qualified ids and source custody are routing evidence.
@@ -597,7 +607,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const statusFollowsFacts = (deploymentDecision !== null || confidentialApproval !== null || confidentialInputs !== null)
     && parsed.request.status === 'open';
   const open = parsed.request.status === 'open' && !answeredWhileOpen;
-  const requestNotice = Boolean(executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
+  const requestNotice = Boolean(deliveryFailure || executionFailure || (cannotRun && parsed.request.status === 'open') || approvalRouteUnavailable);
   const previewShown = parsed.kind === 'built_in' && Boolean(previewSummary) && !deploymentDecision && !computerAction;
   // A waiting request with nothing else to say reads its status as one header fact, not a section of one row.
   const statusInHeader = open && !requestNotice && !showActionRow && !previewShown && !statusFollowsFacts;
@@ -632,6 +642,11 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         mode="info"
         showChevron={false}
       />
+      {deliveryFailure ? (
+        <Item testID="approvals.result-delivery" title={t('runs.delivery.title')}
+          detail={t('session.askRecord.notSent')} subtitle={deliveryFailure.reason ?? undefined}
+          subtitleLines={0} mode="info" showChevron={false} />
+      ) : null}
       {/* Executed means the open was accepted; the bound operation says whether the page opened. */}
       {parsed.kind === 'built_in' ? (
         <BrowserOpenOperationStatusRow request={parsed.request} serverId={approvalServerId} testID="approvals.browser-open" />
@@ -652,7 +667,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
           showChevron={false}
         />
       ) : null}
-      {executionFailure?.code && !failureCodeInDetails ? (
+      {(executionFailure?.code || deliveryFailure) && !failureCodeInDetails ? (
         <ApprovalTechnicalDetails
           lines={failureTechnicalDetails}
         />
