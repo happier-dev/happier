@@ -7,6 +7,8 @@ import { ProviderRuntimeBindingBasisV1Schema } from '@happier-dev/protocol/provi
 import { createRunnerManagedProviderConsumerAccess, createRunnerManagedProviderRunSourceOpener } from './runnerManagedProviderConsumerAccess';
 import { startProviderBrokerApplicationServer } from '@/providers/broker/providerBrokerApplicationServer';
 import { startManagedProviderConsumerApplication } from '@/providers/broker/managedProviderConsumerApplication';
+import { createStableRunnerPluginExecService } from '@/plugins/runtime/invocation/services/exec';
+import { createUnixAgentIdentityLaunch } from '@/daemon/agentIsolation/unixAgentIdentityAdapter';
 
 describe('runner shared Provider consumer access', () => {
     it.each([
@@ -189,5 +191,62 @@ describe('runner shared Provider consumer access', () => {
             for (const response of streams) response.destroy();
             await new Promise<void>((resolve, reject) => upstream.close((error) => error ? reject(error) : resolve()));
         }
+    });
+
+    it('admits an isolated RunAs Agent launch to the consumer application with the runner credential', async () => {
+        // Composed path behind the 2026-11-22 guest 403: shared gateway access, the runner
+        // transform, the RunAs launch frame and the exec owner are real. Only sudo is
+        // substituted: the launched child reads the frame the way the agent-launch shim does.
+        const daemon = await startProviderBrokerApplicationServer({
+            handler: async () => ({ ok: false, reasonCode: 'broker_unavailable' }),
+            localConsumer: { authorize: () => true, request: async () => ({ ok: false, reasonCode: 'broker_unavailable' }) },
+        });
+        const consumer = await createRunnerManagedProviderConsumerAccess({
+            signal: new AbortController().signal,
+            credentialTransport: { id: 'bearer', protocols: ['anthropic'], uses: ['runtime'], destination: { kind: 'httpHeader', name: 'authorization', format: 'bearer' } },
+            readAccess: async () => ({ endpointUrl: `${daemon.localConsumerEndpointUrl}/v1`, headers: {} }),
+            materialize: async ({ endpointUrl, credentialPlaceholder }) => ({ v: 1, kind: 'spawnEnv', env: [
+                { name: 'URL', value: endpointUrl, source: 'provider' },
+                { name: 'TOKEN', value: credentialPlaceholder, source: 'provider' },
+            ] }),
+        });
+        const agentEnvironment = Object.fromEntries(
+            consumer.materialization.env.flatMap(entry => entry.value === null ? [] : [[entry.name, entry.value]]));
+        const runAs = createUnixAgentIdentityLaunch({
+            managedHappierBinaryPath: process.execPath, executable: '/usr/bin/claude', args: [], cwd: '/tmp',
+            runtimeHome: '/tmp/member-home', environment: agentEnvironment,
+            selectedEnvironmentKeys: ['URL', 'TOKEN'], selectedMaterials: [],
+        });
+        const child = [
+            'let frame = Buffer.alloc(0);',
+            'process.stdin.on("data", async (chunk) => {',
+            ' frame = Buffer.concat([frame, chunk]);',
+            ' if (frame.length < 12 || frame.length < 12 + frame.readUInt32BE(8)) return;',
+            ' const { environment } = JSON.parse(frame.subarray(12, 12 + frame.readUInt32BE(8)).toString("utf8"));',
+            ' const response = await fetch(environment.URL + "/messages", { method: "POST", body: "{}",',
+            '  headers: { authorization: "Bearer " + environment.TOKEN } });',
+            ' process.exit(response.status === 503',
+            '  && response.headers.get("x-happier-provider-broker-error-code") === "broker_unavailable" ? 0 : response.status === 403 ? 13 : 1);',
+            '});',
+        ].join('');
+        const service = createStableRunnerPluginExecService({
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            agentCli: { async checkReadiness(request) { return { launchable: request.candidates.map((agentId) => ({ agentId })) }; } },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
+            async resolveSystemTool(request) {
+                return { resolutionId: 'resolution-isolated-agent', launch: { command: process.execPath, args: [], env: {} },
+                    result: { executable: { kind: 'systemTool', id: request.toolId }, executablePath: process.execPath } };
+            },
+            transformAgentChildLaunchEnvironment: consumer.transformLaunchEnvironment,
+            async authorizeLaunch() {
+                return Object.freeze({ command: process.execPath, args: Object.freeze(['-e', child]), env: Object.freeze({ ...runAs.env }),
+                    stdinPreamble: new Uint8Array(runAs.stdinPreamble), release() {} });
+            },
+        });
+        try {
+            const launched = await service.spawn({ executable: { kind: 'systemTool', id: 'fixture.node' } });
+            await expect(launched.wait()).resolves.toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 0 } } });
+        } finally { await consumer.cleanup(); await daemon.close(); }
     });
 });
