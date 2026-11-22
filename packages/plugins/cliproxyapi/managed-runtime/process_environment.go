@@ -17,12 +17,14 @@ const (
 type ManagedPurposeConfiguration struct {
 	V                int                              `json:"v"`
 	ModelListEnabled bool                             `json:"modelListEnabled"`
+	WireProjection   bool                             `json:"wireProjection,omitempty"`
 	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
 }
 
 type managedPurposeConfigurationWire struct {
 	V                int                              `json:"v"`
 	ModelListEnabled *bool                            `json:"modelListEnabled"`
+	WireProjection   bool                             `json:"wireProjection,omitempty"`
 	Purposes         []ManagedPurposeConfigurationRow `json:"purposes"`
 }
 
@@ -58,6 +60,7 @@ func ParseManagedPurposeConfiguration(value string) (ManagedPurposeConfiguration
 	return normalizeManagedPurposeConfiguration(ManagedPurposeConfiguration{
 		V:                wire.V,
 		ModelListEnabled: *wire.ModelListEnabled,
+		WireProjection:   wire.WireProjection,
 		Purposes:         wire.Purposes,
 	})
 }
@@ -103,6 +106,7 @@ func ImmutableGatewayConfig(
 		AuthEntries:      authEntries,
 		Protocols:        protocols,
 		ModelListEnabled: normalizedPurposeConfiguration.ModelListEnabled,
+		WireProjection:   normalizedPurposeConfiguration.WireProjection,
 	}
 	if err := config.Validate(); err != nil {
 		return Config{}, err
@@ -166,6 +170,7 @@ func normalizeManagedPurposeConfiguration(
 	return ManagedPurposeConfiguration{
 		V:                3,
 		ModelListEnabled: configuration.ModelListEnabled,
+		WireProjection:   configuration.WireProjection,
 		Purposes:         purposes,
 	}, nil
 }

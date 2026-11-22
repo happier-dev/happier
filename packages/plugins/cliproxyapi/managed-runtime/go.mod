@@ -7,6 +7,7 @@ tool golang.org/x/vuln/cmd/govulncheck
 require (
 	github.com/gin-gonic/gin v1.10.1
 	github.com/gorilla/websocket v1.5.3
+	github.com/klauspost/compress v1.20.2
 	// Moving this pin re-derives the identity-header strip-list in
 	// lease_transport.go. The upstream Codex and Claude executors set those
 	// headers from registration-time auth data and their names live in the
@@ -35,7 +36,6 @@ require (
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.20.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
 	github.com/leodido/go-urn v1.4.0 // indirect
 	github.com/libp2p/zeroconf/v2 v2.2.0 // indirect

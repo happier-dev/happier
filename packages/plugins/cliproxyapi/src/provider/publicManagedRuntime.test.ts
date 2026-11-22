@@ -484,6 +484,39 @@ async function healthIdentity(service: ManagedServiceHandle): Promise<unknown> {
 }
 
 describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
+  it('opts only the selected saved gateway into the wire projection', async () => {
+    vi.stubEnv('HAPPIER_CLIPROXYAPI_WIRE_PROJECTION_CONNECTION_ID', 'gateway-wire-replay');
+    try {
+      const requests = [
+        { reason: 'catalogProbe', connectionId: 'gateway-wire-replay', connectionRevision: 1 },
+        { reason: 'sessionDemand', connectionId: 'gateway-wire-replay', connectionRevision: 1 },
+        { reason: 'sessionDemand', connectionId: 'gateway-other', connectionRevision: 1 },
+        { reason: 'explicitStartLocal' },
+      ] as const;
+      const supervise = vi.fn<ManagedServices['supervise']>(async () => managedService(['meta-upstream']));
+      const context = {
+        connectedAccounts: connectedAccounts(['meta-upstream']).service,
+        managedServices: { dependencies: {} as never, supervise },
+        signal: new AbortController().signal,
+      };
+      for (const request of requests) {
+        await CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME.start({
+          ...request,
+          endpointTemplateIds: requestedEndpointTemplateIds,
+        }, context);
+      }
+      const configuration = supervise.mock.calls.map(([spec]) => {
+        if (spec.mode.kind !== 'spawn') throw new Error('Missing physical gateway spec');
+        return JSON.parse(spec.mode.launch.env!.HAPPIER_CLIPROXYAPI_MANAGED_PURPOSE_CONFIGURATION!);
+      });
+      expect(configuration.map((value) => value.wireProjection))
+        .toEqual([true, true, undefined, undefined]);
+      expect(configuration[0]).toEqual(configuration[1]);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it('accepts managed health metadata beyond former byte caps with unordered declarations', async () => {
     const identity = healthyIdentity(['openai-upstream']);
     const extended = { ...identity, wrapperBuildVersion: ` ${'build'.repeat(8192)} `,

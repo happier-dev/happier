@@ -176,6 +176,7 @@ async function assertManagedHealthIdentity(
 
 async function resolveManagedPurposeSnapshot(
   context: Parameters<ManagedProviderRuntime['start']>[1],
+  wireProjection: boolean,
 ): Promise<ManagedPurposeSnapshot> {
   throwIfAborted(context.signal);
   const families = CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES;
@@ -216,6 +217,7 @@ async function resolveManagedPurposeSnapshot(
     serializedPurposeConfiguration: JSON.stringify({
       v: 3,
       modelListEnabled: CLIPROXYAPI_MANAGED_MODEL_LIST_ENABLED,
+      ...(wireProjection ? { wireProjection: true } : {}),
       purposes: families.map((family) => ({
         id: family.authEntry.id,
         provider: family.authEntry.provider,
@@ -288,7 +290,11 @@ const CATALOG_PROBE_ENDPOINT_TEMPLATE_IDS: ReadonlySet<string> = new Set(
 );
 
 const start: ManagedProviderRuntime['start'] = async (request, context) => {
-  const purposeSnapshot = await resolveManagedPurposeSnapshot(context);
+  const diagnosticConnectionId = process.env.HAPPIER_CLIPROXYAPI_WIRE_PROJECTION_CONNECTION_ID;
+  const wireProjection = Boolean(diagnosticConnectionId)
+    && request.reason !== 'explicitStartLocal'
+    && request.connectionId === diagnosticConnectionId;
+  const purposeSnapshot = await resolveManagedPurposeSnapshot(context, wireProjection);
   const admitsCatalogProbeEndpoints = request.reason === 'catalogProbe';
   const endpointTemplateIds = Object.freeze(request.endpointTemplateIds.filter(
     (endpointTemplateId) => purposeSnapshot.endpointTemplateIds.includes(

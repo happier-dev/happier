@@ -2720,6 +2720,17 @@ lookup, and treat upstream 401s as request-scoped failures so a later daemon lea
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
 The catalog is compatibility evidence, not Account entitlement.
 
+For a broker-admitted Claude replay in 0.3 development, set
+`HAPPIER_CLIPROXYAPI_WIRE_PROJECTION_CONNECTION_ID` in the QA daemon's launch
+configuration to the exact saved gateway connection ID. Start the gateway from
+that configuration with the matching wrapper build. Its private, per-instance
+runtime directory contains `managed-wire-projection.jsonl` after the first
+admitted `POST /v1/messages`. Each record pairs the upstream status, event types
+and block metadata with the equivalent Anthropic response fields. Text lengths
+count UTF-8 bytes. The wrapper keeps CommercialMode enabled and the projection
+contains only structural fields. Capture the file while the instance is live
+and clear the selector after the replay.
+
 For native Codex Responses clients, the development managed codec presents MCP
 namespace children, including deferred tool-search catalogs, as ordinary
 `mcp__<server>__<tool>` functions on the Codex-wire upstream route. It translates continuation calls and explicit tool selection to

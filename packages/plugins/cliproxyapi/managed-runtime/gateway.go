@@ -42,6 +42,7 @@ type Config struct {
 	AuthEntries        []AuthEntry        `json:"authEntries"`
 	Protocols          []ProviderProtocol `json:"protocols"`
 	ModelListEnabled   bool               `json:"modelListEnabled"`
+	WireProjection     bool               `json:"wireProjection,omitempty"`
 }
 
 var (
