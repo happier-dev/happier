@@ -53,10 +53,10 @@ export async function hasCompleteTeardownInTx(tx: Tx, link: Link, teardownDeploy
 /** Native absence and released management custody are separate facts. */
 export async function readDeploymentTargetCleanupBlockerInTx(tx: Tx, link: Link, runtimeTargetLinkId: string | null) {
     const state = readDeploymentTargetLinkState(link);
+    if (state === 'detached') return null;
     const teardown = await readLatestDeploymentTeardownInTx(tx, link);
     const { latest } = teardown;
     if (latest?.operation === 'teardown' && latest.startedAt && latest.state !== 'succeeded') return 'teardown_incomplete' as const;
-    if (state === 'detached') return null;
     if (state === 'provisioned' || state === 'deployed') return 'provider_resource' as const;
     return await hasCompleteTeardownProofInTx(tx, link, undefined, runtimeTargetLinkId, teardown) ? null : 'teardown_incomplete' as const;
 }
@@ -66,10 +66,11 @@ async function hasCompleteTeardownProofInTx(tx: Tx, link: Link, teardownDeployme
     knownLinks?: readonly DeploymentTargetLinkHeaderV1[]) {
     const subjects = await readDeploymentTeardownSubjectsInTx(tx, link, teardown.accepted, runtimeTargetLinkId, knownLinks);
     if (link.machines.length > 0 && subjects.length === 0) return true;
-    if (!teardown.latest) return link.state === 'configured' && !link.activeDeploymentId;
+    const state = readDeploymentTargetLinkState(link);
+    if (!teardown.latest) return state === 'configured' && !link.activeDeploymentId;
     const { proof } = teardown;
     if (!proof || link.activeDeploymentId
-        || link.state !== 'detached' && link.state !== (proof.retainedProviderResource ? 'provisioned' : 'configured')) return false;
+        || state !== 'detached' && state !== (proof.retainedProviderResource ? 'provisioned' : 'configured')) return false;
     // Signed settlement advances once; canonical unlink/delete advances once
     // more. Only a retained read consumes that disposition, never new admission.
     const dispositionRevision = teardownDeploymentIds === undefined && link.deletedAt !== null ? 1 : 0;

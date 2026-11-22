@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
+import { deleteDeploymentEnvironmentInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
 import { sourceFromRow } from '@/app/projects/sources/projectSourceService';
 import { readDeploymentTargetInTx } from './deploymentTargetLinkService';
 import * as blobFiles from '@/storage/blob/files';
@@ -12,6 +12,7 @@ import { createDeploymentAcceptedExecution, deploymentAcceptedExecutionColumns }
 import { projectDeploymentReceiptHeader } from './deploymentService';
 import { listDeploymentReceiptsInTx, readDeploymentReceiptInTx } from './deploymentReadService';
 import { DeploymentTeardownProofV1Schema } from '@happier-dev/protocol';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 
 function teardownProof(machine: { id: string; installationId: string | null }, retainedProviderResource: boolean) {
     return DeploymentTeardownProofV1Schema.parse({ targetLinkRevision: 1,
@@ -250,20 +251,45 @@ export function deploymentAccountPurgeCases() {
         expect(await db.deployment.findUnique({ where: { id: f.receipt.id } })).toEqual(f.receipt);
     });
 
-    it('names a detached target whose teardown started but did not finish', async () => {
-        const f = await fixture(true);
-        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
-            detachedAt: new Date(), state: 'deployed', activeDeploymentId: f.receipt.id,
+    it('protects a managed deployment until the owner explicitly detaches after a failed teardown', async () => {
+        const f = await fixture(false);
+        await db.machine.update({ where: { id: f.machine.id }, data: {
+            metadata: encodePlainMachineStoredContent({ host: 'Purge', platform: 'linux', happyCliVersion: 'test',
+                homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }),
+            dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
         } });
         await db.deployment.update({ where: { id: f.receipt.id }, data: {
-            operation: 'teardown', state: 'failed', startedAt: new Date(),
+            operation: 'deploy', state: 'succeeded', requestedAt: new Date(1), settledAt: new Date(1),
+        } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: {
+            state: 'deployed', activeDeploymentId: f.receipt.id,
+        } });
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { runtimeTargetLinkId: f.link.id } });
+        const target = { environmentId: f.environment.id, targetLinkId: f.link.id, targetKind: 'ownServer' };
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'provider_resource', ...target },
+        });
+        await db.deployment.create({ data: {
+            environmentId: f.environment.id, targetLinkId: f.link.id, operation: 'teardown', state: 'failed',
+            requestKey: randomUUID(), actionOperationId: randomUUID(), requestedByAccountId: f.account.id,
+            predecessorDeploymentId: f.receipt.id, requestedAt: new Date(2), startedAt: new Date(3), settledAt: new Date(4),
+            contentArtifactId: f.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1,
         } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({
             status: 'failed', code: 'account_erasure_deployment_cleanup_required',
-            blocker: { reason: 'teardown_incomplete', environmentId: f.environment.id, targetLinkId: f.link.id, targetKind: 'ownServer' },
+            blocker: { reason: 'teardown_incomplete', ...target },
         });
         expect(await db.account.findUnique({ where: { id: f.account.id }, select: { status: true } })).toEqual({ status: 'active' });
-        expect(await db.deploymentEnvironment.count({ where: { id: f.environment.id } })).toBe(1);
+        const serverId = await getOrCreateServerIdentityId();
+        const disposition = await inTx(tx => deleteDeploymentEnvironmentInTx(tx, f.account.id, {
+            serverId, environmentId: f.environment.id, expectedRevision: f.environment.revision,
+            requestKey: randomUUID(), detachKeepRunning: true,
+        }));
+        expect(disposition.ok, JSON.stringify(disposition)).toBe(true);
+        expect(disposition).toMatchObject({ detached: true });
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toBeNull();
     });
 
     it('refuses incoming foreign receipt lineage and preserves both graphs', async () => {

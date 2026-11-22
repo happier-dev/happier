@@ -10,6 +10,7 @@ import { hasCompleteTeardownInTx } from '@/app/deployments/deploymentDisposition
 import { readDeploymentEnvironmentRequiredSecretUsesInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readEnvironmentMachineSecretGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
 import { admitDeploymentStoredContentsInTx } from '@/app/deployments/deploymentStoredContent';
+import { readDeploymentTargetLinkState } from '@/app/deployments/deploymentTargetLinkService';
 import type { Tx } from '@/storage/inTx';
 import { resolveProjectSourceAudienceInTx } from './projectSourceService';
 import { readProjectSourceContentReferencesInTx } from './projectSourceContentReferences';
@@ -53,7 +54,8 @@ export async function hasProjectSourceOwnerContinuityInTx(tx: Tx, actorAccountId
     const active = new Set<string>(deploymentInProgressStates());
     for (const environment of environments) {
         for (const link of environment.targetLinks) {
-            const retained = link.deletedAt !== null || link.detachedAt !== null || environment.deletedAt !== null;
+            const retained = link.deletedAt !== null || readDeploymentTargetLinkState(link) === 'detached'
+                || environment.deletedAt !== null;
             if (retained && await hasCompleteTeardownInTx(tx, link, undefined, environment.runtimeTargetLinkId)) continue;
             machines.push(...link.machines.map(member => ({ machineId: member.machineId,
                 installationId: member.installationId, role: 'target' as const })));

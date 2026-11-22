@@ -9,12 +9,14 @@ Erasure itself deletes no deployment rows.
 
 Only a solely Account-owned, dependency-closed graph is purged. Source ownership
 and audience come from the Source owner; receipt occupancy and native absence
-come from the existing receipt and teardown owners. A tombstoned Environment
-still needs complete teardown evidence for targets Happier manages. Explicit
-Detach and keep running ends Happier’s custody. The detached link and its Receipts
-are history, and Account erasure can proceed without deleting the resource at its
-provider. Queued or running work, incomplete teardown and provider resources
-still managed by Happier need cleanup. The purge protects foreign and Team-owned
+come from the existing receipt and teardown owners. A managed provider resource
+blocks erasure whether its Environment is live or tombstoned. An Environment
+record can be purged with its Account once its dependencies and cleanup
+obligations are resolved. Queued or running work needs cleanup, and an unfinished
+teardown blocks erasure while Happier still manages the target. An explicit
+**Detach and keep running** ends Happier’s custody, including after a failed
+teardown. The detached link and its Receipts are history. The person can erase
+their Account while keeping the resource at its provider. The purge protects foreign and Team-owned
 data, shared content and incoming foreign lineage. The HTTP 409 response
 `account_erasure_deployment_cleanup_required` carries a typed blocker and its
 owned deployment, Environment, target, Source or Artifact reference when
