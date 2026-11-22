@@ -224,6 +224,9 @@ export function createSidecarProcessController(params: Readonly<{
             if (!stopped.ok) throw stopped.error;
             await current?.settled;
         },
+        async waitForExit() {
+            await active?.settled;
+        },
         getStatus() {
             return status;
         },
@@ -243,6 +246,7 @@ export type SidecarProcessController = Readonly<{
     launch: (plan: SidecarPrivateLaunchPlan) => SidecarProcessResult;
     stop: () => SidecarProcessResult;
     stopAndWait: () => Promise<void>;
+    waitForExit: () => Promise<void>;
     getStatus: () => BrowserSidecarRuntimeStatusV1;
     /** Private actual-child fact; it remains retained until the exit is observed. */
     getPid?: () => number | null;

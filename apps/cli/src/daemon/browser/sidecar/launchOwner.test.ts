@@ -1,7 +1,7 @@
 import { PassThrough } from 'node:stream';
 import type { BrowserCommandV1 } from '@happier-dev/protocol';
 import * as childProcess from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { access, lstat, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -85,6 +85,125 @@ function openViewCommand(): Extract<BrowserCommandV1, { kind: 'openView' }> {
 }
 
 describe('browser sidecar launch owner', () => {
+    it.each(['reply-then-exit', 'reply-then-close', 'reject'] as const)(
+        'settles retained disposal from engine events: %s', async (mode) => {
+            const fake = createFakeProcess();
+            const writable = fake.process.stdio[3]!;
+            const readable = fake.process.stdio[4]!;
+            let closeSent!: () => void;
+            const sent = new Promise<void>(resolve => { closeSent = resolve; });
+            // OS pipe peer stands in for the engine; controller, adapter and CDP transport stay real.
+            writable.on('data', chunk => {
+                const request = JSON.parse(chunk.toString().replace(/\0$/, '')) as { id: number; method: string };
+                if (request.method === 'Browser.close') closeSent();
+                readable.write(JSON.stringify({ id: request.id,
+                    ...(request.method === 'Browser.close' && mode === 'reject'
+                        ? { error: { code: -32000, message: 'fixture_refused' } } : { result: {} }),
+                }) + '\0');
+            });
+            fake.kill.mockImplementation(() => { queueMicrotask(() => fake.emitExit(0, 'SIGTERM')); return true; });
+            const factory = launchOwner.createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                browserSessionId: 'browser_session_end', sidecarId: 'sidecar_end',
+                profile: { profileId: 'profile_end', storageMode: 'user',
+                    owner: { kind: 'user', id: 'end_fixture' }, cleanupOnSessionClose: false },
+                profileDirectory: '/unused-retained-fixture',
+                binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: '/fixture/engine',
+                    discoveryKind: 'managedRuntime', diagnostics: [] },
+                spawnProcess: () => fake.process,
+            });
+            const result = await factory({ machineId: 'machine_end' });
+            if (!result.ok) throw new Error('Pipe fixture unavailable');
+            let disposed = false;
+            const disposal = result.dispose?.().then(() => { disposed = true; });
+            await sent;
+            await new Promise<void>(resolve => setImmediate(resolve));
+            if (mode !== 'reject') {
+                expect(disposed).toBe(false);
+                expect(fake.kill).not.toHaveBeenCalled();
+                if (mode === 'reply-then-exit') fake.emitExit(0);
+                else readable.destroy();
+            }
+            await disposal;
+            expect(fake.kill).toHaveBeenCalledTimes(mode === 'reply-then-exit' ? 0 : 1);
+        },
+    );
+
+    // Explicit installed engine only, isolated temporary profiles, no acquisition or user data.
+    // The OS spawn boundary adds no-sandbox solely for workers without a usable sandbox.
+    it.skipIf(!process.env.HAPPIER_BROWSER_TEST_EXECUTABLE).each([
+        'retained', 'ephemeral', 'already-exited', 'transport-closed',
+    ] as const)('disposes a real engine through the owner: %s', async (mode) => {
+        const executable = process.env.HAPPIER_BROWSER_TEST_EXECUTABLE!;
+        const directory = await mkdtemp(join(tmpdir(), 'browser-owner-end-'));
+        const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');
+        const children: childProcess.ChildProcess[] = [];
+        const exits: Promise<void>[] = [];
+        const launch = async () => {
+            const factory = launchOwner.createBrowserSidecarLaunchOwnerControlAdapterFactory({
+                browserSessionId: 'browser_session_end', sidecarId: 'sidecar_end',
+                profile: { profileId: 'profile_end', storageMode: mode === 'ephemeral' ? 'ephemeral' : 'user',
+                    owner: { kind: 'user', id: 'end_fixture' }, cleanupOnSessionClose: mode === 'ephemeral' },
+                profileDirectory: directory,
+                binaryResolution: { ok: true, source: 'managedBrowserPackage', executablePath: executable,
+                    discoveryKind: 'managedRuntime', diagnostics: [] },
+                spawnProcess: (file, args) => {
+                    const child = actual.spawn(file, [...args, '--no-sandbox'], {
+                        stdio: ['ignore', 'ignore', 'ignore', 'pipe', 'pipe'],
+                    });
+                    children.push(child);
+                    exits.push(new Promise(resolve => child.once('exit', () => resolve())));
+                    console.info(JSON.stringify({ event: 'engine_started', mode, pid: child.pid }));
+                    return child;
+                },
+            });
+            const result = await factory({ machineId: 'machine_end' });
+            if (!result.ok || !result.contextCapture || !result.dispose) throw new Error('Engine fixture unavailable');
+            const transport = result.contextCapture.transport;
+            const dispatchBrowserCommand = transport.dispatchBrowserCommand;
+            if (!dispatchBrowserCommand) throw new Error('Engine command transport unavailable');
+            return { result, transport, dispatchBrowserCommand };
+        };
+        try {
+            const { result, transport, dispatchBrowserCommand } = await launch();
+            await dispatchBrowserCommand({ method: 'Storage.setCookies', params: { cookies: [{
+                name: 'owner_end', value: 'synthetic-state', domain: 'end.example.test', path: '/',
+                expires: Math.floor(Date.now() / 1000) + 3600,
+            }] } });
+            if (mode === 'already-exited') {
+                await dispatchBrowserCommand({ method: 'Browser.close' });
+                await exits[0];
+            }
+            if (mode === 'transport-closed') {
+                children[0].stdio[3]?.destroy();
+                children[0].stdio[4]?.destroy();
+                await transport.closed;
+            }
+            await result.dispose();
+            expect(children[0].exitCode !== null || children[0].signalCode !== null).toBe(true);
+            if (mode === 'ephemeral') {
+                await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
+            } else if (mode === 'retained') {
+                const lockLeft = await lstat(join(directory, 'SingletonLock')).then(() => true, () => false);
+                expect(lockLeft).toBe(false);
+                const reopened = await launch();
+                try {
+                    const stored = await reopened.dispatchBrowserCommand({ method: 'Storage.getCookies' }) as { cookies: { name: string; value: string }[] };
+                    expect(stored.cookies.some(cookie => cookie.name === 'owner_end' && cookie.value === 'synthetic-state')).toBe(true);
+                } finally {
+                    await reopened.result.dispose();
+                }
+            } else {
+                await expect(access(directory)).resolves.toBeUndefined();
+            }
+        } finally {
+            for (const child of children) {
+                if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM');
+            }
+            await Promise.all(exits);
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it.skipIf(process.platform !== 'linux')('inherits CDP descriptors through the default Linux spawn and a systemd-run exec fixture', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-browser-inherited-pipe-'));
         const actual = await vi.importActual<typeof import('node:child_process')>('node:child_process');

@@ -109,7 +109,8 @@ export type BrowserSidecarContextCaptureSurface = Readonly<{
     interactions?: BrowserSidecarInteractions;
     /** Private actual-launch fact for the exact live owned view, never caller metadata. */
     resolveNativeObservation?(view: Readonly<{ browserSessionId: string; viewId: string }>): 'not_observable' | undefined;
-    transport: Pick<BrowserSidecarCdpControlTransport, 'dispatchPageCommand'>;
+    transport: Pick<BrowserSidecarCdpEventCapableTransport, 'dispatchPageCommand' | 'closed'>
+        & Partial<Pick<BrowserSidecarCdpControlTransport, 'dispatchBrowserCommand'>>;
     resolvePageHandle(
         view: Readonly<{ browserSessionId: string; viewId: string }>,
     ): BrowserSidecarCdpPageHandle | null;

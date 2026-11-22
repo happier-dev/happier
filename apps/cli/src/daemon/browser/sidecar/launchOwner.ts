@@ -192,6 +192,23 @@ export function createBrowserSidecarLaunchOwnerControlAdapterFactory(
         const extensions = adapterResult.extensions;
         const dispose = () => {
             disposal ??= (async () => {
+                if (!privateLaunch.cleanupOnStop && processController.getPid?.() !== null) {
+                    const transport = adapterResult.contextCapture?.transport;
+                    if (transport?.dispatchBrowserCommand) {
+                        try {
+                            // Retained state must flush before we cut the pipe or signal the engine.
+                            // Exit, command rejection or transport closure settles this wait; no deadline.
+                            const exited = processController.waitForExit();
+                            await Promise.race([
+                                exited,
+                                transport.dispatchBrowserCommand({ method: 'Browser.close' }).then(() => exited),
+                                ...(transport.closed ? [transport.closed] : []),
+                            ]);
+                        } catch {
+                            // A failed close request uses the existing disposal and signal path below.
+                        }
+                    }
+                }
                 try {
                     await adapterResult.dispose?.();
                 } finally {
