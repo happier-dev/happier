@@ -19,7 +19,14 @@ import {
 } from '../../firstPartyRuntime/index.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import type { GuestCliIdentityV1 } from '@happier-dev/protocol/features';
-import { installManagedGuestCliViaRemoteDownload } from '../ssh/managedGuestCliSupplier.js';
+import {
+  installManagedGuestCliViaRemoteDownload,
+  readManagedGuestCliIdentity,
+  resolveManagedGuestCliSource,
+  type ManagedGuestCliBuildTarget,
+  type ManagedGuestCliLocalBuildPayload,
+  type ManagedGuestCliLocalBuildMetadata,
+} from '../ssh/managedGuestCliSupplier.js';
 
 import { createScpReadyPayloadArchive } from './createScpReadyPayloadArchive.js';
 import type { SystemTaskSshConnectionConfig } from './relayRuntimeKinds.js';
@@ -42,7 +49,6 @@ import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
-import { resolveManagedGuestCliSource, type ManagedGuestCliBuildTarget, type ManagedGuestCliLocalBuildPayload, type ManagedGuestCliLocalBuildMetadata } from '../ssh/managedGuestCliSupplier.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -290,11 +296,12 @@ export async function installRemoteFirstPartyComponentPayload(
   const target = await resolvedDeps.resolveRemoteReleaseTarget({
     ...(params.signal ? { signal: params.signal } : {}),
   });
-  if (params.componentId === 'happier-cli' && params.homeUrl
-    && params.guestCli?.source === 'home-payload' && (params.guestCli.payloads || !localCliPayloadRoot)) {
+  const cliHomeUrl = params.componentId === 'happier-cli' ? params.homeUrl : undefined;
+  const guestCli = cliHomeUrl ? params.guestCli ?? await readManagedGuestCliIdentity({ homeUrl: cliHomeUrl, signal: params.signal }) : undefined;
+  if (cliHomeUrl && guestCli?.source === 'home-payload' && (guestCli.payloads || !localCliPayloadRoot)) {
     params.onPhase?.('transfer');
-    return await installManagedGuestCliViaRemoteDownload({ homeUrl: params.homeUrl, channel, ...target,
-      guestCli: params.guestCli, remoteHomeDir: params.remoteHomeDir, signal: params.signal,
+    return await installManagedGuestCliViaRemoteDownload({ homeUrl: cliHomeUrl, channel, ...target,
+      guestCli, remoteHomeDir: params.remoteHomeDir, signal: params.signal,
       onPromote: () => params.onPhase?.('promote'),
       transferArchive: async ({ path, chunks }) => {
         const localStage = await mkdtemp(join(tmpdir(), 'happier-pinned-archive-'));
@@ -313,11 +320,11 @@ export async function installRemoteFirstPartyComponentPayload(
     });
   }
   let versionId: string | undefined;
-  if (params.componentId === 'happier-cli' && params.homeUrl) {
+  if (cliHomeUrl && guestCli) {
     const localPayloadDirectory = localCliPayloadRoot ? await resolveLocalCliPayloadDirectory(localCliPayloadRoot, target) : undefined;
     const localPayloadVersion = localPayloadDirectory ? await readLocalCliPayloadVersion(localPayloadDirectory) : undefined;
     const source = await resolveManagedGuestCliSource({
-      homeUrl: params.homeUrl, guestCli: params.guestCli, channel,
+      homeUrl: cliHomeUrl, guestCli, channel,
       binaryPath: resolveRemoteInstalledFirstPartyBinaryPath({ componentId: params.componentId, channel, remoteHomeDir }),
       runRemoteText: remoteCommand => resolvedDeps.runRemoteText({ remoteCommand, ...(params.signal ? { signal: params.signal } : {}) }),
       signal: params.signal, localPayloadAvailable: !!localCliPayloadRoot, localPayloadVersion,

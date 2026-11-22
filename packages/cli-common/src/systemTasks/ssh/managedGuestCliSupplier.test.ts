@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join, dirname, basename } from 'node:path';
 import { prepareManagedGuestCliBuildInput, resolveManagedGuestCliBuildIdentity, resolveManagedGuestCliSource, installManagedGuestCliViaRemoteDownload, selectManagedGuestCliPayload } from './managedGuestCliSupplier.js';
-import { GuestCliIdentityV1Schema } from '@happier-dev/protocol/features';
+import { GuestCliIdentityV1Schema, type GuestCliIdentityV1 } from '@happier-dev/protocol/features';
 import { createCliPayloadFixture } from '../testkit/createCliPayloadFixture.js';
 import { SystemTaskExecutionError } from '../runSystemTask.js';
 import { installRemoteFirstPartyComponentPayload } from '../kinds/remoteFirstPartyPayloadInstaller.js';
@@ -27,8 +27,9 @@ describe('managed guest CLI source supplier', () => {
   });
   it.each([{ matching: false, transport: 'native', noDownloader: true }, { matching: true, transport: 'native', noDownloader: true },
     { matching: true, transport: 'native', noDownloader: false },
-    { matching: false, transport: 'ssh', noDownloader: false }, { matching: true, transport: 'ssh', noDownloader: false }])(
-    'uses the admitted Home archive pin before extraction or execution ($transport matching=$matching noDownloader=$noDownloader)', async ({ matching, transport, noDownloader }) => {
+    { matching: false, transport: 'ssh', noDownloader: false }, { matching: true, transport: 'ssh', noDownloader: false },
+    { matching: true, transport: 'ssh', noDownloader: false, readHome: true }])(
+    'uses the Home archive pin before extraction or execution ($transport matching=$matching noDownloader=$noDownloader readHome=$readHome)', async ({ matching, transport, noDownloader, readHome }) => {
     if (process.platform === 'win32') return; // Guest download/extraction is a POSIX remote boundary.
     const root = await mkdtemp(join(tmpdir(), 'happier-home-guest-export-'));
     const fixture = await createCliPayloadFixture();
@@ -36,9 +37,13 @@ describe('managed guest CLI source supplier', () => {
     const archivePath = join(root, 'payload.tar.gz');
     const requested: string[] = [];
     let archive = new Uint8Array();
+    let advertisedGuestCli: GuestCliIdentityV1;
     const server = createServer((request, response) => {
       requested.push(request.url ?? '');
-      if (request.url === '/v1/runtime/guest-cli/payloads/linux/x64') response.end(archive);
+      if (request.url === '/v1/features') {
+        response.setHeader('Content-Type', 'application/json');
+        response.end(JSON.stringify({ capabilities: { guestCli: advertisedGuestCli } }));
+      } else if (request.url === '/v1/runtime/guest-cli/payloads/linux/x64') response.end(archive);
       else response.writeHead(404).end();
     });
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -67,6 +72,8 @@ describe('managed guest CLI source supplier', () => {
         { target: { os: 'linux', arch: 'arm64' }, sha256: 'b'.repeat(64), url: '/v1/runtime/guest-cli/payloads/linux/arm64' },
         { target: { os: 'linux', arch: 'x64' }, sha256, url: '/v1/runtime/guest-cli/payloads/linux/x64' },
       ] });
+      advertisedGuestCli = guestCli;
+      if (readHome) vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
       // The admitted producer descriptor remains fixed while download bytes change.
       if (!matching) archive = new Uint8Array([...archive, 0]);
       let phase: string | undefined;
@@ -92,7 +99,8 @@ describe('managed guest CLI source supplier', () => {
           });
         },
         runRemoteText,
-      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable', guestCli,
+      }) : installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli', homeUrl, channel: 'stable',
+        ...(readHome ? { requireHomePayload: true } : { guestCli }),
         onPhase: value => { phase = value; } }, {
         resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
         runRemoteText: request => {
@@ -114,7 +122,10 @@ describe('managed guest CLI source supplier', () => {
         await expect(access(extraction)).rejects.toThrow();
       }
       if (transport === 'ssh') expect(phaseAtPromotion).toBe('promote');
-      expect(requested).toEqual(['/v1/runtime/guest-cli/payloads/linux/x64']);
+      expect(requested).toEqual([
+        ...(readHome ? ['/v1/features'] : []),
+        '/v1/runtime/guest-cli/payloads/linux/x64',
+      ]);
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -122,7 +133,10 @@ describe('managed guest CLI source supplier', () => {
       await rm(root, { recursive: true, force: true });
     }
   });
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
   const homeFetch = (source: 'home-payload' | 'public-release', releases: readonly string[] = [], channel = 'stable') => {
     const urls: string[] = [];
     const boundary: typeof fetch = async input => {
