@@ -152,17 +152,20 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
     const waiting: string[] = [];
     // Two provisioners of one product ("Cua") are told apart by what each creates, from their own declarations;
     // a card and the list of what waits for a computer name them the same way.
-    const titleOf = (provisioner: (typeof catalog.provisioners)[number]) => {
+    const titleCounts = new Map<string, number>();
+    const titledProvisioners = provisioners.map(provisioner => {
         const title = localized(provisioner.contribution.pluginId, provisioner.descriptor.title);
+        titleCounts.set(title, (titleCounts.get(title) ?? 0) + 1);
+        return { provisioner, title };
+    });
+    const titleOf = (title: string, kind: string | undefined) => (titleCounts.get(title) ?? 0) > 1 && kind
+        ? `${title} ${kind}` : title;
+    const cards: ManagedProvisionerCard[] = titledProvisioners.flatMap<ManagedProvisionerCard>(({ provisioner, title: baseTitle }) => {
         const kind = provisioner.descriptor.kindTitle ? localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) : undefined;
-        const sharesTitle = provisioners.some(other => other !== provisioner
-            && localized(other.contribution.pluginId, other.descriptor.title) === title);
-        return sharesTitle && kind ? `${title} ${kind}` : title;
-    };
-    const cards: ManagedProvisionerCard[] = provisioners.flatMap<ManagedProvisionerCard>(provisioner => {
+        const title = titleOf(baseTitle, kind);
         // Discovery has no launch choices yet: conditional types stay offered for configuration.
         const local = readMachineProvisionerSessionPlacementV1(provisioner.descriptor, {})?.kind === 'controller-local';
-        if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title: titleOf(provisioner),
+        if (props.presetOnly) return [{ id: buildQualifiedPluginContributionKey(provisioner.contribution), title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', canSetUpHere: true,
@@ -178,7 +181,7 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         // The provisioner's own browser-reachability fact, read by the same owner that refuses its acquire.
         const placement = readMachineProvisionerHostAvailability({ ...(accountHost && accountHost !== 'unavailable' ? accountHost : { host: 'native' as const }),
             provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
-        if (placement.requiresController && local) { waiting.push(titleOf(provisioner)); return []; }
+        if (placement.requiresController && local) { waiting.push(title); return []; }
         // A card the offline controller runs keeps its place and says so; its retained check returns when it is back.
         const offline = local && controllerOffline;
         const hostPending = needsRuntimeHost(provisioner, controller) && (accountHost === null || accountHost === 'unavailable');
@@ -203,11 +206,10 @@ export function useMachineProvisionerCatalog(props: MachineProvisionerPickerProp
         const hint = offline || placement.requiresController || needsApp || readiness.homeUnreachable || readiness.kind === 'ready' ? undefined
             : readiness.status ? managedProvisionerStatusHint(localized(provisioner.contribution.pluginId, readiness.status), statusLabel)
             : readiness.failure && readiness.kind === 'unavailable' ? describeManagedProvisionerFailure(readiness.failure) : undefined;
-        const title = titleOf(provisioner);
         return [{ id, title,
             description: provisioner.descriptor.description ? localized(provisioner.contribution.pluginId, provisioner.descriptor.description) : '',
             ...(hint ? { hint } : {}),
-            ...(provisioner.descriptor.kindTitle ? { kind: localized(provisioner.contribution.pluginId, provisioner.descriptor.kindTitle) } : {}),
+            ...(kind !== undefined ? { kind } : {}),
             location: local ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: placement.executionTarget,
             canSetUpHere: placement.available && !placement.requiresController
