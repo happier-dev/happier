@@ -87,7 +87,7 @@ export function trackRuntimeSocketHandlers(socket: Socket): void {
             finishRuntimeSocketEvent(work);
             return result;
         };
-        return registerHandler.call(this, event, Object.assign(trackedHandler, { listener: handler }));
+        return Reflect.apply(registerHandler, this, [event, Object.assign(trackedHandler, { listener: handler })]);
     };
 }
 
