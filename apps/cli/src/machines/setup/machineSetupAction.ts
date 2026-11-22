@@ -682,10 +682,21 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
               observedSourceFacts[origin] = { ...observedSourceFacts[origin], pendingScripts };
             }
           }
-          const written = await desired.apply({ expectedDesiredRevision: current.policy.revision, sources,
+          const desiredWrite = { expectedDesiredRevision: current.policy.revision, sources,
             exclusions, observedSourceFacts,
             ...(!sameStrictJsonValue(sources, originalSources) ? { pendingScriptSources: originalSources } : {}),
-          }, { signal: cancellationSignal });
+          };
+          let written = await desired.apply(desiredWrite, { signal: cancellationSignal });
+          if (written.status === 'locked' || written.status === 'unavailable') {
+            // Admitted, confirmed work finishes: a reconnect with identical content keys
+            // writes through the current port under the same revision CAS. A changed key
+            // (rotation or revocation) leaves the effects applied and the record unsaved.
+            const currentDesired = desired.current();
+            if (!currentDesired) {
+              throw Object.assign(new Error('machine_setup_record_not_saved'), { code: 'machine_setup_record_not_saved' });
+            }
+            written = await currentDesired.apply(desiredWrite, { signal: cancellationSignal });
+          }
           if (written.status !== 'applied' && written.status !== 'unchanged' && written.status !== 'satisfied') {
             const code = written.status === 'conflict' ? 'plan_changed' : `machine_setup_content_${written.status}`;
             throw Object.assign(new Error(code), { code });

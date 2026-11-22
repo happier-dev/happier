@@ -638,6 +638,16 @@ export type ManagedMachinePolicyInvalidation = Readonly<{ kind: 'currentness' }>
     | Readonly<{ kind: 'machines'; machineIds: readonly string[] }>
     | Readonly<{ kind: 'managed'; managedIds: readonly string[] }>;
 
+/** Same Machine content keys and owner write envelope: the basis a codec, and an admitted write, may keep. */
+function sameMachineContentKeyBasis(left: Machine, right: Machine): boolean {
+    return (left.encryptionMode ?? 'e2ee') === (right.encryptionMode ?? 'e2ee')
+        && left.encryptionVariant === right.encryptionVariant
+        && isDeepStrictEqual(left.encryptionKey, right.encryptionKey)
+        && (left.dataEncryptionKey ?? null) === (right.dataEncryptionKey ?? null)
+        && (left.keyBasis ? left.keyBasis.dataEncryptionKey : left.dataEncryptionKey ?? null)
+            === (right.keyBasis ? right.keyBasis.dataEncryptionKey : right.dataEncryptionKey ?? null);
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value && typeof value === 'object' && !Array.isArray(value)
         ? value as Record<string, unknown>
@@ -5770,17 +5780,28 @@ export class ApiMachineClient {
         };
     }
 
-    /** Setup preparation and publication share the incumbent captured field port. */
+    /** Setup preparation and publication share the incumbent captured field port.
+     * `current` hands confirmed work to the port of a later transport only while the
+     * content keys are unchanged; a key rotation or revocation returns null. */
     captureMachineSetupDesired(): Readonly<{
         read(): ReturnType<typeof getMachineSetupDesiredV1>;
         apply(input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
             options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]): ReturnType<typeof mutateMachineSetupDesiredV1>;
+        current(): Readonly<{ apply(input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
+            options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]): ReturnType<typeof mutateMachineSetupDesiredV1> }> | null;
     }> {
         const port = this.captureMachineMetadataFieldPort();
+        const admittedMachine = this.machine;
         return {
             read: () => getMachineSetupDesiredV1(port),
             apply: (input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
                 options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]) => mutateMachineSetupDesiredV1(input, port, options),
+            current: () => {
+                if (!sameMachineContentKeyBasis(admittedMachine, this.machine)) return null;
+                const currentPort = this.captureMachineMetadataFieldPort();
+                return { apply: (input: Parameters<typeof mutateMachineSetupDesiredV1>[0],
+                    options?: Parameters<typeof mutateMachineSetupDesiredV1>[2]) => mutateMachineSetupDesiredV1(input, currentPort, options) };
+            },
         };
     }
 
@@ -6821,13 +6842,7 @@ export class ApiMachineClient {
                 return;
             }
             if (next.metadataVersion < this.machine.metadataVersion || next.daemonStateVersion < this.machine.daemonStateVersion) return;
-            const retainCodec = this.machineContentReady
-                && (this.machine.encryptionMode ?? 'e2ee') === (next.encryptionMode ?? 'e2ee')
-                && this.machine.encryptionVariant === next.encryptionVariant
-                && isDeepStrictEqual(this.machine.encryptionKey, next.encryptionKey)
-                && (this.machine.dataEncryptionKey ?? null) === (next.dataEncryptionKey ?? null)
-                && (this.machine.keyBasis ? this.machine.keyBasis.dataEncryptionKey : this.machine.dataEncryptionKey ?? null)
-                    === (next.keyBasis ? next.keyBasis.dataEncryptionKey : next.dataEncryptionKey ?? null);
+            const retainCodec = this.machineContentReady && sameMachineContentKeyBasis(this.machine, next);
             // A fresh same-key snapshot must not retire admitted publication ACKs.
             // Still replace the snapshot context so older refreshes cannot install it.
             const codec = retainCodec ? this.machineContentCodec : createMachineContentCodec(next);

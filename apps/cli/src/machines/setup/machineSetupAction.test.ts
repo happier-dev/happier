@@ -866,6 +866,49 @@ describe('admitted Machine setup snapshot lifetime', () => {
     }));
   });
 
+  // C65 (servers-deploy #200, reproduced 2026-11-22 07:12–07:16Z with a 60 s Home-address block):
+  // a daemon reconnect during the Apply replaces the socket, transport generation and codec identity.
+  // O-MACH 07:39Z: admitted work finishes on the current port while the content key is unchanged.
+  const reconnectDuringScript = (fixture: Awaited<ReturnType<typeof createNativeSoftwareInstallFixture>>,
+    keyChange?: Readonly<{ dataEncryptionKey: string }>) => {
+    nativeTerminal.autoExit = true;
+    nativeTerminal.onLaunch = () => {
+      const client = fixture.client as unknown as Record<string, unknown>;
+      Reflect.set(client, 'socket', Object.create(Reflect.get(client, 'socket') as object));
+      Reflect.set(client, 'activeTransportGeneration', (Reflect.get(client, 'activeTransportGeneration') as number) + 1);
+      const context = Reflect.get(client, 'machineContentContext') as { codec: object; ready: boolean };
+      Reflect.set(client, 'machineContentContext', { codec: Object.create(context.codec), ready: true });
+      if (keyChange) Reflect.set(client, 'machine', { ...(Reflect.get(client, 'machine') as object), ...keyChange });
+    };
+    onTestFinished(() => { nativeTerminal.autoExit = false; nativeTerminal.onLaunch = undefined; });
+  };
+  const planOneScript = async (fixture: Awaited<ReturnType<typeof createNativeSoftwareInstallFixture>>) => MachineSetupPlanResultV1Schema.parse(
+    await fixture.machineSetupPlan({ input: { homeId: 'srv_home', machineId: fixture.machine.id, mode: 'effects',
+      sources: [{ kind: 'direct' as const, setup: { scripts: [{ body: 'echo bl2-c65', affects: 'none' as const }] } }] },
+    context: fixture.context('machines.setup.plan') }));
+
+  it('records the confirmed Apply through the current port after a same-key reconnect', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const plan = await planOneScript(fixture);
+    reconnectDuringScript(fixture);
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ operationId: expect.any(String) });
+    expect(fixture.metadataWrites.at(-1)).toMatchObject({ setup: { sources: plan.sources } });
+  });
+
+  it('settles applied-but-unrecorded when the content key changed during the Apply', async () => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const plan = await planOneScript(fixture);
+    reconnectDuringScript(fixture, { dataEncryptionKey: 'rotated-during-apply' });
+    expect(await fixture.apply({ input: { homeId: 'srv_home', machineId: fixture.machine.id,
+      desiredRevision: plan.desiredRevision, sources: plan.sources, exclusions: plan.exclusions,
+      recipePlans: plan.recipePlans ?? [] }, context: fixture.context('machines.setup.apply') }))
+      .toMatchObject({ ok: false, errorCode: 'machine_setup_record_not_saved' });
+    expect(fixture.metadataWrites).toHaveLength(0);
+  });
+
   it('stops the admitted Apply on local cancellation before another step or desired publication', async () => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
     const sources = [{ kind: 'direct' as const, setup: { scripts: [
