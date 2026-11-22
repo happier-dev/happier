@@ -116,6 +116,8 @@ export type HappierCollectionModel<Item> = Readonly<{
   /** The caller's identity rule, so a presentation keys its cells exactly as the model does. */
   keyOf: (item: Item) => HappierCollectionKey;
   sections: readonly HappierCollectionSection<Item>[];
+  /** How many groups the axis declares, whichever of them hold rows now; 0 when the items are not grouped. */
+  declaredGroupCount: number;
   /** Every reachable key in traversal order, the draft first. */
   keys: readonly HappierCollectionKey[];
   window: HappierCollectionWindow;
@@ -367,6 +369,7 @@ export function useHappierCollection<Item>(input: HappierCollectionModelInput<It
   return {
     keyOf,
     sections,
+    declaredGroupCount: groups?.axis.length ?? 0,
     keys,
     window: input.window ?? HAPPIER_COLLECTION_WINDOW_COMPLETE,
     focusKey,

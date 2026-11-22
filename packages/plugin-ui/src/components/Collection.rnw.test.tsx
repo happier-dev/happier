@@ -4244,6 +4244,7 @@ describe('the table sheet', () => {
     { shape: 'table', presentation: 'table' as const },
   ])('titles a $shape with one group above its sheet, as a page section', ({ presentation }) => {
     const view = mount({ presentation, scroll: 'page', grouped: true, detail: 'none',
+      grouping: { ...groups, axis: groups.axis.slice(0, 1) },
       items: entries.filter((entry) => entry.group === 'needs') });
     try {
       view.measure(1440);
@@ -4258,6 +4259,26 @@ describe('the table sheet', () => {
         const fill = getComputedStyle(node).backgroundColor;
         expect(fill === '' || fill === 'transparent' || fill === 'rgba(0, 0, 0, 0)').toBe(true);
       }
+    } finally {
+      view.unmount();
+    }
+  });
+
+  // TRIAGE-DESIGN-ACCEPT-250 F5: whether one group is the section's title is the table's declared grouping, never how
+  // many groups still hold rows. A search that leaves one group keeps its band in the sheet, so the header stays put.
+  it.each([
+    { shape: 'page list', presentation: 'list' as const },
+    { shape: 'table', presentation: 'table' as const },
+  ])('keeps a $shape banded when a search leaves one of its groups', async ({ presentation }) => {
+    const options = { presentation, scroll: 'page' as const, grouped: true, detail: 'none' as const };
+    const view = mount({ ...options, items: entries });
+    try {
+      view.measure(1440);
+      const bandInSheet = () => sheetAround(view, 'a')!.querySelector('[aria-label="Needs you"]') !== null;
+      expect(bandInSheet()).toBe(true);
+      await view.update({ ...options, items: entries.filter((entry) => entry.id === 'a') });
+      expect(sheetAround(view, 'a')!.textContent).not.toContain('Everything else');
+      expect(bandInSheet()).toBe(true);
     } finally {
       view.unmount();
     }

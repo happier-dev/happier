@@ -197,18 +197,21 @@ export function WorkflowsLibraryHome(): React.ReactElement {
     const { workflowSections } = libraryView;
     const groups = React.useMemo(() => {
         const source = display.groupBy === 'source' ? LIBRARY_GROUPS : workflowLibraryProjectAxis(projects);
-        if (!workflowSections.sections.length) return source;
         const sectionGroups = new Map(workflowSections.sections.map(section => [section.address.sectionId, {
             key: `section:${section.address.sectionId}`, title: resolveSessionSectionDisplayTitle(section.display),
         }]));
-        return {
-            get axis() { return [...sectionGroups.values(), ...source.axis]; },
-            groupOf: (row: LibraryRow) => {
-                const folderId = 'definition' in row ? workflowSections.assignmentFor(row.definition.definitionId) : null;
-                return (folderId ? sectionGroups.get(folderId)?.key : undefined) ?? source.groupOf(row);
-            },
+        const groupOf = (row: LibraryRow) => {
+            const folderId = 'definition' in row ? workflowSections.assignmentFor(row.definition.definitionId) : null;
+            return (folderId ? sectionGroups.get(folderId)?.key : undefined) ?? source.groupOf(row);
         };
-    }, [display.groupBy, projects, workflowSections]);
+        // The page declares the groups its library holds, filtered or not: a library of its own workflows alone is one
+        // section, titled beside its "Built-in" sibling (N38).
+        const held = new Set(rows.map(groupOf));
+        return {
+            get axis() { return [...sectionGroups.values(), ...source.axis].filter((group) => held.has(group.key)); },
+            groupOf,
+        };
+    }, [display.groupBy, projects, rows, workflowSections]);
     const model = useHappierCollection<LibraryRow>({
         items: rows,
         keyOf: readRowKey,

@@ -2595,10 +2595,11 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // ---- the List's cells: rows, and each open peek right below its row (table only) ----
   const expanded = model.expanded;
   const previousCells = useRef<ReadonlyMap<string, CollectionCell<Item>>>(new Map());
-  // One titled group in a page table's sheet is that section's title, above the sheet on the page column beside its
-  // sibling sections' titles; groups band the sheet only when there are two or more (rounded-sheet ruling; N38,
-  // QA-STATUS-LISTS-1120).
-  const onlyGroup = drawnSections.length === 1 ? drawnSections[0]!.group : null;
+  // A page table whose axis declares one titled group is that section: its title stands above the sheet on the page
+  // column beside its sibling sections' titles; two or more band the sheet (rounded-sheet ruling; N38,
+  // QA-STATUS-LISTS-1120). The declared axis decides, never the groups that still hold rows: a search that leaves one
+  // group must not move the header (TRIAGE-DESIGN-ACCEPT-250 F5).
+  const onlyGroup = model.declaredGroupCount === 1 && drawnSections.length === 1 ? drawnSections[0]!.group : null;
   const loneGroup = sheetTable && !cards && onlyGroup !== null && onlyGroup.title !== '' ? onlyGroup : null;
   const sections = useMemo(() => {
     const nextCells = new Map<string, CollectionCell<Item>>();

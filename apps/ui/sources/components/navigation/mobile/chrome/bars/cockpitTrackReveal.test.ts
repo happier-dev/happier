@@ -1,13 +1,15 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCockpitTrackViewportWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackEndRoom, resolveCockpitTrackViewportWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 
 describe('a scrolling phone bar keeps its selected tab in view', () => {
     const viewport = 300;
     const fade = 16;
-    it('scrolls just enough to show a selected tab cut off at the end, clear of the edge fade', () => {
-        expect(resolveCockpitTrackRevealX({ x: 270, width: 60, offset: 0, viewport, fade })).toBe(46);
-        expect(resolveCockpitTrackRevealX({ x: 320, width: 60, offset: 0, viewport, fade })).toBe(96);
+    // A scrolled track starts on a whole tab (ARTIFACTS-STORAGE-ACCEPT-1120 fix 10): scrolled "just enough", the tab
+    // before the selected one was cut through its glyph right after the fixed first tab and read as a broken icon.
+    it('scrolls a selected tab cut off at the end into view, the track starting on a whole tab', () => {
+        expect(resolveCockpitTrackRevealX({ x: 240, width: 60, offset: 0, viewport, fade })).toBe(60);
+        expect(resolveCockpitTrackRevealX({ x: 300, width: 60, offset: 0, viewport, fade })).toBe(120);
     });
     // UI refinements 11-19 ruling (a): the selected tab is always fully visible. The track opens at its start unless
     // that shows the selected tab only partly; then it scrolls just enough to show it whole. At 390 four 50 px tabs sit
@@ -15,12 +17,20 @@ describe('a scrolling phone bar keeps its selected tab in view', () => {
     it('opens at its start while the selected tab is whole there', () => {
         expect(resolveCockpitTrackRevealX({ x: 100, width: 50, offset: 0, viewport: 175, fade })).toBeNull();
     });
-    it('scrolls a selected end tab showing only its peek half just enough to show it whole', () => {
-        expect(resolveCockpitTrackRevealX({ x: 150, width: 50, offset: 0, viewport: 175, fade })).toBe(41);
+    it('scrolls a selected end tab showing only its peek half one whole tab, never into the tab before it', () => {
+        expect(resolveCockpitTrackRevealX({ x: 150, width: 50, offset: 0, viewport: 175, fade })).toBe(50);
     });
-    it('scrolls back to a selected tab hidden before the start', () => {
-        expect(resolveCockpitTrackRevealX({ x: 40, width: 50, offset: 120, viewport, fade })).toBe(24);
-        expect(resolveCockpitTrackRevealX({ x: 10, width: 50, offset: 60, viewport, fade })).toBe(0);
+    it('scrolls back to a selected tab hidden before the start, onto a whole tab', () => {
+        expect(resolveCockpitTrackRevealX({ x: 100, width: 50, offset: 120, viewport, fade })).toBe(50);
+        expect(resolveCockpitTrackRevealX({ x: 0, width: 50, offset: 60, viewport, fade })).toBe(0);
+    });
+    // At the track's end the peek's room stays after the last tab, so the end is a whole-tab position too: four 50 px
+    // tabs in a 175 px track end at 50 (three whole tabs and the peek's room), not at 25 with half a tab cut.
+    it("keeps the peek's room after the last tab, so the track's end starts on a whole tab", () => {
+        const room = resolveCockpitTrackEndRoom({ viewport: 175, minWidth: 50 });
+        expect(room).toBe(25);
+        expect((4 * 50 + room - 175) % 50).toBe(0);
+        expect(resolveCockpitTrackEndRoom({ viewport: 50, minWidth: 50 })).toBe(0);
     });
     it('leaves a fully visible tab where it is', () => {
         expect(resolveCockpitTrackRevealX({ x: 100, width: 50, offset: 0, viewport, fade })).toBeNull();

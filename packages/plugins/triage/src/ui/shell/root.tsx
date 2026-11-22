@@ -2271,9 +2271,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     // A first run with nothing listed (lab `merged-connect`): filters, an order and List | Board could change nothing,
     // so the toolbar keeps only the page switch, the saved views and More.
     const tasksFirstRun = empty?.kind === 'taskFirstRun';
-    // On Tasks the lens leads with whose tasks (Mine · Agents · Everyone), three short options as one segmented
-    // control, then the saved view.
-    const lens = taskAudience === undefined ? views.control : <Row gap="small" align="center"><Select
+    // On Tasks whose tasks (Mine · Agents · Everyone) is the toolbar's scope: three short options as one segmented
+    // control.
+    const scope = taskAudience === undefined || tasksFirstRun ? undefined : <Select
         label={text('plugins.triage.tasks.audience', 'Show tasks')}
         presentation="segmented"
         value={taskAudience}
@@ -2281,16 +2281,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           label: text(`plugins.triage.tasks.${value}`, value === 'mine' ? 'Mine' : value === 'agents' ? 'Agents' : 'Everyone') }))}
         onChange={(value) => { if (value === 'mine' || value === 'agents' || value === 'everyone')
           applyLensEdit({ kind: 'taskAudienceChanged', audience: value }, 'lens'); }}
-      />{views.control}</Row>;
+      />;
     return (
     <CollectionToolbar
       {...(slots === undefined ? {} : { slots: switchAsTitle ? { ...slots, title: pageViewSwitch } : slots })}
-      // Under host chrome (a phone) the switch leads the lens: beside the saved view on PRs & Issues, and on its own
-      // line above whose tasks on Tasks, where the row would not hold both segmented controls.
-      lens={tasksFirstRun ? (switchAsTitle ? views.control : <Row gap="small" align="center">{pageViewSwitch}{views.control}</Row>)
-        : switchAsTitle ? lens : taskAudience === undefined
-        ? <Row gap="small" align="center">{pageViewSwitch}{views.control}</Row>
-        : <Stack gap="small">{pageViewSwitch}{lens}</Stack>}
+      // Under host chrome (a phone) the switch leads the lens, beside the saved view on both pages.
+      lens={switchAsTitle ? views.control : <Row gap="small" align="center">{pageViewSwitch}{views.control}</Row>}
+      {...(scope === undefined ? {} : { scope })}
       // New task is the Tasks page's one primary action; on the first run it is the personal list's own button.
       {...(taskAudience === undefined || tasksFirstRun ? {} : { primary: { label: text('plugins.triage.tasks.new', 'New task'),
         onPress: startNewTask } })}

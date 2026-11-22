@@ -17,7 +17,8 @@ export type DetailsPaneSlotBinding = PluginUiDetailsPaneHost;
 /** The pane's frame: what docks or undocks the pane and titles it. Changes rarely. */
 type DetailsPaneSlotFrame = Readonly<{
     title?: string;
-    subtitle?: string;
+    /** The facts line: one string, or separate facts the header wraps between (never inside one). */
+    subtitle?: string | readonly string[];
     testID?: string;
     /** A host page's companion beside its own content (Logs, Session), not an item opened from a list. */
     companion?: true;
@@ -52,8 +53,19 @@ type DetailsPaneSlotStore = Readonly<{
 function sameFrame(left: DetailsPaneSlotFrame | null, right: DetailsPaneSlotFrame | null): boolean {
     if (left === right) return true;
     if (left === null || right === null) return false;
-    return left.title === right.title && left.subtitle === right.subtitle && left.testID === right.testID
+    return left.title === right.title && sameSubtitle(left.subtitle, right.subtitle) && left.testID === right.testID
         && left.companion === right.companion;
+}
+
+/** A detail re-creates its facts array per render; equal facts must not republish the frame. */
+function sameSubtitle(left: DetailsPaneSlotFrame['subtitle'], right: DetailsPaneSlotFrame['subtitle']): boolean {
+    if (left === right) return true;
+    if (typeof left !== 'object' || typeof right !== 'object') return false;
+    return left.length === right.length && left.every((fact, index) => fact === right[index]);
+}
+
+function subtitleSegments(subtitle: DetailsPaneSlotFrame['subtitle']): readonly string[] {
+    return subtitle === undefined ? [] : typeof subtitle === 'string' ? (subtitle ? [subtitle] : []) : subtitle;
 }
 
 /**
@@ -157,9 +169,11 @@ const DetailsPaneSlotBodyView = React.memo(function DetailsPaneSlotBodyView(prop
                     // The name wraps rather than cuts off the words that tell two entries apart (lab c7).
                     titleNumberOfLines={2}
                     title={props.frame.title}
-                    {...(body?.subtitleLeading === undefined
+                    {...(body?.subtitleLeading === undefined && typeof props.frame.subtitle !== 'object'
                         ? { subtitle: props.frame.subtitle }
-                        : { line: { leading: body.subtitleLeading, segments: props.frame.subtitle ? [props.frame.subtitle] : [] } })}
+                        // Each fact is its own segment, so the line wraps between facts rather than inside an id.
+                        : { line: { ...(body?.subtitleLeading === undefined ? {} : { leading: body.subtitleLeading }),
+                            segments: subtitleSegments(props.frame.subtitle) } })}
                     leading={body?.leading}
                     mainRestoreChip
                     actions={body?.actions}

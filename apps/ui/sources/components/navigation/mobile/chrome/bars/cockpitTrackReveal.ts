@@ -1,15 +1,25 @@
 /**
  * Where a scrolling phone bar's track scrolls so its selected tab is whole and clear of the edge fade (Plan 30 §457).
  * Null when it already is, so the track stays where it opened, at its start. The selected tab is always fully
- * visible: a selected tab the start shows only partly (the track's peek) moves the track just enough to show it whole
- * (UI refinements 11-19 ruling a).
+ * visible: a selected tab the start shows only partly (the track's peek) moves the track to show it whole
+ * (UI refinements 11-19 ruling a). The track then starts on a whole tab (tabs share one width): moved only "just
+ * enough", the tab before the selected one was cut through its glyph beside the fixed first tab
+ * (ARTIFACTS-STORAGE-ACCEPT-1120 fix 10).
  */
 export function resolveCockpitTrackRevealX(input: Readonly<{ x: number; width: number; offset: number; viewport: number; fade: number }>): number | null {
     const start = input.x - input.fade;
     const end = input.x + input.width + input.fade;
-    if (start < input.offset) return Math.max(0, start);
-    if (end > input.offset + input.viewport) return Math.max(0, end - input.viewport);
+    if (start < input.offset) return Math.max(0, Math.floor(start / input.width) * input.width);
+    if (end > input.offset + input.viewport) return Math.max(0, Math.ceil((end - input.viewport) / input.width) * input.width);
     return null;
+}
+
+/**
+ * The room after a scrolling track's last tab: the peek's part of the viewport, so the track's end is a whole-tab
+ * position too and never leaves half a tab at its start.
+ */
+export function resolveCockpitTrackEndRoom(input: Readonly<{ viewport: number; minWidth: number }>): number {
+    return input.minWidth > 0 ? input.viewport % input.minWidth : 0;
 }
 
 /**

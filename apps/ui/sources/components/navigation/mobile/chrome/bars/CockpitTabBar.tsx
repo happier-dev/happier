@@ -23,7 +23,7 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
-import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX, resolveCockpitTrackViewportWidth } from './cockpitTrackReveal';
+import { resolveCockpitTrackEndRoom, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX, resolveCockpitTrackViewportWidth } from './cockpitTrackReveal';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 import { t } from '@/text';
 
@@ -370,7 +370,9 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
             horizontal
             showsHorizontalScrollIndicator={false}
             style={[webMask ?? null, trackWidth === null ? null : { width: trackWidth }]}
-            contentContainerStyle={styles.trackContent}
+            // The peek's room after the last tab, so the track's end starts on a whole tab like every other position.
+            contentContainerStyle={[styles.trackContent, trackWidth === null ? null
+                : { paddingRight: resolveCockpitTrackEndRoom({ viewport: trackWidth, minWidth: props.tabMinWidth }) }]}
             onContentSizeChange={(width, height) => { fades.onContentSizeChange(width, height); reveal(); }}
             onScroll={onScroll}
             scrollEventThrottle={32}

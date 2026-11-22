@@ -115,6 +115,12 @@ export type CollectionToolbarProps = Readonly<{
   /** Which lens the reader looks through (a saved-view picker). It leads the controls at every width. */
   lens?: ReactNode;
   /**
+   * A short choice that scopes what the lens shows (whose tasks), as one segmented control. It leads the lens on the
+   * wide row. Folded it stands beside the lens where the line holds both and the arrangement switch, and otherwise takes
+   * the line under them, so the switch never ends up on a line of its own.
+   */
+  scope?: ReactNode;
+  /**
    * What narrows and orders the list (lab `spfield` B). The filters open from one funnel at the end of the search
    * field, at every width: `sheet` is the page's narrowing form, anchored under the field on a wide page and the
    * shared bottom sheet on a phone. What is on is said by the Collection's token line under the toolbar, never by
@@ -191,7 +197,8 @@ const REFRESH_ITEM_ID = 'happier-collection-toolbar:refresh';
  * sheet, with ⋯ beside it (Refresh carrying the freshness, the page's actions, then Order), then Select where the
  * list can select —
  * and one row with the lens on the left and the arrangement switch on the right. A healthy list stays quiet there; a list that is refreshing or
- * not current says so in that row, so it is never only inside a menu. A lens that leaves the switch too little room
+ * not current says so in that row, so it is never only inside a menu. A scope that does not fit in that row takes the
+ * line under it. A lens that leaves the switch too little room
  * gives it the next line, still on the trailing edge; a page name that would leave the search less than its readable
  * width takes the line above the search.
  */
@@ -339,6 +346,7 @@ function useWideToolbar(props: CollectionToolbarProps, active: boolean): (search
         {...(props.testID === undefined ? {} : { testID: `${props.testID}:lead` })}>
         {slots?.title ?? null}
         {search}
+        {props.scope ?? null}
         {props.lens ?? null}
         {props.refine?.render?.() ?? null}
         {slots?.selection ?? null}
@@ -392,7 +400,7 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lendi
   // The widths the folded row can still see of what the wide row draws: the lens as drawn here, and the sizes of
   // the rest. When any of them gets smaller the wide row may fit again (`CollectionToolbarFitReport.shrank`).
   // `buttons` (the round Filters, ⋯ and +) is the search line's own, for the room it leaves the search.
-  const [widths, setWidths] = useState<Partial<Record<'title' | 'lens' | 'selection' | 'accessory' | 'pageActions' | 'buttons', number>>>({});
+  const [widths, setWidths] = useState<Partial<Record<'title' | 'lens' | 'scope' | 'views' | 'selection' | 'accessory' | 'pageActions' | 'buttons', number>>>({});
   const [stackWidth, setStackWidth] = useState<number | null>(null);
   const measured = (slot: keyof typeof widths, content: ReactNode, style: HappierPortableStyle = compactLensStyle) => content == null ? null : (
     <View style={style} onLayout={(event) => {
@@ -402,6 +410,7 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lendi
   );
   const wideContent = [
     props.lens == null ? 0 : widths.lens ?? 0,
+    props.scope == null ? 0 : widths.scope ?? 0,
     slots?.title == null ? 0 : widths.title ?? 0,
     slots?.pageActions == null ? 0 : widths.pageActions ?? 0,
     freshness == null ? 0 : freshness.label.length,
@@ -455,6 +464,13 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lendi
       && stackWidth - headItems.reduce((sum, width) => sum + width, 0) - spacing.small * headItems.length
         < HAPPIER_PAGE_METRICS.toolbarSearchMinWidthPx * textScale;
     const title = measured('title', slots?.title, compactTitleStyle);
+    // The scope shares the lens line while that line also holds the arrangement switch and the route controls. Judged
+    // from each control's own width, as the title is, so it settles and never flips; unmeasured, it starts under the line.
+    const lensItems = [widths.lens, widths.scope, widths.accessory, widths.views, widths.pageActions]
+      .filter((width): width is number => width !== undefined && width > 0);
+    const scopeBesideLens = stackWidth !== null && widths.scope !== undefined
+      && lensItems.reduce((sum, width) => sum + width, 0) + spacing.small * lensItems.length <= stackWidth;
+    const scope = measured('scope', props.scope, compactScopeStyle);
     // Select is an action on the list, as Filters and ⋯ are: it ends the search row, where the search gives way to it,
     // and never shares the lens row, whose segmented lens and switch leave it no room on a phone (it wrapped mid-word).
     const selection = measured('selection', slots?.selection, compactSelectionStyle);
@@ -484,6 +500,7 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lendi
               under it, rather than the lens shrinking under the accessory drawn over it. */}
           <Row gap="small" wrap align="center" style={compactLeadStyle}>
             {measured('lens', props.lens, compactLensStyle)}
+            {scopeBesideLens ? scope : null}
             {head ? null : selection}
             {measured('accessory', props.accessory)}
           </Row>
@@ -499,12 +516,13 @@ function useCompactToolbar(props: CollectionToolbarProps, active: boolean, lendi
                 />
               )}
             </View>
-            <Views views={props.views} compact />
+            {measured('views', props.views === undefined ? null : <Views views={props.views} compact />, compactViewsStyle)}
             {head ? null : buttons}
             {/* The host's route controls (Run on) and the column's Hide stay one line, as they end the wide row. */}
             {measured('pageActions', slots?.pageActions, compactPageActionsStyle)}
           </View>
         </Row>
+        {scope === null || scopeBesideLens ? null : <View key="scope" style={compactTitleLineStyle}>{scope}</View>}
       </View>
     );
   };
@@ -618,7 +636,11 @@ const compactLeadStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 const compactLensStyle: HappierPortableStyle = { flexShrink: 1, minWidth: 0 };
 /** The page's name or switch keeps its words whole beside the search, which gives way instead. */
 const compactTitleStyle: HappierPortableStyle = { flexShrink: 0 };
-/** The name's own line above the search: a row, so the name keeps its own width there. */
+/** The scope keeps its words whole; the line it stands on is chosen so it fits. */
+const compactScopeStyle: HappierPortableStyle = { flexShrink: 0 };
+/** The arrangement switch is never squeezed by what ends its line. */
+const compactViewsStyle: HappierPortableStyle = { flexShrink: 0 };
+/** A line of its own (the name above the search, the scope under the lens): a row, so the control keeps its own width. */
 const compactTitleLineStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', minWidth: 0 };
 /** The search line's round buttons, kept whole beside the field. */
 const compactButtonsStyle: HappierPortableStyle = { flexDirection: 'row', alignItems: 'center', flexShrink: 0 };

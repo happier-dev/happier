@@ -260,6 +260,45 @@ it.each([308, 390])('keeps the arrangement switch clear of a wide lens in the fo
     }
 });
 
+// Triage Tasks on a phone (TRIAGE-DESIGN-ACCEPT-250 F9): the page switch and Views, whose tasks (Mine · Agents ·
+// Everyone), and List | Board took three toolbar lines, the last one holding the switch alone. The scope takes the line
+// under the lens, so the arrangement switch stays with the lens and the toolbar is two lines.
+function ScopedList({ lensWidth }: { lensWidth: number }) {
+    const model = useHappierCollection({ items, keyOf, groups, window: { kind: 'complete' }, openKey: null, onOpenChange: () => {} });
+    return <CoreCollectionScope renderPageScroller={renderPageScroller}>
+        <Collection model={model} anatomy={anatomy} accessibilityLabel="Entries" presentation="list" detail="none" scroll="page"
+            minListWidth={PLUGIN_CARD_MIN_WIDTH_PX} minDetailWidth={PLUGIN_CARD_MIN_WIDTH_PX} preferredListRatio={0.5}
+            header={(slots) => <CollectionToolbar slots={slots} testID="toolbar"
+                lens={<View testID="lens" style={{ width: lensWidth, height: 32 }} />}
+                scope={<View testID="scope" style={{ width: 208, height: 32 }} />}
+                views={{ label: 'Arrange', value: 'list', onChange: () => {},
+                    options: [{ value: 'list', label: 'List', icon: 'list', testID: 'view:list' },
+                        { value: 'board', label: 'Board', icon: 'board', testID: 'view:board' }] }} />} />
+    </CoreCollectionScope>;
+}
+
+it.each([
+    { where: 'a phone (its scope takes the line under the lens)', width: 390, lensWidth: 226, beside: false },
+    { where: 'a narrowed wide list (its scope stays beside the lens)', width: 700, lensWidth: 60, beside: true },
+])('keeps the arrangement switch on the lens line beside a scope on $where', async ({ width, lensWidth, beside }) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const root = createRoot(host);
+    try {
+        await act(async () => root.render(<View style={{ width }}><ScopedList lensWidth={lensWidth} /></View>));
+        const layout = await measureWebLayout(host, { viewport: { width, height: 900 }, settle: (replay) => act(replay) });
+        const lens = layout.rect('lens');
+        const scope = layout.rect('scope');
+        const board = layout.rect('view:board');
+        expect(board.top, JSON.stringify({ lens, board })).toBeLessThan(lens.bottom);
+        expect(scope.top < lens.bottom && scope.bottom > lens.top, JSON.stringify({ lens, scope })).toBe(beside);
+        if (!beside) expect(scope.top).toBeGreaterThanOrEqual(board.bottom);
+    } finally {
+        await act(async () => root.unmount());
+        host.remove();
+    }
+});
+
 // A list narrowed beside a detail pane (Triage Tasks at 1440, DESIGN-ACCEPT-209): the page's name beside the search
 // left the field about 70 px ("Searc"). The name takes its own line instead, so the search keeps a readable width.
 function TitledSearchList() {

@@ -321,6 +321,36 @@ describe('DetailsPaneSlotHost (the page details pane a plugin DetailsPane render
         expect(screen.getTextContent()).toContain('tidewater/checkout-web #2476 · You opened 42m ago');
     });
 
+    it('hands the header separate facts, so the line wraps between them, and keeps an equal facts line local', async () => {
+        let frames = 0;
+        let refresh: () => void = () => {};
+        function Publisher() {
+            const [, setRevision] = React.useState(0);
+            refresh = () => setRevision(value => value + 1);
+            const binding = useDetailsPaneSlotBinding();
+            return <>{binding?.renderDetailsPane({
+                open: true,
+                title: 'Move cart totals to server-side rounding',
+                // A fresh array each render, as a detail re-derives its facts.
+                subtitle: ['tidewater/checkout-web #2476', 'You opened 42m ago', 'leeroy/server-rounding → main'],
+                subtitleLeading: React.createElement('SourceMark'),
+                children: 'Detail',
+                onClose() {},
+                testID: 'entry',
+            })}</>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><DetailsPaneSlotHost renderHost={({ main, details, onCloseDetails }) => {
+            frames += 1;
+            return <AppPaneScopeHost scopeId="project:facts" main={main}
+                destinationDetails={details ? { pane: details.content, onClose: onCloseDetails } : undefined} />;
+        }}><Publisher /></DetailsPaneSlotHost></AppPaneProvider>);
+        const header = screen.root.find((node) => node.props.testID === 'entry.header' && typeof node.type !== 'string');
+        expect(header.props.line.segments).toEqual(['tidewater/checkout-web #2476', 'You opened 42m ago', 'leeroy/server-rounding → main']);
+        const settledFrames = frames;
+        for (let index = 0; index < 5; index += 1) await act(async () => refresh());
+        expect(frames - settledFrames).toBe(0);
+    });
+
     it('renders a plugin DetailsPane in the page details pane, beside the page, with the plugin context intact', async () => {
         const { screen, context } = await mountPluginPage();
 
