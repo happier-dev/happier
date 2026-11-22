@@ -1221,7 +1221,9 @@ describe('Work and Coach widget bodies', () => {
     });
     const refresh = vi.fn(async () => {});
     const caption = vi.fn();
-    const unread = { ...slice, work: bare, sources: [{ source: 'work', status: 'error' }] } satisfies UsageQueryResultSlice;
+    const unread = { ...slice, work: bare, sources: [
+      { source: 'work', status: 'partial', errorCode: 'work_evidence_failed', unreadSessions: { failed: 1 } },
+    ] } satisfies UsageQueryResultSlice;
     const reader = React.createRef<ReturnType<typeof useOptionalCurrentUiContextReader>>();
     function Outcomes() {
       reader.current = useOptionalCurrentUiContextReader();
@@ -1262,7 +1264,7 @@ describe('Work and Coach widget bodies', () => {
     await shipped.update(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes }}
       presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />);
     expect(shipped.findByTestId('shipped.empty')).toBeTruthy();
-    const measured = await renderScreen(<UsageOutcomesWidget {...props} slice={workRead}
+    const measured = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...workRead, mergedOutcomes }}
       id="usage_outcomes" testID="measured" />);
     expect(measured.findByTestId('measured.noPrs')).toBeTruthy();
     expect(measured.findAllByType(SurfaceStateCard).find(node => node.props.testID === 'measured.noPrs')?.props.size).toBe('line');
@@ -1274,7 +1276,7 @@ describe('Work and Coach widget bodies', () => {
     const bare = UsageWorkProjectionSchema.parse(allocateUsageOutcomes({
       contributions: [{ ...contribution('sessionless', 's1', 't1'), sessionId: null }], evidence: [],
     }));
-    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: bare }}
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: bare, workSummary: { mergedPrCount: 0 } }}
       id="usage_outcomes" testID="outcomes" />);
     expect(screen.findByTestId('outcomes.empty')).toBeTruthy();
     expect(screen.findByTestId('outcomes.noPrs')).toBeFalsy();
@@ -1327,7 +1329,7 @@ describe('Work and Coach widget bodies', () => {
       evidence: [evidence('s1', 't1', 1), evidence('s1', 't1', 2)],
     }));
     expect(ambiguous.outcomes).toHaveLength(0);
-    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: ambiguous }}
+    const screen = await renderScreen(<UsageOutcomesWidget {...props} slice={{ ...slice, work: ambiguous, workSummary: { mergedPrCount: 0 } }}
       id="usage_outcomes" testID="outcomes" />);
     expect(screen.findByType(OutcomeFunnel).props.steps).toMatchObject([
       { id: 'sessions', value: 1 }, { id: 'witnessed', value: 1 },

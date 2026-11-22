@@ -849,13 +849,15 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     });
     const retainedDetail = canRetainDetail && (pendingDetail || failedDetail) ? prior : undefined;
     const retainedNightHours = retainedDetail?.howYouWork?.nightShift;
+    const priorWorkSource = prior?.sources.find(source => source.source === 'work');
     // Missing evidence on an ordinary failed read is not a replacement. An
     // explicit empty admission/quarantine still withdraws the old witnesses.
     const failedWork = workSnapshot?.status === 'error' && workSnapshot.evidence === undefined
       && workSnapshot.branchEvidence === undefined && canRetainUsageReadFailure(workSnapshot.errorCode)
-      && (prior?.workSummary !== undefined || prior?.mergedOutcomes !== undefined || prior?.publicProfileEvidence?.facts.mergedPrs !== undefined);
+      && (prior?.workSummary !== undefined || prior?.mergedOutcomes !== undefined
+        || prior?.publicProfileEvidence?.facts.mergedPrs !== undefined
+        || prior?.work !== undefined && (priorWorkSource?.status === 'partial' || priorWorkSource?.status === 'stale'));
     const retainWork = workSnapshot?.status === 'pending' || failedWork;
-    const priorWorkSource = prior?.sources.find(source => source.source === 'work');
     const workAsOfMs = failedWork ? priorWorkSource?.asOfMs : workSnapshot?.asOfMs;
     const unreadWorkSessions = workSnapshot?.status === 'pending' ? priorWorkSource?.unreadSessions : workSnapshot?.unreadSessions;
     // A reread has not replaced observed Work facts. Keep their currentness
@@ -1014,17 +1016,19 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
       branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : readableWork ? workSnapshot?.branchEvidence ?? [] : [],
     }));
     const workProjection = workFacts.value;
-    // Allocation can enumerate unlinked Sessions before their Work evidence answers.
-    const hasMergedOutcomes = retainWork && prior?.mergedOutcomes !== undefined || readableWork;
-    const workSummary = workProjection && hasMergedOutcomes ? prior?.work === workProjection && prior.workSummary
+    // A partial read can supply real links while another Session's Work is unread.
+    // Only a read without a refusal can establish that the result is empty.
+    const canReportZeroMerged = retainWork ? prior?.workSummary?.mergedPrCount === 0
+      : readableWork && workSnapshot.errorCode === undefined
+        && workSnapshot.unreadSessions === undefined && workSnapshot.updateRequired === undefined;
+    const observedWork = readableWork || retainWork && prior?.workSummary !== undefined;
+    const candidateSummary = workProjection && observedWork ? prior?.work === workProjection && prior.workSummary
       || projectUsageWorkSummary(workProjection.outcomes, workProjection)
-      : readableWork && workSnapshot?.summary || retainWork && prior?.workSummary || undefined;
+      : readableWork && workSnapshot.summary || retainWork && prior?.workSummary || undefined;
+    const workSummary = candidateSummary && (candidateSummary.mergedPrCount > 0 || canReportZeroMerged) ? candidateSummary : undefined;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
-      work: workProjection, startMs, endMs, observed: Boolean(hasMergedOutcomes),
-    }, () => workProjection && endMs !== undefined && endMs >= startMs
-      // An allocation scaffold also exists before Work has ever been read.
-      // Only an observed summary can retain known counts through a reread.
-      && hasMergedOutcomes
+      work: workProjection, startMs, endMs, observed: workSummary !== undefined,
+    }, () => workProjection && workSummary && endMs !== undefined && endMs >= startMs
       ? summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes }) : undefined);
     const planInsights = projectAdmittedUsageInputs(admitted?.planInsights, {
       accounting: snapshot?.value, asOfMs: snapshot?.asOfMs, startMs: period.startMs, endMs: period.endMs,

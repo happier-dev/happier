@@ -1691,6 +1691,19 @@ describe('resolveUsagePageAggregation', () => {
       expect(reread.results[0]?.mergedOutcomes).toBeUndefined();
       expect(UsageQueryBatchResultSchema.safeParse(reread).success).toBe(true);
     }
+    const partial = resolveUsagePageAggregation({ queries: [query], previous: cold, nowMs,
+      accounting: [{ query, status: 'available', value: cold.results[0]!.accounting }],
+      work: [{ query, status: 'partial', errorCode: 'work_evidence_failed',
+        unreadSessions: { failed: 1 }, evidence: [], branchEvidence: [] }],
+    }, bundledUsageModelPriceCatalog);
+    expect(partial.results[0]?.sources).toContainEqual(expect.objectContaining({
+      source: 'work', status: 'partial', errorCode: 'work_evidence_failed',
+    }));
+    expect(partial.results[0]?.work?.outcomes).toEqual([]);
+    expect(partial.results[0]?.workSummary).toBeUndefined();
+    expect(partial.results[0]?.mergedOutcomes).toBeUndefined();
+    expect(UsageQueryBatchResultSchema.safeParse(partial).success).toBe(true);
+
     const observedEmpty = read(cold, nowMs + 30_000, 'available');
     expect(observedEmpty.results[0]?.mergedOutcomes).toMatchObject({ linkedMergedCount: 0 });
     expect(observedEmpty.results[0]?.workSummary?.mergedPrCount).toBe(0);
