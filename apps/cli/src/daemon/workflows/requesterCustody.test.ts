@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { access, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,12 +10,69 @@ import { UpdateBodySchema } from '@happier-dev/protocol/updates';
 import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import type { StoredCredentials } from '@/persistence';
+import { createRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
 import { retainWorkflowRequesterCredentials, acquireWorkflowRequesterCredentials, retireWorkflowRequesterCredentials } from './requesterCustody';
 import * as requesterCustody from './requesterCustody';
 import { createWorkflowRunStorageTestkit } from './workflowRunStorage.testkit';
 
 const wire = vi.hoisted(() => ({ io: vi.fn() }));
 vi.mock('socket.io-client', () => ({ io: wire.io }));
+
+function publishedProfileAutomation(id: string, machineId: string, triggerIds: readonly string[]) {
+  return AutomationDefinitionDetailSchema.parse({
+    id, name: 'Approval Profile check', description: null, enabled: true, workflowDefinitionId: null,
+    scopeSessionId: null, targetType: null, existingSessionId: null, templateVersion: 1,
+    lastRunAt: null, createdAt: 1, updatedAt: 1, templateCiphertext: 'opaque fixture',
+    assignments: [{ machineId, enabled: true, priority: 0, updatedAt: 1 }],
+    triggers: triggerIds.map(triggerId => ({ id: triggerId, revision: 0, enabled: true, createdAt: 1,
+      updatedAt: 1, kind: 'action', phase: 'before', mode: 'wait', onFailure: 'refuse',
+      actionIds: ['machines.command.run'], triggerDefinitionEnvelope: 'opaque trigger fixture' })),
+  });
+}
+
+it.each([
+  { existingTriggerIds: undefined, publication: 'a new Profile check' },
+  { existingTriggerIds: ['10d027a9-a59f-4802-9373-98ed6564fec9'], publication: 'an appended Profile check' },
+])('keeps guest custody when catch-up precedes publication of $publication', async ({ existingTriggerIds }) => {
+  const app = fastify();
+  const origin = 'http://workflow-requester-publication.test';
+  const directory = await mkdtemp(join(tmpdir(), 'workflow-requester-publication-'));
+  const attribution = { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' };
+  // Native G15 Profile authoring retained the Any check while Home still had
+  // only its Exact sibling, or no definition at all on the first Save.
+  const automationId = 'cd4638cd-444a-42fd-93a2-0be35bffdb9c';
+  const scopeId = 'd64b55a0-33b9-4fdd-b878-c46459a57988';
+  const binding = { ...attribution, happyHomeDir: directory, scopeId, serverHttpBaseUrl: origin };
+  let publishedTriggerIds: readonly string[] | undefined = existingTriggerIds;
+  app.get('/v1/account/profile', async () => ({ id: attribution.accountId }));
+  app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: null }));
+  app.get('/v3/automations/' + automationId, async (request, reply) => {
+    expect(request.headers.authorization).toBe('Bearer guest-token');
+    return publishedTriggerIds ? publishedProfileAutomation(automationId, attribution.machineId, publishedTriggerIds)
+      : reply.code(404).send({ error: 'not_found' });
+  });
+  app.post('/v3/automations/runs/workflow-storage', async () => ({ runs: [] }));
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin });
+  try {
+    const retained = await retainWorkflowRequesterCredentials({ ...binding, automationId, attribution,
+      credentials: { token: 'guest-token', encryption: null } });
+    await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
+    await expect(access(retained.path)).resolves.toBeUndefined();
+
+    publishedTriggerIds = [...(existingTriggerIds ?? []), scopeId];
+    await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
+    const admitted = await acquireWorkflowRequesterCredentials(binding);
+    expect(admitted?.attribution).toEqual(attribution);
+    expect(admitted?.credentials.token).toBe('guest-token');
+    await admitted?.release();
+
+    publishedTriggerIds = existingTriggerIds;
+    await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
+    expect(await acquireWorkflowRequesterCredentials(binding)).toBeNull();
+  } finally { restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});
 
 it('reconciles only addressed guest custody on typed changes and catches up missed work on reconnect', async () => {
   const app = fastify();
@@ -38,12 +96,20 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
   const kit = createWorkflowRunStorageTestkit({ runId: 'admitted', machineId: installation.machineId,
     state: 'cancelled', origin: { kind: 'direct' } });
   const reads: string[] = [];
+  const definitionReads: string[] = [];
+  const published = new Map([['automation-a', 'trigger-a'], ['automation-b', 'trigger-b']]);
   const pending = new Set(scopes.map(scope => scope.scopeId));
   const errors: unknown[] = [];
   app.get('/v1/account/profile', async request => ({ id: request.headers.authorization === 'Bearer guest-a' ? 'guest-a' : 'guest-b' }));
   app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: null }));
-  app.get('/v3/automations/:id', async (_request, reply) => reply.code(404).send({ error: 'not_found' }));
+  app.get<{ Params: { id: string } }>('/v3/automations/:id', async (request, reply) => {
+    const { id } = request.params;
+    definitionReads.push(id);
+    const triggerId = published.get(id);
+    return triggerId ? publishedProfileAutomation(id, installation.machineId, [triggerId])
+      : reply.code(404).send({ error: 'not_found' });
+  });
   app.post<{ Body: { request: { runId?: string; triggerId?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
     const id = request.body.request.runId ?? request.body.request.triggerId;
     if (!id) throw new Error('Expected exact custody selector');
@@ -58,9 +124,14 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
       attribution: { serverId: installation.serverId, machineId: installation.machineId,
         installationId: installation.installationId, accountId: scope.accountId },
       credentials: { token: scope.accountId, encryption: null } });
+    for (const scope of scopes) if (scope.automationId) {
+      await requesterCustody.reconcileWorkflowRequesterCredentialScope({ ...installation, ...scope });
+    }
+    definitionReads.length = 0;
     observation = requesterCustody.observeWorkflowRequesterCredentialCustody({ ...installation,
       hostAccountId: 'custodian', onError: error => errors.push(error) });
-    await vi.waitFor(() => expect(new Set(reads)).toEqual(new Set(scopes.map(scope => scope.scopeId))));
+    await vi.waitFor(() => expect(reads.slice().sort()).toEqual(['direct-a', 'direct-b', 'direct-other']));
+    await vi.waitFor(() => expect(definitionReads.slice().sort()).toEqual(['automation-a', 'automation-b']));
     await vi.waitFor(() => expect(sockets.size).toBe(2));
     const guest = sockets.get('guest-a')!;
     let seq = 0;
@@ -76,6 +147,7 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
     // Removing a deleted Automation's last admitted child retires only its
     // own trigger. A sibling trigger and the other guest stay undisturbed.
     pending.delete('trigger-a');
+    published.delete('automation-a');
     push({ t: 'account-change', changeKinds: ['automation'], entityIds: ['automation-a'] });
     await vi.waitFor(async () => {
       const inventory = await requesterCustody.listWorkflowRequesterCredentialScopes(installation);
@@ -85,10 +157,12 @@ it('reconciles only addressed guest custody on typed changes and catches up miss
     });
     expect(reads).toEqual(['trigger-a']);
     reads.length = 0;
+    definitionReads.length = 0;
     // A missed offline update is intentionally coarse: reconnect re-reads
     // every remaining scope for this guest, never the other guest's scope.
     guest.trigger('connect');
-    await vi.waitFor(() => expect(reads.slice().sort()).toEqual(['direct-a', 'direct-b', 'trigger-b']));
+    await vi.waitFor(() => expect(reads.slice().sort()).toEqual(['direct-a', 'direct-b']));
+    await vi.waitFor(() => expect(definitionReads).toEqual(['automation-b']));
     expect(errors).toEqual([]);
   } finally { observation?.dispose(); restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
 });
@@ -146,11 +220,11 @@ it('keeps custody for an admitted queued Run when its trigger is disabled, then 
   let pending = true;
   app.get('/v1/account/profile', async () => ({ id: 'guest' }));
   app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
-  // The saved schedule was deleted while this daemon was offline. Reconnect
-  // consumes the same guest-owned durable definition and admitted Run inventory.
+  let published = true;
   app.get('/v3/automations/saved-automation', async (request, reply) => {
     expect(request.headers.authorization).toBe('Bearer guest-token');
-    return reply.code(404).send({ error: 'not_found' });
+    return published ? publishedProfileAutomation('saved-automation', attribution.machineId, ['trigger'])
+      : reply.code(404).send({ error: 'not_found' });
   });
   app.post<{ Body: { operation: string; request: { runId?: string; triggerId?: string; cursor?: string } } }>('/v3/automations/runs/workflow-storage', async request => {
     expect(request.headers.authorization).toBe('Bearer guest-token');
@@ -190,8 +264,11 @@ it('keeps custody for an admitted queued Run when its trigger is disabled, then 
     expect(unknown?.credentials.token).toBe('guest-token');
     await unknown?.release();
     pending = true;
-    await retainWorkflowRequesterCredentials({ ...binding, automationId: 'saved-automation',
-      credentials: { token: 'guest-token', encryption: null }, attribution });
+    // A predecessor record has no publication marker. It already represents
+    // a saved trigger for this installation and still drains on offline removal.
+    await createRequesterSessionCredentialCustody({ ...binding, scope: 'workflow_trigger', sessionId: binding.scopeId,
+      automationId: 'saved-automation', credentials: { token: 'guest-token', encryption: null }, attribution });
+    published = false;
     await requesterCustody.reconcileWorkflowRequesterCredentialScope(binding);
     const queuedAfterOfflineDelete = await acquireWorkflowRequesterCredentials(binding);
     expect(queuedAfterOfflineDelete?.credentials.token).toBe('guest-token');

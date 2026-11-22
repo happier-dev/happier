@@ -1137,6 +1137,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
   credentials: StoredCredentials;
   homeServerIdentityId?: string;
   automationId?: string;
+  automationScopePending?: true;
   machineAdmission?: Readonly<{ custodianAccountId: string; role?: 'use' | 'manage' }>;
   executionIdentity?: Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
 }>): Promise<Readonly<{ path: string; created: boolean; cleanup(): Promise<void> }>> {
@@ -1145,6 +1146,7 @@ export async function createRequesterSessionCredentialCustody(input: RequesterSe
     ...(input.endpointRole ? { endpointRole: input.endpointRole } : {}),
     ...(input.executionIdentity ? { executionIdentity: input.executionIdentity } : {}),
     ...(input.automationId ? { automationId: input.automationId } : {}),
+    ...(input.automationScopePending ? { automationScopePending: true } : {}),
     attribution: input.attribution, credentials: encodeStoredCredentials(input.credentials),
     ...(input.homeServerIdentityId ? { homeServerIdentityId: input.homeServerIdentityId } : {}),
     ...(input.machineAdmission ? { machineAdmission: { custodianAccountId: input.machineAdmission.custodianAccountId,

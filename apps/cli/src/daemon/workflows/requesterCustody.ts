@@ -3,6 +3,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecr
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createCredentialedWorkflowActionAdmissionReader, readWorkflowActionInvocationEffect } from './workflowActionAdmission';
 import type { StoredCredentials } from '@/persistence';
+import { AsyncLock } from '@/utils/lock';
 import { z } from 'zod/mini';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getAutomationDefinition } from '@/api/automations';
@@ -21,6 +22,8 @@ import { createRequesterSessionCredentialCustody, listRequesterSessionCredential
 type ScopeBinding = Readonly<{ happyHomeDir: string; serverId: string; machineId: string; installationId: string; scopeId: string;
   accountId?: string; homeServerIdentityId?: string; serverHttpBaseUrl?: string; signal?: AbortSignal }>;
 const activeScopes = new Map<string, { count: number; retire: boolean }>();
+// Serialize local edits while the Home inventory read runs outside the lock.
+const custodyMutation = new AsyncLock();
 const custodyChanges = new Set<() => void>();
 const notifyCustodyChange = () => { for (const listener of custodyChanges) listener(); };
 const binding = (input: ScopeBinding, attribution: RequesterWorkAttributionV1) => ({ happyHomeDir: input.happyHomeDir,
@@ -53,17 +56,26 @@ export async function retainWorkflowRequesterCredentials(input: Readonly<{
   if (input.machineAdmission && input.machineAdmission.actorAccountId !== input.attribution.accountId) {
     throw new Error('requester_session_custody_mismatch');
   }
-  // A trigger may be saved for future occurrences. A Run keeps the admission
-  // it captured first, including an unavailable role in older private custody.
-  const original = input.automationId ? null : await readBinding({ ...input.attribution,
-    happyHomeDir: input.happyHomeDir, scopeId: input.scopeId, homeServerIdentityId: input.homeServerIdentityId });
-  const retained = await createRequesterSessionCredentialCustody({ ...input,
-    machineAdmission: original ? original.stored.machineAdmission : input.machineAdmission,
-    sessionId: input.scopeId, scope: 'workflow_trigger' });
-  const active = activeScopes.get(retained.path);
-  if (active) active.retire = false;
+  const retained = await custodyMutation.inLock(async () => {
+    const original = await readBinding({ ...input.attribution, happyHomeDir: input.happyHomeDir,
+      scopeId: input.scopeId, homeServerIdentityId: input.homeServerIdentityId });
+    const alreadyPublished = original && original.stored.automationId === input.automationId
+      && !original.stored.automationScopePending && !original.stored.retireWhenIdle;
+    // Trigger custody is installed before Home publishes it. Direct Runs
+    // keep the admission they first captured, including an unavailable role.
+    const record = await createRequesterSessionCredentialCustody({ ...input,
+      ...(input.automationId && !alreadyPublished ? { automationScopePending: true } : {}),
+      machineAdmission: !input.automationId && original ? original.stored.machineAdmission : input.machineAdmission,
+      sessionId: input.scopeId, scope: 'workflow_trigger' });
+    const active = activeScopes.get(record.path);
+    if (active) active.retire = false;
+    return record;
+  });
   notifyCustodyChange();
-  return { ...retained, cleanup: async () => { await retained.cleanup(); notifyCustodyChange(); } };
+  return { ...retained, cleanup: async () => {
+    await custodyMutation.inLock(retained.cleanup);
+    notifyCustodyChange();
+  } };
 }
 
 /** Action owners know only their admitted requester and the execution target. */
@@ -119,13 +131,18 @@ async function readBinding(input: ScopeBinding) {
   } catch { return null; }
 }
 
-export async function retireWorkflowRequesterCredentials(input: ScopeBinding): Promise<void> {
-  const stored = await readBinding(input);
-  if (!stored) return;
-  const active = activeScopes.get(stored.path) ?? { count: 0, retire: true };
+async function markWorkflowRequesterCredentialsForRetirement(record: NonNullable<Awaited<ReturnType<typeof readBinding>>>): Promise<void> {
+  const active = activeScopes.get(record.path) ?? { count: 0, retire: true };
   active.retire = true;
-  activeScopes.set(stored.path, active);
-  await replacePrivateBearerFile({ path: stored.path, contents: JSON.stringify({ ...stored.stored, retireWhenIdle: true }) });
+  activeScopes.set(record.path, active);
+  await replacePrivateBearerFile({ path: record.path, contents: JSON.stringify({ ...record.stored, retireWhenIdle: true }) });
+}
+
+export async function retireWorkflowRequesterCredentials(input: ScopeBinding): Promise<void> {
+  await custodyMutation.inLock(async () => {
+    const record = await readBinding(input);
+    if (record) await markWorkflowRequesterCredentialsForRetirement(record);
+  });
   await settleWorkflowRequesterCredentialRetirement(input);
 }
 
@@ -143,13 +160,29 @@ export async function reconcileWorkflowRequesterCredentialScope(input: ScopeBind
   const automationId = stored.stored.automationId;
   if (automationId) {
     const automation = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => getAutomationDefinition({
-      token: credentials.token, automationId,
+      token: credentials.token, automationId, signal: input.signal,
     }));
-    if (!automation || !automation.enabled
-      || !automation.assignments.some(assignment => assignment.machineId === input.machineId && assignment.enabled)
-      || !automation.triggers.some(trigger => trigger.id === input.scopeId && trigger.enabled)) {
-      await retireWorkflowRequesterCredentials(input);
-    }
+    const published = !!automation?.enabled
+      && automation.assignments.some(assignment => assignment.machineId === input.machineId && assignment.enabled)
+      && automation.triggers.some(trigger => trigger.id === input.scopeId && trigger.enabled);
+    // Until Home has published this exact binding, absence could mean either
+    // an in-flight Save or an unresolved write. The author rolls back refusals.
+    const pending = stored.stored.automationScopePending === true;
+    if (pending ? !published : published) return;
+    const retired = await custodyMutation.inLock(async () => {
+      input.signal?.throwIfAborted();
+      const current = await readBinding(input);
+      if (!current || !sameStrictJsonValue(current.stored, stored.stored)) return false;
+      if (published) {
+        await replacePrivateBearerFile({
+          path: current.path, contents: JSON.stringify({ ...current.stored, automationScopePending: undefined }),
+        });
+        return false;
+      }
+      await markWorkflowRequesterCredentialsForRetirement(current);
+      return true;
+    });
+    if (retired) await settleWorkflowRequesterCredentialRetirement(input);
     return;
   }
   const storage = createWorkflowRunStorageClient({ token: credentials.token, serverHttpBaseUrl });
@@ -190,10 +223,12 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
   } while (cursor);
   // A re-save clears this same scope's retirement intent, including while the
   // admitted-work inventory was in flight.
-  if (activeScopes.get(stored.path) !== active || !active.retire || active.count) return;
-  await retireRequesterSessionCredentialCustody(stored.value);
-  activeScopes.delete(stored.path);
-  notifyCustodyChange();
+  await custodyMutation.inLock(async () => {
+    if (activeScopes.get(stored.path) !== active || !active.retire || active.count) return;
+    await retireRequesterSessionCredentialCustody(stored.value);
+    activeScopes.delete(stored.path);
+    notifyCustodyChange();
+  });
 }
 
 /** The incumbent guest Account socket lives only while this installation holds its custody. */

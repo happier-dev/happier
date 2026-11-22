@@ -32,6 +32,7 @@ export const CustodySchema = z.strictObject({
   endpointRole: z.optional(z.literal('source')),
   executionIdentity: z.optional(IsolatedExecutionIdentitySchema),
   automationId: z.optional(z.string().check(z.minLength(1))),
+  automationScopePending: z.optional(z.literal(true)),
   retireWhenIdle: z.optional(z.literal(true)),
   attribution: RequesterWorkAttributionV1Schema,
   homeServerIdentityId: z.optional(z.string().check(z.minLength(1))),

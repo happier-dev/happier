@@ -6059,9 +6059,10 @@ installation is execution authority, not a new human read grant.
 The Automation association stays inside the sealed message and protected local
 custody record. Existing guest Account-change and reconnect observation reads
 the exact Automation inventory to retire deleted or disabled triggers after
-admitted Runs drain. A reconnect cleanup that wins before a late save commits
-can leave that occurrence without custody; the existing content-free refusal
-asks the person to re-save. No new server custody authority or retry is added.
+admitted Runs drain. A new trigger's custody stays pending locally until its
+enabled binding appears in that inventory. A read before publication preserves
+the same protected requester context. The author still cleans up a confirmed
+save refusal.
 
 Each direct start and occurrence uses the existing Machine admission owner as
 the requester. The accepted Run assignment retains its admitted installation.

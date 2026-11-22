@@ -3134,9 +3134,13 @@ at-rest protection and is not sent to the server. Re-saving clears that marker;
 the existing Run terminal/reconnect events drain admitted work before retiring
 the context. The protected record retains the Automation association so the
 existing guest Account-change/reconnect observer can read the exact Automation
-inventory and retire offline deletions. If reconnect cleanup wins before a late
-save commits, its occurrence gets the content-free custody refusal and the person
-re-saves. No new queue, timer or server-side custody record is introduced.
+inventory and retire offline deletions. A new trigger binding carries the optional
+local `automationScopePending` marker until this observer sees the enabled
+Automation, trigger and installation's Machine assignment together. A missing
+binding during publication preserves custody, and a confirmed save refusal still
+cleans it up. Older records without the marker represent saved custody and
+retain their offline retirement behavior. Older daemons can read the record and
+still have the early retirement race.
 
 Machine-only Automation wakes add an optional requester-scope routing hint.
 Run summaries add optional `errorCode` so existing typed Workflow presentation
