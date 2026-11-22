@@ -369,29 +369,39 @@ function swallowNextClick(): void {
     document.addEventListener('pointerdown', stop, true);
 }
 
-/**
- * Whether a popover opened from inside `owner` (its anchor sits in owner's content or interaction boundary) is still open. While it is, that
- * nested popover owns dismissal: a press inside it is not outside `owner`, and a press outside both closes only it.
- */
-function hasOpenNestedWebPopover(owner: OpenWebPopoverEntry): boolean {
+function isNestedWebPopover(owner: OpenWebPopoverEntry, child: OpenWebPopoverEntry): boolean {
+    if (child === owner) return false;
     const content = owner.getContentElement();
-    const interactionBoundary = owner.getInteractionBoundaryElement();
-    return OPEN_WEB_POPOVERS.some(entry => {
-        if (entry === owner) return false;
-        const anchor = entry.getAnchorElement();
-        return anchor !== null && (content?.contains(anchor) === true || interactionBoundary?.contains(anchor) === true);
-    });
+    const boundary = owner.getInteractionBoundaryElement();
+    return [child.getAnchorElement(), child.getFocusTriggerElement()].some(anchor =>
+        anchor !== null && (content?.contains(anchor) === true || boundary?.contains(anchor) === true));
 }
 
-/** A submenu's portal belongs to the same focus interaction as the content that opened it. */
-function isWithinWebPopoverFocus(entry: OpenWebPopoverEntry, target: Node): boolean {
+type WebPopoverTargetScope = 'content' | 'trigger' | 'boundary' | 'nested' | 'modal' | 'outside';
+
+/** The portal and in-page boundaries that participate in this popover's interaction. */
+function getWebPopoverTargetScope(
+    entry: OpenWebPopoverEntry,
+    target: Node,
+    ancestors: readonly OpenWebPopoverEntry[] = [],
+): WebPopoverTargetScope {
     const content = entry.getContentElement();
-    if (content?.contains(target) || entry.getAnchorElement()?.contains(target) || entry.getFocusTriggerElement()?.contains(target)) return true;
+    if (content?.contains(target)) return 'content';
+
+    // A global dialog renders through its provider. A popover inside that dialog still owns its own boundary.
+    const targetElement = target instanceof Element ? target : target.parentElement;
+    const modalLayer = targetElement?.closest('[data-happy-modal-layer]');
+    if (modalLayer && content && !modalLayer.contains(content)) return 'modal';
+
+    if (entry.getAnchorElement()?.contains(target) || entry.getFocusTriggerElement()?.contains(target)) return 'trigger';
+    if (entry.getInteractionBoundaryElement()?.contains(target)) return 'boundary';
+
+    // Explicit boundaries may overlap. Visit each branch without following it back into its ancestors.
     return OPEN_WEB_POPOVERS.some(child => {
-        if (child === entry) return false;
-        const trigger = child.getFocusTriggerElement() ?? child.getAnchorElement();
-        return trigger !== null && content?.contains(trigger) === true && isWithinWebPopoverFocus(child, target);
-    });
+        if (ancestors.includes(child) || !isNestedWebPopover(entry, child)) return false;
+        const childScope = getWebPopoverTargetScope(child, target, [...ancestors, entry]);
+        return childScope !== 'outside' && childScope !== 'modal';
+    }) ? 'nested' : 'outside';
 }
 
 /** Where a native popover waits, laid out but out of sight, until its placement is measured. */
@@ -2292,28 +2302,18 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         const handlePointerDownCapture = (event: Event) => {
             const target = event.target as Node | null;
             if (!target) return;
-            const contentEl = getContentDomElement();
-            if (contentEl && contentEl.contains(target)) return;
-            // Global dialogs render at their provider, outside the opening popover's
-            // React/DOM subtree. Their presses belong to that higher modal layer.
-            // A menu inside this dialog still handles presses outside its own content.
-            const modalLayer = target instanceof Element ? target.closest('[data-happy-modal-layer]') : target.parentElement?.closest('[data-happy-modal-layer]');
-            if (modalLayer && contentEl && !modalLayer.contains(contentEl)) return;
-            // A popover opened from inside this one (a row's menu in a roster) handles this press itself.
-            if (hasOpenNestedWebPopover(openEntry)) return;
-            const anchorEl = getDomElementFromNode(anchorRef.current);
-            // If we cannot resolve the DOM elements (common with RN-web refs in portaled subtrees),
-            // fail open: do not swallow the click. This avoids breaking in-popover interactions.
-            if (!contentEl && !anchorEl) return;
-            if (anchorEl && anchorEl.contains(target)) {
-                if (props.closeOnAnchorPress) {
-                    requestClose('dismiss');
-                }
+            const scope = getWebPopoverTargetScope(openEntry, target);
+            if (scope === 'content' || scope === 'modal' || scope === 'nested') return;
+            // An outside press dismisses the innermost open popover first.
+            if (OPEN_WEB_POPOVERS.some(child => isNestedWebPopover(openEntry, child))) return;
+            if (scope === 'trigger') {
+                if (props.closeOnAnchorPress) requestClose('dismiss');
                 return;
             }
+            if (scope === 'boundary') return;
+            // RN Web may not have resolved either DOM ref yet. Leave the press to its target.
+            if (!openEntry.getContentElement() && !openEntry.getAnchorElement()) return;
 
-            const interactionBoundary = getDomElementFromNode(props.interactionBoundaryRef?.current);
-            if (interactionBoundary?.contains(target)) return;
             const shouldConsumeOutsidePointerDown = props.consumeOutsidePointerDown ?? true;
             if (shouldConsumeOutsidePointerDown) {
                 // Prevent nested Radix/Vaul "outside click" logic from also dismissing the underlying modal.
@@ -2335,7 +2335,9 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         const handleFocusOut = (event: FocusEvent) => {
             // Removing focused content can blur it without moving focus outside the popover.
             if (closeRequested.current || !(event.target instanceof Node) || !(event.relatedTarget instanceof Node)) return;
-            if (!isWithinWebPopoverFocus(openEntry, event.target) || isWithinWebPopoverFocus(openEntry, event.relatedTarget)) return;
+            const origin = getWebPopoverTargetScope(openEntry, event.target);
+            // A global dialog can receive this popover's focus without giving it ownership of later dialog focus.
+            if (origin === 'outside' || origin === 'modal' || getWebPopoverTargetScope(openEntry, event.relatedTarget) !== 'outside') return;
             requestClose('dismiss');
         };
 

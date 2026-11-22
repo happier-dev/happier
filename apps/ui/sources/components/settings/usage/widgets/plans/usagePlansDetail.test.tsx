@@ -404,6 +404,72 @@ it('reveals exact projected percent points without rounding the admitted project
   expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.headline.detail')?.props.datum.value).toBe('60.25%');
 });
 
+it.each(['runs out', 'rounded percentage'] as const)('reads the Projections hero value first (%s)', async branch => {
+  const now = Date.now();
+  const depletesAtMs = branch === 'runs out' ? now + 3 * HOUR : null;
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const quota = depletesAtMs === null ? read : ConnectedServiceQuotaGetResultV1Schema.parse({
+    ...read, pace: read.pace.map(row => ({ ...row, value: { ...row.value, depletesAtMs } })),
+  });
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderPlanAccessibility(<UsageProjectionsWidget {...bodyProps([quota])} id="usage_projections" testID="proj" />);
+  const datum = screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.headline.detail');
+  expect(datum).toBeDefined();
+  const reading = spokenPlanText(datum!.parent!).join(' ').replace(/\s/g, ' ');
+  const value = depletesAtMs === null ? '~60%' : formatMoment(depletesAtMs, now).replace(/\s/g, ' ');
+  const caption = t(depletesAtMs === null ? 'usage.board.plans.projectionUsedAtReset' : 'usage.board.plans.projectionRunsOutLabel');
+  expect(reading.slice(0, value.length), reading).toBe(value);
+  expect(reading.indexOf(caption)).toBeGreaterThan(reading.indexOf(value));
+  expect(reading.split(value)).toHaveLength(2);
+  expect(reading).toContain(t('usage.board.plans.estimatedFrom', { count: 7 }));
+});
+
+it('reads the compact Plan fit value once before its account caption', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const props = bodyProps([read]);
+  const slice = { ...props.slice, planInsights: {
+    recordedWeek: { status: 'available', recordedActiveDays: 1, recordedEvents: 1, coverage: 'complete' },
+    accounts: [{ source: read.source, weather: [], pricePerReset: [], modelHeadroom: [],
+      value: { status: 'available', kind: 'api_equivalent', amountUsd: 55.3, currency: 'USD', period: {},
+        coverage: 'complete', pricedContributionCount: 1, unpricedContributionCount: 0, unknownAccountContributionCount: 0,
+        pricingSources: ['fixture'], priceMultiple: { status: 'available', multiple: 2.765, priceKind: 'entered',
+          priceAmount: 20, currency: 'USD', priceAsOfMs: now, priceSource: 'fixture',
+          period: { startAtMs: now - DAY, endAtMs: now }, method: 'observed_api_equivalent_divided_by_period_price' } },
+    }],
+  } } satisfies typeof props.slice;
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />);
+  const row = screen.findHostByTestId('fit.plan.work')!;
+  expect(screen.findHostByTestId('fit.plan.work.figure')).not.toBeNull();
+  const reading = spokenPlanText(row).join(' ');
+  expect(reading.slice(0, 4), reading).toBe('2.8×');
+  expect(reading.split('2.8×')).toHaveLength(2);
+  expect(reading.indexOf('Account work')).toBeGreaterThan(reading.indexOf('2.8×'));
+});
+
+it('reads the compact Plan fit price once before its account caption when precision is hidden', async () => {
+  const now = Date.now();
+  const amount = 12.12345;
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], {}, {
+    subscription: { status: 'unavailable', renewal: 'unknown', observedAtMs: now, staleAfterMs: HOUR,
+      enteredMonthlyPrice: { amount, currency: 'USD', enteredAtMs: now } },
+  });
+  const { formatUsageCost } = await import('@/utils/format/usageNumbers');
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps([read])} id="usage_plan_fit" testID="fit" />);
+  const row = screen.findHostByTestId('fit.plan.work')!;
+  expect(screen.findHostByTestId('fit.plan.work.figure')).not.toBeNull();
+  const value = t('usage.board.plans.planEntered', { amount: formatUsageCost(amount, 'USD') });
+  const reading = spokenPlanText(row).join(' ');
+  expect(reading.slice(0, value.length), reading).toBe(value);
+  expect(reading.split(value)).toHaveLength(2);
+  expect(reading.indexOf('Account work')).toBeGreaterThan(reading.indexOf(value));
+});
+
 it('gives projection series one named exact-values path and keeps repeated figures out of keyboard navigation', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,

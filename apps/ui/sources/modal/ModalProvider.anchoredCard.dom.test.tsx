@@ -32,6 +32,52 @@ const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMe
 const { HappierPressable } = await import('@happier-dev/plugin-ui/presentation');
 const { ChartTooltip } = await import('@/components/ui/charts/ChartTooltip');
 const { SelectionListFilterChip } = await import('@/components/ui/selectionList/SelectionListFilterChips');
+const { BoardSettingsButton } = await import('@/components/boards/header/BoardSettingsPopover');
+const { createWorkBoardV1 } = await import('@happier-dev/protocol/boards/workBoardV1');
+
+it('keeps Board Settings open and returns to Delete when its confirmation is canceled (J-B19)', async () => {
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const board = createWorkBoardV1({ id: 'confirm-board', name: 'Example Board' });
+    const dispatch = vi.fn();
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        return <ModalProvider>
+            <BoardSettingsButton board={board} homes={{ activeServerId: null, mountedServerIds: [], isHomeMounted: () => false }}
+                pickedCards={[]} canvasAvailable dispatch={dispatch} onRemoveItem={() => {}} onDeleted={() => {}}
+                open={open} onOpenChange={setOpen} onAddByHand={() => {}} />
+            <output data-testid="board-settings-open">{String(open)}</output>
+        </ModalProvider>;
+    }
+    const get = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+    try {
+        await act(async () => root.render(<Harness />));
+        await act(async () => { get('board-header.settings').focus(); get('board-header.settings').click(); });
+        await vi.waitFor(() => expect(get('board-settings.delete')).not.toBeNull());
+        const deleteButton = get('board-settings.delete');
+        expect(deleteButton.closest('[data-happy-modal-layer]')).toBeNull();
+        await act(async () => {
+            deleteButton.focus();
+            expect(document.activeElement).toBe(deleteButton);
+            deleteButton.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', code: 'Space', bubbles: true, cancelable: true }));
+        });
+        await vi.waitFor(() => {
+            const modalLayer = get('web-modal-cancel')?.closest('[data-happy-modal-layer]');
+            expect(modalLayer?.contains(document.activeElement)).toBe(true);
+        });
+        await act(async () => get('web-modal-cancel').click());
+        await vi.waitFor(() => expect(get('web-modal-cancel')).toBeNull());
+        expect(dispatch).not.toHaveBeenCalled();
+        expect(get('board-settings-open').textContent).toBe('true');
+        expect(get('board-settings.delete')).toBe(deleteButton);
+        await vi.waitFor(() => expect(document.activeElement).toBe(deleteButton));
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+    }
+});
+
 
 it('moves DOM focus with headerless listbox roving focus, skipping disabled choices', async () => {
     const container = document.createElement('div');

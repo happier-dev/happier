@@ -304,6 +304,39 @@ it('dismisses a desktop anchored popover only on focus departure, including from
     }
 });
 
+it('keeps a desktop anchored popover open as focus moves into its declared in-page boundary', async () => {
+    viewport.width = 1440;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const close = vi.fn();
+    function Harness() {
+        const trigger = React.useRef<HTMLButtonElement>(null);
+        const boundary = React.useRef<HTMLDivElement>(null);
+        return <>
+            <div ref={boundary}>
+                <button ref={trigger}>Customize</button>
+                <button data-testid="page-boundary">Related control</button>
+            </div>
+            <Popover open anchor={{ kind: 'view', ref: trigger }} portal={{ web: true }}
+                interactionBoundaryRef={boundary} onRequestClose={close}>
+                {() => <button data-testid="menu-item">Change section</button>}
+            </Popover>
+        </>;
+    }
+    const get = (id: string) => document.querySelector<HTMLButtonElement>(`[data-testid="${id}"]`)!;
+    try {
+        await act(async () => root.render(<Harness />));
+        await act(async () => { get('menu-item').focus(); get('page-boundary').focus(); });
+        expect(document.activeElement).toBe(get('page-boundary'));
+        expect(close).not.toHaveBeenCalled();
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        viewport.width = 390;
+    }
+});
+
 it('keeps a desktop anchored popover open when an inside label blurs Search', async () => {
     viewport.width = 1440;
     const container = document.createElement('div');

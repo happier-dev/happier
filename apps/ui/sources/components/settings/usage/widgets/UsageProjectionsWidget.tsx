@@ -26,6 +26,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Text } from '@/components/ui/text/Text';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { Typography } from '@/constants/Typography';
 import { getPreferredLanguage, t } from '@/text';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
@@ -551,16 +552,21 @@ function ProjectionHeadline(props: Readonly<{ window: UsagePlanWindow; nowMs: nu
       : null,
   ].filter(Boolean).join(' · ');
   const runsOut = pace.depletesAtMs !== null;
-  const figure = <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
-    label={runsOut ? t('usage.board.plans.projectionRunsOutLabel') : t('usage.board.plans.projectionUsedAtReset')}
-    value={runsOut ? formatMoment(pace.depletesAtMs!, props.nowMs) : Math.round(pace.projectedUsedFraction * 100)}
-    {...(runsOut ? {} : { valueFormatter: (value: number) => `~${value}%` })} showLabel caption={basis} />;
+  const projectedPercent = Math.round(pace.projectedUsedFraction * 100);
+  const value = runsOut ? formatMoment(pace.depletesAtMs!, props.nowMs) : `~${projectedPercent}%`;
+  const label = t(runsOut ? 'usage.board.plans.projectionRunsOutLabel' : 'usage.board.plans.projectionUsedAtReset');
   const exact = runsOut ? new Intl.DateTimeFormat(getPreferredLanguage(), { dateStyle: 'full', timeStyle: 'long' }).format(pace.depletesAtMs!)
     : formatHappierDataExactShare(pace.projectedUsedFraction, getPreferredLanguage());
+  const hasExactTooltip = runsOut || exact !== `${projectedPercent}%`;
+  const figure = <HappierDataMetric testID={props.testID} theme={chartTheme} size="stat"
+    label={label} value={runsOut ? value : projectedPercent}
+    {...(runsOut ? {} : { valueFormatter: () => value })} showLabel caption={basis} decorative={hasExactTooltip} />;
   return (
     <View style={styles.headline}>
-      {runsOut || exact !== `${Math.round(pace.projectedUsedFraction * 100)}%`
-        ? <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: props.window.label, value: exact, subtitle: basis }}>{figure}</ChartDatum> : figure}
+      {hasExactTooltip ? <>
+        <Text style={visuallyHiddenStyle}>{[value, label, basis].filter(Boolean).join(' · ')}</Text>
+        <ChartDatum testID={`${props.testID}.detail`} datum={{ keyboard: false, label: props.window.label, value: exact, subtitle: basis }}>{figure}</ChartDatum>
+      </> : figure}
       {runsOut ? (
         <NoticeLine
           testID={`${props.testID}.beforeReset`}

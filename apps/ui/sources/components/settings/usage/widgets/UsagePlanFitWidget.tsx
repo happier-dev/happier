@@ -5,6 +5,7 @@ import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Text } from '@/components/ui/text/Text';
+import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -297,15 +298,19 @@ function PlanRow(
   const value = props.insights?.value;
   const multiple = value?.status === 'available' && value.priceMultiple.status === 'available' ? value.priceMultiple.multiple : null;
   const known = Boolean(entered || price.paid || price.list);
-  const keyFact = multiple !== null
-    ? `${multiple.toLocaleString(getPreferredLanguage(), { maximumFractionDigits: 1 })}×`
-    : known ? priceText : null;
+  const shownMultiple = multiple?.toLocaleString(getPreferredLanguage(), { maximumFractionDigits: 1 });
+  const keyFact = shownMultiple !== undefined ? `${shownMultiple}×` : known ? priceText : null;
   const selectedPrice = entered ?? price.paid ?? price.list;
+  const exactPrice = selectedPrice ? formatHappierDataValue(selectedPrice.amount, getPreferredLanguage()) : null;
   const exactFigure = multiple !== null ? `${formatHappierDataValue(multiple, getPreferredLanguage())}×`
-    : selectedPrice ? `${selectedPrice.currency} ${formatHappierDataValue(selectedPrice.amount, getPreferredLanguage())}` : null;
-  const hiddenFigure = multiple !== null || selectedPrice !== null && selectedPrice !== undefined
-    && !priceText.includes(formatHappierDataValue(selectedPrice.amount, getPreferredLanguage()));
-  const figure = keyFact === null ? null : <Text style={[styles.price, text.title]} numberOfLines={1}>{keyFact}</Text>;
+    : selectedPrice && exactPrice && !priceText.includes(exactPrice) ? `${selectedPrice.currency} ${exactPrice}` : null;
+  const figure = keyFact === null ? null : (
+    <Text style={[styles.price, text.title]} numberOfLines={1}
+      aria-hidden={exactFigure !== null || undefined}
+      importantForAccessibility={exactFigure !== null ? 'no' : undefined}>
+      {keyFact}
+    </Text>
+  );
   // The verdict is the outcome ("never ran out in 242"); the counted windows stay in Details.
   const verdict = fit.observed === 0 ? null : fit.usedUp === 0
     ? t('usage.board.plans.fitNeverRanOut', { total: fit.observed })
@@ -318,7 +323,7 @@ function PlanRow(
     verdict ? fitWindow : null,
     verdict ?? (fit.reason === props.sharedFitReason ? null : fitText),
   ].filter(Boolean).join(' · ');
-  const figureNode = hiddenFigure && exactFigure ? <ChartDatum testID={`${props.testID}.figure`}
+  const figureNode = exactFigure !== null ? <ChartDatum testID={`${props.testID}.figure`}
     datum={{ keyboard: false, label: props.name.title, value: exactFigure, subtitle: [priceText, periodText, fitText].join(' · ') }}>{figure}</ChartDatum> : figure;
   const identity = <UsagePlanIdentity name={props.name} compact />;
   const secondaryLine = (
@@ -336,15 +341,20 @@ function PlanRow(
     <View
       testID={props.testID}
       style={styles.row}
-      accessibilityLabel={[props.name.title, priceText, periodText, paceText].filter(Boolean).join(', ')}
+      accessibilityLabel={[props.name.title, exactFigure !== null && multiple === null ? null : priceText, periodText, paceText].filter(Boolean).join(', ')}
     >
+      {exactFigure !== null ? (
+        <Text style={visuallyHiddenStyle}>
+          {shownMultiple === undefined ? keyFact : t('usage.board.plans.planValueMultiple', { multiple: shownMultiple })}
+        </Text>
+      ) : null}
       {/* The plan row itself opens its exact values and details at every widget size. */}
         <UsagePlanDisclosure loadExactHistory title={`${props.name.title}, ${t('usage.board.charts.showValues')}`} testID={`${props.testID}.details`}
           label={<>{identity}{secondaryLine}</>} trailing={figureNode}>
           <View style={styles.details}>
             {/* Terms first (what it costs, when it ends), then how it is being used, then what you can do. */}
             <View style={styles.terms}>
-              {hiddenFigure && exactFigure ? <Text style={[styles.fit, text.detail]}>{exactFigure}</Text> : null}
+              {exactFigure !== null ? <Text style={[styles.fit, text.detail]}>{exactFigure}</Text> : null}
               <Text style={[known ? styles.fit : styles.quiet, text.detail]}>{priceText}</Text>
               <Text style={[renewalKnown ? styles.fit : styles.quiet, text.detail]}>{periodText}</Text>
             </View>
