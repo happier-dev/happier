@@ -1,3 +1,11 @@
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
+import { waitForObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
+import { ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore } from '../connectedServices/accountGroups/quotas/ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore';
+import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from '../connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator';
+import { startDaemonConnectedServiceRuntime } from './startDaemonRuntimeBootstrap';
 import axios from 'axios';
 import { afterEach, expect, it, vi } from 'vitest';
 import { ApiClient } from '@/api/api';
@@ -141,6 +149,84 @@ it('coalesces startup quota wakes until the failed Home admission is due again',
     expect(attempts, 'ordinary wakes remain immediate after recovery').toEqual([0, tickMs, tickMs + 1_000]);
   } finally {
     await loop.stop();
+    vi.useRealTimers();
+  }
+});
+
+it('does not start quota reads for thirteen requester recoveries without a live quota target', async () => {
+  vi.useFakeTimers();
+  const credentials = { token: 'startup-requester-recovery-fixture', encryption: null };
+  const api = await ApiClient.create(credentials);
+  const registry = new ConnectedServiceRuntimeRegistry();
+  const reads: AbortSignal[] = [];
+  const observedErrors: unknown[] = [];
+  const active: NonNullable<Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>>['connectedServiceQuotasLoopHandle']>[] = [];
+  const release = new AbortController();
+  vi.stubGlobal('fetch', vi.fn<typeof fetch>(async () => new Response(JSON.stringify(FeaturesResponseSchema.parse({
+    features: { connectedServices: { enabled: true, quotas: { enabled: true } } }, capabilities: {},
+  })))));
+  resetServerFeaturesClientForTests();
+  vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+    const path = new URL(String(url)).pathname;
+    if (path !== '/v1/account/encryption') throw new Error(`Unexpected requester quota read: ${path}`);
+    const signal = config?.signal;
+    if (!(signal instanceof AbortSignal)) throw new Error('Scheduled Home read is missing its lifetime');
+    reads.push(signal);
+    await waitForObservation(new Promise<never>(() => {}), AbortSignal.any([signal, release.signal]));
+    throw new Error('Slow Home read unexpectedly settled');
+  });
+  const input = {
+    api, credentials, machineId: 'machine', machineIdProvider: () => 'machine',
+    runtimeId: 'startup-requester-recovery', activeServerDir: '/fixture/active', happyHomeDir: '/fixture/home',
+    processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false', HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0' },
+    trackedSessionsByKey: new Map(), connectedServiceRuntimeRegistry: registry,
+    providerAccountUsageStore: createProviderAccountUsageStore(),
+    connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+    connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+      credentialHealthSwitchLeases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry(),
+      switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+      applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
+      applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
+    },
+    logger: { debug: (_message: string, detail?: unknown) => observedErrors.push(detail), info() {}, warn() {} },
+    accountSettingsSnapshot: () => ({ source: 'network' as const, settings: accountSettingsParse({}),
+      settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [] }),
+  } satisfies Parameters<typeof startDaemonConnectedServiceRuntime>[0];
+  const registerTarget = (sessionId: string, pid: number) => registry.registerTarget({
+    pid, sessionId, agentId: 'codex', materializationKey: sessionId,
+    connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } } },
+  });
+  const createRequesterLoop = async (sessionId: string) => {
+    // The production requester registry can also see other Sessions on this Account.
+    const scopedRegistry = registry.scopeToRequester(() => true);
+    const binding = { requesterQuotaStartupSessionId: sessionId };
+    const runtime = await startDaemonConnectedServiceRuntime({ ...input, ...binding, connectedServiceRuntimeRegistry: scopedRegistry });
+    const handle = runtime.connectedServiceQuotasLoopHandle;
+    if (!handle) throw new Error('Requester quota loop did not start');
+    active.push(handle);
+    return handle;
+  };
+  try {
+    registerTarget('other-session-on-the-same-account', 99);
+    const recovered = await Promise.all(Array.from({ length: 13 }, (_, index) => createRequesterLoop(`archived-${index}`)));
+    await vi.advanceTimersByTimeAsync(10);
+    await Promise.all(recovered.map(handle => handle.stop()));
+    expect(reads, 'temporary recoveries issue zero whole-pass reads in the first second').toHaveLength(0);
+    expect(observedErrors.filter(error => typeof error === 'object' && error !== null && 'wakeReason' in error)).toEqual([]);
+
+    await createRequesterLoop('live');
+    registerTarget('live', 100);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads, 'an actual requester registration immediately admits its quota pass').toHaveLength(1);
+
+    await createRequesterLoop('other-session-on-the-same-account');
+    await vi.advanceTimersByTimeAsync(0);
+    expect(reads, 'a requester with an already registered target reads immediately').toHaveLength(2);
+  } finally {
+    release.abort();
+    await Promise.all(active.map(handle => handle.stop()));
+    vi.unstubAllGlobals();
+    resetServerFeaturesClientForTests();
     vi.useRealTimers();
   }
 });

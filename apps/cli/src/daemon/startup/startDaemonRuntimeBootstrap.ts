@@ -448,6 +448,7 @@ export async function startDaemonConnectedServiceRuntime(
     | 'resolveConnectedServiceQualifiedPurposeBindingSnapshot' | 'resolveQualifiedConnectedAccountPeerClass'
     | 'resolveQualifiedConnectedAccountPeerOperationTransport' | 'resolveConnectedAccountUsageIdentity' | 'activatePurposeBindings'> & Readonly<{
     accountSettingsSnapshot?: () => import('@/settings/accountSettings/activeAccountSettingsSnapshot').ActiveAccountSettingsSnapshot | null;
+    requesterQuotaStartupSessionId?: string | null;
     savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
     subscribeAccountSettingsSnapshot?: (listener: () => void, keys: ActiveAccountSettingsKeys) => () => void;
     connectedServicesMaterializationBaseDir?: string;
@@ -991,7 +992,12 @@ export async function startDaemonConnectedServiceRuntime(
       }),
       startLoop: (coordinator) => startConnectedServiceQuotasLoop({
         enabled: true,
-        runImmediately: true,
+        // A temporary requester can see other Sessions on its Account. Eager startup requires
+        // demand from its own Session. A later registration still wakes the loop.
+        runImmediately: !params.accountSettingsSnapshot || (
+          params.requesterQuotaStartupSessionId != null
+          && connectedServiceRuntimeRegistry.listQuotaTargets().some(target => target.sessionId === params.requesterQuotaStartupSessionId)
+        ),
         tickMs: quotasTickMs,
         subscribeWake: listener => subscribeCoordinatorWake(listener, ['usageQuotaNotificationsV1'], event => coordinator.invalidateInventory(event)),
         coordinator: createConnectedServiceQuotaLoopCoordinator({ coordinator,

@@ -47,6 +47,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   providerAccountUsageStore: ProviderAccountUsageStore;
   signal?: AbortSignal;
   coordinatorInput: Omit<CoordinatorInput, 'publishConnectedServiceObservation' | 'api' | 'credentials' | 'accountSettingsSnapshot' | 'subscribeAccountSettingsSnapshot'
+    | 'requesterQuotaStartupSessionId'
     | 'activeServerDir' | 'providerAccountUsageStore' | 'connectedServiceRuntimeQuotaSnapshots'
     | 'qualifiedConnectedAccountEstablishedRuntimeOwner' | 'listScheduledQualifiedConnectedAccounts'
     | 'listQualifiedConnectedAccountGroupQuotaTargets' | 'onQualifiedConnectedAccountCredentialUpdated'
@@ -214,6 +215,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   try {
     coordinators = await withHome(() => startDaemonConnectedServiceRuntime({ ...input.coordinatorInput,
     activeServerDir, api, credentials: bootstrap.credentials, accountSettingsSnapshot: () => savedSecrets.readSnapshot(),
+    requesterQuotaStartupSessionId: bootstrap.getBoundSessionId(),
     savedSecretOperationContext: savedSecrets,
     connectedServiceRuntimeRegistry,
     connectedServicesMaterializationBaseDir, runAccountOperation: withHome,

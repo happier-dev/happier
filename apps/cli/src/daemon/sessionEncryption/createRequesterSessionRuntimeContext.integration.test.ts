@@ -739,12 +739,14 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
         coordinatorProfiles = [];
         purposeRuntime.purposes.invalidate();
         vi.useFakeTimers();
+        const tickMs = 60_000;
         background = await runWithServerHttpBaseUrl('https://bob-home.test', () => startDaemonConnectedServiceRuntime({
           api: requester.api, credentials: requester.bootstrap.credentials, machineId: 'machine', machineIdProvider: () => 'machine',
           runtimeId: 'idle-loop', happyHomeDir: directory, activeServerDir: directory,
           logger: { debug: () => {}, info: () => {}, warn: () => {} },
           processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1', HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
-            HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0' },
+            HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0',
+            HAPPIER_CONNECTED_SERVICES_QUOTAS_TICK_MS: String(tickMs) },
           trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: loopRegistry,
           connectedServiceRuntimeQuotaSnapshots: requester.connectedServiceRuntimeQuotaSnapshots,
           providerAccountUsageStore: requester.providerAccountUsageStore,
@@ -760,6 +762,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
           connectedServiceQuotaFetcherDescriptors: [{ id: 'fixture-provider', createFetcher: () => ({ serviceId: 'openai-codex',
             loadQuota: async () => { providerReads++; throw new Error('Retired requester reached provider'); } }) }],
         }));
+        await vi.advanceTimersByTimeAsync(tickMs);
         await settleTicks();
         expect(background.connectedServiceRefreshLoopHandle).not.toBeNull();
         expect(background.connectedServiceQuotasLoopHandle).not.toBeNull();
