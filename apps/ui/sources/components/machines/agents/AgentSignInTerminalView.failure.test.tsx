@@ -11,6 +11,30 @@ const { AgentSignInTerminalView } = await import('./AgentSignInTerminalView');
 
 const handlers = { onOpenUrl: () => {}, onCheckAgain: vi.fn(), onClose: () => {} };
 
+it.each(['pane', 'sheet'] as const)('presents a dedicated device-code Copy beside Open (%s)', async layout => {
+    const onCopyDeviceCode = vi.fn();
+    const onOpenUrl = vi.fn();
+    const screen = await renderScreen(<AgentSignInTerminalView
+        testID="sign-in"
+        layout={layout}
+        agentTitle="CLI"
+        mark={null}
+        machineName="devbox"
+        session={{ phase: 'waiting', failure: null, terminalKey: 'login', authUrl: 'https://example.invalid/activate', startedAtMs: null }}
+        accountLabel={null}
+        terminal={null}
+        deviceCode="AB12-CD34"
+        handlers={{ ...handlers, onCopyDeviceCode, onOpenUrl }}
+    />);
+    try {
+        expect(screen.getTextContent()).toContain('AB12-CD34');
+        await screen.pressByTestIdAsync('sign-in.copyCode');
+        expect(onCopyDeviceCode).toHaveBeenCalledOnce();
+        expect(onOpenUrl).not.toHaveBeenCalled();
+        expect(screen.findByTestId('sign-in.openUrl')).not.toBeNull();
+    } finally { await screen.unmount(); }
+});
+
 function view(layout: 'pane' | 'sheet', failure = 'Machine is unreachable.') {
     return (
         <AgentSignInTerminalView

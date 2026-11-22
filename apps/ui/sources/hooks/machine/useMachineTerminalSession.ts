@@ -95,6 +95,7 @@ export function useMachineTerminalSession(params: Readonly<{
     /** An existing process owned by another lifecycle. Null waits for that owner;
      * undefined retains this controller's normal ensure/restart ownership. */
     attachedTerminalId?: string | null;
+    onAttachedOutput?: (terminalId: string, preview: string) => void;
 }>) {
     const rendererInstanceId = React.useId();
     const admission = useMachineTerminalActionAdmission({ terminalKey: params.terminalKey, workspace: params.workspace,
@@ -230,6 +231,13 @@ export function useMachineTerminalSession(params: Readonly<{
         return true;
     }, [bumpConnectionNonce]);
 
+    const onAttachedOutput = React.useCallback((state: TerminalSurfaceState) => {
+        const lifetime = admissionRef.current.lifetime;
+        if (state.terminalId && state.terminalId === params.attachedTerminalId && state.output
+            && lifetime?.isCurrent() && areServerAccountScopesEqual(state.scope, lifetime.scope)) {
+            params.onAttachedOutput?.(state.terminalId, state.output);
+        }
+    }, [params.attachedTerminalId, params.onAttachedOutput]);
     const {
         detectedUrl,
         outputRetention,
@@ -250,6 +258,7 @@ export function useMachineTerminalSession(params: Readonly<{
         terminalRendererHandleRef,
         clearNonceRef,
         hydrateOnRender: false,
+        onPreviewOutput: params.onAttachedOutput ? onAttachedOutput : undefined,
     });
     const recordTerminalExit = React.useCallback((exit?: Readonly<{ exitCode: number | null; signal: number | null }>) => {
         const state = updateSurfaceState(current => ({
@@ -670,7 +679,7 @@ export function useMachineTerminalSession(params: Readonly<{
                 });
                 setDetectedUrl(null);
             } else {
-                replaceSurfaceState({
+                const state = replaceSurfaceState({
                     ...cachedSurfaceState,
                     scope: authority.scope,
                     terminalId: ensured.terminalId,
@@ -678,6 +687,7 @@ export function useMachineTerminalSession(params: Readonly<{
                     cursorMode: replayPlan.initialCursor.mode,
                     exit: retainedExit,
                 });
+                if (params.onAttachedOutput && !retainedExit) onAttachedOutput(state);
                 hydrateTerminalRendererIfNeeded();
             }
             const rendererResource = params.terminalRef.current?.captureResource?.();
@@ -990,6 +1000,8 @@ export function useMachineTerminalSession(params: Readonly<{
         params.cwd,
         params.launch,
         params.attachedTerminalId,
+        params.onAttachedOutput,
+        onAttachedOutput,
         params.readOnly,
         params.sessionId,
         workspace,

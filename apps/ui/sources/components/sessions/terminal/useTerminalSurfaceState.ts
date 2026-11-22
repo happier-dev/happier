@@ -9,6 +9,7 @@ import {
     createEmptyTerminalSurfaceState,
     readTerminalSurfaceState,
     replaceTerminalSurfaceState,
+    type TerminalSurfaceState,
     updateTerminalSurfaceState,
 } from './terminalSurfaceStateCache';
 
@@ -27,6 +28,7 @@ export function useTerminalSurfaceState(params: Readonly<{
     terminalRendererHandleRef: React.MutableRefObject<EmbeddedTerminalRendererHandle | null>;
     clearNonceRef: React.MutableRefObject<number>;
     hydrateOnRender?: boolean;
+    onPreviewOutput?: (state: TerminalSurfaceState) => void;
 }>) {
     const initialSurfaceState = React.useMemo(
         () => readTerminalSurfaceState(params.terminalKey) ?? createEmptyTerminalSurfaceState(),
@@ -93,6 +95,16 @@ export function useTerminalSurfaceState(params: Readonly<{
         }));
     }, [params.clearNonceRef, params.cursorRef, params.terminalIdRef, params.terminalRef, params.terminalRendererHandleRef, updateSurfaceState]);
 
+    const recordTerminalPreviewOutput = React.useCallback((data: string) => {
+        if (!data) return;
+        const state = updateSurfaceState((current) => ({
+            ...appendTerminalPreviewText(current, data),
+            terminalId: params.terminalIdRef.current,
+            cursor: params.cursorRef.current,
+        }));
+        params.onPreviewOutput?.(state);
+    }, [params.cursorRef, params.onPreviewOutput, params.terminalIdRef, updateSurfaceState]);
+
     const writeTerminalOutput = React.useCallback((data: string) => {
         if (!data) {
             return true;
@@ -104,24 +116,9 @@ export function useTerminalSurfaceState(params: Readonly<{
                 return false;
             }
         }
-        updateSurfaceState((current) => ({
-            ...appendTerminalPreviewText(current, data),
-            terminalId: params.terminalIdRef.current,
-            cursor: params.cursorRef.current,
-        }));
+        recordTerminalPreviewOutput(data);
         return true;
-    }, [params.cursorRef, params.terminalIdRef, params.terminalRef, params.terminalRendererHandleRef, updateSurfaceState]);
-
-    const recordTerminalPreviewOutput = React.useCallback((data: string) => {
-        if (!data) {
-            return;
-        }
-        updateSurfaceState((current) => ({
-            ...appendTerminalPreviewText(current, data),
-            terminalId: params.terminalIdRef.current,
-            cursor: params.cursorRef.current,
-        }));
-    }, [params.cursorRef, params.terminalIdRef, updateSurfaceState]);
+    }, [params.terminalRef, params.terminalRendererHandleRef, recordTerminalPreviewOutput]);
 
     const hydrateTerminalRendererIfNeeded = React.useCallback(() => {
         const renderer = params.terminalRef.current;

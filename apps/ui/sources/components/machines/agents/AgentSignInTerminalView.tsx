@@ -19,6 +19,7 @@ import { t } from '@/text';
 export type AgentSignInTerminalHandlers = Readonly<{
     onOpenUrl: (url: string) => void;
     onCheckAgain: () => void;
+    onCopyDeviceCode?: () => void;
     onStartSession?: () => void;
     onClose: () => void;
 }>;
@@ -30,6 +31,7 @@ export type AgentSignInTerminalViewProps = Readonly<{
     session: MachineAgentSignInSession;
     /** Signed in: the account the agent's own probe reported, when it names one. */
     accountLabel: string | null;
+    deviceCode?: string | null;
     /** The live machine terminal running the agent's own login (the container mounts it). */
     terminal: React.ReactNode;
     /** `pane`: the bottom pane beside the terminal (wide). `sheet`: a phone sheet, the link first and the terminal behind a disclosure. */
@@ -87,6 +89,7 @@ function SidePanel(props: AgentSignInTerminalViewProps) {
             </View>
             {/* A failed start opened no browser; a failed check after one did. */}
             {session.phase !== 'failed' || session.authUrl ? <Text style={styles.lead}>{t('machineAgents.panelLead')}</Text> : null}
+            <DeviceCode value={props.deviceCode} onCopy={handlers.onCopyDeviceCode} testID={testID} />
             {session.authUrl ? <AuthUrl url={session.authUrl} onOpen={handlers.onOpenUrl} testID={testID} /> : null}
             {session.phase === 'failed' ? (
                 <SignInFailureLine agentTitle={props.agentTitle} failure={session.failure} onCheckAgain={handlers.onCheckAgain} testID={testID} />
@@ -130,6 +133,7 @@ function SignInSheet(props: AgentSignInTerminalViewProps) {
             ) : (
                 <>
                     {session.phase !== 'failed' || session.authUrl ? <Text style={styles.sheetLead}>{t('machineAgents.phoneLead', { agent: props.agentTitle, machine: props.machineName })}</Text> : null}
+                    <DeviceCode value={props.deviceCode} onCopy={handlers.onCopyDeviceCode} testID={testID} />
                     {session.authUrl ? (
                         <RoundButton testID={`${testID}.openUrl`} title={t('machineAgents.openSignInPage')} onPress={() => handlers.onOpenUrl(session.authUrl!)} />
                     ) : null}
@@ -192,6 +196,16 @@ function AuthUrl(props: Readonly<{ url: string; onOpen: (url: string) => void; t
             <Icon name="link" size={14} color={theme.colors.text.secondary} />
             <Text style={styles.urlText} numberOfLines={1}>{props.url.replace(/^https?:\/\//, '')}</Text>
             <RoundButton testID={`${props.testID}.openUrl`} size="small" display="secondary" title={t('machineAgents.open')} onPress={() => props.onOpen(props.url)} />
+        </View>
+    );
+}
+
+function DeviceCode(props: Readonly<{ value?: string | null; onCopy?: () => void; testID: string }>) {
+    if (!props.value || !props.onCopy) return null;
+    return (
+        <View style={styles.url}>
+            <Text style={styles.urlText} selectable>{props.value}</Text>
+            <RoundButton testID={`${props.testID}.copyCode`} size="small" display="secondary" title={t('common.copy')} onPress={props.onCopy} />
         </View>
     );
 }

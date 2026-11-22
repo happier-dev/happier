@@ -235,6 +235,11 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     checkAgain: () => executeIntent('status'),
     cancel: () => executeIntent('cancel'),
     restart: () => executeIntent('restart'),
+    copyTerminalDeviceCode: (terminalId: string, text: string) => {
+      if (!entry || !boundTarget?.lifetime.isCurrent() || entry.terminalId !== terminalId
+        || entry.state.phase !== 'waiting' || entry.terminalExited) return;
+      return execute('clipboard.write', { text }, { retainInvocation: true });
+    },
     reportTerminalUrl: (event: Pick<DaemonTerminalStreamEventUrl, 'kind' | 'url'> | null) => {
       if (entry && boundTarget?.lifetime.isCurrent() && event?.kind === 'auth' && entry.state.terminalKey) publish(entry, { authUrl: event.url });
     },
@@ -251,7 +256,7 @@ export function useAgentSignIn(target: Readonly<{ serverId?: string | null; mach
     reportTerminalFailure: (failure: string) => {
       if (entry && boundTarget?.lifetime.isCurrent() && entry.state.terminalKey) { entry.probeAbort?.abort(); publish(entry, { phase: 'failed', failure }); }
     },
-  }), [boundTarget, entry, executeIntent]);
+  }), [boundTarget, entry, execute, executeIntent]);
   return { ...state, state, terminalId: state.terminalKey ? entry?.terminalId ?? null : null,
     available: Boolean(boundTarget?.lifetime.isCurrent()),
     accountLabel: entry?.accountLabel ?? null, signInScope, ...actions };

@@ -19,6 +19,13 @@ import type { AgentSignInTerminalTarget } from './signInTerminalHost';
 /** The key of an agent's sign-in terminal on a machine; one per (machine, agent), reused on reopen. */
 export const agentSignInTerminalKey = machineAgentSignInTerminalKey;
 
+function readDeviceCode(preview: string): string | null {
+    const text = preview.replace(/\u001b\[[0-9;]*m/g, '');
+    const gitHub = /^! (?:First copy your one-time code: ([A-Z0-9]+-[A-Z0-9]+)|One-time code \(([A-Z0-9]+-[A-Z0-9]+)\) copied to clipboard)\r?\n/m.exec(text);
+    const codex = /^(?:2\. )?Enter this one-time code \(expires in [0-9]+ minutes\)\r?\n[ \t]*([A-Z0-9]+-[A-Z0-9]+)\r?\n/m.exec(text);
+    return gitHub?.[1] ?? gitHub?.[2] ?? codex?.[1] ?? null;
+}
+
 /**
  * The agent's own sign-in running in a machine terminal (lab T1), wired to the sign-in owner
  * (`useAgentSignIn`: phase, the link the CLI printed, the status probe) and one terminal session with the
@@ -36,6 +43,15 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
     const presence = useMachinePresenceSummary(props.serverId, props.machineId);
     const terminalRef = React.useRef<EmbeddedTerminalRendererHandle | null>(null);
     const notifiedExitTerminalRef = React.useRef<string | null>(null);
+    const [deviceCode, setDeviceCode] = React.useState<{ terminalId: string; code: string } | null>(null);
+    const recognizedTerminal = React.useRef<string | null>(null);
+    const onAttachedOutput = React.useCallback((terminalId: string, preview: string) => {
+        if (recognizedTerminal.current === terminalId) return;
+        const code = readDeviceCode(preview);
+        if (!code) return;
+        recognizedTerminal.current = terminalId;
+        setDeviceCode({ terminalId, code });
+    }, []);
     const terminalKey = signIn.terminalKey ?? agentSignInTerminalKey(props.machineId, props.agentId);
     const launch = React.useMemo(() => ({ kind: 'agent_login' as const, agentId: props.agentId }), [props.agentId]);
     const controller = useMachineTerminalSession({
@@ -47,6 +63,7 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
         machineRpcTargetAvailable: true,
         terminalKey,
         attachedTerminalId: signIn.terminalId,
+        onAttachedOutput,
         terminalRef,
         closeOnUnmount: false,
     });
@@ -91,10 +108,14 @@ export const AgentSignInTerminal = React.memo(function AgentSignInTerminal(props
             machineName={props.machineName}
             session={signIn}
             accountLabel={signIn.accountLabel}
+            deviceCode={signIn.phase === 'waiting' && deviceCode?.terminalId === signIn.terminalId ? deviceCode.code : null}
             terminal={terminal}
             handlers={{
                 onOpenUrl: (url) => { fireAndForget(openExternalUrl(url), { tag: 'AgentSignInTerminal.openUrl' }); },
                 onCheckAgain: () => { fireAndForget(signIn.checkAgain(), { tag: 'AgentSignInTerminal.checkAgain' }); },
+                onCopyDeviceCode: () => {
+                    if (deviceCode) fireAndForget(signIn.copyTerminalDeviceCode(deviceCode.terminalId, deviceCode.code), { tag: 'AgentSignInTerminal.copyDeviceCode', logError: false });
+                },
                 onClose: close,
                 ...(props.onStartSession ? { onStartSession: props.onStartSession } : {}),
             }}
