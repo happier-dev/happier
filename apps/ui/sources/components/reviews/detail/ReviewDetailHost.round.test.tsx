@@ -1,6 +1,11 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
+import { ExecutionRunGetRequestSchema, ExecutionRunPublicStateSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { standardCleanup } from '@/dev/testkit';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
+import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import {
   createSessionFilesViewFixture,
@@ -21,7 +26,7 @@ afterEach(async () => {
   fixture = undefined;
 });
 
-it('names each reviewer of a settled partial round with only the outcome the round proves, not the round state again', async () => {
+it('keeps a historical settled round aggregate-only when no individual outcome was persisted', async () => {
   fixture = await createSessionFilesViewFixture({
     serverUrl: 'https://review-round-reviewers.test',
     request: async (url) =>
@@ -91,27 +96,54 @@ it('names each reviewer of a settled partial round with only the outcome the rou
       .filter((child): child is string => typeof child === 'string')
       .join(' ') ?? '';
   try {
-    await vi.waitFor(() =>
-      expect(
-        screen.findHostByTestId('review-detail:participant:step-1-reviewer-1'),
-      ).not.toBeNull(),
-    );
-    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(
-      'Codex',
-    );
-    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(
-      t('reviewWalkthrough.collection.stateCompleted'),
-    );
-    // A reviewer the partial round does not vouch for is named by its place, never its positional id, and given no
-    // invented state: the round's record does not yet say which reviewer fell short.
-    expect(textOf('review-detail:participant:step-1-reviewer-2').trim()).toBe(
-      t('reviewWalkthrough.detail.reviewerRun', { count: 2 }),
-    );
-    // The section says who; the notice line already says the round was partial.
-    expect(textOf('review-detail:group:reviewers')).not.toContain(
-      t('reviewWalkthrough.collection.statePartial'),
-    );
+    await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:partial')).not.toBeNull());
+    expect(screen.findHostByTestId('review-detail:group:reviewers')).toBeNull();
+    const { ReviewDetailView } = await import('./ReviewDetailView');
+    await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
+    expect(textOf('review-detail:runs:empty')).toContain(t('reviewWalkthrough.collection.statePartial'));
   } finally {
     await screen.unmount();
   }
+});
+
+it('uses the same persisted reviewer results on the round, Runs, notice and Activity despite running execution markers', async () => {
+  // Stored output captured from the real P02 round start/settlement producer; no internal reader is mocked.
+  const reviewId = 'sealed-review';
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://sealed-review.test', request: async url =>
+    new URL(String(url)).pathname === '/v1/reviews/comments' ? Response.json({ items: [], cursor: null }) : Response.json({}, { status: 404 }),
+    rpc: request => {
+      if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
+      if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return { run: ExecutionRunPublicStateSchema.parse({
+        runId: ExecutionRunGetRequestSchema.parse(request.payload).runId, callId: 'call', sidechainId: 'side', intent: 'review',
+        backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'default', retentionPolicy: 'resumable',
+        runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: 5000 }) };
+      return undefined;
+    } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Addition', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Addition' }, body: JSON.stringify(settledRound),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const { formatElapsedDuration } = await import('@/components/machines/durationWords');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  const textOf = (id: string) => screen.findByTestId(id)?.findAll(node => typeof node.type === 'string')
+    .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
+  try {
+    await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.collection.statePartial')));
+    expect(textOf('review-detail:participant:second')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
+    expect(textOf('review-detail:partial')).toContain('Claude reviewer');
+    expect(textOf('review-detail:partial')).not.toContain('Codex reviewer');
+    await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
+    expect(textOf('review-detail:run:claude')).toContain('Claude reviewer');
+    expect(textOf('review-detail:run:claude')).toContain(t('reviewWalkthrough.collection.statePartial'));
+    expect(textOf('review-detail:run:claude')).toContain(formatElapsedDuration(7000));
+    expect(textOf('review-detail:run:claude')).not.toContain(t('reviewWalkthrough.collection.stateRunning'));
+    expect(textOf('review-detail:run:codex')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
+    expect(textOf('review-detail:run:codex')).toContain(formatElapsedDuration(3000));
+    await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('activity'));
+    expect(textOf('review-activity:reviewer:1:first')).toContain('Claude reviewer');
+    expect(textOf('review-activity:reviewer:1:second')).toContain('Codex reviewer');
+  } finally { await screen.unmount(); }
 });

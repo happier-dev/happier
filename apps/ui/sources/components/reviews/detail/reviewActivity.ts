@@ -1,4 +1,3 @@
-import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ReviewArtifactV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import type { ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewVerdictKindV1 } from '@happier-dev/protocol/reviews/reviewHumanV1';
@@ -6,26 +5,20 @@ import {
   readReviewFindingDecisionV1,
   type ReviewFindingDecisionV1,
 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
+import { projectReviewRoundReviewers, type ReviewRoundReviewerOutcome, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
 
 type Round = Pick<
   ReviewArtifactV1['rounds'][number],
-  'ordinal' | 'state' | 'startedAt' | 'finishedAt'
+  'ordinal' | 'state' | 'startedAt' | 'finishedAt' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes' | 'runs'
 >;
-type RunRead = Readonly<{
-  runId: string;
-  status: ExecutionRunPublicState['status'];
-  finishedAtMs?: number;
-  findingsCount: number | null;
-  backendTarget: ExecutionRunPublicState['backendTarget'];
-}>;
 
 /** Who did it: a person (the viewer reads "You"), an Agent acting in a session, or a reviewer run. */
 export type ReviewActivityActor =
   | Readonly<{ kind: 'account'; accountId: string }>
   | Readonly<{ kind: 'agent'; agentId: string }>
   | Readonly<{
-      kind: 'run';
-      backendTarget: ExecutionRunPublicState['backendTarget'];
+      kind: 'reviewer';
+      name: string;
     }>;
 
 export type ReviewActivityEvent = Readonly<{
@@ -41,8 +34,7 @@ export type ReviewActivityEvent = Readonly<{
       }>
     | Readonly<{ kind: 'fixed'; title: string }>
     | Readonly<{ kind: 'verdict'; verdict: ReviewVerdictKindV1 }>
-    | Readonly<{ kind: 'runFinished'; findingsCount: number | null }>
-    | Readonly<{ kind: 'runDidntFinish' }>
+    | Readonly<{ kind: 'reviewerFinished'; outcome: Exclude<ReviewRoundReviewerOutcome, 'running'> }>
     | Readonly<{
         kind: 'roundStarted' | 'roundFinished';
         round: number;
@@ -71,7 +63,7 @@ export function projectReviewActivity(
       verdict: ReviewVerdictKindV1;
       submittedAt: number;
     }>[];
-    runs: readonly RunRead[];
+    runReads?: ReadonlyMap<string, ReviewRoundReviewerRead>;
   }>,
 ): readonly ReviewActivityEvent[] {
   const events: ReviewActivityEvent[] = [];
@@ -93,6 +85,11 @@ export function projectReviewActivity(
         round: round.ordinal,
         state: round.state,
       });
+    for (const reviewer of projectReviewRoundReviewers(round, input.runReads)) {
+      if (reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
+      events.push({ id: `reviewer:${round.ordinal}:${reviewer.reviewerId}`, at: reviewer.finishedAt,
+        actor: { kind: 'reviewer', name: reviewer.name }, kind: 'reviewerFinished', outcome: reviewer.outcome });
+    }
   }
   for (const comment of input.comments) {
     const title = comment.finding?.title;
@@ -125,19 +122,6 @@ export function projectReviewActivity(
       kind: 'verdict',
       verdict: verdict.verdict,
     });
-  }
-  for (const run of input.runs) {
-    if (run.status === 'running' || run.finishedAtMs === undefined) continue;
-    const base = {
-      id: `run:${run.runId}`,
-      at: run.finishedAtMs,
-      actor: { kind: 'run' as const, backendTarget: run.backendTarget },
-    };
-    events.push(
-      run.status === 'succeeded'
-        ? { ...base, kind: 'runFinished', findingsCount: run.findingsCount }
-        : { ...base, kind: 'runDidntFinish' },
-    );
   }
   return events.sort((left, right) => right.at - left.at);
 }

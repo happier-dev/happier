@@ -46,7 +46,8 @@ describe('Review page people', () => {
   it('draws no reviewers row for a round only people review', () => {
     const round = projectRound({ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] });
     expect(round.groups).toEqual([]);
-    const reviewed = projectRound({ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0'], runs: [] });
+    const reviewed = projectRound({ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0'], runs: [],
+      reviewerOutcomes: [{ reviewerId: 's0:r0', outcome: 'completed' }] });
     expect(reviewed.groups.map(group => group.id)).toEqual(['reviewers']);
   });
 });

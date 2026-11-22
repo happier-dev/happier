@@ -1,0 +1,49 @@
+{
+  "v": 1,
+  "rounds": [
+    {
+      "ordinal": 1,
+      "state": "partial",
+      "startedAt": 1000,
+      "finishedAt": 10000,
+      "reviewerIds": [
+        "first",
+        "second"
+      ],
+      "runs": [
+        {
+          "kind": "execution",
+          "runId": "claude",
+          "machineId": "m1"
+        },
+        {
+          "kind": "execution",
+          "runId": "codex",
+          "machineId": "m1"
+        }
+      ],
+      "reviewerDisplayNames": {
+        "first": "Claude reviewer",
+        "second": "Codex reviewer"
+      },
+      "reviewerOutcomes": [
+        {
+          "reviewerId": "first",
+          "displayName": "Claude reviewer",
+          "outcome": "partial",
+          "runId": "claude",
+          "startedAt": 2000,
+          "finishedAt": 9000
+        },
+        {
+          "reviewerId": "second",
+          "displayName": "Codex reviewer",
+          "outcome": "completed",
+          "runId": "codex",
+          "startedAt": 3000,
+          "finishedAt": 6000
+        }
+      ]
+    }
+  ]
+}

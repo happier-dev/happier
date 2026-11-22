@@ -1,5 +1,7 @@
 import { expect, it } from 'vitest';
 import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
+import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
+import { ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 
 const { projectReviewActivity } = await import('./reviewActivity');
 
@@ -35,43 +37,27 @@ it('lists who did what to the Review, newest first: decisions, fixes, verdicts, 
         fromState: 'proposed' as const,
         toState: 'open' as const,
         reviewTriageStatus: 'accept' as const,
-        transitionedAt: 30,
+        transitionedAt: 30000,
         transitionedBy: { kind: 'user' as const, userId: 'alice' },
       },
       {
         transitionId: 't2',
         fromState: 'open' as const,
         toState: 'resolved' as const,
-        transitionedAt: 50,
+        transitionedAt: 50000,
         transitionedBy: { kind: 'user' as const, userId: 'bob' },
       },
     ],
   };
   const events = projectReviewActivity({
-    rounds: [{ ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 20 }],
+    rounds: ReviewArtifactBodyV1Schema.parse(settledRound).rounds,
     comments: [withHistory],
     verdicts: [
       {
         accountId: 'bob',
         roundOrdinal: 1,
         verdict: 'approve',
-        submittedAt: 60,
-      },
-    ],
-    runs: [
-      {
-        runId: 'run-1',
-        status: 'succeeded',
-        finishedAtMs: 15,
-        findingsCount: 4,
-        backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
-      },
-      {
-        runId: 'run-2',
-        status: 'failed',
-        finishedAtMs: 16,
-        findingsCount: null,
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
+        submittedAt: 60000,
       },
     ],
   });
@@ -79,20 +65,20 @@ it('lists who did what to the Review, newest first: decisions, fixes, verdicts, 
   expect(
     events.map((event) => [event.at, event.actor?.kind ?? null, event.kind]),
   ).toEqual([
-    [60, 'account', 'verdict'],
-    [50, 'account', 'fixed'],
-    [30, 'account', 'decided'],
-    [20, null, 'roundFinished'],
-    [16, 'run', 'runDidntFinish'],
-    [15, 'run', 'runFinished'],
-    [1, null, 'roundStarted'],
+    [60000, 'account', 'verdict'],
+    [50000, 'account', 'fixed'],
+    [30000, 'account', 'decided'],
+    [10000, null, 'roundFinished'],
+    [9000, 'reviewer', 'reviewerFinished'],
+    [6000, 'reviewer', 'reviewerFinished'],
+    [1000, null, 'roundStarted'],
   ]);
   expect(events.find((event) => event.kind === 'decided')).toMatchObject({
     actor: { accountId: 'alice' },
     title: 'Totals subtract',
     decision: 'accept',
   });
-  expect(events.find((event) => event.kind === 'runFinished')).toMatchObject({
-    findingsCount: 4,
+  expect(events.find((event) => event.id === 'reviewer:1:first')).toMatchObject({
+    actor: { name: 'Claude reviewer' }, outcome: 'partial',
   });
 });

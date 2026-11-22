@@ -7,10 +7,7 @@ import { hasAgentIconMark, isBundledAgentId } from '@/agents/catalog/catalog';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import {
-  resolveExecutionRunAgentMarkId,
-  resolveExecutionRunBackendLabel,
-} from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
+import { reviewRoundReviewerOutcomeLabel } from '../reviewRoundReviewers';
 import { reviewFindingDecisionLabel } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import {
   presentSharePrincipal,
@@ -149,13 +146,7 @@ function presentActor(
       ) : null,
     };
   }
-  const markId = resolveExecutionRunAgentMarkId(actor.backendTarget, theme);
-  return {
-    label:
-      resolveExecutionRunBackendLabel(actor.backendTarget) ??
-      t('reviewWalkthrough.detail.reviewerRun', { count: 1 }),
-    mark: markId ? <AgentIcon agentId={markId} size={ICON_SIZE.sm} /> : null,
-  };
+  return { label: actor.name, mark: null };
 }
 
 function eventSentence(event: ReviewActivityEvent): string {
@@ -169,14 +160,8 @@ function eventSentence(event: ReviewActivityEvent): string {
       return t('reviewWalkthrough.detail.eventFixed', { title: event.title });
     case 'verdict':
       return t(VERDICT_WORDS[event.verdict]);
-    case 'runFinished':
-      return event.findingsCount === null
-        ? t('reviewWalkthrough.detail.eventRunFinished')
-        : t('reviewWalkthrough.detail.eventRunFinishedWith', {
-            count: event.findingsCount,
-          });
-    case 'runDidntFinish':
-      return t('reviewWalkthrough.detail.eventRunDidntFinish');
+    case 'reviewerFinished':
+      return reviewRoundReviewerOutcomeLabel(event.outcome);
     case 'roundStarted':
       return t('reviewWalkthrough.detail.eventRoundStarted', {
         round: event.round,
