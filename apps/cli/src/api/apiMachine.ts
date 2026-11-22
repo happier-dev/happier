@@ -4765,7 +4765,10 @@ export class ApiMachineClient {
         const installation = readInstallationIdentityIfExistsSync();
         const socket = this.socket;
         // These checks run before the Project handler can attempt any effect.
-        const unavailable = () => ({ kind: 'refused', code: 'project_open_unavailable', effectAttempted: false } as const);
+        const unavailable = (phase: string) => ({
+            kind: 'refused', code: 'project_open_unavailable', effectAttempted: false,
+            failureCause: { phase, errorClass: 'Error', errorCode: 'project_open_unavailable', httpStatus: null },
+        } as const);
         if (!socket?.connected || !installation || !authorization || !requesterAuthorization || !admission || !envelope
             || requesterAuthorization.token !== authorization.token || !isDeepStrictEqual(requesterAuthorization.binding, authorization.binding)
             || !requesterAuthorization.requesterAccountProjection || !requesterAuthorization.requesterHttpProjection
@@ -4778,14 +4781,20 @@ export class ApiMachineClient {
             || configuration.activeServerId !== this.machineRuntimeServerId
             || !isExternalActionAuthorizationBoundToEnvelope(authorization.binding,
                 { actionId: 'projects.open', machineId: this.machine.id, envelope })
-            || envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)
-            || !context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) return unavailable();
+            || envelope.v === 1 && !sameStrictJsonValue(envelope.input, request)) return unavailable('projects.open.admission');
+        if (!context.verifyMachineAdmissionCurrent || !await context.verifyMachineAdmissionCurrent()) {
+            return unavailable('projects.open.admission_currentness');
+        }
         const homeId = await this.readWorkspaceSyncHomeIdentity({ effectful: true, ...(context.signal ? { signal: context.signal } : {}) });
-        if (homeId !== authorization.binding.serverIdentityId
-            || !await isServerProfileHomeIdentity(this.machineRuntimeServerId, request.serverId)
-            || this.socket !== socket || !socket.connected
+        if (homeId !== authorization.binding.serverIdentityId) return unavailable('projects.open.target_home');
+        if (!await isServerProfileHomeIdentity(this.machineRuntimeServerId, request.serverId)) {
+            return unavailable('projects.open.target_profile');
+        }
+        if (this.socket !== socket || !socket.connected
             || configuration.activeServerId !== this.machineRuntimeServerId
-            || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) return unavailable();
+            || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) {
+            return unavailable('projects.open.target_currentness');
+        }
         return OpenProjectResultV1Schema.parse(await this.rpcHandlerManager.invokeLocal(RPC_METHODS.PROJECTS_OPEN, request, {
             ...(context.signal ? { signal: context.signal } : {}), localActionContext: context,
             // This owner validated the exact admitted root above. Preserve that

@@ -301,7 +301,8 @@ it.each([
   if (losesProfileIdentity) {
     expect(ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId: artifact.id }))).toMatchObject({
       status: 'failed',
-      execution: { ok: false, errorCode: 'project_open_unavailable', effectAttempted: false },
+      execution: { ok: false, errorCode: 'project_open_unavailable', effectAttempted: false,
+        failureCause: { phase: 'projects.open.target_profile', errorCode: 'project_open_unavailable' } },
     });
     expect(rows).toHaveLength(0);
     return;
