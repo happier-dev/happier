@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 import * as React from 'react';
+import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WorkflowTriggerSetV1Schema} from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
@@ -1563,14 +1564,14 @@ describe('Account Workflow Library and settings', () => {
         }
     });
 
-    it('keeps Library coverage partial until Account Workflows are read, then counts their membership', async () => {
+    it('keeps Library coverage unavailable until Account Workflows are read, then counts their membership', async () => {
         const read = createDeferred<void>();
         listReply = async () => { await read.promise; return listRows(); };
         try {
             const library = await renderHook(() => useWorkflowLibraryView(true));
             await waitForHomeGovernance(() => expect(library.getCurrent().library.status).toBe('loaded'));
             expect(library.getCurrent().accountWorkflows.status).toBe('loading');
-            expect(library.getCurrent().libraryCoverage).toBe('partial');
+            expect(library.getCurrent().libraryCoverage).toBe('unavailable');
             serve(fixture());
             await act(async () => read.resolve());
             await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
@@ -1588,7 +1589,7 @@ describe('Account Workflow Library and settings', () => {
             const library = await renderHook(() => useWorkflowLibraryView(true));
             await waitForHomeGovernance(() => expect(library.getCurrent().library.status).toBe('loaded'));
             expect(library.getCurrent().accountWorkflows.status).toBe('loading');
-            expect(library.getCurrent().libraryCoverage).toBe('partial');
+            expect(library.getCurrent().libraryCoverage).toBe('unavailable');
             await act(async () => read.resolve());
             await waitForHomeGovernance(() => expect(library.getCurrent().libraryCoverage).toBe('complete'));
             expect(library.getCurrent().accountWorkflows.status).toBe('ready');
@@ -1779,6 +1780,7 @@ describe('Account Workflow Library and settings', () => {
     });
     it('reviews legacy toggles before converting and keeps a cancelled change untouched', async () => {
         const set = fixture(true); serve(set);
+        home.answer(serverId, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, { body: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) });
         const screen = await renderAccountScreen(<AccountTriggersSection />);
         const toggle = screen.findByTestId('workflows-column:trigger:digest-switch');
         await act(async () => toggle?.props.onValueChange(false));

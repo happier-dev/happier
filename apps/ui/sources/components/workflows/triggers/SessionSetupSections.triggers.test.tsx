@@ -704,10 +704,10 @@ describe('the Session Info page Automations section', () => {
       </PluginSurfaceFocusEligibilityProvider>;
       const screen = await renderScreen(host());
       await settle();
-      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-starts-unavailable'), screen.getTextContent()).not.toBeNull());
+      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-starts-offline')).not.toBeNull());
       await screen.update(host(true));
       expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true);
-      expect(screen.findByTestId('subject-triggers-starts-unavailable')).toBeNull();
+      expect(screen.findByTestId('subject-triggers-starts-offline')).toBeNull();
     });
 
     it('keeps a settled Habit read failure and its retry visible even when the Machine is offline', async () => {
