@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
-import { isScmLocalRepositoryReadRpcMethod, isScmRunStartRpcPurpose, requiresExplicitScmMachineTarget, SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { isScmLocalRepositoryReadRpcMethod, requiresExplicitScmMachineTarget, SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { isExecutionRunStartRpcPurpose } from './executionRunStartRpcPurpose.js';
 import { SESSION_RPC_METHODS } from '../rpc/methods.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 
@@ -49,11 +50,18 @@ describe('SCM Action parity', () => {
   it.each(['scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest', 'scm.diffSummary.refine',
     'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'])('binds the nested Run Start purpose for %s', actionId => {
     const method = `session:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;
-    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', method)).toBe(true);
-    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.send', method)).toBe(false);
-    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', `session:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`)).toBe(false);
-    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
-    expect(isScmRunStartRpcPurpose('scm.diffSummary.result.read', 'execution.run.start', method)).toBe(false);
+    expect(isExecutionRunStartRpcPurpose(actionId, 'execution.run.start', method)).toBe(true);
+    expect(isExecutionRunStartRpcPurpose(actionId, 'execution.run.send', method)).toBe(false);
+    expect(isExecutionRunStartRpcPurpose(actionId, 'execution.run.start', `session:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`)).toBe(false);
+    expect(isExecutionRunStartRpcPurpose(actionId, 'execution.run.start', SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
+    expect(isExecutionRunStartRpcPurpose('scm.diffSummary.result.read', 'execution.run.start', method)).toBe(false);
+  });
+
+  it('binds direct Review Start without promoting narration or follow-up roots to Start', () => {
+    const method = `session:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;
+    expect(isExecutionRunStartRpcPurpose('review.start', 'execution.run.start', method)).toBe(true);
+    expect(isExecutionRunStartRpcPurpose('review.walkthrough', 'execution.run.start', method)).toBe(false);
+    expect(isExecutionRunStartRpcPurpose('review.follow_up', 'execution.run.start', method)).toBe(false);
   });
 
   it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get', 'scm.suggestion.apply', 'scm.diffSummary.capture'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {

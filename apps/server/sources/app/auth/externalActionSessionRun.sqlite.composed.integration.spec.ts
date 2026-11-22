@@ -39,7 +39,7 @@ describe('signed Account Session Run RPC admission', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'execution.run.start' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'scm.diffSummary.generate', preflight = false) {
+    async function fixture(actionId: 'execution.run.start' | 'execution.run.ensure' | 'execution.run.ensure_or_start' | 'scm.diffSummary.generate' | 'review.start', preflight = false) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id,
@@ -47,7 +47,7 @@ describe('signed Account Session Run RPC admission', () => {
             metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'session-key' } });
-        const methodSuffix = preflight ? RPC_METHODS.CAPABILITIES_DESCRIBE : actionId === 'execution.run.start' || actionId === 'scm.diffSummary.generate' ? SESSION_RPC_METHODS.EXECUTION_RUN_START
+        const methodSuffix = preflight ? RPC_METHODS.CAPABILITIES_DESCRIBE : actionId === 'execution.run.start' || actionId === 'scm.diffSummary.generate' || actionId === 'review.start' ? SESSION_RPC_METHODS.EXECUTION_RUN_START
             : actionId === 'execution.run.ensure' ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE : SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START;
         const params = preflight ? {} : actionId === 'scm.diffSummary.generate'
             ? ExecutionRunStartRequestSchema.parse({ kind: EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary,
@@ -55,8 +55,16 @@ describe('signed Account Session Run RPC admission', () => {
                 permissionMode: readLlmTaskPermissionModeV1('scm_diff_summary'), retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
                 intentInput: { cwd: '/repository', source: { kind: 'workingTree' }, comparisonId: 'a'.repeat(64), resultId: 'result', expectedRevision: 1,
                     outputs: ['summary', 'walkthrough', 'commitPlan'] } })
+            : actionId === 'review.start' ? ExecutionRunStartRequestSchema.parse({
+                intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Inspect owned total.cjs.',
+                permissionMode: 'read-only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'streaming' })
             : { runId: 'run-voice' };
-        const input: Record<string, string> = preflight ? { sessionId: session.id } : { sessionId: session.id, runId: 'run-voice' };
+        // The U8 attached start is an Account Review root addressed to its existing Session.
+        const input = !preflight && actionId === 'review.start' ? { sessionId: session.id, cwd: '/repository',
+            reviewers: [{ kind: 'engine', engineId: 'claude' }], instructions: 'Inspect owned total.cjs.',
+            scope: 'repository', permissionMode: 'read_only', then: 'report', notifyParentOnCompletion: false,
+            reviewCommentAuthorIntent: 'open', childSelection: 'agentDefault' }
+            : preflight ? { sessionId: session.id } : { sessionId: session.id, runId: 'run-voice' };
         const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: machine.id }, input };
         const root = ExternalActionExecutionAuthorizationV1Schema.parse(await auth.mintExternalActionExecutionAuthorization({
             serverIdentityId: await getOrCreateServerIdentityId(), accountId: account.id,
@@ -68,7 +76,7 @@ describe('signed Account Session Run RPC admission', () => {
             credentials: { token: await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' }) },
             invocation: { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' },
             purpose: { kind: 'machine_rpc', method: methodSuffix, params }, installationPublicKey: new Uint8Array(keys.publicKey), randomBytes: nacl.randomBytes });
-        const effectActionId = actionId === 'scm.diffSummary.generate' ? 'execution.run.start' : actionId;
+        const effectActionId = actionId === 'scm.diffSummary.generate' || actionId === 'review.start' ? 'execution.run.start' : actionId;
         const packet = (sessionId = preflight ? machine.id : session.id, signingKey = keys.secretKey) => {
             const method = `${sessionId}:${methodSuffix}`;
             const requestId = randomUUID();
@@ -97,7 +105,7 @@ describe('signed Account Session Run RPC admission', () => {
                 { ...forged, resolveCurrentSessionMachine: f.resolveCurrentSessionMachine })).toBeNull();
         });
 
-    async function relayFixture(publisherOnOtherMachine = false, actionId: 'execution.run.start' | 'scm.diffSummary.generate' = 'execution.run.start',
+    async function relayFixture(publisherOnOtherMachine = false, actionId: 'execution.run.start' | 'scm.diffSummary.generate' | 'review.start' = 'execution.run.start',
         receive?: (issued: Awaited<ReturnType<typeof fixture>>, packet: SocketRpcRequestPayload) => Promise<unknown>) {
         const f = await fixture(actionId);
         const publisherMachine = publisherOnOtherMachine
@@ -158,12 +166,12 @@ describe('signed Account Session Run RPC admission', () => {
             authorization: { kind: 'session.write', sessionId: f.session.id } });
     });
 
-    it('admits the issued SCM root through the relay and real daemon requester preparation', async () => {
+    it.each(['scm.diffSummary.generate', 'review.start'] as const)('admits the issued %s root through the relay and real daemon requester preparation', async actionId => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const get = vi.spyOn(axios, 'get');
         const post = vi.spyOn(axios, 'post');
         try {
-            const f = await relayFixture(false, 'scm.diffSummary.generate', async (issued, packet) => {
+            const f = await relayFixture(false, actionId, async (issued, packet) => {
                 const credentials = { token: await auth.createToken(issued.account.id, undefined,
                     { kind: 'account', authority: 'present_user' }), encryption: null };
                 const settings = prepareAccountSettingsV2Content({ credentials, raw: {}, envelopeKind: 'plain' });
@@ -223,12 +231,12 @@ describe('signed Account Session Run RPC admission', () => {
             const ack = vi.fn();
             await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, f.packet, ack);
             expect(ack).toHaveBeenCalledWith({ ok: true, result: { runId: 'scm-admitted',
-                requesterAccountId: f.account.id, hasRequesterExecutor: true, rootActionId: 'scm.diffSummary.generate' } });
+                requesterAccountId: f.account.id, hasRequesterExecutor: true, rootActionId: actionId } });
         } finally { get.mockRestore(); post.mockRestore(); await channel.close(); }
     });
 
-    it('keeps SCM Start isolated to its signed installation, Account and current Session publisher', async () => {
-        const f = await relayFixture(true, 'scm.diffSummary.generate');
+    it.each(['scm.diffSummary.generate', 'review.start'] as const)('keeps %s Start isolated to its signed installation, Account and current Session publisher', async actionId => {
+        const f = await relayFixture(true, actionId);
         const ack = vi.fn();
         await triggerSocketHandler(f.caller, SOCKET_RPC_EVENTS.CALL, f.packet, ack);
         expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));

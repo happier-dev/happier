@@ -21,7 +21,7 @@ import { PLUGIN_COLLECTION_SHARING_HTTP_PATHS_V1 as collectionSharingPaths,
     PluginCollectionSharingCensusRequestV1Schema, PluginCollectionSharingCommitKeysRequestV1Schema,
 } from '@happier-dev/protocol/plugins/data/collectionSharingV1';
 import { readHomeConfigEnv } from '@/app/home/settings/homeSettings';
-import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
+import { isExecutionRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { homeDomainActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_GROUP_CREATE_ACTION_ID_V1, isTeamGroupUpdateActionIdV1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { TEAM_CREDENTIAL_CREATE_ACTION_ID_V1, TEAM_CREDENTIAL_GET_ACTION_ID_V1,
@@ -5798,7 +5798,7 @@ export async function verifyExternalActionMachineRpcExecution(
         return admitted.verified;
     }
 
-    const scmRunStartPurpose = isScmRunStartRpcPurpose(binding.actionId, execution.effectActionId, request.method)
+    const nestedRunStartPurpose = isExecutionRunStartRpcPurpose(binding.actionId, execution.effectActionId, request.method)
         && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL);
     // Any Session-routed method spends its own signed root at the addressed
     // Session; the router admits that Session's access and current publisher.
@@ -5814,7 +5814,7 @@ export async function verifyExternalActionMachineRpcExecution(
         ? request.method.slice(0, separator) : null;
     const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
         && sessionRule?.routeToSessionOwnerDaemon
-        && (binding.actionId === execution.effectActionId || scmRunStartPurpose)
+        && (binding.actionId === execution.effectActionId || nestedRunStartPurpose)
         && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
         ? request.method.slice(0, separator) : null;
     const sessionRpcTarget = abortSessionId ? { sessionId: abortSessionId, homeAdmittedAbort: true as const }
@@ -5907,7 +5907,7 @@ export async function verifyExternalActionMachineRpcExecution(
                     machineId: request.method.slice(0, Math.max(separator, 0)), installationId: execution.installationId,
                 }, execution.reviewedChild)
                 : resolveMachineRpcExternalActionEffectV1(method, binding);
-        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose && (binding.actionId !== execution.effectActionId
+        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !nestedRunStartPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
@@ -5955,7 +5955,7 @@ export async function verifyExternalActionMachineRpcExecution(
     const currentPrincipal = await verifyCurrentExternalActionPrincipal(binding);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return null;
-    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose || projectPrepareReviewPurpose || reviewScmPreparationPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
+    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || nestedRunStartPurpose || projectPrepareReviewPurpose || reviewScmPreparationPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
     if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),

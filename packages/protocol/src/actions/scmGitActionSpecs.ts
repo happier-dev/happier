@@ -99,13 +99,6 @@ export function isScmDiffSummaryRunAction(actionId: string): actionId is 'scm.di
     || actionId === 'scm.diffSummary.discuss';
 }
 
-/** Home and the receiving host share the SCM root's declared nested Run effect. */
-export function isScmRunStartRpcPurpose(actionId: string, effectActionId: string | null, method: string): boolean {
-  const separator = method.indexOf(':');
-  return isScmDiffSummaryRunAction(actionId) && effectActionId === 'execution.run.start'
-    && separator > 0 && method.slice(separator + 1) === SESSION_RPC_METHODS.EXECUTION_RUN_START;
-}
-
 /** Named metadata keeps declaration emission bounded without widening the wire schemas. */
 export type ScmActionSpecDefinition<
   TId extends ActionId,

@@ -3,7 +3,7 @@ import { isPluginError, type PluginErrorContractData } from '@happier-dev/protoc
 import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '@happier-dev/sync-client';
 import { SocketRpcContinuationReturnV1Schema } from '@happier-dev/protocol/socketRpc';
 import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
-import { isScmRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { isExecutionRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isReviewScmPreparationEffectV1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 /**
@@ -767,7 +767,7 @@ export class RpcHandlerManager {
             const methodMatches = sessionTransitionInput
                 || resolveSocketRpcSessionAuthorization(targetMethod)?.routeToSessionOwnerDaemon === true
                     && (effectActionId === binding.actionId
-                        || isScmRunStartRpcPurpose(binding.actionId, effectActionId, request.method));
+                        || isExecutionRunStartRpcPurpose(binding.actionId, effectActionId, request.method));
             return methodMatches && binding.machineId === this.localMachineId
                 && (binding.target.kind === 'machine' && binding.target.machineId === this.localMachineId
                     || binding.target.kind === 'session' && binding.target.sessionId === this.scopePrefix)

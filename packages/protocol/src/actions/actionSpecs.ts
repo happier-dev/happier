@@ -2523,4 +2523,5 @@ export function resolveVoiceClientToolNameAlias(value: string): string | null {
 
   return null;
 }
-export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction, isScmRunStartRpcPurpose } from './scmGitActionSpecs.js';
+export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from './scmGitActionSpecs.js';
+export { isExecutionRunStartRpcPurpose } from './executionRunStartRpcPurpose.js';
