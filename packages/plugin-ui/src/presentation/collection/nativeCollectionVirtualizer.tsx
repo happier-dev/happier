@@ -60,6 +60,13 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
   }, [handle, request.onHandle]);
   const sections = request.kind === 'sections' ? request.sections : undefined;
   const sectionIndices = useMemo(() => new Map(sections?.map((section, index) => [section, index])), [sections]);
+  // RNW truncates the unmeasured tail spacer. Its list footer can therefore appear at the end
+  // of the measured window and move while the reader is trying to press it. The last section's
+  // footer is a real virtualized cell after all its rows.
+  const lastWebSection = Platform.OS === 'web' ? sections?.at(-1) : undefined;
+  const endContent = request.endContent;
+  const renderSectionFooter = useCallback(({ section }: Readonly<{ section: Readonly<{ key: string }> }>) =>
+    section === lastWebSection ? <>{endContent}</> : null, [endContent, lastWebSection]);
   const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     tracker?.onScroll(event);
     request.onScroll?.(event.nativeEvent.contentOffset.y);
@@ -111,7 +118,7 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
     // Keep overscan below the platform default; mounted work is characterized
     // against collection size, including the platform's retained initial batch.
     windowSize: 3,
-    ListFooterComponent: request.endContent === undefined ? undefined : <>{request.endContent}</>,
+    ListFooterComponent: endContent === undefined || lastWebSection !== undefined ? undefined : <>{endContent}</>,
     maintainVisibleContentPosition: request.preserveVisibleContentPositionOnPrepend && Platform.OS !== 'web'
       ? { minIndexForVisible: 0 } : undefined,
     onScroll: request.onScroll === undefined ? undefined : onScroll,
@@ -141,6 +148,7 @@ function NativeCollectionVirtualizer<Item>({ request }: Readonly<{ request: Coll
       stickySectionHeadersEnabled={stickyHeaders}
       renderItem={renderGroupedItem}
       renderSectionHeader={renderSectionHeader}
+      renderSectionFooter={lastWebSection === undefined || endContent === undefined ? undefined : renderSectionFooter}
     />
   ) : (
     <FlatList<Item> {...props} ref={flat} data={request.items}
