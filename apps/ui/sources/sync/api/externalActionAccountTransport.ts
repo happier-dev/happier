@@ -112,15 +112,17 @@ export async function executeOriginalAccountRequesterOperation(params: Readonly<
             account.assertCurrent();
             return { status: response.status, value };
         },
-        // The reader's opened Machine content; a Machine it cannot open stays Home-vouched.
-        readExecutorKeyPin: async machineId => {
-            if (!areServerAccountScopesEqual(storage.getState().profileScope, account.accountLifetime.scope)) return undefined;
-            const machine = storage.getState().machines[machineId];
-            if (!machine?.metadata || machine.availability?.kind === 'locked' || !machine.storageMode) return undefined;
-            return readExecutorKeyPinFromMachineContentV1({ machineId, contentMode: machine.storageMode,
-                installationPublicKey: machine.metadata.installationPublicKey });
-        },
+        readExecutorKeyPin: async machineId => readOpenedExecutorKeyPin(account, machineId),
     }));
+}
+
+/** The reader's opened Machine content for the installation sealer; a Machine it cannot open stays Home-vouched. */
+function readOpenedExecutorKeyPin(account: LazyActionAccountContext, machineId: string) {
+    if (!areServerAccountScopesEqual(storage.getState().profileScope, account.accountLifetime.scope)) return undefined;
+    const machine = storage.getState().machines[machineId];
+    if (!machine?.metadata || machine.availability?.kind === 'locked' || !machine.storageMode) return undefined;
+    return readExecutorKeyPinFromMachineContentV1({ machineId, contentMode: machine.storageMode,
+        installationPublicKey: machine.metadata.installationPublicKey });
 }
 
 function projectActionMachine(source: (Pick<MachinePublishedRowV1, 'id' | 'kind' | 'active' | 'revokedAt' | 'replacedByMachineId'
@@ -346,6 +348,7 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
                 account.assertCurrent();
                 executionAuthorization = sealManagedControllerActionCodecV1({ authorization: executionAuthorization,
                     material: codecMaterial, installationPublicKey, randomBytes: getRandomBytes,
+                    executorKeyPin: readOpenedExecutorKeyPin(account, executionAuthorization.binding.machineId),
                     ...(collectorKeyPins ? { collectorKeyPins } : {}),
                     ...(params.invocation ? { invocation: params.invocation } : {}) });
             } catch (error) {
@@ -357,15 +360,24 @@ export async function executeOriginalAccountActionTransport(params: DeploymentRe
             account.assertCurrent();
             params.signal?.throwIfAborted();
             const credentials = serializeRequesterAccountCredentials(custody.accountMode, account.credentials);
-            if (foreignGuest || params.invocation) {
-                if (!custody.installationPublicKey) return failure('content_unavailable');
-                executionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: executionAuthorization,
-                    credentials, purpose: { kind: 'external_action' }, installationPublicKey: custody.installationPublicKey, randomBytes: getRandomBytes,
+            if ((foreignGuest || params.invocation) && !custody.installationPublicKey) return failure('content_unavailable');
+            try {
+                // The installation sealer refuses a Home-delivered key that this Account's opened Machine content does not pin.
+                if ((foreignGuest || params.invocation) && custody.installationPublicKey) {
+                    executionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: executionAuthorization,
+                        credentials, purpose: { kind: 'external_action' }, installationPublicKey: custody.installationPublicKey, randomBytes: getRandomBytes,
+                        executorKeyPin: readOpenedExecutorKeyPin(account, executionAuthorization.binding.machineId),
+                        ...(params.invocation ? { invocation: params.invocation } : {}) });
+                }
+                if (wake && controllerPublicKey) executionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: executionAuthorization,
+                    credentials, purpose: { kind: 'managed_finite_wake', target: wake.target }, installationPublicKey: controllerPublicKey, randomBytes: getRandomBytes,
+                    executorKeyPin: wake.target.controller ? readOpenedExecutorKeyPin(account, wake.target.controller.machineId) : undefined,
                     ...(params.invocation ? { invocation: params.invocation } : {}) });
+            } catch (error) {
+                const refused = parseActionExecuteFailure(error);
+                if (refused) return refused;
+                throw error;
             }
-            if (wake && controllerPublicKey) executionAuthorization = sealExternalActionRequesterAccountContextV1({ authorization: executionAuthorization,
-                credentials, purpose: { kind: 'managed_finite_wake', target: wake.target }, installationPublicKey: controllerPublicKey, randomBytes: getRandomBytes,
-                ...(params.invocation ? { invocation: params.invocation } : {}) });
         }
         request = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: binding.target.machineId,
             envelope, executionAuthorization });

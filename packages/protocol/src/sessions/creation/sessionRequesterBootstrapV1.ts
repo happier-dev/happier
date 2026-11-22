@@ -319,6 +319,7 @@ function retainedCheckoutTeardownPurpose(input: RetainedCheckoutTeardownRoute) {
 export function sealRetainedCheckoutTeardownV1(input: RetainedCheckoutTeardownRoute & Readonly<{
   data: RetainedCheckoutTeardownDataV1 | null;
   installationPublicKey: Uint8Array;
+  executorKeyPin?: InstallationKeyPinV1 | null;
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
@@ -328,7 +329,8 @@ export function sealRetainedCheckoutTeardownV1(input: RetainedCheckoutTeardownRo
     authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
     purpose, data: input.data });
   return { ...authorization, requesterAccountContext: sealInstallationContext({ plaintext, installationId: input.installationId,
-    installationPublicKey: input.installationPublicKey, randomBytes: input.randomBytes }) };
+    installationPublicKey: input.installationPublicKey, randomBytes: input.randomBytes, machineId: input.machineId,
+    accountEncryptionMode: authorization.binding.accountEncryptionMode, executorKeyPin: input.executorKeyPin }) };
 }
 
 /** Call only after admitting the SOURCE signature and exact writer target route. */
@@ -371,6 +373,7 @@ type SealManagedCreationActionCodecInput = Readonly<{
   envelope: ExternalActionRequestEnvelope;
   recipient: z.infer<typeof ManagedEnrollmentInstallationV1Schema>;
   material?: Readonly<{ type: 'dataKey'; machineKey: Uint8Array }>;
+  executorKeyPin?: InstallationKeyPinV1 | null;
   randomBytes(length: number): Uint8Array;
 }>;
 
@@ -404,7 +407,8 @@ export function sealManagedCreationActionCodecV1(input: SealManagedCreationActio
       requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
     ...(needsCodecMaterial ? { codec: { machineKey: encodeBase64(input.material!.machineKey) } } : {}) });
   return { ...envelope, managedCreationCodec: sealInstallationContext({ plaintext, installationId: recipient.installationId,
-    installationPublicKey: decodeBase64(recipient.installationPublicKey, 'base64url'), randomBytes: input.randomBytes }) };
+    installationPublicKey: decodeBase64(recipient.installationPublicKey, 'base64url'), randomBytes: input.randomBytes,
+    machineId: recipient.machineId, accountEncryptionMode: root.accountEncryptionMode, executorKeyPin: input.executorKeyPin }) };
 }
 
 function isManagedCreationCodecParent(root: ExternalActionExecutionAuthorizationV1['binding'], actionId: string) {
@@ -545,15 +549,6 @@ export function isTelemetryCollectorKeyPinRequiredV1(binding: Pick<ExternalActio
 }
 
 /**
- * An E2EE requester operation read verifies the Home-delivered executor key
- * against the key the executor published in its own E2EE Machine content.
- */
-export function isExecutorKeyPinReadV1(binding: Pick<ExternalActionExecutionAuthorizationV1['binding'],
-  'requesterOperationRead' | 'accountEncryptionMode'>): boolean {
-  return binding.requesterOperationRead === true && binding.accountEncryptionMode === 'e2ee';
-}
-
-/**
  * The executor pin a reader derives from a Machine whose content it opened: undefined unless that
  * content is E2EE (plain content is server-readable, so the delivered key stays Home-vouched), null
  * when the content publishes no key.
@@ -575,8 +570,8 @@ function isInstallationKeyPinnedV1(pin: InstallationKeyPinV1, machineId: string,
   return pin.machineId === machineId && pin.installationKeyFingerprint === fingerprint;
 }
 
-function assertInstallationKeyPinnedV1(binding: ExternalActionExecutionAuthorizationV1['binding'], installationPublicKey: Uint8Array,
-  input: Readonly<{ collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[]; executorKeyPin?: InstallationKeyPinV1 | null }>): void {
+function assertCollectorKeyPinnedV1(binding: ExternalActionExecutionAuthorizationV1['binding'], installationPublicKey: Uint8Array,
+  input: Readonly<{ collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[] }>): void {
   const fingerprint = computeMachineInstallationKeyFingerprintV1(installationPublicKey);
   if (isTelemetryCollectorKeyPinRequiredV1(binding)) {
     const admission = binding.deploymentReadAdmission;
@@ -589,13 +584,6 @@ function assertInstallationKeyPinnedV1(binding: ExternalActionExecutionAuthoriza
       !isInstallationKeyPinnedV1(byEnvironment.get(environmentId)!, binding.machineId, fingerprint));
     if (mismatched.length) refuseInstallationKey('installation_key_mismatch', { environmentIds: mismatched, recovery: 'telemetry_setup' });
   }
-  // Undefined: the reader cannot open this executor's content, so the delivered key stays Home-vouched.
-  if (isExecutorKeyPinReadV1(binding) && input.executorKeyPin !== undefined) {
-    const details = { machineId: binding.machineId, recovery: 'restart_daemon' };
-    if (input.executorKeyPin === null) refuseInstallationKey('installation_key_unbound', details);
-    if (!isInstallationKeyPinnedV1(input.executorKeyPin, binding.machineId, fingerprint))
-      refuseInstallationKey('installation_key_mismatch', details);
-  }
 }
 
 export function sealManagedControllerActionCodecV1(input: Readonly<{
@@ -606,7 +594,6 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   installationPublicKey: Uint8Array;
   /** Required for an E2EE Environment collector read; see isTelemetryCollectorKeyPinRequiredV1. */
   collectorKeyPins?: readonly TelemetryCollectorKeyPinV1[];
-  /** An E2EE operation read's executor key from its Machine content; null when that content publishes none. */
   executorKeyPin?: InstallationKeyPinV1 | null;
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
@@ -614,21 +601,35 @@ export function sealManagedControllerActionCodecV1(input: Readonly<{
   if (!isManagedControllerCodecRootV1(authorization.binding)
     || authorization.binding.target.kind !== 'machine' || authorization.binding.target.machineId !== authorization.binding.machineId)
     throw new Error('managed_controller_codec_root_mismatch');
-  assertInstallationKeyPinnedV1(authorization.binding, input.installationPublicKey, input);
+  assertCollectorKeyPinnedV1(authorization.binding, input.installationPublicKey, input);
   const plaintext = ManagedControllerCodecPlaintextV1Schema.parse({ v: 1,
     authorization: { v: authorization.v, token: authorization.token, binding: authorization.binding },
     purpose: { kind: 'managed_controller_codec' }, codec: { machineKey: encodeBase64(input.material.machineKey) },
     ...(input.machineSetupAppBlockIds ? { machineSetupAppBlockIds: input.machineSetupAppBlockIds } : {}),
     ...(input.invocation ? { invocation: input.invocation } : {}) });
   return { ...authorization, requesterAccountContext: sealInstallationContext({ ...input, plaintext,
-    installationId: authorization.binding.installationId }) };
+    installationId: authorization.binding.installationId, machineId: authorization.binding.machineId,
+    accountEncryptionMode: authorization.binding.accountEncryptionMode }) };
 }
 
+/**
+ * The one installation sealer. For an E2EE Account it refuses a Home-delivered key that differs from the
+ * executor pin the sealer read from that Machine's own E2EE content (null: the content publishes no key).
+ * An undefined pin means the sealer cannot open that content, so the delivered key stays Home-vouched;
+ * plain Accounts are server-readable by contract.
+ */
 function sealInstallationContext(input: Readonly<{
   plaintext: z.infer<typeof InstallationContextPlaintextV1Schema>; installationId: string;
   installationPublicKey: Uint8Array; randomBytes(length: number): Uint8Array;
+  machineId: string; accountEncryptionMode: 'plain' | 'e2ee' | undefined; executorKeyPin?: InstallationKeyPinV1 | null | undefined;
 }>) {
   if (!isValidEd25519PublicKey(input.installationPublicKey)) throw new Error('invalid_installation_public_key');
+  if (input.accountEncryptionMode === 'e2ee' && input.executorKeyPin !== undefined) {
+    const details = { machineId: input.machineId, recovery: 'restart_daemon' };
+    if (input.executorKeyPin === null) refuseInstallationKey('installation_key_unbound', details);
+    if (!isInstallationKeyPinnedV1(input.executorKeyPin, input.machineId,
+      computeMachineInstallationKeyFingerprintV1(input.installationPublicKey))) refuseInstallationKey('installation_key_mismatch', details);
+  }
   const ciphertext = sealBoxBundle({ plaintext: new TextEncoder().encode(JSON.stringify(input.plaintext)),
     recipientPublicKey: ed25519.utils.toMontgomery(input.installationPublicKey), randomBytes: input.randomBytes });
   return { kind: 'installation_sealed_v1' as const, installationId: input.installationId,
@@ -657,9 +658,10 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
   invocation?: ExternalActionRequesterInvocationV1;
   purpose: ExternalActionRequesterAccountContextPurposeV1;
   installationPublicKey: Uint8Array;
+  /** The recipient Machine's key pin from content this Account opened; see sealInstallationContext. */
+  executorKeyPin?: InstallationKeyPinV1 | null;
   randomBytes(length: number): Uint8Array;
 }>): ExternalActionExecutionAuthorizationV1 {
-  if (!isValidEd25519PublicKey(input.installationPublicKey)) throw new Error('invalid_installation_public_key');
   const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(input.authorization);
   if (input.purpose.kind === 'external_action' && isManagedControllerCodecActionV1(authorization.binding)
     && authorization.binding.accountId !== authorization.binding.custodianAccountId)
@@ -684,6 +686,8 @@ export function sealExternalActionRequesterAccountContextV1(input: Readonly<{
     || mode === undefined) throw new Error('requester_account_mode_mismatch');
   const sealed = sealInstallationContext({ ...input, plaintext,
     installationId: moveRecipient?.installationId ?? preparation?.controller.installationId ?? wake?.target.controller?.installationId ?? authorization.binding.installationId,
+    machineId: moveRecipient?.machineId ?? preparation?.controller.machineId ?? wake?.target.controller?.machineId ?? authorization.binding.machineId,
+    accountEncryptionMode: mode,
   });
   return wake ? { ...authorization, managedFiniteWake: { ...wake, requesterAccountContext: sealed } }
     : { ...authorization, requesterAccountContext: sealed };

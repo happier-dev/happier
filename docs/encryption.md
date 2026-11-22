@@ -146,10 +146,9 @@ receiving the reader's Account credentials. A new presentation of the signed
 root passes through the existing admission boundary.
 
 Home delivers the executor's installation key with the admission, so Home
-alone does not vouch for it. Before sealing, the codec sealing owner
-(`sealManagedControllerActionCodecV1`) compares the delivered key with a
-fingerprint read from E2EE content that Home cannot forge. It uses the same
-refusals for both read kinds: `installation_key_mismatch` and
+alone does not vouch for it. Before sealing, the sealing owner compares the
+delivered key with a fingerprint read from E2EE content that Home cannot forge.
+It uses the same refusals for every kind: `installation_key_mismatch` and
 `installation_key_unbound`. Neither falls back to the delivered key.
 
 - **Environment collector reads.** When the telemetry writer installs or moves
@@ -162,10 +161,17 @@ refusals for both read kinds: `installation_key_mismatch` and
   pin. An E2EE reader opens each admitted Environment's content with its own
   Artifact opener. A missing pin refuses with recovery `telemetry_setup`: run
   telemetry setup again, which writes the pin.
-- **Requester operation reads.** The daemon publishes its own installation
-  public key in its E2EE Machine metadata on every metadata refresh. An E2EE
-  reader that can open that Machine's content verifies against it. Content that
-  publishes no key refuses with recovery `restart_daemon`. The reader compares
+- **Every installation seal (executor pin).** The daemon publishes its own
+  installation public key in its E2EE Machine metadata on every metadata
+  refresh. The one installation sealer (`sealInstallationContext`) checks the
+  recipient Machine's pin for every purpose of an E2EE Account: requester
+  credentials, managed controller and creation codecs, finite wakes and
+  retained checkout teardown. The sealer reads the pin from that Machine's
+  content, which the sealer opened itself. Content that publishes no key refuses
+  with recovery `restart_daemon`. Callers that pass a pin today: requester
+  operation reads, and app dispatch of requester credentials, controller codecs
+  and finite wakes to a Machine whose content the app has opened.
+  An operation reader compares
   the minted root's `accountEncryptionMode` with its own persisted Account mode
   and refuses a mismatch, so Home cannot skip the check by minting `plain`.
 
@@ -173,7 +179,12 @@ The delivered key stays Home-vouched in two cases. Plain-mode readers and plain
 Machine or Environment content are server-readable by contract. A Machine whose
 content the reader cannot open, such as a foreign custodian's managed
 controller without a content grant, has no unforgeable source. The owner
-accepted that residual (2026-11-20).
+accepted that residual (2026-11-20). Not yet pinned (open, 2026-11-22): CLI
+action dispatch (requester credentials and codecs), the daemon's retained
+checkout teardown, the managed creation codec, the codec of a
+remote Setup receiver, the daemon's requester-projection seal, and the session
+requester bootstrap RPC (`sealInstalledRequest`), which is a second sealer
+without the Account mode.
 
 The Environment pin is trust-on-first-use: it is only as trustworthy as Home was
 when the writer read the key. A collector reinstall changes the key and refuses

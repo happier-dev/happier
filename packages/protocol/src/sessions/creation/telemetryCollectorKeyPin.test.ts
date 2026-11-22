@@ -8,8 +8,10 @@ import { parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedAct
 import { parseActionExecuteFailure } from '../../actions/actionExecutionResult.js';
 import { computeMachineInstallationKeyFingerprintV1 } from '../../machines/identity/installationKeySchemas.js';
 import {
+  openExternalActionRequesterAccountContextV1,
   openManagedControllerActionCodecV1,
   readExecutorKeyPinFromMachineContentV1,
+  sealExternalActionRequesterAccountContextV1,
   sealManagedControllerActionCodecV1,
 } from './sessionRequesterBootstrapV1.js';
 
@@ -220,5 +222,40 @@ describe('executor pin from opened Machine content', () => {
       .toEqual(executorPin(collector.publicKey));
     expect(readExecutorKeyPinFromMachineContentV1({ machineId: 'executor', contentMode: 'e2ee' })).toBeNull();
     expect(readExecutorKeyPinFromMachineContentV1({ machineId: 'executor', contentMode: 'plain', installationPublicKey: key })).toBeUndefined();
+  });
+});
+
+function credentialRoot(accountEncryptionMode: 'plain' | 'e2ee') {
+  const target = { kind: 'machine' as const, machineId: 'executor' };
+  return ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'credential-seal', binding: {
+    accountId: 'reader', custodianAccountId: 'reader', authentication: { kind: 'account', tokenEpoch: 1 },
+    serverIdentityId: 'home', machineId: target.machineId, installationId: 'installation', accountEncryptionMode,
+    actionId: ACTION_INVOKE_ACTION_ID_V1, requestId: 'credential-seal', requestEnvelopeDigest: 'a'.repeat(43), target,
+  } });
+}
+const credentialsFor = (mode: 'plain' | 'e2ee') => mode === 'e2ee'
+  ? { token: 'requester-token', secret: Buffer.alloc(32, 9).toString('base64') } : { token: 'requester-token' };
+
+describe('every installation seal of an E2EE Account checks the executor key its Machine content pins', () => {
+  const seal = (mode: 'plain' | 'e2ee', installationPublicKey: Uint8Array, executorKeyPin?: ReturnType<typeof executorPin> | null) =>
+    sealExternalActionRequesterAccountContextV1({ authorization: credentialRoot(mode), credentials: credentialsFor(mode),
+      purpose: { kind: 'external_action' }, installationPublicKey, randomBytes: tweetnacl.randomBytes,
+      ...(executorKeyPin === undefined ? {} : { executorKeyPin }) });
+  const open = (authorization: ReturnType<typeof seal>) => openExternalActionRequesterAccountContextV1({ authorization,
+    purpose: { kind: 'external_action' }, machineId: 'executor', installationId: 'installation', serverIdentityId: 'home',
+    installationPrivateKey: collector.secretKey });
+
+  it('refuses requester credentials sealed to a Home-substituted key and seals to the pinned key', () => {
+    expect(refusal(() => seal('e2ee', substitute.publicKey, executorPin(collector.publicKey))))
+      .toMatchObject({ errorCode: 'installation_key_mismatch', details: { machineId: 'executor' } });
+    expect(refusal(() => seal('e2ee', collector.publicKey, null)))
+      .toMatchObject({ errorCode: 'installation_key_unbound', details: { machineId: 'executor', recovery: 'restart_daemon' } });
+    expect(refusal(() => seal('e2ee', collector.publicKey, executorPin(collector.publicKey, 'other-machine'))))
+      .toMatchObject({ errorCode: 'installation_key_mismatch' });
+    expect(open(seal('e2ee', collector.publicKey, executorPin(collector.publicKey)))).toMatchObject({ token: 'requester-token' });
+  });
+
+  it('keeps plain Accounts on the delivered key', () => {
+    expect(open(seal('plain', collector.publicKey, executorPin(substitute.publicKey)))).toEqual({ token: 'requester-token' });
   });
 });

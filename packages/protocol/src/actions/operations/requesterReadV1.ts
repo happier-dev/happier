@@ -9,7 +9,7 @@ import {
 } from '../externalActionApi.js';
 import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionExecutionAuthorization.js';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
-import { isExecutorKeyPinReadV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
+import { sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
 import { parseActionExecuteFailure } from '../actionExecutionResult.js';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from './actionIdsV1.js';
 import { ActionOperationAddressV1Schema } from './addressV1.js';
@@ -98,7 +98,7 @@ export async function executeRequesterActionOperationV1(params: RequesterOperati
   const { requesterOperationReadInstallationPublicKey: _key, ...signed } = authorization.data;
   let executionAuthorization: typeof signed;
   try {
-    const executorKeyPin = isExecutorKeyPinReadV1(root) ? await params.readExecutorKeyPin?.(target.machineId) : undefined;
+    const executorKeyPin = root.accountEncryptionMode === 'e2ee' ? await params.readExecutorKeyPin?.(target.machineId) : undefined;
     executionAuthorization = sealManagedControllerActionCodecV1({ authorization: signed, material,
       installationPublicKey: decodeBase64(key, 'base64url'), randomBytes: params.randomBytes,
       ...(executorKeyPin !== undefined ? { executorKeyPin } : {}) });
