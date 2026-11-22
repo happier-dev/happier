@@ -14,6 +14,7 @@ import { WidgetInstanceActionInputSchemasV1, WidgetInstanceActionOutputSchemasV1
 import { SessionPullRequestBindingInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginInvocationActionsService, type PluginActionsHostExecutor, type PluginActionsServiceSeed } from '@/plugins/runtime/invocation/services/actions';
+import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createManagedPluginSourceCustody } from '@/plugins/runtime/lifecycle/contributions/runtimeIdentity.testkit';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
@@ -173,7 +174,7 @@ describe('CLI session pull request binding', () => {
       effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining('denied') } });
   });
 
-  it.each(['current', 'provider retired', 'connection changed'] as const)(
+  it.each(['current', 'provider retired', 'connection changed', 'comments permission denied'] as const)(
     'composes native open in a Team Session with a fresh repository and %s binding authority', async (authority) => {
     const ordinaryRead = boundary.get.getMockImplementation()!;
     boundary.get.mockImplementation(async (url: string) => {
@@ -190,6 +191,8 @@ describe('CLI session pull request binding', () => {
     const definition = { kind: 'installed', surface: { pluginId: TRIAGE_PLUGIN.manifest.id, localId: 'session-pull-request' } } as const;
     const credentialRef = { service: { pluginId: GITHUB_PLUGIN.manifest.id, localId: 'github-account' }, accountId: '99' };
     const state = new MemoryCollection<Record<string, JsonValue>>();
+    const linkRequestId = 'pr-link-request';
+    const warn = vi.fn<PluginServices['logger']['warn']>();
     let providerRetired = false;
     let instances: WidgetInstanceV1[] = [];
     let adds = 0;
@@ -246,6 +249,11 @@ describe('CLI session pull request binding', () => {
     const http = createPluginHttpFixture({ request: async request => {
       expect(request.method === undefined || request.method === 'GET').toBe(true);
       const path = new URL(request.url).pathname;
+      if (authority === 'comments permission denied' && path === '/repos/acme/widgets/issues/comments') {
+        return { status: 403, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(
+          JSON.stringify({ message: 'Resource not accessible by personal access token' }),
+        ) };
+      }
       const body = path === '/repos/acme/widgets' ? { id: 77, name: 'widgets', full_name: 'acme/widgets', owner: { login: 'acme' } }
         : path === '/user' ? { id: 99, login: 'native-user' }
         : path === '/repos/acme/widgets/issues/comments' ? []
@@ -305,6 +313,7 @@ describe('CLI session pull request binding', () => {
       resolveCurrentPluginMaterializationRef: pluginId => createPluginActionCallerMaterializationFixture(pluginId).materialization,
       createServices: seed => ({ ...createUnavailablePluginServices(),
         actions: actionsFor(seed),
+        logger: { ...createUnavailablePluginServices().logger, warn },
         targetedContributions: targeted.bind({ pluginId: seed.plugin.id, signal: seed.signal, isCurrent: seed.isOccurrenceCurrent }),
         http: { ...http, async openWebSocket() { throw new Error('No PR attach socket'); } },
         // The shared Collection and credential materializers are genuine external boundaries.
@@ -321,10 +330,12 @@ describe('CLI session pull request binding', () => {
     });
     const invokeCore = async (localId: string, input: JsonValue) => {
       const result = await registry.invoke({ pluginId: CHANNELS_MANIFEST.id, localId, input, surface: 'cli',
-        invocationAuthority: 'present_user', signal: controller.signal,
+        invocationAuthority: 'present_user', signal: controller.signal, requestId: linkRequestId,
         requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
       if (result.status === 'deferred') throw new Error(`deferred:${result.artifactId}`);
-      if (result.status !== 'executed') return { ok: false, errorCode: result.code, error: result.code };
+      if (result.status !== 'executed') return projectContributedActionFailure({
+        errorCode: result.code, error: result.message, data: result.data,
+      });
       return result.value;
     };
     let nativeResponse = ScmPullRequestOpenOrReuseResponseSchema.parse({ success: true, pullRequest, result: 'created', nextAction: { kind: 'none' } });
@@ -356,7 +367,16 @@ describe('CLI session pull request binding', () => {
         const cause = authority === 'provider retired' ? 'channels_pr_link_provider_not_ready' : 'channels_pr_link_connection_not_ready';
         expect(await open()).toMatchObject({ success: true, pullRequest, result: 'created',
           outcome: { kind: 'effect_applied_with_warning',
-            effect: { kind: 'pull_request', number: 42, url: pullRequest.url }, message: expect.stringContaining(cause) } });
+            effect: { kind: 'pull_request', number: 42, url: pullRequest.url },
+            message: authority === 'comments permission denied'
+              ? expect.stringMatching(new RegExp(`access to read repository comments.*${cause}.*${linkRequestId}`))
+              : expect.stringContaining(cause) } });
+        if (authority === 'comments permission denied') {
+          expect(warn.mock.calls.filter(([, details]) => details?.code === cause)).toEqual([
+            [expect.any(String), expect.objectContaining({ code: cause, requestId: linkRequestId, reason: 'permissionMissing' })],
+          ]);
+          expect(state.rows.size).toBe(0);
+        }
         expect(await invokeCore('session-pull-request-binding-v1', { kind: 'list', sessionId }))
           .toEqual({ kind: 'links', sessionId, pullRequestLinks: [] });
         expect(adds).toBe(0);

@@ -1,4 +1,6 @@
 import { ActionRefusalDiagnosticV1Schema, createActionRefusalDetailsV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readPluginErrorRequestIdV1 } from '@happier-dev/cli-common/plugins/errors';
+import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import type { CliActionDepsParams } from '@/session/actions/cliActionDeps/types';
 import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from '@/session/actions/cliActionDeps/machineTransport';
 import type { SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
@@ -122,7 +124,14 @@ export function createSessionBoundScmAction(
         const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
         const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(details && typeof details === 'object' ? Reflect.get(details, 'diagnostic') : undefined);
         const reason = diagnostic.success ? `${code}/${diagnostic.data.reason}` : code;
-        const message = `The pull request is open. Its link to this Session could not be confirmed (${reason}). Link the existing pull request to this Session.`;
+        const authorDetails = isPluginErrorData(details) && 'details' in details ? details.details : undefined;
+        const requestId = readPluginErrorRequestIdV1({ details: authorDetails });
+        const remedy = authorDetails && typeof authorDetails === 'object' && 'remedy' in authorDetails
+          && typeof authorDetails.remedy === 'string' ? authorDetails.remedy : undefined;
+        const reference = requestId ? `${reason}. Request ID ${requestId}` : reason;
+        const message = remedy
+          ? `The pull request is open. ${remedy} (${reference}).`
+          : `The pull request is open. Its link to this Session could not be confirmed (${reference}). Link the existing pull request to this Session.`;
         const nativeOutcome = parsed.data.outcome;
         return {
           ...parsed.data,

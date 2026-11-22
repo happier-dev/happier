@@ -286,6 +286,31 @@ type ProviderConnectionPreparation =
     setup: ConversationProviderSetupResultV1;
     transportOrigin: PluginMachineExecutionOriginV1;
   }>;
+type ProviderConnectionTestRefusal = Extract<ProviderConnectionPreparation, { kind: 'notReady' }>;
+
+const prLinkConnectionTestRemedies = {
+  credentialInvalid: 'Reconnect the repository account in Connected Accounts, then link the existing pull request to this Session.',
+  permissionMissing: 'Give the connected account access to read repository comments, then link the existing pull request to this Session.',
+  network: 'Check that the Session Machine can reach the repository provider, then link the existing pull request to this Session.',
+  rateLimited: 'Wait for the repository provider’s rate limit to reset, then link the existing pull request to this Session.',
+  providerConflict: 'Resolve the conflicting integration with the repository provider, then link the existing pull request to this Session.',
+  unsupported: 'Use a repository connection that supports comment polling, then link the existing pull request to this Session.',
+  invalidConfiguration: 'Verify that the connected account can access this repository, then link the existing pull request to this Session.',
+} satisfies Record<ProviderConnectionTestRefusal['reason'], string>;
+
+function refuseSessionPullRequestConnection(
+  context: PluginInvocationContext,
+  stage: 'test' | 'retain' | 'bind',
+  reason?: ProviderConnectionTestRefusal['reason'],
+): PluginError {
+  const code = 'channels_pr_link_connection_not_ready';
+  const requestId = context.requestId ?? context.invocationId;
+  const remedy = reason === undefined ? 'Link the existing pull request to this Session again.' : prLinkConnectionTestRemedies[reason];
+  const details = { ...(reason === undefined ? {} : { reason }), ...(requestId === undefined ? {} : { requestId }) };
+  context.services.logger.warn('[Channels] PR link connection unavailable', { code, stage, ...details });
+  return new PluginError({ code, message: remedy, retryable: true, details: { ...details, remedy } });
+}
+
 type ProviderConnectionSetup =
   | ConversationProviderSetupRemediationV1
   | Readonly<{
@@ -4115,12 +4140,12 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
   const connectionIdForTest = createConnectionId();
   const prepared = await runProviderConnectionTest({ context, setupInput: createInput, provider, connectionIdForTest,
     prepared: { kind: 'ready', setup, transportOrigin: nativeSetup.executionOrigin } });
-  if (prepared.kind !== 'ready') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
+  if (prepared.kind !== 'ready') throw refuseSessionPullRequestConnection(context, 'test', prepared.reason);
   const connectionResult = await persistPreparedConversationConnection(createInput, provider, prepared, connectionIdForTest, context);
-  if (connectionResult.kind !== 'created' && connectionResult.kind !== 'rejoined') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
+  if (connectionResult.kind !== 'created' && connectionResult.kind !== 'rejoined') throw refuseSessionPullRequestConnection(context, 'retain');
   const connectionId = connectionResult.connectionId;
   const connectionAdmission = admitBindingResolutionConnection({ row: connectionResult.connectionRow, connectionId });
-  if (connectionAdmission.kind !== 'current') throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection is not ready.', true);
+  if (connectionAdmission.kind !== 'current') throw refuseSessionPullRequestConnection(context, 'retain');
   const connection = connectionAdmission.connection;
   const { configurationRevision } = connection;
   // Rejoin retains the connection's transport placement and credential. These
@@ -4176,7 +4201,7 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
       ...(endpoints.sharedEndpointInputModes === undefined ? {} : { sharedEndpointInputModes: endpoints.sharedEndpointInputModes }),
     }, context);
     if (binding.kind === 'stale') {
-      throw pluginError('channels_pr_link_connection_not_ready', 'The PR conversation connection changed or became unavailable during attachment.', true);
+      throw refuseSessionPullRequestConnection(context, 'bind');
     }
     if (binding.kind === 'unavailable' && binding.reason === 'providerUnavailable') {
       throw pluginError('channels_pr_link_provider_not_ready', 'The selected PR conversation provider became unavailable during attachment.', true);
