@@ -87,8 +87,13 @@ export type ReviewDetailViewProps = Readonly<{
   /** The one primary for this view (Submit review when it is asked of you, else New round once settled). */
   primaryAction?: PageHeaderPrimaryAction | null;
   menu: readonly PageHeaderMenuAction[];
-  /** `'pending'` while the Review owner's read is on its way: the sentence's line is held, so nothing below it moves. */
-  glance: ReviewDetailGlance | 'pending' | null;
+  glance: ReviewDetailGlance | null;
+  /**
+   * The Review owner's read is still on its way. What the record draws stays (title, score line, reviewers) and the
+   * glance holds its line; People, the tabs and the findings wait under the loading rows and arrive as one block, so no
+   * control moves under the reader.
+   */
+  detailPending?: boolean;
   /** The round's reviewer score as the Host aggregated it (lowest or median, the person's setting); `null` when none was recorded. */
   quality?: ReviewRoundQualityV1 | null;
   qualityUnavailableReason?: ReviewRoundQualityUnavailableReasonV1 | null;
@@ -160,11 +165,11 @@ export function ReviewDetailView(
         testID="review-detail:header"
       />
       <PageContentColumn style={styles.column}>
-        {props.glance || showsQuality || props.notice ? (
+        {props.glance || props.detailPending || showsQuality || props.notice ? (
           // The glance stands on the sections' sheet edge; the notice line brings that edge itself, so both glyphs align.
           <View style={styles.lead}>
-            {props.glance || showsQuality ? <View style={styles.leadInset}>
-              {props.glance === 'pending' ? <ReviewGlancePending /> : props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
+            {props.glance || props.detailPending || showsQuality ? <View style={styles.leadInset}>
+              {props.detailPending ? <ReviewGlancePending /> : props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
               {showsQuality ? <ReviewQualityLines quality={props.quality ?? null} reviewers={qualityReviewers} /> : null}
             </View> : null}
             {props.notice ?? null}
@@ -178,11 +183,13 @@ export function ReviewDetailView(
             onSelectRound={props.onSelectRound}
           />
         ) : null}
-        {props.submit ?? null}
-        <ReviewDetailTabsLine tabs={tabs} activeTab={props.activeTab} onSelectTab={props.onSelectTab} />
-        <View testID={`review-detail:panel:${props.activeTab}`}>
-          {props.children}
-        </View>
+        {props.detailPending ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_STATE} rows={3} /></ItemGroup> : <>
+          {props.submit ?? null}
+          <ReviewDetailTabsLine tabs={tabs} activeTab={props.activeTab} onSelectTab={props.onSelectTab} />
+          <View testID={`review-detail:panel:${props.activeTab}`}>
+            {props.children}
+          </View>
+        </>}
       </PageContentColumn>
     </ItemList>
   );

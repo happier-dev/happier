@@ -474,9 +474,9 @@ export function ReviewDetailHost(props: Readonly<{
   if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
   if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
   if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
-  // Until the Review owner's first read lands, the page stands on its record: title, rounds, reviewers and scores are the
-  // record's, so the tab line is already where it stays; the glance holds its line pending, and what waits on the reader
-  // isn't known, so it offers nothing (never New round). The People row is the owner's and arrives with it.
+  // Until the Review owner's first read lands, the page stands on its record (title, scores, reviewers) and the glance
+  // holds its line. People, the tabs and the findings depend on that read, so they arrive with it as one block and no
+  // control moves under the reader; what waits on the reader isn't known yet, so nothing is offered (never New round).
   const personPending = Boolean(scope) && !detail.data && (detail.status === 'idle' || detail.status === 'loading');
 
   const canSubmit =Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
@@ -627,7 +627,8 @@ export function ReviewDetailHost(props: Readonly<{
         ...menu,
         ...(operations.canManage ? [{ id: 'delete', testID: 'review-detail:delete', title: t('artifacts.delete'), destructive: true,
           loading: operations.deleting, onSelect: operations.remove }] : [])]}
-      glance={personPending ? 'pending' : projectReviewGlance(round, review, { countsOnChips: true, fixedCount, needsYou: human?.roundOrdinal === round?.ordinal ? human?.needsYou : undefined })}
+      detailPending={personPending}
+      glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount, needsYou: human?.roundOrdinal === round?.ordinal ? human?.needsYou : undefined })}
       quality={roundQuality.quality}
       qualityUnavailableReason={roundQuality.unavailableReason}
       qualityReviewers={qualityReviewers}

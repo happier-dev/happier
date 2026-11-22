@@ -196,9 +196,11 @@ it('offers no primary from a Review still loading: never New round, and no place
   } finally { await screen.unmount(); }
 });
 
-it('lays the page out from the Review record while its owner read loads, so the sections above the tabs never change (G2)', async () => {
+it('stands on the Review record while its owner read loads, then brings People, the tabs and the findings in as one block (G2)', async () => {
   const reviewId = 'steady-tabs-review';
-  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+  // One person was asked: their People row is the owner's data and arrives with the read.
+  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, verdicts: [],
+    requests: [{ id: 'steady-bob', roundOrdinal: 1, principal: { kind: 'account', accountId: 'bob' }, required: true, needsAccess: false }],
     needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false, requestedVerdict: false,
       pendingDecisions: false, canSubmitVerdict: false } };
   let openDetail!: () => void;
@@ -226,21 +228,27 @@ it('lays the page out from the Review record while its owner read loads, so the 
   const { ReviewDetailView } = await import('./ReviewDetailView');
   const { t } = await import('@/text');
   const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
-  // What stands above the tab line, in order: its offset is these sections' heights, so the same sections mean no jump.
-  const aboveTabs = () => [
+  // What the record draws, in order, above the block that waits for the read: it must not change when the read lands.
+  const fromRecord = () => [
     screen.findHostByTestId('review-detail:header') ? 'header' : null,
     screen.findHostByTestId('review-detail:glance') || screen.findHostByTestId('review-detail:glance:pending') ? 'glance' : null,
     screen.findHostByTestId('review-detail:quality') ? 'quality' : null,
-    screen.findHostByTestId('review-detail:round') ? `round:${screen.findAllByType(ReviewDetailView)[0]?.props.rounds[0]?.groups.length}` : null,
+    screen.findHostByTestId('review-detail:group:reviewers') ? 'reviewers' : null,
   ].filter(Boolean);
+  const block = () => ({ people: screen.findHostByTestId('review-detail:group:people') !== null,
+    tabs: screen.findHostByTestId('review-detail:tab:findings') !== null,
+    findings: screen.findHostByTestId('review-detail:panel:findings') !== null });
   try {
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
-    const loading = aboveTabs();
+    const loading = fromRecord();
+    expect(loading).toEqual(['header', 'glance', 'quality', 'reviewers']);
+    // Held open: nothing that could move under the person is on screen yet.
+    expect(block()).toEqual({ people: false, tabs: false, findings: false });
     expect(screen.findAllByType(ReviewDetailView)[0]?.props.primaryAction?.title ?? null).not.toBe(t('reviewWalkthrough.detail.newRound'));
     await act(async () => { openDetail(); });
     await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:glance')).not.toBeNull());
-    expect(loading).toEqual(aboveTabs());
-    expect(aboveTabs()).toEqual(['header', 'glance', 'quality', 'round:1']);
+    expect(block()).toEqual({ people: true, tabs: true, findings: true });
+    expect(fromRecord()).toEqual(loading);
   } finally { await screen.unmount(); }
 });
 
