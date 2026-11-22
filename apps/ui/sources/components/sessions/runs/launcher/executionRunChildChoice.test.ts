@@ -4,6 +4,19 @@ import { applyExecutionRunChildSelection, clearExecutionRunChildSelection, readE
 import { selectReviewLauncherRetryReviewers } from './reviewLauncherSelection';
 
 describe('child choice permission for a fresh launch', () => {
+    it('authors native credential routing with an exact native model and clears it for inherited or Account-default choices', () => {
+        const modelSelection = { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'sonnet' };
+        const chosen = applyExecutionRunChildSelection({ instructions: 'Inspect', connectedServices: { stale: true } }, modelSelection);
+        expect(chosen).toEqual({ instructions: 'Inspect', modelSelection, connectedServices: null });
+        expect(clearExecutionRunChildSelection(chosen)).toEqual({ instructions: 'Inspect' });
+        expect(applyExecutionRunChildSelection(chosen, 'agentDefault')).toEqual({ instructions: 'Inspect', childSelection: 'agentDefault' });
+    });
+
+    it('keeps a Provider model source responsible for its route after a native choice', () => {
+        const modelSelection = { agentTargetKey: 'agent:claude', providerConnectionId: 'provider_1', modelId: 'sonnet' };
+        expect(applyExecutionRunChildSelection({ instructions: 'Inspect', connectedServices: null }, modelSelection))
+            .toEqual({ instructions: 'Inspect', modelSelection });
+    });
     it('retries the original indexed engine selection with its configuration and excludes mixed participants', () => {
         const first = { kind: 'engine', engineId: 'codex', modelId: 'first-model' };
         const second = { kind: 'engine', engineId: 'codex', modelId: 'second-model' };

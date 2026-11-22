@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { ReviewStartInputSchema, type ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { applyExecutionRunChildSelection } from './executionRunChildChoice';
 import { compileReviewLauncherInput, updateReviewLauncherEngineConfiguration, updateReviewLauncherStepInput } from './reviewLauncherSelection';
 
 describe('review launcher submission', () => {
+    it('compiles the chosen reviewer exact native model and explicit native route through the start schema', () => {
+        const reviewer = { kind: 'engine', engineId: 'claude' };
+        const modelSelection = { agentTargetKey: 'agent:claude', providerConnectionId: null, modelId: 'sonnet' };
+        const selected = applyExecutionRunChildSelection({ reviewers: [reviewer], steps: [
+            { kind: 'review', reviewers: [reviewer], instructions: '' },
+        ] }, modelSelection);
+        const parsed = ReviewStartInputSchema.parse(compileReviewLauncherInput(selected, 'Inspect', null));
+        expect(parsed.reviewers).toEqual([{ ...reviewer, modelSelection, connectedServices: null }]);
+    });
+
     const transcriptReviewers = [
         { kind: 'session', session: { serverId: 'peer-home', sessionId: 'peer' }, includeSessionTranscript: true },
         { kind: 'model', launch: {

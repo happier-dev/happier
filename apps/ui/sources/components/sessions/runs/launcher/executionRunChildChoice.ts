@@ -55,7 +55,7 @@ export function applyExecutionRunChildSelection<T extends Record<string, unknown
         const rest = clearChildConfiguration(configuration);
         return selection === 'agentDefault' ? { ...rest, childSelection: 'agentDefault' }
             : 'teamCredentialModel' in selection ? { ...rest, teamCredentialModel: selection.teamCredentialModel }
-            : { ...rest, modelSelection: selection };
+            : { ...rest, modelSelection: selection, ...(selection.providerConnectionId === null ? { connectedServices: null } : {}) };
     };
     return Array.isArray(input.reviewers) ? updateReviewLauncherEngineConfiguration(input, apply) : apply(input);
 }

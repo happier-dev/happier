@@ -1403,7 +1403,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
         const ref = { agentTargetKey: canonicalTargetKey(codex.id), providerConnectionId: null, modelId: 'gpt-6.1-luna' };
         await act(async () => shown.props.onSelect(ref));
         await waitFor(() => expect(emittedStarts).toHaveLength(2));
-        expect(emittedStarts[1]).toMatchObject({ modelSelection: ref });
+        expect(emittedStarts[1]).toMatchObject({ modelSelection: ref, connectedServices: null });
         expect(outboundText()).toContain('Keep my child draft');
     });
     it('does not let an unavailable default Agent hide an eligible Agent', async () => {
@@ -1735,7 +1735,7 @@ describe('SessionInteractiveExecutionRunDraftView — real composer and Action p
             const native = { agentTargetKey: claude(), providerConnectionId: null, modelId: 'claude-native' };
             await act(async () => picker.props.onSelect(native));
             await send();
-            expect(emittedStarts[0]).toMatchObject({ modelSelection: native });
+            expect(emittedStarts[0]).toMatchObject({ modelSelection: native, connectedServices: null });
         });
         it('on a phone says what the Run follows beside when it starts, so a scrolled-away chip never hides it', async () => {
             windowState.width = 390;
