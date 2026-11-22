@@ -31,6 +31,7 @@ import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRo
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { prepareDeploymentAppMachineRevocationInTx } from './deploymentAppRevocation';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { projectDeploymentReceiptCompletionV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
@@ -110,7 +111,8 @@ export async function requestCancelDeploymentInTx(tx: Tx, actorAccountId: string
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
     await publishDeploymentChangesInTx(tx, loaded.admission, loaded.row.id, current.revision, current.id,
         !isDeepStrictEqual(projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state)),
-            projectDeploymentReceiptActivityV1('outcome_unknown')), accountIds);
+            projectDeploymentReceiptActivityV1('outcome_unknown')), accountIds,
+        projectDeploymentReceiptCompletionV1(DeploymentStateV1Schema.parse(row.state), 'outcome_unknown', current.revision, now.getTime()));
     return receiptResult(current, loaded.row.revision);
 }
 
@@ -488,9 +490,11 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
         await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, loaded.row.revision, undefined, false, accountIds);
     }
     const deploymentRevision = input.expectedRevision + 1;
+    const previousState = DeploymentStateV1Schema.parse(row.state);
     await publishDeploymentChangesInTx(tx, loaded, loaded.row.id, deploymentRevision, row.id,
-        !isDeepStrictEqual(projectDeploymentReceiptActivityV1(DeploymentStateV1Schema.parse(row.state)),
-            projectDeploymentReceiptActivityV1(input.state)), accountIds);
+        !isDeepStrictEqual(projectDeploymentReceiptActivityV1(previousState),
+            projectDeploymentReceiptActivityV1(input.state)), accountIds,
+        projectDeploymentReceiptCompletionV1(previousState, input.state, deploymentRevision, now.getTime()));
     return receiptResult({ id: row.id, environmentId: row.environmentId, revision: deploymentRevision, state: input.state },
         environmentRevision, removeEnvironment && completeTeardown);
 }

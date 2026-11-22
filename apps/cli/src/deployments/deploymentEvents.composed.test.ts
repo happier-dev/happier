@@ -15,6 +15,7 @@ import { projectDeploymentReceiptInvalidationsForHost } from './receiptEventInva
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { plugin as cloudflare } from '../../../../packages/plugins/deploy-cloudflare/src/manifest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { settleInterruptedDeploymentReceiptForHost } from './receiptRecovery';
 
 const materialization = { pluginId: 'happier.machine.services', machineId: 'observer', materializationId: 'installed' };
 const setupInput = { v: 1 as const, serverId: 'home', environmentId: 'env' };
@@ -25,7 +26,7 @@ const definition = (event: string): PluginCheckpointedEventSourceDefinitionV1 =>
     sourceInstanceId: `deployment:${event}`, sourceContractVersion: 1, sourceConfig: config,
     observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: materialization }, filter: null, maximumObservationAgeMs: null,
 });
-function fixture(event: string | readonly string[] = 'deployment-failed', pageSize?: number) {
+function fixture(event: string | readonly string[] = 'deployment-failed', pageSize?: number, nativeCompletion = false) {
     let currentDefinitions = typeof event === 'string' ? [definition(event)] : event.map(definition);
     const failed = createDeploymentReceiptHeaderV1({ id: 'failed', environmentId: 'env', state: 'failed',
         requestedAtMs: 1, startedAtMs: 2, settledAtMs: 3 });
@@ -89,7 +90,7 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
             return { dispose() { set.delete(listener); } };
         } } } },
     } as unknown as BackgroundServiceContext;
-    const adapter = createDeploymentReceiptEventSourceAdapter(context.services.events.host, () => 10);
+    const adapter = createDeploymentReceiptEventSourceAdapter(context.services.events.host, () => 10, nativeCompletion ? context : undefined);
     let wakeSubscription = adapter.subscribeWake?.(async () => {});
     const cycle = async (source = adapter) => {
         // The real runner owns its subscription during a finite cycle. Keep one
@@ -102,6 +103,14 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         subscriptions(eventId: string) { return listeners.get(eventId)?.size ?? 0; },
         sources(definitions: PluginCheckpointedEventSourceDefinitionV1[]) { currentDefinitions = definitions; },
         configure(sourceConfig: typeof config & { previewChildren?: true }) { currentDefinitions = currentDefinitions.map(current => ({ ...current, sourceConfig })); },
+        async accountWake(entityIds: string[]) {
+            await cycle();
+            const events = await projectDeploymentReceiptInvalidationsForHost({ t: 'account-change', entityIds }, async () => 'home');
+            for (const event of events) {
+                for (const listener of listeners.get(event.eventId) ?? []) await listener(event);
+            }
+            await cycle();
+        },
         async wake(environmentId = 'env', deploymentId = 'failed') {
             for (const listener of listeners.get('@happier/deployment/receipt-invalidated') ?? []) await listener({ payload: { serverId: 'home', environmentId, deploymentId } });
         },
@@ -117,6 +126,47 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         } };
 }
 describe('deployment receipt Events through canonical admission', () => {
+    it('publishes the recovered unknown observation at its committed time and skips later refinements for After Deploy', async () => {
+        const f = fixture(['deployment-outcome-unknown'], 10, true);
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const running = createDeploymentReceiptHeaderV1({ id: 'interrupted', environmentId: 'env', revision: 2,
+            state: 'running', requestedAtMs: 1, startedAtMs: 2, settledAtMs: undefined,
+            acceptedExecution: { v: 1, controller } });
+        f.rows.splice(0, f.rows.length, running);
+        await f.cycle();
+        expect(await settleInterruptedDeploymentReceiptForHost({ ...controller, operation: 'deploy', requestKey: 'new',
+            environmentId: 'env', accountId: 'account-owner', context: {} }, {
+            readInProgress: async () => [running],
+            readOperation: async () => null,
+            readReceipt: async () => ({ content: { sourceIntent: { kind: 'stored', contentRevision: 1,
+                composeDigest: `sha256:${'a'.repeat(64)}`, document: 'services: {}', profiles: [], services: [] },
+                buildMachineId: controller.machineId, machines: [controller.machineId], onFailure: 'keepPartial',
+                images: [], machineResults: [], steps: [] } }),
+            writeTransition: async request => {
+                expect(request).toMatchObject({ expectedRevision: 2, state: 'outcome_unknown' });
+                f.rows[0] = createDeploymentReceiptHeaderV1({ ...running, state: request.state, revision: 3, settledAtMs: undefined });
+                return { ok: true, deploymentId: running.id, deploymentRevision: 3, revision: 1,
+                    state: request.state, environmentId: 'env' };
+            },
+        })).toBeNull();
+        // The host boundary delivers the receipt metadata authored by the committed Home transition.
+        await f.accountWake(['deployment-receipt:env:interrupted', 'deployment-receipt-completion:env:interrupted:outcome_unknown:3:7']);
+        const native = () => f.admissions.filter(input => input.definitions.length === 0);
+        expect(native()).toEqual([expect.objectContaining({
+            eventRef: { pluginId: materialization.pluginId, localId: 'deployment-outcome-unknown' }, occurredAt: 7,
+            payload: expect.objectContaining({ deploymentId: 'interrupted', receiptRevision: 3, state: 'outcome_unknown', observedAt: 7 }),
+        })]);
+        expect(f.admissions.filter(input => input.definitions.length > 0)).toEqual([expect.objectContaining({
+            eventRef: { pluginId: materialization.pluginId, localId: 'deployment-outcome-unknown' }, occurredAt: 7,
+        })]);
+        f.rows[0] = createDeploymentReceiptHeaderV1({ ...running, state: 'failed', revision: 4, settledAtMs: 8 });
+        await f.accountWake(['deployment-receipt:env:interrupted', 'deployment-receipt-completion:env:interrupted']);
+        expect(native()).toHaveLength(1);
+        f.rows.push(createDeploymentReceiptHeaderV1({ ...running, id: 'direct', state: 'failed', revision: 3, settledAtMs: 9 }));
+        await f.accountWake(['deployment-receipt:env:direct', 'deployment-receipt-completion:env:direct:failed:3:9']);
+        expect(native()).toHaveLength(2);
+        expect(native()[1]).toMatchObject({ eventRef: { localId: 'deployment-failed' }, occurredAt: 9, payload: { deploymentId: 'direct' } });
+    });
     it('pushes pending, ready, failure and retained cleanup receipts for one preview template without polling', async () => {
         const f = fixture('deployment-receipt-changed', 10);
         f.configure({ ...config, observingSince: 20, environmentId: 'template', previewChildren: true });
@@ -367,10 +417,10 @@ describe('deployment receipt Events through canonical admission', () => {
         const f = fixture();
         const source = { ...definition('deployment-failed'), sourceConfig: { v: 1 as const, serverId: 'home', observingSince: 2 } };
         f.sources([source]);
-        f.rows[0].settledAtMs = 1;
+        f.rows[0] = { ...f.rows[0], startedAtMs: 1, settledAtMs: 1 };
         await f.cycle();
         expect(f.admissions).toHaveLength(0);
-        f.rows[0].settledAtMs = 3;
+        f.rows[0] = { ...f.rows[0], settledAtMs: 3 };
         await f.wake('env', f.rows[0].id);
         await f.cycle();
         expect(f.admissions).toHaveLength(1);
@@ -379,10 +429,10 @@ describe('deployment receipt Events through canonical admission', () => {
     });
     it('excludes pre-enrollment settlements and preserves settlements after setup before adoption', async () => {
         const f = fixture();
-        f.rows[0].settledAtMs = 1;
+        f.rows[0] = { ...f.rows[0], startedAtMs: 1, settledAtMs: 1 };
         await f.cycle();
         expect(f.admissions).toHaveLength(0);
-        f.rows[0].settledAtMs = 3;
+        f.rows[0] = { ...f.rows[0], settledAtMs: 3 };
         await f.cycle(createDeploymentReceiptEventSourceAdapter(f.context.services.events.host, () => 20));
         expect(f.admissions).toHaveLength(1);
         expect(f.admissions[0].occurredAt).toBe(3);
@@ -403,7 +453,7 @@ describe('deployment receipt Events through canonical admission', () => {
     it('replaces an adopted source when its configured boundary changes under the same source id', async () => {
         const f = fixture(); await f.cycle();
         f.configure({ ...config, observingSince: 4 });
-        f.rows[0].settledAtMs = 5;
+        f.rows[0] = { ...f.rows[0], settledAtMs: 5 };
         await f.cycle();
         expect(f.admissions).toHaveLength(2);
         expect(f.admissions[1].occurredAt).toBe(5);

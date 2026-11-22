@@ -11,6 +11,9 @@ import { SessionIdSchema } from '../../sessions/idsV1.js';
 import { DiscussionIdSchema } from '../../discussions/content.js';
 import { asProtocolZod } from "../actions/internalProtocolZodAdapter.js";
 import { PluginWebhookHeartbeatReceiptHintV1Schema } from '../webhooks/endpointV1.js';
+import { AutomationActionOutcomeV1Schema } from '../../automations/automationActionIdentityV1.js';
+import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema, DeploymentTimestampV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
+import type { DeploymentStateV1 } from '../../deployments/deploymentStateV1.js';
 import { MachinePresenceAutomationOccurrenceV1Schema } from '../../machines/machinePresenceTransitionsV1.js';
 
 export const HAPPIER_RUNTIME_HOST_EVENT_PREFIX_V1 = '@happier/runtime/' as const;
@@ -23,10 +26,49 @@ export const HAPPIER_DISCUSSION_INVALIDATED_HOST_EVENT_ID_V1 =
 export const HAPPIER_HEALTH_CHECK_HEARTBEAT_RECEIVED_HOST_EVENT_ID_V1 = '@happier/health-check/heartbeat-received' as const;
 export const HealthCheckHeartbeatReceivedHostEventV1Schema = PluginWebhookHeartbeatReceiptHintV1Schema;
 export type HealthCheckHeartbeatReceivedHostEventV1 = z.infer<typeof HealthCheckHeartbeatReceivedHostEventV1Schema>;
+export const DeploymentReceiptCompletionV1Schema = lazyZodSchema(() => z.strictObject({
+    state: AutomationActionOutcomeV1Schema, revision: DeploymentRevisionV1Schema, occurredAt: DeploymentTimestampV1Schema,
+}));
+export type DeploymentReceiptCompletionV1 = z.infer<typeof DeploymentReceiptCompletionV1Schema>;
+
+/** R25 completes the invocation at its first outcome. Receipt reconciliation can continue. */
+export function projectDeploymentReceiptCompletionV1(previous: DeploymentStateV1, next: DeploymentStateV1,
+    revision: number, occurredAt: number): DeploymentReceiptCompletionV1 | null {
+    const outcome = AutomationActionOutcomeV1Schema.safeParse(next);
+    return outcome.success && !AutomationActionOutcomeV1Schema.safeParse(previous).success
+        ? { state: outcome.data, revision, occurredAt } : null;
+}
+
+const prefix = 'deployment-receipt-completion:';
+
+/** A companion to the normal receipt wake. Null distinguishes an ordinary write from a first outcome. */
+export function buildDeploymentReceiptCompletionWakeV1(environmentId: string, deploymentId: string,
+    completion: DeploymentReceiptCompletionV1 | null): string {
+    return `${prefix}${encodeURIComponent(environmentId)}:${encodeURIComponent(deploymentId)}${completion
+        ? `:${completion.state}:${completion.revision}:${completion.occurredAt}` : ''}`;
+}
+
+export function readDeploymentReceiptCompletionWakeV1(entityId: string): Readonly<{
+    environmentId: string; deploymentId: string; completion: DeploymentReceiptCompletionV1 | null;
+}> | null {
+    if (!entityId.startsWith(prefix)) return null;
+    const parts = entityId.slice(prefix.length).split(':');
+    if (parts.length !== 2 && parts.length !== 5) return null;
+    try {
+        const environmentId = DeploymentIdentifierV1Schema.parse(decodeURIComponent(parts[0]!));
+        const deploymentId = DeploymentIdentifierV1Schema.parse(decodeURIComponent(parts[1]!));
+        const completion = parts.length === 2 ? null : DeploymentReceiptCompletionV1Schema.parse({
+            state: parts[2], revision: Number(parts[3]), occurredAt: Number(parts[4]),
+        });
+        return { environmentId, deploymentId, completion };
+    } catch { return null; }
+}
+
 export const HAPPIER_DEPLOYMENT_RECEIPT_INVALIDATED_HOST_EVENT_ID_V1 = '@happier/deployment/receipt-invalidated' as const;
 export const DeploymentReceiptInvalidatedHostEventV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: z.string().check(z.minLength(1)),
   environmentId: z.string().check(z.minLength(1)), deploymentId: z.string().check(z.minLength(1)),
+  completion: z.optional(z.nullable(DeploymentReceiptCompletionV1Schema)),
 }));
 export type DeploymentReceiptInvalidatedHostEventV1 = z.infer<typeof DeploymentReceiptInvalidatedHostEventV1Schema>;
 /** Exact committed Account row routing; content stays behind its Action reader. */

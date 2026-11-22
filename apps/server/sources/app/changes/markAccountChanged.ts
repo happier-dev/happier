@@ -432,6 +432,7 @@ export async function markAccountsChanged(
         kind?: ChangeKind;
         hint?: unknown;
         hintForAccount?: (accountId: string) => unknown;
+        wakeEntityId?: string;
         /** This recipient's current-view publication replaces its duplicate viewer wake. */
         currentViewForAccount?: (accountId: string) => boolean;
         /** The writer updated this Session row in this transaction: its change rows link it without an existence read. */
@@ -446,7 +447,7 @@ export async function markAccountsChanged(
     if (!entityId) throw new Error("markAccountsChanged: entityId is required");
     if (accountIds.length === 0) return [];
 
-    if (params.hint !== undefined || params.hintForAccount || params.currentViewForAccount
+    if (params.hint !== undefined || params.hintForAccount || params.wakeEntityId || params.currentViewForAccount
         || (kind !== "account" && kind !== "savedSecretResource" && kind !== "session" && kind !== "machine")) {
         // Project all caller-owned hints before locking any Account. Cursor
         // allocation and merge-sensitive hints remain solely point-writer-owned.
@@ -455,6 +456,7 @@ export async function markAccountsChanged(
         const cursors: AccountChangePublication[] = [];
         for (const accountId of accountIds) {
             cursors.push(await markAccountChanged(tx, { accountId, kind, entityId, hint: hints.get(accountId),
+                ...(params.wakeEntityId ? { wakeEntityId: params.wakeEntityId } : {}),
                 ...(params.sessionRowWrittenInTx && kind === "session" ? { sessionRowWrittenInTx: true as const } : {}),
                 ...(params.currentViewForAccount?.(accountId) ? { currentViewSessionId: entityId } : {}) }));
         }
@@ -651,6 +653,8 @@ export interface MarkAccountChangedParams {
     accountId: string;
     kind: ChangeKind;
     entityId: string;
+    /** Additional committed routing on the same wake. The feed still stores one row. */
+    wakeEntityId?: string;
     hint?: unknown;
     /** Retain Machine/other-Session wakes; the current-view publisher covers this Session's viewers. */
     currentViewSessionId?: string;
@@ -682,6 +686,7 @@ export async function markAccountChanged(tx: Tx, params: MarkAccountChangedParam
         accountId: params.accountId,
         kind,
         entityId: params.entityId,
+        ...(params.wakeEntityId ? { wakeEntityId: params.wakeEntityId } : {}),
         ...(params.currentViewSessionId ? { currentViewSessionId: params.currentViewSessionId } : {}),
         ...(params.sessionRowWrittenInTx && kind === "session" ? { sessionRowWrittenInTx: true as const } : {}),
         ...(params.hint === undefined ? {} : { hint: structuredClone(compactHint(kind, params.hint)) }),
@@ -730,6 +735,7 @@ async function publishAccountChanged(
         ? pluginDomainHint.data
         : compactHint(kind, params.hint);
 
+    const wakeEntityIds = params.wakeEntityId ? [entityId, params.wakeEntityId] : [entityId];
     const now = new Date();
     const sessionId = kind === "session" || kind === "share" ? entityId : null;
     const machineId = kind === "machine" ? entityId : null;
@@ -882,7 +888,7 @@ async function publishAccountChanged(
         if (params.accountEncryptionTransitionActivation && rows[0]?.activationCount !== 1) {
             throw new Error('Account publication requires its prelocked activation receipt');
         }
-        scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId,
+        scheduleAccountChangeWake(tx, accountId, cursor, kind, wakeEntityIds, hint, params.currentViewSessionId,
             kind === 'artifact' ? artifactPublicationKinds(hint, rows[0]?.artifactKind) : undefined);
         recordAccountChangeRows(tx, accountId, [{ cursor, kind, entityId, changedAt: now, hint: rows[0]?.hint ?? null }]);
         return cursor;
@@ -989,7 +995,7 @@ async function publishAccountChanged(
         if (updated.count !== 1) throw new Error('Account publication requires its prelocked activation receipt');
     }
 
-    scheduleAccountChangeWake(tx, accountId, cursor, kind, [entityId], hint, params.currentViewSessionId, artifactKinds);
+    scheduleAccountChangeWake(tx, accountId, cursor, kind, wakeEntityIds, hint, params.currentViewSessionId, artifactKinds);
     recordAccountChangeRows(tx, accountId, [{ cursor, kind, entityId, changedAt: now, hint: stored.hint ?? null }]);
     return cursor;
 }

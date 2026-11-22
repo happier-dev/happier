@@ -51,12 +51,17 @@ async function fixture(retired: boolean) {
 }
 
 export function deploymentAccountPurgeCases() {
-    it('erases a retired solely Account-owned graph before its Artifacts and Machines', async () => {
+    it('erases a retired solely Account-owned graph including an unknown Deploy before its Artifacts and Machines', async () => {
         const f = await fixture(true);
+        const unknown = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
+            state: 'outcome_unknown', operation: 'deploy', requestKey: randomUUID(), actionOperationId: randomUUID(),
+            requestedAt: new Date(1), startedAt: new Date(2),
+            requestedByAccountId: f.account.id, contentArtifactId: f.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
         expect(await db.account.findUnique({ where: { id: f.account.id } })).toBeNull();
         expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toBeNull();
         expect(await db.deployment.findUnique({ where: { id: f.receipt.id } })).toBeNull();
+        expect(await db.deployment.findUnique({ where: { id: unknown.id } })).toBeNull();
         expect(await db.artifact.findUnique({ where: { id: f.artifact.id } })).toBeNull();
     });
 
