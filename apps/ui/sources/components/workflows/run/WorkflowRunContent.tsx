@@ -978,6 +978,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // page says them when no pane shows that card: on a phone, with nothing open, or with another step open.
     // Stop stays the page's own next step.
     const failureStepBeside = !phone && failurePresentation != null && props.selectedInvocationId === failurePresentation.invocationId;
+    // Only a stopped step's recovery card says when its choices appear; a hold open beside the Run does not, so the
+    // page keeps the recovery owner's one wait line at every width (FIN-DESIGN-ACCEPT-5 K).
+    const besideLifecycle = failureStepBeside ? props.invocations.find(row => row.id === props.selectedInvocationId)?.lifecycle : undefined;
+    const failureCardSaysRecovery = besideLifecycle === 'failed' || besideLifecycle === 'outcome_uncertain';
     // The line says what the attempt recorded and a usage limit's reset, so the page says why without opening
     // See failures (FIN-DESIGN-C4 R5), once: not again beside the card that says it (WAVE-ACCEPT-1118D c1).
     // An interrupted Run parked on a failed step says the same retained cause under its status.
@@ -988,7 +992,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         && (props.run.state === 'failed' || props.run.state === 'interrupted')
         && props.firstFailedInvocationResolution === 'loading' && (phone || props.selectedInvocationId === null);
     const failureChoices = failurePresentation == null ? null : resolveWorkflowRecoveryChoices(failurePresentation.recovery, props);
-    const failureRecoveryInstruction = (failureStepBeside ? null : failurePresentation?.recovery.usageLimitWait ?? failureChoices?.waitLine)
+    const failureRecoveryInstruction = (failureCardSaysRecovery ? null : failurePresentation?.recovery.usageLimitWait ?? failureChoices?.waitLine)
         ?? (failureChoices?.noChoices === true && primaryAction === 'stop' ? t('workflows.recovery.nextStop') : null);
     // That line already names the away Machine and when choices appear, so the page does not say contact was lost
     // a second time beside it (FIN-DESIGN-ACCEPT-4 G).

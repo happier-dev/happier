@@ -16,7 +16,7 @@ import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEdito
 import { t } from '@/text';
 
 import type { WorkflowConditionValueFacts } from '../presentation/workflowConditionRules';
-import { formatWorkflowFieldLabel, formatWorkflowReferenceScopeLabel, formatWorkflowResultFieldType, formatWorkflowTriggerEventLabel, workflowResultFieldText } from '../presentation/workflowValuePresentation';
+import { formatWorkflowFieldLabel, formatWorkflowReferenceScopeLabel, formatWorkflowResultFieldType, formatWorkflowTriggerEventLabel, formatWorkflowWorkspaceFieldLabel, workflowResultFieldText } from '../presentation/workflowValuePresentation';
 
 export type WorkflowConditionValueOption = Readonly<{
   id: string;
@@ -332,14 +332,14 @@ export function listWorkflowConditionValueOptions(
       workspace,
       t('workflows.workspace.title'),
       t('workflows.condition.whereItWorks'),
-      t('workflows.condition.folderOf', { step: distinctLabel(producer) }),
+      `${distinctLabel(producer)} · ${formatWorkflowWorkspaceFieldLabel('directory')}`,
       { kind: 'workspace', producer: source, field: 'directory' },
     );
     push(
       workspace,
       t('workflows.workspace.title'),
       t('workflows.condition.whereItWorks'),
-      t('workflows.condition.projectFolderOf', { step: distinctLabel(producer) }),
+      `${distinctLabel(producer)} · ${formatWorkflowWorkspaceFieldLabel('checkoutRootPath')}`,
       { kind: 'workspace', producer: source, field: 'checkoutRootPath' },
     );
   }

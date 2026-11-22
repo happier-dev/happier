@@ -102,4 +102,14 @@ describe('workflow prompt reference scope', () => {
         expect(formatWorkflowValueOptionLabel(options.find(option => option.reference.kind === 'input')!)).toBe('Branch');
         expect(formatWorkflowValueOptionLabel(options.find(option => option.unavailableReason === 'runs_later')!)).toBe('tell');
     });
+
+    // FIN-DESIGN-ACCEPT-5 J: a step's folders read as tokens ("Find · Folder"), never as a possessive.
+    it('names each workspace source by its step and field, the way the reference token reads them', () => {
+        const draft = createWorkflowEditorDraft({ draftId: 'folders', name: 'Fix', blocks: [step('find'), step('check')] });
+        const workspace = listWorkflowConditionValueOptions(draft, 'check').filter(option => option.reference.kind === 'workspace');
+        expect(workspace.map(option => formatWorkflowValueOptionLabel(option))).toEqual([
+            'find · workflows.input.workspaceFolder',
+            'find · workflows.workspace.projectCheckout',
+        ]);
+    });
 });

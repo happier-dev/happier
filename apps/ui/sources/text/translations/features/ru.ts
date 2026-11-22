@@ -20362,7 +20362,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { ru: {
-        checkoutRoot: 'Корневая папка рабочей копии',
+        workspaceFolder: 'Папка',
         unavailableValue: 'Значение недоступно', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Контекст сессии' : turns === 1 ? 'Последний ход сессии' : `Последние ходы сессии: ${turns}`,
         tokensUsed: 'Использовано токенов', goalTokenBudget: 'Бюджет токенов цели',
         trailingCount: ({ source, value }: { source: string; value: string }) => `Последовательные ${source}, совпадающие с ${value}`,
@@ -20925,8 +20925,6 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         thisRound: 'Этот раунд',
         fixedValue: 'Постоянное значение',
         wholeResult: 'Результат',
-        folderOf: ({ step }: { step: string }) => `Папка шага ${step}`,
-        projectFolderOf: ({ step }: { step: string }) => `Папка проекта шага ${step}`,
         compareToValue: 'Сравнить с другим значением',
         addCondition: 'Добавить условие',
         removeCondition: 'Удалить условие',

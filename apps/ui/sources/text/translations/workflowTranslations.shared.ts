@@ -619,8 +619,6 @@ export const en = {
         thisRound: 'This round',
         fixedValue: 'A fixed value',
         wholeResult: 'Result',
-        folderOf: ({ step }: { step: string }) => `${step}’s folder`,
-        projectFolderOf: ({ step }: { step: string }) => `${step}’s project folder`,
         compareToValue: 'Compare to another value',
         addCondition: 'Add a condition',
         removeCondition: 'Remove condition',

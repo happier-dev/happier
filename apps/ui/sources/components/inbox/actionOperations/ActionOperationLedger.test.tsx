@@ -251,6 +251,24 @@ describe('ActionOperationLedgerView', () => {
         expect(summary).toBeDefined();
         expect(summary!.props.trailingState).toBeNull();
     });
+    it('says a folded row\'s repeat count in its visible line on a narrow Inbox row (FIN-DESIGN-ACCEPT-5 L)', async () => {
+        // The narrow row has no state column, so "Failed 3×" leads the line beneath the title, before the cause and age.
+        const attempt = (operationId: string, settledAt: number) => ({
+            serverId: 'server-1',
+            snapshot: { version: 1 as const, operationId, revision: 2, actionId: 'session.spawn_new',
+                state: 'failed' as const, scope: { accountId: 'account-1', machineId: 'machine-1' }, title: 'Create session',
+                createdAt: settledAt - 10, settledAt, cancellation: 'unsupported' as const, error: { errorCode: 'failed', error: 'Failed' } },
+            observation: 'available' as const,
+            isUnavailableProjection: false,
+        });
+        const latest = attempt('attempt-3', 300);
+        const screen = await renderScreen(<ActionOperationRows operations={[latest]} presentation="inbox" narrow
+            attempts={new Map([[latest, [latest, attempt('attempt-2', 200), attempt('attempt-1', 100)]]])}
+            onOpenOperation={() => {}} onDismissOperation={() => {}} />);
+        const summary = screen.findAll((node) => node.props.testID === 'inbox.action-operation.attempt-3.summary'
+            && 'facts' in node.props)[0];
+        expect(summary!.props.facts[0]).toBe('Failed 3×');
+    });
 
     it('offers a restrained bulk clear only for successful recent rows', async () => {
         const onClearRecent = vi.fn();

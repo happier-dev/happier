@@ -20272,7 +20272,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { ja: {
-        checkoutRoot: 'チェックアウトのルートフォルダー',
+        workspaceFolder: 'フォルダー',
         unavailableValue: '値を利用できません', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'セッションのコンテキスト' : turns === 1 ? '直近1ターンのセッション' : `直近${turns}ターンのセッション`,
         tokensUsed: '使用トークン数', goalTokenBudget: '目標のトークン予算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `${value}に一致する連続した${source}`,
@@ -20835,8 +20835,6 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         thisRound: 'このラウンド',
         fixedValue: '固定値',
         wholeResult: '結果',
-        folderOf: ({ step }: { step: string }) => `${step} のフォルダー`,
-        projectFolderOf: ({ step }: { step: string }) => `${step} のプロジェクトフォルダー`,
         compareToValue: '別の値と比較',
         addCondition: '条件を追加',
         removeCondition: '条件を削除',

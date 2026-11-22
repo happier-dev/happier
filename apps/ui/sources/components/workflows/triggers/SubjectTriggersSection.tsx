@@ -288,12 +288,6 @@ export const SubjectTriggersSectionContent = React.memo(
     ), [widget, linkSlot, linkHeld, linkExpanded, openAutomate]);
     const sectionActions = widget ? null : (
       <View ref={addAnchor} collapsable={false} style={styles.actions}>
-        <SectionActionButton
-          testID="subject-triggers-add"
-          icon="plus"
-          title={t('workflows.triggers.section.automate')}
-          onPress={openAutomate}
-        />
         {linkSlot === 'offered' ? (
           <View ref={linkAnchor} collapsable={false}>
             <SectionActionButton
@@ -310,6 +304,13 @@ export const SubjectTriggersSectionContent = React.memo(
             <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
           </View>
         ) : null}
+        {/* Automate… closes the row on the section's trailing edge; Link (or its held place) sits before it. */}
+        <SectionActionButton
+          testID="subject-triggers-add"
+          icon="plus"
+          title={t('workflows.triggers.section.automate')}
+          onPress={openAutomate}
+        />
       </View>
     );
     const section = (

@@ -33,7 +33,8 @@ vi.mock('react-native-unistyles', async () => {
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key) => key });
+    // The attempt ordinal is the one parameter these assertions read.
+    return createTextModuleMock({ translate: (key, params) => key === 'workflows.run.attempt' ? `Attempt ${String(params?.attempt)}` : key });
 });
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -192,6 +193,9 @@ describe('ActionOperationDetailModal', () => {
         try {
             expect(['try-3', 'try-2', 'try-1'].map(id => screen.findByTestId(`action-operation-attempt.${id}`) !== null))
                 .toEqual([true, true, true]);
+            // FIN-DESIGN-ACCEPT-5 M: each attempt reads by its ordinal, newest (the third) first.
+            expect(['try-3', 'try-2', 'try-1'].map(id => screen.findAll(node => node.props.testID === `action-operation-attempt.${id}` && 'title' in node.props)[0]?.props.title))
+                .toEqual(['Attempt 3', 'Attempt 2', 'Attempt 1']);
         } finally { await screen.unmount(); }
     });
 

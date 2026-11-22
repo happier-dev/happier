@@ -113,6 +113,8 @@ export function WorkflowValuePicker(props: Readonly<{
                     searchPlaceholder={t('workflows.condition.findValue')}
                     showCategoryTitles
                     matchTriggerWidth={false}
+                    // The field it fills names the list: its accessible name, and its title as a phone sheet.
+                    popoverAccessibilityLabel={props.label}
                     selectedId={selectedId}
                     items={[
                         ...options.map((option) => ({

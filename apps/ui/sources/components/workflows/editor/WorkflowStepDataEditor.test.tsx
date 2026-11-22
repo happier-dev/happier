@@ -185,7 +185,9 @@ describe('WorkflowStepDataEditor field selects', () => {
             { kind: 'session_context', recentTurns: 2 }, { kind: 'session_context_field', field: 'goal.tokenBudget' },
         ];
         for (const reference of references) expect(formatWorkflowValueReference(draft, reference)).not.toContain('"kind"');
-        expect(formatWorkflowValueReference(draft, references[4]!)).toContain('workflows.input.checkoutRoot');
+        expect(formatWorkflowValueReference(draft, references[4]!)).toMatch(/· workflows\.workspace\.projectCheckout$/);
+        expect(formatWorkflowValueReference(draft, { kind: 'workspace', producer, field: 'directory' }))
+            .toMatch(/· workflows\.input\.workspaceFolder$/);
         // External/future values may be unavailable to this reader; never expose their native bag.
         expect(formatWorkflowValueReference(draft, { kind: 'future', data: { secret: 'hidden' } } as unknown as WorkflowValueReference)).toBe('workflows.input.unavailableValue');
     });

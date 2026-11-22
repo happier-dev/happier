@@ -36,6 +36,11 @@ export function formatWorkflowTriggerEventLabel(event: WorkflowTriggerEventIdent
     return 'kind' in event ? humanizeIdentifier(`${event.phase}Action`) : humanizeIdentifier(event.localId);
 }
 
+/** A step's workspace field in words: its folder, or the project folder its checkout starts at. */
+export function formatWorkflowWorkspaceFieldLabel(field: 'directory' | 'checkoutRootPath'): string {
+    return field === 'directory' ? t('workflows.input.workspaceFolder') : t('workflows.workspace.projectCheckout');
+}
+
 /**
  * A reference read as words ("Workflow input files", "Check the build result ·
  * verdict", "Item value"): the one reading Step options sentences, container
@@ -76,7 +81,7 @@ export function formatWorkflowValueReference(draft: WorkflowValuePresentationCon
                 value: formatWorkflowLiteralValue(reference.equals),
             });
         case 'workspace':
-            return `${t('workflows.workspace.title')} · ${producerLabel(reference.producer)} · ${t(reference.field === 'directory' ? 'workflows.workspace.projectCheckout' : 'workflows.input.checkoutRoot')}`;
+            return `${t('workflows.workspace.title')} · ${producerLabel(reference.producer)} · ${formatWorkflowWorkspaceFieldLabel(reference.field)}`;
         case 'item':
             return withPath(t(`workflows.input.itemField.${reference.field}`), reference.path);
         case 'iteration':

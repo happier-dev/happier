@@ -2,7 +2,7 @@
 
 
 export type WorkflowValueReferenceCopy = {
-    checkoutRoot: string;
+    workspaceFolder: string;
     unavailableValue: string;
     sessionContext: (params: { turns: number }) => string;
     tokensUsed: string;
@@ -15,7 +15,7 @@ export type WorkflowValueReferenceCopy = {
 };
 
 export const workflowValueReferenceTranslationsEnglish = { en: {
-        checkoutRoot: 'Checkout root folder',
+        workspaceFolder: 'Folder',
         unavailableValue: 'Unavailable value', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Session context' : turns === 1 ? 'Last session turn' : `Last ${turns} session turns`,
         tokensUsed: 'Tokens used', goalTokenBudget: 'Goal token budget',
         trailingCount: ({ source, value }: { source: string; value: string }) => `Consecutive ${source} matching ${value}`,

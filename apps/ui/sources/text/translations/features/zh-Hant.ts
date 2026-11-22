@@ -20212,7 +20212,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { 'zh-Hant': {
-        checkoutRoot: '簽出根資料夾',
+        workspaceFolder: '資料夾',
         unavailableValue: '值無法使用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '工作階段上下文' : turns === 1 ? '最近一回合工作階段' : `最近${turns}回合工作階段`,
         tokensUsed: '已用權杖', goalTokenBudget: '目標權杖預算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `連續符合${value}的${source}`,
@@ -20775,8 +20775,6 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         thisRound: '本輪',
         fixedValue: '固定值',
         wholeResult: '結果',
-        folderOf: ({ step }: { step: string }) => `${step} 的資料夾`,
-        projectFolderOf: ({ step }: { step: string }) => `${step} 的專案資料夾`,
         compareToValue: '與另一個值比較',
         addCondition: '新增條件',
         removeCondition: '移除條件',

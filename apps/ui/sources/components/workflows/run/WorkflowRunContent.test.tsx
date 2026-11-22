@@ -1064,6 +1064,22 @@ describe('WorkflowRunContent', () => {
     expect(lines).toHaveLength(1);
   });
 
+  it('reads the one reconnect line at both widths while a hold that cannot say it is open beside the Run (FIN-DESIGN-ACCEPT-5 K)', async () => {
+    const hold = createWorkflowInvocationIndexFixture({ id: 'hold', parentRecordId: 'root', lifecycle: 'waiting_for_review' });
+    const offline = {
+      run: createWorkflowRunSummaryFixture({ state: 'running', attentionRequired: true }),
+      machineName: 'MacBook Pro', machineReachable: false, invocations: [hold], invocationProgressById: openedLeafProgress('hold'),
+      firstFailedInvocationId: null, firstFailedInvocationResolution: 'resolved' as const,
+    };
+    const reconnect = 'workflows.recovery.choicesOnReconnect:{"machine":"MacBook Pro"}';
+    const offlineLines = (screen: Awaited<ReturnType<typeof renderContent>>) => ['workflow-run-failure-next', 'workflow-run-machine-unavailable']
+      .map(testID => screen.findByTestId(testID)).filter(node => node !== null).map(node => node!.props.children);
+    viewport.window = { width: 390, height: 844 };
+    expect(offlineLines(await renderContent({ ...offline, selectedInvocationId: null }))).toEqual([reconnect]);
+    viewport.window = { width: 1440, height: 900 };
+    expect(offlineLines(await renderContent({ ...offline, selectedInvocationId: hold.id }))).toEqual([reconnect]);
+  });
+
   it('names the failed step the Map marks while the first-failure lookup is still settling (LABPARITY-ACCEPT-F fix 2)', async () => {
     // The Run's pages land before its separate first-failure lookup: the Map already marks step 1 failed,
     // so the headline reads that same row instead of saying no step finished.

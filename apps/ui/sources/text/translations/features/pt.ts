@@ -20323,7 +20323,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { pt: {
-        checkoutRoot: 'Pasta raiz do checkout',
+        workspaceFolder: 'Pasta',
         unavailableValue: 'Valor indisponível', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Contexto da sessão' : turns === 1 ? 'Último turno da sessão' : `Últimos ${turns} turnos da sessão`,
         tokensUsed: 'Tokens utilizados', goalTokenBudget: 'Orçamento de tokens do objetivo',
         trailingCount: ({ source, value }: { source: string; value: string }) => `${source} consecutivos correspondentes a ${value}`,
@@ -20886,8 +20886,6 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         thisRound: 'Esta rodada',
         fixedValue: 'Um valor fixo',
         wholeResult: 'Resultado',
-        folderOf: ({ step }: { step: string }) => `Pasta de ${step}`,
-        projectFolderOf: ({ step }: { step: string }) => `Pasta do projeto de ${step}`,
         compareToValue: 'Comparar com outro valor',
         addCondition: 'Adicionar uma condição',
         removeCondition: 'Remover a condição',

@@ -20351,7 +20351,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { ca: {
-        checkoutRoot: 'Carpeta arrel del checkout',
+        workspaceFolder: 'Carpeta',
         unavailableValue: 'Valor no disponible', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? 'Context de la sessió' : turns === 1 ? 'Últim torn de la sessió' : `Últims ${turns} torns de la sessió`,
         tokensUsed: 'Tokens utilitzats', goalTokenBudget: 'Pressupost de tokens de l’objectiu',
         trailingCount: ({ source, value }: { source: string; value: string }) => `${source} consecutius amb ${value}`,
@@ -20914,8 +20914,6 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         thisRound: 'Aquesta ronda',
         fixedValue: 'Un valor fix',
         wholeResult: 'Resultat',
-        folderOf: ({ step }: { step: string }) => `Carpeta de ${step}`,
-        projectFolderOf: ({ step }: { step: string }) => `Carpeta del projecte de ${step}`,
         compareToValue: 'Compara amb un altre valor',
         addCondition: 'Afegeix una condició',
         removeCondition: 'Elimina la condició',

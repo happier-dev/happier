@@ -500,13 +500,15 @@ export const ActionOperationDetailModal = React.memo(
 
         {attempts.length > 1 ? (
           <ItemGroup title={t('inbox.actionOperations.attempts')}>
-            {attempts.map((attempt) => (
+            {/* Newest first, each by its ordinal ("Attempt 3"), the way a Run names its attempts. */}
+            {attempts.map((attempt, index) => (
               <Item
                 key={attempt.snapshot.operationId}
                 testID={`action-operation-attempt.${attempt.snapshot.operationId}`}
                 mode="info"
-                title={formatActionOperationAge(attempt.snapshot)}
-                subtitle={presentFailure(attempt.snapshot)?.reason ?? describeActionOperationStatusLabel({ kind: 'host', value: 'failed' })}
+                title={t('workflows.run.attempt', { attempt: String(attempts.length - index) })}
+                subtitle={joinHappierFacts(presentFailure(attempt.snapshot)?.reason
+                  ?? describeActionOperationStatusLabel({ kind: 'host', value: 'failed' }), formatActionOperationAge(attempt.snapshot))}
               />
             ))}
           </ItemGroup>

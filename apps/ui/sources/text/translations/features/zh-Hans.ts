@@ -20212,7 +20212,7 @@ return { legacyTranslations, creationTranslations, workflowTriggersTranslations 
 
 const Domain_workflowValueReferenceTranslations = (() => {
 const workflowValueReferenceTranslations = { zh: {
-        checkoutRoot: '检出根文件夹',
+        workspaceFolder: '文件夹',
         unavailableValue: '值不可用', sessionContext: ({ turns }: { turns: number }) => turns === 0 ? '会话上下文' : turns === 1 ? '最近一轮会话' : `最近${turns}轮会话`,
         tokensUsed: '已用令牌', goalTokenBudget: '目标令牌预算',
         trailingCount: ({ source, value }: { source: string; value: string }) => `连续匹配${value}的${source}`,
@@ -20775,8 +20775,6 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         thisRound: '本轮',
         fixedValue: '固定值',
         wholeResult: '结果',
-        folderOf: ({ step }: { step: string }) => `${step} 的文件夹`,
-        projectFolderOf: ({ step }: { step: string }) => `${step} 的项目文件夹`,
         compareToValue: '与另一个值比较',
         addCondition: '添加条件',
         removeCondition: '删除条件',

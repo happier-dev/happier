@@ -180,7 +180,8 @@ const ActionOperationRow = React.memo(function ActionOperationRow(props: Readonl
 
     if (inboxPresentation) return <InboxWorkRow
         testID={`inbox.action-operation.${snapshot.operationId}`} title={snapshot.title} narrow={props.narrow}
-        facts={[failureReason, sourceTitle, determinateProgress, sourceContext.contextLine]}
+        // A narrow row has no state column, so a folded row's count leads its line ("Failed 3× · Exit code 1 · 1m").
+        facts={[props.narrow === true && attemptCount > 1 ? stateWord : null, failureReason, sourceTitle, determinateProgress, sourceContext.contextLine]}
         phase={workStatus.bucket === 'working' ? 'live' : workStatus.bucket === 'needs_you' ? 'attention' : 'finished'}
         // Repeated failures of one work item read as one row: "Failed 3×" at the latest failure's time.
         status={attemptCount > 1 ? { ...workStatus, word: stateWord } : workStatus}
