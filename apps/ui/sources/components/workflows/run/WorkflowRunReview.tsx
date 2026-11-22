@@ -16,7 +16,6 @@ import { REVIEW_CARD_VISIBLE_FINDINGS } from '@/components/sessions/reviews/mess
 import { resolveExecutionRunBackendLabel } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCatalog';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { t } from '@/text';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 
@@ -92,7 +91,8 @@ export function WorkflowRunReview(
             row.comment.state,
             comments.pending[row.rowId],
           ),
-          meta: facts.length > 0 ? joinHappierFacts(...facts) : null,
+          // One standing per row, in the history owner's order (lab `hunts-running`); the rest is on the Review page.
+          meta: facts[0] ?? null,
         };
       }),
     [comments.pending, historyByIdentity, roots],
