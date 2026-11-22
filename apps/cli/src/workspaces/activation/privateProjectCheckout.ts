@@ -78,7 +78,7 @@ export function admitPrivateProjectCheckoutDestination(input: Readonly<{
   reviewIdentity?: Pick<DestinationReview, 'accountId' | 'serverId' | 'machineId'>;
 }>): void {
   const choice = input.materialization;
-  const matches = choice.kind === 'sync'
+  const matches = choice.kind === 'sync' || choice.kind === 'worktree'
     ? choice.targetPath === input.prepared.rootPath
     : choice.kind === 'clone' && choice.destinationParentPath === input.prepared.destinationParentPath
       && choice.destinationDirectoryName === input.prepared.destinationDirectoryName;

@@ -96,10 +96,13 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
   const attach = materialization.kind === 'attach' && (input.request.source.kind === 'workspace' && !!input.existingWorkspaceRefId
     || input.request.source.kind === 'folder');
   const existing = (attach || sync) && !!input.existingWorkspaceRefId;
+  const source = materialization.kind === 'worktree'
+    ? preparePrivateProjectCheckout({ requesterIdentity: selected, memberRoot, workspaceRefs: input.workspaceRefs,
+      workspaceRefId: input.existingWorkspaceRefId ?? refuse(), createId: refuse }) : undefined;
   const prepared = preparePrivateProjectCheckout({ requesterIdentity: selected, memberRoot,
     workspaceRefs: input.workspaceRefs, ...(existing ? { workspaceRefId: input.existingWorkspaceRefId } : {}),
     createId: () => materialization.kind === 'clone' ? materialization.destinationDirectoryName
-      : materialization.kind === 'sync' ? basename(materialization.targetPath)
+      : materialization.kind === 'sync' || materialization.kind === 'worktree' ? basename(materialization.targetPath ?? refuse())
         : attach && input.request.source.kind === 'folder' ? basename(input.request.source.path) : refuse() });
   if (!attach) admitPrivateProjectCheckoutDestination({ prepared, materialization,
     reviewIdentity: { accountId: selected.requester.accountId, serverId: snapshot.memberIdentity.homeServerIdentityId!,
@@ -171,7 +174,8 @@ export async function preparePrivateProjectOpenCheckout(input: Readonly<{
       const child = await prepareWorkspaceCheckoutEffect({ request: attach
         ? { ...input.request, source: { kind: 'workspace', workspaceId: prepared.workspaceRefId } } : input.request,
         workspaceRefId: prepared.workspaceRefId,
-        workspaceRoot: memberRoot.workspaceRoot, ...(attach ? { existingRootPath: prepared.rootPath } : {}), registry: lease.registry });
+        workspaceRoot: memberRoot.workspaceRoot,
+        ...(attach ? { existingRootPath: prepared.rootPath } : source ? { existingRootPath: source.rootPath } : {}), registry: lease.registry });
       assertPluginCurrent = child.assertCurrent;
       const selection = await prepareGitAccountSelection(child.effect);
       try {

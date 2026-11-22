@@ -349,6 +349,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const materializationKey = context.localActionContext?.actionRequestId ?? context.transportRequestId
           ?? context.callerInputAuthorization?.binding.requestId;
         if (!materializationKey || input.materialization.kind !== 'clone'
+          && !(input.materialization.kind === 'worktree' && sourceWorkspaceRefId)
           && !(input.materialization.kind === 'attach' && (sourceWorkspaceRefId || input.source.kind === 'folder'))
           && !(input.materialization.kind === 'sync' && sourceWorkspaceRefId && runtime.workspaceSyncAdapter?.preparePrivateExecution))
           return refused('workspace_private_checkout_required');
@@ -360,7 +361,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         }
         const privateRequest = input.materialization.kind === 'clone' && selector
           ? { ...input, source: { kind: 'repository' as const, selector }, ref, subdir }
-          : (input.materialization.kind === 'attach' || input.materialization.kind === 'sync') && sourceWorkspaceRefId
+          : (input.materialization.kind === 'attach' || input.materialization.kind === 'sync' || input.materialization.kind === 'worktree') && sourceWorkspaceRefId
             ? { ...input, source: { kind: 'workspace' as const, workspaceId: sourceWorkspaceRefId } } : input;
         privateCheckout = await preparePrivateProjectOpenCheckout({ runtime: runtime.privateCheckout!,
           ingress: context,

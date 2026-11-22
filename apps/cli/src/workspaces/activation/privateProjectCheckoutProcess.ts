@@ -72,8 +72,9 @@ export async function materializePrivateProjectCheckoutProcess(input: PrivatePro
       },
     } });
   // A settled canonical child can attest no-effect auth/admission refusal.
-  // Abrupt transport loss cannot: clone may already have reserved its path.
-  if (!outcome.settled && input.effect.request.materialization.kind === 'clone') onEffectsIssued();
+  // Abrupt transport loss cannot: clone or worktree creation may have reserved its path.
+  if (!outcome.settled && (input.effect.request.materialization.kind === 'clone'
+    || input.effect.request.materialization.kind === 'worktree')) onEffectsIssued();
   if (outcome.failure !== undefined) throw outcome.failure;
   if (failure) throw failure;
   if (!outcome.settled || !result || !outcome.exitedCleanly) throw refusal('workspace_effect_outcome_unknown');

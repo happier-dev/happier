@@ -64,16 +64,20 @@ describe('private Project checkout preparation', () => {
     expect(prepared.rootPath).toBe(existing.rootPath);
   });
 
-  it('requires the reviewed exact destination and never relocates or converts a worktree request', () => {
+  it('requires the reviewed exact destination for clone and member worktree requests', () => {
     const input = fixture();
     const prepared = preparePrivateProjectCheckout({ ...input, workspaceRefs: [], createId: () => 'checkout-id' });
     expect(() => admitPrivateProjectCheckoutDestination({ prepared, materialization: {
       kind: 'clone', destinationParentPath: prepared.destinationParentPath, destinationDirectoryName: prepared.destinationDirectoryName,
     } })).not.toThrow();
+    expect(() => admitPrivateProjectCheckoutDestination({ prepared, materialization: {
+      kind: 'worktree', targetPath: prepared.rootPath,
+      checkout: { kind: 'git_worktree', displayName: 'feature', baseRef: 'main', branchMode: 'new' },
+    } })).not.toThrow();
     for (const materialization of [
       { kind: 'clone' as const, destinationParentPath: '/shared', destinationDirectoryName: prepared.destinationDirectoryName },
       { kind: 'clone' as const, destinationParentPath: prepared.destinationParentPath, destinationDirectoryName: 'other-checkout' },
-      { kind: 'worktree' as const, targetPath: prepared.rootPath,
+      { kind: 'worktree' as const, targetPath: '/shared/feature',
         checkout: { kind: 'git_worktree' as const, displayName: 'feature', baseRef: 'main', branchMode: 'new' as const } },
     ]) expect(() => admitPrivateProjectCheckoutDestination({ prepared, materialization }))
       .toThrowError(expect.objectContaining({ code: 'workspace_private_checkout_review_required' }));

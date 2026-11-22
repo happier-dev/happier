@@ -16,6 +16,7 @@ import { runWorkspaceEffectWorker } from './workspaceEffectWorker';
 import { workspaceCheckoutNativeBoundary as boundary } from './workspaceCheckoutNative.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createWorkspaceEffectScmRegistry, prepareWorkspaceCheckoutEffect } from './workspaceEffect';
+import { preparePrivateProjectCheckout, admitPrivateProjectCheckoutDestination } from './privateProjectCheckout';
 import { createWorkspaceSyncSeedExport, resolveWorkspaceSyncSeedTransfer } from '@/workspaces/sync/workspaceSyncSeedTransfer';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { buildDirectPeerTransferEndpointPath } from '@/machines/transfer/directPeerTransport';
@@ -283,6 +284,75 @@ afterEach(() => {
   const phases = boundary.phases.join(',');
   boundary.reset();
   if (stalled) throw new Error(`Private checkout fixture did not settle; closed phases: ${phases}`);
+});
+
+it.skipIf(process.platform !== 'linux')('creates and reopens a worktree from the accepted member checkout without daemon filesystem traversal', async () => {
+  await withTempDir('private-worktree-process-', async workspaceRoot => {
+    const sourceRoot = join(workspaceRoot, 'accepted-source');
+    const rootPath = join(workspaceRoot, 'second-checkout');
+    await mkdir(join(sourceRoot, 'app'), { recursive: true });
+    await writeFile(join(sourceRoot, 'app', 'seed.txt'), 'member source');
+    const git = promisify(execFile);
+    await git('git', ['init', '-b', 'main'], { cwd: sourceRoot });
+    await git('git', ['add', '.'], { cwd: sourceRoot });
+    await git('git', ['-c', 'user.name=Native worktree test', '-c', 'user.email=native@example.invalid', 'commit', '-m', 'initial'], { cwd: sourceRoot });
+    const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
+      requester: { serverId: 'profile', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
+    const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'canonical-home' }),
+      workspaceRoot, agentUid: 2401, agentGid: 2401 };
+    const memberRoot = { identity: memberIdentity, workspaceRoot, daemonGid: 2400 };
+    const snapshot = { enabled: true, status: { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const },
+      workspaceRoots: [workspaceRoot], memberIdentity, localTransport: { agentUid: 2401, agentGid: 2401 },
+      launch: { managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+        runtimeHome: join(memberIdentity.home, 'runtime', 'fixture'), environment: {}, selectedEnvironmentKeys: [], selectedMaterials: [] } };
+    const request = { serverId: 'canonical-home', machineId: 'machine',
+      source: { kind: 'workspace' as const, workspaceId: 'accepted-source' }, subdir: 'app',
+      materialization: { kind: 'worktree' as const, targetPath: rootPath,
+        checkout: { kind: 'git_worktree' as const, displayName: 'member-second', baseRef: 'HEAD', branchMode: 'new' as const } } };
+    const prepared = preparePrivateProjectCheckout({ requesterIdentity, memberRoot, workspaceRefs: [], createId: () => 'second-checkout' });
+    const fixture = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+    boundary.privateRoot = sourceRoot;
+    boundary.privateRoots = [rootPath];
+    boundary.launch = async (input, output) => {
+      const frame = await readAgentLaunchFrame(input);
+      expect(frame.nativeIdentity?.agentUid).toBe(2401);
+      await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal, currentDirectory: () => workspaceRoot });
+    };
+    let effects = 0;
+    const launch = { requesterIdentity, agentIsolation: { read: () => snapshot }, signal: new AbortController().signal, assertCurrent() {} };
+    try {
+      admitPrivateProjectCheckoutDestination({ prepared, materialization: request.materialization });
+      const child = await prepareWorkspaceCheckoutEffect({ request, workspaceRefId: prepared.workspaceRefId,
+        workspaceRoot, existingRootPath: sourceRoot, registry: fixture.registry });
+      const nativeInput = { prepared, memberRoot, effect: child.effect, launch,
+        managedHappierBinaryPath: snapshot.launch.managedHappierBinaryPath, verifyCurrent: async () => {}, onEffectsIssued() { effects += 1; } };
+      const checkout = await materializePrivateProjectCheckoutProcess(nativeInput);
+      expect(checkout).toMatchObject({ rootPath, directory: join(rootPath, 'app'), created: true });
+      expect(effects).toBe(1);
+      expect((await git('git', ['branch', '--show-current'], { cwd: rootPath })).stdout.trim()).toBe('member-second');
+      expect((await git('git', ['branch', '--show-current'], { cwd: sourceRoot })).stdout.trim()).toBe('main');
+      const attach = await prepareWorkspaceCheckoutEffect({ request: { ...request, source: { kind: 'workspace', workspaceId: prepared.workspaceRefId },
+        materialization: { kind: 'attach' } }, workspaceRefId: prepared.workspaceRefId,
+        workspaceRoot, existingRootPath: rootPath, registry: fixture.registry });
+      expect(await materializePrivateProjectCheckoutProcess({ ...nativeInput, effect: attach.effect })).toMatchObject({ rootPath, created: false });
+      expect(effects).toBe(1);
+      await withTempDir('foreign-git-worktree-', async foreignRoot => {
+        await git('git', ['init', '-b', 'main'], { cwd: foreignRoot });
+        await git('git', ['-c', 'user.name=Foreign fixture', '-c', 'user.email=foreign@example.invalid', 'commit', '--allow-empty', '-m', 'initial'], { cwd: foreignRoot });
+        const foreignLinkedRoot = join(workspaceRoot, 'foreign-link');
+        await git('git', ['worktree', 'add', '-b', 'foreign-link', foreignLinkedRoot], { cwd: foreignRoot });
+        const foreignPrepared = preparePrivateProjectCheckout({ requesterIdentity, memberRoot, workspaceRefs: [], createId: () => 'foreign-link' });
+        const foreign = await prepareWorkspaceCheckoutEffect({ request: { ...request, subdir: undefined,
+          source: { kind: 'workspace', workspaceId: 'foreign-link' }, materialization: { kind: 'attach' } },
+          workspaceRefId: foreignPrepared.workspaceRefId, workspaceRoot, existingRootPath: foreignLinkedRoot, registry: fixture.registry });
+        await expect(materializePrivateProjectCheckoutProcess({ ...nativeInput, prepared: foreignPrepared, effect: foreign.effect }))
+          .rejects.toMatchObject({ code: 'workspace_private_checkout_required', details: { reason: 'workspace_git_metadata_shared' } });
+        expect(effects).toBe(1);
+      });
+      await expect(realpath(rootPath)).rejects.toMatchObject({ code: 'EACCES' });
+      expect(boundary.childFailure).toBeUndefined();
+    } finally { boundary.completed = true; await fixture.dispose(); }
+  });
 });
 
 it.skipIf(process.platform !== 'linux')('accepts member-verified private checkout readback when daemon physical traversal is denied', async () => {

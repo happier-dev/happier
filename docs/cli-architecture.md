@@ -2569,6 +2569,12 @@ that captured identity for later transfers and reconnects. Its credentials use a
 Sync relationship scope in the existing private requester-custody store;
 automatic conflict recovery
 requires that exact retained relationship capture at daemon ingress.
+Project Open worktree creation also runs in that captured native member process
+in 0.3 development. Its source must be the exact accepted checkout in the
+requester's private root, and its reviewed destination is another direct child
+of that root. SCM owns Git worktree creation and metadata inspection. A linked
+worktree can be reopened when its shared repository metadata remains inside the
+same member root; a host or another member's repository is refused.
 Add Machine uses this same path for a Can use destination (owner ruling
 2026-11-14). `resolveWorkspaceSyncDestinationPlacement` in
 `apps/ui/sources/sync/ops/workspaceSyncRelationshipCreate.ts` reads the

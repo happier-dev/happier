@@ -15,7 +15,8 @@ import { activateScmRuntimeContributionsOnDemand } from '@/scm/scmBackendCatalog
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { materializeProjectCheckout, type MaterializedProjectCheckout } from './materializeProjectCheckout';
 import { readProjectCloneSource } from './readProjectCloneSource';
-import { privateProjectCheckoutRefusal } from './privateProjectCheckout';
+import { privateProjectCheckoutRefusal, resolvePrivateProjectCheckoutRoot } from './privateProjectCheckout';
+import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 
 export type WorkspaceCheckoutEffect = Readonly<{
   request: OpenProjectInputV1;
@@ -45,19 +46,16 @@ export async function prepareWorkspaceCheckoutEffect(input: Readonly<{
   existingRootPath?: string;
   registry: ResolvedExecutablePluginRuntimeRegistry;
 }>): Promise<Readonly<{ effect: WorkspaceCheckoutEffect; assertCurrent(): void }>> {
-  if (input.request.materialization.kind === 'attach' && input.existingRootPath) {
-    const admitted = input.request.cloneSource ? await prepareAdmittedScmEffect({ registry: input.registry }) : {
-      effect: { generation: input.registry.generation, plugins: [], contributions: {} }, assertCurrent() {},
-    };
-    return { effect: { request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,
-      existingRootPath: input.existingRootPath, ...admitted.effect }, assertCurrent: admitted.assertCurrent };
-  }
-  if (input.request.source.kind !== 'repository' && input.request.materialization.kind !== 'sync') throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
+  const existing = input.request.source.kind === 'workspace' && input.existingRootPath
+    && (input.request.materialization.kind === 'attach' || input.request.materialization.kind === 'worktree');
+  if (!existing && input.request.source.kind !== 'repository' && input.request.materialization.kind !== 'sync')
+    throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
   const admitted = await prepareAdmittedScmEffect({ registry: input.registry,
     ...(input.request.source.kind === 'repository' ? { providerId: input.request.source.selector.provider.id } : {}),
   });
   return { assertCurrent: admitted.assertCurrent, effect: {
-    request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot, ...admitted.effect,
+    request: input.request, workspaceRefId: input.workspaceRefId, workspaceRoot: input.workspaceRoot,
+    ...(existing ? { existingRootPath: input.existingRootPath } : {}), ...admitted.effect,
   } };
 }
 
@@ -131,7 +129,7 @@ export async function createWorkspaceEffectScmRegistry(input: AdmittedScmEffect,
 export async function executeWorkspaceCheckoutEffect(input: WorkspaceCheckoutEffect,
   context: WorkspaceCheckoutEffectContext): Promise<MaterializedProjectCheckout> {
   const request = OpenProjectInputV1Schema.parse(input.request);
-  const expectedRoot = join(input.workspaceRoot, input.workspaceRefId);
+  const expectedRoot = resolvePrivateProjectCheckoutRoot(input.workspaceRoot, input.workspaceRefId);
   // Physical readback belongs to the member that owns the private checkout.
   // The daemon receives this result only through its captured admitted child.
   const verified = async (checkout: MaterializedProjectCheckout): Promise<MaterializedProjectCheckout> => {
@@ -145,38 +143,53 @@ export async function executeWorkspaceCheckoutEffect(input: WorkspaceCheckoutEff
     && request.materialization.destinationParentPath === input.workspaceRoot;
   const attach = request.source.kind === 'workspace' && request.materialization.kind === 'attach'
     && input.existingRootPath === expectedRoot;
-  if (!clone && !attach) {
+  const worktree = request.source.kind === 'workspace' && request.materialization.kind === 'worktree'
+    && request.materialization.targetPath === expectedRoot
+    && input.existingRootPath === resolvePrivateProjectCheckoutRoot(input.workspaceRoot, request.source.workspaceId);
+  if (!clone && !attach && !worktree) {
     throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
   }
   context.signal.throwIfAborted();
-  if (attach) {
-    if (await realpath(expectedRoot) !== expectedRoot) throw privateProjectCheckoutRefusal();
-    const gitPath = join(expectedRoot, '.git');
-    const metadata = await lstat(gitPath).catch((error: unknown) => {
-      if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
-      throw error;
-    });
-    if (metadata && (!metadata.isDirectory() || metadata.isSymbolicLink() || await realpath(gitPath) !== gitPath
-      || await lstat(join(gitPath, 'commondir')).then(() => true, error => {
-        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false; throw error;
-      }))) throw privateProjectCheckoutRefusal('workspace_git_metadata_shared');
-    const checkout = await verified(await materializeProjectCheckout({ materialization: { kind: 'attach' }, sourceDirectory: expectedRoot,
-      sourceRootPath: expectedRoot, subdir: request.subdir, signal: context.signal }));
-    if (!request.cloneSource) return checkout;
-    const registry = await createWorkspaceEffectScmRegistry(input, context);
-    try {
-      return { ...checkout, cloneSource: await readProjectCloneSource({ directory: checkout.directory,
-        registry: registry.registry, signal: context.signal }) };
-    } finally { await registry.dispose(); }
-  }
-  const registry = await createWorkspaceEffectScmRegistry(input, context);
+  let scm: Awaited<ReturnType<typeof createWorkspaceEffectScmRegistry>> | undefined;
+  const registry = async () => scm ??= await createWorkspaceEffectScmRegistry(input, context);
   try {
+    if (attach || worktree) {
+      const sourceRoot = input.existingRootPath!;
+      if (await realpath(sourceRoot) !== sourceRoot) throw privateProjectCheckoutRefusal();
+      const gitPath = join(sourceRoot, '.git');
+      const metadata = await lstat(gitPath).catch((error: unknown) => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return null;
+        throw error;
+      });
+      if (metadata?.isSymbolicLink() || metadata?.isDirectory() && await realpath(gitPath) !== gitPath)
+        throw privateProjectCheckoutRefusal('workspace_git_metadata_shared');
+      const linked = metadata && (!metadata.isDirectory() || await lstat(join(gitPath, 'commondir')).then(() => true, error => {
+        if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return false; throw error;
+      }));
+      if (linked) {
+        // SCM owns Git's administrative references. Linked worktrees may share
+        // that member's private repository, never a host or another member's.
+        const inspected = await inspectWorkspaceLocationWithScmWorkspace({ candidatePath: sourceRoot,
+          registry: (await registry()).registry, signal: context.signal });
+        const repository = inspected?.checkoutDiscovery.find(entry => entry.kind === 'git_worktree')?.repositoryIdentityPath;
+        if (!repository || !isCanonicalAbsolutePathInsideRoot(input.workspaceRoot, await realpath(repository)))
+          throw privateProjectCheckoutRefusal('workspace_git_metadata_shared');
+      }
+    }
+    if (attach) {
+      const checkout = await verified(await materializeProjectCheckout({ materialization: { kind: 'attach' }, sourceDirectory: expectedRoot,
+        sourceRootPath: expectedRoot, subdir: request.subdir, signal: context.signal }));
+      if (!request.cloneSource) return checkout;
+      return { ...checkout, cloneSource: await readProjectCloneSource({ directory: checkout.directory,
+        registry: (await registry()).registry, signal: context.signal }) };
+    }
     context.signal.throwIfAborted();
-    if (request.source.kind !== 'repository') throw privateProjectCheckoutRefusal('workspace_private_checkout_review_required');
     return await verified(await materializeProjectCheckout({ materialization: request.materialization,
-      selector: request.source.selector, ref: request.ref, subdir: request.subdir,
-      registry: registry.registry, signal: context.signal,
+      ...(request.source.kind === 'repository' ? { selector: request.source.selector }
+        : { sourceDirectory: input.existingRootPath, sourceRootPath: input.existingRootPath }),
+      ref: request.ref, subdir: request.subdir,
+      registry: (await registry()).registry, signal: context.signal,
       onEffectsIssued: context.onEffectsIssued,
     }));
-  } finally { await registry.dispose(); }
+  } finally { await scm?.dispose(); }
 }
