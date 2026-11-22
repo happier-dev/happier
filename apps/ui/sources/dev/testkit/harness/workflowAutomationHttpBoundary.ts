@@ -178,14 +178,16 @@ export function createWorkflowAutomationHttpBoundary(): {
                 creates.push(created);
                 const failure = respond?.(method, created);
                 if (failure) return failure;
-                if (!created.executionRecipe) throw new Error('Workflow Automation fixture requires an execution recipe');
+                if (!created.executionRecipe && !created.observationOnly) throw new Error('Expected a Workflow or an observation-only Automation');
                 const detail = AutomationDefinitionDetailSchema.parse({ id: created.automationId,
                     name: created.name, description: created.description ?? null, enabled: created.enabled,
                     workflowDefinitionId: created.workflowDefinitionId ?? null, scopeSessionId: created.scopeSessionId ?? null,
-                    targetType: null, existingSessionId: null, templateVersion: created.executionRecipe.templateVersion,
-                    lastRunAt: null, createdAt: 1, updatedAt: 1, executionRecipe: created.executionRecipe,
+                    targetType: null, existingSessionId: null, templateVersion: created.executionRecipe?.templateVersion ?? 1,
+                    lastRunAt: null, createdAt: 1, updatedAt: 1,
+                    ...(created.executionRecipe ? { executionRecipe: created.executionRecipe } : {}),
+                    ...(created.observationOnly ? { observationOnly: created.observationOnly } : {}),
                     scheduleOccurrences: [],
-                    ...(created.executionRecipe.v === 2 && created.executionRecipe.managedTarget !== undefined
+                    ...(created.executionRecipe?.v === 2 && created.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: created.executionRecipe.managedTarget } : {}),
                     assignments: (created.assignments ?? []).map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),
                     triggers: created.triggers.map(row => createWorkflowAutomationTriggerDetailFixture(created.automationId, row)),

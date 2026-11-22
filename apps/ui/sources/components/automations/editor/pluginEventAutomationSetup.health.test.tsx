@@ -26,7 +26,7 @@ import { ActionInputFormModal } from '@/components/plugins/actions/ActionInputFo
 import type { ActionInputForm, ActionInputFormSubmissionResult } from '@/components/plugins/actions/actionInputForm';
 import { changeTextTestInstance, pressTestInstanceAsync, renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary,
@@ -34,7 +34,7 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { observeMachinePresenceForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 
@@ -72,7 +72,7 @@ vi.mock('socket.io-client', async original => (
     await import('@/dev/testkit/harness/serverAccountConnectionHarness')
 ).createSocketIoClientBoundary(original));
 const rpc = vi.hoisted(() => ({ respond: undefined as undefined | ((request: Readonly<{
-    method: string; payload: unknown;
+    method: string; payload: unknown; machineId?: string;
 }>) => unknown), hostActions: [] as unknown[] }));
 
 // The daemon RPC is the process boundary; descriptor selection, forms and validation stay real.
@@ -98,11 +98,11 @@ describe('configures a prebound guided deployment and bound health starters', ()
 
 // Host-owned setup now crosses the Account Action HTTP boundary. The simulated
 // daemon delegates action.invoke to the same external plugin handler replies.
-async function restoreServerAccountForTest(params: Parameters<typeof restoreAccount>[0]) {
+async function restoreServerAccountForTest(params: Parameters<typeof restoreAccount>[0] & { peerMachineId?: string }) {
     if (!params.accountId || !params.serverIdentityId) throw new Error('Expected an identified Health Account');
-    const boundary = await createExternalActionAccountHttpBoundary({
+    const createBoundary = (machineId: string) => createExternalActionAccountHttpBoundary({
         serverUrl: params.serverUrl, serverIdentityId: params.serverIdentityId, accountId: params.accountId,
-        machineId: healthSetupFixture().machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
+        machineId, actionId: 'action.invoke', tokenEpoch: 0, requesterInvocation: 'required',
         failure: value => {
             const result = DaemonPluginStructuredMessageActionExecuteResponseSchema.safeParse(value);
             return result.success && !result.data.ok ? { errorCode: result.data.code, error: result.data.code } : null;
@@ -117,10 +117,24 @@ async function restoreServerAccountForTest(params: Parameters<typeof restoreAcco
             return result.ok ? result.result : result;
         },
     });
+    const boundary = await createBoundary(healthSetupFixture().machineId);
+    const peer = params.peerMachineId ? await createBoundary(params.peerMachineId) : null;
     return restoreAccount({ ...params, credentials: { token: createServedHomeAccountToken(params.accountId, true) },
         request: async (input, init) => {
             let response: Response | null;
-            try { response = await boundary.handle(new URL(String(input)), init); }
+            try {
+                const url = new URL(String(input));
+                if (peer && url.pathname === '/v1/machines') return Response.json([boundary.machine, peer.machine]);
+                if (peer && url.pathname === '/v1/machines/read-batch') {
+                    return createMachineReadBatchResponseFixture(init?.body, id =>
+                        id === boundary.machine.id ? boundary.machine : id === peer.machine.id ? peer.machine : null);
+                }
+                const body = peer && url.pathname.startsWith('/v1/actions/') && typeof init?.body === 'string'
+                    ? JSON.parse(init.body) : null;
+                const targetsPeer = peer && (url.pathname.endsWith('/' + peer.machine.id)
+                    || body?.machineId === peer.machine.id || body?.target?.machineId === peer.machine.id);
+                response = await (targetsPeer ? peer : boundary).handle(url, init);
+            }
             catch (error) { healthBoundaryErrors.push(error); throw error; }
             if (response) return response;
             return params.request?.(input, init) ?? null;
@@ -371,13 +385,12 @@ it.each([
 });
 
 function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_health_setup', native = false,
-    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }, authoredManifest: unknown = PLUGIN_MANIFEST) {
+    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }, authoredManifest: unknown = PLUGIN_MANIFEST, machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08') {
     // Source publication admits authored bytes before they can become eligible Events.
     const admitted = ingestPluginManifestV2(authoredManifest);
     expect(admitted.ok, admitted.ok ? undefined : JSON.stringify(admitted.diagnostics)).toBe(true);
     if (!admitted.ok) throw new Error('Health manifest admission failed');
     const { id: pluginId, displayName, version } = admitted.manifest;
-    const machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08';
     const sourceCustody = { kind: 'development', registeredRootId: 'machine-services-source' } as const;
     const origin = { serverIdentityId, sourceRef: { machineId, pluginId, sourceCustody } };
     const occurrenceId = 'machine-services-current';
@@ -1222,9 +1235,8 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 });
 
 // PAGE-ACCEPT-176 R10-D1: Add check is one surface. Its Save writes one observation-only trigger; Cancel writes nothing.
-it.each(['submitted', 'cancelled'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
-    const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
     const { Modal } = await import('@/modal');
     const { subjectStarterEventSeed } = await import('@/components/workflows/triggers/subjectTriggerStarters');
     const { storage } = await import('@/sync/domains/state/storage');
@@ -1237,21 +1249,28 @@ it.each(['submitted', 'cancelled'] as const)('Add check writes once on Save and 
     const accountId = 'native-add-check';
     const serverIdentityId = 'srv_native_add_check';
     const http = createHomeHubArtifactHttpBoundary(accountId);
+    const { createWorkflowAutomationHttpBoundary } = await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
+    const workflows = createWorkflowAutomationHttpBoundary();
+    const peerMachineId = 'eadc2422-b42b-478d-97b1-af9b530d5f09';
     let exactIntentRead: unknown;
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://native-add-check.test',
-        serverIdentityId, accountId, request: async (input, init) => {
+        serverIdentityId, accountId, peerMachineId: outcome === 'switched' ? peerMachineId : undefined, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'] && exactIntentRead)
                 return Response.json(exactIntentRead);
             if (path === '/v1/features' || path === '/v1/features/authenticated')
                 return Response.json(createRootLayoutFeaturesResponse());
-            return http.request(input, init);
+            return await workflows.handle(new URL(String(input)), init) ?? http.request(input, init);
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected Add check Account');
     const { machineId, pluginId, event, fresh, inputs, projection } = healthSetupFixture(
         connection.serverId, serverIdentityId, true, { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
     );
+    const peer = outcome === 'switched'
+        ? healthSetupFixture(connection.serverId, serverIdentityId, true,
+            { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' }, PLUGIN_MANIFEST, peerMachineId)
+        : null;
     const { replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
     if (!admitted.ok) throw new Error('Expected the Machine services manifest');
@@ -1260,7 +1279,9 @@ it.each(['submitted', 'cancelled'] as const)('Add check writes once on Save and 
         availabilityCursor: 1, hostingCapability: { enabled: false },
         intent: { pluginId, enabled: true, desiredVersion: null, offlineUiHosting: 'disabled', writableCollections: [], revision: 'health-declaration' },
         release: null, uiArtifacts: [], packageAssets: [], currentDeclaration: null,
-        machineDeclarations: [{ machineId, machineInstallationId: 'health-installation', declaration: { declarationDigestSha256 } }],
+        machineDeclarations: [machineId, ...(peer ? [peer.machineId] : [])].map(id => ({
+            machineId: id, machineInstallationId: 'health-installation', declaration: { declarationDigestSha256 },
+        })),
     };
     exactIntentRead = { ...intentRead, declarationBodies: [{ declarationDigestSha256, manifest: admitted.manifest }] };
     replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: {
@@ -1273,13 +1294,20 @@ it.each(['submitted', 'cancelled'] as const)('Add check writes once on Save and 
             config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
             periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }] });
     const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
-        members: [{ machineId, serverId: connection.serverId, serverIdentityId,
-            projection: inputs.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
+        members: [{ machineId, inputs }, ...(peer ? [peer] : [])].map(member => ({
+            machineId: member.machineId, serverId: connection.serverId, serverIdentityId,
+            projection: member.inputs.pluginUiProjection, phase: 'current', interactionEnabled: true,
+        })) });
+    if (peer) expect(sourceFacts.sourceCandidates).toEqual(expect.arrayContaining([expect.objectContaining({
+        source: expect.objectContaining({ origin: peer.fresh.origin }), validation: { kind: 'admitted' },
+    })]));
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null);
     rpc.respond = request => {
-        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
-            return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+        if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+            const selected = peer?.machineId === request.machineId ? peer : { projection, event };
+            return { protocolVersion: 1, projection: selected.projection, automationEligibleEvents: [selected.event] };
+        }
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
             return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
                 sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
@@ -1288,32 +1316,56 @@ it.each(['submitted', 'cancelled'] as const)('Add check writes once on Save and 
     };
     const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
         expect(config.component).not.toBe(ActionInputFormModal);
-        expect(config.props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
         return 'native-add-check';
     });
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
-        storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
-        observeMachinePresenceForTest(lifetime.scope, [machineId]);
+        await publishMachineInventoryForTest(lifetime.scope,
+            [fresh.machineTarget.machine, ...(peer ? [peer.fresh.machineTarget.machine] : [])]);
         const seed = subjectStarterEventSeed('addCheck', { subject: { ...subject, machineId }, controllerMachineId: machineId });
         if (!seed) throw new Error('Expected the Environment Add check seed');
         const onClose = vi.fn();
         screen = await renderScreen(<AddCheckSetup testID="add-check" lifetime={lifetime} seed={seed} onClose={onClose} />);
         await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(1));
         expect(rpc.hostActions).toEqual([]);
-        const settle: unknown = Reflect.get(Object(modal.mock.calls[0]?.[0].props), 'onSettle');
-        if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
-        await act(async () => { settle(outcome === 'submitted' ? { kind: 'submitted', input: setupInput } : { kind: 'cancelled' }); });
-        if (outcome === 'cancelled') {
-            await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
+        expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
+        if (peer) {
+            const props = modal.mock.calls[0]?.[0].props;
+            expect(props).toMatchObject({ watcherChoices: expect.arrayContaining([
+                { machineId, selected: true }, { machineId: peer.machineId, selected: false },
+            ]) });
+            const chooseWatcher: unknown = Reflect.get(Object(props), 'chooseWatcher');
+            if (typeof chooseWatcher !== 'function') throw new Error('Expected to switch the open native form');
+            const draft = { check: { kind: 'http', endpoint: 'https://production.example.test/health', expectStatus: '20' } };
+            await act(async () => { chooseWatcher(peer.machineId, draft); });
+            await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(2));
+            expect(modal.mock.calls[1]?.[0].props).toMatchObject({
+                watcherChoices: expect.arrayContaining([
+                    { machineId, selected: false }, { machineId: peer.machineId, selected: true },
+                ]),
+                launchInput: { observerMachineId: peer.machineId, initialInput: { subject, rendererDraft: draft } },
+            });
             expect(rpc.hostActions).toEqual([]);
-        } else {
-            // The configured source is applied once and the one trigger write is sent. This harness serves no workflow
-            // write, so the refusal is said in place with Retry instead of closing as if saved (live QA proves the save).
-            await waitForHomeGovernance(() => expect(screen?.findByTestId('add-check.failed')).not.toBeNull());
+            expect(workflows.creates).toEqual([]);
             expect(onClose).not.toHaveBeenCalled();
+        }
+        const settle: unknown = Reflect.get(Object(modal.mock.calls.at(-1)?.[0].props), 'onSettle');
+        if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
+        await act(async () => { settle(outcome === 'cancelled' ? { kind: 'cancelled' } : { kind: 'completed', input: setupInput }); });
+        await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
+        if (outcome === 'cancelled') {
+            expect(rpc.hostActions).toEqual([]);
+            expect(workflows.creates).toEqual([]);
+        } else {
             expect(rpc.hostActions).toHaveLength(1);
+            expect(workflows.creates).toHaveLength(1);
+            expect([...workflows.rows.values()]).toEqual([expect.objectContaining({
+                observationOnly: expect.objectContaining({ kind: 'observationOnly' }),
+                triggers: [expect.objectContaining({ observation: expect.objectContaining({
+                    watcher: expect.objectContaining({ machineId: peer?.machineId ?? machineId }),
+                }) })],
+            })]);
         }
     } finally {
         await screen?.unmount();

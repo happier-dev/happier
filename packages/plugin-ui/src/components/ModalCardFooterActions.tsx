@@ -11,6 +11,8 @@ export type ModalCardFooterActionsProps = Readonly<{
   cancelLabel?: string;
   note?: string | null;
   noteTestID?: string;
+  /** Snapshot the form's unsaved input when its containing setup is moved to another Machine. */
+  captureDraft?: () => unknown;
   children?: ReactNode;
 }>;
 
@@ -35,10 +37,10 @@ export function ModalCardFooterActions(props: ModalCardFooterActionsProps) {
     {props.children}
   </HappierModalCardFooterActions>;
   // The slot holds the latest footer; it renders apart from this form, so republishing never re-renders the form.
-  useEffect(() => { footerSlot?.(bridge(footer)); });
+  useEffect(() => { footerSlot?.(bridge(footer), props.captureDraft); });
   useEffect(() => () => footerSlot?.(null), [footerSlot]);
   return footerSlot ? null : footer;
 }
 
 function useNoPhoneSheet() { return false; }
-function useNoFooterSlot(): ((footer: ReactNode | null) => void) | null { return null; }
+function useNoFooterSlot(): ((footer: ReactNode | null, captureDraft?: () => unknown) => void) | null { return null; }

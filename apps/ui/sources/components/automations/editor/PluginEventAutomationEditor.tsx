@@ -240,21 +240,26 @@ export function PluginEventAutomationEditor(props: Readonly<{
         setEndpointPlacement(selectedMachineId && accountLifetime?.isCurrent()
             ? { seed: currentSeed, lifetime: accountLifetime, machineId: selectedMachineId } : null);
     }, [accountLifetime, currentSeed, currentObservation, model.seededObservationMachineId, model.selectedWatcherOrigin, chooseWatcher]);
-    const nativeSetupStarted = React.useRef(false);
+    const nativeSetupStarted = React.useRef<string | null>(null);
+    const nativeWatcherId = model.selectedWatcherOrigin
+        ? getPluginMachineExecutionOriginRef(model.selectedWatcherOrigin).machineId : null;
+    const setupKey = newSetup ? nativeWatcherId : 'saved';
     const readyToOpen = newSetup
-        ? model.sourceStatus === 'idle' && model.selectedEvent !== null && model.selectedWatcherOrigin !== null
+        ? model.sourceStatus === 'idle' && nativeWatcherId === machineId && model.selectedEvent !== null
+            && projection.phase === 'ready'
+            && projection.inputs?.automationEligibleEvents?.includes(model.selectedEvent) === true
         : model.sourceStatus === 'configured';
     React.useEffect(() => {
-        if (!setup || chooseWatcher || nativeSetupStarted.current || !readyToOpen) return;
-        nativeSetupStarted.current = true;
+        if (!setup || chooseWatcher || !setupKey || nativeSetupStarted.current === setupKey || !readyToOpen) return;
+        nativeSetupStarted.current = setupKey;
         model.configureSource();
-    }, [chooseWatcher, model.configureSource, readyToOpen, setup]);
+    }, [chooseWatcher, model.configureSource, readyToOpen, setup, setupKey]);
     if (setup) {
         const retrySetup = () => {
             if (model.eventCatalogStatus === 'ready' && model.selectedEvent
                 && (!newSetup || model.selectedWatcherOrigin)) model.configureSource();
             else {
-                nativeSetupStarted.current = false;
+                nativeSetupStarted.current = null;
                 setCatalogRefresh(current => current + 1);
             }
         };
@@ -276,7 +281,7 @@ export function PluginEventAutomationEditor(props: Readonly<{
             </View>;
         }
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp' || applying
-            || (newSetup ? readyToOpen && !nativeSetupStarted.current
+            || (newSetup ? model.sourceStatus === 'idle' && nativeWatcherId !== null && nativeSetupStarted.current !== setupKey
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
         if (waiting) return <SurfaceStateCard size="line" kind="loading"
             title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />;

@@ -368,10 +368,15 @@ export function usePluginEventAutomationComposer(params: Readonly<{
     // permanently strand the form, because the seed effect latches on
     // `appliedEditSeedKeyRef` and cannot restore what it erased.
     const [selectedWatcherOrigin, setSelectedWatcherOrigin] = React.useState<PluginMachineExecutionOriginV1 | null>(null);
+    const [nativeSetupResume, setNativeSetupResume] = React.useState<Readonly<{
+        machineId: string;
+        input: Readonly<Record<string, unknown>>;
+    }> | null>(null);
     const [configuredSourceAccount, setConfiguredSourceAccount] = React.useState(accountLifetime);
     if (configuredSourceAccount !== accountLifetime) {
         setConfiguredSourceAccount(accountLifetime);
         setSelectedWatcherOrigin(null);
+        setNativeSetupResume(null);
         eraseConfiguredSource();
     }
     const [maximumObservationAgeMsText, setMaximumObservationAgeMsText] = React.useState('');
@@ -392,12 +397,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         const current = matches.length === 1 ? matches[0]! : null;
         if (
             !current
-            || current.event.occurrenceId !== selected.event.occurrenceId
+            || (nativeSetupResume
+                ? current.event.automation.source.sourceContractVersion !== selected.event.automation.source.sourceContractVersion
+                : current.event.occurrenceId !== selected.event.occurrenceId
+                    || current.setupAction.occurrenceId !== selected.setupAction.occurrenceId)
             || !arePluginContributionIdentitiesEqual(
                 current.setupAction.identity,
                 selected.setupAction.identity,
             )
-            || current.setupAction.occurrenceId !== selected.setupAction.occurrenceId
         ) {
             setSelectedEvent(null);
             setConfiguredSetup(null);
@@ -414,7 +421,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSelectedEvent(current);
             advanceRevision();
         }
-    }, [eligibleEvents, params.projectionPhase]);
+    }, [eligibleEvents, nativeSetupResume, params.projectionPhase]);
     const eventCatalogStatus = params.projectionPhase === 'ready'
         && params.projectionInputs?.automationEligibleEvents !== undefined
         ? 'ready' as const
@@ -472,9 +479,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         [availabilityReader],
     );
     const watcherPluginId = selectedEvent?.event.identity.pluginId ?? initialEditSeed?.eventRef.pluginId ?? initialEventRef?.pluginId ?? '';
-    const monitoringMachineId = initialSetupSeed && (!selectedEvent
+    const monitoringMachineId = nativeSetupResume?.machineId ?? (initialSetupSeed && (!selectedEvent
         || arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, selectedEvent.event.identity))
-        ? initialSetupSeed.monitoringMachineId : undefined;
+        ? initialSetupSeed.monitoringMachineId : undefined);
     React.useEffect(() => {
         if (!watcherPluginId || !monitoringMachineId || !availabilityReader) return;
         fireAndForget(availabilityReader.ensureAutomationEventDeclarations({ pluginId: watcherPluginId, machineId: monitoringMachineId }), {
@@ -618,6 +625,18 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (selectedEventRef.current === null) chooseEvent(matches[0], true);
     }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId]);
 
+    const selectableNativeWatchers = React.useMemo(() => {
+        if (!params.newSourceSetup || !selectedWatcherOrigin) return [];
+        const { serverIdentityId } = selectedWatcherOrigin;
+        const byMachine = new Map<string, PluginExecutionOriginCandidateV1 | null>();
+        for (const candidate of executionOriginCandidates) {
+            const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+            if (origin.serverIdentityId !== serverIdentityId || readPluginEventAutomationWatcherFailure(candidate, null)) continue;
+            const { machineId } = getPluginMachineExecutionOriginRef(origin);
+            byMachine.set(machineId, byMachine.has(machineId) ? null : candidate);
+        }
+        return Array.from(byMachine.values()).filter(candidate => candidate !== null);
+    }, [executionOriginCandidates, params.newSourceSetup, selectedWatcherOrigin]);
     const selectWatcher = React.useCallback((candidate: PluginExecutionOriginCandidateV1) => {
         const selected = selectedEventRef.current;
         const pluginId = selected?.event.identity.pluginId ?? initialEventPluginId;
@@ -626,7 +645,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             !pluginId || (!selected && !initialEventLocalId)
             || accountLifetime?.isCurrent() !== true
             || getPluginMachineExecutionOriginRef(origin).pluginId !== pluginId
-            || !selectableWatchers.some(value => arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(value), origin))
+            || ![...selectableWatchers, ...selectableNativeWatchers].some(value =>
+                arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(value), origin))
         ) {
             return false;
         }
@@ -640,7 +660,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpoint(null);
         advanceRevision();
         return true;
-    }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableWatchers]);
+    }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableNativeWatchers, selectableWatchers]);
 
     // New Events and direct saved-source moves start on the surface's Machine when it can watch.
     // A new Event with a bound monitoring Machine starts there instead.
@@ -895,6 +915,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             setSourceStatus('settingUp');
             setSourceFailure(null);
             const setupHeading = (params.newSourceSetup ?? params.savedSourceSetup)?.heading;
+            const selectedMachineId = selectedWatcherOrigin
+                ? getPluginMachineExecutionOriginRef(selectedWatcherOrigin).machineId : null;
+            const nativeWatchersById = new Map(selectableNativeWatchers.map(candidate =>
+                [getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId, candidate]));
+            const canChooseWatcher = (machineId: string) => machineId !== selectedMachineId
+                && !setupScope.signal.aborted && nativeWatchersById.has(machineId);
+            const resume = nativeSetupResume && nativeSetupResume.machineId === selectedMachineId ? nativeSetupResume : null;
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
                 requireNativeRenderer: params.newSourceSetup !== undefined,
@@ -909,7 +936,14 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                     : initialEditSeed && arePluginContributionIdentitiesEqual(initialEditSeed.eventRef, currentEvent.event.identity)
                         ? { initialSource: initialEditSeed.source } : {}),
                 ...(initialSetupSeed && arePluginContributionIdentitiesEqual(initialSetupSeed.eventRef, currentEvent.event.identity)
-                    ? { initialSetupSeed } : {}),
+                    ? { initialSetupSeed: resume
+                        ? { ...initialSetupSeed, monitoringMachineId: resume.machineId } : initialSetupSeed } : {}),
+                ...(params.newSourceSetup ? {
+                    nativeSetupDraft: resume?.input,
+                    watcherChoices: Array.from(nativeWatchersById.keys(), machineId =>
+                        ({ machineId, selected: machineId === selectedMachineId })),
+                    canChooseWatcher,
+                } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
                 maximumObservationAgeMs: maximumObservationAgeMs.value,
@@ -931,7 +965,18 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             ) {
                 return;
             }
+            if (configured.kind === 'superseded') {
+                const candidate = nativeWatchersById.get(configured.machineId);
+                if (candidate && selectWatcher(candidate)) {
+                    setNativeSetupResume({ machineId: configured.machineId, input: configured.input });
+                } else {
+                    if (selectedMachineId) setNativeSetupResume({ machineId: selectedMachineId, input: configured.input });
+                    setSourceStatus('unavailable');
+                }
+                return;
+            }
             if (configured.kind === 'cancelled') {
+                setNativeSetupResume(null);
                 setSourceStatus(previousStatus);
                 setSourceFailure(previousFailure);
                 (params.savedSourceSetup ?? params.newSourceSetup)?.onSettled({ kind: 'cancelled' });
@@ -945,6 +990,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 setSourceStatus('unavailable');
                 return;
             }
+            setNativeSetupResume(null);
             setConfiguredSetup(configured.draft);
             setWebhookEndpoint(configured.webhookEndpoint);
             setSourceStatus('configured');
@@ -976,6 +1022,10 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         maximumObservationAgeMs.valid,
         maximumObservationAgeMs.value,
         resolveExecutionOrigin,
+        nativeSetupResume,
+        selectableNativeWatchers,
+        selectedWatcherOrigin,
+        selectWatcher,
         setupScope,
         sourceStatus,
         sourceFailure,

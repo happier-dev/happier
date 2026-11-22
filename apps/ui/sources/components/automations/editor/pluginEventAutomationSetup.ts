@@ -44,7 +44,7 @@ import {
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 import { EVENT_OBSERVER_BINDING_UNAVAILABLE, resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
-import { presentPluginEventAutomationSetupSurface, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import { presentPluginEventAutomationSetupSurface, type NativeSetupWatcherChoice, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
@@ -72,7 +72,8 @@ type SetupOutcome =
     }>
     | (Readonly<{ kind: 'unavailable' }> & Partial<PluginEventAutomationSetupFailure>)
     | Readonly<{ kind: 'stale'; reason: 'event_retired' }>
-    | Readonly<{ kind: 'cancelled' }>;
+    | Readonly<{ kind: 'cancelled' }>
+    | Readonly<{ kind: 'superseded'; machineId: string; input: Readonly<Record<string, unknown>> }>;
 
 export type PluginEventAutomationWebhookEndpointEnsurer =
     typeof ensurePluginEventAutomationWebhookEndpoint;
@@ -242,6 +243,9 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
  */
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
+    nativeSetupDraft?: Readonly<Record<string, unknown>>;
+    watcherChoices?: readonly NativeSetupWatcherChoice[];
+    canChooseWatcher?: (machineId: string) => boolean;
     requireNativeRenderer?: boolean;
     /** The host's name for the native setup surface; the Event's own title otherwise. */
     surfaceHeading?: SetupSurfaceHeading;
@@ -356,6 +360,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                                 ...(isSetupSurfaceObjectInput(retainedInput) ? retainedInput : {}),
                                 ...seed.setupInput,
                                 ...selection.form.getInput(),
+                                ...params.nativeSetupDraft,
                             }) : params.initialSource ? PluginUiJsonValueV1Schema.safeParse(retainedInput) : null;
                         if (initialInput && !initialInput.success) {
                             selection.form.cancel();
@@ -370,6 +375,8 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             serverId: initial.origin.machineTarget.serverId,
                             accountLifetime: params.accountLifetime,
                             commandBridge: params.commandBridge,
+                            watcherChoices: params.watcherChoices,
+                            canChooseWatcher: params.canChooseWatcher,
                             launchInput: {
                                 observerMachineId: initial.origin.machineTarget.target.machineId,
                                 ...(initialInput?.success ? { initialInput: initialInput.data } : {}),
@@ -377,6 +384,14 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             ...(params.surfaceHeading ? { heading: params.surfaceHeading } : {}),
                             ...(operationScope.signal ? { signal: operationScope.signal } : {}),
                         });
+                        if (surfaceSettlement.kind === 'superseded') {
+                            const currentInput = initialInput?.success && isSetupSurfaceObjectInput(initialInput.data)
+                                ? initialInput.data : selection.form.getInput();
+                            selection.form.replaceInput({ ...currentInput, rendererDraft: surfaceSettlement.draft });
+                            const input = selection.form.getInput();
+                            selection.form.cancel();
+                            return { kind: 'superseded', machineId: surfaceSettlement.machineId, input } as const;
+                        }
                         if (surfaceSettlement.kind === 'cancelled') {
                             selection.form.cancel();
                             return await selection.result;
@@ -433,6 +448,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                 ? selection.result
                 : selection;
         if (settled.kind === 'cancelled') return { kind: 'cancelled' };
+        if (settled.kind === 'superseded') return settled;
         if (settled.kind !== 'submitted') return { kind: 'unavailable' };
         if (operationScope.signal.aborted) return { kind: 'unavailable' };
 

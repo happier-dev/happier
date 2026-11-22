@@ -1,20 +1,26 @@
 import * as React from 'react';
 
 type FooterStore = Readonly<{
-  set: (footer: React.ReactNode | null) => void;
+  set: (footer: React.ReactNode | null, captureDraft?: () => unknown) => void;
+  captureDraft: () => unknown;
+  hasDraft: () => boolean;
   get: () => React.ReactNode | null;
   subscribe: (listener: () => void) => () => void;
 }>;
 
 function createFooterStore(): FooterStore {
   let footer: React.ReactNode | null = null;
+  let readDraft: (() => unknown) | undefined;
   const listeners = new Set<() => void>();
   return {
-    set: (next) => {
+    set: (next, captureDraft) => {
       footer = next;
+      readDraft = captureDraft;
       listeners.forEach((listener) => listener());
     },
     get: () => footer,
+    captureDraft: () => readDraft?.(),
+    hasDraft: () => readDraft !== undefined,
     subscribe: (listener) => {
       listeners.add(listener);
       return () => {

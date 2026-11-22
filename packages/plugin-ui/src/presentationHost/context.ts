@@ -380,7 +380,7 @@ export type PluginUiPresentationHost = Readonly<{
    * The containing host card's footer, when that card hosts a plugin form: footer actions placed here stay pinned
    * beside the card's edge instead of scrolling with the form. Null where the card keeps its own footer.
    */
-  useModalCardFooterSlot?(): ((footer: ReactNode | null) => void) | null;
+  useModalCardFooterSlot?(): ((footer: ReactNode | null, captureDraft?: () => unknown) => void) | null;
   /** The host's own date and time picker for `LocalDateTimeField`; absent, the field is typed alone. */
   localDateTimePicker?: import('../presentation/form/LocalDateTimeField.js').HappierLocalDateTimePickerHost;
   /** Qualified row destinations use the incumbent workspace owner; absent hosts keep ordinary activation. */

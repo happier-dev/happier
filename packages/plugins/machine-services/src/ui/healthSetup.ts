@@ -58,6 +58,49 @@ type Draft = Readonly<{
 const EMPTY: Draft = { kind: 'http', endpoint: '', expectStatus: '200', keyword: '', host: '', port: '', hostname: '',
     recordType: 'A', expectedAnswer: '', graceMs: MINUTE, periodMs: MINUTE, consecutiveFailuresBeforeAlerting: 1 };
 
+type InvestigationDraft = Readonly<{ mode: 'inbox' | 'auto_start'; configuredActionId?: string }>;
+
+type RendererDraft = Readonly<{
+    check: Draft | null;
+    alerts?: SourceOptions['alerts'];
+    investigation?: InvestigationDraft;
+}>;
+
+function readRendererDraft(value: unknown): RendererDraft | undefined {
+    if (typeof value !== 'object' || value === null || Array.isArray(value)) return;
+    const { check, alerts, investigation } = value as Readonly<Record<string, unknown>>;
+    let restored: Draft | null = null;
+    if (typeof check === 'object' && check !== null && !Array.isArray(check)) {
+        const record = check as Readonly<Record<string, unknown>>;
+        const kind = KINDS.find(kind => kind.id === record.kind)?.id;
+        const recordType = RECORD_TYPES.find(type => type === record.recordType);
+        const restoredFields = Object.fromEntries(Object.entries(EMPTY).map(([key, fallback]) => [
+            key, typeof record[key] === typeof fallback ? record[key] : fallback,
+        ])) as typeof EMPTY;
+        const contributed = HealthCheckKindCatalogV1ProtocolSchema.safeParse([record.contributedKind]);
+        const contributedKind = contributed.success ? contributed.data[0] : undefined;
+        restored = {
+            ...restoredFields, kind: kind ?? EMPTY.kind, recordType: recordType ?? EMPTY.recordType,
+            ...(typeof record.monitorId === 'string' ? { monitorId: record.monitorId } : {}),
+            ...(typeof record.endpointGroup === 'string' ? { endpointGroup: record.endpointGroup } : {}),
+            ...(typeof record.endpointName === 'string' ? { endpointName: record.endpointName } : {}),
+            ...(contributedKind ? { contributedKind, contributedValidator: compilePluginJsonSchema(contributedKind.configSchema),
+                contributedDraft: record.contributedDraft } : {}),
+        };
+    }
+    const parsedAlerts = HealthCheckSetupDraftV1ProtocolSchema.safeParse({ v: 1, alerts });
+    const mode = typeof investigation === 'object' && investigation !== null && 'mode' in investigation
+        ? investigation.mode : undefined;
+    const action = typeof investigation === 'object' && investigation !== null && 'configuredActionId' in investigation
+        ? investigation.configuredActionId : undefined;
+    return {
+        check: restored,
+        ...(parsedAlerts.success && parsedAlerts.data.alerts ? { alerts: parsedAlerts.data.alerts } : {}),
+        ...(mode === 'inbox' || mode === 'auto_start'
+            ? { investigation: { mode, ...(typeof action === 'string' ? { configuredActionId: action } : {}) } } : {}),
+    };
+}
+
 function readSavedCheckDraft(check: Check | undefined, kind: HealthCheckKindCatalogV1[number] | undefined): Draft | null {
     if (!check) return null;
     const cadence = {
@@ -110,19 +153,21 @@ function readLaunch(input: unknown): Readonly<{
     draft: HealthCheckSetupDraftV1;
     observerMachineId?: string;
     selectedCheckId?: string;
+    rendererDraft?: RendererDraft;
 }> | null {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) return null;
     const record = input as Readonly<Record<string, unknown>>;
     const initial = record.initialInput;
     if (typeof initial !== 'object' || initial === null || Array.isArray(initial)) return null;
-    const { selectedCheckId, ...setupDraft } = initial as Readonly<Record<string, unknown>>;
+    const { selectedCheckId, rendererDraft, ...setupDraft } = initial as Readonly<Record<string, unknown>>;
     const draft = HealthCheckSetupDraftV1ProtocolSchema.safeParse(setupDraft);
     if (!draft.success || draft.data.subject === undefined) return null;
     if (selectedCheckId !== undefined && (typeof selectedCheckId !== 'string'
         || !draft.data.checks?.some(check => check.checkId === selectedCheckId))) return null;
     const observer = record.observerMachineId;
     return { draft: draft.data, ...(typeof observer === 'string' && observer.length > 0 ? { observerMachineId: observer } : {}),
-        ...(selectedCheckId === undefined ? {} : { selectedCheckId }) };
+        ...(selectedCheckId === undefined ? {} : { selectedCheckId }),
+        rendererDraft: readRendererDraft(rendererDraft) };
 }
 
 function configFor(draft: Draft, retainedMonitorConfig?: Check['config']): unknown {
@@ -230,12 +275,12 @@ function text(label: string, value: string, onChange: (next: string) => void, op
 
 function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; existing: readonly Check[];
     sourceOptions: SourceOptions;
-    observerMachineId?: string; selectedCheckId?: string; signal: AbortSignal }>): ReactElement {
+    observerMachineId?: string; selectedCheckId?: string; rendererDraft?: RendererDraft; signal: AbortSignal }>): ReactElement {
     const t = usePluginTranslation();
     const host = usePluginHostApi();
     const [existing, setExisting] = useState(props.existing);
     const [selectedCheckId, setSelectedCheckId] = useState<string | null>(props.selectedCheckId ?? null);
-    const [editedDraft, setEditedDraft] = useState<Draft | null>(null);
+    const [editedDraft, setEditedDraft] = useState<Draft | null>(props.rendererDraft?.check ?? null);
     const domain = props.sourceOptions.domain;
     // Add check (a launch that holds no checks) starts empty beside whatever the source already has; a source opened
     // for editing restores its first check (PAGE-ACCEPT-176 R10-D1).
@@ -252,9 +297,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [alertDraft, setAlertDraft] = useState<Readonly<{
         alerts: SourceOptions['alerts']; testContext?: HealthCheckSetupPreviewResultV1['testContext'];
         destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
-    }>>({ alerts: props.sourceOptions.alerts });
+    }>>({ alerts: props.rendererDraft?.alerts ?? props.sourceOptions.alerts });
     const { alerts, testContext: preparedSource, destinationSelectionContext } = alertDraft;
-    const [alertsEdited, setAlertsEdited] = useState(false);
+    const [alertsEdited, setAlertsEdited] = useState(props.rendererDraft?.alerts !== undefined);
     const setAlerts = (next: SourceOptions['alerts']) => {
         setAlertDraft(current => ({ ...current, alerts: next }));
         setAlertsEdited(true);
@@ -278,12 +323,20 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         }).catch(() => { if (!retired && !props.signal.aborted) setPreviewUnavailable(true); });
         return () => { retired = true; };
     }, [host, props.signal, props.subject, props.existing, props.sourceOptions, previewAttempt]);
-    const [investigation, setInvestigation] = useState<Readonly<{ mode: 'inbox' | 'auto_start'; configuredActionId?: string }> | undefined>(props.sourceOptions.investigation);
+    const [investigation, setInvestigation] = useState<InvestigationDraft | undefined>(
+        props.rendererDraft?.investigation ?? props.sourceOptions.investigation);
+    const [investigationEdited, setInvestigationEdited] = useState(props.rendererDraft?.investigation !== undefined);
+    const changeInvestigation = (next: InvestigationDraft) => {
+        setInvestigation(next);
+        setInvestigationEdited(true);
+        setRefusedSave(false);
+    };
     const investigationMode = investigation?.mode ?? 'inbox';
     const configuredActionId = investigation?.configuredActionId ?? '';
     const [saving, setSaving] = useState(false);
     const [refusedSave, setRefusedSave] = useState(false);
     const [loadingKinds, setLoadingKinds] = useState(false);
+    const [gatusHowOpen, setGatusHowOpen] = useState(false);
     const [kindsUnavailable, setKindsUnavailable] = useState(false);
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
     const set = (patch: Partial<Draft>) => { setEditedDraft(current => ({ ...(current ?? draft), ...patch })); setRefusedSave(false); };
@@ -496,7 +549,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, { alerts, onChange: setAlerts, testContext: preparedSource, destinationSelectionContext }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
-            value: investigationMode, onChange: mode => { setInvestigation({ mode, configuredActionId }); setRefusedSave(false); }, maximumColumns: 2,
+            value: investigationMode, onChange: mode => changeInvestigation({ mode, configuredActionId }), maximumColumns: 2,
             options: [
                 { id: 'inbox', title: t(`${K}.investigation.inbox`, 'Show in Inbox'),
                     subtitle: t(`${K}.investigation.inbox.description`, 'Investigate when you choose.') },
@@ -504,11 +557,18 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                     subtitle: t(`${K}.investigation.automatic.description`, 'Use a configured Action when a new alert opens.') },
             ] }),
         investigationMode === 'auto_start' ? text(t(`${K}.investigation.action`, 'Configured investigation'), configuredActionId,
-            value => { setInvestigation({ mode: 'auto_start', configuredActionId: value }); setRefusedSave(false); }, { testID: 'health-setup-investigation-action',
+            value => changeInvestigation({ mode: 'auto_start', configuredActionId: value }), { testID: 'health-setup-investigation-action',
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
-        h(ModalCardFooterActions, { cancel: { testID: 'health-setup-cancel', disabled: saving,
+        h(ModalCardFooterActions, {
+            // Carry renderer input as typed, including incomplete fields. Preview still runs with the original seed.
+            captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({
+                check: editedDraft,
+                ...(alertsEdited ? { alerts } : {}),
+                ...(investigationEdited ? { investigation } : {}),
+            })) : undefined,
+            cancel: { testID: 'health-setup-cancel', disabled: saving,
             onPress: () => { void host.settleEphemeralInput({ kind: 'cancelled' }, { signal: props.signal }); } } },
             offersBoth ? saveChanges('secondary') : null, primary));
 }
@@ -521,6 +581,7 @@ function HealthCheckSetupSurface(context: RenderContext): ReactElement {
     return h(HealthCheckSetupForm, { subject: launch.draft.subject, existing: launch.draft.checks ?? [],
         sourceOptions: { ...(launch.draft.investigation ? { investigation: launch.draft.investigation } : {}),
             ...(launch.draft.alerts ? { alerts: launch.draft.alerts } : {}), ...(launch.draft.domain ? { domain: launch.draft.domain } : {}) },
+        rendererDraft: launch.rendererDraft,
         ...(launch.observerMachineId ? { observerMachineId: launch.observerMachineId } : {}),
         ...(launch.selectedCheckId ? { selectedCheckId: launch.selectedCheckId } : {}), signal: context.signal });
 }

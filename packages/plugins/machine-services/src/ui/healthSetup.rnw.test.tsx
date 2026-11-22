@@ -84,6 +84,21 @@ async function addButton(page: PluginUiTestkit) {
   return await page.getByRole('button', { name: 'Add check' });
 }
 
+it('reopens Add check with the incomplete form entered before changing the watcher', async () => {
+  const { page, settled } = await mount({ observerMachineId: 'peer-watcher', initialInput: {
+    v: 1, subject, rendererDraft: { check: { kind: 'http', endpoint: 'https://app.example.test', expectStatus: '20' } },
+  } });
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Endpoint"]')?.value).toBe('https://app.example.test');
+  expect(document.querySelector<HTMLInputElement>('input[aria-label="Expect status"]')?.value).toBe('20');
+  expect(settled).toEqual([]);
+
+  await type('Expect status', '204');
+  await act(async () => { await page.press(await addButton(page)); });
+  expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
+    checks: [expect.objectContaining({ config: { endpoint: 'https://app.example.test', expectStatus: 204 } })],
+  }) })]);
+});
+
 it('does not offer to turn alerts off while Add check waits for its read-only preview', async () => {
   const calls: unknown[] = [];
   let finishPreview: (value: JsonValue) => void = () => {};

@@ -4,6 +4,7 @@ import { PluginModalCardFooterSlot, PluginModalCardFooterSlotContext, usePluginM
 
 import {
     PluginUiEphemeralInputSettlementV1Schema,
+    PluginUiJsonValueV1Schema,
     type PluginUiEphemeralInputSettlementV1,
 } from '@happier-dev/protocol/plugins/ui';
 import type { DaemonContributionRegistryProjectionAutomationEligibleEventV1, DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -36,7 +37,16 @@ import { subscribeMachineContributionRegistryProjectionInvalidation } from '@/sy
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
-export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1;
+export type NativeSetupWatcherChoice = Readonly<{ machineId: string; selected: boolean }>;
+
+type SetupSurfaceWatcherSelection = Readonly<{
+    watcherChoices?: readonly NativeSetupWatcherChoice[];
+    /** The composer validates whether this Machine still owns a usable origin. */
+    canChooseWatcher?: (machineId: string) => boolean;
+}>;
+
+export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1
+    | Readonly<{ kind: 'superseded'; machineId: string; draft: unknown }>;
 
 export function createPluginEventAutomationSetupSurfaceBinding(params: Readonly<{
     isSettled: () => boolean;
@@ -107,6 +117,8 @@ type SetupSurfaceModalProps = Readonly<{
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     onSettle: (settlement: PluginEventAutomationSetupSurfaceSettlement) => void;
+    watcherChoices?: readonly NativeSetupWatcherChoice[];
+    chooseWatcher?: (machineId: string, draft: unknown) => boolean;
 }> & CustomModalInjectedProps;
 
 function PluginEventAutomationSetupSurfaceModal(
@@ -137,6 +149,14 @@ function PluginEventAutomationSetupSurfaceModal(
     // A form that offers its own footer (its Cancel and primary together) takes the card's footer, pinned beside the
     // card's edge; until then, and for forms without one, the card keeps its Cancel (PAGE-ACCEPT-176 R11-D1).
     const footerSlot = usePluginModalCardFooterSlot();
+    const hasDraft = React.useSyncExternalStore(footerSlot.subscribe, footerSlot.hasDraft, footerSlot.hasDraft);
+    const chooseWatcher = (machineId: string) => {
+        if (settledRef.current) return false;
+        const draft = footerSlot.captureDraft();
+        if (draft === undefined || !props.chooseWatcher?.(machineId, draft)) return false;
+        settledRef.current = true;
+        return true;
+    };
     const footer = React.useMemo(() => (
         <PluginModalCardFooterSlot store={footerSlot} fallback={
             <View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end' }}>
@@ -183,7 +203,8 @@ function PluginEventAutomationSetupSurfaceModal(
     const host = <PluginSurfaceHost ephemeralMount={ephemeralMount} machineId={props.machineId} serverId={props.serverId}
         launchInput={props.launchInput} />;
     const origin = props.originLabel ? <SetupOriginRow label={props.originLabel} machineId={props.machineId}
-        serverId={props.serverId} /> : null;
+        serverId={props.serverId} watcherChoices={hasDraft ? props.watcherChoices : undefined}
+        chooseWatcher={chooseWatcher} /> : null;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
         <PluginModalCardFooterSlotContext.Provider value={footerSlot.set}>
@@ -197,7 +218,13 @@ function PluginEventAutomationSetupSurfaceModal(
 }
 
 /** Where the setup runs, as the sheet's first field (the composer preselects the surface's Machine). */
-function SetupOriginRow(props: Readonly<{ label: string; machineId: string; serverId: string | null }>) {
+function SetupOriginRow(props: Readonly<{
+    label: string;
+    machineId: string;
+    serverId: string | null;
+    watcherChoices?: readonly NativeSetupWatcherChoice[];
+    chooseWatcher: (machineId: string) => boolean;
+}>) {
     const { theme } = useUnistyles();
     const machine = useServerScopedMachineLabel(props.serverId, props.machineId);
     // It stands on the form's own edge and rhythm, as the plugin's fields below it do: a label over its value.
@@ -215,7 +242,7 @@ function SetupOriginRow(props: Readonly<{ label: string; machineId: string; serv
  * invocation; its caller revalidates and submits the value through the generic
  * Action input owner.
  */
-export async function presentPluginEphemeralInputSurface(params: Readonly<{
+type EphemeralInputSurfaceParams = Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
     title: string;
     description?: string;
@@ -228,7 +255,14 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
     accountLifetime: ActiveServerAccountScopeLifetime;
     signal?: AbortSignal;
     commandBridge?: BaseModalConfig['commandBridge'];
-}>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
+}>;
+
+export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & { canChooseWatcher?: never }):
+    Promise<PluginUiEphemeralInputSettlementV1>;
+export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & SetupSurfaceWatcherSelection):
+    Promise<PluginEventAutomationSetupSurfaceSettlement>;
+export async function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & SetupSurfaceWatcherSelection):
+    Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const setupSurface = params.surface;
     const plugin = params.projection.pluginProjectionById[
         setupSurface.contribution.pluginId
@@ -284,6 +318,12 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
                 serverId: params.serverId,
                 accountLifetime: params.accountLifetime,
                 onSettle: finish,
+                watcherChoices: params.watcherChoices,
+                chooseWatcher: (machineId: string, draft: unknown) => {
+                    if (settled || !params.canChooseWatcher?.(machineId) || !PluginUiJsonValueV1Schema.safeParse(draft).success) return false;
+                    finish({ kind: 'superseded', machineId, draft });
+                    return true;
+                },
             },
             onRequestClose: onAbort,
             onHostUnmount: onAbort,
@@ -306,7 +346,7 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     launchInput?: PluginUiLaunchInputV1;
     /** The host's own name for this setup (Add check), in place of the Event's trigger wording, and for its Machine. */
     heading?: SetupSurfaceHeading;
-}>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
+}> & SetupSurfaceWatcherSelection): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const surface = params.eligibleEvent.setupSurface;
     if (!surface) return Promise.resolve({ kind: 'cancelled' });
     const { heading, ...rest } = params;
