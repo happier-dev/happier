@@ -1,9 +1,11 @@
 import { afterEach, expect, it } from 'vitest';
 import fastify from 'fastify';
 import {
+  ApprovalRequestV2Schema,
   FeaturesResponseSchema,
   TargetActionApprovalRequestV1Schema,
 } from '@happier-dev/protocol';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -165,5 +167,60 @@ it('refuses a terminal sign-in approving a daemon-held contributed Ask before mi
     expect(await store.targetActionApprovalsGet({ artifactId })).toMatchObject({
       status: 'open',
     });
+  });
+});
+
+// W21-A: a guest's own Agent asks to open the Browser in its Session on another
+// person's Machine. The Ask is client-placed and forwarded from that Session, so the
+// CLI replays it by minting a fresh decision root at Home, which a terminal can never hold.
+function forwardedGuestBrowserAsk() {
+  const target = { kind: 'machine' as const, machineId: 'owner-machine' };
+  const input = { commandId: 'qa-browser-open', scopeId: 'home:session',
+    target: { kind: 'externalUrl', targetId: 'qa-target-1', url: 'https://example.test/' } };
+  const envelope = { v: 1 as const, requestId: 'guest-browser-open', target, input };
+  const caller = { kind: 'session' as const, sessionId: 'guest-session', starterDepth: 0, turnDepth: 0 };
+  return ApprovalRequestV2Schema.parse({ v: 2, actionId: 'browser.workspace.open', status: 'open',
+    summary: 'Open a page in the Browser', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' },
+    actionArgs: input,
+    executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', caller,
+      callerPermissionMode: 'default',
+      sessionInputSource: { sourceSessionId: caller.sessionId, sourceTurnId: 'guest-turn', via: 'action' },
+      accountId: 'account-1', serverId: 'server-1', serverIdentityId: 'srv_home', target,
+      actionId: 'browser.workspace.open', requestId: 'guest-browser-open', machineId: target.machineId,
+      externalActionInputSignature: 'a'.repeat(86), originalActionEnvelope: envelope,
+      externalActionExecutionAuthorization: { v: 1, token: 'home-signed-root', binding: {
+        accountId: 'account-1', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'srv_home', machineId: target.machineId,
+        installationId: 'owner-installation', actionId: 'browser.workspace.open', requestId: 'guest-browser-open',
+        target, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        sessionActionSource: { machineId: target.machineId, installationId: 'owner-installation' },
+        sessionActionOrigin: { v: 1, caller, sourceTurnId: 'guest-turn', callerPermissionMode: 'default',
+          requestId: envelope.requestId } } } },
+  });
+}
+
+it.each(['terminal', 'account'] as const)(
+  'answers a %s sign-in approving a guest Session\'s forwarded Browser Ask by its reviewer rule', async (kind) => {
+  const home = await startHome();
+  const credentials = storedCredentials(kind);
+  await runWithServerHttpBaseUrl(home.url, async () => {
+    const store = createCliApprovalsArtifactStore({ credentials, serverId: 'server-1', serverHttpBaseUrl: home.url });
+    const { artifactId } = await store.approvalsCreate({ request: forwardedGuestBrowserAsk(), serverId: 'server-1' });
+    home.posts.length = 0;
+    const executor = createCliActionExecutorFromCredentials({ credentials, serverId: 'server-1',
+      serverApiUrl: home.url, actionsSettingsProvider: createActionSettingsProvider() });
+    const decided = await executor.execute('approval.request.decide', { artifactId, decision: 'approve' },
+      { surface: 'cli', authority: 'present_user', actionRequestId: `decide-${kind}` });
+    if (kind === 'terminal') {
+      // The person reads its cause and is sent to the app; Home sees nothing and the Ask stays open.
+      expect(decided).toMatchObject({ ok: false, errorCode: 'present_user_required', effectAttempted: false,
+        details: { reason: 'approval_reviewer_required' } });
+      expect(home.posts).toEqual([]);
+      expect(await store.approvalsGet({ artifactId, serverId: 'server-1' })).toMatchObject({ status: 'open' });
+    } else {
+      // A person's sign-in is not refused by the terminal rule: it records consent and reaches Home.
+      expect(decided).not.toMatchObject({ errorCode: 'present_user_required' });
+      expect(home.posts.length).toBeGreaterThan(0);
+    }
   });
 });

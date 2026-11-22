@@ -1,6 +1,7 @@
 import {
   resolveApprovalExecutor,
   type ApprovalRequestV2,
+  type StoredApprovalRequestV2,
 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 export type CliApprovalDecisionPlacement =
@@ -20,7 +21,7 @@ export type CliApprovalDecisionPlacement =
  */
 export function resolveCliApprovalDecisionPlacement(
   input: Readonly<{
-    request: ApprovalRequestV2;
+    request: ApprovalRequestV2 | StoredApprovalRequestV2;
     /** This process hosts Machine execution (daemon ingress or an owned plugin runtime). */
     hostsMachineExecution: boolean;
     /** A client port is reachable from this process for client-placed replays. */

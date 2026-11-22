@@ -1001,6 +1001,12 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   }
   const machineAdmissionTransport = daemonMachineAdmissionTransport ?? params.machineAdmissionTransport;
   const approvalServerApiUrl = fixedServerApiUrl ?? resolveServerHttpBaseUrl();
+  // One placement decision for an approved replay: the pre-consent reviewer refusal
+  // and the replay itself read the same answer about where (and whether) it mints.
+  const resolveApprovalReplayPlacement = (request: ApprovalRequestV2 | StoredApprovalRequestV2) => resolveCliApprovalDecisionPlacement({ request,
+    hostsMachineExecution: Boolean(machineAdmissionTransport || params.machineActionDirectTargetTransport
+      || params.pluginActionExecutionOwner === 'current_process'),
+    hasClientPort: Boolean(params.clientActionExecute || getDaemonClientActionExecutor(approvalServerId)) });
   const resolveActionServerApiUrl = (): string => fixedServerApiUrl ?? resolveServerHttpBaseUrl();
   const runWithActionServer = <T>(run: () => T): T => fixedServerApiUrl
     ? runWithServerHttpBaseUrl(fixedServerApiUrl, run)
@@ -1417,11 +1423,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       // fresh decision root this stored terminal credential can never obtain.
       ...(hasStoredSessionCredentialProvenance(credentials) ? {
         approvalRequestApproveRefusal: ({ request }) => {
-          if (machineAdmissionTransport || params.machineActionDirectTargetTransport
-            || params.pluginActionExecutionOwner === 'current_process'
-            || readLiveCliApprovalOriginScope(request) !== null || readApprovalRequesterDecisionV1(request, 'approve')) return null;
-          const executor = resolveApprovalExecutor(request);
-          if (executor.kind !== 'daemon' && executor.kind !== 'live_invocation'
+          if (readLiveCliApprovalOriginScope(request) !== null || readApprovalRequesterDecisionV1(request, 'approve')) return null;
+          // Every origin replay with a fresh root mints one, including a forwarded or
+          // client-placed Session Ask (a guest's Browser open): refuse it here, before consent.
+          if (resolveApprovalReplayPlacement(request).kind === 'local'
             || readApprovalReplayDecisionAdmission(request) !== 'fresh') return null;
           return readTerminalApprovalReviewerRefusal(credentials);
         },
@@ -1463,10 +1468,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         // A live effect stays in its original waiter, and a forwarded Session Ask
         // stays with the daemon that holds its signed carrier. Machine RPC only
         // carries the authenticated decision to that process; it never rebuilds input.
-        const placement = resolveCliApprovalDecisionPlacement({ request,
-          hostsMachineExecution: Boolean(machineAdmissionTransport || params.machineActionDirectTargetTransport
-            || params.pluginActionExecutionOwner === 'current_process'),
-          hasClientPort: Boolean(params.clientActionExecute || getDaemonClientActionExecutor(approvalServerId)) });
+        const placement = resolveApprovalReplayPlacement(request);
         if (placement.kind === 'unavailable') return actionFailure('approval_origin_unavailable');
         if (placement.kind === 'local') return null;
         const { machineId } = placement;
