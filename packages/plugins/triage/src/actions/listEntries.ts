@@ -213,9 +213,15 @@ export async function assembleTriageListPass(
                 return { rows: active.map(record => record.value), records: active, status: 'complete' as const };
             })
     );
-    const configuredRows = configured.rows;
+    const configuredRows = configured.rows.flatMap(row => {
+        const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
+        const selectedKindIds = deps.taskOnly
+            ? contribution?.descriptor.kinds.filter(kind => kind.task === true).map(kind => kind.id)
+            : undefined;
+        return selectedKindIds?.length === 0 ? [] : [{ row, contribution, selectedKindIds }];
+    });
     const selectedSortSourceIds = input.sort === undefined ? undefined : new Set(selectTriageListSourcesV1(
-        configuredRows.map(row => row.configured.instance), input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
+        configured.rows.map(row => row.configured.instance), input.filters ?? TRIAGE_LIST_NO_FILTERS_V1,
     ).map(source => source.sourceInstanceId));
     const configuredRecords = configured.records;
     const configuredSourcesStatus = configured.status;
@@ -235,8 +241,7 @@ export async function assembleTriageListPass(
         record,
     ]));
     const configuredScopes = new Map<string, NonNullable<TriageListEntriesResultV1['configuredSources'][number]['scope']>>();
-    await Promise.all(configuredRows.map(async (row) => {
-        const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
+    await Promise.all(configuredRows.map(async ({ row, contribution }) => {
         if (contribution === undefined) return;
         const sourceInstanceId = row.configured.instance.sourceInstanceId;
         const unit = contribution.descriptor.scopeUnit;
@@ -267,12 +272,7 @@ export async function assembleTriageListPass(
         }
         configuredScopes.set(sourceInstanceId, { unit, projection });
     }));
-    for (const row of configuredRows) {
-        const contribution = admittedByQualifiedId.get(row.sourceQualifiedId);
-        const selectedKindIds = deps.taskOnly
-            ? contribution?.descriptor.kinds.filter((kind) => kind.task === true).map((kind) => kind.id)
-            : undefined;
-        if (selectedKindIds?.length === 0) continue;
+    for (const { row, contribution, selectedKindIds } of configuredRows) {
         const source = {
             pluginId: row.configured.instance.source.pluginId,
             localId: row.configured.instance.source.localId,

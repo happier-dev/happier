@@ -530,6 +530,57 @@ describe('the aggregate list coverage claim', () => {
             failure: { class: 'unsupportedContract', code: 'triage/sortUnsupported' } });
     });
 
+    it('projects configured scope only for sources that can appear in Tasks', async () => {
+        const { collections, control } = createTestkitCorpusCollections();
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('a'), sourceInstanceId: INSTANCE_ID, configuredAtMs: 1,
+        })));
+        control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
+            instanceTag: paddedInstanceTag('b'), sourceInstanceId: SECOND_INSTANCE_ID, configuredAtMs: 2, source: OTHER_SOURCE,
+        })));
+        const forge: TriageAdmittedSourceV1 = {
+            ...ADMITTED_SOURCE,
+            descriptor: { ...ADMITTED_SOURCE.descriptor, scopeUnit: { singularLabel: 'Project', pluralLabel: 'Projects' } },
+            operations: {
+                ...ADMITTED_SOURCE.operations,
+                // The host transport owns operation handles.
+                listScopeUnits: {} as NonNullable<TriageAdmittedSourceV1['operations']['listScopeUnits']>,
+            },
+        };
+        const tracker: TriageAdmittedSourceV1 = {
+            ...forge,
+            contributor: { ...forge.contributor, pluginId: OTHER_SOURCE.pluginId, contributionId: OTHER_SOURCE.localId },
+            descriptor: { ...forge.descriptor, kinds: forge.descriptor.kinds.map(kind => ({ ...kind, task: true })) },
+        };
+        const scopeReads: string[] = [];
+        const deps: Parameters<typeof listTriageEntries>[1] = {
+            sourceInstances: collections.sourceInstances,
+            readSourceSnapshot: async () => ({ contributions: [forge, tracker] }),
+            executeScopeUnits: async (_operation, input) => {
+                if (input.mode !== 'configured') throw new Error('Expected configured scope');
+                scopeReads.push(input.draft.localInstanceKey);
+                return { kind: 'page', status: 'complete', selection: { kind: 'all' }, units: [] };
+            },
+            executeScan: finishedWalk,
+            nowMs: () => 1000,
+        };
+        const census = { v: 1, sources: { kind: 'allConfigured' }, limit: 0, order: 'newest' } as const;
+        const all = TriageListEntriesResultV1Schema.parse(await listTriageEntries(census, deps));
+        expect(all.configuredSources.map(source => source.sourceInstanceId)).toEqual(
+            expect.arrayContaining([INSTANCE_ID, SECOND_INSTANCE_ID]),
+        );
+        expect(scopeReads.splice(0).sort()).toEqual(['example/repository-1', 'example/repository-2']);
+
+        const tasks = TriageListEntriesResultV1Schema.parse(await listTriageEntries(census, { ...deps, taskOnly: true }));
+        expect(tasks.configuredSources.some(source => source.sourceInstanceId === INSTANCE_ID)).toBe(false);
+        expect(tasks.configuredSources.find(source => source.sourceInstanceId === SECOND_INSTANCE_ID)).toEqual(
+            all.configuredSources.find(source => source.sourceInstanceId === SECOND_INSTANCE_ID),
+        );
+        expect(tasks.configuredSourcesStatus).toBe(all.configuredSourcesStatus);
+        // Same Tasks census on open or revalidation: 2 targeted scope Actions before, 1 after.
+        expect(scopeReads).toEqual(['example/repository-2']);
+    });
+
     it('preserves the originating Request ID when configured scope metadata is rejected', async () => {
         const { collections, control } = createTestkitCorpusCollections();
         control.sourceInstances.seed(toCorpusStoredValue(configuredRow({
