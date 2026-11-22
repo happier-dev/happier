@@ -78,6 +78,7 @@ import { useUnistyles } from 'react-native-unistyles';
 import { useAtmosphere } from '@/components/atmosphere/useAtmosphere';
 import { atmosphereStageStore, useAtmospherePictureShown, useAtmosphereSending, useAtmosphereSendDissolving } from '@/components/atmosphere/atmosphereStage';
 import { HomePlanet, homePlanetFootFade, useHomePlanetGeometry } from '@/components/atmosphere/HomePlanet';
+import { presentReadyHome } from './homeArrival';
 import { useHomeGlyphArrival } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { usePersonalHomeBootstrapCovered } from '@/components/personalHome/bootstrap/PersonalHomeBootstrapGate';
@@ -533,6 +534,10 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     const homeLoading = guidance.kind === 'loading' || (!guidanceIsHome && !layout.hasSnapshot && layout.status === 'loading');
     const homeCovered = usePersonalHomeBootstrapCovered();
     const firstArrival = useHomeGlyphArrival();
+    const arrivalPresented = focused && presented && !homeCovered;
+    const readyForArrival = arrivalPresented && !homeUnavailable && !homeLoading
+        && (guidanceIsHome || layout.hasSnapshot);
+    React.useLayoutEffect(() => readyForArrival ? presentReadyHome() : undefined, [readyForArrival]);
     const momentTarget = React.useMemo(() => resolveHomeMomentTarget({
         guidanceKind: guidance.kind, heroActive, planetSource, pane: planetPane,
         layer: planetGeometry ? planetGlyphLayer({ geometry: planetGeometry, intensity: planetIntensity, digits: planetDigits, soft: phone,
@@ -551,8 +556,10 @@ const HomeHubContent = React.memo(function HomeHubContent() {
     // Parked Home's glass sleeps through the backing of the tabs shown in its place.
     const framed = (content: React.ReactNode) => (
         <GlassEnvironmentHold presented={presented} carriesAtmosphere={heroActive && heroFrame.hero !== null}>
-            {/* The presented pane owns arrival even while its rows are still hydrating. */}
-            <StepMotionLayer layerKey="home" active={focused && !homeCovered} retainContent warmOnMount={false} style={styles.pane}>
+            {/* Web keeps the outgoing step until Home can paint usable content or its Retry. */}
+            <StepMotionLayer layerKey="home" active={Platform.OS === 'web'
+                ? arrivalPresented && (!homeLoading || homeUnavailable)
+                : focused && !homeCovered} retainContent warmOnMount={false} style={styles.pane}>
                 <HomeHubFrame focused={focused} style={styles.pane} onLayout={onHubLayout} loadingLayer={loadingMoment.layer}>
                     {content}
                 </HomeHubFrame>

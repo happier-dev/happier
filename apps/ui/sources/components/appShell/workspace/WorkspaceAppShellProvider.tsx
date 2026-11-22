@@ -2,17 +2,24 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { useCompactAppDestinationCatalog } from '../destinations/compactAppDestinationCatalog';
 import { WorkspaceProvider } from './WorkspaceProvider';
-import { WorkspaceShellWillHostRoutesContext } from './WorkspaceRouteHostingContext';
+import { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext } from './WorkspaceRouteHostingContext';
 import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
 import { storage, useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/state/storage';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
+import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
+import { skipStepMotion } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
 import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { useCurrentRoutePathname } from './currentRouteLocation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
+
+function revealUnavailableHome(): void {
+    // The held entry must yield to the reachable Retry control if admission ends offline.
+    if (isHomeArrivalMotionPending()) skipStepMotion();
+}
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode; browserWindow?: AppWindowRecord | null }>) {
@@ -69,7 +76,26 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     // Native's stack owns recovery navigation before the workspace can restore private tabs.
     // Web retains its initial navigator gate so a transient first scope cannot consume its deep link.
     // While it waits, the person sees the startup state, or the Home's Retry once it is unreachable.
-    const restoring = pendingFirstAccount && Platform.OS === 'web';
+    const [pendingPhoneHome, setPendingPhoneHome] = React.useState<'/home' | null>(null);
+    // A descriptive catalog can be ready before Sync publishes the new Account. An Expo-only leaf
+    // can replace its route once the Account is ready and its navigator will stay mounted.
+    const restoring = Platform.OS === 'web' && (pendingFirstAccount || (pendingPhoneHome !== null && (!ready || !dataReady)));
+    const canNavigate = presentation !== null && !restoring && ready && dataReady;
+    React.useLayoutEffect(() => {
+        if (!hasWorkspace) setPendingPhoneHome(null);
+    }, [hasWorkspace]);
+    const phoneHomeArrival = React.useMemo(() => ({
+        defer(href: '/home') {
+            if (canNavigate || requestedPresentation !== 'phone') return false;
+            setPendingPhoneHome(href);
+            return true;
+        },
+        take() {
+            if (!canNavigate || !pendingPhoneHome) return null;
+            setPendingPhoneHome(null);
+            return pendingPhoneHome;
+        },
+    }), [canNavigate, pendingPhoneHome, requestedPresentation]);
     if (!restoring && (presentation !== 'entry' && ((accountLifetime && !accountLifetime.isCurrent())
         || (!ready && admittedLifetime.current !== null && admittedLifetime.current !== accountLifetime)))) return null;
     if (!restoring && resolveDesktopWindowContext().role === 'secondary') {
@@ -78,9 +104,13 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={pendingFirstAccount} restoreRetainedHome={restoreRetainedHome} catalog={catalog}>
         {restoring
-            ? <HomeReachabilityGate variant="pane"><AppLaunchState testID="workspace-account-restoring" /></HomeReachabilityGate>
+            ? <HomeReachabilityGate variant="pane" onUnavailable={revealUnavailableHome}>
+                <AppLaunchState testID="workspace-account-restoring" />
+            </HomeReachabilityGate>
             : <WorkspaceShellWillHostRoutesContext.Provider value={Platform.OS === 'web' && requestedPresentation === 'shell'}>
-                {props.children}
+                <WorkspacePhoneHomeArrivalContext.Provider value={Platform.OS === 'web' ? phoneHomeArrival : null}>
+                    {props.children}
+                </WorkspacePhoneHomeArrivalContext.Provider>
             </WorkspaceShellWillHostRoutesContext.Provider>}
     </WorkspaceProvider>;
 }

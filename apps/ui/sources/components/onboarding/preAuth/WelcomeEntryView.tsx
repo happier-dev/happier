@@ -10,7 +10,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
 import { STEP_DOOR_WIDTH_PX, StepOrDivider } from '@/components/onboarding/unauthShell/StepFormParts';
-import { RelayRetentionDisclosure } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
+import { RelayRetentionDisclosure, WELCOME_RETENTION_LINE_COUNT } from '@/components/onboarding/unauthShell/RelayRetentionDisclosure';
 import { ShellHeaderClearanceContext, ShellWelcomeOverflowContext, useShellCornerDoor, useShellCornerNote } from '@/components/onboarding/unauthShell/shellCorner';
 import { OrganizationPolicyInvalidHelp, OrganizationPolicyManagedLine } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
@@ -368,11 +368,10 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
     },
-    // Two lines are kept for the summary, so it arrives after the doors without moving them.
+    // The disclosure keeps its place after the doors while the catalog loads.
     retention: {
         width: '100%',
-        // The gap above plus two body lines.
-        minHeight: 56,
+        minHeight: theme.space.s16 + WELCOME_RETENTION_LINE_COUNT * (Typography.variant('body').lineHeight ?? 0),
         paddingTop: theme.space.s16,
     },
 }));

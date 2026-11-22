@@ -10,7 +10,7 @@ import { HomePlanet } from '@/components/atmosphere/HomePlanet';
 import { useGlyphClock } from '@/components/atmosphere/moments/useMomentClock';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
-import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
+import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 
 import { StepEntranceBody } from './StepEntranceBody';
 import { StepMotionLayer } from './StepMotionLayer';
@@ -544,24 +544,26 @@ it('captures the approved step for one Home landing and holds the tour until the
         expect(copy?.isConnected).toBe(true);
         expect(copy?.style.backgroundColor).toBeTruthy();
         expect(copies).toEqual([copy]);
-        expect(applyHome).toHaveBeenCalledExactlyOnceWith('/');
-        expect(isShowcaseHomeLandingPending()).toBe(true);
+        expect(applyHome).toHaveBeenCalledTimes(1);
+        expect(isHomeArrivalMotionPending()).toBe(true);
         expect(container.querySelector('button')).toBeNull();
+        expect(frozenEffects).toHaveLength(0);
+        expect(copy?.isConnected).toBe(true);
+        await act(async () => presentHome());
         expect(frozenEffects).toHaveLength(1);
         const [dissolve] = frozenEffects;
         expect(dissolve.frames[0]?.opacity).toBe(1);
         expect(dissolve.frames.at(-1)?.opacity).toBe(0);
         expect(dissolve.duration).toBeLessThan(1_050);
         await act(async () => {
-            if (stageMotion?.kind !== 'transition') throw new Error('Expected the outgoing dissolve before Home attaches');
+            if (stageMotion?.kind !== 'transition') throw new Error('Expected the outgoing dissolve with Home in place');
             stageMotion.onSettled?.();
         });
         expect(copy?.isConnected).toBe(false);
-        await act(async () => presentHome());
         expect(stageMotion?.kind).toBe('transition');
-        expect(isShowcaseHomeLandingPending()).toBe(true);
+        expect(isHomeArrivalMotionPending()).toBe(true);
         await act(async () => skipStepMotion());
-        expect(isShowcaseHomeLandingPending()).toBe(false);
+        expect(isHomeArrivalMotionPending()).toBe(false);
     } finally {
         observer.disconnect();
         await act(async () => root.unmount());

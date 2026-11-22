@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { useCurrentRouteSegments } from '@/components/appShell/workspace/currentRouteLocation';
+import { useCurrentRoutePathname } from '@/components/appShell/workspace/currentRouteLocation';
 
 import { useAuth } from '@/auth/context/AuthContext';
-import { isWelcomeRoute } from '@/auth/routing/authRouting';
+import { isHomeArrivalSettled, subscribeHomeArrival } from '@/components/hub/homeArrival';
 import { getCurrentReleaseId } from '@/changelog/releaseNotes/manifestRuntime';
 import { setLastSeenReleaseId } from '@/changelog/releaseNotes/storage';
 import { OnboardingShowcaseStorySurface } from '@/components/onboarding/showcase';
@@ -11,7 +11,7 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { usePendingSetupIntent } from '@/components/onboarding/state/usePendingSetupIntent';
 
-import { isShowcaseAwaitingSignIn, isShowcaseHomeLandingPending, markShowcaseAwaitingSignIn, subscribeShowcaseHomeLanding } from './storage';
+import { isShowcaseAwaitingSignIn, markShowcaseAwaitingSignIn } from './storage';
 import { useOnboardingShowcaseState } from './useOnboardingShowcaseState';
 
 function markCurrentReleaseNotesSeen(): void {
@@ -32,8 +32,9 @@ export function OnboardingShowcaseAutoShowMount(): null {
     const showcase = useOnboardingShowcaseState();
     const modal = useModal();
     const modalStackActive = modal.state.modals.length > 0;
-    const welcomeActive = isWelcomeRoute(useCurrentRouteSegments());
-    const landingPending = React.useSyncExternalStore(subscribeShowcaseHomeLanding, isShowcaseHomeLandingPending);
+    const pathname = useCurrentRoutePathname();
+    const homeActive = pathname === '/' || pathname === '/home';
+    const arrivalSettled = React.useSyncExternalStore(subscribeHomeArrival, isHomeArrivalSettled);
     const setupPending = usePendingSetupIntent() !== null;
     const ranRef = React.useRef(false);
 
@@ -48,9 +49,8 @@ export function OnboardingShowcaseAutoShowMount(): null {
             showcase.markSeen();
             return;
         }
-        // Inline auth admits Home in a layout effect of this same commit. Read the live handoff
-        // before opening the modal, then use the subscription to wake when the landing settles.
-        if (modalStackActive || !welcomeActive || isShowcaseHomeLandingPending() || setupPending || getPendingTerminalConnect()) return;
+        // A layout effect in the same commit may begin the move or withdraw Home's ready content.
+        if (modalStackActive || !homeActive || !isHomeArrivalSettled() || setupPending || getPendingTerminalConnect()) return;
 
         ranRef.current = true;
         let modalId: string | null = null;
@@ -80,7 +80,7 @@ export function OnboardingShowcaseAutoShowMount(): null {
                 },
             },
         });
-    }, [auth.isAuthenticated, landingPending, modalStackActive, setupPending, showcase, welcomeActive]);
+    }, [arrivalSettled, auth.isAuthenticated, homeActive, modalStackActive, setupPending, showcase]);
 
     return null;
 }

@@ -17,7 +17,7 @@ import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TES
 import { GlassSurface } from '@/components/ui/glass/GlassSurface';
 import { Typography } from '@/constants/Typography';
 
-import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
+import { RelayRetentionDisclosure, WELCOME_RETENTION_LINE_COUNT } from './RelayRetentionDisclosure';
 import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, ShellWelcomeOverflowContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
@@ -501,9 +501,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'flex-end',
         gap: theme.space.s8,
     },
-    // Reserve the corner pill's two-line footprint so reading the disclosure does not recenter the doors.
+    // Reserve the corner pill's footprint so reading the disclosure does not recenter the doors.
     cornerNoteSlot: {
-        minHeight: 2 * (Typography.variant('body').lineHeight ?? 0)
+        minHeight: WELCOME_RETENTION_LINE_COUNT * (Typography.variant('body').lineHeight ?? 0)
             + 2 * (theme.space.s8 + StyleSheet.hairlineWidth),
         justifyContent: 'flex-end',
     },

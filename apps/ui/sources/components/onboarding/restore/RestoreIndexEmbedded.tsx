@@ -187,6 +187,7 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                     showBack={false}
                     onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
                     renderAdditionalSignInWays={props.renderAdditionalSignInWays}
+                    onOpenLostAccess={props.onOpenLostAccess}
                     onHeadingChange={setScannerHeading}
                     onOpenPairingLinkEntry={openPasteEntry}
                     onShowQrInstead={openQr}

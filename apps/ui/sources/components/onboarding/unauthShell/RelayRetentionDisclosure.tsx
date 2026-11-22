@@ -7,6 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+// Both placements reserve the three body lines the catalog summary occupies at their reading width.
+export const WELCOME_RETENTION_LINE_COUNT = 3;
+
 /**
  * What the pre-sign-in disclosure can say about a Home's data retention: what it deletes, from a
  * policy that answered, or that it could not be checked (with a retry). It never falls silent on a

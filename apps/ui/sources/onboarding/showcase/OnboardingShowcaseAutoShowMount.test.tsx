@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { presentReadyHome, setHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createExpoRouterMock } from '@/dev/testkit/mocks/router';
 
@@ -38,7 +39,10 @@ const modalState = vi.hoisted(() => ({
 
 const routeState = vi.hoisted(() => ({ segments: [] as string[] }));
 
-vi.mock('expo-router', () => createExpoRouterMock({ segments: () => routeState.segments }).module);
+vi.mock('expo-router', () => createExpoRouterMock({
+    segments: () => routeState.segments,
+    pathname: () => '/' + routeState.segments.filter(segment => !segment.startsWith('(') && segment !== 'index').join('/'),
+}).module);
 
 vi.mock('@/auth/context/AuthContext', () => ({
     useAuth: () => authState,
@@ -71,7 +75,9 @@ vi.mock('@/components/onboarding/showcase', () => ({
 }));
 
 describe('OnboardingShowcaseAutoShowMount', () => {
+    let withdrawHome: (() => void) | undefined;
     beforeEach(async () => {
+        withdrawHome = presentReadyHome();
         const { clearShowcaseSeenVersion } = await import('./storage');
         clearShowcaseSeenVersion();
         authState.isAuthenticated = false;
@@ -87,6 +93,9 @@ describe('OnboardingShowcaseAutoShowMount', () => {
 
     afterEach(() => {
         standardCleanup();
+        withdrawHome?.();
+        withdrawHome = undefined;
+        setHomeArrivalMotionPending(false);
         vi.useRealTimers();
     });
 
@@ -145,23 +154,22 @@ describe('OnboardingShowcaseAutoShowMount', () => {
     });
 
     it('waits for a Home landing admitted in the same commit as authentication', async () => {
-        const { setShowcaseHomeLandingPending } = await import('./storage');
+        withdrawHome?.();
+        withdrawHome = undefined;
         const { OnboardingShowcaseAutoShowMount } = await import('./OnboardingShowcaseAutoShowMount');
         function Landing() {
             React.useLayoutEffect(() => {
-                if (authState.isAuthenticated) setShowcaseHomeLandingPending(true);
+                if (authState.isAuthenticated) setHomeArrivalMotionPending(true);
             }, [authState.isAuthenticated]);
             return <OnboardingShowcaseAutoShowMount />;
         }
-        try {
-            const screen = await renderScreen(<Landing />);
-            await signIn(screen, <Landing />);
-            expect(modalState.show).not.toHaveBeenCalled();
-            await act(async () => setShowcaseHomeLandingPending(false));
-            expect(modalState.show).toHaveBeenCalledTimes(1);
-        } finally {
-            setShowcaseHomeLandingPending(false);
-        }
+        const screen = await renderScreen(<Landing />);
+        await signIn(screen, <Landing />);
+        expect(modalState.show).not.toHaveBeenCalled();
+        await act(async () => setHomeArrivalMotionPending(false));
+        expect(modalState.show).not.toHaveBeenCalled();
+        await act(async () => { withdrawHome = presentReadyHome(); });
+        expect(modalState.show).toHaveBeenCalledTimes(1);
     });
 
     it('offers Ask Happier on the last card as an explicit choice that closes the tour as seen', async () => {

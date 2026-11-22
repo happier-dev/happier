@@ -48,7 +48,7 @@ import { QrCodeScannerView } from '@/components/qr/QrCodeScannerView';
 import { PairingStatusPill, PairingStatusWaitingDot, pairingStatusStyles } from '@/components/auth/pairing/PairingStatusPill';
 import { StepPrimaryButton, StepRowBackButton, StepRowWayButton, useStepRowBack } from '@/components/onboarding/unauthShell/stepBack';
 import { StepActions, StepProblemHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
-import { StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepQuietAction, StepWaysRow } from '@/components/onboarding/unauthShell/StepFormParts';
 import { HomeContextLine } from '@/components/onboarding/ui/ActiveRelaySummary';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { trackAccountRestored, trackAuthEnrollmentTransientRetry } from '@/track';
@@ -247,6 +247,7 @@ export type RestoreScanComputerQrViewProps = Readonly<{
     /** False when the host already draws the way back (the welcome pane's chevron, the setup card's back). */
     showBack?: boolean;
     onOpenSecretKeyLogin?: () => void;
+    onOpenLostAccess?: () => void;
     /**
      * The step's other ways in (the model's ways row). Called with this view's own leading way (the recovery key, whose
      * view also takes a pairing link) for the live camera's row, and with none under the unavailable state.
@@ -1400,6 +1401,13 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         iconName={enrollmentPresentation.recoveryAction === 'scan_new_code' ? 'qr-code'
                             : enrollmentPresentation.recoveryAction === 'enter_new_link' ? 'link' : null}
                     />
+                    {props.entryIntent === 'enter_home' ? (
+                        <StepQuietAction
+                            testID="restore-open-lost-access"
+                            label={t('connect.lostAccessLink')}
+                            onPress={props.onOpenLostAccess ?? (() => moveToRoute(() => router.push('/restore/lost-access')))}
+                        />
+                    ) : null}
                 </StepActions>
             </View>
         );

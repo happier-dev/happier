@@ -32,7 +32,7 @@ type PendingMove = {
     complete?: (outcome: StepBuildResult) => void;
     cancelled: boolean;
     layoutReady: boolean;
-    webDeparture?: 'playing' | 'cleared';
+    webDeparture?: (() => void) | 'playing' | 'cleared';
 };
 type StagePaint = Readonly<{
     animation: StepAnimation;
@@ -453,6 +453,12 @@ function createStepMotionStage(
     function enter(layer: StepMotionLayerHandle) {
         const move = pending;
         if (!move || move.destination !== layer.key || move.webDeparture === 'playing') return;
+        // Keep the backed step visible during workspace admission. Its dissolve and the retained
+        // Home build can then run together without exposing the intermediate route.
+        if (typeof move.webDeparture === 'function') {
+            move.webDeparture();
+            return;
+        }
         pending = null;
         move.cancelled = true;
         if (move.grammar === 'fade' || (!move.freeze && !move.webDeparture)) {
@@ -724,7 +730,8 @@ function createStepMotionStage(
                 // Without the renderer the move still never shows an empty column between the two steps.
                 next.freeze = copyStepLayer(outgoing, backdrop) ?? undefined;
             }
-            if (backdrop && next.freeze?.clone) departForHome(outgoing, next, next.freeze);
+            const freeze = next.freeze;
+            if (backdrop && freeze?.clone) next.webDeparture = () => departForHome(outgoing, next, freeze);
             try {
                 return move.commit();
             } catch (error) {

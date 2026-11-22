@@ -5,7 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { useRouter, useLocalSearchParams, useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { MainView } from '@/components/navigation/shell/MainView';
 import { useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { WorkspaceShellWillHostRoutesContext } from '@/components/appShell/workspace/WorkspaceRouteHostingContext';
+import { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext } from '@/components/appShell/workspace/WorkspaceRouteHostingContext';
 import { clearPendingSetupIntent } from '@/sync/domains/pending/pendingSetupIntent';
 import { getPendingTerminalConnect } from '@/sync/domains/pending/pendingTerminalConnect';
 import { PreAuthOnboardingWizardEntry } from '@/components/onboarding/preAuth/PreAuthOnboardingWizardEntry';
@@ -42,6 +42,7 @@ export function Home() {
     const focused = useIsFocused();
     const destinationInstance = useDestinationInstanceKey();
     const workspaceWillHostHome = React.useContext(WorkspaceShellWillHostRoutesContext);
+    const phoneHomeArrival = React.useContext(WorkspacePhoneHomeArrivalContext);
     const params = useLocalSearchParams<{
         id?: string | string[];
         messageId?: string | string[];
@@ -88,15 +89,25 @@ export function Home() {
             return;
         }
         if (applying.current) return;
+        const admittedHome = phoneHomeArrival?.take();
+        if (admittedHome) {
+            applying.current = true;
+            router.replace(admittedHome);
+            return;
+        }
 
         const apply = (continuation?: Parameters<typeof resolvePostAuthLanding>[0]['continuation'], afterReveal?: () => void) => {
             applying.current = true;
             resolvePostAuthLanding({
                 replace: router.replace, continuation,
-                revealHome: () => {
+                revealHome: (href) => {
                     interactive.current = false;
-                    applying.current = false;
-                    setHomeVisible(true);
+                    if (href === '/home') {
+                        if (!phoneHomeArrival?.defer(href)) router.replace(href);
+                    } else {
+                        applying.current = false;
+                        setHomeVisible(true);
+                    }
                     afterReveal?.();
                 },
             });
@@ -140,7 +151,7 @@ export function Home() {
             else setHomeVisible(true);
         }
     }, [askHappierReady, firstRun, focused, homeVisible, isAuthenticated, keepBootstrapShell, params, pendingSetup,
-        router, scope, serverId, startAskHappier]);
+        phoneHomeArrival, router, scope, serverId, startAskHappier]);
 
     if (firstRun) {
         return <PersonalHomeBootstrapContent><PreAuthOnboardingWizardEntry /></PersonalHomeBootstrapContent>;

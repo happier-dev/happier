@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterAll, expect, it, vi } from 'vitest';
 import { createDeferred, renderScreen } from '@/dev/testkit';
@@ -32,8 +33,9 @@ const { AuthProvider, InjectedAuthProvider, useAuth } = await import('@/auth/con
 const { AppShellPluginUiProjectionProvider } = await import('../plugins/AppShellPluginUiProjection');
 const { WorkspaceAppShellProvider } = await import('./WorkspaceAppShellProvider');
 const { WorkspaceRouteEntry } = await import('./createWorkspaceRouteEntry');
-const { WorkspaceShellWillHostRoutesContext } = await import('./WorkspaceRouteHostingContext');
+const { WorkspacePhoneHomeArrivalContext, WorkspaceShellWillHostRoutesContext } = await import('./WorkspaceRouteHostingContext');
 const { useOptionalWorkspaceNavigation } = await import('./WorkspaceNavigationContext');
+const { resolvePostAuthLanding } = await import('@/components/onboarding/state/resolvePostAuthLanding');
 const { storage } = await import('@/sync/domains/state/storage');
 const { saveSessionListWarmCacheEntries } = await import('@/sync/domains/state/warmCachePersistence');
 const { profileDefaults } = await import('@/sync/domains/profiles/profile');
@@ -70,14 +72,17 @@ it('lets the live signed-out route commit its landing before the workspace takes
     }
 });
 
-it('admits the first Account workspace after real cold Sync restore reaches data-ready', async () => {
-    const accountId = 'first-shell-restore';
+it.each(['cold', 'compact arrival'] as const)('admits the first Account workspace after real Sync restore reaches data-ready (%s)', async arrival => {
+    const compact = arrival === 'compact arrival';
+    const accountId = compact ? 'first-phone-restore' : 'first-shell-restore';
     const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature` };
+    const dimensions = compact ? vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 }) : null;
     const settingsStarted = createDeferred<void>();
     const settings = createDeferred<void>();
     const requests: string[] = [];
+    const replace = vi.fn();
     const restoration = restoreServerAccountForTest({
-        serverUrl: 'https://first-shell-restore.example.test', accountId, credentials,
+        serverUrl: `https://${accountId}.example.test`, accountId, credentials,
         request: async (input, init) => {
             const path = new URL(String(input)).pathname;
             requests.push(path);
@@ -99,17 +104,47 @@ it('admits the first Account workspace after real cold Sync restore reaches data
     // of the optional encryption capability probe.
     await settingsStarted.promise;
     function WorkspaceRead() {
+        const { isAuthenticated } = useAuth();
         const navigation = useOptionalWorkspaceNavigation();
+        const phoneArrival = React.useContext(WorkspacePhoneHomeArrivalContext);
+        const openedWelcome = React.useRef(!isAuthenticated);
+        const selected = React.useRef(false);
+        React.useLayoutEffect(() => {
+            if (!compact || !isAuthenticated || selected.current) return;
+            const admitted = phoneArrival?.take();
+            if (admitted) {
+                selected.current = true;
+                replace(admitted);
+            } else if (openedWelcome.current) {
+                selected.current = true;
+                resolvePostAuthLanding({ replace, revealHome: href => {
+                    if (href !== '/home' || !phoneArrival?.defer(href)) replace(href);
+                } });
+            }
+        }, [isAuthenticated, phoneArrival]);
         return React.createElement('AdmittedWorkspace', { catalog: navigation?.catalog, accountId: storage.getState().profileScope?.accountId });
     }
-    const screen = await renderScreen(<AuthProvider initialCredentials={credentials}>
-        <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider><WorkspaceRead /></WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>
-    </AuthProvider>);
+    const shell = <AppShellPluginUiProjectionProvider><WorkspaceAppShellProvider><WorkspaceRead /></WorkspaceAppShellProvider></AppShellPluginUiProjectionProvider>;
+    const inlineApp = (published: typeof credentials | null) => <InjectedAuthProvider credentials={published}>{shell}</InjectedAuthProvider>;
+    const screen = await renderScreen(compact ? inlineApp(null) : <AuthProvider initialCredentials={credentials}>{shell}</AuthProvider>);
     try {
+        if (compact) {
+            expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(1);
+            await screen.update(inlineApp(credentials));
+            expect(replace).not.toHaveBeenCalled();
+        }
         expect(storage.getState().isDataReady).toBe(false);
         expect(screen.root.findAllByType('AdmittedWorkspace')).toHaveLength(0);
         await vi.waitFor(() => expect(screen.root.findAllByType('canvas').length).toBeGreaterThan(0));
+        if (compact) {
+            await act(async () => {
+                publishAppliedActiveServerRuntimeAvailability(true);
+                storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null });
+            });
+            await vi.waitFor(() => expect(screen.root.findAll(node => node.props?.testID === 'home-unreachable-retry').length).toBeGreaterThan(0));
+        }
         await act(async () => {
+            if (compact) storage.setState({ endpointStatus: 'online', socketStatus: 'connected' });
             settings.resolve();
             await restoration;
             await sync.awaitBootstrapForegroundAcquisition();
@@ -120,6 +155,7 @@ it('admits the first Account workspace after real cold Sync restore reaches data
         });
         expect(screen.root.findByType('AdmittedWorkspace').props.accountId).toBe(accountId);
         expect(screen.root.findByType('AdmittedWorkspace').props.catalog.length).toBeGreaterThan(0);
+        if (compact) expect(replace.mock.calls).toEqual([['/home']]);
         expect(storage.getState().settingsVersion).toBe(0);
         expect(requests).toContain('/v1/account/profile');
         expect(requests).toContain('/v2/account/settings');
@@ -127,6 +163,7 @@ it('admits the first Account workspace after real cold Sync restore reaches data
         settings.resolve();
         await screen.unmount();
         await (await restoration).dispose();
+        dimensions?.mockRestore();
     }
 });
 

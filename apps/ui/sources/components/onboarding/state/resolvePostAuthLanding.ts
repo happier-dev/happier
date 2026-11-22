@@ -1,14 +1,15 @@
 import type { Href } from 'expo-router';
 
 import { runStepMove } from '@/components/ui/motion/stepMotion/StepMotionStage';
-import { setShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
+import { setHomeArrivalMotionPending } from '@/components/hub/homeArrival';
+import { getDeviceType } from '@/utils/platform/responsive';
 import { tryAdmitInternalRouteHref } from '@/utils/path/routeUtils';
 
 export function revealFirstArrivalHome(layer: string, commit: () => void): void {
-    setShowcaseHomeLandingPending(true);
+    setHomeArrivalMotionPending(true);
     runStepMove({
         kind: 'home', layer, commit,
-        onSettled: () => setShowcaseHomeLandingPending(false),
+        onSettled: () => setHomeArrivalMotionPending(false),
     });
 }
 
@@ -21,7 +22,7 @@ export function resolvePostAuthLanding(input: Readonly<{
     teamContinuation?: string;
     continuation?: Href;
     returnTo?: string | null;
-    revealHome?: () => void;
+    revealHome?: (href: '/' | '/home') => void;
 }>): void {
     let target: Href | null = null;
     if (input.teamContinuation) target = tryAdmitInternalRouteHref(input.teamContinuation);
@@ -31,5 +32,6 @@ export function resolvePostAuthLanding(input: Readonly<{
         input.replace(target);
         return;
     }
-    revealFirstArrivalHome('workflow', input.revealHome ?? (() => input.replace('/')));
+    const home = getDeviceType() === 'phone' ? '/home' : '/';
+    revealFirstArrivalHome('workflow', () => (input.revealHome ?? input.replace)(home));
 }

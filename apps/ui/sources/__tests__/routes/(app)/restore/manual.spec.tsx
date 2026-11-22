@@ -29,7 +29,7 @@ const { initializeAuthRouteRuntimeForTests } = await import('@/dev/testkit/harne
 await initializeAuthRouteRuntimeForTests();
 const { AuthProvider } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
-const { isShowcaseHomeLandingPending } = await import('@/onboarding/showcase/storage');
+const { isHomeArrivalMotionPending } = await import('@/components/hub/homeArrival');
 const { adoptHomeProfile, getDeviceDefaultServerId, getTabActiveServerId, resetServerProfilesRuntimeForTests } = await import('@/sync/domains/server/serverProfiles');
 const { getActiveServerSnapshot, upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
 const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
@@ -70,7 +70,7 @@ describe('/restore/manual', () => {
                 source: 'qr', descriptorAuthority: 'current_connection_observation' });
             navigation.params = { targetServerId: home.id, targetServerUrl: home.serverUrl };
             let pendingAtDismissal = false;
-            navigation.dismissTo.mockImplementationOnce(() => { pendingAtDismissal = isShowcaseHomeLandingPending(); });
+            navigation.dismissTo.mockImplementationOnce(() => { pendingAtDismissal = isHomeArrivalMotionPending(); });
             const screen = await renderManualRestoreScreen();
             // Authentication itself is covered below; exercise the real post-auth focus handoff.
             await act(async () => { await screen.find(candidate => candidate.props.target?.serverId === home.id)!.props.onAuthenticated(); });
@@ -148,7 +148,7 @@ describe('/restore/manual', () => {
 
     it('persists the restored Secret Key and dismisses to Home without dispatching a nested replace', async () => {
         let pendingAtDismissal = false;
-        navigation.dismissTo.mockImplementationOnce(() => { pendingAtDismissal = isShowcaseHomeLandingPending(); });
+        navigation.dismissTo.mockImplementationOnce(() => { pendingAtDismissal = isHomeArrivalMotionPending(); });
         const token = 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature';
         const secret = encodeBase64(new Uint8Array(32).fill(7), 'base64url');
         const authRequests: RequestInit[] = [];

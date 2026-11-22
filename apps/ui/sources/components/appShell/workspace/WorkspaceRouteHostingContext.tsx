@@ -5,3 +5,9 @@ export const WorkspaceRouteHostingContext = React.createContext<((href: string) 
 
 /** The web shell will host private destination bodies, including while its first route is being admitted. */
 export const WorkspaceShellWillHostRoutesContext = React.createContext(false);
+
+/** Keeps the phone Home selected by a live entry through the first Account's navigator remount. */
+export const WorkspacePhoneHomeArrivalContext = React.createContext<{
+    defer: (href: '/home') => boolean;
+    take: () => '/home' | null;
+} | null>(null);

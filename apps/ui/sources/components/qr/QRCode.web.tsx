@@ -93,7 +93,12 @@ export const QRCode = React.memo((props: QRCodeProps) => {
     // so edges stay sharp at any size (a 72 px store code smeared when modules were fractional and
     // overlapped their neighbours by a pixel to hide antialiasing seams).
     const pixelRatio = typeof window !== 'undefined' && window.devicePixelRatio > 0 ? window.devicePixelRatio : 1;
-    const moduleSize = Math.max(1, Math.floor(((size + 2 * bleed) * pixelRatio) / (qrMatrix.size + margin))) / pixelRatio;
+    const modulesAcross = qrMatrix.size + margin;
+    const snappedModule = Math.max(1, Math.floor(((size + 2 * bleed) * pixelRatio) / modulesAcross)) / pixelRatio;
+    // A pairing card already has a quiet zone. If whole-pixel snapping still undersizes its ink,
+    // rasterize evenly spaced edges across the paper instead of dropping to the next smaller grid.
+    const fillPaper = bleed > 0 && snappedModule * modulesAcross < size;
+    const moduleSize = fillPaper ? size / modulesAcross : snappedModule;
     const origin = Math.round(((size - moduleSize * qrMatrix.size) / 2) * pixelRatio) / pixelRatio;
 
     // Generate modules with rounded corners
@@ -168,6 +173,7 @@ export const QRCode = React.memo((props: QRCodeProps) => {
                 width={size}
                 height={size}
                 viewBox={`0 0 ${size} ${size}`}
+                shapeRendering={fillPaper ? 'crispEdges' : undefined}
                 style={{ display: 'block', borderRadius: moduleSize, overflow: bleed > 0 ? 'visible' : undefined }}
             >
                 {/* Background */}

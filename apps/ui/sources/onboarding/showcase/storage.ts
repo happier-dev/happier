@@ -5,23 +5,6 @@ const SHOWCASE_SEEN_VERSION_KEY = 'onboarding-showcase-seen-version';
 // This device was seen signed out with the tour unread: its next sign-in is a first one here, even across a reload.
 const SHOWCASE_AWAITING_SIGN_IN_KEY = 'onboarding-showcase-awaiting-sign-in';
 const listeners = new Set<() => void>();
-const homeLandingListeners = new Set<() => void>();
-let homeLandingPending = false;
-
-export function isShowcaseHomeLandingPending(): boolean {
-    return homeLandingPending;
-}
-
-export function setShowcaseHomeLandingPending(pending: boolean): void {
-    if (pending === homeLandingPending) return;
-    homeLandingPending = pending;
-    for (const listener of homeLandingListeners) listener();
-}
-
-export function subscribeShowcaseHomeLanding(listener: () => void): () => void {
-    homeLandingListeners.add(listener);
-    return () => { homeLandingListeners.delete(listener); };
-}
 
 function emitChanged(): void {
     for (const listener of listeners) listener();

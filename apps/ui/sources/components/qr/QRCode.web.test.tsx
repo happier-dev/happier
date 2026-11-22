@@ -81,6 +81,20 @@ describe('QRCode.web', () => {
         }
     });
 
+    it('uses the pairing paper width at one device pixel per CSS pixel for a dense production-size link', async () => {
+        vi.stubGlobal('window', { devicePixelRatio: 1 });
+        try {
+            const data = 'happier:///restore?invite=' + 'q'.repeat(814);
+            const count = createQRMatrix(data, 'medium').size;
+            expect(2 * count).toBeGreaterThan(216);
+            const screen = await renderScreen(<QRCode data={data} size={204} quietZone={false} bleed={6} />);
+            const [module] = screen.findAll(node => node.type === 'rect' && node.props.fill === '#000000' && node.props.rx === undefined);
+            expect(module.props.width * count).toBeCloseTo(204);
+        } finally {
+            vi.unstubAllGlobals();
+        }
+    });
+
     it('draws every module on the device pixel grid, never spilling into its neighbours (a small code stays sharp)', async () => {
         vi.stubGlobal('window', { devicePixelRatio: 2 });
         try {

@@ -127,6 +127,7 @@ export function HomeReachabilityGate(props: Readonly<{
     children: React.ReactNode;
     /** For multi-Home lists, only report this Home when it is part of the visible query. */
     relevantServerIds?: readonly string[];
+    onUnavailable?: () => void;
     /** `line` only: drawn inline in a page header's notice slot, with the time the kept content was read. */
     presentation?: 'inline';
     asOf?: number | null;
@@ -137,6 +138,10 @@ export function HomeReachabilityGate(props: Readonly<{
     const serverId = useReportedHomeServerId();
     const relevant = props.relevantServerIds === undefined
         || (serverId !== null && props.relevantServerIds.some((id) => areServerProfileIdentifiersEquivalent(id, serverId)));
+    const { onUnavailable } = props;
+    React.useLayoutEffect(() => {
+        if (unavailable && relevant) onUnavailable?.();
+    }, [onUnavailable, relevant, unavailable]);
     const home = React.useMemo(
         () => resolveHomeDisplayLabel(serverId ? getServerProfileById(serverId) : null, serverId ?? '', serverId ?? undefined),
         [serverId],

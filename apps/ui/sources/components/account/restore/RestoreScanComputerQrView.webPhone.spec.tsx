@@ -246,6 +246,19 @@ afterEach(async () => {
 });
 
 describe('RestoreScanComputerQrView (web phone)', () => {
+    it('offers Lost access alongside a fresh link after a pasted link expires', async () => {
+        const onOpenPairingLinkEntry = vi.fn();
+        const onOpenLostAccess = vi.fn();
+        const invite = { ...forwardInvite(), expiresAtMs: Date.now() - 1 };
+        const screen = await mount({ entryIntent: 'enter_home', embedded: true,
+            initialPairingLink: buildHomeQrInviteDeepLink({ invite }),
+            onHeadingChange: () => {}, onOpenPairingLinkEntry, onOpenLostAccess });
+        await flushHookEffects();
+        expect(screen.findByTestId('restore-enrollment-paste-new')).toBeTruthy();
+        await screen.pressByTestIdAsync('restore-open-lost-access');
+        expect(onOpenLostAccess).toHaveBeenCalledTimes(1);
+    });
+
     it('renders the real scanner and keeps pairing-link entry reachable on web', async () => {
         const onOpenPairingLinkEntry = vi.fn();
         const screen = await mount({ onOpenPairingLinkEntry });

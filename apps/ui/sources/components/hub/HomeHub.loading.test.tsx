@@ -15,7 +15,7 @@ import { InboxSummaryProvider } from '@/hooks/inbox/useInboxSummary';
 import { StepMotionStage } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { StepMotionLayer } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { resolvePostAuthLanding } from '@/components/onboarding/state/resolvePostAuthLanding';
-import { isShowcaseHomeLandingPending } from '@/onboarding/showcase/storage';
+import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
 
 vi.mock('socket.io-client', async importOriginal =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -209,13 +209,18 @@ describe('Home Loading at the RN-web layout boundary', () => {
                 await act(async () => container!.querySelector('button')!.click());
                 expect(find('home-hub.loading')).toBeTruthy();
                 expect(container!.textContent).not.toContain('Approved');
+                expect(document.body.textContent).toContain('Approved');
+                expect(outgoingAnimations).toHaveLength(0);
+                expect(isHomeArrivalMotionPending()).toBe(true);
+                await act(async () => read.resolve());
+                await flushHookEffects({ cycles: 20, turns: 2 });
+                expect(find('home-hub.loading')).toBeNull();
                 expect(outgoingAnimations).not.toHaveLength(0);
-                expect(isShowcaseHomeLandingPending()).toBe(true);
                 await act(async () => {
                     for (const effect of outgoingAnimations) effect.onfinish?.();
                 });
-                expect(isShowcaseHomeLandingPending()).toBe(false);
-                expect(find('home-hub.loading')).toBeTruthy();
+                expect(isHomeArrivalMotionPending()).toBe(false);
+                expect(document.body.textContent).not.toContain('Approved');
             } finally {
                 await act(async () => root!.render(null));
                 if (originalAnimate) Object.defineProperty(HTMLElement.prototype, 'animate', originalAnimate);
