@@ -14,6 +14,7 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
   unref?: boolean;
   failureBackoffMs?: number;
   maxFailureBackoffMs?: number;
+  respectFailureDeadlineForTriggers?: boolean;
   setTimeoutFn?: (fn: () => void, ms: number) => unknown;
   clearTimeoutFn?: (handle: unknown) => void;
 }>): SingleFlightIntervalLoopHandle {
@@ -60,6 +61,12 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
       if (options.force) pendingForcedRerun = true;
       return;
     }
+    if (options.force && args.respectFailureDeadlineForTriggers && failureCount > 0
+      && nextAutomaticRunAtMs !== null && Date.now() < nextAutomaticRunAtMs) {
+      pendingForcedRerun = true;
+      if (timer === null) armTimer();
+      return;
+    }
     clearTimer();
     pendingForcedRerun = false;
     inFlight = true;
@@ -79,9 +86,9 @@ export function startSingleFlightIntervalLoop(args: Readonly<{
         if (failureBackoffMs > 0) {
           const multiplier = Math.max(1, 2 ** failureCount);
           const delayMs = Math.min(maxFailureBackoffMs, failureBackoffMs * multiplier);
-          failureCount += 1;
           nextAutomaticRunAtMs = Date.now() + delayMs;
         } else nextAutomaticRunAtMs = Date.now() + intervalMs;
+        failureCount += 1;
         args.onError?.(error);
       })
       .finally(() => {

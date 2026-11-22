@@ -32,6 +32,7 @@ export function startConnectedServiceQuotasLoop(params: Readonly<{
     },
     onError: params.onTickError,
     unref: true,
+    respectFailureDeadlineForTriggers: true,
     setTimeoutFn: params.setTimeoutFn,
     clearTimeoutFn: params.clearTimeoutFn,
   });
