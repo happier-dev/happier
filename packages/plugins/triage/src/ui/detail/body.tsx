@@ -167,7 +167,12 @@ export function TriageDetailTabbedBody(props: Readonly<{
   actionsNavigation?: TriageDetailActionsNavigationV1;
   pushed?: boolean;
   tabs: readonly TriageDetailTabV1[];
-  entry: TriageDetailSourceMountV1;
+  /**
+   * The entry's source mount; `null` while its first read settles. The tab row the kind declares stands from first
+   * paint and `reading` holds the panel, so the story never moves under a row inserted when the read lands (F10).
+   */
+  entry: TriageDetailSourceMountV1 | null;
+  reading?: React.ReactNode;
   /** The linked fix PR's mount, when an issue or error group has one. */
   fixPullRequest: TriageDetailSourceMountV1 | null;
   fixPullRequestNavigation?: TriageDetailFixPullRequestNavigationV1 | null;
@@ -195,7 +200,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
   type FilesCount = Readonly<{ instanceKey: string; count: number | null }> | null;
   const [entryFilesCount, setEntryFilesCount] = React.useState<FilesCount>(null);
   const [fixFilesCount, setFixFilesCount] = React.useState<FilesCount>(null);
-  const entryKey = props.entry.instanceKey;
+  const entryKey = props.entry?.instanceKey;
   const fixKey = props.fixPullRequest?.instanceKey;
   // The header's write and facts belong to this entry. A linked fix's own Files and Checks still read and disclose,
   // but its Merge and status never reach the issue's header: the fix PR is drawn once, by its own story step.
@@ -251,7 +256,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
     }), [props.actionsNavigation, props.fixPullRequestNavigation, props.fixPullRequestsEmpty, tabs, setSelected]);
 
   const selectedTab = tabs.find((tab) => tab.frameId === selected);
-  const slot = selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
+  const slot = props.entry === null ? 'entry' : selected === 'session' ? 'session' : selectedTab?.from ?? 'unavailable';
   const pageLead = React.useContext(TriageDetailPageLeadContext);
 
   return (
@@ -272,7 +277,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
           <TriageDetailPanelNavigationProvider navigation={navigation}>
             <Tabs value={slot} onValueChange={() => {}} ariaLabel="" tabList="host" layout="fill">
               <Tabs.Item value="entry" title="" retention="retain">
-                <SourceDetailInstance
+                {props.entry === null ? props.reading : <SourceDetailInstance
                   key={props.entry.instanceKey}
                   mount={props.entry}
                   panel={slot === 'entry' ? selectedTab?.id ?? null : null}
@@ -284,7 +289,7 @@ export function TriageDetailTabbedBody(props: Readonly<{
                   publishVisiblePanels={publishEntryPanels}
                   publishFilesCount={publishEntryFilesCount}
                   pageScroll={props.pushed === true}
-                />
+                />}
               </Tabs.Item>
               <Tabs.Item value="fixPullRequest" title="" retention="retain">
                 {props.fixPullRequest === null ? props.fallback : (

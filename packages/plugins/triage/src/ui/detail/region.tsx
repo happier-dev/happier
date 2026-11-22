@@ -1144,12 +1144,36 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             code={props.availabilityFailure.code} detail={props.availabilityFailure.detail}
             requestId={props.availabilityFailure.requestId} showReason={false} />}
         </Stack>
-      ) : detail === null || detail.kind === 'reading' ? (
-        <Stack gap="small">
-          <Text variant="micro" tone="neutral" value={reading} />
-          <TriageStoryLoadingLines label={reading} />
-        </Stack>
-      ) : detail.kind === 'unavailable' ? (
+      ) : detail === null || detail.kind === 'reading' ? (() => {
+        const readingLines = (
+          <Stack gap="small">
+            <Text variant="micro" tone="neutral" value={reading} />
+            <TriageStoryLoadingLines label={reading} />
+          </Stack>
+        );
+        // The entry's kind already declares its tabs: their row stands over the reading lines from first paint. It is
+        // the same tabbed body the settled read fills (same providers, same key), so the row and its page navigation
+        // stay one instance and nothing is inserted above the story when the read lands (F10).
+        return composition.kind !== 'tabs' || selected === null ? readingLines : (
+          <TriagePostMutationCompletionProvider onComplete={completePostMutation}>
+            <TriageActivityAgentProvider value={activityAgent}>
+            <TriageEvidenceDisclosureProvider disclosure={evidenceDisclosure}>
+              <TriageDetailTabbedBody
+                pushed={props.pushed}
+                key={deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId)}
+                tabs={composition.tabs}
+                tabSelection={tabSelection}
+                entry={null}
+                reading={readingLines}
+                fixPullRequest={null}
+                overviewTail={null}
+                fallback={null}
+              />
+            </TriageEvidenceDisclosureProvider>
+            </TriageActivityAgentProvider>
+          </TriagePostMutationCompletionProvider>
+        );
+      })() : detail.kind === 'unavailable' ? (
         <EmptyState
           titleKey="plugins.triage.surface.detail.removedConnection.title"
           title="This connection is no longer configured"

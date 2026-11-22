@@ -1334,7 +1334,8 @@ it.each([false, true])('publishes and dispatches real detail controls from a res
         sourcePanelProbe: true, linkedSessionCount: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 + 1, activeSurface: true,
         onAggregateRead: () => { aggregateReads += 1; },
         publishCurrentUiContext: context => { published.push(context); } });
-    await expect(page.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+    // The kind's tab row stands while the entry reads (F10); the source body mounts once its read lands.
+    await vi.waitFor(async () => { await expect(page.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined(); });
     const commands = published.at(-1)?.commands;
     expect(commands?.length).toBeGreaterThan(0);
     const find = (kind: string) => commands?.find(command => command.command.kind === 'executeAction'
@@ -3259,6 +3260,34 @@ describe('opening a row into the source detail', () => {
         releaseDetailRead();
         await act(async () => { await Promise.resolve(); });
         await act(async () => { await Promise.resolve(); });
+    });
+
+    it('draws the tab row the entry kind declares while its first read settles (F10)', async () => {
+        const shell = await mountShell({ tabbedDetail: true });
+        await measureFillRegion(900);
+        await openTheRow(shell);
+        const harness = currentHarness;
+        if (harness === null) throw new Error('the shell was not mounted');
+        const tabNames = () => Array.from(document.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent?.trim() ?? '');
+        const settledTabs = tabNames();
+        expect(settledTabs).toContain('Files');
+        const releaseDetailRead = harness.blockNextDetailRead(LONG_ENTRY_ID);
+        await act(async () => {
+            await shell.press(await shell.getByRole('button', { name: LONG_REF_ROW_TITLE }));
+        });
+        await act(async () => { await Promise.resolve(); });
+        // The kind already says which tabs it has: the row stands from first paint over the reading lines, so the
+        // story never moves under a row inserted when the read lands.
+        expect(queryDetailBodyNode()).toBeNull();
+        expect(document.body.textContent).toContain('Reading this pull request from Example forge');
+        expect(tabNames()).toEqual(settledTabs);
+        await expect(shell.getByRole('tab', { name: 'Overview', state: { selected: true } })).resolves.toBeDefined();
+        releaseDetailRead();
+        await act(async () => { await Promise.resolve(); });
+        await act(async () => { await Promise.resolve(); });
+        await vi.waitFor(() => expect(queryDetailBodyNode()).not.toBeNull());
+        expect(tabNames()).toEqual(settledTabs);
+        await expect(shell.getByRole('tab', { name: 'Overview', state: { selected: true } })).resolves.toBeDefined();
     });
 
     it('updates the host detail identity after a source mutation', async () => {
