@@ -80,8 +80,41 @@ describe('retained stored deployment source', () => {
       const text = screen.getTextContent();
       expect(text).toContain(t('projects.deployments.receipt.operationRollback'));
       expect(text).toContain('Removed person');
-      expect(text).toContain('Receipt details were removed with their owner’s account.');
+      expect(text).toContain(t('projects.deployments.receipt.detailsRemoved'));
       expect(screen.findAllByType(SurfaceStateCard)).toHaveLength(0);
+    } finally {
+      controller.retire();
+    }
+  });
+
+  it('offers Cancel through the admitted header when a running Receipt has lost its Artifact', async () => {
+    const serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://receipt-cancel.test',
+      serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const scope = { serverId, accountId: 'account-owner' };
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const deployment = { ...createDeploymentReceiptDetailV1().deployment, environmentId: environment.environment.id,
+      state: 'running' as const, contentArtifactId: null };
+    // This transport response is the admitted Home read; parsing and UI stay real.
+    const controller = createDeploymentReadControllerV1({ scope, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [deployment], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: { deployment, content: null, cancellable: true } }),
+    } });
+    const cancel = vi.fn<ReturnType<typeof createDeploymentActions>['cancel']>(async () => ({
+      ok: true, deploymentId: deployment.id, environmentId: deployment.environmentId,
+      deploymentRevision: deployment.revision + 1, revision: 1, state: 'outcome_unknown',
+    }));
+    try {
+      const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller}
+        environmentId={environment.environment.id} deploymentId={deployment.id} environmentName="Staging"
+        demand={{ mounted: true, visible: true, focused: true }} accountId="account-owner" serverId={serverId}
+        readLogs={null} onBack={() => {}} rollback={null} cancel={cancel} deploy={null} phone={false} linkPath={null}
+        review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      await waitForReceipt(screen);
+      await screen.pressByTestIdAsync('project-deployments.receipt.cancel');
+      expect(cancel).toHaveBeenCalledWith({ environmentId: deployment.environmentId, deploymentId: deployment.id,
+        expectedReceiptRevision: deployment.revision });
     } finally {
       controller.retire();
     }

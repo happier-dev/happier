@@ -1,4 +1,4 @@
-import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentReceiptPresentationV1 } from '@happier-dev/deployments/contracts/v1';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import type { createDeploymentActions } from './deploymentActions';
@@ -7,7 +7,7 @@ import { useDeploymentPress } from './deploymentActionOutcome';
 
 /** Receipt and removal recovery share the server's cancellation facts and the same Stop Action. */
 export function useDeploymentCancellation(input: Readonly<{
-    receipt: DeploymentReceiptDetailV1 | null;
+    receipt: DeploymentReceiptPresentationV1 | null;
     cancel: ReturnType<typeof createDeploymentActions>['cancel'] | null;
     review: DeploymentReviewHandle;
     onOpenReceipt: (deploymentId: string) => void;
@@ -24,7 +24,7 @@ export function useDeploymentCancellation(input: Readonly<{
             deploymentId: receipt.deployment.id, expectedReceiptRevision: receipt.deployment.revision }), { openReceipt: false });
     };
     const pressCancel = () => {
-        const consequence = input.receipt?.cancellationConsequence;
+        const consequence = input.receipt?.content ? input.receipt.cancellationConsequence : undefined;
         if (!consequence) { requestCancel(); return; }
         Modal.alert(t('projects.deployments.receipt.cancelAskTitle'),
             consequence.kind === 'service-down-until-rollback'

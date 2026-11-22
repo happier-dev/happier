@@ -9,7 +9,7 @@ import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/a
 import { ExternalActionExecutionAuthorizationBindingV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createArtifact } from '@/app/artifacts/artifactWriteService';
+import { createArtifact, deleteArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
@@ -191,6 +191,25 @@ it('publishes receipt cancellation availability from the admitted lifecycle owne
     const settled = await f.receipt('succeeded');
     expect(await inTx(tx => readDeploymentReceiptInTx(tx, f.owner.id, { ...input, deploymentId: settled.id })))
         .toMatchObject({ ok: true, cancellable: false });
+});
+
+it('lets the admitted deployer stop a running Receipt after an ordinary Artifact deletion', async () => {
+    const f = await fixture();
+    const receipt = await f.receipt('running');
+    if (!receipt.contentArtifactId) throw new Error('Expected the running Receipt to have private content');
+    expect(await deleteArtifact({ actorUserId: f.owner.id, artifactId: receipt.contentArtifactId })).toMatchObject({ ok: true });
+    const input = { serverId, environmentId: f.environment.id, deploymentId: receipt.id };
+    const read = (accountId: string) => inTx(tx => readDeploymentReceiptInTx(tx, accountId, input));
+    expect(await read(f.owner.id)).toMatchObject({ ok: true, cancellable: true,
+        deployment: { state: 'running', contentArtifactId: null } });
+    expect(await read(f.reader.id)).toMatchObject({ ok: true, cancellable: false });
+    expect(await read(f.foreign.id)).toMatchObject({ ok: false });
+    expect(await inTx(tx => requestCancelDeploymentInTx(tx, f.owner.id, { ...input, expectedReceiptRevision: receipt.revision })))
+        .toMatchObject({ ok: true, state: 'outcome_unknown' });
+    expect(await read(f.owner.id)).toMatchObject({ ok: true, cancellable: false,
+        deployment: { state: 'outcome_unknown', cancelRequestedAtMs: expect.any(Number) } });
+    expect(await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...f.input, detachKeepRunning: true })))
+        .toMatchObject({ ok: true, detached: true });
 });
 
 it('releases former builder grants and Machine references after Stop leaves the rollout outcome unknown', async () => {

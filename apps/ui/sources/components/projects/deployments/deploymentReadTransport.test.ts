@@ -1041,6 +1041,11 @@ describe('deployment scoped read transport', () => {
         expect(await transport.readReceipt(scope, environmentHeader.id, receiptHeader.id, options))
             .toEqual({ ok: true, value: { ...receiptDetail, cancellable: false,
                 cancellationConsequence: { kind: 'service-down-until-rollback' } } });
+        const headerOnly = { ...receiptHeader, state: 'running' as const, contentArtifactId: null };
+        homes.answer(serverId, `/v1/deployments/receipts/${receiptHeader.id}`,
+            { body: { ok: true, deployment: headerOnly, cancellable: true } });
+        expect(await transport.readReceipt(scope, environmentHeader.id, receiptHeader.id, options))
+            .toEqual({ ok: true, value: { deployment: headerOnly, content: null, cancellable: true } });
         homes.answer(serverId, root, { body: { ok: true, items: [environmentHeader], currentDeployments: [otherReceipt],
             projectSources, runtimeTargetLinks: [runtimeTargetLink], nextCursor: null } });
         expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true,

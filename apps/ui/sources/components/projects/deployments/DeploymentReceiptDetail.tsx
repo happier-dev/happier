@@ -164,7 +164,7 @@ export const DeploymentReceiptDetail = React.memo(
     const domains = useDeploymentEnvironmentDomains(nativeAddressDemand ? props.controller : null,
       nativeAddressDemand ? props.environmentId : null, props.demand);
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
-      receipt: opened, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
+      receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
       onRequest: () => setLatestPress('cancel'),
     });
     const pressed = latestPress === 'rollback' ? rollbackPress : latestPress === 'deploy' ? againPress : cancelPress;
@@ -239,6 +239,23 @@ export const DeploymentReceiptDetail = React.memo(
         </ItemList>
       );
     }
+    // The running receipt's one action (lab d3 `live`): Cancel in the header, or spanning a phone's pinned bar.
+    // Cancel leads only while the work runs; an unconfirmed receipt the server still lets you cancel keeps it in ⋯.
+    const { phone } = props;
+    const cancelLeads = canCancel && deploymentInProgressStates().includes(value.deployment.state);
+    const cancelButton = cancelLeads || (!opened && canCancel) ? (
+      <RoundButton
+        testID="project-deployments.receipt.cancel"
+        size="normal"
+        display="secondary"
+        style={phone ? styles.phoneAction : undefined}
+        title={t('common.cancel')}
+        leading={<Icon name="stop-circle" size={14} color={theme.colors.text.secondary} />}
+        loading={cancelPress.running || cancelRequested}
+        disabled={cancelPress.running || cancelRequested || cancelPress.reviewPending}
+        onPress={pressCancel}
+      />
+    ) : null;
     if (!opened) {
       const { deployment } = value;
       const actor = deployment.requestedByAccountId === null ? t('projects.deployments.receipt.removedPerson') : null;
@@ -255,8 +272,21 @@ export const DeploymentReceiptDetail = React.memo(
                   { key: 'outcome', text: deploymentStateLabel(deployment.state) },
                   { key: 'when', text: describeReceipt(deployment, actor) },
                 ]}
+                actions={phone ? undefined : cancelButton}
+                actionsPlacement="page"
               />
+              {pressAttention && !phone ? (
+                <DeployOutcomeBanner controller={cancelPress.banner} machine={null} copy="cancel" />
+              ) : null}
             </ItemList>
+            {phone && (cancelButton || pressAttention) ? (
+              <KeyboardStickyFooter>
+                <PagePinnedBar testID="project-deployments.receipt.bar" style={styles.bar}>
+                  {pressAttention ? <DeployOutcomeBanner controller={cancelPress.banner} machine={null} copy="cancel" placement="inline" /> : null}
+                  {cancelButton}
+                </PagePinnedBar>
+              </KeyboardStickyFooter>
+            ) : null}
           </View>
         </NavigationBackChromeProvider>
       );
@@ -271,7 +301,7 @@ export const DeploymentReceiptDetail = React.memo(
     const recordedCause = deployment.state !== 'failed' ? null : facts.failure
       ? resolveActionExecutionErrorMessage(facts.failure, recovery ? '' : (failureCode ?? ''))
       : t('workflows.recovery.causeNotRecorded');
-    const { deploy, teardown, promote, environmentId, phone } = props;
+    const { deploy, teardown, promote, environmentId } = props;
     const mayDeploy = environmentValue?.environment.capabilities.deploy === true;
     const providerEnvironment = content.platform?.providerEnvironment.selection.kind;
     const rollback = mayDeploy && (!platform || (platformTarget?.rollback
@@ -414,22 +444,6 @@ export const DeploymentReceiptDetail = React.memo(
         loading={rollingBack}
         disabled={rollingBack || reviewPending}
         onPress={() => { rollBack(retainedTarget.deploymentId); }}
-      />
-    ) : null;
-    // The running receipt's one action (lab d3 `live`): Cancel in the header, or spanning a phone's pinned bar.
-    // Cancel leads only while the work runs; an unconfirmed receipt the server still lets you cancel keeps it in ⋯.
-    const cancelLeads = canCancel && deploymentInProgressStates().includes(deployment.state);
-    const cancelButton = cancelLeads ? (
-      <RoundButton
-        testID="project-deployments.receipt.cancel"
-        size="normal"
-        display="secondary"
-        style={phone ? styles.phoneAction : undefined}
-        title={t('common.cancel')}
-        leading={<Icon name="stop-circle" size={14} color={theme.colors.text.secondary} />}
-        loading={cancelPress.running || cancelRequested}
-        disabled={cancelPress.running || cancelRequested || cancelPress.reviewPending}
-        onPress={pressCancel}
       />
     ) : null;
     // A failed receipt's way forward beside Roll back (lab d3 `failed` header).

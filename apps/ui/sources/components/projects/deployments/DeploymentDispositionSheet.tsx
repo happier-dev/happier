@@ -131,7 +131,7 @@ function DeploymentDispositionSheet(
   const blockedReceipt = useReceiptRead(props.recovery?.controller ?? null,
     props.recovery?.environmentId ?? null, blockedId, PRESENTED);
   const blockedValue = blockedReceipt.snapshot.value;
-  const cancellation = useDeploymentCancellation({ receipt: blockedId && blockedValue?.content ? blockedValue : null,
+  const cancellation = useDeploymentCancellation({ receipt: blockedId ? blockedValue : null,
     cancel: props.recovery?.cancel ?? null, review: props.recovery?.review ?? NO_REVIEW,
     onOpenReceipt: props.recovery?.onOpenReceipt ?? (() => {}) });
   const machine = keepNamesWhole(props.provider ?? props.machine ?? t('projects.deployments.aMachine'));

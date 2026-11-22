@@ -172,8 +172,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         const receipt = parsed.data;
         if (!receipt.ok) return failure(receipt.error);
         if (receipt.deployment.environmentId !== environmentId || receipt.deployment.id !== deploymentId) return failure('invalid_response');
+        const cancellation = receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable };
         if (!hasDeploymentReceiptContentV1(receipt.deployment)) {
-            return { ok: true, value: { deployment: receipt.deployment, content: null } };
+            return { ok: true, value: { deployment: receipt.deployment, content: null, ...cancellation } };
         }
         const artifact = await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: options.signal });
         const content = readDeploymentReceiptArtifactV1(receipt.deployment, artifact);
@@ -182,7 +183,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             deployment: receipt.deployment, content: content.content,
         });
         return { ok: true, value: { deployment: receipt.deployment, content: content.content,
-            ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }),
+            ...cancellation,
             ...(cancellationConsequence ? { cancellationConsequence } : {}) } };
     });
     const transport = {

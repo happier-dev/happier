@@ -30,7 +30,9 @@ and the other Account keeps its own Artifact until it erases. In-progress
 Receipts still require their Artifact and can block erasure. The 0.3 development
 server migrations make both requester attribution and Receipt content custody
 nullable. Clients on the same cut can read the retained header without an
-Artifact.
+Artifact. If the Artifact is deleted while a deployment is running, a person
+with Deploy access can still select Cancel. The Receipt records the outcome as
+unknown and releases the in-progress slot.
 
 ## Browser exception setup (0.3 development)
 

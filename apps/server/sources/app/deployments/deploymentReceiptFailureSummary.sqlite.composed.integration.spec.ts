@@ -124,15 +124,17 @@ describe('signed deployment receipt failure summary', () => {
             if (!source.ok) throw new Error(source.error);
             expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.account.id,
                 machineId: owner.machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' }))).toMatchObject({ kind: 'saved' });
-            async function content(kind: string, value: unknown, storedKind?: string) {
+            async function content(kind: string, value: unknown, storedKind?: string, shared = true) {
                 const result = await createArtifact({ actorUserId: owner.account.id, artifactId: crypto.randomUUID(),
                     ...(storedKind ? { kind: storedKind } : {}),
                     header: decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Team deployment' })),
                     body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(value) })),
                     dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
                 if (!result.ok) throw new Error(result.error);
-                expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.account.id,
-                    artifactId: result.artifact.id, principal: { kind: 'team', teamId: team.id }, accessLevel: 'admin' }))).toMatchObject({ ok: true });
+                if (shared) {
+                    expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: owner.account.id,
+                        artifactId: result.artifact.id, principal: { kind: 'team', teamId: team.id }, accessLevel: 'admin' }))).toMatchObject({ ok: true });
+                }
                 return { contentArtifactId: result.artifact.id, contentHeaderVersion: result.artifact.headerVersion,
                     contentBodyVersion: result.artifact.bodyVersion };
             }
@@ -168,7 +170,7 @@ describe('signed deployment receipt failure summary', () => {
             const otherReceipt = await db.deployment.create({ data: { ...receipt, id: crypto.randomUUID(),
                 environmentId: otherEnvironment.id, targetLinkId: otherLink.id,
                 requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
-                ...await content('deployment-receipt.v1', privateContent, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1) } });
+                ...await content('deployment-receipt.v1', privateContent, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, false) } });
             const input = { serverId, environmentId: environment.environmentId, deploymentId: receipt.id };
             const root = await deployer.withAccountProjection(await deployer.root('deployments.receipts.get', input));
             expect(root.binding.accountId).toBe(deployer.account.id);
@@ -177,7 +179,7 @@ describe('signed deployment receipt failure summary', () => {
             const foreign = await app.inject({ method: 'GET', url: foreignPath,
                 headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
                     ...await deployer.headers(root, { effectActionId: 'deployments.receipts.get', method: 'GET', path: foreignPath }) } });
-            expect(foreign.statusCode, foreign.body).toBe(401);
+            expect(foreign.statusCode, foreign.body).toBe(404);
             const metadataPath = `/v1/deployments/receipts/${receipt.id}?serverId=${serverId}&environmentId=${environment.environmentId}`;
             const unavailable = await app.inject({ method: 'GET', url: metadataPath,
                 headers: { authorization: `Bearer ${outsider.presentUserToken}` } });

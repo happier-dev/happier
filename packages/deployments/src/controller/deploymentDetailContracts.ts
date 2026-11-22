@@ -103,6 +103,7 @@ export const DeploymentReceiptPresentationV1Schema = z.union([
     z.strictObject({
         deployment: z.safeExtend(DeploymentReceiptHeaderV1Schema, { contentArtifactId: z.null() }),
         content: z.null(),
+        cancellable: z.optional(z.boolean()),
     }),
 ]);
 export type DeploymentReceiptPresentationV1 = z.infer<typeof DeploymentReceiptPresentationV1Schema>;

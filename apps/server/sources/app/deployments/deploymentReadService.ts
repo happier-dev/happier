@@ -280,7 +280,7 @@ export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
     return DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment,
         // Same Source admission and lifecycle rule as requestCancelDeploymentInTx.
         // This is presentation, not a second authority or an admission proof.
-        cancellable: hasContent && canDeployDeploymentEnvironment(loaded.admission, loaded.row)
+        cancellable: canDeployDeploymentEnvironment(loaded.admission, loaded.row)
             && deployment.cancelRequestedAtMs === undefined && canTransitionDeploymentV1(deployment.state, 'outcome_unknown') });
 }
 
