@@ -46,8 +46,9 @@ import { prepareOriginalAccountManagedPresetAcquire, prepareOriginalAccountWorkf
 import { projectExternalActionManagedAdmissionV1, projectExternalActionManagedAdmissionOperandV1, projectDeploymentPreparationAdmissionV1,
   projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
-import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { MachineContentKeyUnavailableError } from '@/api/machine/machineDataEncryptionKey';
+import { isManagedControllerCodecActionV1, isReviewedMachineSetupCodecV1, isTelemetryCollectorKeyPinRequiredV1, readExecutorKeyPinFromMachineContentV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { MachineContentKeyUnavailableError, resolvePublishedMachineContentCodec } from '@/api/machine/machineDataEncryptionKey';
+import { StoredMachinePublishedMetadataV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { readTelemetryCollectorKeyPinsV1, type TelemetryCollectorKeyPinPortsV1 } from '@happier-dev/deployments/telemetry';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -716,6 +717,24 @@ function projectExternalActionInstalledMachineResult(machineId: string,
         : installed.data.replacedByMachineId !== null ? 'installation_replaced' : null;
   if (reason) return { ok: false, details: { machineId, status: publication.status, reason } };
   return { ok: true, machine: { ...installed.data, installationId: installed.data.installationId } };
+}
+
+/**
+ * The executor pin for a seal to an own-Account Machine, from the installed publication dispatch already
+ * read: its E2EE content opened with this Account's material, so Home's delivered key is not taken on trust.
+ * Content this Account cannot open throws; callers fail closed.
+ */
+function readOwnInstalledExecutorKeyPin(installed: InstalledMachine, credentials: StoredCredentials,
+  accountMode: 'plain' | 'e2ee'): InstallationKeyPinV1 | null | undefined {
+  if (accountMode !== 'e2ee') return undefined;
+  const row: Readonly<Record<string, unknown>> = installed;
+  if (typeof row.metadata !== 'string') return null;
+  const metadata = StoredMachinePublishedMetadataV1Schema.parse(resolvePublishedMachineContentCodec({ credentials,
+    machineId: installed.id, expectedAccountMode: accountMode, access: installed.access,
+    publishedDataEncryptionKey: row.dataEncryptionKey, machineKind: installed.kind, installationId: installed.installationId,
+    runnerContentKeyBinding: row.runnerContentKeyBinding }).decodeStored(row.metadata));
+  return readExecutorKeyPinFromMachineContentV1({ machineId: installed.id, contentMode: 'e2ee',
+    installationPublicKey: metadata.installationPublicKey });
 }
 
 /** Existing callers need only an installed/not-installed answer from the same owner. */
@@ -1418,17 +1437,19 @@ async function prepareOriginalAccountAction(
         || !isExternalActionAuthorizationBoundToEnvelope(root, { actionId, machineId: input.target.machineId, envelope })
         || !await isCurrent()) return fail('admission_unavailable', 'dispatch.workflow_authorization');
       try {
+        // Own-Account target (custodian checked above): the sealer checks Home's key against its own content.
+        const executorKeyPin = readOwnInstalledExecutorKeyPin(installed, input.credentials, mode.mode);
         const authorization = controllerCodec && material
-          ? sealManagedControllerActionCodecV1({ authorization: minted.authorization, material,
+          ? sealManagedControllerActionCodecV1({ authorization: minted.authorization, material, executorKeyPin,
             ...(input.invocation ? { invocation: input.invocation } : {}),
             installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes })
-          : sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization,
+          : sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization, executorKeyPin,
           credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token },
           purpose: { kind: 'external_action' }, installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes });
         if (!await isCurrent()) return fail('target_unavailable', 'dispatch.workflow_authorization.currentness');
         body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
           machineId: root.machineId, envelope, executionAuthorization: authorization });
-      } catch { return fail('content_unavailable'); }
+      } catch (error) { return parseActionExecuteFailure(error) ?? fail('content_unavailable'); }
     }
   } else if (telemetryRead && input.target.kind === 'machine' || scopedController || machine && access && (foreign || requiresMachineProof)) {
     if (!input.serverIdentityId) return fail('admission_unavailable', 'dispatch.machine_home_identity');
@@ -1443,7 +1464,8 @@ async function prepareOriginalAccountAction(
         || installed.access.resourceMode !== observed.access?.resourceMode || !await isCurrent()) return null;
       return installed;
     };
-    const installed = scopedController ?? (machine ? await readInstalledMachine(machine) : null);
+    const installedPublication = scopedController || !machine ? null : await readInstalledMachine(machine);
+    const installed = scopedController ?? installedPublication;
     if (!installed && !telemetryRead) return fail('admission_unavailable', 'dispatch.machine_installation');
     const destinationId = scopedController?.machineId ?? (input.target.kind === 'machine' ? input.target.machineId : machine!.id);
     const custodianAccountId = scopedController?.custodian.accountId ?? access?.custodian.accountId;
@@ -1535,7 +1557,10 @@ async function prepareOriginalAccountAction(
             const refusal = await confirmDisclosure({ id: destinationId, custodian: machine?.access?.custodian });
             if (refusal) return refusal;
           }
-          authorization = sealExternalActionRequesterAccountContextV1({ authorization,
+          // A foreign custodian's content is not ours to open; its delivered key stays Home-vouched (docs/encryption.md).
+          const executorKeyPin = foreign || !installedPublication ? undefined
+            : readOwnInstalledExecutorKeyPin(installedPublication, input.credentials, mode.mode);
+          authorization = sealExternalActionRequesterAccountContextV1({ authorization, executorKeyPin,
             credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'external_action' },
             ...(invocation ? { invocation } : {}),
             installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
@@ -1556,7 +1581,7 @@ async function prepareOriginalAccountAction(
         }
         admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,
           executionAuthorization: authorization });
-      } catch { return fail('content_unavailable'); }
+      } catch (error) { return parseActionExecuteFailure(error) ?? fail('content_unavailable'); }
       return { deliver: () => deliverExternalActionRequest({ actionId, serverHttpBaseUrl: homeUrl, body: admittedBody, envelope, headers,
         ...(material ? { material } : {}), ...(binding ? { binding } : {}),
         ...(signal ? { signal } : {}), isCurrent }) };

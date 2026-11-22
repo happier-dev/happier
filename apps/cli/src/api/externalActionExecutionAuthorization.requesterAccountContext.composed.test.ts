@@ -34,6 +34,7 @@ import { Buffer } from 'node:buffer';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ed25519 } from '@noble/curves/ed25519';
+import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { openExternalActionRequestV2, prepareExternalActionResponseV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -794,6 +795,8 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     onRead(authorization: string | undefined): void }>;
   onRequestPath?: (path: string | undefined) => void;
   artifacts?: ReturnType<typeof fastify>;
+  /** The key the target daemon publishes in its own E2EE content; defaults to the key Home delivers. */
+  machineContentInstallationPublicKey?: Uint8Array;
 } = {}) {
   const seed = new Uint8Array(32).fill(19);
   const publicKey = ed25519.getPublicKey(seed);
@@ -819,9 +822,15 @@ async function home(mode: 'plain' | 'e2ee', events: string[], options: {
     if (request.url === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) {
       return respond(ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }));
     }
+    const resourceMode = options.custodianAccountId === 'bob' ? mode : 'plain';
+    // An own E2EE Machine carries the daemon's published key in content the requester's legacy secret opens.
+    const content = resourceMode === 'e2ee' ? { storageMode: 'e2ee', metadata: createMachineContentCodec({ encryptionMode: 'e2ee',
+      encryptionKey: new Uint8Array(32).fill(23), encryptionVariant: 'legacy' }).encodeStored({ host: 'alice-host', platform: 'linux',
+      happyCliVersion: '0.3.0', homeDir: '/home/alice', happyHomeDir: '/home/alice/.happier',
+      installationPublicKey: encodeBase64(options.machineContentInstallationPublicKey ?? publicKey, 'base64url') }) } : { storageMode: 'plain' };
     const machine = { id: 'alice-machine', kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
-      installationId: 'alice-installation', installationPublicKey: encodeBase64(publicKey), storageMode: 'plain',
-      access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: options.machineRole ?? 'use', resourceMode: options.custodianAccountId === 'bob' ? mode : 'plain', accessState: 'ready' } };
+      installationId: 'alice-installation', installationPublicKey: encodeBase64(publicKey), ...content,
+      access: { custodian: { accountId: options.custodianAccountId ?? 'alice', displayName: 'Alice' }, role: options.machineRole ?? 'use', resourceMode, accessState: 'ready' } };
     const controller = { ...machine, id: 'alice-controller', installationId: 'controller-installation',
       installationPublicKey: encodeBase64(controllerPublicKey),
       access: { ...machine.access, custodian: { accountId: options.controllerCustodianAccountId ?? 'alice', displayName: 'Alice' } } };
@@ -1755,6 +1764,29 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         expect(received.v).toBe(mode === 'plain' ? 1 : 2);
         expect(events).toEqual(['home-authorized', 'dispatch']);
         expect(JSON.stringify(received)).not.toContain(credentials.token);
+      } finally { Object.assign(configuration, originalConfiguration); }
+    });
+  });
+
+  it('refuses to seal own E2EE credentials to a Home key the target Machine content does not publish', async () => {
+    await withTempDir('happier-own-remote-pin-', async taskDir => {
+      const originalConfiguration = { serversDir: configuration.serversDir };
+      Object.assign(configuration, { serversDir: join(taskDir, 'servers') });
+      try {
+        const events: string[] = [];
+        const credentials: StoredCredentials = { token: token('terminal'),
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(23) }, credentialProvenance: 'stored_session' };
+        await writeStoredCredentialsForServerId('home', credentials);
+        const target = await home('e2ee', events, { custodianAccountId: 'bob', originalOwnAction: 'agents.models.list',
+          authenticationKind: 'terminal', machineContentInstallationPublicKey: ed25519.getPublicKey(new Uint8Array(32).fill(31)) });
+        const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+          readCredentials: () => readStoredCredentialsForServerId('home'),
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own Account work must not disclose private custody'); } });
+        expect(await executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' }))
+          .toMatchObject({ ok: false, errorCode: 'installation_key_mismatch' });
+        expect(events).not.toContain('dispatch');
       } finally { Object.assign(configuration, originalConfiguration); }
     });
   });

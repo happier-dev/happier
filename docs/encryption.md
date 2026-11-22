@@ -169,8 +169,10 @@ It uses the same refusals for every kind: `installation_key_mismatch` and
   retained checkout teardown. The sealer reads the pin from that Machine's
   content, which the sealer opened itself. Content that publishes no key refuses
   with recovery `restart_daemon`. Callers that pass a pin today: requester
-  operation reads, and app dispatch of requester credentials, controller codecs
-  and finite wakes to a Machine whose content the app has opened.
+  operation reads; app dispatch of requester credentials, controller codecs
+  and finite wakes to a Machine whose content the app has opened; and CLI
+  dispatch of requester credentials and codecs to an own-Account Machine, read
+  from the installed publication that dispatch already fetches.
   An operation reader compares
   the minted root's `accountEncryptionMode` with its own persisted Account mode
   and refuses a mismatch, so Home cannot skip the check by minting `plain`.
@@ -180,8 +182,8 @@ Machine or Environment content are server-readable by contract. A Machine whose
 content the reader cannot open, such as a foreign custodian's managed
 controller without a content grant, has no unforgeable source. The owner
 accepted that residual (2026-11-20). Not yet pinned (open, 2026-11-22): CLI
-action dispatch (requester credentials and codecs), the daemon's retained
-checkout teardown, the managed creation codec, the codec of a
+finite wakes and scoped managed controllers, the daemon's retained checkout
+teardown, the managed creation codec, the codec of a
 remote Setup receiver, the daemon's requester-projection seal, and the session
 requester bootstrap RPC (`sealInstalledRequest`), which is a second sealer
 without the Account mode.
