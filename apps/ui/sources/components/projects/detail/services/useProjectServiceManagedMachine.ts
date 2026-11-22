@@ -110,17 +110,18 @@ export function useProjectServiceManagedMachine(input: Readonly<{
       void resumeRef.current();
     });
   }, [cancel, input.binding, input.serverId, session]);
-  const inventoryIds = React.useMemo(() => session.resolve && session.acquisition?.managedId ? [input.serverId] : [],
-    [input.serverId, session, state]);
-  const inventory = useManagedMachineInventory(inventoryIds, undefined, execute);
+  const managedId = session.resolve && !session.inFlight ? session.acquisition?.managedId : undefined;
+  const inventoryIds = React.useMemo(() => managedId ? [input.serverId] : [], [input.serverId, managedId]);
+  const inventory = useManagedMachineInventory(inventoryIds, managedId, execute);
   const enrollment = inventory.entries[resolveServerProfileScopeIdForIdentifier(input.serverId)];
   const resumedEnrollment = React.useRef<Readonly<{ session: Continuation; entry: typeof enrollment }> | null>(null);
   React.useEffect(() => {
     if (!session.resolve || !progress || (progress.kind !== 'acquiring' && progress.kind !== 'enrollment_pending' && progress.kind !== 'setup_pending')
       || enrollment?.status !== 'ready') return;
+    const machine = enrollment.machines[0];
     if (!session.inFlight && !(resumedEnrollment.current?.session === session && resumedEnrollment.current.entry === enrollment)
-      && enrollment.machines.some(machine => machine.id === session.acquisition?.managedId && machine.enrolledMachineId
-      && machine.creationState === 'active' && machine.machineSetup?.state !== 'pending' && machine.machineSetup?.state !== 'running')) {
+      && machine?.enrolledMachineId && machine.archivedAt === undefined && machine.creationState === 'active'
+      && machine.machineSetup?.state !== 'pending' && machine.machineSetup?.state !== 'running') {
       resumedEnrollment.current = { session, entry: enrollment };
       void resumeRef.current();
     }

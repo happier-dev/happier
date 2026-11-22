@@ -1544,7 +1544,7 @@ describe('Service Runs on through the placement and relocation Actions', () => {
     const moving = mode === 'move' || mode === 'move-cancel';
     const heldEnrollment = ['dual', 'cancel', 'back', 'source-changed', 'declaration-changed', 'move', 'move-cancel'].includes(mode);
     let machine: ManagedMachineV1;
-    let inventoryReads = 0;
+    const inventoryReads: Array<Readonly<{ kind: 'get' | 'list'; input: unknown }>> = [];
     const { createDefaultRuntimeActionExecutor } = await import('@/sync/ops/actions/defaultRuntimeActionExecutor');
     const frontDoor = createFrontDoorRuntimeActionExecutor(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
 
@@ -1565,10 +1565,14 @@ describe('Service Runs on through the placement and relocation Actions', () => {
           return { managedId: 'paid-service', operation: { operationId: 'install-service' } };
         }
         if (request.actionId === 'machines.managed.get') {
+          inventoryReads.push({ kind: 'get', input: request.input });
           if (heldEnrollment) await enrollment.promise;
           return machine;
         }
-        if (request.actionId === 'machines.managed.list') { inventoryReads += 1; return { machines: [machine] }; }
+        if (request.actionId === 'machines.managed.list') {
+          inventoryReads.push({ kind: 'list', input: request.input });
+          return { machines: [machine] };
+        }
         throw new Error('unexpected_managed_transport');
       },
       actionOperationAction: async () => ({ kind: 'found', operation: { version: 1, operationId: 'install-service', revision: 2,
@@ -1642,7 +1646,14 @@ describe('Service Runs on through the placement and relocation Actions', () => {
       if (mode === 'back') await act(async () => { setControlVisible(false); });
       if (mode === 'dual') await act(async () => { await start(); });
       if (mode === 'inventory') {
-        await vi.waitFor(async () => { await flushHookEffects(); expect(inventoryReads).toBeGreaterThan(0); });
+        await vi.waitFor(async () => {
+          await flushHookEffects();
+          expect(inventoryReads.length).toBeGreaterThan(1);
+        });
+        expect(inventoryReads).toEqual([
+          { kind: 'get', input: { homeId, managedId: 'paid-service' } },
+          { kind: 'get', input: { homeId, managedId: 'paid-service' } },
+        ]);
         machine = { ...machine, enrolledMachineId: 'new-service-worker' };
         act(() => publishHomeAccountChange(serverId));
       }
