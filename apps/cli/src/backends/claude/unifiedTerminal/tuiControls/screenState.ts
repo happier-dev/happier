@@ -222,7 +222,8 @@ const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[│|][^\S\n]*)?((?:>|›|❯)(?![^\S\n]*(?:\d+\.|[◯◉○●◐◑]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[│|][^\S\n]*)?(?:\n|$)/;
 // A scrolled native composer replaces its hidden prompt row with an overflow border.
 // Require the complete bordered, indented viewport; arbitrary transcript tails are not input.
-const SCROLLED_COMPOSER = /(?:^|\n)─+[^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+─+\n((?:(?:[^\S\n][^\n]*)?\n)+)─+(?:\n|$)/;
+// Leave the next row's delimiter unconsumed so a newer prompt starts outside this match.
+const SCROLLED_COMPOSER = /(?:^|\n)─+[^\S\n]+↑[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+─+\n((?:(?:[^\S\n][^\n]*)?\n)+)─+(?=\n|$)/;
 const SLASH_SUGGESTION_LINE = /(?:^|\n)[^\S\n]*\/[a-z][a-z0-9-]*\b/i;
 // Agents/selection panel (live capture 2026-06-12 11:50, runner pid 58731): the selector header
 // renders `↑/↓ to select` and the focus cursor renders as `❯ ◯ <agent-type> <title>` rows. The

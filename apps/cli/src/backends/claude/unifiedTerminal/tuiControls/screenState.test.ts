@@ -1414,6 +1414,8 @@ describe('parseClaudeScreenState — scrolled composer draft', () => {
     expect(parseClaudeScreenState(clipped.replace('────────────────────────────────────────────────────────────────────────────────\n', '')).composerContent)
       .toBe('An earlier submitted prompt');
     expect(parseClaudeScreenState(`${clipped}\n❯ current draft`).composerContent).toBe('current draft');
+    const withoutStatus = clipped.split('\n').slice(0, -2).join('\n');
+    expect(parseClaudeScreenState(`${withoutStatus}\n❯ current draft`).composerContent).toBe('current draft');
     expect(parseClaudeScreenState('  A transcript paragraph\n────────────────\n  ⏵⏵ auto mode on').composerContent).toBeNull();
   });
 
