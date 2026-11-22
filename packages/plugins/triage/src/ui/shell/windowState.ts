@@ -615,7 +615,7 @@ export function resolveTriageListShellState(
     const failure = viewHealth.selectedFailures.length === 0 ? null
       : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures });
     const readingSources = viewHealth.body.coverage === 'partial'
-      && (snapshot.pending === 'initial' || snapshot.sourceAdmissionPending === true);
+      && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
     if (window.rows.length === 0 && failure === null && readingSources) return Object.freeze({ kind: 'initial' });
     return Object.freeze({
       kind: 'window',

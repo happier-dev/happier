@@ -1554,8 +1554,10 @@ describe('the mounted PRs & Issues surface', () => {
         await act(async () => {
             await shell.updateSurface({ ...resolving, machineConnectionPending: false, machineExecutionReady: true });
         });
+        await vi.waitFor(() => expect(harness.scanCalls.count).toBe(3));
         await visibleTexts(shell, ['Replace the duplicated normalizer']);
         expect(list()).toBe(region);
+        expect.soft(region?.textContent).toContain('Reading your sources…');
         expect(document.body.textContent).not.toContain(`${LABEL_B} could not be read`);
         expect(document.body.textContent).not.toContain('Middle change');
 

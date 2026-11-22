@@ -1580,6 +1580,7 @@ describe('the mounted PRs & Issues window store', () => {
 
         const snapshot = store.getSnapshot();
         expect(snapshot.window?.rows.map((row) => row.entryRef.entryId)).toEqual(['1', '3', '2']);
+        expect(snapshot.window?.coverage).toBe('partial');
         expect(snapshot.error).toBeUndefined();
         // Every connection this pass would have asked is named, because none of
         // them was read — `core/SURFACE.md` §6.2 row 4 asks for the affected

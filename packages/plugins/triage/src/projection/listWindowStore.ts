@@ -1274,6 +1274,7 @@ export function createTriageListWindowStore(deps: Readonly<{
         if (previous !== undefined) {
             lanes.set(sourceInstanceId, {
                 ...previous,
+                lane: previous.lane.exhausted ? Object.freeze({ ...previous.lane, exhausted: false }) : previous.lane,
                 observations: retainObservations(previous.observations, admitted),
                 error: laneError,
             });
@@ -1368,6 +1369,7 @@ export function createTriageListWindowStore(deps: Readonly<{
             // row reporting a read that had already given up.
             settleAppend(true, cycleWasAppend);
             pending = 'idle';
+            if (window !== null) rebuild();
             publish();
             return;
         }
