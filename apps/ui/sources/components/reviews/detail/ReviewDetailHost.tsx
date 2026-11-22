@@ -72,16 +72,22 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemLoadStateRows, type ItemLoadState } from '@/components/ui/lists/ItemLoadStateRows';
 import { ItemList } from '@/components/ui/lists/ItemList';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
+import { PageHeader, type PageHeaderPrimaryAction } from '@/components/ui/layout/PageHeader';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { useActiveServerAccountScopeLifetime, useWorkflowRun } from '@/sync/store/hooks';
+import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
+import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
+import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 import { ReviewPagePluginContent } from '../plugins/ReviewPluginContent';
 import type { PluginReviewPageSelection } from '@/components/plugins/pages/pluginPageRoute';
 
@@ -130,6 +136,7 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
   if (round.reviewerIds.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
   const reviewers = projectReviewRoundReviewers(round, reads, roster);
   if (reviewers.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
+  const unfinished = new Set(reviewRoundUnfinishedReviewers(round, reviewers).map(reviewer => reviewer.reviewerId));
   // Places alone ("Reviewer 1 · Reviewer 2") repeat the count above them; the row names reviewers only when the round
   // recorded a name or a reviewer has an outcome to say.
   const saysMore = reviewers.some(reviewer => reviewer.named || reviewer.outcome !== null);
@@ -152,10 +159,12 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
           id: reviewer.reviewerId,
           label: reviewer.name,
           mark: reviewer.run || reviewer.agentId ? <ReviewerMark reviewer={reviewer} /> : null,
-          state: reviewer.outcome === null ? null : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
+          // An older one-reviewer round that didn't finish says so on its card too, as its notice and Runs do (U8 R6 P11).
+          state: reviewer.outcome === null ? unfinished.has(reviewer.reviewerId) ? reviewRoundReviewerOutcomeLabel('partial') : null
+            : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
               ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
               : reviewRoundReviewerOutcomeLabel(reviewer.outcome),
-          tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' ? 'failed' : null,
+          tone: reviewer.outcome === 'failed' || reviewer.outcome === 'partial' || unfinished.has(reviewer.reviewerId) ? 'failed' : null,
         })),
       },
     ],
@@ -344,6 +353,10 @@ export function ReviewDetailHost(props: Readonly<{
     }) ?? [];
   }, [human, lastOrdinal, names, scope?.accountId]);
   const newRound = useReviewNewRound({ scope, record, canEdit, people: newRoundPeople });
+  // A running Review is stopped through the Workflow run that runs it, by the run's own Stop (U8 R6 RN1).
+  const runningWorkflowRunId = round?.state === 'running'
+    ? round.runs.find(run => run.kind === 'workflow')?.runId ?? detail.data?.review.workflowRunId ?? null : null;
+  const [stopAction, setStopAction] = React.useState<PageHeaderPrimaryAction | null>(null);
   const decide = React.useCallback((target: ReviewFindingDecisionTarget, decision: 'accept' | 'reject' | 'defer') =>
     comments.decide(target.comment.id, decision), [comments.decide]);
   const findingRound = React.useMemo(() => round && record ? { round: { reviewId: record.reviewId,
@@ -493,6 +506,7 @@ export function ReviewDetailHost(props: Readonly<{
   // and no grey placeholder held for one either (U8 R5 B6). The Runs tab doesn't read findings; it decides from what it has.
   const findingsKnown = !scope || activeTab === 'runs' || comments.status === 'loaded' || comments.status === 'failed';
   const primaryAction = canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
+    : runningWorkflowRunId && stopAction ? stopAction
     : personPending || !findingsKnown ? null
     : implementAction ?? (awaitingDecision ? null : newRoundAction);
   // A finding's standing words: its round status and captured scope, then (a Hunt's) its standing across runs.
@@ -653,9 +667,10 @@ export function ReviewDetailHost(props: Readonly<{
                 active: selecting, onStart: startSelecting } : undefined}
               renderRow={renderFindingRow} />
             // A settled round that found nothing says so in one line (the glance already says "Nothing to fix").
-            : findings.unavailableFindings.length === 0 && comments.status === 'loaded' && !comments.cursor && round?.state !== 'running'
+            // A running round that found nothing yet says so too (U8 R6 RN2).
+            : findings.unavailableFindings.length === 0 && comments.status === 'loaded' && !comments.cursor
               ? <SurfaceStateCard testID="review-detail:findings-empty" kind="empty" size="line"
-                  title={t('reviewWalkthrough.detail.findingsEmpty')} /> : null}
+                  title={t(round?.state === 'running' ? 'reviewWalkthrough.detail.findingsNoneYet' : 'reviewWalkthrough.detail.findingsEmpty')} /> : null}
         {findings.unavailableFindings.map(comment => {
           // A finding this page can't draw names its place and why, and offers what can still be done: read it again when
           // its words couldn't be read, or see the code it points at when it was saved without its details.
@@ -715,6 +730,7 @@ export function ReviewDetailHost(props: Readonly<{
         </>
       ) : null}
       {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs} roster={roster}
+        workflowRunId={detail.data?.review.workflowRunId ?? null}
         subjectKind={review?.subjectKind ?? null} onRetry={round.ordinal === lastOrdinal ? newRound.retry : null} /> : null}
       {activeTab === 'activity' ? (
         comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
@@ -722,6 +738,7 @@ export function ReviewDetailHost(props: Readonly<{
       ) : null}
     </ReviewDetailView>
     {activeTab === 'findings' ? bulkBar : null}
+    {runningWorkflowRunId && canEdit ? <ReviewRunStop runId={runningWorkflowRunId} onAction={setStopAction} /> : null}
     </View>
     )}</ReviewPagePluginContent>
   );
@@ -746,6 +763,8 @@ export function ReviewRoundRuns(props: Readonly<{
   reads?: ReadonlyMap<string, ReviewRoundRunRead>;
   /** The Review's roster, so a reviewer has the same name here as in every other round. */
   roster?: ReturnType<typeof reviewRosterOf>;
+  /** The Workflow run the Review records, for a round that doesn't reference one yet. */
+  workflowRunId?: string | null;
   /** What the round read, for the section's line ("Each read the whole repository."). */
   subjectKind?: ReviewSubjectKindV1 | null;
   /** Retry reviewers that did not finish, as a new round with only them (the latest round only). */
@@ -758,9 +777,10 @@ export function ReviewRoundRuns(props: Readonly<{
   const reviewers = projectReviewRoundReviewers(props.round, props.reads, props.roster);
   const unfinished = new Set(reviewRoundUnfinishedReviewers(props.round, reviewers).map(reviewer => reviewer.reviewerId));
   const runsById = new Map(props.round.runs.map(run => [run.runId, run]));
-  const workflow = props.round.runs.find(run => run.kind === 'workflow');
-  const executions = props.round.runs.filter(run => run.kind === 'execution');
-  const workflowHref = scope && workflow ? createWorkflowRunRoute(workflow.runId, scope.serverId) : null;
+  // The Workflow run that runs the round: its own reference, else the run the Review records (a running round may not
+  // reference it yet).
+  const workflowRunId = props.round.runs.find(run => run.kind === 'workflow')?.runId ?? props.workflowRunId ?? null;
+  const workflowHref = scope && workflowRunId ? createWorkflowRunRoute(workflowRunId, scope.serverId) : null;
   const rowCount = reviewRoundReviewerRowCount(props.round);
   if (rowCount === 0) {
     return (
@@ -809,29 +829,32 @@ export function ReviewRoundRuns(props: Readonly<{
             accessibilityLabel={t('reviewWalkthrough.detail.retryReviewer', { name: reviewer.name })}
             onPress={() => props.onRetry?.([reviewer])} /> } : {})}
           {...(href ? { onPress: () => router.push(href as never) } : {})} />;
-      }) : executions.map(run => {
-        const href = executionHref(run);
+      }) : reviewers.map(reviewer => {
+        // A running reviewer: its read run as the shared Run row, else its name, how long it has run, and the way to
+        // its run (its own when referenced, else the Workflow that runs it), lab `detail-running` (U8 R6 RN1).
+        const reference = reviewer.runId ? runsById.get(reviewer.runId) : undefined;
+        const href = executionHref(reference) ?? workflowHref;
         const onPress = href ? () => router.push(href as never) : undefined;
-        const reviewer = reviewers.find(item => item.runId === run.runId);
-        const read = props.reads?.get(run.runId)?.run ?? null;
-        if (read) {
-          const findingsCount = props.reads?.get(run.runId)?.findingsCount ?? null;
+        const testID = `review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`;
+        if (reviewer.run && reference?.kind === 'execution') {
+          const read = reviewer.run;
           const duration = read.finishedAtMs !== undefined ? formatElapsedDuration(read.finishedAtMs - read.startedAtMs) : null;
           return (
-            <View key={run.runId} testID={`review-detail:run:${run.runId}`}>
-              <ExecutionRunRow run={read} serverId={scope?.serverId ?? null} machineId={run.machineId} onPress={onPress}
-                subtitle={joinHappierFacts(findingsCount === null ? null : t('reviewWalkthrough.detail.findingsCount', { count: findingsCount }),
-                  duration) || undefined} />
+            <View key={reviewer.reviewerId} testID={testID}>
+              <ExecutionRunRow run={read} serverId={scope?.serverId ?? null} machineId={reference.machineId} onPress={onPress}
+                subtitle={joinHappierFacts(reviewer.findingsCount === null ? null
+                  : t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount }), duration) || undefined} />
             </View>
           );
         }
         return (
           <Item
-            key={run.runId}
-            testID={`review-detail:run:${run.runId}`}
-            title={reviewer?.name ?? t('reviewWalkthrough.detail.workflowRun')}
-            icon={reviewer ? <ReviewerMark reviewer={reviewer} size={20} /> : undefined}
-            subtitle={t(ROUND_STATE_KEYS[props.round.state])}
+            key={reviewer.reviewerId}
+            testID={testID}
+            title={reviewer.name}
+            icon={<ReviewerMark reviewer={reviewer} size={20} />}
+            subtitle={t('reviewWalkthrough.detail.runningSince', {
+              time: formatMoment(reviewer.startedAt ?? props.round.startedAt, Date.now()) })}
             {...(onPress ? { onPress } : {})}
           />
         );
@@ -839,3 +862,41 @@ export function ReviewRoundRuns(props: Readonly<{
     </ItemGroup>
   );
 }
+
+/**
+ * A running Review's Stop: its Workflow run's own Stop through the inline run controls owner (as "Stop reviewing" on a
+ * Session's run fold), lifted to the page as its primary. It reads the run once when the store doesn't hold it yet.
+ */
+function ReviewRunStop(props: Readonly<{ runId: string; onAction: (action: PageHeaderPrimaryAction | null) => void }>) {
+  const lifetime = useActiveServerAccountScopeLifetime();
+  const run = useWorkflowRun(props.runId)?.summary ?? null;
+  const known = run !== null;
+  React.useEffect(() => {
+    if (known || !lifetime) return;
+    const controller = new AbortController();
+    void createWorkflowRunDetailActions({ accountLifetime: lifetime }).getRun(props.runId, controller.signal).then(detail => {
+      if (!controller.signal.aborted && lifetime.isCurrent()) publishOpenedWorkflowRunDetail(detail, lifetime.scope);
+    }, () => undefined);
+    return () => controller.abort();
+  }, [known, lifetime, props.runId]);
+  React.useEffect(() => () => props.onAction(null), [props.onAction]);
+  return run && lifetime ? <ReviewRunStopControl run={run} lifetime={lifetime} onAction={props.onAction} /> : null;
+}
+
+function ReviewRunStopControl(props: Readonly<{ run: WorkflowRunSummaryV1; lifetime: ServerAccountScopeLifetime;
+  onAction: (action: PageHeaderPrimaryAction | null) => void }>) {
+  const controls = useWorkflowInlineRunControls({ run: props.run, definition: null, acceptedContext: null,
+    accountLifetime: props.lifetime, canEdit: true, onStarted: noStart });
+  const { onAction } = props;
+  const stoppable = props.run.availability.cancel && !controls.cancelRequested;
+  const pending = controls.pendingControl;
+  const submit = controls.submitControl;
+  React.useEffect(() => {
+    onAction(stoppable ? { title: t('workflows.transcriptCard.stopReviewing'), icon: 'stop', presentation: 'secondary',
+      testID: 'review-detail:stop', loading: pending === 'cancel', disabled: pending !== null,
+      onPress: () => { void submit('cancel'); } } : null);
+  }, [onAction, pending, stoppable, submit]);
+  return null;
+}
+
+function noStart(): void {}

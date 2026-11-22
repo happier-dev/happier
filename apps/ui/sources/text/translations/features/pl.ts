@@ -13375,6 +13375,8 @@ const pl: ReviewWalkthroughTranslations = {
         reasonNoResult: 'Nie można odczytać wyniku',
         suggestedFix: 'Sugerowana poprawka',
         revisionAt: 'w',
+        runningSince: ({ time }) => `Trwa od ${time}`,
+        findingsNoneYet: 'Na razie nic nie znaleziono',
         reviewers: 'Recenzenci',
         reviewersReadRepository: 'Każdy przeczytał całe repozytorium.',
         reviewersReadComparison: 'Każdy przeczytał te same zmiany.',

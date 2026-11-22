@@ -232,6 +232,8 @@ type ChangedFilesReviewProps = {
     viewedFilter?: React.ReactNode;
     /** Show the viewed files again: the hidden line's Show (the host's own Hide viewed path). */
     onShowViewed?: () => void;
+    /** The comparison's whole file count when the host knows more than it loaded (a captured page's total): the count,
+     *  the index's "10 / 6004" and the viewed total all read it. */
     fileViewedTotal?: number;
     /** A file on its source (a pull request's file on GitHub), offered in the file's ⋯ beside Copy path. */
     fileSourceLink?: ((path: string) => DiffFileSourceLink | null) | null;
@@ -552,14 +554,16 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         if (changedFilesViewMode === 'repository' && snapshot?.entriesPage) {
             const totals = scmSnapshotLineTotals(snapshot);
             return { files: out, coverage: {
-                fileCount: diffArea === 'both' ? snapshot.entriesPage.totalFiles : diffArea === 'included' ? snapshot.totals.includedFiles : snapshot.totals.pendingFiles,
+                // A captured comparison's total comes from its host page (6,004), not the files loaded so far (10).
+                fileCount: diffArea === 'both' ? props.fileViewedTotal ?? snapshot.entriesPage.totalFiles
+                    : diffArea === 'included' ? snapshot.totals.includedFiles : snapshot.totals.pendingFiles,
                 added: (diffArea !== 'pending' ? totals.includedAdded : 0) + (diffArea !== 'included' ? totals.pendingAdded : 0),
                 removed: (diffArea !== 'pending' ? totals.includedRemoved : 0) + (diffArea !== 'included' ? totals.pendingRemoved : 0),
                 linesKnown,
             } satisfies ChangedFilesReviewCoverage };
         }
-        return { files: out, coverage: { fileCount: out.length, added, removed, linesKnown } satisfies ChangedFilesReviewCoverage };
-    }, [sections, changedFilesViewMode, snapshot, diffArea]);
+        return { files: out, coverage: { fileCount: props.fileViewedTotal ?? out.length, added, removed, linesKnown } satisfies ChangedFilesReviewCoverage };
+    }, [sections, changedFilesViewMode, snapshot, diffArea, props.fileViewedTotal]);
 
     const hasMoreFiles = snapshot?.entriesPage?.nextCursor != null && Boolean(props.onLoadMore);
     const loadMoreFiles = React.useCallback(() => { if (hasMoreFiles && !props.loadingMore) void props.onLoadMore?.(); }, [hasMoreFiles, props.loadingMore, props.onLoadMore]);

@@ -135,7 +135,9 @@ export function ReviewNewRoundDialog(
   useModalCardChrome(props.setChrome, chrome);
   return (
     <View style={styles.body}>
-      {props.loading ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
+      {/* Rows already known (a retry names its reviewers) hold their place while the preview reads; the loading panel is
+          only for a dialog with nothing to show yet, so nothing collapses when the preview arrives (U8 R6). */}
+      {props.loading && props.reviewers.length === 0 ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
       {/* Why the round can't start yet, and its one way forward, on one line above the rows it is about. */}
       {props.reason ? <SurfaceStateCard testID="review-new-round:unavailable" kind="unavailable" size="line" title={props.reason}
         {...(props.onRetry ? { action: { label: t('common.retry'), testID: 'review-new-round:retry', onPress: props.onRetry } } : {})} /> : null}

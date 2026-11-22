@@ -29,10 +29,12 @@ export function MiddleEllipsisText(props: Readonly<{
             </Text>
         );
     }
+    // Each half is its own app Text, which would set the default face: they inherit the caller's instead (a mono id
+    // stays mono, U8 R6 L2).
     return (
         <Text testID={props.testID} {...{ dataSet: props.dataSet }} style={[props.style, ROW_STYLE]} accessibilityRole={props.accessibilityRole}>
-            <Text style={split.headStyle} numberOfLines={1} ellipsizeMode="tail">{split.head}</Text>
-            <Text style={split.tailStyle} numberOfLines={1}>{split.tail}</Text>
+            <Text useDefaultTypography={false} style={split.headStyle} numberOfLines={1} ellipsizeMode="tail">{split.head}</Text>
+            <Text useDefaultTypography={false} style={split.tailStyle} numberOfLines={1}>{split.tail}</Text>
         </Text>
     );
 }

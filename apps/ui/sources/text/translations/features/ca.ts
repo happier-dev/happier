@@ -13347,6 +13347,8 @@ const ca: ReviewWalkthroughTranslations = {
         reasonNoResult: 'No s’ha pogut llegir el resultat',
         suggestedFix: 'Correcció suggerida',
         revisionAt: 'a',
+        runningSince: ({ time }) => `En curs des de ${time}`,
+        findingsNoneYet: 'Encara no s’ha trobat res',
         reviewers: 'Revisors',
         reviewersReadRepository: 'Cadascun ha llegit tot el repositori.',
         reviewersReadComparison: 'Cadascun ha llegit els mateixos canvis.',

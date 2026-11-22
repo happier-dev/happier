@@ -134,11 +134,12 @@ export function reviewRoundReviewerName(round: NamedRound, reviewerId: string, r
   return reviewRoundReviewerIdentity(round, reviewerId, roster).name;
 }
 
-/** How many reviewer rows the round's Runs draws: its settled results, or its started reviewer runs while it runs. */
+/** How many reviewer rows the round's Runs draws: its settled results, or its reviewers while it runs. */
 export function reviewRoundReviewerRowCount(
   round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerOutcomes' | 'runs'>,
 ): number {
-  if (round.state === 'running') return round.runs.filter(run => run.kind === 'execution').length;
+  // A running round lists every reviewer it started, whether or not its own run is referenced yet (U8 R6 RN1).
+  if (round.state === 'running') return round.reviewerIds.length;
   return round.reviewerOutcomes?.length ?? round.reviewerIds.length;
 }
 
@@ -173,8 +174,10 @@ export function projectReviewRoundReviewers(
       findingsCount: null, run: null,
     }));
   }
+  // Reviewer runs only: a running round may also carry its Workflow run, which is no reviewer's.
+  const executions = round.runs.filter(run => run.kind === 'execution');
   return round.reviewerIds.map((reviewerId, index) => {
-    const reference = round.runs[index];
+    const reference = executions[index];
     const read = reference?.kind === 'execution' ? reads?.get(reference.runId) ?? null : null;
     const status = read?.run?.status ?? null;
     const ended: ReviewRoundReviewerOutcome | null = status === null || status === 'running' ? null

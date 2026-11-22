@@ -13299,6 +13299,8 @@ const ja: ReviewWalkthroughTranslations = {
         reasonNoResult: '結果を読み取れませんでした',
         suggestedFix: '修正案',
         revisionAt: 'コミット',
+        runningSince: ({ time }) => `${time} から実行中`,
+        findingsNoneYet: 'まだ何も見つかっていません',
         reviewers: 'レビュアー',
         reviewersReadRepository: 'それぞれがリポジトリ全体を読みました。',
         reviewersReadComparison: 'それぞれが同じ変更を読みました。',

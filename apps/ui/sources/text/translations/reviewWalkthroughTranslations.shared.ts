@@ -244,6 +244,8 @@ export type ReviewWalkthroughTranslations = {
         reasonNoResult: string;
         suggestedFix: string;
         revisionAt: string;
+        runningSince: (params: Readonly<{ time: string }>) => string;
+        findingsNoneYet: string;
         reviewers: string;
         reviewersReadRepository: string;
         reviewersReadComparison: string;
@@ -535,6 +537,8 @@ export const en: ReviewWalkthroughTranslations = {
         reasonNoResult: 'Its result couldn’t be read',
         suggestedFix: 'Suggested fix',
         revisionAt: 'at',
+        runningSince: ({ time }) => `Running since ${time}`,
+        findingsNoneYet: 'Nothing found yet',
         reviewers: 'Reviewers',
         reviewersReadRepository: 'Each read the whole repository.',
         reviewersReadComparison: 'Each read the same changes.',

@@ -99,4 +99,15 @@ describe('Retrying reviewers that did not finish', () => {
     const screen = await renderScreen(<RetryHarness retried={['Claude · step 1', 'Claude · step 2']} everyone />);
     try { expect(subtitles.at(-1)).toBe(t('reviewWalkthrough.detail.retryRoundDescriptionAll')); } finally { await screen.unmount(); }
   });
+
+  it('keeps the retried rows in place while the preview loads, with no panel that collapses when it arrives (U8 R6)', async () => {
+    const loading = await renderScreen(<ReviewNewRoundDialog previousRound={2} retrying={['Claude · step 2']}
+      reviewers={[{ id: 'step-2-reviewer-1', label: 'Claude · step 2', mark: null, continuity: null }]} loading ready={false}
+      onStart={startNothing} onClose={onClose} setChrome={() => {}} />);
+    try {
+      expect(loading.findByTestId('review-new-round:reviewer:step-2-reviewer-1')).not.toBeNull();
+      const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+      expect(loading.findAllByType(SurfaceStateCard).filter(card => card.props.kind === 'loading')).toHaveLength(0);
+    } finally { await loading.unmount(); }
+  });
 });

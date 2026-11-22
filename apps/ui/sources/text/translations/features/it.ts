@@ -13354,6 +13354,8 @@ const it: ReviewWalkthroughTranslations = {
         reasonNoResult: 'Il suo risultato non è leggibile',
         suggestedFix: 'Correzione suggerita',
         revisionAt: 'a',
+        runningSince: ({ time }) => `In corso da ${time}`,
+        findingsNoneYet: 'Ancora niente trovato',
         reviewers: 'Revisori',
         reviewersReadRepository: 'Ognuno ha letto l’intero repository.',
         reviewersReadComparison: 'Ognuno ha letto le stesse modifiche.',

@@ -13239,6 +13239,8 @@ const zhHans: ReviewWalkthroughTranslations = {
         reasonNoResult: '无法读取结果',
         suggestedFix: '建议的修复',
         revisionAt: '提交',
+        runningSince: ({ time }) => `自 ${time} 起运行中`,
+        findingsNoneYet: '尚未发现任何问题',
         reviewers: '审查者',
         reviewersReadRepository: '每位都阅读了整个仓库。',
         reviewersReadComparison: '每位都阅读了相同的更改。',

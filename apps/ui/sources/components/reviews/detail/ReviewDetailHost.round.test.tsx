@@ -78,9 +78,11 @@ it('keeps captured historical Review A names with no individual state or timing 
       .join(' ') ?? '';
   try {
     await vi.waitFor(() => expect(screen.findHostByTestId('review-detail:partial')).not.toBeNull());
-    expect(textOf('review-detail:participant:step-1-reviewer-1').trim()).toBe('Claude');
+    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain('Claude');
     // A one-reviewer Partial round names its reviewer even with no individual result (U8 R5 P8).
     expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.reviewersDidntFinish', { names: 'Claude', count: 1 }));
+    // The round card says the same outcome as the notice and Runs (U8 R6 P11).
+    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
     const { ReviewDetailView } = await import('./ReviewDetailView');
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     // Its only reviewer is the one that didn't finish (U8 R5 P8), on Runs as in the notice.
@@ -202,5 +204,41 @@ it('keeps the step-2 name in round 2 and says why it did not finish (U8 R5 P7, r
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     expect(textOf('review-detail:run:run-2')).toContain(stepTwo);
     expect(textOf('review-detail:run:run-2')).toContain(t('reviewWalkthrough.detail.reasonLaunchFailed'));
+  } finally { await screen.unmount(); }
+});
+
+it('lets a running Review be stopped through its run, lists its running reviewer with a way to its run, and says nothing was found yet (U8 R6 RN1, RN2)', async () => {
+  const reviewId = 'running-review';
+  const runId = '33333333-3333-4333-8333-333333333333';
+  const startedAt = Date.UTC(2026, 10, 22, 14, 2);
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://running-review.test', request: async url =>
+    new URL(String(url)).pathname === '/v1/reviews/comments' ? Response.json({ items: [], cursor: null }) : Response.json({}, { status: 404 }) });
+  const { getStorage } = await import('@/sync/domains/state/storage');
+  const { workflowRunRowFromSummary } = await import('@/sync/store/domains/workflowRuns');
+  const { createWorkflowRunSummaryFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+  // The Review's Workflow run as the run owner holds it (running, Stop available).
+  getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: runId, state: 'running' }))]);
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Code review', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Code review' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'running', startedAt, finishedAt: null, reviewerIds: ['step-1-reviewer-1'],
+      reviewerDisplayNames: { 'step-1-reviewer-1': 'claude' }, runs: [{ kind: 'workflow', runId }] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  const textOf = (id: string) => screen.findByTestId(id)?.findAll(node => typeof node.type === 'string')
+    .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
+  try {
+    await vi.waitFor(() => expect(screen.findByTestId('review-detail:findings-empty')).not.toBeNull());
+    expect(textOf('review-detail:findings-empty')).toContain(t('reviewWalkthrough.detail.findingsNoneYet'));
+    await vi.waitFor(() => expect(screen.findByType(ReviewDetailView).props.primaryAction?.title).toBe(t('workflows.transcriptCard.stopReviewing')));
+    const view = screen.findByType(ReviewDetailView);
+    expect(view.props.tabs.find((tab: { id: string }) => tab.id === 'runs')?.count).toBe(1);
+    await act(async () => view.props.onSelectTab('runs'));
+    expect(textOf('review-detail:run:step-1-reviewer-1')).toContain('Claude');
+    expect(textOf('review-detail:run:step-1-reviewer-1')).toContain(t('reviewWalkthrough.collection.stateRunning'));
+    expect(screen.findByTestId('review-detail:runs:empty')).toBeNull();
   } finally { await screen.unmount(); }
 });

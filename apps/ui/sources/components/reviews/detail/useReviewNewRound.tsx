@@ -118,8 +118,10 @@ function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly
                 continuity: row.continuity, required: reviewer.required };
         }
         return { id: row.id, label: retriedById.get(row.id)?.name ?? labels[index] ?? (reviewer.kind === 'engine' ? reviewer.engineId : t('runPage.intentTitles.review')),
+            // The identity mark the row had while loading stays once the preview lands (U8 R6).
             mark: reviewer.kind === 'model' ? <ExecutionRunAgentMark size={18}
-                agentId={resolveBundledAgentIdFromContributionIdentity(reviewer.launch.agentTarget.identity)} /> : null,
+                agentId={resolveBundledAgentIdFromContributionIdentity(reviewer.launch.agentTarget.identity)} />
+                : retriedById.get(row.id)?.agentId ? <ExecutionRunAgentMark size={18} agentId={retriedById.get(row.id)!.agentId} /> : null,
             continuity: row.continuity, costConsent: costForReviewer(preview.inventory, reviewer) };
     });
     return <ReviewNewRoundDialog {...props} reviewers={reviewers} retrying={retriedReviewers?.map(reviewer => reviewer.name)}
