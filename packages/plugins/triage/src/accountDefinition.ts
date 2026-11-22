@@ -117,6 +117,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           inputFields: [
             { path: 'handoff.task', title: 'Action' },
             { path: 'handoff.sessionChoice.session', title: 'Session' },
+            { path: 'recipientStopNotice', title: 'Session status' },
           ],
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,

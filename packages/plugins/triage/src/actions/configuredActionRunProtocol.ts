@@ -14,6 +14,8 @@ import { TriageWorkspaceModeV1Schema } from '../sessions/entrySessionWorkspace.j
 
 export const TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 = TRIAGE_SESSION_HANDOFF_ACTION_REF_V1.localId;
 
+export const TRIAGE_RECIPIENT_STOP_NOTICE = 'Stopped by a person';
+
 const text = defineProtocolString({ minLength: 1 });
 const selectedEntry = defineProtocolObject({
     entryRef: TriageEntryRefV1Schema,
@@ -110,9 +112,12 @@ type ConfiguredReviewResumeSchema = ReturnType<typeof defineProtocolObject<{
     result: typeof TriageStartEntrySessionResultV1Schema;
     instructions: typeof TriagePullRequestReviewInstructionsV1Schema;
 }, { readonly policy: 'closed' }>>;
+const recipientStopNotice = defineProtocolLiteral(TRIAGE_RECIPIENT_STOP_NOTICE);
+
 type ConfiguredActionInputMembers = {
     v: ReturnType<typeof defineProtocolLiteral<1>>;
     handoff: typeof TriageSessionHandoffInputV1Schema;
+    recipientStopNotice: ReturnType<typeof recipientStopNotice.optional>;
     singleIntent: ReturnType<typeof singleIntent.optional>;
     drafts: ReturnType<ReturnType<typeof defineProtocolArray<typeof TriageStartEntrySessionSettledDraftV1Schema>>['optional']>;
     reviewChoices: ReturnType<typeof TriagePullRequestReviewChoiceV1Schema.optional>;
@@ -122,6 +127,8 @@ type ConfiguredActionInputMembers = {
 type ConfiguredActionInputSchema = ReturnType<typeof defineProtocolObject<ConfiguredActionInputMembers, { readonly policy: 'closed' }>>;
 export const TriageRunConfiguredActionInputV1Schema: ConfiguredActionInputSchema = defineProtocolObject({
     v: defineProtocolLiteral(1), handoff: TriageSessionHandoffInputV1Schema,
+    /** Presentation only, for the mounted Send confirmation. */
+    recipientStopNotice: recipientStopNotice.optional(),
     singleIntent: singleIntent.optional(),
     /** Shared destination uses one draft; per-entry destinations carry drafts in entry order. */
     drafts: defineProtocolArray(TriageStartEntrySessionSettledDraftV1Schema).optional(),

@@ -12,6 +12,30 @@ const request: TriageEntrySessionStartRequestV1 = {
     presentation: { label: 'Example issue' },
 };
 describe('Session start host-control preparation', () => {
+    it.each(['explicit Stop', 'ordinary exit', 'another Home'] as const)(
+        'discloses only a person-Stop hold on the picked Session (%s)', async (outcome) => {
+            const session = { sessionId: 'session-a', serverId: 'home-a' };
+            const readSession = vi.fn<NonNullable<TriageStartHostV1['readSession']>>().mockResolvedValue({
+                ...session, serverId: outcome === 'another Home' ? 'home-b' : session.serverId,
+                lifecycle: 'inactive', runtime: 'unknown', operational: 'idle', workStatus: { state: 'idle' },
+                ...(outcome === 'ordinary exit' ? {} : { hasExplicitStopHold: true }),
+            });
+            const owner = createTriageEntrySessionStartController({ readSession } as TriageStartHostV1);
+            try {
+                const prepared = await owner.getSnapshot().prepareAction({
+                    ...request, destinationChoice: 'existingSession',
+                }, { signal: new AbortController().signal }, session);
+                const parsed = TriageRunConfiguredActionInputV1Schema.parse(prepared?.input);
+                expect(parsed.handoff.sessionChoice).toEqual({
+                    kind: 'existing', session: { selector: 'sessions', addresses: [session] },
+                });
+                if (outcome === 'explicit Stop') {
+                    expect(parsed).toHaveProperty('recipientStopNotice', 'Stopped by a person');
+                } else {
+                    expect(parsed).not.toHaveProperty('recipientStopNotice');
+                }
+            } finally { owner.dispose(); }
+        });
     it('replaces physical outcomes when automation starts a different run', async () => {
         const owner = createTriageEntrySessionStartController({} as TriageStartHostV1);
         try {

@@ -81,7 +81,7 @@ import {
     submitTriageEntrySessionStart,
     type TriageSessionStartHostV1,
 } from '../ui/header/startEntrySessionCommand.js';
-import { TriageRunConfiguredActionResultV1Schema,
+import { TRIAGE_RECIPIENT_STOP_NOTICE, TriageRunConfiguredActionResultV1Schema,
     TriageRunConfiguredActionInputV1Schema, type TriageRunConfiguredActionInputV1, type TriageConfiguredStartRecoveryV1, type TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 
 type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'single' }>;
@@ -1195,6 +1195,13 @@ export function createTriageEntrySessionStartController(
                 setPhase(unavailable('handoffOutcomeUnknown'));
                 return null;
             }
+            // Read only the mounted recipient's presentation. Send owns admission and Stop behavior.
+            const recipient = session && await host.readSession?.(session.sessionId, {
+                signal: options.signal, includeActivity: false,
+            }).catch(() => null);
+            if (options.signal.aborted || retired.current) { cancel(); return null; }
+            const stoppedByPerson = session !== undefined && recipient?.hasExplicitStopHold === true
+                && recipient.sessionId === session.sessionId && recipient.serverId === session.serverId;
             const resumeStart = sameRequest ? previous : undefined;
             if (!sameRequest) configuredResult = null;
             preparedAction = TriageRunConfiguredActionInputV1Schema.parse({ v: 1, handoff,
@@ -1202,7 +1209,9 @@ export function createTriageEntrySessionStartController(
             preparedComparison = request.comparisonSource;
             prepared = true;
             setPhase(session === undefined ? STARTING : Object.freeze({ kind: 'starting', session }));
-            return { input: projectNativeJsonValueForTransport(preparedAction) };
+            return { input: projectNativeJsonValueForTransport(stoppedByPerson
+                ? { ...preparedAction, recipientStopNotice: TRIAGE_RECIPIENT_STOP_NOTICE }
+                : preparedAction) };
         } catch (error) {
             inFlight.current = false;
             if (!retired.current) setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(error)));

@@ -12688,6 +12688,8 @@ complete snapshot, so reports-only Work changes invalidate the same subscription
 In unreleased 0.3, the mounted Session snapshot includes
 `hasExplicitStopHold: true` when the Session owner metadata contains the explicit
 Stop hold used by Send admission. Ordinary process exit leaves the field absent.
+Triage uses the selected recipient's mounted snapshot to disclose a recorded
+person Stop in its existing Send confirmation. Send still owns admission and delivery.
 The snapshot carries only the flag. Watches pick up hold changes through the
 existing snapshot digest. The closed DTO and its SDK reader load together on the
 0.3 development cut.

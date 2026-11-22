@@ -522,6 +522,32 @@ describe('mounted plugin surface feedback and confirmation (§3.4, UI-T21)', () 
         await expect(pending).resolves.toMatchObject({ status: 'approved' });
     });
 
+    it('discloses the Stop notice in Triage’s existing Send dialog only when preparation supplies it', async () => {
+        const { PLUGIN_MANIFEST } = await import('../../../../../../packages/plugins/triage/src/manifest');
+        const declaration = PLUGIN_MANIFEST.contributes?.actions?.find(action => action.id === 'sessions/run-configured-v1');
+        if (!declaration?.confirmation) throw new Error('Expected the Triage Send confirmation');
+        const { host, adapter } = createMountedSurface(undefined, 'writesLocal', 'send', undefined, {
+            confirmation: declaration.confirmation,
+        });
+        try {
+            const pending = adapter.api.admitAction('send', { recipientStopNotice: 'Stopped by a person' });
+            await openedDialog();
+            const dialog = modalHarness.readConfig();
+            expect(dialog.props.description?.split('\n')).toContain('Session status: Stopped by a person');
+            dialog.props.onConfirm();
+            await expect(pending).resolves.toBe(true);
+
+            const ordinary = adapter.api.admitAction('send', {});
+            await openedDialog(dialog);
+            expect(modalHarness.readConfig().props.description).not.toContain('Stopped by a person');
+            modalHarness.readConfig().props.onCancel();
+            await expect(ordinary).resolves.toBe(false);
+        } finally {
+            adapter.dispose();
+            host.dispose?.();
+        }
+    });
+
     it('shows exact reviewed input labels and omits absent and confidential operands', async () => {
         const { host, adapter } = createMountedSurface(undefined, 'writesLocal', 'merge', undefined, {
             inputHints: { fields: [{ path: 'privateToken', title: 'Token', widget: 'secret' }] },
