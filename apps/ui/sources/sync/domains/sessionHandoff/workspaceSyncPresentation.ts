@@ -2,6 +2,7 @@ import { t } from '@/text';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import type { WorkspaceSyncSetAttention } from './workspaceSyncRelationshipModel';
 import type { WorkspaceSyncStatusSnapshot } from './workspaceSyncStatusStore';
 import type { WorkspaceSyncDestinationPlacement } from '@/sync/ops/workspaceSyncRelationshipCreate';
@@ -69,13 +70,21 @@ export function readWorkspaceSyncErrorCode(error: unknown): string | null {
     return typeof code === 'string' && code.length > 0 ? code : null;
 }
 
+export type WorkspaceSyncFailurePresentation = Readonly<{
+    /** One sentence for the typed cause, ending at its full stop; never a code. */
+    message: string;
+    /** The exact code for diagnosis, which the surface's Technical details disclosure shows. */
+    code: string;
+    technicalDetails: PluginUiActionFailurePresentationV1['technicalDetails'];
+}>;
+
 /**
- * The refusal copy for a failed Workspace Sync Action: the human message for its typed cause (or
- * code), with the exact code for diagnosis. Request ids and technical details stay on the carried
- * error for diagnostics, never on the failure screen (OWNER-RULINGS 2026-11-12 (7)).
+ * The refusal copy for a failed Workspace Sync Action: the human message for its typed cause, with the
+ * exact code under Technical details (UI refinements ruling, Board B 2026-11-22 17:42Z). Request ids and
+ * other diagnostics stay on the carried error, never on the failure screen (OWNER-RULINGS 2026-11-12 (7)).
  * Own-folder guidance is for the Can use route only; `placement` is Add Machine's decided route.
  */
-export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement): string | null {
+export function presentWorkspaceSyncFailure(error: unknown, placement?: WorkspaceSyncDestinationPlacement): WorkspaceSyncFailurePresentation | null {
     const code = readWorkspaceSyncErrorCode(error);
     if (!code) return null;
     const record = error as Readonly<Record<string, unknown>>;
@@ -92,7 +101,8 @@ export function presentWorkspaceSyncFailure(error: unknown, placement?: Workspac
     if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
     const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
         ...(failureCause ? { failureCause } : {}) }).reason;
-    return `${message} (${shownCode})`;
+    return { message, code: shownCode,
+        technicalDetails: [{ key: 'code', label: t('workflows.run.technical.failureCode'), value: shownCode }] };
 }
 
 export function resolveWorkspaceSyncModeTranslationKey(value: unknown): WorkspaceSyncModeTranslationKey | null {

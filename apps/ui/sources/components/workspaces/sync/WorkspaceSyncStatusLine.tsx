@@ -67,7 +67,7 @@ export function presentWorkspaceSyncStatusLine(
   switch (input.stateKey) {
     case 'workspaceSync.state.controllerUnavailable':
       return {
-        text: presentWorkspaceSyncFailure(input.readError) ?? t(input.stateKey),
+        text: presentWorkspaceSyncFailure(input.readError)?.message ?? t(input.stateKey),
         tone: 'warn',
         busy: false,
         action: 'retry',

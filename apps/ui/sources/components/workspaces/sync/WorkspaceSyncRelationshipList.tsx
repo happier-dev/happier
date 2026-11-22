@@ -38,7 +38,7 @@ import type { WorkspaceSyncRelationshipSummary } from '@/sync/domains/sessionHan
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { useLocalDaemonControl } from '@/components/settings/machines/localControl/useLocalDaemonControl';
 import { resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
-import { Modal } from '@/modal';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { openWorkspaceSyncRelationshipDetails } from './openWorkspaceSyncRelationshipDetails';
 import { presentWorkspaceSyncStatusLine, WorkspaceSyncStatusLine } from './WorkspaceSyncStatusLine';
@@ -113,7 +113,9 @@ export const WorkspaceSyncRelationshipRow = React.memo(function WorkspaceSyncRel
             // mounted Action interest mid-flight; that cancelled settle is not a failed Action.
             if (!actionExecution.isCurrent()) return;
             setWorkspaceSyncStatusError(scope, caught);
-            Modal.alert(t('common.error'), presentWorkspaceSyncFailure(caught) ?? t('errors.operationFailed'));
+            // The shared failure alert: the sentence, with the code one tap away under Technical details.
+            const failure = presentWorkspaceSyncFailure(caught);
+            alertActionFailure({ reason: failure?.message ?? t('errors.operationFailed'), code: failure?.code ?? null });
         } finally {
             setPendingAction(null);
         }

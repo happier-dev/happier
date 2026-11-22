@@ -37,6 +37,7 @@ const { MachineSelector } = await import('@/components/sessions/new/components/M
 const { PathSelectionList } = await import('@/components/ui/pathPicker/PathSelectionList');
 const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
 const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+const { TechnicalDetailsDisclosure } = await import('@/components/ui/lists/TechnicalDetailsDisclosure');
 const owner = await import('./openWorkspaceSyncAddMachine');
 const { WorkspaceSyncRelationshipRow } = await import('./WorkspaceSyncRelationshipList');
 
@@ -245,6 +246,10 @@ async function renderOpenedModal() {
 
 const statusLine = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(SurfaceStateCard)
     .find(node => node.props.testID === 'workspace-sync-add-machine-status');
+/** The typed code the form keeps under Technical details, never in the sentence. */
+const technicalCode = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(TechnicalDetailsDisclosure)
+    .find(node => node.props.testID === 'workspace-sync-add-machine-technical-details')?.props.lines
+    .find((line: Readonly<{ key: string; value: string }>) => line.key === 'code')?.value;
 
 async function chooseTarget(screen: Awaited<ReturnType<typeof renderScreen>>, path = '/target', machineId = 'machine-b') {
     const target = storage.getState().machines[machineId];
@@ -544,8 +549,9 @@ describe('Project Add machine modal', () => {
         try { await approveWorkspaceSyncRelationshipCreate({ artifactId: 'failed-sync', serverId: workspace.serverId }); }
         catch (caught) { failure = caught; }
         expect(failure).toMatchObject({ code: 'credential_scope_denied' });
-        const message = presentWorkspaceSyncFailure(failure);
-        expect(message).toContain('machine_manage_required');
+        const presented = presentWorkspaceSyncFailure(failure);
+        expect(presented?.code).toBe('machine_manage_required');
+        const message = JSON.stringify(presented);
         // Recorded approval reads intentionally omit opaque, non-contract details.
         expect(failure).toMatchObject({ failureCause: request.execution?.failureCause });
         expect(message).not.toContain('/secret/workspace');
@@ -576,7 +582,8 @@ describe('Project Add machine modal', () => {
         await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
         await act(async () => { modal.submit().props.onPress(); });
         await vi.waitFor(() => expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1));
-        await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('machine_manage_required'));
+        await vi.waitFor(() => expect(technicalCode(modal.screen)).toBe('machine_manage_required'));
+        expect(statusLine(modal.screen)?.props.title).not.toContain('machine_manage_required');
         expect(ExternalActionRequestEnvelopeV1Schema.parse(workspace.home.requestsFor('/v1/actions/projects.open')[0]!.input).input).toMatchObject({ materialization: { kind: path === 'source attach' ? 'attach' : 'sync' } });
         expect(requestId).not.toBe('');
         expect(presentFailure.mock.calls.some(([failure]) =>
@@ -723,7 +730,7 @@ describe('Project Add machine modal', () => {
 
         it('retains the Action failure code without a Project Open refusal', async () => {
             const modal = await attachSource(new Error('server_unreachable'));
-            await vi.waitFor(() => expect(modal.screen.getTextContent()).toContain('server_unavailable'));
+            await vi.waitFor(() => expect(technicalCode(modal.screen)).toBe('server_unavailable'));
             expect(workspace.home.requestsFor('/v1/actions/projects.open')).toHaveLength(1);
         });
     });

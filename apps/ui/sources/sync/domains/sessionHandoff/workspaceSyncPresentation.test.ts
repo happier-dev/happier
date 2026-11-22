@@ -12,37 +12,44 @@ import {
     resolveWorkspaceSyncStateTranslationKey,
 } from './workspaceSyncPresentation';
 
+/** The house rule: the sentence ends at its full stop; the typed code sits under Technical details. */
+function failure(message: string, code: string) {
+    return { message, code, technicalDetails: [{ key: 'code', label: t('workflows.run.technical.failureCode'), value: code }] };
+}
+
 describe('workspaceSyncPresentation', () => {
     it('explains unavailable requester access while preserving the original relationship refusal', () => {
         const code = 'relationship_not_owned';
         expect(resolveWorkspaceSyncErrorTranslationKey(code)).toBe('workspaceSync.error.requesterAccessUnavailable');
-        expect(presentWorkspaceSyncFailure(new RpcError('Private requester diagnostic', code))).toBe(
-            `${t('workspaceSync.error.requesterAccessUnavailable')} (${code})`,
-        );
+        expect(presentWorkspaceSyncFailure(new RpcError('Private requester diagnostic', code))).toEqual(failure(
+            t('workspaceSync.error.requesterAccessUnavailable'), code,
+        ));
     });
 
     it('shows the original RPC failure code even when it has no translated explanation', () => {
         const error = new RpcError('Untranslated diagnostic', 'project_requester_authority_unavailable');
         expect(readWorkspaceSyncErrorCode(error)).toBe('project_requester_authority_unavailable');
-        expect(presentWorkspaceSyncFailure(error)).toContain('project_requester_authority_unavailable');
-        expect(presentWorkspaceSyncFailure({ code: 'relationship_not_ready' })).toContain('relationship_not_ready');
+        expect(presentWorkspaceSyncFailure(error)?.code).toBe('project_requester_authority_unavailable');
+        expect(presentWorkspaceSyncFailure(error)?.message).not.toContain('project_requester_authority_unavailable');
+        expect(presentWorkspaceSyncFailure({ code: 'relationship_not_ready' })?.technicalDetails)
+            .toEqual(failure('', 'relationship_not_ready').technicalDetails);
     });
     // R126S3: a Manage owner got Can use guidance plus raw "false · dispatch · Error" diagnostics.
     const nativeRefusal = { code: 'workspace_private_checkout_review_required', effectAttempted: false, requestId: 'request-r126s3',
         failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'workspace_private_checkout_review_required', httpStatus: null } };
     it('never gives a Manage placement the Can use own-folder guidance', () => {
         expect(presentWorkspaceSyncFailure(nativeRefusal, 'source_relationship'))
-            .toBe(`${t('workspaceSync.error.needsAttention')} (workspace_private_checkout_review_required)`);
+            .toEqual(failure(t('workspaceSync.error.needsAttention'), 'workspace_private_checkout_review_required'));
         expect(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open'))
-            .toBe(`${t('workspaceSync.error.ownFolderOnly')} (workspace_private_checkout_review_required)`);
+            .toEqual(failure(t('workspaceSync.error.ownFolderOnly'), 'workspace_private_checkout_review_required'));
     });
 
     it('shows the human message for the typed cause and keeps diagnostics and the request id off the screen', () => {
         const homeRefusal = { code: 'credential_scope_denied', requestId: 'request-home', details: { reason: 'target_not_authorized' },
             failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: null } };
         expect(presentWorkspaceSyncFailure(homeRefusal, 'destination_open'))
-            .toBe(`${t('workspaceSync.error.manageRequired')} (machine_manage_required)`);
-        const message = presentWorkspaceSyncFailure(nativeRefusal, 'destination_open') ?? '';
+            .toEqual(failure(t('workspaceSync.error.manageRequired'), 'machine_manage_required'));
+        const message = JSON.stringify(presentWorkspaceSyncFailure(nativeRefusal, 'destination_open'));
         for (const diagnostic of ['dispatch', ' · ', 'Error', 'request-r126s3', 'false']) expect(message).not.toContain(diagnostic);
     });
 
@@ -149,8 +156,8 @@ describe('workspaceSyncPresentation', () => {
         ['workspace_unavailable', 'workspaceSync.error.workspaceUnavailable'],
     ] as const)('explains the carried %s refusal in words', (code, key) => {
         const presented = presentWorkspaceSyncFailure(new RpcError('Private owner diagnostic', code));
-        expect(presented).toBe(`${t(key)} (${code})`);
-        expect(presented).not.toContain('Private owner diagnostic');
+        expect(presented).toEqual(failure(t(key), code));
+        expect(JSON.stringify(presented)).not.toContain('Private owner diagnostic');
     });
 
     it('tells a person whose reviewed folder changed to review it again, keeping the reason out of the sentence', () => {
@@ -159,8 +166,8 @@ describe('workspaceSyncPresentation', () => {
             nativeErrorReason: 'root_fingerprint.absence_vs_presence',
         } });
         const presented = presentWorkspaceSyncFailure(error);
-        expect(presented).toBe(`${t('workspaceSync.error.reviewedFolderChanged')} (approval_stale)`);
-        expect(presented).not.toContain('root_fingerprint');
+        expect(presented).toEqual(failure(t('workspaceSync.error.reviewedFolderChanged'), 'approval_stale'));
+        expect(JSON.stringify(presented)).not.toContain('root_fingerprint');
     });
 
     it('settles a completed observation with no engine session as unavailable', () => {

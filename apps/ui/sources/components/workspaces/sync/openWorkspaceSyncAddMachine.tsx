@@ -13,6 +13,7 @@ import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { SurfaceStateCard, type SurfaceStateKind } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { CustomModalInjectedProps } from '@/modal';
 import { Modal } from '@/modal';
@@ -25,7 +26,7 @@ import {
     type WorkspaceSyncRelationshipSummary,
 } from '@/sync/domains/sessionHandoff/workspaceSyncRelationshipModel';
 import { useWorkspaceSyncRelationshipSummaries } from '@/sync/domains/sessionHandoff/useWorkspaceSyncRelationshipSummaries';
-import { presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
+import { presentWorkspaceSyncFailure, readWorkspaceSyncErrorCode, type WorkspaceSyncFailurePresentation } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 import {
     buildWorkspaceContentPolicy,
     parseSessionHandoffIgnoredIncludeGlobs,
@@ -79,6 +80,15 @@ const ignoreClose = () => {};
  * outcome. Tone and the live region come from the shared state line (danger for a failure, an alert
  * announcement for it).
  */
+/** A failure the form shows: the sentence, and the typed code when a Sync refusal carried one. */
+type AddMachineFailure = Readonly<{ message: string; technicalDetails?: WorkspaceSyncFailurePresentation['technicalDetails'] }>;
+
+/** A caught failure in words: the Sync presenter's sentence and code, else the thrown message. */
+function readAddMachineFailure(caught: unknown, placement?: Parameters<typeof presentWorkspaceSyncFailure>[1]): AddMachineFailure {
+    return presentWorkspaceSyncFailure(caught, placement)
+        ?? { message: caught instanceof Error ? caught.message : t('errors.operationFailed') };
+}
+
 function resolveStatusLine(input: Readonly<{
     error: string | null;
     phase: 'idle' | 'submitting' | 'approval_pending' | 'approving' | 'linked';
@@ -155,7 +165,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
     const [advancedExpanded, setAdvancedExpanded] = React.useState(false);
     const [pendingApprovalId, setPendingApprovalId] = React.useState<string | null>(null);
     const [phase, setPhase] = React.useState<'idle' | 'submitting' | 'approval_pending' | 'approving' | 'linked'>('idle');
-    const [error, setError] = React.useState<string | null>(null);
+    const [error, setError] = React.useState<AddMachineFailure | null>(null);
     const [inspectRequired, setInspectRequired] = React.useState(false);
     const [linkedConflictCount, setLinkedConflictCount] = React.useState<number | null>(null);
     // The source checkout a folder-only source was attached as; its address names the source Machine.
@@ -222,7 +232,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
             ? t('workspaceSync.start.blocked.destinationFolder')
             : null;
     const busy = phase === 'submitting' || phase === 'approving';
-    const statusLine = resolveStatusLine({ error, phase, linkedConflictCount });
+    const statusLine = resolveStatusLine({ error: error?.message ?? null, phase, linkedConflictCount });
 
     const confirmAndApprove = React.useCallback(async (artifactId: string, signal: AbortSignal) => {
         if (signal.aborted) {
@@ -264,8 +274,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 setInspectRequired(true);
             }
             setError(signal.aborted
-                ? t('workspaceSync.error.needsAttention')
-                : presentWorkspaceSyncFailure(caught, placement ?? undefined) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
+                ? { message: t('workspaceSync.error.needsAttention') }
+                : readAddMachineFailure(caught, placement ?? undefined));
             setPhase('approval_pending');
         }
     }, [destinationIntent, homeDir, mode, placement, props.source.serverId, resolvedPath, selectedMachine]);
@@ -318,7 +328,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 sourceCheckout = accepted.workspace;
                 setMaterializedSource(sourceCheckout);
             } catch (caught) {
-                setError(presentWorkspaceSyncFailure(caught) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
+                setError(readAddMachineFailure(caught));
                 setPhase('idle');
                 return;
             }
@@ -378,8 +388,8 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                 setInspectRequired(true);
             }
             setError(controller.signal.aborted
-                ? t('workspaceSync.error.needsAttention')
-                : presentWorkspaceSyncFailure(caught, placement ?? undefined) ?? (caught instanceof Error ? caught.message : t('errors.operationFailed')));
+                ? { message: t('workspaceSync.error.needsAttention') }
+                : readAddMachineFailure(caught, placement ?? undefined));
             setPhase('idle');
         }
         } finally {
@@ -487,6 +497,10 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
                     title={statusLine.title}
                     accessibilitySemantics={statusLine.announce}
                 />
+            ) : null}
+            {error?.technicalDetails?.length ? (
+                <TechnicalDetailsDisclosure testID="workspace-sync-add-machine-technical-details"
+                    title={t('approvals.technicalDetails')} lines={error.technicalDetails} />
             ) : null}
             {phase === 'linked' && linkedConflictCount && existing ? (
                 <Item
