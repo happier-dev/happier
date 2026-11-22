@@ -2542,6 +2542,10 @@ For a brokered Team model, pass the current entitled catalog row's
 `team_resource` ref to this operand. This applies to both detached and
 Session-owned Runs.
 
+In 0.3 development source, a native tunnel-start failure during Team model
+binding open returns the retryable `broker_unavailable` cause. Check the Team
+credential broker connection, then retry the Session with the same model.
+
 Automatic LLM-task runner discovery on a Machine uses the Session launch
 purpose default and native sign-in evidence. When neither supplies a usable
 route, it can carry a compatible personal connection or a brokered Team model

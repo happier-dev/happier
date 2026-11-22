@@ -1,7 +1,7 @@
 import { ProviderBrokerAdmissionFailureCodeV1Schema } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { TeamCredentialBrokerApplicationFailureCodeV1Schema, type TeamCredentialBrokerApplicationFailureCodeV1 } from '@happier-dev/protocol/teams/credentials/externalProviderApiV1';
 import { ConnectedServiceUxDiagnosticCodeV1Schema, type ConnectedServiceUxDiagnosticCodeV1 } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { projectSessionRuntimeFailureCause, readSessionPreparationFailureCode, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause, readSessionPreparationFailureCode, SESSION_PREPARATION_FAILURE_PREVIEWS, type SessionPreparationFailureCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export type TeamCredentialLaunchFailureCode = TeamCredentialBrokerApplicationFailureCodeV1
@@ -51,7 +51,9 @@ export class SessionTeamCredentialLaunchUnavailableError extends Error {
   // Launch and catalog decisions always supply their exact code and phase.
   constructor(readonly code: TeamCredentialLaunchFailureCode = 'team_credential_provider_selection_not_current',
     readonly phase: TeamCredentialLaunchFailurePhase = 'binding', cause?: unknown) {
-    super(`The Team credential could not be used (${code}). Choose an available credential for this Session.`);
+    super(code === 'broker_unavailable'
+      ? SESSION_PREPARATION_FAILURE_PREVIEWS.broker_unavailable
+      : `The Team credential could not be used (${code}). Choose an available credential for this Session.`);
     // The runner may fail before its webhook. Its existing stderr cause record
     // must retain this closed refusal independently of the process exit code.
     const refusal = createTeamCredentialLaunchFailureCause(code, phase);

@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import tweetnacl from 'tweetnacl';
 import { MACHINE_CONTROL_TIMEOUT_MS } from '@happier-dev/iroh-native';
+import { IrohNativeOperationError } from '@happier-dev/iroh-native/node';
 import { createProviderBrokerRouteGrantSigningInputV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import { DIRECT_ROUTE_GRANT_TTL_MS } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantCachePolicyV1';
 import { afterAll, afterEach, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
@@ -408,7 +409,7 @@ it('opens the current accepted Team tuple after an active Session revision chang
   expect(h.tracked.spawnOptions.teamCredentialBindings?.[0]?.expectedResourceRevision).toBe(0);
 });
 
-it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'admission refused', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
+it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'admission refused', 'tunnel start failed', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
   'opens the real Codex Team binder with the tracked recipient catalog, never custodian consent (%s)', async scenario => {
   const freshNative = scenario === 'fresh owner native' || scenario === 'fresh member native' || scenario === 'fresh member native manage';
   const freshActor = scenario === 'fresh member native' || scenario === 'fresh member native manage' ? 'member' : 'owner';
@@ -517,6 +518,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
               signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } } };
         },
         openTunnel: async request => {
+          if (metadata === 'tunnel start failed') throw new IrohNativeOperationError('transport-unavailable', 'Native tunnel start failed');
           if (nativeTunnelOpen) return await nativeTunnelOpen(request);
           const { refreshBrokerOpen } = request;
           refreshStream = refreshBrokerOpen;
@@ -780,6 +782,16 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
     expect(h.nativeEffects()).toBe(before);
     expect(h.tracked.requesterSessionRuntimeContext).toBeUndefined();
     await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(invocationId) });
+    return;
+  }
+  if (metadata === 'tunnel start failed') {
+    const refusal = await openThroughRunner().then(() => null, (error: unknown) => error);
+    expect(boundary.responseStatus).toBe(200);
+    expect(boundary.responseBody).toMatchObject({ ok: false, error: { code: 'broker_unavailable' } });
+    expect(refusal).toMatchObject({ code: 'broker_unavailable' });
+    expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal }))
+      .toMatchObject({ source: 'team_credential', code: 'broker_unavailable' });
+    expect(brokerOpens).toBe(1);
     return;
   }
   if (metadata === 'admission refused') {

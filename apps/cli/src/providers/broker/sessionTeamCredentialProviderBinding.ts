@@ -23,7 +23,7 @@ import {
 import { isSameTeamCredentialBrokerApplication } from '@/providers/broker/teamCredentialModelCatalog';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { resolveProviderCredentialPlaintextAsync } from '@/providers/spawn/credentials';
-import { MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
+import { IrohNativeOperationError, MACHINE_HTTP_LOCAL_CAPABILITY_HEADER } from '@happier-dev/iroh-native/node';
 import { PROVIDER_BROKER_MODEL_ID_HEADER, teamCredentialBrokerLocalCredentialTransport } from './providerBrokerPrivateProtocol';
 import { createProviderBrokerEndpointDiscovery } from './providerBrokerEndpointDiscovery';
 import type { ExposeManagedProviderConsumerEndpoint } from './managedProviderConsumerApplication';
@@ -263,7 +263,13 @@ export async function openExactSessionTeamCredentialProviderBinding(
       refreshAuthority: opened.authority,
     }, signal), signal),
     signal: input.signal,
-  }), input.signal);
+  }), input.signal).catch((error: unknown) => {
+    input.signal.throwIfAborted();
+    if (error instanceof IrohNativeOperationError) {
+      throw new SessionTeamCredentialLaunchUnavailableError('broker_unavailable', 'binding', error);
+    }
+    throw error;
+  });
   let composed: Awaited<ReturnType<typeof composeProviderBindingMaterialization>> | null = null;
   let exposure: Awaited<ReturnType<ExposeManagedProviderConsumerEndpoint>> | undefined;
   try {
