@@ -329,6 +329,17 @@ describe('resolveTriageListShellState', () => {
     }
   });
 
+  it('carries the paced source deadline beside a separate connection failure', () => {
+    const retryNotBeforeMs = Date.now() + 60_000;
+    const line = readTriageListFailureLine({ kind: 'sources', sources: [
+      { sourceInstanceId: 'sentry', displayName: 'Sentry', reason: 'Asked us to slow down.', retryNotBeforeMs },
+      { sourceInstanceId: 'forge', displayName: 'GitHub', reason: 'Needs a connection.', needsConnectionChange: true },
+    ] });
+    expect(line).toMatchObject({ pacedUntilMs: retryNotBeforeMs, recovery: 'manageSources' });
+    expect(line.label).toContain('Sentry');
+    expect(line.label).toContain('GitHub');
+  });
+
   it('preserves the provider refusal code as well as its readable failure class', () => {
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
       sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,

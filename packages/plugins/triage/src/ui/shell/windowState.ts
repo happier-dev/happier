@@ -451,22 +451,32 @@ export function readTriageListFailureLine(
   text: TriageTextResolverV1 = ENGLISH_TEXT,
   locale?: string,
 ): TriageListFailureLineV1 {
+  const paced = failure.sources.flatMap(source => source.retryNotBeforeMs === undefined
+    ? [] : [{ displayName: source.displayName, deadlineMs: source.retryNotBeforeMs }]);
+  if (paced.length === 0) return readUnpacedListFailureLine(failure, text, locale);
+
+  const nowMs = Date.now();
+  const pacedUntilMs = Math.min(...paced.map(source => source.deadlineMs));
+  const names = createTriageNameListFormatter(locale)(paced.map(source => source.displayName));
+  const pacedLabel = text('plugins.triage.surface.failure.pacedUntil', '{names} asked us to slow down until {time}.')
+    .replace('{names}', names).replace('{time}', formatHappierAsOfTime(pacedUntilMs, nowMs, locale ?? 'en'));
+  const otherSources = failure.sources.filter(source => source.retryNotBeforeMs === undefined);
+  const otherLine = otherSources.length === 0 ? null
+    : readUnpacedListFailureLine({ ...failure, sources: otherSources }, text, locale);
+  const eligibility = evaluateRefreshEligibility({ nowMs, retryNotBeforeMs: pacedUntilMs });
+  return Object.freeze({
+    label: otherLine === null ? pacedLabel : `${pacedLabel} ${otherLine.label}`,
+    pacedUntilMs,
+    recovery: otherLine?.recovery ?? (eligibility.kind === 'blocked' ? null : 'retry'),
+  });
+}
+
+function readUnpacedListFailureLine(
+  failure: TriageListShellFailureV1,
+  text: TriageTextResolverV1,
+  locale: string | undefined,
+): TriageListFailureLineV1 {
   const first = failure.sources[0];
-  const deadlines = failure.sources.flatMap(source => source.retryNotBeforeMs === undefined ? [] : [source.retryNotBeforeMs]);
-  if (deadlines.length > 0 && deadlines.length === failure.sources.length) {
-    // A read can help as soon as any source is eligible.
-    const pacedUntilMs = Math.min(...deadlines);
-    const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
-    // Pacing is the source asking us to wait, not a failed read: one sentence with its subject and its reset (N12).
-    // Retained rows stay on screen, and the list's own age line says how old they are.
-    return Object.freeze({
-      label: text('plugins.triage.surface.failure.pacedUntil', '{names} asked us to slow down until {time}.')
-        .replace('{names}', names).replace('{time}', formatHappierAsOfTime(pacedUntilMs, Date.now(), locale ?? 'en')),
-      pacedUntilMs,
-      recovery: evaluateRefreshEligibility({ nowMs: Date.now(), retryNotBeforeMs: pacedUntilMs }).kind === 'blocked'
-        ? null : 'retry',
-    });
-  }
   const machineUnreachable = first !== undefined && failure.sources.every((source) => source.machineUnreachable === true);
   const needsConnectionChange = failure.sources.every((source) => source.needsConnectionChange === true);
   if (failure.sources.length > 1 || failure.retainedRows === true || machineUnreachable) {

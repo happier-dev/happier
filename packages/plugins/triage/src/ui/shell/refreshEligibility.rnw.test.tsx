@@ -283,21 +283,13 @@ describe('the Refresh control while a source has asked us to wait', () => {
         expect(await refreshDisabled(shell)).toBe(false);
     });
 
-    it('refuses the empty screen\u2019s own retry control on the same answer', async () => {
-        // With no rows, the page offers a second Refresh beside its empty
-        // state. One page, one decision about whether a read may happen: a
-        // control that stayed pressable here would spend a press the
-        // coordinator silently refuses.
+    it('withholds the empty shell retry while its source is paced', async () => {
         const shell = await mountShell({ rows: 'none' });
 
         expect(await refreshDisabled(shell)).toBe(true);
-        // The empty slot says the same one failure line the rows would carry, with its own Try again.
-        const retry = await shell.getByRole('button', { name: 'Try again' });
-        expect(retry.state?.disabled).toBe(true);
-        const lines = [...document.querySelectorAll('[role="status"]')].filter(node =>
-            node.textContent?.includes('could not be read'));
-        expect(lines).toHaveLength(1);
-        expect(lines[0]?.textContent).toContain('Their entries may be missing or out of date.');
+        await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
+        const lines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
+        expect(lines.filter(line => line.includes('Example account asked us to slow down until'))).toHaveLength(1);
     });
 
     it('does not wake while the refusal is still running', async () => {

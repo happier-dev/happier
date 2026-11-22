@@ -788,7 +788,7 @@ describe('the mounted Composer entry picker', () => {
             .toEqual([COMPOSER_B]);
     });
 
-    it('paces Refresh when every configured connection failed with a stated deadline', async () => {
+    it('shows a paced source beside an unavailable connection and disables Refresh', async () => {
         const harness = createHarness({
             scanFailure: {
                 class: 'rateLimit',
@@ -798,13 +798,9 @@ describe('the mounted Composer entry picker', () => {
         });
         const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-unreadable');
 
-        // The failure is named beside the picker's own chrome rather than
-        // replacing it. `resolveState` puts freshness ahead of source health for
-        // exactly this reason, and the ordering is why the `sourcesUnavailable`
-        // arm below cannot fire: a lane that failed also makes the window stale.
-        // One quiet line on the list's edge, in the page's own words for the same failure; never an alert card.
         const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent ?? '');
-        expect(statusLines.some(line => line.includes('example/repository') && line.includes('could not be')),
+        // The fixture also has an unavailable Tasks lane. The forge's own pacing should still be visible.
+        expect(statusLines.some(line => line.includes('example/repository asked us to slow down until')),
             JSON.stringify(statusLines)).toBe(true);
         expect(await picker.queryByRole('alert')).toBeUndefined();
         expect(await picker.queryByText('No source could be read')).toBeUndefined();
