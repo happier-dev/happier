@@ -522,10 +522,12 @@ describe('finite Project setup execution', () => {
         expect(await run.execution).not.toHaveProperty('setupSettlement');
     });
 
-    it('consumes the real native resolver tuple without an interactive shell wrapper', async () => {
+    it('launches native resolver tuples directly and retries only the unconfirmed suffix', async () => {
         const f = await fixture([]);
-        await writeFile(join(f.root, 'Makefile'), 'setup:\n\tprintf native\n');
+        const makefile = join(f.root, 'Makefile');
+        await writeFile(makefile, 'prepare:\n\tprintf prepare\nsetup:\n\tprintf setup\n');
         await writeFile(join(f.root, '.happier/project.json'), JSON.stringify({ version: 1, workspace: { setup: [
+            { kind: 'native', tool: 'make', file: 'Makefile', target: 'prepare' },
             { kind: 'native', tool: 'make', file: 'Makefile', target: 'setup' },
         ] } }));
         const nativeIo = { resolveTool: async () => ({ executablePath: '/managed/make', version: '1' }) };
@@ -534,9 +536,21 @@ describe('finite Project setup execution', () => {
         f.trust(reviewed.plan.reviewedEffectDigest);
         const run = f.start({ nativeIo });
         await expect.poll(() => f.spawned.length).toBe(1);
-        expect(f.spawned[0]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', join(f.root, 'Makefile'), 'setup'] });
+        expect(f.spawned[0]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'prepare'] });
         f.spawned[0]!.pty.exit(0);
-        expect(await run.execution).toMatchObject({ kind: 'process_settled', result: { ok: true } });
+        await expect.poll(() => f.spawned.length).toBe(2);
+        expect(f.spawned[1]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'setup'] });
+        f.spawned[1]!.pty.exit(7);
+        expect(await run.completion).toMatchObject({ ok: false, errorCode: 'project_setup_step_failed' });
+        expect(await f.store.read(f.target)).toMatchObject({ confirmedCommandCount: 1 });
+
+        const retry = f.start({ nativeIo });
+        await expect.poll(() => f.spawned.length).toBe(3);
+        expect(f.spawned[2]?.launch).toMatchObject({ file: '/managed/make', args: ['-f', makefile, 'setup'] });
+        f.spawned[2]!.pty.exit(0);
+        expect(await retry.execution).toMatchObject({ kind: 'process_settled', result: { ok: true } });
+        expect(f.spawned).toHaveLength(3);
+        expect(vi.mocked(axios.post).mock.calls.filter(([url]) => url.endsWith('/read'))).toHaveLength(2);
         expect(await f.store.matches(f.target, reviewed.plan.successBasis)).toBe(true);
     });
 
