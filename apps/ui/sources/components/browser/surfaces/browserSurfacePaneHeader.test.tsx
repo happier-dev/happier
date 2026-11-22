@@ -27,14 +27,14 @@ afterEach(() => {
 function HeaderText(): React.ReactElement {
     const published = usePublishedPaneHeaderContent('browser');
     const text = published?.line?.segments.map((segment) => typeof segment === 'string' ? segment : segment.text).join('') ?? '';
-    return <Text testID="browser-header-text">{text}</Text>;
+    return <Text testID="browser-header-text" accessibilityHint={published?.immersive ? 'immersive' : 'large'}>{text}</Text>;
 }
 
-function Harness(props: Readonly<{ presentation: 'workspace' | 'viewer' }>): React.ReactElement {
+function Harness(props: Readonly<{ presentation: 'workspace' | 'viewer'; pageOpen?: boolean }>): React.ReactElement {
     return <PaneHeaderSlotProvider>
         <HeaderText />
         <PaneHeaderSlotScope slotKey="browser">
-            <BrowserSurfacePaneHeader presentation={props.presentation} serverId={null} machineId="preview-machine" />
+            <BrowserSurfacePaneHeader presentation={props.presentation} serverId={null} machineId="preview-machine" pageOpen={props.pageOpen} />
         </PaneHeaderSlotScope>
     </PaneHeaderSlotProvider>;
 }
@@ -59,5 +59,20 @@ describe('Browser surface pane header', () => {
 
         await screen.update(<Harness presentation="workspace" />);
         expect(headerText()).toContain('Renamed Computer');
+    });
+
+    it('never asks a phone to draw the large header, and names only the Machine over an open page (lab Kp)', async () => {
+        const machine = createMachineFixture({
+            id: 'preview-machine',
+            metadata: { host: 'preview.local', displayName: 'Preview Computer', platform: 'linux', happyCliVersion: 'test', happyHomeDir: '/tmp/happier', homeDir: '/tmp' },
+        });
+        getStorage().setState({ machines: { [machine.id]: machine } });
+        const screen = await renderScreen(<Harness presentation="workspace" />);
+        const header = () => screen.findHostByTestId('browser-header-text')?.props;
+        expect(header()?.accessibilityHint).toBe('immersive');
+
+        await screen.update(<Harness presentation="workspace" pageOpen />);
+        expect(header()?.accessibilityHint).toBe('immersive');
+        expect(header()?.children).toBe('Preview Computer');
     });
 });

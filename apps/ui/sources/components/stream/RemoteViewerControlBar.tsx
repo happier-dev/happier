@@ -28,12 +28,14 @@ const HOST: RemoteViewerControlBarHost = {
 /**
  * Bind the app's exact material, controls, type, spacing and translations. The bar is a finger's stand-in
  * for a mouse and keyboard, so it stands over the picture only where the primary pointer is a finger; a
- * mouse and keyboard drive the picture directly (labs Q, H, LV have no bar). It always floats over the
- * live picture, so it takes that picture's coat: a white page never washes a dark bar out.
+ * mouse and keyboard drive the picture directly (labs Q, H, LV have no bar). It stands there only while
+ * this viewer controls the picture: a viewer who watches sees the page alone (lab Kp), and taking control
+ * brings the bar. It always floats over the live picture, so it takes that picture's coat: a white page
+ * never washes a dark bar out.
  */
 export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const touch = useHappierTouchPrimaryPointer(Platform.OS);
-    if (!touch) return null;
+    if (!touch || !props.enabled) return null;
     return <TouchRemoteViewerControlBar {...props} />;
 }
 

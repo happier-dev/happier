@@ -21,15 +21,16 @@ function WorkspacePaneHeader(props: BrowserSurfacePaneHeaderProps): null {
         () => <Icon name="laptop" size={13} color={theme.colors.text.tertiary} />,
         [theme.colors.text.tertiary],
     );
+    // "Previews from" describes the launchpad's list; over an open page (a website, often) the line names only
+    // where the browser runs. A phone never draws the large header over the Browser: the Session header and the
+    // address carry identity, and the page or the launchpad starts right under them (labs Kp, Ap).
+    const segment = props.pageOpen === true
+        ? machineName ?? null
+        : machineName ? t('browserLaunchpad.pane.previewsFrom', { machine: machineName }) : t('browserLaunchpad.pane.previews');
     usePaneHeaderSlotContent(React.useMemo(() => ({
-        line: {
-            leading: machineMark,
-            segments: [machineName
-                ? t('browserLaunchpad.pane.previewsFrom', { machine: machineName })
-                : t('browserLaunchpad.pane.previews')],
-        },
-        immersive: props.pageOpen === true,
-    }), [machineMark, machineName, props.pageOpen]));
+        line: { leading: machineMark, segments: segment ? [segment] : [] },
+        immersive: true,
+    }), [machineMark, segment]));
     return null;
 }
 

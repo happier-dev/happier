@@ -37,6 +37,18 @@ describe('remote viewer control bar', () => {
         const touch = await renderScreen(<Bar />);
         try { expect(touch.findHostByTestId('controls')).toBeTruthy(); } finally { await touch.unmount(); }
     });
+
+    it('stands over the picture only while this viewer controls it; a passive viewer sees the page alone', async () => {
+        pointer.coarse = true;
+        function Passive() {
+            const actions = useRemoteViewerActions({ enabled: false, sendGesture: () => {} });
+            return <RemoteViewerControlBar enabled={false} actions={actions} testID="controls" controls={{
+                mode: 'direct', setMode: () => {}, resetZoom: () => {},
+            }} />;
+        }
+        const passive = await renderScreen(<Passive />);
+        try { expect(passive.findHostByTestId('controls')).toBeFalsy(); } finally { await passive.unmount(); }
+    });
 });
 
 describe('remote viewer keyboard toggle', () => {

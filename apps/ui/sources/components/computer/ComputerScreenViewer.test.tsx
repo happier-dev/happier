@@ -263,7 +263,8 @@ describe('ComputerScreenViewer', () => {
     expect(clipboardShortcut.mock.calls.map(call => call[0])).toEqual(['paste', 'copy']);
     expect(screen.findByTestId('v-input-controls-keyboard')).not.toBeNull();
     await screen.update(<ComputerScreenViewer {...viewerProps} presence={{ kind: 'agent', activity: null, target: null, controlEpoch: 2 }} />);
-    expect(screen.findByTestId('v-input-controls-escape')?.props.disabled).toBe(true);
+    // Once the agent has the screen again, the person watches: the bar leaves with their control.
+    expect(screen.findHostByTestId('v-input-controls')).toBeFalsy();
     await screen.unmount();
   });
   it('allows hover only while this source is controlled by the person, preserving tap takeover', async () => {
