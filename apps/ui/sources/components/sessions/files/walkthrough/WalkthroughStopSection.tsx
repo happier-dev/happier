@@ -26,7 +26,7 @@ import { WalkthroughStopExchangeList } from './WalkthroughStopExchanges';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { scmFileStatusFromChange } from '@/scm/scmStatusFiles';
 import type { WalkthroughLetteredCaption, WalkthroughStop, WalkthroughStopFile } from './walkthroughReading';
-import { WalkthroughCaptionLane, type WalkthroughCaptionFocus } from './WalkthroughCaptions';
+import { WalkthroughCaptionLane, type WalkthroughCaptionFocus, type WalkthroughCaptionLaneProps } from './WalkthroughCaptions';
 import type { ChangedFilesReviewFindModel } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
 import { ChangedFilesReviewFindCount } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { walkthroughStopFindKey } from './walkthroughFind';
@@ -107,7 +107,7 @@ export type WalkthroughCardCaptions = Readonly<{
 
 /** A card with captions draws its code through their lane (the same renderer Files' Explain uses); others draw it alone. */
 function renderWithCaptions(captions: WalkthroughCardCaptions | null | undefined, file: Pick<WalkthroughStopFile, 'path' | 'unifiedDiff'>,
-    renderDiff: (lane: Readonly<{ renderLeadingLane?: React.ComponentProps<typeof DiffViewer>['renderLeadingLane']; highlightLineIds?: ReadonlySet<string> }> | null) => React.ReactNode) {
+    renderDiff: (lane: WalkthroughCaptionLaneProps | null) => React.ReactNode) {
     if (!captions || captions.captions.length === 0) return renderDiff(null);
     return <WalkthroughCaptionLane path={file.path} focusKey={captions.focusKey} captions={captions.captions} focus={captions.focus}
         unifiedDiff={file.unifiedDiff}>{renderDiff}</WalkthroughCaptionLane>;
@@ -198,7 +198,8 @@ export const WalkthroughHunkCard = React.memo(function WalkthroughHunkCard(props
                                 precomputedLines={find?.active ? findSnapshot?.lines : undefined}
                                 registerFindRefold={find ? registerFindRefold : undefined}
                                 findRangesByLineId={findSnapshot?.ranges}
-                                scrollToLineId={findTargetLineId}
+                                scrollToLineId={lane?.scrollToLineId ?? findTargetLineId}
+                                scrollToLineRequestId={lane?.scrollToLineId ? lane.scrollToLineRequestId : undefined}
                                 highlightLineId={findTargetLineId}
                                 onScrollToLine={findTargetLineId ? find?.onScrollToLine : undefined}
                             />

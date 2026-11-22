@@ -39,7 +39,7 @@ import { resolveCodeLineRangeSelection } from '@/components/ui/code/interactions
 import type { CodeTokenPointer } from '@/components/ui/code/interactions/codeTokenPress';
 import { PIERRE_FIND_HIGHLIGHT_CSS, pierreCodeLineSelector, registerPierreFindHighlights } from './pierreFindHighlights.web';
 import { bindPierreIntelligence, PIERRE_DIAGNOSTIC_HIGHLIGHT_NAMES } from './pierreIntelligence.web';
-import { formatCodeEditorDiagnosticCss, resolveAgentWashColor, resolveCodeSelectionColor } from '@/components/ui/code/editor/editorTheme';
+import { formatCodeEditorDiagnosticCss, resolveAgentWashColor, resolveCodeActiveLineColor, resolveCodeSelectionColor } from '@/components/ui/code/editor/editorTheme';
 import { HappierUnifiedDiffViewer } from '../happier/HappierUnifiedDiffViewer';
 import { HappierTextDiffViewer } from '../happier/HappierTextDiffViewer';
 import { HAPPIER_UI_FONT_SCALE_CSS_VAR } from '@/components/ui/text/webUnistylesFontOverrides';
@@ -1054,8 +1054,11 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         }
         if (lineSelectors.length === 0 && numberSelectors.length === 0) return '';
 
-        return `${lineSelectors.join(',\n')} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n${numberSelectors.join(',\n')} {\n  box-shadow: inset 0 0 0 1px var(--diffs-selection-base);\n}\n`;
-    }, [codeLines, props.highlightLineId, props.highlightLineIds]);
+        // The canonical renderer's current-line band (CodeLineRow): a soft tint over the row, its diff colour kept beneath.
+        const band = resolveCodeActiveLineColor(theme.colors.accent.blue);
+        if (!band) return '';
+        return `${[...lineSelectors, ...numberSelectors].join(',\n')} {\n  box-shadow: inset 0 0 0 100vmax ${band};\n}\n`;
+    }, [codeLines, props.highlightLineId, props.highlightLineIds, theme.colors.accent.blue]);
 
     const reviewCommentHoverSlotUnsafeCSS = props.onPressAddComment
         ? PIERRE_REVIEW_COMMENT_HOVER_SLOT_UNSAFE_CSS

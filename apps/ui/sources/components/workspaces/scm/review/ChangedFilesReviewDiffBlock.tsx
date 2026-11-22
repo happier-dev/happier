@@ -45,7 +45,7 @@ import type { HunkReviewControllerParams } from './hunkReview/useHunkReviewContr
 import { useChangedFilesReviewPathHunkReview, type ChangedFilesReviewHunkReviewSource } from './changedFilesReviewHunkReviewSource';
 
 /** The code view's leading lane and line tint a file's captions draw through. */
-export type DiffLineCaptionLane = Pick<DiffViewerBaseProps, 'renderLeadingLane' | 'highlightLineIds'>;
+export type DiffLineCaptionLane = Pick<DiffViewerBaseProps, 'renderLeadingLane' | 'highlightLineIds' | 'scrollToLineId' | 'scrollToLineRequestId'>;
 
 /** Keep / Discard on a Review file's changes (P5): the list's checkout and its one discard owner. */
 export type ReviewBlockHunkReview = Readonly<Pick<HunkReviewControllerParams, 'source' | 'host' | 'serverId' | 'onDiscard'
@@ -479,7 +479,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     findRangesByLineId={findRangesByLineId}
                     hunks={reviewHunks}
                     reviewUnits={reviewUnits}
-                    scrollToLineId={props.scrollToLineId}
+                    scrollToLineId={lane?.scrollToLineId ?? props.scrollToLineId}
                     highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}
                     externalScrollView={props.externalScrollView}
@@ -517,7 +517,8 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     findRangesByLineId={findRangesByLineId}
                     hunks={reviewHunks}
                     reviewUnits={reviewUnits}
-                    scrollToLineId={props.scrollToLineId}
+                    scrollToLineId={lane?.scrollToLineId ?? props.scrollToLineId}
+                    scrollToLineRequestId={lane?.scrollToLineId ? lane.scrollToLineRequestId : undefined}
                     highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}
                     externalScrollView={props.externalScrollView}

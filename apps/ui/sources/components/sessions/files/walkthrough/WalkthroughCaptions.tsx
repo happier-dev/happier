@@ -30,7 +30,7 @@ import type { WalkthroughLetteredCaption } from './walkthroughReading';
 /** The code view's leading-lane cell and line tint, as the diff viewer takes them. */
 export type WalkthroughCaptionLaneProps = Pick<
   DiffViewerBaseProps,
-  'renderLeadingLane' | 'highlightLineIds'
+  'renderLeadingLane' | 'highlightLineIds' | 'scrollToLineId' | 'scrollToLineRequestId'
 >;
 
 type ActiveCaption = Readonly<{ key: string; mode: 'preview' | 'open' }>;
@@ -533,9 +533,16 @@ export function WalkthroughCaptionLane(
       activeKey ? new Set(placement.lineIds.get(activeKey) ?? []) : undefined,
     [activeKey, placement],
   );
+  // A phone's caption sheet covers the bottom of the screen: the code view lands the caption's first line at its
+  // reading line, above the sheet (each opening a new request, so stepping back to a caption lands again).
+  const [scrollRequest, setScrollRequest] = React.useState<Readonly<{ lineId: string; requestId: number }> | null>(null);
+  const revealAboveSheet = React.useCallback((key: string) => {
+    const lineId = placement.lineIds.get(key)?.[0];
+    if (lineId) setScrollRequest((current) => ({ lineId, requestId: (current?.requestId ?? 0) + 1 }));
+  }, [placement]);
   const lane = React.useMemo<WalkthroughCaptionLaneProps>(
-    () => ({ renderLeadingLane, highlightLineIds }),
-    [highlightLineIds, renderLeadingLane],
+    () => ({ renderLeadingLane, highlightLineIds, scrollToLineId: scrollRequest?.lineId, scrollToLineRequestId: scrollRequest?.requestId }),
+    [highlightLineIds, renderLeadingLane, scrollRequest],
   );
 
   const caption = activeKey
@@ -581,6 +588,7 @@ export function WalkthroughCaptionLane(
               <CaptionSheetBody
                 caption={caption}
                 path={path}
+                onShown={revealAboveSheet}
                 position={index + 1}
                 total={placed.length}
                 onPrevious={index > 0 ? () => step(-1) : undefined}
@@ -645,6 +653,8 @@ function CaptionSheetBody(
   props: Readonly<{
     caption: WalkthroughLetteredCaption;
     path: string;
+    /** The sheet is showing this caption: its lines go above the sheet. */
+    onShown: (key: string) => void;
     /** Its place among the file's drawn captions, the ones previous and next step through. */
     position: number;
     total: number;
@@ -653,7 +663,8 @@ function CaptionSheetBody(
     onReadInWalkthrough?: () => void;
   }>,
 ) {
-  const { caption } = props;
+  const { caption, onShown } = props;
+  React.useEffect(() => onShown(caption.key), [caption.key, onShown]);
   return (
     <View testID="walkthrough-caption-sheet" style={styles.sheet}>
       <CaptionHeading

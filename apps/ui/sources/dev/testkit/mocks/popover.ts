@@ -1,7 +1,8 @@
 import * as React from 'react';
 
 type PopoverModule = typeof import('@/components/ui/popover');
-type InlinePopoverFrame = Readonly<{ maxHeight: number; maxWidth: number; placement: 'bottom' }>;
+/** `presentation: 'sheet'` stands for a phone, where the shared popover presents as the bottom sheet. */
+type InlinePopoverFrame = Readonly<{ maxHeight: number; maxWidth: number; placement: 'bottom'; presentation?: 'anchored' | 'sheet' }>;
 type InlinePopoverProps = React.ComponentProps<PopoverModule['Popover']>;
 
 /**
