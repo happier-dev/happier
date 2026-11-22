@@ -1,6 +1,7 @@
 import { ReviewStartInputSchema, reviewReviewerIdsForStartV1, reviewReviewersForEngineIdsV1 } from '@happier-dev/plugin-sdk/reviews';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRuns';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -973,7 +974,8 @@ describe('the registered formal Review transition', () => {
     it('admits an editable PR composition through the canonical Review owner and retains its keyed receipt', async () => {
         const reviews: unknown[] = [];
         const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async raw => {
-            reviews.push(raw);
+            // Exercise the same strict JSON codec as the SDK Action transport.
+            reviews.push(normalizeStrictJsonValue(raw));
             return { intent: 'review', sessionId: 'session-a', results:
                 reviewReviewerIdsForStartV1(ReviewStartInputSchema.parse(raw)).map(key => ({
                     key, ok: true, result: { runId: `run-${key}` },

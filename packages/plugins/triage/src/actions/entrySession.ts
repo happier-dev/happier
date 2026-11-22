@@ -382,11 +382,11 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             const { sourceResult: _sourceResult, ...refusal } = verified;
             return refusal;
         }
-        const fanout = await context.services.actions.execute('review.start', {
+        const fanout = await context.services.actions.execute('review.start', projectNativeJsonValueForTransport({
             ...admission.data,
             scmPullRequestReviewScope: verified.scope,
             ...(verified.comparisonId === undefined ? {} : { comparisonId: verified.comparisonId }),
-        }, context.signal === undefined ? undefined : { signal: context.signal });
+        }), context.signal === undefined ? undefined : { signal: context.signal });
         const parsed = readReviewStartActionResultV1(fanout, admission.data);
         let relationFailure: TriageNewSessionFailureV1 | undefined;
         if (parsed.kind !== 'outcome_unknown' && parsed.reviewRound !== undefined) {
