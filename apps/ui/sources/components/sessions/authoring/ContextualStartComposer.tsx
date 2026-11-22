@@ -386,12 +386,14 @@ export function ContextualStartComposerBody({ model, whoLabel, whoHint, question
                                 detailColor: theme.colors.text.secondary, chevronColor: theme.colors.text.secondary,
                                 field: resolveFieldBoxColors(theme, 'idle'), fieldSpan: 'intrinsic' })}
                         </HappierPressable></View> : null}
-                        {hasChosen ? <TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
+                        {/* A link keeps to its own line's start (the shared link's anchoring); its slot centres it on the
+                            row beside the role field (U8 R4 E3). */}
+                        {hasChosen ? <View style={styles.linkSlot}><TextLinkButton testID={`contextual-start-${choosingWho ? 'done' : 'change'}-who`}
                             tone="strong" size="meta" label={t(choosingWho ? 'common.done' : 'common.change')}
-                            disabled={busy} onPress={() => setWhoEditing(value => !value)} /> : null}
-                        {addAgent ? <TextLinkButton testID="contextual-start-add-agent-button" tone="strong" size="meta"
+                            disabled={busy} onPress={() => setWhoEditing(value => !value)} /></View> : null}
+                        {addAgent ? <View style={styles.linkSlot}><TextLinkButton testID="contextual-start-add-agent-button" tone="strong" size="meta"
                             label={t('session.collaboration.discussion.secondOpinion.addAgentShort')}
-                            disabled={busy || openRecipe !== null} onPress={startAdd} /> : null}
+                            disabled={busy || openRecipe !== null} onPress={startAdd} /></View> : null}
                     </View> : undefined} />
             </View>
             <View style={styles.hang}>
@@ -447,4 +449,5 @@ const styles = StyleSheet.create((theme) => ({
     hang: { marginHorizontal: -HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx },
     groupNote: { ...Typography.variant('meta'), color: theme.colors.text.tertiary, flexShrink: 1 },
     fieldTrigger: { justifyContent: 'center' },
+    linkSlot: { justifyContent: 'center' },
 }));

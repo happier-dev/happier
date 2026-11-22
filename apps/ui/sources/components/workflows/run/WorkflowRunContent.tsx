@@ -113,7 +113,10 @@ import {
 } from './workflowInvocationStructure';
 import { workflowRunStyles as styles } from './workflowRunStyles';
 import { WorkflowRunNeedsYouDock } from './WorkflowRunNeedsYouDock';
-import { WorkflowRunReview } from './WorkflowRunReview';
+import { WorkflowRunReview, type WorkflowRunResultReview } from './WorkflowRunReview';
+import { workflowRunStartsReview, workflowStepResultShownByRunReview } from './workflowRunReviewResult';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
     formatWorkflowRunOriginLabel,
@@ -264,6 +267,8 @@ export type WorkflowRunContentProps = Readonly<{
     usageLabel?: string | null;
     resultLabel?: string | null;
     result?: JsonValue;
+    /** The Review this Run produced and whether its final output is that Review (the screen's one reading). */
+    resultReview?: WorkflowRunResultReview | null;
     /** Exact final-output producer from the encrypted terminal result owner. */
     finalOutputInvocationId?: string | null;
     /** Earliest failed row from the lifecycle-indexed query owner. */
@@ -450,7 +455,7 @@ function WorkflowSelectedDetail(props: Readonly<{
     const card = props.renderReviewCard?.(props.sessionId !== null && interaction.canSendMessages ? discuss : undefined,
         { compact: props.phone, title: props.title, subtitle: props.subtitle,
             // In a pane the facts scroll with the value, so the decision stays pinned under them.
-            ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...detail} resultShownAbove /> }) }) ?? null;
+            ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...detail} resultShownAbove insideReviewCard /> }) }) ?? null;
     const reviewShown = card !== null && !reviewDismissed;
     const reviewOpen = props.phone && active && reviewShown;
     // The held review is one mounted card whether it sits in the step's pane or in the phone's sheet, so a
@@ -590,8 +595,12 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const phone = useDeviceType() === 'phone';
     const navigationScope = useActiveServerAccountScope(props.serverId ?? null);
     // Only a run whose steps start a Review reads for the Review it produced.
-    const producesReview = React.useMemo(() => props.materializedLeaves?.some(leaf => leaf.kind === 'action'
-        && leaf.actionId === REVIEW_START_ACTION_ID_V1) === true, [props.materializedLeaves]);
+    const producesReview = React.useMemo(() => workflowRunStartsReview(props.materializedLeaves), [props.materializedLeaves]);
+    // The Review the embedded summary shows: when the Run's final output names it, that Review is the Run's result,
+    // opened from the header, and no step pane prints its raw record (U8 R4 R1, R2).
+    const producedReviewId = props.resultReview?.reviewId ?? null;
+    const finalOutputIsReview = props.resultReview?.isResult === true;
+    const router = useRouter();
     const selectPage = React.useCallback((id: string) => {
         if (id === 'flow' || id === 'steps' || id === 'activity') props.onChangeView(id);
     }, [props.onChangeView]);
@@ -949,6 +958,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         canRunAgain: onRunAgain !== undefined,
         canStop: props.run.availability.cancel && props.onCancel !== undefined && props.cancelRequested !== true,
         remedy: failureRemedy,
+        resumeChoicesPending: props.machineReachable === false,
     });
     // The failure is already open beside the Run: its step carries the way forward as the pane's primary, so
     // the header's stays visible but bordered, and See failures would only point at the step already showing.
@@ -1049,9 +1059,13 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         : undefined;
     const runningStep = runningInvocation === undefined ? null : invocationLabel(runningInvocation);
     const runningOccurrence = runningInvocation === undefined ? null : invocationOccurrenceLabel(runningInvocation);
+    // A Run held only on a Wait for you that Needs you already names says so in its status word alone, rather than
+    // "Waiting for you — X is waiting for you." beside the row naming X (U8 R4 A1).
+    const holdNamedBelow = props.run.state === 'waiting_for_review' && firstAttention !== undefined
+        && attentionWaitsForYou(firstAttention);
     const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
-        sentence: formatWorkflowRunOutcomeSentence({
+        sentence: holdNamedBelow ? outcomeWord : formatWorkflowRunOutcomeSentence({
             run: props.run,
             cancelRequested: props.cancelRequested,
             coverage,
@@ -1209,12 +1223,24 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             size="md"
         />
     ) : null;
+    const resultIsReview = terminalOutcome?.kind === 'open_result' && finalOutputIsReview;
     const outcomeAction = terminalOutcome?.kind === 'result_absent' && props.view !== 'steps' ? (
         <ToolbarButton
             key="inspect-steps"
             testID={`${testIDPrefix}-inspect-steps`}
             onPress={() => selectWorkflowNavigationItem(executeNavigation, navigation.model, 'steps')}
             label={t('workflows.run.inspectSteps')}
+            size="md"
+        />
+    ) : terminalOutcome?.kind === 'open_result' && resultIsReview && producedReviewId !== null ? (
+        // The Run's result is the Review it produced: its one way in opens that Review (U8 R4 R2).
+        <ToolbarButton
+            key="open-result"
+            testID={`${testIDPrefix}-open-result`}
+            onPress={() => router.push(artifactResourceRoute({ kind: 'artifact', artifactId: producedReviewId },
+                navigationScope?.serverId) as never)}
+            label={t('reviewWalkthrough.detail.openReview')}
+            tone="primary"
             size="md"
         />
     ) : terminalOutcome?.kind === 'open_result' ? (
@@ -1554,9 +1580,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                                 return (
                                     <Item
                                         key={invocation.id}
-                                        // A Wait that keeps its default name is already the instruction ("Wait for you").
-                                        title={invocation.lifecycle !== 'waiting_for_review' ? step : attentionWaitsForYou(invocation)
-                                            ? step === t('workflows.page.blocks.waitTitle') ? step : t('workflows.run.attentionWaitRow', { step })
+                                        // Under "Needs you" a Wait for you is named by its step: the heading already says it waits for
+                                        // the person (U8 R4 A1). A held result still says it waits for a review.
+                                        title={invocation.lifecycle !== 'waiting_for_review' || attentionWaitsForYou(invocation) ? step
                                             : t('workflows.run.attentionReviewRow', { step })}
                                         subtitle={invocation.lifecycle === 'waiting_for_review' ? where
                                             : [describeWorkflowInvocationLifecycle(invocation.lifecycle).label, where].filter(Boolean).join(' · ')}
@@ -1593,8 +1619,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             )}
 
             {/* A run that starts a Review (a Hunt) shows that Review itself: its findings so far (lab `hunts-running`). */}
+            {/* A phone page without its view switch row gives the summary the page's section gap before the Map (U8 R4 R3). */}
             {producesReview ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
-                testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge]} /> : null}
+                openedFromHeader={resultIsReview}
+                testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge,
+                    phone && !navigationShown && sourceFolded && isTerminalWorkflowRunState(props.run.state) ? styles.sectionBeforeView : null]} /> : null}
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}
@@ -1684,6 +1713,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             setupOutcome: block?.kind === 'action' && lifecycle === 'completed'
                 ? describeWorkflowSetupOutcome({ blocks: [block], machine: setupMachine }) : null,
             machineSetupStep: block?.kind === 'action' && block.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1,
+            startsReview: block?.kind === 'action' && block.actionId === REVIEW_START_ACTION_ID_V1,
         };
     }, [attentionWaitsForYou, derivedStructure, formatOccurrence, presentEngine, props.definition, props.frozenChildren, setupMachine,
         props.materializedLeaves, props.selectedInvocationId, props.selectedInvocationProgress?.attempt,
@@ -1717,6 +1747,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             noChoicesNext,
             setupOutcome: selectedDetail.setupOutcome,
             machineSetupStep: selectedDetail.machineSetupStep,
+            // The embedded Review already shows this step's result, so its raw record stays out of the pane (U8 R4 R1).
+            ...(workflowStepResultShownByRunReview({ producedReviewId, finalOutputIsReview,
+                finalOutputInvocationId: props.finalOutputInvocationId, selectedInvocationId: props.selectedInvocationId,
+                selectedStartsReview: selectedDetail.startsReview }) ? { resultShownAbove: true } : {}),
             // The Run's own replay, offered on the failed step that has no recovery choice of its own.
             ...(onRunAgain === undefined ? {} : { onRunAgain }),
             ...(props.onOpenMachineRemedy === undefined ? {} : { onOpenMachineRemedy: props.onOpenMachineRemedy }),
@@ -1767,6 +1801,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.onOpenMachineRemedy,
         selectedDetail.setupOutcome,
         selectedDetail.machineSetupStep,
+        selectedDetail.startsReview,
+        producedReviewId,
+        finalOutputIsReview,
         props.onAcknowledgeUncertainPriorEffects,
         props.onContinuePrepared,
         props.onCopyWorkspace,

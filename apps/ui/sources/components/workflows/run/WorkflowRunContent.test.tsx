@@ -2594,6 +2594,39 @@ describe('WorkflowRunContent', () => {
     );
   });
 
+  it('says a Run waiting on a named Wait-for-you step waits for you once, with the step named in Needs you (U8 R4 A1)', async () => {
+    const definition = createWorkflowDefinitionFixture({
+      blocks: [
+        {
+          kind: 'wait',
+          id: 'approve',
+          name: 'Approve pull request setup',
+          document: { text: 'Continue to prepare the PR, or stop this run.', references: [], attachments: [] },
+        },
+      ],
+    });
+    const screen = await renderContent({
+      definition,
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'waiting_for_review' }),
+      invocations: [
+        createWorkflowInvocationIndexFixture({ id: 'root', parentRecordId: null, memberOrdinal: '0', sequence: '0' }),
+        createWorkflowInvocationIndexFixture({
+          id: 'held', parentRecordId: 'root', memberOrdinal: '0', sequence: '1', lifecycle: 'waiting_for_review',
+        }),
+      ],
+    });
+    const outcome = String(screen.findByTestId('workflow-run-outcome')?.props.children);
+    // The status word already says it waits for the person; the line does not say it again about the step.
+    expect(outcome).not.toContain('workflows.run.attentionWaitSentence');
+    expect(outcome).not.toContain('Approve pull request setup');
+    const needsYou = screen.findByTestId('workflow-run-needs-you');
+    expect(needsYou).toBeTruthy();
+    const listed = screen.getTextContent();
+    expect(listed).toContain('Approve pull request setup');
+    // Under "Needs you" the row names the step; it does not repeat "is waiting for you".
+    expect(listed).not.toContain('workflows.run.attentionWaitRow');
+  });
+
   it.each([
     ['running', 'running', 'runningStepSentence'],
     ['running', 'waiting_for_review', 'attentionReviewSentence'],

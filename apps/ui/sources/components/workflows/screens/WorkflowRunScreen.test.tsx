@@ -1197,6 +1197,29 @@ describe('WorkflowRunScreen', () => {
             expect(readContentProps()?.selectedRelatedExecution).toBeNull();
         }
     });
+    it('pairs a held Wait-for-you with stopping the run, the decision its prompt offers (U8 R4 A2)', async () => {
+        const run = createWorkflowRunSummaryFixture({ state: 'waiting_for_review', origin: { kind: 'direct' } });
+        const root = createWorkflowInvocationIndexFixture({ id: '33333333-3333-4333-8333-333333333333', sequence: '0' });
+        const held = createWorkflowInvocationIndexFixture({ id: '55555555-5555-4555-8555-555555555555',
+            parentRecordId: root.id, sequence: '1', lifecycle: 'waiting_for_review' });
+        const definition = createWorkflowDefinitionFixture({ defaults: {}, blocks: [{ kind: 'wait', id: 'approve',
+            name: 'Approve pull request setup',
+            document: { text: 'Continue to prepare the PR, or stop this run.', references: [], attachments: [] } }] });
+        const heldDetail = { index: held, parentRevision: run.revision, progress: WorkflowProgressEnvelopeV1Schema.parse({
+            kind: 'happier.workflow-progress.v1', blockKind: 'wait', attempt: '0', logicalInvocationRecordId: held.id,
+            invocationPath: { blockId: 'approve', scope: [] },
+        }) };
+        detailActions.getInvocation.mockResolvedValue({ invocation: heldDetail });
+        routeState.invocationId = held.id;
+        const screen = await renderRunScreen({ run, definition, invocations: [root, held], invocationDetails: [heldDetail] });
+        await vi.waitFor(() => expect(screen.findAllByType(WorkflowReviewCard)).toHaveLength(1));
+        const waitIdentity = screen.findByType(WorkflowReviewCard).props.waitIdentity;
+        expect(waitIdentity?.onStop).toEqual(expect.any(Function));
+        // A generic Wait keeps its own prompt and Continue; only the Open PR gate renames them.
+        expect(waitIdentity?.title).toBeUndefined();
+        expect(waitIdentity?.primaryLabel).toBeUndefined();
+    });
+
     it.each([false, true])('FIX270 native workspace copy respects clipboard Action enabled=%s', async enabled => {
         Object.assign(Platform, { OS: 'ios' });
         Object.assign(platformViewport, { width: 390, height: 844 });

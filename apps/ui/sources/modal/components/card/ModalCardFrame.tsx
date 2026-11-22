@@ -14,12 +14,15 @@ import { ContainedPageScopeProvider } from '@/components/ui/lists/listPresentati
 import { SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { ModalCardBody } from './ModalCardBody';
 import { PopoverScrollSourceProvider, usePopoverScrollSourceRef } from '@/components/ui/popover/PopoverScrollSource';
+import { PopoverBoundaryProvider, usePopoverBoundary } from '@/components/ui/popover/PopoverBoundary';
 import { ModalCardHeader } from './ModalCardHeader';
 import { SheetGrabber, useSheetDismiss, useSheetDrag } from './sheetDragDismiss';
 import { useModalCardDimensions, type ModalCardDimensionOptions, type ModalCardSizePreset } from './useModalCardDimensions';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useKeyboardHeight } from '@/hooks/ui/useKeyboardHeight';
+
+const NO_POPOVER_BOUNDARY: React.RefObject<unknown> = { current: null };
 
 type ModalCardFrameProps = Readonly<{
     children: React.ReactNode;
@@ -247,6 +250,11 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
         ? bodyHeight + Math.max(0, Math.round(dimensions.maxHeight) - frameHeight)
         : bodyHeight;
 
+    // A menu opened in a centred card stays within the card's width: hung from a field near its edge, it opens from
+    // the field's other edge instead of overhanging the card (U8 R4 E2). A sheet or fullscreen card already spans the
+    // window, so popovers there keep whatever boundary they inherit.
+    const inheritedPopoverBoundary = usePopoverBoundary();
+    const ownsPopoverBoundary = framed && !sheet && !fullscreen;
     const hasHeader = framed && props.header !== 'none' && (props.leading != null
         || props.title != null
         || props.subtitle != null
@@ -261,7 +269,10 @@ export function ModalCardFrame(props: ModalCardFrameProps) {
                 style={[boundsContent && bodyHeight > 0
                     ? fixedHeight ? { height: bodyHeight, flexGrow: 0, flexShrink: 0 } : { maxHeight: bodyCap }
                     : null, props.bodyStyle]}>
-                <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
+                <PopoverBoundaryProvider boundaryRef={ownsPopoverBoundary ? frameRef : inheritedPopoverBoundary?.ref ?? NO_POPOVER_BOUNDARY}
+                    axis={ownsPopoverBoundary ? 'horizontal' : inheritedPopoverBoundary?.axis ?? 'horizontal'}>
+                    <SurfaceFreshnessOnSheetProvider onSheet={framed && !fullscreen}>{props.children}</SurfaceFreshnessOnSheetProvider>
+                </PopoverBoundaryProvider>
             </ModalCardBody>
         </PopoverScrollSourceProvider>
     );

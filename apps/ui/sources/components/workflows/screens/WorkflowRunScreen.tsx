@@ -79,6 +79,7 @@ import {
     type WorkflowRunDetailView,
     type WorkflowRunOperationKind,
 } from '../run/WorkflowRunContent';
+import { useWorkflowRunResultReview } from '../run/WorkflowRunReview';
 import {
     isWorkflowWorkspaceUnavailableReason,
     projectWorkflowInvocationRecovery,
@@ -1009,6 +1010,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
         && sourceReadIdentity !== sourceIdentity;
     const visibleResult = contentBelongsToActiveScope ? result : undefined;
     const visibleFinalOutputInvocationId = contentBelongsToActiveScope ? finalOutputInvocationId : null;
+    // The Review this Run produced and whether it is the Run's result (a Hunt): the page shows that Review in place.
+    const resultReview = useWorkflowRunResultReview({ runId, scope: activeAccountScope,
+        leaves: visibleAcceptedContext?.materializedLeaves, result: visibleResult, enabled: activelyViewed });
     const visibleFirstFailedInvocation = selectWorkflowRunFirstFailedInvocation(visibleInvocations);
     const visibleUsageLabel = contentBelongsToActiveScope ? usageLabel : null;
     const visibleProgressByInvocationId = contentBelongsToActiveScope
@@ -1124,7 +1128,8 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
     const openingInvocationId = summary !== null && isTerminalWorkflowRunState(summary.state)
         && firstFailedInvocationResolution !== 'resolved' ? null
         : failurePresentation?.invocationId ?? (summary?.state === 'succeeded'
-            ? visibleFinalOutputInvocationId ?? allInvocations.at(-1)?.id ?? null : null);
+            // A result that is the Review the page already shows opens no step beside it (U8 R4 R1).
+            ? resultReview?.isResult === true ? null : visibleFinalOutputInvocationId ?? allInvocations.at(-1)?.id ?? null : null);
     // The opening selection follows the Run (a hold, then its final output or last step) until the person
     // picks a row themselves; a deliberate choice, closing the pane included, is never moved.
     React.useEffect(() => {
@@ -2231,7 +2236,9 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                                 value: selectedRelatedProgress.result,
                                 contract: WorkflowResultContractSchema.safeParse(selectedRelatedProgress.resultContract).data,
                             },
-                        } : undefined}
+                        // Every Wait for you offers its other decision beside Continue: stopping the run (U8 R4 A2). A Wait has
+                        // no deny result of its own; the run's cancel is the "no" its prompt names.
+                        } : summary.availability.cancel ? { onStop: whenEvidenceConfirmed(() => submitControl('cancel')) } : undefined}
                         readState={selectedReadState}
                         belowResult={placement?.belowResult}
                         active={activelyViewed} confirmed={selectedEvidenceConfirmed} compact={placement?.compact === true}
@@ -2260,6 +2267,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 usageLabel={visibleUsageLabel}
                 resultLabel={visibleResultLabel}
                 result={visibleResult}
+                resultReview={resultReview}
                 finalOutputInvocationId={visibleFinalOutputInvocationId}
                 firstFailedInvocationId={visibleFirstFailedInvocation?.id ?? null}
                 firstFailedInvocationResolution={firstFailedInvocationResolution}

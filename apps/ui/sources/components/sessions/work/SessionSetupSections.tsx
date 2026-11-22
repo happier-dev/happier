@@ -24,7 +24,7 @@ import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import { useSessionMachineReachability } from '@/components/sessions/model/useSessionMachineReachability';
 import { projectScheduledWorkflowRows } from '@/components/workflows/triggers/scheduledWorkflowRows';
 import type { AccountTriggerRow } from '@/components/workflows/triggers/accountTriggerRows';
-import { buildReviewHabitTriggerRequest, findReviewHabitRow } from '@/components/reviews/habit/reviewHabit';
+import { buildReviewHabitTriggerRequest, findReviewHabitRow, readReviewHabitReviewers } from '@/components/reviews/habit/reviewHabit';
 import { ReviewHabitControl, ReviewHabitReviewerSetup, alertReviewHabitWriteFailed } from '@/components/reviews/habit/ReviewHabitSetup';
 import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -218,7 +218,11 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
   // Retry and the pending/failed treatment cover the section's own read and the readers of what writes here.
   const combined = React.useMemo(() => ({ ...automations, rows: triggerRows, read: { ...read, status, retry } }),
     [automations, triggerRows, read, status, retry]);
-  const habit = useSessionReviewHabit({ sessionId, homeId: props.homeId, automations, habitRow, ready: read.status === 'ready' });
+  // Who the habit runs is its own saved trigger's reviewers (the Session's lifetime set).
+  const habitReviewers = React.useMemo(() => readReviewHabitReviewers(habitRow
+    ? sessionSets.find(set => set.automationId === habitRow.automationId) : null), [habitRow, sessionSets]);
+  const habit = useSessionReviewHabit({ sessionId, homeId: props.homeId, serverId: props.serverId, automations, habitRow,
+    reviewers: habitReviewers, ready: read.status === 'ready' });
   // Session Info folds an empty Habits into "Add to this session" from this read, without another.
   const summaryScope = useActiveServerAccountScope(props.serverId);
   useReportSessionInfoSectionSummary('habits.startsHere', summaryScope ? {
@@ -270,6 +274,8 @@ function useSessionReviewHabit(params: Readonly<{
   homeId: string;
   automations: ReturnType<typeof useResourceAutomationsSection>;
   habitRow: AccountTriggerRow | null;
+  reviewers: ReturnType<typeof readReviewHabitReviewers>;
+  serverId: string | null;
   ready: boolean;
 }>): React.ReactNode {
   const { sessionId, homeId, habitRow } = params;
@@ -301,6 +307,7 @@ function useSessionReviewHabit(params: Readonly<{
   }, [editor, homeId, sessionId, setupLifetime]);
   return (
     <ReviewHabitControl status={params.ready ? 'ready' : 'loading'} row={habitRow}
+      reviewers={params.reviewers} serverId={params.serverId}
       pending={saving || (habitRow !== null && editor.pending.has(habitRow.automationId))}
       onToggle={toggle} onSetUp={setUp} onOpenReviewers={openReviewers}
       setup={setupLifetime ? <ReviewHabitReviewerSetup accountLifetime={setupLifetime} consumerSessionId={sessionId}

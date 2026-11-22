@@ -48,7 +48,8 @@ export type ReviewSummaryProps = Readonly<{
   rows: readonly ReviewSummaryRow[];
   more?: Readonly<{ label: string; onPress: () => void }> | null;
   reviewers: readonly Readonly<{ label: string; backendId: string }>[];
-  onOpenReview: () => void;
+  /** The way into the Review; a host that already opens it from its own header leaves it out. */
+  onOpenReview?: () => void;
   /** "Implement N fixes" when the person accepted any; otherwise the decision happens on the Review. */
   implement?: Readonly<{
     label: string;
@@ -113,8 +114,8 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
               loading={props.implement.busy} disabled={props.implement.busy} onPress={props.implement.onPress} />
           ) : null}
           {props.footerAction ?? null}
-          <TextLinkButton testID="review-summary:open" size="row" tone="strong" label={t('reviewWalkthrough.detail.openReview')}
-            onPress={props.onOpenReview} />
+          {props.onOpenReview ? <TextLinkButton testID="review-summary:open" size="row" tone="strong"
+            label={t('reviewWalkthrough.detail.openReview')} onPress={props.onOpenReview} /> : null}
         </>
       )}
     />

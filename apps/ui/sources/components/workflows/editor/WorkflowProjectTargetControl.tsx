@@ -20,6 +20,10 @@ import { resolveNewSessionCheckoutChipModel } from '@/components/sessions/new/mo
 import { WORKSPACE_NEW_WORKTREE_OPTION_ID, type WorktreeSelectionStepScope } from '@/components/sessions/new/hooks/screenModel/buildWorktreeSelectionListSteps';
 import { SessionAuthoringFieldSelectTrigger } from '@/components/sessions/authoring/controls/SessionAuthoringFieldSelectTrigger';
 import { Icon } from '@/components/ui/icons/Icon';
+import { AgentInputRailChip } from '@/components/sessions/agentInput/definitions/agentInputChipRowReach';
+import { AGENT_INPUT_CHIP_ICON_SIZE_PX, AGENT_INPUT_CHIP_ICON_STYLE } from '@/components/sessions/agentInput/definitions/agentInputChipIconMetrics';
+import { useSessionAuthoringChipRenderContext } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { normalizeNodeForView } from '@/components/ui/rendering/normalizeNodeForView';
 import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { Text } from '@/components/ui/text/Text';
@@ -106,6 +110,8 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: theme.space.s8,
         borderRadius: theme.borderRadius.md,
     },
+    chip: { maxWidth: '100%', flexShrink: 1 },
+    chipLabel: { minWidth: 0, flexShrink: 1 },
 }));
 
 const EMPTY_WORKSPACE_REFS: ReadonlyArray<WorkspaceRefV1> = [];
@@ -547,6 +553,8 @@ function WorkflowWhereChips(props: WorkflowWhereInput & Readonly<{
             trailing={props.renderChip === undefined && target !== null && isWorkflowProjectTarget(target) ? (() => {
                 const picker = <ProjectCheckoutPicker
                     currentUiContextCommandScope={scope}
+                    // In the composer's chip row the checkout is the third chip, beside the Machine and folder (U8 R4 E1).
+                    chip={props.presentation !== 'fields' && props.chipVariant !== 'bordered'}
                     target={target}
                     serverId={serverId}
                     machineHomeDir={machineHomeDir}
@@ -590,6 +598,8 @@ function ProjectCheckoutPicker(props: Readonly<{
     workspace?: WorkflowWhereWorkspace;
     /** Opened from another control (a step card's Workspace chip): mounted open, hung from it, no own trigger. */
     controlled?: Readonly<{ anchorRef: React.RefObject<React.ComponentRef<typeof View> | null>; onClose: () => void }>;
+    /** Drawn as a chip of the composer's placement row (New Session's checkout chip), not a quiet value. */
+    chip?: boolean;
     testIDPrefix: string;
 }>): React.ReactElement | null {
     const { onSelectDirectory, target } = props;
@@ -606,6 +616,7 @@ function ProjectCheckoutPicker(props: Readonly<{
     }, [onControlledClose]);
     const ownAnchorRef = React.useRef<React.ComponentRef<typeof View> | null>(null);
     const anchorRef = props.controlled?.anchorRef ?? ownAnchorRef;
+    const chipContext = useSessionAuthoringChipRenderContext(anchorRef);
     const repoScmSnapshot = useNewSessionRepoScmSnapshot({
         serverId: props.serverId,
         machineId: target.machineId,
@@ -708,9 +719,26 @@ function ProjectCheckoutPicker(props: Readonly<{
     }
     if (picker === null) return null;
 
+    const toggle = scope === undefined ? () => setOpen(current => !current) : () => { void commands.invoke(open ? 'close' : 'open'); };
     return (
         <>
-            <View ref={anchorRef} collapsable={false}>
+            {props.chip === true ? (
+                // The checkout reads as one of the row's chips, in New Session's checkout chip anatomy.
+                <AgentInputRailChip
+                    ref={anchorRef}
+                    testID={`${props.testIDPrefix}-project-checkout`}
+                    onPress={toggle}
+                    accessibilityRole="button"
+                    accessibilityLabel={`${t('newSession.checkout.selectTitle')}: ${picker.selectedLabel}`}
+                    accessibilityState={{ expanded: open }}
+                    hasPopup="listbox"
+                    style={(pressed: boolean) => [chipContext.chipStyle(pressed), styles.chip]}
+                >
+                    {normalizeNodeForView(<Icon name="stack-simple" size={AGENT_INPUT_CHIP_ICON_SIZE_PX} color={chipContext.iconColor}
+                        style={AGENT_INPUT_CHIP_ICON_STYLE} />)}
+                    <Text numberOfLines={1} style={[chipContext.textStyle, styles.chipLabel]}>{picker.selectedLabel}</Text>
+                </AgentInputRailChip>
+            ) : <View ref={anchorRef} collapsable={false}>
                 <HappierPressable
                     testID={`${props.testIDPrefix}-project-checkout`}
                     accessibilityRole="button"
@@ -725,7 +753,7 @@ function ProjectCheckoutPicker(props: Readonly<{
                 >
                     <Text numberOfLines={1} style={styles.value}>{picker.selectedLabel}</Text>
                 </HappierPressable>
-            </View>
+            </View>}
             <AgentInputSelectionListPopover
                 currentUiContextCommandScope={scope === undefined ? undefined : `${scope}.checkout.list`}
                 open={open}

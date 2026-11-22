@@ -4,6 +4,7 @@ import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/dis
 import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import { useExecutableParticipantSections } from '@/components/discussions/useExecutableParticipantSections';
+import { useExecutableParticipantLabel } from '@/components/sessions/authoring/useExecutableParticipantLabel';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { buildMachineAddHref } from '@/components/settings/machines/collection/machineCollectionModel';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -22,6 +23,7 @@ import { useHomeAiLaunchProfileCatalog } from '@/sync/store/useAiLaunchProfiles'
 import { t } from '@/text';
 
 type Choice = 'off' | 'eachTurn';
+const NO_REVIEWERS: readonly ExecutableParticipantSelectionV1[] = Object.freeze([]);
 
 /**
  * Who reviews each turn, chosen once when the habit is set up (ORCH ruling 2026-11-22): the shared "add an agent"
@@ -108,6 +110,10 @@ export const ReviewHabitControl = React.memo(function ReviewHabitControl(
     /** While the Session's automations are still read, no option is drawn as chosen. */
     status: 'loading' | 'ready';
     row: AccountTriggerRow | null;
+    /** Who the saved habit runs: its trigger's reviewers input, read by `readReviewHabitReviewers`. */
+    reviewers: readonly ExecutableParticipantSelectionV1[];
+    /** The Home whose Machines name where each reviewer runs. */
+    serverId: string | null;
     pending: boolean;
     setup: React.ReactNode;
     onToggle: (row: AccountTriggerRow, next: boolean) => void;
@@ -161,16 +167,39 @@ export const ReviewHabitControl = React.memo(function ReviewHabitControl(
       />
       {props.setup}
       {row && !row.off ? (
-        <Item
-          testID="review-habit-reviewers"
-          title={t('reviewWalkthrough.detail.reviewHabitReviewers')}
-          subtitle={t('reviewWalkthrough.detail.reviewHabitReviewersDetail')}
+        <ReviewHabitReviewersRow
+          reviewers={props.reviewers ?? NO_REVIEWERS}
+          serverId={props.serverId}
           onPress={() => onOpenReviewers(row, anchorRef)}
         />
       ) : null}
     </View>
   );
 });
+
+/**
+ * "Who reviews" names the saved reviewers and where they run (lab `session-habit`: "Claude on MacBook Pro · findings
+ * land in Reviews"), in the participant owner's words. Mounted only while the habit is on, so its Machine and Session
+ * name reads happen only then.
+ */
+function ReviewHabitReviewersRow(
+  props: Readonly<{
+    reviewers: readonly ExecutableParticipantSelectionV1[];
+    serverId: string | null;
+    onPress: () => void;
+  }>,
+) {
+  const who = useExecutableParticipantLabel(props.reviewers, props.serverId, props.reviewers.length > 0);
+  const where = t('reviewWalkthrough.detail.reviewHabitReviewersDetail');
+  return (
+    <Item
+      testID="review-habit-reviewers"
+      title={t('reviewWalkthrough.detail.reviewHabitReviewers')}
+      subtitle={who ? `${who} \u00b7 ${where}` : where}
+      onPress={props.onPress}
+    />
+  );
+}
 
 /** The setup's one failure path: the trigger writer's own problem, said the way every trigger write says it. */
 export function alertReviewHabitWriteFailed(error: unknown) {

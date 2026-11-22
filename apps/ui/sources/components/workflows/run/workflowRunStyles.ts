@@ -161,6 +161,10 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     pageSection: {
         paddingHorizontal: HAPPIER_PAGE_METRICS.pageTextInsetPx,
     },
+    /** A phone page's last header section when no view switch row follows it: the page's section gap before the Map. */
+    sectionBeforeView: {
+        marginBottom: HAPPIER_PAGE_METRICS.sectionGapPx,
+    },
     technicalToggle: {
         flexDirection: 'row',
         alignItems: 'center',
@@ -212,6 +216,17 @@ export const workflowRunStyles = StyleSheet.create((theme) => ({
     provenance: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
+    },
+    /** A decided step's one line (a Wait continued): its mark, the decision, then who made it. */
+    decidedLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        gap: theme.space.s6,
+    },
+    decidedWord: {
+        ...Typography.variant('body', 'semiBold'),
+        color: theme.colors.text.primary,
     },
     /** A step header's hold navigation gives way to the column; its Previous and Next always stay reachable. */
     holdNavigation: {

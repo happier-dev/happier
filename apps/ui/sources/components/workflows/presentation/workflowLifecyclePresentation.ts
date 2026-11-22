@@ -78,6 +78,8 @@ export function resolveWorkflowRunPrimaryAction(params: Readonly<{
     canStop: boolean;
     /** The failure's Machine-setting remedy, from the recovery presenter's typed reading. */
     remedy?: WorkflowFailureRemedy | null;
+    /** The Run's Machine is away, so what it could resume is not known until it reconnects. */
+    resumeChoicesPending?: boolean;
 }>): WorkflowRunPrimaryAction {
     if (params.state === 'failed') {
         if (params.remedy != null) return 'remedy';
@@ -89,8 +91,9 @@ export function resolveWorkflowRunPrimaryAction(params: Readonly<{
     if (params.canResume) return 'resume';
     if (params.state !== 'succeeded' && params.canRunAgain) return 'run_again';
     // An interrupted Run with nothing to resume moves on only by being stopped (then run again), so
-    // Stop is its one primary (07 §6.1, FIN-DESIGN-REVIEW H3).
-    return params.state === 'interrupted' && params.canStop ? 'stop' : null;
+    // Stop is its one primary (07 §6.1, FIN-DESIGN-REVIEW H3). While its Machine is away the resume choices are
+    // not known yet: its next step is that Machine's return, which the page says, so Stop stays bordered (U8 R4 A4).
+    return params.state === 'interrupted' && params.canStop && params.resumeChoicesPending !== true ? 'stop' : null;
 }
 
 /** Another round adds the authored continuation contract to ordinary replay eligibility. */

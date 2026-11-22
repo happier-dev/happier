@@ -258,6 +258,14 @@ describe('resolveWorkflowRunPrimaryAction', () => {
         expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'cancelled' })).toBe('run_again');
         expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'interrupted', canRunAgain: false, canStop: true })).toBe('stop');
     });
+
+    it('fills no Stop for an interrupted Run whose resume choices wait on its Machine coming back', () => {
+        // The page says the choices appear on reconnect; Stop stays a bordered control, not the way forward.
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'interrupted', canRunAgain: false, canStop: true,
+            resumeChoicesPending: true })).toBeNull();
+        expect(resolveWorkflowRunPrimaryAction({ ...base, state: 'interrupted', canRunAgain: false, canStop: true,
+            resumeChoicesPending: false })).toBe('stop');
+    });
 });
 
 describe('resolveWorkflowRunPrimaryAction remedies', () => {

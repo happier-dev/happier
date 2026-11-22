@@ -33,6 +33,7 @@ import { formatWorkflowUsageLabel } from '@/components/workflows/presentation/wo
 import { WorkflowResultContractSchema } from '@happier-dev/protocol/workflows/workflowV1';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
@@ -95,8 +96,10 @@ export type WorkflowInvocationDetailProps = Readonly<{
     /** Why this row is waiting or was skipped, when its canonical facts say so. */
     cause?: string | null;
     contentUnavailable?: boolean;
-    /** The review card above these facts already shows this step's result. */
+    /** The step's result is already shown above these facts (its review card, or the Run's embedded Review). */
     resultShownAbove?: boolean;
+    /** These facts sit inside the review card, so their sheets share its edges. */
+    insideReviewCard?: boolean;
     /** Undefined retains older callers' notice; null means Review already presents this state. */
     contentReadState?: React.ReactNode;
     /** Read the exact historical attempt; never selects its value for this attempt. */
@@ -906,6 +909,9 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                 // "Result"; "Final output" is the Run's, and only one step carries it.
                 <View testID={`${testIDPrefix}-invocation-result`}><ListPresentationProvider value="page">
                     <ItemGroup title={props.waitPrompt ?? t('workflows.input.result')}
+                        // A Wait decided without a value reads as a decided line under its question, not as a field
+                        // holding the word (U8 R4 A3, lab `prauto-approved`).
+                        {...(visibleResult === undefined ? { surface: 'none' as const } : {})}
                         // The exact structured value stays one Copy away, never printed as JSON: Copy sits in the
                         // region's header (lab run-A_completed), not as a row inside the value (FIN-DESIGN-ACCEPT-2 F6).
                         {...(!resultCopyable ? {} : {
@@ -930,9 +936,14 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
                                 <Text style={styles.provenance}>{t('workflows.run.notAnswered')}</Text>
                             </SectionContentRow>
                         ) : (
-                            // A completed Wait with nothing to fill in was continued, not left unanswered.
+                            // A completed Wait with nothing to fill in was continued, not left unanswered: the decision
+                            // leads in the label weight, who made it follows.
                             <SectionContentRow testID={`${testIDPrefix}-invocation-continued`}>
-                                <Text style={styles.provenance}>{answeredBy ?? t('workflows.run.waitContinued')}</Text>
+                                <View style={styles.decidedLine}>
+                                    <Icon name="check" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />
+                                    <Text style={styles.decidedWord}>{t('workflows.run.waitContinued')}</Text>
+                                    {answeredBy === null ? null : <Text style={styles.provenance}>{answeredBy}</Text>}
+                                </View>
                             </SectionContentRow>
                         )}
                     </ItemGroup>
@@ -941,7 +952,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
             {/* What the step returned leads; what it was given follows it (FIN-DESIGN-REVIEW H4). */}
             {props.progress?.input === undefined ? null : (
                 // What the step was given reads in the same card anatomy as what it returned.
-                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
+                <View testID={`${testIDPrefix}-invocation-input`}><ListPresentationProvider value="page" pageInsets={props.insideReviewCard === true ? 'contained' : 'standard'}>
                     <ItemGroup title={t('workflows.input.label')}>
                         <WorkflowReviewValue value={props.progress.input} contract={undefined}
                             testIDPrefix={`${testIDPrefix}-invocation-input`} />
@@ -953,7 +964,7 @@ export function WorkflowInvocationDetail(props: WorkflowInvocationDetailProps): 
               * A settled step's missing usage reads "Not reported" in quiet meta, never a bare dash.
               */}
             {usageLabel === null && !workspaceInformative && technicalLines.length === 0 ? null : (
-                <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page" pageInsets={props.resultShownAbove === true ? 'contained' : 'standard'}>
+                <View testID={`${testIDPrefix}-invocation-meta`}><ListPresentationProvider value="page" pageInsets={props.insideReviewCard === true ? 'contained' : 'standard'}>
                     <ItemGroup header="none">
                         {usageLabel === null ? null : (
                             <Item

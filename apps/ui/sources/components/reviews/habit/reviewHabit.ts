@@ -4,6 +4,10 @@ import type { WorkflowTriggerAddRequestV1, WorkflowTriggerSetV1 } from '@happier
 import type { ReviewReviewerSelectionV1 } from '@happier-dev/protocol/reviews/reviewStart';
 import type { AutomationEventFilterV1 } from '@happier-dev/protocol/automations/automationEventFilterV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import {
+  normalizeExecutableParticipantSelectionV1,
+  type ExecutableParticipantSelectionV1,
+} from '@happier-dev/protocol/discussions/executableParticipants';
 
 import type { AccountTriggerRow } from '@/components/workflows/triggers/accountTriggerRows';
 import { buildTriggerDefinition } from '@/components/workflows/triggers/sessionTriggerForm';
@@ -80,4 +84,19 @@ export function findAccountReviewHabit(sets: readonly WorkflowTriggerSetV1[]): R
         if (trigger) return { automationId: set.automationId, triggerId: trigger.id, enabled: set.enabled && trigger.enabled };
     }
     return null;
+}
+
+/**
+ * Who the saved habit runs: the trigger's own `inputs.reviewers`, chosen and saved at setup, read through the
+ * participant owner's normalizer (each carries its Machine, which says where it reviews). Nothing readable is none.
+ */
+export function readReviewHabitReviewers(
+  set: Pick<WorkflowTriggerSetV1, 'context'> | null | undefined,
+): readonly ExecutableParticipantSelectionV1[] {
+  const value = set?.context?.inputs?.reviewers;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((entry) => {
+    const selection = normalizeExecutableParticipantSelectionV1(entry);
+    return selection ? [selection] : [];
+  });
 }

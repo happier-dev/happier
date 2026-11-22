@@ -106,6 +106,8 @@ const styles = StyleSheet.create((theme) => ({
     actions: { gap: theme.space.s8, alignItems: 'stretch' },
     /** The decision: the primary, its one consequence, then the quiet choices. */
     decision: { gap: theme.space.s8, paddingTop: theme.space.s12, alignItems: 'stretch' },
+    decisionPair: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    decisionPairPrimary: { flexGrow: 1, flexShrink: 1 },
     quietActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', columnGap: theme.space.s4 },
     head: { gap: theme.space.s4 },
     /** The one place that says this needs the person: amber on the word and the hand, nothing else. */
@@ -251,6 +253,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const noValueNeeded = props.waitForYou && props.contract === undefined;
     const blocked = props.pending === true || props.readOnly === true || props.disabled === true || props.generation !== undefined;
     const stopDisabled = props.pending === true || props.readOnly === true || props.disabled === true;
+    const waitStop = props.waitForYou && props.waitIdentity?.onStop !== undefined;
     const generatePrimary = !props.waitForYou && !valid && props.draft === undefined && props.canGenerate !== false;
     const readiness = classifyWorkflowHoldV1({ lifecycle: props.lifecycle ?? 'waiting_for_review',
         isCurrent: props.isCurrent ?? true, progress: props.progress });
@@ -354,13 +357,19 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             title={t('common.stop')} disabled={stopDisabled} loading={props.pending}
             onPress={async () => { if (!stopDisabled) await props.generation?.onStop?.(); }} /> : null}
     </View> : held && !props.readOnly ? <View testID={`${prefix}-primary`} style={styles.decision}>
+        {/* A Wait's two decisions sit side by side, the lab's Approve beside Deny (U8 R4 A2): go on, or stop the run. */}
+        <View style={waitStop ? styles.decisionPair : null}>
             <RoundButton testID={`${prefix}-${generatePrimary ? 'generate' : 'use'}`} size="normal"
                 // Pending is busy, not unavailable: the primary keeps its look with the spinner in it.
                 disabled={props.pending !== true && (blocked || (!generatePrimary && !valid && !noValueNeeded))} loading={props.pending} titleNumberOfLines="complete"
                 title={generatePrimary ? t('workflows.review.generate') : props.waitForYou ? props.waitIdentity?.primaryLabel
                     ?? (noValueNeeded ? t('workflows.review.continue') : t(singleField ? 'workflows.review.useValue' : 'workflows.review.useValues'))
                     : plan ? t('workflows.review.usePlan') : t('workflows.review.useResult')}
-                onPress={generatePrimary ? generate : use} />
+                onPress={generatePrimary ? generate : use}
+                {...(waitStop ? { style: styles.decisionPairPrimary } : {})} />
+            {waitStop ? <RoundButton testID={`${prefix}-stop-wait`} size="normal" display="secondary" title={t('common.stop')}
+                disabled={stopDisabled} onPress={async () => { if (!stopDisabled) await props.waitIdentity?.onStop?.(); }} /> : null}
+        </View>
             {validationReadout ? <Text testID={`${prefix}-validation`} style={[hasFieldError ? styles.error : styles.secondary, styles.footnote]}
                 accessibilityRole={hasFieldError ? 'alert' : undefined}>{validationReadout}</Text> : null}
             {props.waitForYou && props.waitIdentity?.consequence ? <Text style={[styles.secondary, styles.footnote]}>{props.waitIdentity.consequence}</Text>
@@ -368,11 +377,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 : t('workflows.review.generateBody') : plan ? t('workflows.review.usePlanBody') : t('workflows.review.useBody')}</Text> : null}
             {quietActions}
             {generateRow ? <ListPresentationProvider value="page" pageInsets="contained">{generateRow}</ListPresentationProvider> : null}
-            {props.waitForYou && props.waitIdentity?.onStop ? <>
-                <RoundButton testID={`${prefix}-stop-wait`} size="small" display="inverted" title={t('common.stop')}
-                    disabled={stopDisabled} onPress={async () => { if (!stopDisabled) await props.waitIdentity?.onStop?.(); }} />
-                {props.waitIdentity.stopConsequence ? <Text style={[styles.secondary, styles.footnote]}>{props.waitIdentity.stopConsequence}</Text> : null}
-            </> : null}
+            {waitStop && props.waitIdentity?.stopConsequence
+                ? <Text style={[styles.secondary, styles.footnote]}>{props.waitIdentity.stopConsequence}</Text> : null}
     </View> : null;
     // The state line says it needs the person; the sheet stays neutral so the result reads as content
     // (lab round 1105 R1). Copy and the full reading sit on the value's own line.

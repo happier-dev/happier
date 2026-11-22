@@ -15,6 +15,7 @@ const {
   findAccountReviewHabit,
   findReviewHabitRow,
   projectReviewHabitPlacement,
+  readReviewHabitReviewers,
   REVIEW_HABIT_WORKFLOW_ID,
 } = await import('./reviewHabit');
 const { projectAccountTriggerRows } =
@@ -153,5 +154,22 @@ describe('the all-sessions review habit', () => {
         const accountHabit = set('account-habit', lifecycle('t2'));
         expect(findAccountReviewHabit([sessionScoped])).toBeNull();
         expect(findAccountReviewHabit([sessionScoped, accountHabit])).toMatchObject({ automationId: 'account-habit', triggerId: 't2', enabled: true });
+    });
+});
+
+describe('readReviewHabitReviewers', () => {
+    const launch = { executionTarget: { serverId: 'home-1', machineId: 'machine-1' },
+        directory: { kind: 'path', path: '/code/app' },
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+
+    it('reads who reviews from the saved trigger\'s reviewers input', () => {
+        const set = { context: { inputs: { reviewers: [{ kind: 'model', launch }] } } } as never;
+        expect(readReviewHabitReviewers(set)).toMatchObject([{ kind: 'model', launch: { executionTarget: { machineId: 'machine-1' } } }]);
+    });
+
+    it('names nobody when the saved trigger carries no reviewers it can read', () => {
+        expect(readReviewHabitReviewers({ context: { inputs: {} } } as never)).toEqual([]);
+        expect(readReviewHabitReviewers({} as never)).toEqual([]);
+        expect(readReviewHabitReviewers(null)).toEqual([]);
     });
 });

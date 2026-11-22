@@ -18,10 +18,44 @@ import { resolveReviewEngineTarget } from '@/sync/domains/reviews/reviewEngineCa
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
+import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
+import { workflowResultNamesReview, workflowRunStartsReview } from './workflowRunReviewResult';
 
 /** A finding's engine by name: the Review engine option's target through the backend label owner. */
 function reviewEngineLabel(engineId: string): string {
   return resolveExecutionRunBackendLabel(resolveReviewEngineTarget(engineId)) ?? engineId;
+}
+
+/**
+ * The Review a Workflow run produced, through the Review owner's `workflowRunId` link; `null` for a run that produced
+ * none of its own (another round of an existing one). The run page and its embedded summary read the same list key.
+ */
+export function useWorkflowRunProducedReview(runId: string, scope: ServerAccountScope | null, enabled: boolean) {
+  const list = useReviewList({ workflowRunId: runId, limit: 1 }, { scope, enabled });
+  return list.items?.[0] ?? null;
+}
+
+/** The Review a Run produced, and whether its final output is that Review. */
+export type WorkflowRunResultReview = Readonly<{ reviewId: string; isResult: boolean }>;
+
+/**
+ * The Run page's one reading of the Review its Run produced (the Review owner's `workflowRunId` link) and whether the
+ * final output is that Review. The page and its embedded summary share the one list key.
+ */
+export function useWorkflowRunResultReview(params: Readonly<{
+    runId: string | null;
+    scope: ServerAccountScope | null;
+    leaves: readonly WorkflowMaterializedLeafV1[] | undefined;
+    result: JsonValue | undefined;
+    enabled: boolean;
+}>): WorkflowRunResultReview | null {
+    const startsReview = workflowRunStartsReview(params.leaves);
+    const review = useWorkflowRunProducedReview(params.runId ?? '', params.scope,
+        params.enabled && startsReview && params.runId !== null);
+    const reviewId = startsReview && params.runId !== null ? review?.reviewId ?? null : null;
+    return React.useMemo(() => reviewId === null ? null
+        : { reviewId, isResult: workflowResultNamesReview(params.result, reviewId) }, [reviewId, params.result]);
 }
 
 /**
@@ -34,16 +68,14 @@ export function WorkflowRunReview(
     runId: string;
     scope: ServerAccountScope | null;
     enabled: boolean;
+    /** The run page's own header opens this Review (its result), so the summary offers no second way in. */
+    openedFromHeader?: boolean;
     style?: StyleProp<ViewStyle>;
     testID?: string;
   }>,
 ): React.ReactElement | null {
   const router = useRouter();
-  const list = useReviewList(
-    { workflowRunId: props.runId, limit: 1 },
-    { scope: props.scope, enabled: props.enabled },
-  );
-  const review = list.items?.[0] ?? null;
+  const review = useWorkflowRunProducedReview(props.runId, props.scope, props.enabled);
   const reviewId = review?.reviewId ?? null;
   const comments = useReviewComments({
     scope: props.scope,
@@ -138,7 +170,7 @@ export function WorkflowRunReview(
               }
             : null
         }
-        onOpenReview={open}
+        {...(props.openedFromHeader ? {} : { onOpenReview: open })}
       />
     </View>
   );
