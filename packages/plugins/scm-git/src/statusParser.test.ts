@@ -159,6 +159,7 @@ describe('git status snapshot parser', () => {
         const snapshot = buildGitSnapshot(input);
 
         expect(snapshot.repo.defaultBranch).toBe('release/2026');
+        expect(snapshot.repo.defaultRef).toBe('upstream/release/2026');
     });
 
     it('applies untracked file stats when provided (counts as pending additions)', () => {

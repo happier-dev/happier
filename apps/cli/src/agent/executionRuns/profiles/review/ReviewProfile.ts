@@ -53,10 +53,13 @@ export const ReviewProfile: ExecutionRunIntentProfile = bindScmExecutionRunProfi
     delete existing.resultGenerator;
     delete existing.resultBaseRevision;
     // The comparison identity is the sole caller selector; reread its machine evidence.
-    const captured = typeof existing.comparisonId === 'string'
+    let captured = typeof existing.comparisonId === 'string'
       ? await readCapturedScmComparison({ cwd, comparisonId: existing.comparisonId, ...(sessionId ? { sessionId } : {}) }) : null;
     const scmReviewScope = await resolveScope({ cwd,
       intentInput: { ...existing, ...(captured ? { comparison: captured.comparison } : {}) } });
+    if (!captured && scmReviewScope.comparison) {
+      captured = await readCapturedScmComparison({ cwd, comparisonId: scmReviewScope.comparison.id, ...(sessionId ? { sessionId } : {}) });
+    }
     if (scmReviewScope.status === 'unsupported'
       && (existing.comparisonId !== undefined || existing[SCM_PULL_REQUEST_REVIEW_SCOPE_INPUT_KEY] !== undefined
         || existing.selectedPaths !== undefined || existing.selectedFiles !== undefined)) {

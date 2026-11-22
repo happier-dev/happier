@@ -71,6 +71,10 @@ default. Valid repository output larger than 4 MiB remains readable; an explicit
 command budget or `HAPPIER_SCM_MAX_OUTPUT_BYTES` still applies when configured.
 Captured Review uses its existing paged file-index projection to respect the
 socket response boundary without rejecting a large comparison wholesale.
+Review start and round preparation share that bounded projection. Patch bodies
+remain readable by the retained comparison identity; when even the file index
+spans pages, the admitted Review marks its projected inventory incomplete and
+reports how many captured files it includes rather than claiming full coverage.
 
 Credentialed push uses a host-private Git metadata view: object identities,
 references and push configuration are data, while repository/include/attributes

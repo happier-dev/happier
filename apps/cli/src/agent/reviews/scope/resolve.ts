@@ -1,9 +1,11 @@
 import { ReviewScmScopeV1Schema } from '@happier-dev/protocol/reviews/scope';
-import { hasConflictingReviewScope, reviewWorkingTreeAreaV1, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
-import { ScmComparisonSchema, ScmRevisionRangeV1Schema } from '@happier-dev/protocol/scm/comparison';
+import { hasConflictingReviewScope, ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { ScmComparisonSchema, ScmRevisionRangeV1Schema, type ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { resolveScmPullRequestReviewScope } from '@happier-dev/protocol/reviews/scmPullRequestScope';
+import { resolveReviewBaseRefV1, resolveReviewComparisonSourceV1 } from '@happier-dev/protocol/reviews/prepareReviewRoundV1';
+import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
 import { ScmEntryKindSchema } from '@happier-dev/protocol/scm/workingSnapshot';
-import type { ReviewBase, ReviewChangeType, ReviewScmScopeBaseRefV1, ReviewScmScopeDiagnosticCodeV1, ReviewScmScopeDiagnosticV1, ReviewScmScopePathV1, ReviewScmScopeV1, ScmWorkingEntry, ScmWorkingSnapshot } from '@happier-dev/protocol';
+import type { ReviewBase, ReviewChangeType, ReviewScmScopeDiagnosticCodeV1, ReviewScmScopeDiagnosticV1, ReviewScmScopePathV1, ReviewScmScopeV1, ScmWorkingEntry, ScmWorkingSnapshot } from '@happier-dev/protocol';
 
 import { resolveScmSelection } from '@/scm/resolveScmSelection';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
@@ -57,6 +59,7 @@ function parseReviewInput(intentInput: unknown): Readonly<{
   record: ReviewInputRecord;
   changeType: ReviewChangeType;
   base: ReviewBase;
+  headRef?: string;
 }> {
   const raw = isRecord(intentInput) ? intentInput : {};
   const parsed = ReviewStartInputSchema.safeParse({
@@ -69,6 +72,7 @@ function parseReviewInput(intentInput: unknown): Readonly<{
       record: parsed.data,
       changeType: parsed.data.changeType,
       base: parsed.data.base,
+      headRef: parsed.data.headRef,
     };
   }
   return {
@@ -104,27 +108,6 @@ function explicitSelectedPaths(record: ReviewInputRecord): readonly string[] | n
     }
   }
   return [...selected];
-}
-
-function resolveBaseRef(input: Readonly<{
-  base: ReviewBase;
-  snapshot: ScmWorkingSnapshot;
-}>): ReviewScmScopeBaseRefV1 {
-  if (input.base.kind === 'branch') {
-    return { source: 'explicit', ref: input.base.baseBranch };
-  }
-  if (input.base.kind === 'commit') {
-    return { source: 'explicit', ref: input.base.baseCommit };
-  }
-  const upstream = readString(input.snapshot.branch.upstream);
-  if (upstream) {
-    return { source: 'branch_upstream', ref: upstream };
-  }
-  const defaultBranch = readString(input.snapshot.repo.defaultBranch);
-  if (defaultBranch) {
-    return { source: 'default_branch', ref: defaultBranch };
-  }
-  return { source: 'unavailable', ref: null };
 }
 
 function diffAvailable(input: Readonly<{
@@ -170,19 +153,43 @@ function toReviewScopePath(input: Readonly<{
 function selectPathsForChangeType(input: Readonly<{
   explicitPaths: readonly string[];
   changeType: ReviewChangeType;
-  committedPaths: readonly ReviewScmScopePathV1[];
   uncommittedPaths: readonly ReviewScmScopePathV1[];
   changedPaths: readonly ReviewScmScopePathV1[];
 }>): readonly string[] {
   if (input.explicitPaths.length > 0) return input.explicitPaths;
-  const area = reviewWorkingTreeAreaV1(input.changeType);
-  if (area === 'included') {
-    return input.committedPaths.map((entry) => entry.path);
-  }
-  if (area === 'both') {
+  if (input.changeType === 'all') {
     return input.changedPaths.map((entry) => entry.path);
   }
   return input.uncommittedPaths.map((entry) => entry.path);
+}
+
+function projectCapturedReviewScope(comparison: ScmComparison, requestedPaths: readonly string[]): ReviewScmScopeV1 {
+  const filesByPath = new Map(comparison.inventory.files.map(file => [file.path, file]));
+  if (requestedPaths.some(path => !filesByPath.has(path))) {
+    return unsupportedScope({ code: 'invalid_path', message: 'A selected review path is outside the captured comparison.' });
+  }
+  const selectedPaths = [...new Set(requestedPaths.length ? requestedPaths : filesByPath.keys())];
+  const workingTree = comparison.source.kind === 'workingTree';
+  const committed = !workingTree || comparison.source.area === 'included';
+  const uncommitted = workingTree && comparison.source.area !== 'included';
+  const changedPaths = selectedPaths.map(path => {
+    const file = filesByPath.get(path)!;
+    const available = file.evidence.state === 'available' && file.binary === false;
+    const kind = ScmEntryKindSchema.safeParse(file.changeKind);
+    return { path, previousPath: file.previousPath ?? null, kind: kind.success ? kind.data : 'modified' as const,
+      hasCommittedDelta: committed, hasUncommittedDelta: uncommitted,
+      diff: { committedAvailable: committed && available, uncommittedAvailable: uncommitted && available,
+        isBinary: file.binary === true } };
+  });
+  return ReviewScmScopeV1Schema.parse({ kind: 'review_scm_scope.v1', scope: 'changes', status: 'supported',
+    scmBackendId: 'git', scmMode: '.git', repositoryRoot: comparison.repository.rootPath,
+    worktreeRoot: comparison.repository.rootPath,
+    baseRef: { source: comparison.endpoints.before ? 'explicit' : 'unavailable', ref: comparison.endpoints.before ?? null },
+    comparison: { id: comparison.id, source: comparison.source, endpoints: comparison.endpoints },
+    selectedPaths, changedPaths, committedPaths: changedPaths.filter(path => path.hasCommittedDelta),
+    uncommittedPaths: changedPaths.filter(path => path.hasUncommittedDelta),
+    diff: { committedAvailable: changedPaths.some(path => path.diff.committedAvailable),
+      uncommittedAvailable: changedPaths.some(path => path.diff.uncommittedAvailable) }, diagnostics: [] });
 }
 
 export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): Promise<ReviewScmScopeV1> {
@@ -212,33 +219,7 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     if (!captured.success || captured.data.id !== record.comparisonId) {
       return unsupportedScope({ code: 'scm_status_unavailable', message: 'The selected captured comparison is unavailable.' });
     }
-    const comparison = captured.data;
-    const filesByPath = new Map(comparison.inventory.files.map(file => [file.path, file]));
-    if (requestedPaths.some(path => !filesByPath.has(path))) {
-      return unsupportedScope({ code: 'invalid_path', message: 'A selected review path is outside the captured comparison.' });
-    }
-    const selectedPaths = [...new Set(requestedPaths.length ? requestedPaths : filesByPath.keys())];
-    const workingTree = comparison.source.kind === 'workingTree';
-    const committed = !workingTree || comparison.source.area === 'included';
-    const uncommitted = workingTree && comparison.source.area !== 'included';
-    const changedPaths = selectedPaths.map(path => {
-      const file = filesByPath.get(path)!;
-      const available = file.evidence.state === 'available' && file.binary === false;
-      const kind = ScmEntryKindSchema.safeParse(file.changeKind);
-      return { path, previousPath: file.previousPath ?? null, kind: kind.success ? kind.data : 'modified' as const,
-        hasCommittedDelta: committed, hasUncommittedDelta: uncommitted,
-        diff: { committedAvailable: committed && available, uncommittedAvailable: uncommitted && available,
-          isBinary: file.binary === true } };
-    });
-    return ReviewScmScopeV1Schema.parse({ kind: 'review_scm_scope.v1', scope: 'changes', status: 'supported',
-      scmBackendId: 'git', scmMode: '.git', repositoryRoot: comparison.repository.rootPath,
-      worktreeRoot: comparison.repository.rootPath,
-      baseRef: { source: comparison.endpoints.before ? 'explicit' : 'unavailable', ref: comparison.endpoints.before ?? null },
-      comparison: { id: comparison.id, source: comparison.source, endpoints: comparison.endpoints },
-      selectedPaths, changedPaths, committedPaths: changedPaths.filter(path => path.hasCommittedDelta),
-      uncommittedPaths: changedPaths.filter(path => path.hasUncommittedDelta),
-      diff: { committedAvailable: changedPaths.some(path => path.diff.committedAvailable),
-        uncommittedAvailable: changedPaths.some(path => path.diff.uncommittedAvailable) }, diagnostics: [] });
+    return projectCapturedReviewScope(captured.data, requestedPaths);
   }
 
   if (pullRequest.status === 'scope_present') {
@@ -268,9 +249,12 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
       });
     }
 
+    const reviewInput = parseReviewInput(input.intentInput);
+    const scope = reviewInput.record.scope === 'repository' ? 'repository' : 'changes';
+    const capturesCommittedBranch = scope === 'changes' && reviewInput.changeType === 'committed';
     const status = await selected.selection.backend.statusSnapshot({
       context: selected.context,
-      request: { cwd: resolvedCwd.cwd, includeWorktreeStatus: true },
+      request: { cwd: resolvedCwd.cwd, includeWorktreeStatus: !capturesCommittedBranch },
     });
     if (!status.success || !status.snapshot || !status.snapshot.repo.isRepo) {
       return unsupportedScope({
@@ -279,7 +263,11 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
       });
     }
 
-    const reviewInput = parseReviewInput(input.intentInput);
+    if (capturesCommittedBranch) {
+      const source = await resolveReviewComparisonSourceV1({ ...reviewInput, source: reviewInput.record.source }, async () => status.snapshot);
+      const captured = await captureScmComparison({ cwd: resolvedCwd.cwd, source: source!, registry });
+      return projectCapturedReviewScope(captured.comparison, requestedPaths);
+    }
     const changedPaths = status.snapshot.entries.map((entry) => toReviewScopePath({
       entry,
       snapshot: status.snapshot!,
@@ -287,11 +275,9 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
     const committedPaths = changedPaths.filter((entry) => entry.hasCommittedDelta);
     const uncommittedPaths = changedPaths.filter((entry) => entry.hasUncommittedDelta);
     const explicitPaths = requestedPaths;
-    const scope = reviewInput.record.scope === 'repository' ? 'repository' : 'changes';
     const selectedPaths = scope === 'repository' ? [] : uniqueSafePaths(selectPathsForChangeType({
       explicitPaths,
       changeType: reviewInput.changeType,
-      committedPaths,
       uncommittedPaths,
       changedPaths,
     }));
@@ -304,7 +290,7 @@ export async function resolveReviewScmScope(input: ResolveReviewScmScopeInput): 
       scmMode: status.snapshot.repo.mode ?? selected.selection.mode,
       repositoryRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
       worktreeRoot: status.snapshot.repo.rootPath ?? selected.context.detection.rootPath,
-      baseRef: resolveBaseRef({ base: reviewInput.base, snapshot: status.snapshot }),
+      baseRef: resolveReviewBaseRefV1(reviewInput.base, status.snapshot),
       selectedPaths,
       committedPaths,
       uncommittedPaths,

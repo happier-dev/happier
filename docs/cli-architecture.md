@@ -5506,6 +5506,21 @@ development Protocol and CLI readers reload together; older readers cannot
 establish this scope. No Hunt entity, scheduler or host-side per-file fan-out
 is added.
 
+For change reviews in 0.3 development, `changeType: 'committed'` selects
+commits since the merge base of the selected base and head, rather than staged
+changes. Optional `headRef` names the branch or commit under review and defaults
+to `HEAD`; reviewing another branch never switches the checkout. The base is
+explicit `baseBranch`/`baseCommit`, otherwise the repository's branch upstream
+or remote default branch. If neither exists, the caller must select a base.
+The canonical Review selector captures that branch comparison, and subsequent
+rounds recapture the retained base/head selectors. Generic reviewers consume
+its pinned evidence; native reviewers retain their explicit supported-scope
+checks. `uncommitted` still selects pending working-tree changes and `all`
+selects both index and pending changes. An explicit captured comparison keeps
+its own source selector. Matching development Protocol and CLI readers must
+reload together because older readers can ignore `headRef`; this adds no
+migration, compatibility adapter or new SCM comparison kind.
+
 `review.start` uses the Protocol-owned ordered `reviewers` union. The CLI's engine
 shorthand emits engine selections, while `--input-json` accepts the complete mixed
 roster. Per-selection launch settings stay with that entry, including two entries

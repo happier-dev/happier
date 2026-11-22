@@ -205,7 +205,7 @@ export function buildGitSnapshot(input: {
         })]
         : [];
     const remotes = parseGitRemoteVerbose(input.remotesOutput ?? '');
-    const defaultBranch = resolveRemoteDefaultBranch({
+    const defaultRef = resolveGitDefaultRef({
         remoteHeadRefsOutput: input.remoteHeadRefsOutput,
         remotes,
         upstreamRef: parsedStatus.branch.upstream ?? null,
@@ -219,7 +219,7 @@ export function buildGitSnapshot(input: {
             rootPath: input.rootPath,
             backendId: 'git',
             mode: '.git',
-            ...(defaultBranch ? { defaultBranch } : {}),
+            ...(defaultRef ? { defaultBranch: defaultRef.slice(defaultRef.indexOf('/') + 1), defaultRef } : {}),
             worktrees,
             remotes,
         },

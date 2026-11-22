@@ -13,6 +13,10 @@ import { ReviewProfile } from './ReviewProfile';
 import { scmDiffSummaryResultStore } from '../../tasks/scmDiffSummary/results/resultStore';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { captureScmComparison, deleteCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { resolveReviewScmScope } from '@/agent/reviews/scope/resolve';
+import { createScmBackendRegistry } from '@/scm/registry';
+import { createGitBackend } from '../../../../../../../packages/plugins/scm-git/src/backend';
+import { runWithRealGitScmRuntime } from '../../../../../../../packages/plugins/scm-git/src/testkit/scmRuntime.test-support';
 
 /**
  * The daemon-applied plugin runtime registry is a different process, and this
@@ -35,6 +39,59 @@ vi.mock('@/scm/scmBackendCatalog', () => ({
 }));
 
 describe('ReviewProfile', () => {
+  it.each(['explicit', 'upstream', 'default'] as const)('reviews committed branch evidence with %s base instead of the checkout or index', async baseSelection =>
+    runWithScmAccountScope('review-committed-branch', () => runWithRealGitScmRuntime(async () => {
+      const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-committed-branch-' });
+      const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+      let comparisonId: string | undefined;
+      try {
+        await writeFile(join(fixture.rootPath, 'selected.ts'), 'selectedBranchIssue();\n');
+        git('add', 'selected.ts'); git('commit', '-m', 'Selected branch');
+        const head = git('rev-parse', 'HEAD');
+        git('update-ref', 'refs/heads/review-head', head);
+        await writeFile(join(fixture.rootPath, 'ambient.ts'), 'unrelatedCheckoutIssue();\n');
+        git('add', 'ambient.ts'); git('commit', '-m', 'Unrelated checkout');
+        await writeFile(join(fixture.rootPath, fixture.trackedPath), 'stagedIssue();\n');
+        git('add', fixture.trackedPath);
+        git('remote', 'add', 'origin', fixture.rootPath);
+        git('update-ref', 'refs/remotes/origin/review-base', fixture.headCommit);
+        git('symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/review-base');
+        if (baseSelection === 'upstream') {
+          const branch = git('symbolic-ref', '--short', 'HEAD');
+          git('config', `branch.${branch}.remote`, 'origin');
+          git('config', `branch.${branch}.merge`, 'refs/heads/review-base');
+        }
+        const before = { head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain'), index: git('write-tree') };
+        const registry = createScmBackendRegistry([createGitBackend()]);
+        const patch = await ReviewProfile.prepareStartParams!({ cwd: fixture.rootPath,
+          ...(baseSelection === 'default' ? { sessionId: 'attached-review-session' } : {}),
+          resolveReviewScmScope: input => resolveReviewScmScope({ ...input, registry }), request: {
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, intent: 'review', instructions: 'Review.',
+            permissionMode: 'read_only', runClass: 'bounded', retentionPolicy: 'ephemeral', ioMode: 'request_response',
+            intentInput: { changeType: 'committed', headRef: 'review-head',
+              base: baseSelection === 'explicit' ? { kind: 'commit', baseCommit: fixture.headCommit } : { kind: 'none' } },
+          } });
+        expect(patch?.intentInput).toMatchObject({ comparison: { source: { kind: 'branch', head: 'review-head' } },
+          scmReviewScope: { status: 'supported', selectedPaths: ['selected.ts'] } });
+        const captured = ScmComparisonSchema.parse((patch?.intentInput as Record<string, unknown>).comparison);
+        comparisonId = captured.id;
+        expect(captured.endpoints).toEqual({ before: fixture.headCommit, after: head });
+        expect(captured.inventory.files.map(file => file.path)).toEqual(['selected.ts']);
+        expect(patch?.intentInput).toMatchObject({ scmReviewScope: { status: 'supported', selectedPaths: ['selected.ts'] } });
+        const prompt = ReviewProfile.buildPrompt({ sessionId: null, runId: 'branch', callId: 'branch', sidechainId: 'branch',
+          intent: 'review', backendId: 'claude', backendTarget: { kind: 'builtInAgent', agentId: 'claude' },
+          permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+          startedAtMs: 1, instructions: 'Review.', intentInput: patch?.intentInput });
+        expect(prompt).toContain('selectedBranchIssue();');
+        expect(prompt).not.toContain('unrelatedCheckoutIssue();');
+        expect(prompt).not.toContain('stagedIssue();');
+        expect({ head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain'), index: git('write-tree') }).toEqual(before);
+      } finally {
+        if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, comparisonId });
+        await rm(fixture.rootPath, { recursive: true, force: true });
+      }
+    })));
+
   it('retains native questions and assumptions whose absent optional finding references are null', () => {
     const completed = ReviewProfile.onBoundedComplete({ start: { sessionId: null, runId: 'native', callId: 'native',
       sidechainId: 'native', intent: 'review', backendId: 'codex', backendTarget: { kind: 'builtInAgent', agentId: 'codex' },

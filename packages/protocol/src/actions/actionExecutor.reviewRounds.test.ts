@@ -14,6 +14,49 @@ import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { readWorkflowActionFieldTextEncodingV1 } from '../workflows/workflowActionTextV1.js';
 
+describe('committed Review source admission', () => {
+  it.each(['explicit', 'upstream', 'default'] as const)('retains selected branch commits with %s base across Review admission', async baseSelection => {
+    const records = createInMemoryReviewRecordPortV1();
+    const starts = vi.spyOn(records, 'start');
+    const capturedId = '9'.repeat(64);
+    let snapshotReads = 0;
+    const source = { kind: 'branch' as const, head: 'review-topic', base: baseSelection === 'explicit' ? 'review-base' : 'origin/review-base' };
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      resolveApiTokenGrantSessionMachineId: async () => 'review-machine',
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      scmActionExecute: async ({ actionId, input }) => {
+        if (actionId === 'scm.status.snapshot') { snapshotReads += 1; return { success: true, snapshot: {
+          projectKey: 'review-branch', fetchedAt: 1, repo: { isRepo: true, rootPath: '/review-repo', backendId: 'git', mode: '.git',
+            defaultBranch: 'review-base', defaultRef: 'origin/review-base' }, capabilities: createScmCapabilities(),
+          branch: { head: 'other-checkout', upstream: baseSelection === 'upstream' ? 'origin/review-base' : null,
+            ahead: 0, behind: 0, detached: false }, hasConflicts: false, entries: [],
+          totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0,
+            pendingAdded: 0, pendingRemoved: 0 } } }; }
+        if (actionId !== 'scm.diffSummary.capture') throw new Error(`Unexpected SCM boundary: ${actionId}`);
+        expect(ScmComparisonCaptureInputSchema.parse(input)).toMatchObject({ cwd: '/review-repo', source });
+        return { success: true, comparison: { id: capturedId, source, repository: { rootPath: '/review-repo' },
+          endpoints: { before: 'base-oid', after: 'head-oid' }, inventory: { state: 'complete', files: [], reasons: [] } },
+          metadata: { source, sourceKey: capturedId } };
+      },
+      executionRunStart: async (_session, input) => {
+        expect(input.intentInput).toMatchObject({ comparisonId: capturedId, source, headRef: 'review-topic' });
+        return { runId: 'branch-run', callId: 'branch-call', sidechainId: 'branch-call' };
+      },
+    });
+    const result = await executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo',
+      instructions: 'Review selected branch commits.', reviewers: [{ kind: 'engine', engineId: 'codex' }],
+      changeType: 'committed', headRef: 'review-topic',
+      base: baseSelection === 'explicit' ? { kind: 'branch', baseBranch: 'review-base' } : { kind: 'none' },
+    }, { surface: 'ui' });
+    expect(result).toMatchObject({ ok: true });
+    expect(snapshotReads).toBe(baseSelection === 'explicit' ? 0 : 1);
+    const admitted = starts.mock.calls[0]?.[0];
+    if (!admitted) throw new Error('Expected admitted Review');
+    expect((await records.read(admitted.reviewId))?.rounds[0]).toMatchObject({ comparisonId: capturedId,
+      comparisonCapture: { input: { source } } });
+  });
+});
+
 describe('Review round preparation', () => {
   it.each([null, false, true, 'retained-graph'] as const)('uses fresh paid consent at the actual Workflow engine leaf (%s)', async choice => {
     const records = createInMemoryReviewRecordPortV1();
@@ -233,19 +276,22 @@ describe('Review round preparation', () => {
     } });
   });
   it.each([
-    ['uncommitted', 'pending'], ['committed', 'included'], ['all', 'both'],
-  ] as const)('captures the original %s scope for an ordinary change review on the next round', async (changeType, area) => {
+    ['uncommitted', { kind: 'workingTree', area: 'pending' }],
+    ['committed', { kind: 'branch', base: 'review-base', head: 'review-head' }],
+    ['all', { kind: 'workingTree', area: 'both' }],
+  ] as const)('captures the original %s scope for an ordinary change review on the next round', async (changeType, source) => {
     const records = createInMemoryReviewRecordPortV1();
     const reviewRound = await records.start({ reviewId: 'ordinary-review', title: 'Review', subjectKind: 'repository',
       sourceKind: 'direct', reviewerIds: ['step-1-reviewer-1'], startedAt: 1 });
     const prepared = await prepareReviewRoundV1(ReviewPrepareRoundInputV1Schema.parse({ reviewRound,
-      reviewInput: { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review the current changes.', changeType },
+      reviewInput: { reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review the current changes.', changeType,
+        ...(changeType === 'committed' ? { base: { kind: 'branch', baseBranch: 'review-base' }, headRef: 'review-head' } : {}) },
       previousRoundContext: {},
     }), { reviewRecords: records, startedAt: 2, cwd: '/workspace',
       comparisonTarget: { kind: 'machine', machineId: 'original-machine' },
       captureComparison: async input => {
-        expect(input).toEqual({ cwd: '/workspace', source: { kind: 'workingTree', area } });
-        return { id: 'b'.repeat(64), source: { kind: 'workingTree', area }, repository: { rootPath: '/workspace' },
+        expect(input).toEqual({ cwd: '/workspace', source });
+        return { id: 'b'.repeat(64), source, repository: { rootPath: '/workspace' },
           endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } };
       },
     });

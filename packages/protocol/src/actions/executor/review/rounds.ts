@@ -1,6 +1,7 @@
 import { ReviewPrepareRoundInputV1Schema, ReviewNewRoundInputV1Schema } from '../../../reviews/reviewRoundActionsV1.js';
 import { prepareReviewRoundV1, prepareReviewHumanRoundV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { ScmComparisonCaptureOutputSchema, type ScmComparisonCaptureInput } from '../../../scm/diffSummary.js';
+import type { ScmComparison } from '../../../scm/comparison.js';
 import { WorkflowRunGetResultV1Schema } from '../../../workflows/actionsV1.js';
 import { prepareWorkflowRunStartV1 } from '../../../workflows/workflowStartPreparationV1.js';
 import { REVIEW_PREPARE_ROUND_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
@@ -13,6 +14,7 @@ import { SessionStatusResultSchema } from '../../../sessions/control/contract.js
 import { RpcError } from '../../../rpc/errors.js';
 import { invokeHostReviewedChildV1 } from '../deploymentRoleChild.js';
 import type { JsonObject } from '../../../json/strictJsonValue.js';
+import { createActionExecuteFailureError } from '../../actionExecutionResult.js';
 
 /** Retain the same Machine authority the Review's SCM operation uses. */
 export async function resolveReviewComparisonTargetV1(deps: ActionExecutorDeps, ctx: ActionExecutorContext,
@@ -42,13 +44,25 @@ type RoundActionInvocation = Readonly<{
   executeHostChild: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
 }>;
 
-async function captureReviewComparisonV1(inv: RoundActionInvocation, request: ScmComparisonCaptureInput,
-  context = inv.ctx) {
-  const response = await inv.executeHostChild('scm.diffSummary.capture', request, context);
-  if (!response.ok) throw new Error(response.error, { cause: response });
-  const captured = ScmComparisonCaptureOutputSchema.parse(response.result);
-  if (!captured.success) throw new Error(captured.error, { cause: readActionFailureEnvelope({ ...captured, ok: false }) });
-  return captured.comparison;
+/** Review admission carries a bounded index; file bodies stay pinned at the capture owner. */
+export async function captureReviewComparisonV1(inv: Pick<RoundActionInvocation, 'ctx' | 'executeHostChild'>, request: ScmComparisonCaptureInput,
+  context = inv.ctx): Promise<ScmComparison> {
+  const response = await inv.executeHostChild('scm.diffSummary.capture', { ...request, projection: { kind: 'index' } }, context);
+  if (!response.ok) throw createActionExecuteFailureError(response);
+  const parsed = ScmComparisonCaptureOutputSchema.safeParse(response.result);
+  if (!parsed.success) throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+  const captured = parsed.data;
+  if (!captured.success) throw createActionExecuteFailureError(readActionFailureEnvelope({ ...captured, ok: false })!);
+  const comparison = captured.comparison;
+  // Source coverage and transport coverage are separate. Keep the retained identity
+  // readable through SCM paging, and never present a bounded prefix as all files.
+  if (captured.page && captured.page.nextCursor !== null) {
+    return { ...comparison, inventory: { ...comparison.inventory,
+      state: comparison.inventory.state === 'complete' ? 'incomplete' : comparison.inventory.state,
+      reasons: [...comparison.inventory.reasons,
+        `Review index includes ${comparison.inventory.files.length} of ${captured.page.totalFiles} captured files; remaining files are readable from the retained comparison.`] } };
+  }
+  return comparison;
 }
 
 export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Promise<ActionExecuteResult | null> {

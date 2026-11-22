@@ -178,6 +178,7 @@ export const ScmWorkingSnapshotSchema = lazyZodSchema(() => z.object({
     backendId: z.nullable(ScmBackendIdSchema),
     mode: z.nullable(ScmRepoModeSchema),
     defaultBranch: z.optional(z.nullable(z.string().check(z.minLength(1)))),
+    defaultRef: z.optional(z.nullable(z.string().check(z.minLength(1)))),
     worktrees: z._default(z.array(ScmWorktreeSchema), []),
     remotes: z._default(z.array(ScmRemoteInfoSchema), []),
   }),

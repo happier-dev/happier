@@ -19,7 +19,6 @@ import { ActionSessionAddressV1Schema } from '../actions/sessionAddressV1.js';
 import { ExecutableSessionParticipantSelectionV1Schema, ExecutableModelParticipantSelectionV1Schema } from '../discussions/executableParticipants.js';
 import { ReviewRequestedReviewerInputV1Schema } from './reviewHumanV1.js';
 import { ReviewRoundBindingV1Schema } from './reviewArtifactV1.js';
-import type { ScmDiffArea } from '../scm/workingSnapshot.js';
 import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 
 /**
@@ -31,15 +30,6 @@ import { ReviewFindingSeveritySchema } from './reviewFindingClassification.js';
 
 export const ReviewChangeTypeSchema = lazyZodSchema(() => z.enum(['all', 'committed', 'uncommitted']));
 export type ReviewChangeType = z.infer<typeof ReviewChangeTypeSchema>;
-
-/** Review's historical change-type vocabulary selects the SCM owner's index layers. */
-export function reviewWorkingTreeAreaV1(changeType: ReviewChangeType): ScmDiffArea {
-  switch (changeType) {
-    case 'committed': return 'included';
-    case 'uncommitted': return 'pending';
-    case 'all': return 'both';
-  }
-}
 
 export const ReviewBaseSchema = lazyZodSchema(() => z.union([
   z.looseObject({ kind: z.literal('none') }),
@@ -209,6 +199,8 @@ export const ReviewStartInputFieldsSchema = lazyZodSchema(() => z.looseObject({
     // Intentionally default to uncommitted changes: the common "review what I just changed"
     // flow should stay narrowly scoped unless the user explicitly broadens it.
     changeType: z._default(ReviewChangeTypeSchema, 'uncommitted'),
+    /** Branch or commit to review for committed changes; omission selects HEAD. */
+    headRef: z.optional(z.string().check(z.trim(), z.minLength(1))),
     base: z._default(ReviewBaseSchema, { kind: 'none' }),
     engines: z.prefault(ReviewEngineInputsSchema, {}),
     scmReviewScope: zMini.optional(ReviewScmScopeV1Schema),

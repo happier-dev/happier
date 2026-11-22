@@ -3,14 +3,36 @@ import type { ScmComparisonCaptureInput } from '../scm/diffSummary.js';
 import { RpcError } from '../rpc/errors.js';
 import type { ReviewArtifactV1, ReviewRecordPortV1, ReviewRoundComparisonCaptureV1, ReviewSourceKindV1 } from './reviewArtifactV1.js';
 import type { ReviewPrepareRoundInputV1, ReviewPreparedRoundV1 } from './reviewRoundActionsV1.js';
-import { reviewReviewerDisplayNamesForStartV1, reviewReviewerIdsForStartV1, reviewWorkingTreeAreaV1, type ReviewStartInput } from './reviewStart.js';
+import { reviewReviewerDisplayNamesForStartV1, reviewReviewerIdsForStartV1, type ReviewBase, type ReviewStartInput } from './reviewStart.js';
 import { readRecord } from '../inputs/inputRecords.js';
+import type { ScmWorkingSnapshot } from '../scm/workingSnapshot.js';
+import type { ReviewScmScopeBaseRefV1 } from './scope.js';
 
-/** An explicit comparison keeps its original selector; ordinary changes select their admitted area. */
-export function resolveReviewComparisonSourceV1(input: ReviewStartInput): ScmComparisonSource | undefined {
+/** Review base inference is shared by Action capture and direct Run preparation. */
+export function resolveReviewBaseRefV1(base: ReviewBase,
+  snapshot?: Pick<ScmWorkingSnapshot, 'branch' | 'repo'>): ReviewScmScopeBaseRefV1 {
+  if (base.kind === 'branch') return { source: 'explicit', ref: base.baseBranch };
+  if (base.kind === 'commit') return { source: 'explicit', ref: base.baseCommit };
+  const upstream = snapshot?.branch.upstream?.trim();
+  if (upstream) return { source: 'branch_upstream', ref: upstream };
+  const defaultBranch = snapshot?.repo.defaultRef?.trim() || snapshot?.repo.defaultBranch?.trim();
+  if (defaultBranch) return { source: 'default_branch', ref: defaultBranch };
+  return { source: 'unavailable', ref: null };
+}
+
+/** Explicit comparisons retain their selector; committed Review captures branch history. */
+export async function resolveReviewComparisonSourceV1(input: Pick<ReviewStartInput, 'changeType' | 'base'>
+  & Partial<Pick<ReviewStartInput, 'scope' | 'comparisonId' | 'scmPullRequestReviewScope' | 'source' | 'headRef'>>,
+  readSnapshot?: () => Promise<Pick<ScmWorkingSnapshot, 'branch' | 'repo'> | undefined>): Promise<ScmComparisonSource | undefined> {
   if (input.source !== undefined) return ScmComparisonSourceSchema.parse(input.source);
   if (input.scope === 'repository' || input.comparisonId || input.scmPullRequestReviewScope) return undefined;
-  return { kind: 'workingTree', area: reviewWorkingTreeAreaV1(input.changeType) };
+  if (input.changeType === 'committed') {
+    const explicit = resolveReviewBaseRefV1(input.base);
+    const base = explicit.ref ? explicit : resolveReviewBaseRefV1(input.base, await readSnapshot?.());
+    if (!base.ref) throw new RpcError('Select a base for the committed Review; the repository has no upstream or default branch.', 'invalid_parameters');
+    return { kind: 'branch', head: input.headRef ?? 'HEAD', base: base.ref };
+  }
+  return { kind: 'workingTree', area: input.changeType === 'all' ? 'both' : 'pending' };
 }
 
 /** A person-only Review repeats its record and evidence without inventing execution. */
@@ -66,7 +88,7 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
   if ((!comparison && input.reviewInput.comparisonId) || (isNewRound && input.reviewInput.scope !== 'repository')) {
     const cwd = input.comparisonCapture?.cwd ?? input.reviewInput.cwd ?? comparison?.repository.rootPath ?? deps.cwd;
     if (!cwd) throw new RpcError('workspace_unavailable', 'workspace_unavailable');
-    const source = input.comparisonCapture?.source ?? comparison?.source ?? resolveReviewComparisonSourceV1(input.reviewInput);
+    const source = input.comparisonCapture?.source ?? comparison?.source ?? await resolveReviewComparisonSourceV1(input.reviewInput);
     if (!source) throw new RpcError('Review comparison capture requires the original source selector', 'invalid_parameters');
     const { comparisonId: retainedCaptureId, ...captureOptions } = input.comparisonCapture ?? {};
     const comparisonId = isNewRound ? undefined : input.reviewInput.comparisonId ?? retainedCaptureId;

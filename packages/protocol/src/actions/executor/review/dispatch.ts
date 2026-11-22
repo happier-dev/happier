@@ -24,10 +24,9 @@ import { REVIEW_SETTLE_ROUND_ACTION_ID_V1, type ActionId } from '../../actionIds
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '../../actionIdsReviewHumanV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
-import { isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
-import { dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
+import { createActionExecuteFailureError, isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '../../actionExecutionResult.js';
+import { captureReviewComparisonV1, dispatchReviewRoundAction, resolveReviewComparisonTargetV1 } from './rounds.js';
 import type { ScmComparison } from '../../../scm/comparison.js';
-import { ScmComparisonCaptureOutputSchema } from '../../../scm/diffSummary.js';
 import { ScmStatusSnapshotResponseSchema } from '../../../scm/index.js';
 import { resolveReviewComparisonSourceV1 } from '../../../reviews/prepareReviewRoundV1.js';
 import { dispatchReviewSettlementAction } from './settlement.js';
@@ -291,34 +290,32 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const workflowComposition = requiresReviewWorkflowCompositionV1(reviewInput);
         const needsWorkflowProject = workflowComposition && reviewReviewerIdsForStartV1(reviewInput).length > 0;
         let initialComparison: ScmComparison | undefined;
-        let selectedSource = reviewInput.reviewRound ? undefined : resolveReviewComparisonSourceV1(reviewInput);
-        const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
         let comparisonCwd = reviewInput.cwd ?? (sessionId && sessionId !== ctx.defaultSessionId ? undefined : ctx.agentStartContext?.baseline.directory);
+        comparisonCwd ??= ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.project?.directory : undefined;
+        const readComparisonSnapshot = async () => {
+          const response = await executeHostChild('scm.status.snapshot', { ...(sessionId ? { sessionId } : {}),
+            ...(comparisonCwd ? { cwd: comparisonCwd } : {}), detail: 'facts' }, ctx);
+          if (!response.ok) throw createActionExecuteFailureError(response);
+          const status = ScmStatusSnapshotResponseSchema.safeParse(response.result);
+          if (!status.success) throw createActionExecuteFailureError({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+          if (!status.data.success) throw createActionExecuteFailureError({ ok: false,
+            errorCode: status.data.errorCode ?? 'workspace_unavailable', error: status.data.error ?? 'workspace_unavailable' });
+          comparisonCwd ??= status.data.snapshot?.repo.rootPath ?? undefined;
+          return status.data.snapshot;
+        };
+        let selectedSource = reviewInput.reviewRound ? undefined : await resolveReviewComparisonSourceV1(reviewInput, readComparisonSnapshot);
+        const needsComparison = !reviewInput.reviewRound && Boolean(selectedSource || reviewInput.comparisonId);
         const comparisonTarget = needsComparison || needsWorkflowProject
           ? await resolveReviewComparisonTargetV1(deps, ctx, sessionId, actionId, executeHostChild) : undefined;
-        comparisonCwd ??= ctx.externalActionTarget?.kind === 'machine' ? ctx.externalActionTarget.project?.directory : undefined;
-        if ((needsComparison || needsWorkflowProject) && !comparisonCwd) {
-          const response = await executeHostChild('scm.status.snapshot', { ...(sessionId ? { sessionId } : {}), detail: 'facts' }, ctx);
-          if (!response.ok) return response;
-          const status = ScmStatusSnapshotResponseSchema.safeParse(response.result);
-          if (!status.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-          if (!status.data.success) return { ok: false, errorCode: status.data.errorCode ?? 'workspace_unavailable',
-            error: status.data.error ?? 'workspace_unavailable' };
-          comparisonCwd = status.data.snapshot?.repo.rootPath ?? undefined;
-        }
+        if ((needsComparison || needsWorkflowProject) && !comparisonCwd) await readComparisonSnapshot();
         if (needsComparison && (!comparisonCwd || !comparisonTarget)) {
           return { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' };
         }
         if (needsComparison && comparisonCwd && (!reviewInput.comparisonId || !selectedSource)) {
-          const response = await executeHostChild('scm.diffSummary.capture', { cwd: comparisonCwd,
+          initialComparison = await captureReviewComparisonV1({ ctx, executeHostChild }, { cwd: comparisonCwd,
             ...(selectedSource ? { source: selectedSource } : {}),
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
-            ...(sessionId ? { sessionId } : {}) }, ctx);
-          if (!response.ok) return response;
-          const captured = ScmComparisonCaptureOutputSchema.safeParse(response.result);
-          if (!captured.success) return { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
-          if (!captured.data.success) return readActionFailureEnvelope({ ...captured.data, ok: false })!;
-          initialComparison = captured.data.comparison;
+            ...(sessionId ? { sessionId } : {}) });
           selectedSource = initialComparison.source;
           reviewInput = { ...reviewInput, source: initialComparison.source, comparisonId: initialComparison.id };
         }

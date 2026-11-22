@@ -8,6 +8,8 @@ import { configuration } from '@/configuration';
 import { createScmDiffSummaryResultStore } from '@/agent/executionRuns/tasks/scmDiffSummary/results/resultStore';
 import { applyScmReviewedMarkIntent } from '@happier-dev/protocol/scm/reviewedMarks';
 import { buildScmChangeKeys, buildScmReviewScopeId } from '@happier-dev/protocol/scm/comparisonOccurrences';
+import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
+import { resolveReviewComparisonSourceV1 } from '@happier-dev/protocol/reviews/prepareReviewRoundV1';
 import { retainRepositoryCheckpointTurnEvidence } from '../checkpoints/sessionEvidence';
 import { createLocalScmRepositoryFixture } from '@/testkit/scm/scmBackendContractFixtures';
 import { runWithScmAccountScope } from '../accountScope';
@@ -17,6 +19,53 @@ import { readStoredScmComparison, resolveStoredScmComparisonPath } from './compa
 describe('captured SCM comparison storage', () => {
   const directories: string[] = [];
   afterEach(async () => { await Promise.all(directories.splice(0).map(path => rm(path, { recursive: true, force: true }))); });
+
+  it('reviews committed changes on an explicit branch without including the checkout or index', async () => runWithScmAccountScope('capture-comparison-test', async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-review-branch-' });
+    directories.push(fixture.rootPath);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, encoding: 'utf8' }).trim();
+    const base = fixture.headCommit;
+    // Independent branch histories are fixture Git plumbing; the checkout never changes branches.
+    const branchCommit = (name: string, path: string, text: string) => {
+      const env = { ...process.env, GIT_INDEX_FILE: join(fixture.rootPath, `${name}.index`) };
+      const indexedGit = (...args: string[]) => execFileSync('git', args, { cwd: fixture.rootPath, env, encoding: 'utf8' }).trim();
+      const blob = execFileSync('git', ['hash-object', '-w', '--stdin'], { cwd: fixture.rootPath, input: text, encoding: 'utf8' }).trim();
+      indexedGit('read-tree', base);
+      indexedGit('update-index', '--add', '--cacheinfo', `100644,${blob},${path}`);
+      const commit = git('commit-tree', indexedGit('write-tree'), '-p', base, '-m', name);
+      git('update-ref', `refs/heads/${name}`, commit);
+      return commit;
+    };
+    branchCommit('review-base', 'base-only.txt', 'base advanced independently\n');
+    const head = branchCommit('review-head', 'branch-only.txt', 'selected branch evidence\n');
+    await writeFile(join(fixture.rootPath, 'checkout-only.txt'), 'unrelated checked-out branch\n');
+    git('add', 'checkout-only.txt'); git('commit', '-m', 'checkout branch');
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'staged content\n');
+    git('add', fixture.trackedPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'unstaged content\n');
+    const before = { head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain'), index: git('write-tree') };
+    const control = await captureScmComparison({ cwd: fixture.rootPath,
+      source: { kind: 'branch', base: 'review-base', head: 'review-head' } });
+    expect(control.comparison.endpoints).toEqual({ before: base, after: head });
+    expect(control.comparison.inventory.files.map(file => file.path)).toEqual(['branch-only.txt']);
+    const input = ReviewStartInputSchema.parse({ reviewers: [{ kind: 'engine', engineId: 'claude' }],
+      instructions: 'Review the selected branch.', changeType: 'committed',
+      base: { kind: 'branch', baseBranch: 'review-base' }, headRef: ' review-head ' });
+    const source = await resolveReviewComparisonSourceV1(input);
+    expect(source).toEqual({ kind: 'branch', base: 'review-base', head: 'review-head' });
+    const captured = await captureScmComparison({ cwd: fixture.rootPath, source: source! });
+    expect(captured.comparison.endpoints).toEqual({ before: base, after: head });
+    expect(captured.comparison.inventory.state).toBe('complete');
+    expect(captured.comparison.inventory.files.map(file => file.path)).toEqual(['branch-only.txt']);
+    expect(captured.comparison.inventory.files[0]?.evidence).toMatchObject({ state: 'available',
+      unifiedDiff: expect.stringContaining('+selected branch evidence') });
+    const defaultSource = await resolveReviewComparisonSourceV1({ ...input, headRef: undefined });
+    expect(defaultSource).toEqual({ kind: 'branch', base: 'review-base', head: 'HEAD' });
+    const defaultCaptured = await captureScmComparison({ cwd: fixture.rootPath, source: defaultSource! });
+    expect(defaultCaptured.comparison.endpoints).toEqual({ before: base, after: before.head });
+    expect(defaultCaptured.comparison.inventory.files.map(file => file.path)).toEqual(['checkout-only.txt']);
+    expect({ head: git('rev-parse', 'HEAD'), status: git('status', '--porcelain'), index: git('write-tree') }).toEqual(before);
+  }));
 
   it('captures only the selected working-tree area with matching retained endpoints', async () => runWithScmAccountScope('capture-comparison-test', async () => {
     const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-review-area-' });
