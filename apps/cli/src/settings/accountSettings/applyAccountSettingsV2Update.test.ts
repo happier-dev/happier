@@ -1,4 +1,5 @@
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Credentials, TokenOnlyCredentials } from '@/persistence';
@@ -20,11 +21,11 @@ import {
 import { applyAccountSettingsV2Update } from './bootstrapAccountSettingsContext';
 import { resolveAccountSettingsScopeKey } from './accountSettingsScopeKey';
 
-function credentials(token: string): Credentials {
+function credentials(token: string) {
   return {
     token,
     encryption: { type: 'legacy', secret: new Uint8Array(32).fill(3) },
-  };
+  } satisfies Credentials;
 }
 
 function tokenOnlyCredentials(token: string): TokenOnlyCredentials {
@@ -97,6 +98,24 @@ describe('applyAccountSettingsV2Update', () => {
 
     expect(result.settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
     expect(result.settingsSecretsReadKeys).toEqual([]);
+  });
+
+  it('refuses an unadmitted Plain live update while the device holds active custody', async () => {
+    const accountCredentials = credentials('account-a');
+    const winner = snapshot({ credentials: accountCredentials, version: 1, timing: 'after_foreground_ready' });
+    setActiveAccountSettingsSnapshot(winner);
+
+    const failure = await applyAccountSettingsV2Update({
+      credentials: accountCredentials,
+      update: {
+        content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } },
+        version: 2,
+      },
+    }).then(() => undefined, (error: unknown) => error);
+
+    expect.soft(getActiveAccountSettingsSnapshot()?.settingsVersion).toBe(1);
+    expect(applyProcessEnv).not.toHaveBeenCalled();
+    expect(failure).toMatchObject({ code: 'account_mode_downgrade_unverified' });
   });
 
   it('reports an encrypted live update as unavailable for token-only credentials', async () => {
@@ -214,7 +233,12 @@ describe('applyAccountSettingsV2Update', () => {
     const newer = await applyAccountSettingsV2Update({
       credentials: accountCredentials,
       update: {
-        content: { t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' } },
+        content: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({
+          kind: 'account_settings',
+          material: accountCredentials.encryption,
+          payload: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' },
+          randomBytes: length => new Uint8Array(length).fill(1),
+        }) },
         version: 3,
       },
     });

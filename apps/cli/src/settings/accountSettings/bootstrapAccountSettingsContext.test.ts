@@ -547,7 +547,7 @@ describe('bootstrapAccountSettingsContext', () => {
     } finally { await rm(directory, { recursive: true, force: true }); }
   });
 
-  it.each(['network', 'encrypted network', 'cache'] as const)('keeps valid omitted qualified defaults from %s', async (source) => {
+  it.each(['network', 'cache'] as const)('keeps valid omitted qualified defaults from %s', async (source) => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-qualified-default-bootstrap-'));
     Object.assign(mutableConfigurationForTest(), { activeServerDir: directory, clientEncryptionRequirement: 'follow_account' });
     try {
@@ -578,8 +578,7 @@ describe('bootstrapAccountSettingsContext', () => {
         };
         if (path === '/v2/account/settings') {
           if (source === 'cache') throw new Error('offline');
-          return { status: 200, data: { version: 2, content: source === 'encrypted network'
-            ? { t: 'encrypted', c: sealSettings({}) } : { t: 'plain', v: {} } } };
+          return { status: 200, data: { version: 2, content: { t: 'encrypted', c: sealSettings({}) } } };
         }
         if (path === '/v2/account/settings/history') return { status: 200, data: { snapshots: [] } };
         throw new Error(`Unexpected defaults Home read: ${path}`);
@@ -595,7 +594,7 @@ describe('bootstrapAccountSettingsContext', () => {
   it('rejects plaintext settings before publishing when the environment requires E2EE', async () => {
     Object.assign(mutableConfigurationForTest(), { clientEncryptionRequirement: 'require_e2ee' });
     await expect(bootstrapAccountSettingsContext({
-      credentials: createCredentialsStub(),
+      credentials: createTokenOnlyCredentialsStub(),
       mode: 'blocking',
       refresh: 'force',
       nowMs: 1_000_000,
@@ -616,7 +615,7 @@ describe('bootstrapAccountSettingsContext', () => {
 
   it('rejects plaintext settings that carry a synced E2EE requirement', async () => {
     await expect(bootstrapAccountSettingsContext({
-      credentials: createCredentialsStub(),
+      credentials: createTokenOnlyCredentialsStub(),
       mode: 'blocking',
       refresh: 'force',
       nowMs: 1_000_000,
@@ -1233,7 +1232,7 @@ describe('bootstrapAccountSettingsContext', () => {
   it('supports plaintext settings content envelopes (v2) without decrypting', async () => {
     const nowMs = 1_000_000;
     const res = await bootstrapAccountSettingsContext({
-      credentials: createCredentialsStub(),
+      credentials: createTokenOnlyCredentialsStub(),
       mode: 'blocking',
       refresh: 'force',
       nowMs,
@@ -1256,7 +1255,21 @@ describe('bootstrapAccountSettingsContext', () => {
     expect((res.settings as any).notificationsSettingsV1?.pushEnabled).toBe(false);
   });
 
-  it('loads plain v2 settings with token-only credentials without writing a raw durable cache', async () => {
+  it('starts a keyless Plain Account with one Home Settings read and no durable cache write', async () => {
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(url).pathname) {
+        case '/v1/account/encryption':
+          return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+        case '/v2/account/settings':
+          return {
+            status: 200, data: { version: 13, content: {
+              t: 'plain', v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' },
+            } },
+          };
+        default:
+          throw new Error('Unexpected Home request');
+      }
+    });
     const writeCache = vi.fn(async () => {});
     const decryptCiphertext = vi.fn(async () => {
       throw new Error('unexpected decryptCiphertext');
@@ -1270,13 +1283,6 @@ describe('bootstrapAccountSettingsContext', () => {
       deps: {
         resolveCachePath: () => '/tmp/server/account.settings.cache.json',
         readCache: async () => null,
-        fetchFromServer: async () => ({
-          settingsContent: {
-            t: 'plain',
-            v: { sessionPendingQueueDeliveryTiming: 'after_runtime_idle' },
-          },
-          settingsVersion: 13,
-        }),
         decryptCiphertext,
         writeCache,
         applySideEffects: () => {},
@@ -1291,6 +1297,7 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(result.settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
     expect(decryptCiphertext).not.toHaveBeenCalled();
     expect(writeCache).not.toHaveBeenCalled();
+    expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
   });
 
   it.each(['plain', 'e2ee'] as const)('reads Home Settings for a %s Account when an old encrypted cache has no keys', async mode => {
@@ -1331,23 +1338,25 @@ describe('bootstrapAccountSettingsContext', () => {
     }
   });
 
-  it('refuses an unadmitted Plain Settings response while the encrypted cache has active custody', async () => {
+  it.each(['encrypted', 'absent'] as const)('refuses an unadmitted Plain Settings response with active custody and %s disk cache', async cache => {
     const dir = await mkdtemp(join(tmpdir(), 'account-settings-active-custody-'));
     const path = join(dir, 'account.settings.cache.json');
     const get = vi.spyOn(axios, 'get').mockResolvedValue({
       status: 200, data: { version: 14, content: { t: 'plain', v: { themePreference: 'dark' } } },
     });
     try {
-      await writeAccountSettingsCacheAtomic(path, {
-        version: 2, cachedAt: 1_000_000, settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
-        settingsVersion: 13,
-      });
+      if (cache === 'encrypted') {
+        await writeAccountSettingsCacheAtomic(path, {
+          version: 2, cachedAt: 1_000_000, settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
+          settingsVersion: 13,
+        });
+      }
       const failure = await bootstrapAccountSettingsContext({
         credentials: createCredentialsStub(), mode: 'blocking', refresh: 'force', nowMs: 1_000_000,
         deps: { resolveCachePath: () => path },
       }).then(() => undefined, (error: unknown) => error);
+      expect.soft(getActiveAccountSettingsSnapshot() === null).toBe(true);
       expect(failure).toMatchObject({ code: 'account_mode_downgrade_unverified' });
-      expect(getActiveAccountSettingsSnapshot()).toBeNull();
       expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1527,7 +1536,7 @@ describe('bootstrapAccountSettingsContext', () => {
     } as any);
 
     const res = await bootstrapAccountSettingsContext({
-      credentials: createCredentialsStub(),
+      credentials: createTokenOnlyCredentialsStub('t'),
       mode: 'blocking',
       refresh: 'force',
       nowMs: 1_000_000,

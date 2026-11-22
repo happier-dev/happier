@@ -319,6 +319,9 @@ export async function applyAccountSettingsV2Update(params: Readonly<{
   }
   let rawSettings: unknown = null;
   if (content?.t === 'plain') {
+    if (params.expectedAccountEncryptionMode === undefined) {
+      await admitCliReportedAccountMode('plain', params.credentials);
+    }
     rawSettings = content.v;
   } else if (content?.t === 'encrypted') {
     const encryptionCredentials = requireAccountSettingsEncryptionCredentials(params.credentials);
@@ -982,9 +985,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const fetchAndPersist = async (start = initialIncumbent): Promise<AccountSettingsContext> => {
     const { settingsContent, settingsVersion, parsed } = await (params.publication === 'invocation'
       ? readRequesterSettings() : fetchAndParse(params.signal));
-    // A Plain response alongside an encrypted projection is a mode claim.
-    // The caller's custody admits it before the response can be published.
-    if (settingsContent?.t === 'plain' && cacheContent?.t === 'encrypted' && expectedAccountEncryptionMode === undefined) {
+    // Admit against this caller's custody after any shared requester read.
+    if (settingsContent?.t === 'plain' && expectedAccountEncryptionMode === undefined) {
       await admitCliReportedAccountMode('plain', params.credentials);
     }
     params.signal?.throwIfAborted();
