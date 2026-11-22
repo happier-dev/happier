@@ -20,7 +20,6 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'anthropic', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['claude-subscription', 'anthropic'],
-            usageServiceIds: ['claude-subscription', 'anthropic'],
             quotaResetServiceIds: ['claude-subscription'],
             sessionAuthSwitch: {
                 continuityMode: 'restart_same_home',
@@ -82,7 +81,6 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'openai', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['openai-codex', 'openai'],
-            usageServiceIds: ['openai-codex', 'openai'],
             quotaResetServiceIds: ['openai-codex'],
             sessionAuthSwitch: {
                 continuityMode: 'restart_shared_state_required',
@@ -228,7 +226,6 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'gemini', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['gemini'],
-            usageServiceIds: ['gemini'],
             sessionAuthSwitch: {
                 continuityMode: 'restart_same_home',
                 supportedTransitions: ['native_to_connected', 'connected_to_connected', 'same_connected_group'],
@@ -566,7 +563,6 @@ export const AGENTS_CORE = {
         cloudConnect: { vendorKey: 'antigravity', status: 'wired' },
         connectedServices: {
             supportedServiceIds: ['antigravity'],
-            usageServiceIds: ['antigravity'],
             sessionAuthSwitch: {
                 continuityMode: 'restart_shared_state_required',
                 supportedTransitions: ['same_connected_group'],

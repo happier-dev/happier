@@ -1018,7 +1018,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(quotaSnapshot?.accountLabel).toBe('codex-main');
     });
 
-    it('prefers session runtime quota evidence over launch-time connected profile polling', () => {
+    it('keeps a fixed connected profile when fresh runtime evidence names a different login', () => {
         const launchTimeProfileSnapshot = snapshot([
             meter({ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100 }),
         ]);
@@ -1048,9 +1048,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
             },
         });
 
-        expect(selected?.sourceKind).toBe('native_runtime_evidence');
-        expect(selected?.snapshot.profileId).toBe('backup');
-        expect(selected?.snapshot.meters[0]?.remainingPct).toBe(18);
+        expect(selected?.snapshot).toBe(launchTimeProfileSnapshot);
     });
 
     it('keeps fresher connected account usage ahead of stale runtime quota evidence', () => {

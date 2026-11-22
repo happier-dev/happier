@@ -128,6 +128,7 @@ import {
 import {
     SPAWN_SESSION_ERROR_CODES,
     buildBackendTargetKey,
+    isConnectedServiceCredentialHealthStatusUsable,
     isConnectedServiceResumeUnreachableSpawnErrorDetail,
     isConnectedServiceUxDiagnosticSpawnErrorDetail,
     type ComposerAgentContinuationIntentV1,
@@ -242,21 +243,24 @@ import { useSessionMachineReachability } from '@/components/sessions/model/useSe
 import { useCLIDetection } from '@/hooks/auth/useCLIDetection';
 import {
     computeConnectedServiceQuotaGaugeViewModel,
+    selectConnectedServiceSessionProviderUsageGaugeSource,
     type ConnectedServiceQuotaGaugeLabelFormatter,
     type ConnectedServiceQuotaGaugeWindowMode,
 } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { resolveConnectedServiceQuotaRecoveryCreditReceiptNoticeKey } from '@/sync/domains/connectedServices/connectedServiceQuotaRecoveryCreditReceiptPresentation';
 import { useConnectedServiceQuotaSnapshots } from '@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots';
 import { useConnectedServiceAuthGroupsQuery } from '@/hooks/server/connectedServices/useConnectedServiceAuthGroupsQuery';
+import { useProviderAccountUsageSnapshots } from '@/hooks/server/connectedServices/useProviderAccountUsageSnapshots';
 import {
+    selectProviderUsageDisplaySnapshot,
     type ProviderUsageDisplaySnapshotSource,
 } from '@/sync/domains/connectedServices/accountUsage/selectors';
 import {
     connectedServiceProfileKey,
     resolveConnectedServiceProfileLabel,
 } from '@/sync/domains/connectedServices/connectedServiceProfilePreferences';
+import { resolveConnectedServiceCredentialHealthStatus } from '@/sync/domains/connectedServices/resolveConnectedServiceCredentialHealthStatus';
 import { resolveConnectedServiceProjectionSignature } from '@/sync/domains/connectedServices/resolveConnectedServiceProjectionSignature';
-import { useProviderUsageSources } from '@/hooks/server/connectedServices/useProviderUsageSources';
 import { resolveConnectedServiceQuotaProfileRefForSession } from './resolveConnectedServiceQuotaProfileRefForSession';
 import { usePathname, useRouter } from 'expo-router';
 import * as React from 'react';
@@ -3797,10 +3801,9 @@ function SessionViewLoaded({
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
             agentId: liveComposerState.agentId,
-            runtimeIssue: session.lastRuntimeIssue,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata, session.lastRuntimeIssue]);
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4017,49 +4020,81 @@ function SessionViewLoaded({
         sessionId,
     ]);
 
-    const providerAccountUsageRecordIds = React.useMemo(
-        () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata), [session.metadata],
+    const connectedServiceQuotaProfileCredentialUsable = React.useMemo(() => {
+        if (connectedServiceQuotaProfileRef?.credentialHealthStatus === undefined) return true;
+        return isConnectedServiceCredentialHealthStatusUsable(
+            resolveConnectedServiceCredentialHealthStatus(connectedServiceQuotaProfileRef.credentialHealthStatus),
+        );
+    }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
+    const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
+        connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
+        { fetchPolicy: surfaceFocused ? 'poll' : 'cache_only' },
     );
-    // A session bound to its native login never shows the default connected login's quota.
-    const sessionBoundToNativeLogin = React.useMemo(() => {
-        const bindings = readConnectedServicesBindingsFromMetadata(session.metadata, liveComposerState.agentId);
-        return (getAgentCore(liveComposerState.agentId).connectedServices?.usageServiceIds ?? [])
-            .some((serviceId) => bindings[serviceId]?.source === 'native');
-    }, [session.metadata, liveComposerState.agentId]);
-    const usageRequests = React.useMemo(() => [{
-        providerId: liveComposerState.agentId,
-        sessionId,
-        profileRef: connectedServiceQuotaProfileRef,
-        metadataRecordIds: providerAccountUsageRecordIds,
-        nativeAccount: usageLimitRecovery?.selectedAuth?.kind === 'native' || sessionBoundToNativeLogin,
-        sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
-        recoveryCredits: usageLimitRecoveryCredits,
-    }], [sessionId, liveComposerState.agentId, connectedServiceQuotaProfileRef, providerAccountUsageRecordIds,
-        usageLimitRecovery?.selectedAuth?.kind, sessionBoundToNativeLogin, usageLimitRecoveryCheckNowSupported,
-        usageLimitRecoveryCredits]);
-    const [usageSource] = useProviderUsageSources({ requests: usageRequests,
-        // A retained but hidden session surface keeps its last result and does no live polling.
-        connectedServices: accountProfile?.connectedServicesV2 ?? [], fetchEnabled: surfaceFocused });
-    // The profile whose usage is shown: the session's binding, or the default connected login the
-    // owner selected for it. Profile-dependent gauge controls follow this one.
-    const usageProfileRef = usageSource.profileRef;
-    const connectedServiceQuotaProfileKey = usageSource.profileKey;
-    const connectedServiceQuotaDisplaySnapshot = usageSource.quotaDisplaySnapshot;
+    const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
+        ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
+        : null;
+    const connectedServiceQuotaSnapshot = connectedServiceQuotaProfileKey
+        ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
+        : null;
+    const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
+    const providerAccountUsageRecordIds = React.useMemo(
+        () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
+        [session.metadata],
+    );
+    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(
+        providerAccountUsageRecordIds,
+        { fetchEnabled: surfaceFocused },
+    );
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
-        if (!usageProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
+        if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
             labelsByKey: settings.connectedServicesProfileLabelByKey,
-            serviceId: usageProfileRef.serviceId,
-            profileId: usageProfileRef.profileId,
-        }) ?? connectedServiceQuotaDisplaySnapshot?.accountLabel ?? usageProfileRef.profileId;
+            serviceId: connectedServiceQuotaProfileRef.serviceId,
+            profileId: connectedServiceQuotaProfileRef.profileId,
+        }) ?? connectedServiceQuotaDisplaySnapshot?.accountLabel ?? connectedServiceQuotaProfileRef.profileId;
     }, [
-        usageProfileRef,
+        connectedServiceQuotaProfileRef,
         connectedServiceQuotaDisplaySnapshot?.accountLabel,
         settings.connectedServicesProfileLabelByKey,
     ]);
-    const providerUsageDisplaySnapshotSource = usageSource.displaySnapshotSource;
-    const providerUsageGaugeSource = connectedServiceQuotasEnabled && sessionProviderUsageGaugeMode !== 'hidden'
-        ? usageSource.gaugeSource : null;
+    const providerUsageDisplaySnapshotSource = React.useMemo(() => (
+        selectProviderUsageDisplaySnapshot({
+            providerId: liveComposerState.agentId,
+            metadataRecordIds: providerAccountUsageRecordIds,
+            accountUsageSnapshotsByRecordId: providerAccountUsageSnapshotsByRecordId,
+            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
+            connectedServiceQuotaView: connectedServiceQuotaDisplaySnapshot,
+        })
+    ), [
+        connectedServiceQuotaProfileRef,
+        connectedServiceQuotaDisplaySnapshot,
+        liveComposerState.agentId,
+        providerAccountUsageRecordIds,
+        providerAccountUsageSnapshotsByRecordId,
+    ]);
+    const providerUsageGaugeSource = React.useMemo(() => {
+        if (!connectedServiceQuotasEnabled || sessionProviderUsageGaugeMode === 'hidden') return null;
+        if (!connectedServiceQuotaProfileCredentialUsable) return null;
+        return selectConnectedServiceSessionProviderUsageGaugeSource({
+            providerId: liveComposerState.agentId,
+            connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
+            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
+            connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
+            sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
+            recoveryCredits: usageLimitRecoveryCredits,
+            runtimeIssue: session.lastRuntimeIssue ?? null,
+        });
+    }, [
+        connectedServiceQuotasEnabled,
+        connectedServiceQuotaProfileCredentialUsable,
+        connectedServiceQuotaProfileRef,
+        liveComposerState.agentId,
+        providerUsageDisplaySnapshotSource,
+        session.lastRuntimeIssue,
+        sessionProviderUsageGaugeMode,
+        usageLimitRecoveryCredits,
+        usageLimitRecoveryCheckNowSupported,
+    ]);
     const providerUsageGauge = React.useMemo(() => {
         const gaugeSource = providerUsageGaugeSource;
         if (!gaugeSource) return null;
@@ -4069,21 +4104,14 @@ function SessionViewLoaded({
             windowMode: sessionProviderUsageGaugeWindowMode,
             windowModes: sessionProviderUsageGaugeWindowModesSetting,
             numberWindowMode: sessionProviderUsageGaugeNumberWindowMode,
-            additionalMeterIds: usageProfileRef
-                && gaugeSource.snapshot.serviceId === usageProfileRef.serviceId
+            additionalMeterIds: connectedServiceQuotaProfileRef
+                && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
                 ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
                 : [],
             quotaLimitSelection: connectedServiceQuotaLimitSelection,
             nowMs: nowServerMs(),
             formatter: connectedServiceQuotaGaugeFormatter,
-            // A connected login is named by its service; native or runtime-limit usage belongs to
-            // the composer's own provider, whatever service keys it.
-            providerDisplayName: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
-                && gaugeSource.sourceKind !== 'native_runtime_evidence'
-                && usageProfileRef
-                && gaugeSource.snapshot.serviceId === usageProfileRef.serviceId
-                ? resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId)
-                : t(getAgentCore(liveComposerState.agentId).displayNameKey),
+            providerDisplayName: resolveConnectedServiceProviderDisplayName(gaugeSource.snapshot.serviceId),
             activeAccountDisplayLabel: providerUsageDisplaySnapshotSource?.kind === 'connected_service_quota_view'
                 && gaugeSource.snapshot === connectedServiceQuotaDisplaySnapshot
                 ? connectedServiceQuotaActiveAccountLabel
@@ -4095,18 +4123,17 @@ function SessionViewLoaded({
         connectedServiceQuotaDisplaySnapshot,
         providerUsageDisplaySnapshotSource?.kind,
         providerUsageGaugeSource,
-        usageProfileRef,
+        connectedServiceQuotaProfileRef,
         pinnedQuotaMeterIdsByKey,
         connectedServiceQuotaLimitSelection,
         sessionProviderUsageGaugeWindowModesSetting,
         sessionProviderUsageGaugeNumberWindowMode,
         sessionProviderUsageGaugeWindowMode,
-        liveComposerState.agentId,
     ]);
     const providerUsageGaugeConnectedServiceProfileRef =
         providerUsageGaugeSource
         && isConnectedServiceBoundProviderUsageDisplaySource(providerUsageDisplaySnapshotSource)
-            ? usageProfileRef
+            ? connectedServiceQuotaProfileRef
             : null;
     const [providerUsageRecoveryCreditPending, setProviderUsageRecoveryCreditPending] = React.useState(false);
     const handleProviderUsageRecoveryCreditPress = React.useCallback(async () => {
