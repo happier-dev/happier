@@ -144,9 +144,9 @@ const providerObservationShell = {
 } as const;
 
 describe('Channels collection declarations', () => {
-  it('migrates the published V22 contract before adopting changed embedded Action schemas', async () => {
+  it.each([22, 23])('migrates the published V%s contract without rewriting ingress custody', async (version) => {
     const retained = JSON.parse(readFileSync(new URL(
-      './testkit/fixtures/channelStateV22.json', import.meta.url,
+      `./testkit/fixtures/channelStateV${version}.json`, import.meta.url,
     ), 'utf8'));
     const source = preparePluginAccountCollectionContractV1({
       pluginId: PLUGIN_MANIFEST.id, contribution: retained.collection,
@@ -826,8 +826,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(23);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(24);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -886,6 +886,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v21-to-v22', fromSchemaVersion: 21, toSchemaVersion: 22,
     }, {
       id: 'channel-state-v22-to-v23', fromSchemaVersion: 22, toSchemaVersion: 23,
+    }, {
+      id: 'channel-state-v23-to-v24', fromSchemaVersion: 23, toSchemaVersion: 24,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');

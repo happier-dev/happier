@@ -24,14 +24,20 @@ import type { SettingsChange } from '@happier-dev/plugin-sdk/settings';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/plugin-sdk/manifest';
 import { prepareConversationIngressObligationForBindingDeletion, prepareConversationIngressObligationForConnectionDeletion } from './ingress.js';
 import { runTriageConfiguredHandoffV1 } from '../../triage/src/sessions/configuredActionRun.js';
+import { describeTriageEntrySessionPhaseV1 } from '../../triage/src/ui/header/sessionStartOutcome.js';
 import { testkitEntryRef, testkitLocator } from '../../triage/src/corpus/testkit/observations.test-support.js';
 import { testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, testkitTriageActionId } from '../../triage/src/sessions/testkit/entrySessionTestkit.test-support.js';
 import { TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 } from '../../triage/src/actions/entrySessionProtocol.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 describe('portable Account PR Watch Action', () => {
+    const heldByPerson = { status: 'held', localId: 'configured-input', code: 'session_input_target_unavailable',
+        failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue',
+            errorCode: 'held_by_person', httpStatus: null },
+    } as const;
+
     async function configuredFixFixture(options: { head?: string; expectedHead?: string; closed?: boolean; exhausted?: boolean;
-        send?: 'rejected' | 'unknownThenAccepted' | 'typedError' | 'fanoutFailure' | 'fanoutUnknownThenFailure'; endpointMetadata?: boolean;
+        send?: 'rejected' | 'heldByPerson' | 'unknownThenAccepted' | 'typedError' | 'fanoutFailure' | 'fanoutUnknownThenFailure'; endpointMetadata?: boolean;
         pollFailure?: ConversationConnectionPollFailureV1 | null } = {}) {
         const declaration = GITHUB_PLUGIN.manifest.contributes.targetedPluginContributions?.find(entry => typeof entry.target === 'object' && entry.target !== null && 'pluginId' in entry.target && entry.target.pluginId === CHANNELS_PLUGIN.manifest.id);
         if (!declaration) throw new Error('Missing real GitHub Channels contribution');
@@ -70,6 +76,7 @@ describe('portable Account PR Watch Action', () => {
                 if (options.send === 'typedError') throw new PluginError({ code: 'machine_admission_transport_unavailable',
                     message: 'The Session transport is unavailable.', retryable: true });
                 if (options.send === 'rejected') return { status: 'rejected', code: 'session_input_cancelled' };
+                if (options.send === 'heldByPerson') return heldByPerson;
                 if (options.send === 'fanoutUnknownThenFailure' && sendAttempts === 1) return { kind: 'fanout', results: [{
                     target: { serverId: 'srv_example', sessionId: 'session-a' },
                     result: { ok: true, result: { status: 'outcomeUnknown', localId: 'configured-input', code: 'lost_ack' } },
@@ -180,8 +187,9 @@ describe('portable Account PR Watch Action', () => {
             expect(f.execute.mock.calls.filter(([id]) => id === 'session.message.send')).toHaveLength(send === 'fanoutUnknownThenFailure' ? 2 : 1);
         } finally { await f.kit.dispose(); }
     });
-    it('composes configured Triage Fix with registered Channels custody, attachments and the one host-start counter', async () => {
-        const f = await configuredFixFixture({ head: TESTKIT_OBSERVED_REVISION.headSha, expectedHead: TESTKIT_OBSERVED_REVISION.headSha });
+    it.each(['accepted', 'heldByPerson'] as const)('composes configured Triage Fix with registered Channels custody and one input (%s)', async send => {
+        const f = await configuredFixFixture({ head: TESTKIT_OBSERVED_REVISION.headSha, expectedHead: TESTKIT_OBSERVED_REVISION.headSha,
+            ...(send === 'heldByPerson' ? { send } : {}) });
         const entryRef = testkitEntryRef({ collisionScope: 'acme/widgets', entryId: '12' });
         const locator = testkitLocator({ webUrl: 'https://github.com/acme/widgets/pull/12' });
         const sourceInstanceId = testkitConfiguredInstance().instance.sourceInstanceId;
@@ -225,13 +233,36 @@ describe('portable Account PR Watch Action', () => {
                     preparation: { instance: testkitConfiguredInstance(), entryRef, lastKnownLocator: locator,
                         observed: { ...TESTKIT_OBSERVED_REVISION, observedAtMs: 1 } } },
             }] });
-            expect(result).toMatchObject({ handoff: { kind: 'sendResult', session, result: { status: 'accepted', localId: 'configured-input' } } });
+            if (send === 'heldByPerson') {
+                const obligation = [...f.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+                expect(SessionPullRequestConfiguredFixCustodySchema.safeParse(obligation?.value.payload).success).toBe(true);
+            }
+            expect(result).toMatchObject({ handoff: { kind: 'sendResult', session, result: send === 'heldByPerson'
+                ? heldByPerson : { status: 'accepted', localId: 'configured-input' } } });
             expect(effects).not.toContain('session.message.send');
             const sends = f.execute.mock.calls.filter(([id]) => id === 'session.message.send');
             expect(sends).toHaveLength(1);
             expect(sends[0]?.[1]).toMatchObject({ attachments: [{ attachmentLocalId: 'entry', value: {
                 value: { entryRef, sourceInstance: { sourceInstanceId } } } }] });
             expect(await f.progress()).toMatchObject({ roundsStarted: 0, activeRound: { started: false } });
+            if (send === 'heldByPerson') {
+                const obligation = [...f.state.rows.values()].find(row => row.value['record-kind'] === 'ingress-obligation');
+                expect(obligation?.value.terminal).toBe(true);
+                const validateRow = compilePluginJsonSchema(CHANNEL_STATE_COLLECTION.schema);
+                expect(isValidPluginJsonSchemaValue(validateRow, obligation?.value)).toBe(true);
+                await expect(f.invoke(delegated[0])).resolves.toEqual({ kind: 'configuredFixResult', result: heldByPerson });
+                expect(describeTriageEntrySessionPhaseV1({ kind: 'handoffSettled', result }, { sessionName: 'PR Fix' }))
+                    .toMatchObject({ labelKey: 'plugins.triage.surface.session.heldIn', labelParams: { session: 'PR Fix' },
+                        failure: { codes: ['held_by_person'] } });
+
+                const payload = SessionPullRequestConfiguredFixCustodySchema.parse(obligation?.value.payload);
+                const { failureCause: _cause, ...legacyResult } = heldByPerson;
+                const legacyPayload = { ...payload, result: legacyResult };
+                expect(SessionPullRequestConfiguredFixCustodySchema.parse(legacyPayload)).toEqual(legacyPayload);
+                expect(isValidPluginJsonSchemaValue(validateRow, { ...obligation?.value, payload: legacyPayload })).toBe(true);
+                expect(f.execute.mock.calls.filter(([id]) => id === 'session.message.send')).toHaveLength(1);
+                return;
+            }
             f.start();
             await f.invoke(delegated[0]);
             await f.invoke(delegated[0]);

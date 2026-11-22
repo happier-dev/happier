@@ -2,6 +2,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-
 import { embedProtocolJsonSchema, ProtocolValidationError, type PluginJsonSchema, type ProtocolJsonValue,
     type ProtocolSchemaInput, type ProtocolSchemaOutput,
     type ProtocolSchemaSafeParseResult } from '@happier-dev/plugin-sdk/protocol';
+import { ActionFailureCauseV1ProtocolSchema } from '@happier-dev/plugin-sdk/errors';
 import type { SessionMessageSendResultV1ProtocolSchema } from '@happier-dev/plugin-sdk/sessions';
 import { SessionPullRequestConfiguredFixInputV1Schema } from '@happier-dev/channels-protocol/v1';
 import { CONFIGURED_FIX_CAUSE_ACTION_IDS_V19 } from './configuredFixActionIdsV19.js';
@@ -19,10 +20,11 @@ type PersistedResultDtoV19 = Exclude<LiveResult, LiveFanout> | {
 };
 export type PersistedConfiguredFixResultV19 = PersistedResultDtoV19 & ProtocolJsonValue;
 
-/** Exact result document from the retained channel-state v19/fqhCh writer.
- * This persistence contract deliberately does not project a live SDK schema.
- * The type-only live references above check the translation at compile time;
- * they cannot change these stored bytes when the wire contract evolves. */
+// The Send schema projects the same cause for held single results and fanout leaves.
+const { $schema: _causeDialect, ...heldFailureCauseSchema } = ActionFailureCauseV1ProtocolSchema.jsonSchema;
+
+/** Retained v19/fqhCh result document with the optional held Send cause.
+ * Keep the rest of the stored result independent of live SDK schema changes. */
 const RESULT_SCHEMA: PluginJsonSchema = {
   "anyOf": [
     {
@@ -141,6 +143,7 @@ const RESULT_SCHEMA: PluginJsonSchema = {
                   "type": "string",
                   "const": "held"
                 },
+                "failureCause": heldFailureCauseSchema,
                 "localId": {
                   "type": "string"
                 }
@@ -637,6 +640,7 @@ const RESULT_SCHEMA: PluginJsonSchema = {
                                     "type": "string",
                                     "const": "held"
                                   },
+                                  "failureCause": heldFailureCauseSchema,
                                   "localId": {
                                     "type": "string"
                                   }

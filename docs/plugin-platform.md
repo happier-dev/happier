@@ -6880,6 +6880,11 @@ migration preserves row values; Data validates them against the target contract
 before promoting the writer through the existing candidate-preparation path.
 Same-version contract conflicts remain refusals.
 
+Channels `channel-state` V24 retains the optional Send failure cause for held PR
+Fix receipts. The V23→V24 identity migration preserves existing receipts,
+including those without a cause. A person-held Send settles into Pending, and
+Triage uses the receipt to show the named Session’s waiting notice.
+
 ### Plugin Collection tables
 
 The Account Collection query owner accepts both `asc` and `desc` keyset order.

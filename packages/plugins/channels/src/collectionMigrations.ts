@@ -408,6 +408,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     // Embedded Action schemas changed under V22. Data validates retained rows
     // against the new contract before promoting; custody values stay intact.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v23-to-v24',
+    fromSchemaVersion: 23,
+    toSchemaVersion: 24,
+    // Held Send receipts can now retain an optional cause. Existing rows stay intact.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',
