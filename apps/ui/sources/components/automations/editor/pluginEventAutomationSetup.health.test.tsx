@@ -1352,14 +1352,17 @@ it.each([
     const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected Runs on Account');
-    const { event, fresh, projection, inputs, machineId, pluginId } = healthSetupFixture(connection.serverId, serverIdentityId);
+    const { event, fresh, projection, inputs, machineId, pluginId } = catalog === 'savedCheckFrom'
+        ? healthSetupFixture(connection.serverId, serverIdentityId, true,
+            { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' })
+        : healthSetupFixture(connection.serverId, serverIdentityId);
     const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
         members: [{ machineId, serverId: connection.serverId, serverIdentityId,
             projection: inputs.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null);
     rpc.respond = request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
-        ? { protocolVersion: 1, projection, automationEligibleEvents: catalog === 'events' ? [event] : [] } : undefined;
+        ? { protocolVersion: 1, projection, automationEligibleEvents: catalog === 'events' || catalog === 'savedCheckFrom' ? [event] : [] } : undefined;
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
@@ -1367,6 +1370,34 @@ it.each([
             metadata: { host: 'Runs on studio', platform: 'linux', happyCliVersion: '0.3.0',
                 happyHomeDir: '/home/runs-on', homeDir: '/home/runs-on' } })], true, { sourceServerId: connection.serverId });
         observeMachinePresenceForTest(lifetime.scope, [machineId]);
+        if (catalog === 'savedCheckFrom') {
+            const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+            const { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } = await import('@happier-dev/protocol/automations/automationTriggerIdentity');
+            const onSettled = vi.fn();
+            const subject = { kind: 'environment' as const, environmentId: 'production' };
+            const sourceConfig = HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject,
+                checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
+                    config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
+                    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }],
+            });
+            const triggerId = AutomationTriggerIdSchema.parse('262544ff-0dc8-4240-9462-89784070f591');
+            screen = await renderScreen(<PluginEventAutomationEditor automationId="check" clientId={triggerId} value={null}
+                seed={{ automationId: 'check', triggerId, expectedTriggerRevision: AutomationTriggerRevisionSchema.parse(1), enabled: true,
+                    eventRef: event.event.identity, source: { v: 1, sourceInstanceId: createHealthCheckSourceInstanceIdV1(subject),
+                        sourceContractVersion: 1, sourceConfig, displayLabel: 'Saved health checks' },
+                    observation: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                        machineId, pluginId, materializationId: 'machine-services-observer',
+                    } }, filter: null, maximumObservationAgeMs: null }} serverId={connection.serverId}
+                authoringMachineId={machineId} savedSourceSetup={{ chooseWatcher: true, input: { selectedCheckId: 'http' },
+                    onSettled, renderUnavailable: () => null }} onComplete={() => {}} onCancel={() => {}} />);
+            await waitForHomeGovernance(() => {
+                const proceed = screen!.findAllByType(RoundButton).find(button => button.props.title === t('common.continue'));
+                expect(proceed?.props.disabled).toBe(false);
+                expect(screen!.getTextContent()).toContain('Runs on studio');
+            });
+            expect(onSettled).not.toHaveBeenCalled();
+            return;
+        }
         screen = await renderScreen(<TriggerPluginEventRows testID="runs-on-trigger" when={{ kind: 'pluginEvent', value: null }}
             onChange={() => {}} machineId={catalog === 'noMachine' ? null : machineId} serverId={connection.serverId} editing />);
         const model = () => screen!.findByType(InlinePluginEventEditor).props.model;

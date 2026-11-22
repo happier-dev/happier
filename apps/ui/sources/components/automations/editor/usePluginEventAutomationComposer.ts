@@ -639,13 +639,13 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         return true;
     }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableWatchers]);
 
-    // A new Event watches from the seeded monitoring Machine for its own Event, else from the surface's Machine.
-    // The one current installation there is chosen for the person; any other watcher stays one pick away.
+    // New Events and direct saved-source moves start on the surface's Machine when it can watch.
+    // A new Event with a bound monitoring Machine starts there instead.
     const defaultWatcherMachineId = params.defaultWatcherMachineId ?? null;
     React.useEffect(() => {
         const seed = initialSetupSeed;
         const eventRef = selectedEvent?.event.identity ?? initialEventRef;
-        if (!eventRef || initialEditSeed || selectedWatcherOrigin) return;
+        if (!eventRef || (initialEditSeed && !movingSavedSource) || selectedWatcherOrigin) return;
         const preferredMachineId = seed?.monitoringMachineId && arePluginContributionIdentitiesEqual(seed.eventRef, eventRef)
             ? seed.monitoringMachineId : defaultWatcherMachineId;
         if (!preferredMachineId) return;
@@ -653,7 +653,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId;
         const candidates = selectableWatchers.filter(candidate => machineId(candidate) === preferredMachineId);
         if (candidates.length === 1) selectWatcher(candidates[0]!);
-    }, [defaultWatcherMachineId, initialEditSeed, initialEventRef, initialSetupSeed, selectedEvent, selectedWatcherOrigin,
+    }, [defaultWatcherMachineId, initialEditSeed, initialEventRef, initialSetupSeed, movingSavedSource, selectedEvent, selectedWatcherOrigin,
         selectWatcher, selectableWatchers]);
 
     const resolveExecutionOrigin = React.useCallback(() => {
