@@ -27,8 +27,10 @@ import {
     createActivePluginAccountKvClient,
 } from './activePluginAccountKvClient';
 import {
+    createActivePluginCollectionClient,
     createActivePluginCollectionClientForContractRef,
     prepareCollectionOperation,
+    type ActivePluginCollectionClientV1,
     type ActivePluginCollectionClientForContractRefOutcomeV1,
     type ActivePluginCollectionRejectedV1,
     type ActivePluginCollectionUnavailableReasonV1,
@@ -225,11 +227,9 @@ type ResolvedCollection<TValue extends PluginAccountCollectionValue<PluginAccoun
 >;
 
 /**
- * The RN/RNW direct Data adapter for a surface or Account Action. Availability admits
- * only an immutable current-release ref, the existing Data client reads that
- * ref through its authenticated route, and all row/query semantics remain in
- * the Data owner. This adapter keeps neither a contract cache nor an Account
- * epoch; every operation rechecks the captured lifetime and current admission.
+ * The RN/RNW direct Data adapter for a surface or Account Action. Availability
+ * checks the current release and the Data routes admit the exact reader or
+ * writer ref. Each operation uses the binding's captured Account lifetime.
  */
 type PluginUiDataBindingInput = Readonly<{
     pluginId: string;
@@ -327,6 +327,20 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
             throw dataError(COLLECTION_UNDECLARED_CODE, 'The requested Account Collection is not declared');
         }
         const requested = normalized.ref;
+        let rowReader: Pick<ActivePluginCollectionClientV1<PluginAccountCollectionValue<TDefinition>>, 'get' | 'query'> | undefined;
+        const acquireRowReader = async (signal?: AbortSignal) => {
+            await ensureCollectionAdmitted({ ref: requested }, signal);
+            admit(requested, signal);
+            // The exact get/query endpoint decides reader compatibility in its
+            // row snapshot. The compiled definition supplies only the decoder.
+            return rowReader ??= createActivePluginCollectionClient<PluginAccountCollectionValue<TDefinition>>({
+                contract: normalized.contract,
+                access: 'readOnly',
+                accountLifetime: input.accountLifetime,
+                assertAdmitted: () => { admit(requested); },
+                signal: input.signal,
+            });
+        };
         return Object.freeze<PluginAccountCollectionForDefinition<TDefinition>>({
             sharing: Object.freeze<PluginAccountCollectionForDefinition<TDefinition>['sharing']>({
                 async setGrant(rowId, request, options) {
@@ -450,8 +464,8 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                 throw unavailableError(outcome.reason);
             },
             async get(rowId, options) {
-                const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
-                const outcome = await active.client.get(rowId, options);
+                const reader = await acquireRowReader(options?.signal);
+                const outcome = await reader.get(rowId, options);
                 admit(requested, options?.signal);
                 if (outcome.status === 'ready') {
                     return outcome.row;
@@ -532,8 +546,8 @@ function createPluginUiDataBindings(input: PluginUiDataBindingInput) {
                     lifetime: input.accountLifetime, readBasis: queryReadBasis(request),
                 }) : undefined;
                 try {
-                    const active = await resolve<PluginAccountCollectionValue<TDefinition>>(requested, options?.signal, false);
-                    const outcome = await active.client.query({
+                    const reader = await acquireRowReader(options?.signal);
+                    const outcome = await reader.query({
                         indexId: request.index,
                         ...(request.prefix ? { prefix: request.prefix } : {}),
                         ...(request.prefixes === undefined ? {} : { prefixes: request.prefixes }),

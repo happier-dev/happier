@@ -711,18 +711,26 @@ describe('Plugin Account Availability reader', () => {
             publications, unions: unions(), demandedSchemaPasses });
     });
 
-    it('loads only the demanded bundled declaration, retains discovery, and fences Account replacement', async () => {
+    it('reads each demanded declaration once across overlapping opens and fences Account replacement', async () => {
         const loaded: string[] = [];
+        const target = 'com.acme.first';
+        const sources = Array.from({ length: 9 }, (_, index) => `com.acme.source-${index}`);
+        const demanded = [target, ...sources];
+        const unrelated = 'com.acme.second';
         const graph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'account-actions', tier: 'reactNative',
             entry: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest,
             files: [{ relativePath: 'react-native/account-actions/entry.cjs.bundle', digest: artifactDigest, byteSize: 1 }],
             builtWith: { bundler: 'esbuild', version: '1.0.0' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
-        const bundles = ['com.acme.first', 'com.acme.second'].map(pluginId => {
+        const bundles = [...demanded, unrelated].map(pluginId => {
+            const contributesToTarget = sources.includes(pluginId);
             const manifest = PluginPortableReleaseManifestV1Schema.parse({ schemaVersion: 2, id: pluginId,
                 version: '1.0.0', displayName: pluginId, runtime: { apiVersion: 1 }, contributes: {
                     actions: [{ id: 'read', title: 'Read', surfaces: ['ui'], scopes: ['global'], placementBindings: [], dangerLevel: 'safe',
                         execution: { target: 'account', account: { artifactId: graph.artifactId, exportName: 'activate' } },
                         inputSchema: { type: 'object', additionalProperties: false } }],
+                    ...(contributesToTarget ? { targetedPluginContributions: [{ id: 'source',
+                        target: { pluginId: target, pointId: 'sources' }, protocol: { id: 'sources', version: 1 },
+                        operations: { read: 'read' } }] } : {}),
                     ui: { renderers: [{ id: 'body', kind: 'reactNative', artifact: 'body' }],
                         views: [{ id: 'page', container: 'appPage', target: { kind: 'app' }, renderer: 'body', title: pluginId }] },
                 } });
@@ -730,6 +738,7 @@ describe('Plugin Account Availability reader', () => {
                 displayName: pluginId, normalizedManifest: manifest, artifactGraphs: [graph], entriesById: projectPluginPortableUiDeclarationsV1(manifest) };
             return { pluginId, pluginVersion: manifest.version, packageName: declaration.packageName,
                 displayName: pluginId, entriesById: declaration.entriesById, artifactGraphs: [graph],
+                ...(contributesToTarget ? { targetedPluginIds: [target] } : {}),
                 presentationManifest: { ...manifest, contributes: { ...manifest.contributes,
                     actions: manifest.contributes.actions.map(({ inputSchema: _schema, ...action }) => action) } },
                 loadDeclaration: async () => { loaded.push(pluginId); return declaration; } };
@@ -738,18 +747,19 @@ describe('Plugin Account Availability reader', () => {
         const empty = snapshot({ intentReads: [], materializations: [], snapshots: [] });
         store.replace({ scope, snapshot: empty });
         const reader = store.bind(scope);
-        expect(Object.keys(reader.readAccountUiProjection()?.surfacePlacementsById ?? {})).toHaveLength(2);
+        expect(Object.keys(reader.readAccountUiProjection()?.surfacePlacementsById ?? {})).toHaveLength(bundles.length);
         expect(loaded).toEqual([]);
         expect(reader.readCurrentArtifact({ pluginId: 'com.acme.first', contributionId: 'read', tier: 'reactNative', platform: 'web' }))
             .toMatchObject({ kind: 'available', artifact: { digest: artifactDigest } });
         expect(loaded).toEqual([]);
-        await Promise.all([reader.ensureCurrentAccountExecution('com.acme.first'), reader.ensureCurrentAccountExecution('com.acme.first')]);
-        expect(loaded).toEqual(['com.acme.first']);
-        expect(reader.readCurrentAccountExecution('com.acme.first').kind).toBe('available');
-        expect(reader.readCurrentAccountExecution('com.acme.second').kind).toBe('unavailable');
+        await Promise.all([reader.ensureCurrentAccountExecution(target), reader.ensureAccountTargetDeclarations(target),
+            reader.ensureAccountTargetDeclarations(target)]);
+        expect([...loaded].sort()).toEqual([...demanded].sort());
+        expect(reader.readCurrentAccountExecutionDeclarations().map(row => row.manifest.id)).toEqual([...demanded].sort());
+        expect(reader.readCurrentAccountExecution(unrelated).kind).toBe('unavailable');
         store.replace({ scope: { ...scope, accountId: 'other' }, snapshot: empty });
-        expect((await reader.ensureCurrentAccountExecution('com.acme.second')).kind).toBe('unavailable');
-        expect(loaded).toEqual(['com.acme.first']);
+        expect((await reader.ensureCurrentAccountExecution(unrelated)).kind).toBe('unavailable');
+        expect(loaded).toHaveLength(demanded.length);
     });
 
     it.each([true, false])('fulfills one bundled declaration without revisiting unrelated Machine census rows (presentation schemas: %s)', async (presentationIncludesSchemas) => {

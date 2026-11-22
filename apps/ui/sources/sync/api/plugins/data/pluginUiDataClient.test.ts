@@ -265,7 +265,7 @@ async function loadClient(options: Readonly<{
     vi.doMock('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope', () => ({
         captureServerRequestAuthorityForServerAccountScope: async () => ({
             scope: lifetime.scope,
-            context: { token: 'account-token' },
+            context: { token: 'account-token', targetServerUrl: 'https://server.example' },
             request: transport,
             release: async () => undefined,
         }),
@@ -304,6 +304,29 @@ async function loadClient(options: Readonly<{
 }
 
 describe('Plugin UI Data client', () => {
+    it('starts only the requested Collection row reads during a list open', async () => {
+        let serverAllowsRead = true;
+        const { client, transport } = await loadClient({
+            collectionRead: () => serverAllowsRead
+                ? Response.json({ rows: [], changeCursor: 9 })
+                : Response.json({ error: 'collection_unavailable' }, { status: 404 }),
+        });
+        client.collection(defineAccountCollection({ ...collectionDefinition, id: 'unopened' }));
+        const collection = client.collection(collectionDefinition);
+        const query = { index: 'by-status', prefix: ['open'], order: 'asc' } as const;
+        // Model sequential acquisitions across the observed 26 contract starts.
+        for (let index = 0; index < 26; index++) {
+            await expect(collection.query(query)).resolves.toMatchObject({ rows: [], changeCursor: 9 });
+        }
+        const contractReads = transport.mock.calls.filter(([path]) => path === '/v1/plugins/data/contract');
+        const rowReads = transport.mock.calls.filter(([path]) => path === '/v1/plugins/data/query');
+        expect({ contracts: contractReads.length, rows: rowReads.length }).toEqual({ contracts: 0, rows: 26 });
+        expect(rowReads.every(([, init]) => JSON.parse(String(init?.body)).readerContext.contractDigest === ref.contractDigest)).toBe(true);
+
+        serverAllowsRead = false;
+        await expect(collection.query(query)).rejects.toMatchObject({ code: 'plugin_collection_undeclared' });
+    });
+
     it('carries one prefix-set query through the public Account Collection adapter', async () => {
         const { client, transport } = await loadClient();
         const prefixes = [['open'], ['closed']];
@@ -956,8 +979,8 @@ describe('Plugin UI Data client', () => {
         const collection = client.collection(collectionDefinition);
         await expect(collection.get('task-1')).resolves.toEqual({ rowId: 'task-1', revision: 3,
             value: { id: 'task-1', title: 'Retained row', status: 'open' } });
-        const contractCall = transport.mock.calls.find(([path]) => path === '/v1/plugins/data/contract');
-        expect(JSON.parse(String(contractCall?.[1]?.body))).toMatchObject({ ref });
+        const rowCall = transport.mock.calls.find(([path]) => path === '/v1/plugins/data/get');
+        expect(JSON.parse(String(rowCall?.[1]?.body))).toMatchObject({ readerContext: ref });
         await expect(collection.put({ id: 'task-1', title: 'Retained', status: 'open' }, { expectedRevision: 'absent' }))
             .rejects.toMatchObject({ code: 'plugin_account_storage_unavailable' });
         expect(transport.mock.calls.some(([path]) => path === '/v1/plugins/data/mutate')).toBe(false);
@@ -1146,11 +1169,13 @@ describe('Plugin UI Data client', () => {
                     ? outage() : Response.json({ rows: [], changeCursor: 1 }),
             });
             const collection = client.collection(collectionDefinition);
-            await expect(collection.query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
+            const read = () => boundary === 'contract' ? collection.limits()
+                : collection.query({ index: 'by-status', prefix: ['open'], order: 'asc' });
+            await expect(read())
                 .rejects.toMatchObject({ code: 'plugin_account_storage_unavailable', retryable: true });
             unavailable = false;
-            await expect(collection.query({ index: 'by-status', prefix: ['open'], order: 'asc' }))
-                .resolves.toMatchObject({ rows: [], changeCursor: 1 });
+            await expect(read()).resolves.toMatchObject(boundary === 'contract'
+                ? PLUGIN_COLLECTION_DEFAULT_DEPLOYMENT_LIMITS_V1 : { rows: [], changeCursor: 1 });
         },
     );
 

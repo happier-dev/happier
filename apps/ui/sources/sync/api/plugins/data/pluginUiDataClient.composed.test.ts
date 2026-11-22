@@ -1122,14 +1122,21 @@ describe('mounted Collection contract acquisition through real Home authority', 
                         currentProtocolVersion: 3, declarationTransport: 'http-header-and-socket-auth-v1' } },
                 }));
                 if (request.path === '/v1/plugins/data/contract') {
-                    if (++contractReads === 1) {
+                    contractReads++;
+                    if (firstOperation === 'put' && contractReads === 1) {
                         entered.resolve();
                         await release.promise;
                         return Response.json({ access: 'readOnly', contract });
                     }
                     return Response.json({ access: 'writable', contract });
                 }
-                if (request.path === '/v1/plugins/data/get') return Response.json({ row: null, absenceEpoch: 0 });
+                if (request.path === '/v1/plugins/data/get') {
+                    if (firstOperation === 'get') {
+                        entered.resolve();
+                        await release.promise;
+                    }
+                    return Response.json({ row: null, absenceEpoch: 0 });
+                }
                 if (request.path === '/v1/plugins/data/mutate') {
                     const input = PluginCollectionMutationRequestV1Schema.parse(request.body);
                     return Response.json({ status: 'updated', changeCursor: 9,
@@ -1167,7 +1174,6 @@ describe('mounted Collection contract acquisition through real Home authority', 
                 : mutation === 'delete' ? collection.delete('later', { expectedRevision: 1 })
                     : mutation === 'forget' ? collection.forget('later', { expectedRevision: 1 })
                         : collection.batch([{ kind: 'put', value: { id: 'later' }, expectedRevision: 1 }]);
-            release.resolve();
             const outcome = await written.then(value => ({ status: 'written', value }), error => ({ status: 'refused', error,
                 contractReads, paths: home.requests.map(request => request.path) }));
             expect(outcome).toEqual({ status: 'written', value: mutation === 'batch'
@@ -1175,9 +1181,10 @@ describe('mounted Collection contract acquisition through real Home authority', 
                 : { rowId: 'later',
                 ...(mutation === 'put' ? { revision: 2, value: { id: 'later' } }
                     : mutation === 'delete' ? { revision: 2, deleted: true } : { forgotten: true }) } });
+            release.resolve();
             expect(await firstOutcome).toMatchObject(firstOperation === 'get' ? { value: null }
                 : { error: { code: 'plugin_account_storage_unavailable' } });
-            expect(contractReads).toBe(2);
+            expect(contractReads).toBe(firstOperation === 'get' ? 1 : 2);
         } finally { release.resolve(); await home.dispose(); }
     });
     it('shares only the pending contract HTTP read across independently bound readers without retaining its access', async () => {

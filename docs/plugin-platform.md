@@ -6843,14 +6843,14 @@ digest check, and a new version receives its own preparation. Write ingress
 continues to validate new declarations. This shares static schema work, not
 Account admission or row content.
 
-In 0.3 development source, the direct UI Collection client still reads
-`/v1/plugins/data/contract` once per operation to admit the exact ref and learn
-its current access. A contract is immutable per digest, so once a server answer
-has delivered the contract for a digest, later reads send `omitContract: true`
-and the server answers `{ access }` only, after the same exact-ref admission.
-Refusals are unchanged. A new digest (plugin upgrade or reinstall) is not held
-and receives the full contract. Before this, every operation re-downloaded and
-re-compared the whole contract (about 0.5 MB for Channels `channel-state`).
+In 0.3 development source, typed UI Collection gets and queries use the
+compiled definition to decode rows. The row endpoint admits the exact reader
+reference against the current Account, including retained-reader compatibility,
+before delivering data. Operations that need an independent access decision or
+discover a query descriptor from a reference still use `/v1/plugins/data/contract`.
+An already delivered contract is immutable per digest, so subsequent contract
+requests can send `omitContract: true` and receive `{ access }` after exact-ref
+admission. An unseen digest receives the full contract.
 
 The client compiles the contract schema when an operation first materializes a
 row or validates a value, not when it is created, so an absent get, an empty
