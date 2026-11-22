@@ -36,11 +36,12 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
 }>) {
     const source = currentWorkspaceSource();
     const root = await source.realpath(input.workspace.rootPath);
-    const { entries, excludedPaths, selectionSource } = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
+    const { entries, excludedPaths, selectionSource, unsupportedFilePaths } = await resolveWorkspaceReplicationSourceInputsWithScmWorkspace({
         sourcePath: root,
         workspaceTransfer: { contentOnly: true, includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] },
     });
-    const excluded = new Set(excludedPaths);
+    const unsupported = new Set(unsupportedFilePaths);
+    const excluded = new Set([...(excludedPaths ?? []), ...unsupported]);
     const captureDirectory = createHappierTempDir({ purpose: 'deployment-folder-source' });
     const dispose = () => removeHappierTempDirAsync(captureDirectory);
     let nextEntry = 0;
@@ -87,6 +88,7 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
         const retained: ScmWorkspaceIntegrationWorkspaceExportTransferEntry[] = [];
         for (const entry of entries) {
             input.signal?.throwIfAborted();
+            if (unsupported.has(entry.relativePath)) continue;
             const segments = entry.relativePath.split('/');
             if (segments.some(name => name.toLowerCase() === '.git')) {
                 excluded.add(entry.relativePath);
@@ -130,7 +132,8 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
             totalBytes += entry.kind === 'file' ? entry.sizeBytes : Buffer.byteLength(entry.target);
         }
         return { captured: { ...captured, dispose }, sourceIntent: { ...input.selection, manifestFingerprint, fileCount, totalBytes,
-            excludedPaths: [...excluded].sort() } satisfies FolderSource };
+            excludedPaths: [...excluded].sort(),
+            ...(unsupported.size ? { unsupportedFilePaths: [...unsupported].sort() } : {}) } satisfies FolderSource };
     } catch (error) {
         await dispose();
         throw error;

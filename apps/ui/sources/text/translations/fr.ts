@@ -19916,6 +19916,7 @@ settingsSession: {
           folderExcluded: "Fichiers exclus",
 
           folderNoneExcluded: "Aucun",
+          folderUnsupportedFile: "Type de fichier non pris en charge",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} fichiers · ${size}`,
 

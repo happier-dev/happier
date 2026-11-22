@@ -19662,6 +19662,7 @@ settingsSession: {
           folderExcluded: "排除的文件",
 
           folderNoneExcluded: "无",
+          folderUnsupportedFile: "不支持的文件类型",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} 个文件 · ${size}`,
 

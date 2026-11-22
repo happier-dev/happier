@@ -18846,6 +18846,7 @@ La meva pregunta: `,
               folderExcluded: "Fitxers exclosos",
 
               folderNoneExcluded: "Cap",
+              folderUnsupportedFile: "Tipus de fitxer no compatible",
 
               folderContents: ({ count, size }: { count: number; size: string }) => `${count} fitxers · ${size}`,
 

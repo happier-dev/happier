@@ -23460,6 +23460,7 @@ const enProjects = {
         folderExcluded: "Excluded files",
 
         folderNoneExcluded: "None",
+        folderUnsupportedFile: "Unsupported file type",
 
         folderContents: ({ count, size }: { count: number; size: string }) => `${count} files · ${size}`,
 

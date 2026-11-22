@@ -44,6 +44,7 @@ export type ScmWorkspaceIntegrationWorkspaceReplicationSourceInputs = Readonly<{
     selectionSource: 'scm' | 'filesystem';
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
     excludedPaths?: readonly string[];
+    unsupportedFilePaths?: readonly string[];
     workspaceIntegrationMetadata: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
     safeFilterPolicy: WorkspaceManifestSafeFilterPolicy;
     isNestedRepoSourcePath: boolean;
@@ -286,9 +287,11 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
         if (resolved.transfer && !(resolved.isNestedRepoSourcePath
             && resolved.transfer.entries.length === 0
             && resolved.transfer.excludedPaths === undefined)) {
+            const unsupportedFilePaths: string[] = [];
             const entries = await selectWorkspaceTransferContentEntries({
                 entries: resolved.transfer.entries.map((entry) => createScmWorkspaceIntegrationWorkspaceTransferEntry(entry)),
                 sourceRoot: input.sourcePath, contentOnly: input.workspaceTransfer.contentOnly, registry,
+                unsupportedFilePaths,
             });
             await assertPortableWorkspaceTransferEntriesWithScmWorkspace({
                 entries,
@@ -298,6 +301,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
                 entries,
                 selectionSource: 'scm',
                 ...(resolved.transfer.excludedPaths ? { excludedPaths: resolved.transfer.excludedPaths } : {}),
+                ...(unsupportedFilePaths.length ? { unsupportedFilePaths } : {}),
                 workspaceIntegrationMetadata: input.workspaceTransfer.contentOnly ? null : resolved.transfer.metadata ?? null,
                 safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry),
                 isNestedRepoSourcePath: resolved.isNestedRepoSourcePath,
@@ -316,13 +320,16 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
             throw error;
         }
 
-        const entries = await selectWorkspaceTransferContentEntries({ entries: await listWorkspaceExportFallbackEntries({
+        const fallback = await listWorkspaceExportFallbackEntries({
             root: input.sourcePath,
             readDirectory: async (directory) => await currentWorkspaceSource().readdir(directory),
-        }), sourceRoot: input.sourcePath, contentOnly: input.workspaceTransfer.contentOnly, registry });
+        });
+        const entries = await selectWorkspaceTransferContentEntries({ entries: fallback.entries,
+            sourceRoot: input.sourcePath, contentOnly: input.workspaceTransfer.contentOnly, registry });
         return {
             entries,
             selectionSource: 'filesystem',
+            ...(fallback.unsupportedFilePaths.length ? { unsupportedFilePaths: fallback.unsupportedFilePaths } : {}),
             workspaceIntegrationMetadata: null,
             safeFilterPolicy: entries.length > 0
                 ? await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry)
@@ -337,6 +344,7 @@ async function selectWorkspaceTransferContentEntries(input: Readonly<{
     sourceRoot: string;
     contentOnly?: true;
     registry: ScmBackendRegistry;
+    unsupportedFilePaths?: string[];
 }>): Promise<readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[]> {
     if (!input.contentOnly) return input.entries;
     const administrativeEntries = new Set(input.entries.filter(entry => isAdministrativeWorkspacePathWithScmWorkspace({
@@ -362,7 +370,11 @@ async function selectWorkspaceTransferContentEntries(input: Readonly<{
             if (isIgnorableWorkspaceExportAccessError(error)) return null;
             throw error;
         });
-        if (!stats?.isDirectory()) continue;
+        if (!stats) continue;
+        if (!stats.isDirectory()) {
+            if (!stats.isFile() && !stats.isSymbolicLink()) input.unsupportedFilePaths?.push(entry.relativePath);
+            continue;
+        }
         const nested = await resolveWorkspaceTransferRootWithScmWorkspace({ sessionCwd: entry.sourcePath, registry: input.registry });
         if (nested && nested.repositoryRoot === await currentWorkspaceSource().realpath(entry.sourcePath)) {
             const path = normalizeWorkspacePath(entry.relativePath).replace(/\/$/u, '');

@@ -20152,6 +20152,7 @@ settingsSession: {
               folderExcluded: "Ausgeschlossene Dateien",
 
               folderNoneExcluded: "Keine",
+              folderUnsupportedFile: "Nicht unterstützter Dateityp",
 
               folderContents: ({ count, size }: { count: number; size: string }) => `${count} Dateien · ${size}`,
 

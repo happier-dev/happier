@@ -40,8 +40,9 @@ export type DeploymentReviewRevisionV1 = z.infer<typeof DeploymentReviewRevision
 
 export function projectDeploymentReviewRevisionV1(source: DeploymentSourceIntentV1, subject?: string): DeploymentReviewRevisionV1 {
   if (source.kind === 'folder') {
-    const { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths } = source;
-    return { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths };
+    const { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths, unsupportedFilePaths } = source;
+    return { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths,
+      ...(unsupportedFilePaths === undefined ? {} : { unsupportedFilePaths }) };
   }
   return source.kind === 'repository' ? { kind: source.kind, sha: source.sha, ...(subject === undefined ? {} : { subject }) }
     : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest };

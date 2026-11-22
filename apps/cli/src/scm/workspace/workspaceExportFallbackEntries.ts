@@ -25,20 +25,24 @@ export function isIgnorableWorkspaceExportAccessError(error: unknown): error is 
     );
 }
 
-export async function walkWorkspaceExportTree(params: Readonly<{
+export async function listWorkspaceExportFallbackEntries(params: Readonly<{
     root: string;
     prefix?: string;
     readDirectory: ReadWorkspaceExportDirectory;
-}>): Promise<string[]> {
-    const results: string[] = [];
+}>): Promise<Readonly<{
+    entries: readonly ScmWorkspaceIntegrationWorkspaceExportTransferEntry[];
+    unsupportedFilePaths: readonly string[];
+}>> {
+    const entries: ScmWorkspaceIntegrationWorkspaceExportTransferEntry[] = [];
+    const unsupportedFilePaths: string[] = [];
     const pendingDirectories: string[] = [params.prefix ?? ''];
 
     while (pendingDirectories.length > 0) {
         const currentPrefix = pendingDirectories.pop() ?? '';
         const directory = currentPrefix ? join(params.root, currentPrefix) : params.root;
-        let entries: readonly DirentLike[];
+        let directoryEntries: readonly DirentLike[];
         try {
-            entries = await params.readDirectory(directory);
+            directoryEntries = await params.readDirectory(directory);
         } catch (error) {
             if (isIgnorableWorkspaceExportAccessError(error)) {
                 continue;
@@ -47,7 +51,7 @@ export async function walkWorkspaceExportTree(params: Readonly<{
         }
 
         const directoriesToVisit: string[] = [];
-        for (const entry of entries) {
+        for (const entry of directoryEntries) {
             const relativePath = normalizeRelativePath(currentPrefix ? join(currentPrefix, entry.name) : entry.name);
             if (!relativePath) continue;
             if (entry.isDirectory()) {
@@ -55,7 +59,9 @@ export async function walkWorkspaceExportTree(params: Readonly<{
                 continue;
             }
             if (entry.isFile() || entry.isSymbolicLink()) {
-                results.push(relativePath);
+                entries.push({ relativePath, sourcePath: join(params.root, relativePath) });
+            } else {
+                unsupportedFilePaths.push(relativePath);
             }
         }
 
@@ -64,16 +70,5 @@ export async function walkWorkspaceExportTree(params: Readonly<{
         }
     }
 
-    return results;
-}
-
-export async function listWorkspaceExportFallbackEntries(params: Readonly<{
-    root: string;
-    prefix?: string;
-    readDirectory: ReadWorkspaceExportDirectory;
-}>): Promise<readonly ScmWorkspaceIntegrationWorkspaceExportTransferEntry[]> {
-    return (await walkWorkspaceExportTree(params)).map((relativePath) => ({
-        relativePath,
-        sourcePath: join(params.root, relativePath),
-    }));
+    return { entries, unsupportedFilePaths };
 }

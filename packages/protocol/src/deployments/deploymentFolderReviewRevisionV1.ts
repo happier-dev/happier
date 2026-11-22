@@ -8,4 +8,5 @@ export const DeploymentFolderReviewRevisionV1Schema = z.strictObject({
     fileCount: z.number().check(z.int(), z.nonnegative()),
     totalBytes: z.number().check(z.int(), z.nonnegative()),
     excludedPaths: z.array(WorkspaceManifestRelativePathSchema),
+    unsupportedFilePaths: z.optional(z.array(WorkspaceManifestRelativePathSchema)),
 });

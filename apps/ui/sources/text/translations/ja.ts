@@ -19956,6 +19956,7 @@ settingsSession: {
           folderExcluded: "除外ファイル",
 
           folderNoneExcluded: "なし",
+          folderUnsupportedFile: "サポートされていないファイル形式",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} ファイル · ${size}`,
 

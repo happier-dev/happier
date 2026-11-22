@@ -20044,6 +20044,7 @@ settingsSession: {
           folderExcluded: "File esclusi",
 
           folderNoneExcluded: "Nessuno",
+          folderUnsupportedFile: "Tipo di file non supportato",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} file · ${size}`,
 

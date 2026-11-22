@@ -19996,6 +19996,7 @@ settingsSession: {
           folderExcluded: "Исключённые файлы",
 
           folderNoneExcluded: "Нет",
+          folderUnsupportedFile: "Неподдерживаемый тип файла",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `Файлы: ${count} · ${size}`,
 

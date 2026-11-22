@@ -48,7 +48,7 @@ describe('DeploymentReviewApprovalFacts', () => {
   it('shows the reviewed folder count, size and excluded paths before confirmation', async () => {
     const deploymentReview = { ...machineReview, revision: { kind: 'folder',
       manifestFingerprint: `sha256:${'a'.repeat(64)}`, fileCount: 4, totalBytes: 2_000_000,
-      excludedPaths: ['.env.local', 'cache/item.txt'] } };
+      excludedPaths: ['.env.local', 'build.pipe', 'cache/item.txt'], unsupportedFilePaths: ['build.pipe'] } };
     const approval = readDeploymentReviewApproval({ preview: { deploymentReview } });
     if (!approval) throw new Error('Expected a typed folder review');
     const screen = await renderScreen(
@@ -57,6 +57,7 @@ describe('DeploymentReviewApprovalFacts', () => {
     const text = screen.getTextContent();
     expect(text).toContain('4 files · 2 MB');
     expect(text).toContain('.env.local');
+    expect(text).toContain('build.pipe (projects.deployments.review.folderUnsupportedFile)');
     expect(text).toContain('cache/item.txt');
   });
   it.each(['own-server', 'platform'] as const)('renders the version, replaced version, target and data effect for %s rollback', async target => {

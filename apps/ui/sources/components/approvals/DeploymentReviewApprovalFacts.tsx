@@ -223,6 +223,7 @@ function describeReviewFields(
   const nameOf = (id: string | null) => (id ? names[id] ?? null : null);
   const valueNameOf = (id: string | null) => (id ? names[id] ?? t('approvals.machineNotKnown') : null);
   const multiple = machines.length > 1;
+  const unsupportedFolderFiles = new Set(revision?.kind === 'folder' ? revision.unsupportedFilePaths : undefined);
   const soleMachine = soleMachineName(machines, names);
   const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
   const rows = [
@@ -242,7 +243,9 @@ function describeReviewFields(
         t('projects.deployments.review.folderContents', { count: revision.fileCount,
           size: formatHappierDataBytes(revision.totalBytes, { kind: 'storage' }) })),
       ...field('folderExcluded', t('projects.deployments.review.folderExcluded'),
-        revision.excludedPaths.length ? revision.excludedPaths.join('\n') : t('projects.deployments.review.folderNoneExcluded')),
+        revision.excludedPaths.length ? revision.excludedPaths.map(path => unsupportedFolderFiles.has(path)
+          ? `${path} (${t('projects.deployments.review.folderUnsupportedFile')})` : path).join('\n')
+          : t('projects.deployments.review.folderNoneExcluded')),
     ] : []),
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
       names: secretBindingNames,
