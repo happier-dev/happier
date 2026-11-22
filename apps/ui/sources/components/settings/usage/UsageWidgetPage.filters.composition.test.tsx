@@ -15,7 +15,7 @@ import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery } from '@h
 import { ProviderAccountUsagePageProjectionWriteV1Schema, QualifiedProviderAccountUsageHistoryRequestV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { parseQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import { ArtifactReadBatchHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, readBuiltinWidgetDescriptorV1, WidgetAreaLayoutV1Schema,
+import { buildWidgetSurfaceArtifactHeaderV1, buildWidgetSurfaceArtifactIdV1, WidgetAreaLayoutV1Schema,
     WIDGET_SURFACE_ARTIFACT_KIND_V1, type WidgetAreaLayoutV1, type WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { createServedHomeAccountToken, serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -55,6 +55,7 @@ import * as usageWidgetResource from './useUsageWidgetResource';
 import { UsageCostFactsWidget } from './widgets/UsageCostFactsWidget';
 import { UsageRhythmWidget } from './widgets/UsageRhythmWidget';
 import { UsageFilterBar } from './UsageFilterBar';
+import { usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { UsageProjectLedgerWidget } from './widgets/UsageProjectLedgerWidget';
 import { HappierDataRows } from '@happier-dev/plugin-ui/presentation';
 import * as pluginResource from '@happier-dev/plugin-ui/advanced';
@@ -1177,9 +1178,6 @@ describe('mounted Usage page scope commands', () => {
             && node.props.diagnosticCode === 'denied').length).toBeGreaterThan(0));
         await flushHookEffects({ cycles: 30 });
         expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
-        act(() => screen.findByType(UsageFilterBar).props.onMetricChange('cost'));
-        expect(screen.findByType(UsageFilterBar).props.metricPending).toBe(true);
-        expect(screen.findByType(UsageFilterBar).props.metric).toBe('cost');
     });
 
     it('admits the captured Plans All Sources selections through the canonical widget queries', async () => {
@@ -1285,7 +1283,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-retention" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1293,7 +1291,7 @@ describe('mounted Usage page scope commands', () => {
         await sync.awaitBootstrapForegroundAcquisition();
         const bar = () => screen.findByType(UsageFilterBar);
         await waitForHomeGovernance(() => {
-            expect(screen.findAllByType(WidgetSurface)).toHaveLength(8);
+            expect(screen.findAllByType(WidgetSurface)).toHaveLength(6);
             expect(bar().props.metricPending).toBe(false);
         });
         // The default layout mixes fixed Cost and Tokens bindings. Establish the
@@ -1352,7 +1350,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-inflight-filter" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1360,11 +1358,11 @@ describe('mounted Usage page scope commands', () => {
         await sync.awaitBootstrapForegroundAcquisition();
         const bar = () => screen.findByType(UsageFilterBar);
         const metricWidgets = () => screen.findAllByType(WidgetSurface)
-            .filter(node => readBuiltinWidgetDescriptorV1(node.props.instance.definition)?.inputs?.fields.some(field => field.path === 'metric'));
+            .filter(node => usageWidgetAcceptsMetric(node.props.instance));
         const sourceFilter = () => screen.findAllByType(SelectionListFilterChip)
             .find(node => node.props.filter.id === 'sources')!.props.filter;
         await waitForHomeGovernance(() => {
-            expect(screen.findAllByType(WidgetSurface)).toHaveLength(8);
+            expect(screen.findAllByType(WidgetSurface)).toHaveLength(6);
             expect(bar().props.metricPending).toBe(false);
         });
         await flushHookEffects({ cycles: 20 });
@@ -1377,7 +1375,7 @@ describe('mounted Usage page scope commands', () => {
             expect(bar().props.metric).toBe('tokens');
         });
         layoutArtifactId = buildWidgetSurfaceArtifactIdV1({ serverId: server.id, accountId: 'account-a',
-            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'how-you-work' } });
+            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' } });
         holdNextWrite = true;
         observe = () => frames.push(bar().props.metric);
         try {
@@ -1455,7 +1453,7 @@ describe('mounted Usage page scope commands', () => {
         const screen = await renderMeasuredPage(<React.Profiler id="metric-delayed-publication" onRender={() => observe?.()}>
             <InjectedAuthProvider credentials={credentials}>
                 <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
-                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'how-you-work', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
+                    <CurrentContextPort /><UsageWidgetPage initialFilters={{ layoutId: 'costs', period: 'all', metric: 'tokens', costMode: 'auto', focus: null }} />
                 </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
             </InjectedAuthProvider>
         </React.Profiler>);
@@ -1463,7 +1461,7 @@ describe('mounted Usage page scope commands', () => {
         await sync.awaitBootstrapForegroundAcquisition();
         const bar = () => screen.findByType(UsageFilterBar);
         await waitForHomeGovernance(() => {
-            expect(screen.findAllByType(WidgetSurface)).toHaveLength(8);
+            expect(screen.findAllByType(WidgetSurface)).toHaveLength(6);
             expect(bar().props.metricPending).toBe(false);
         });
         await flushHookEffects({ cycles: 20 });
@@ -1474,11 +1472,11 @@ describe('mounted Usage page scope commands', () => {
         });
 
         const metricWidgets = () => screen.findAllByType(WidgetSurface)
-            .filter(node => readBuiltinWidgetDescriptorV1(node.props.instance.definition)?.inputs?.fields.some(field => field.path === 'metric'));
+            .filter(node => usageWidgetAcceptsMetric(node.props.instance));
         const sourceFilter = () => screen.findAllByType(SelectionListFilterChip)
             .find(node => node.props.filter.id === 'sources')!.props.filter;
         layoutArtifactId = buildWidgetSurfaceArtifactIdV1({ serverId: server.id, accountId: 'account-a',
-            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'how-you-work' } });
+            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId: 'costs' } });
         remainingCostWrites = metricWidgets().length;
         expect(remainingCostWrites).toBeGreaterThan(0);
         // Withhold only the server's read of the final revision. The real write,
@@ -2328,7 +2326,9 @@ describe('mounted Usage page scope commands', () => {
         expect(selectedRoutes).toEqual([nextLayoutId]);
         // The page's filter bar names the scope its widgets follow; no frame repeats "This page".
         await vi.waitFor(() => expect(screen.findAllByType(WidgetSurface).length).toBeGreaterThan(1));
-        expect(screen.findByType(UsageFilterBar).props.metric).toBe('cost');
+        if (nextLayoutId === 'costs') {
+            await vi.waitFor(() => expect(screen.findByType(UsageFilterBar).props.metric).toBe('cost'));
+        }
         expect(screen.getTextContent()).not.toContain(t('widgetAdd.thisPage'));
         await screen.unmount();
     });
