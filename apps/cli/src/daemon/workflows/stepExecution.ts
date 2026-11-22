@@ -311,7 +311,7 @@ export async function enqueueWorkflowSessionInput(params: Readonly<{
     machineAdmissionTransport: params.machineAdmissionTransport,
     ...(params.signal ? { signal: params.signal } : {}),
   });
-  return result.admissionResult
+  return (!result.ok && result.settlementResult?.status === 'held' ? result.settlementResult : result.admissionResult)
     ?? { status: 'outcomeUnknown', localId, code: 'session_input_admission_result_missing' };
 }
 

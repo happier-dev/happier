@@ -1062,6 +1062,9 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
       throw error;
     }
     if (params.signal?.aborted) return await settleAcceptedInputAfterAbort(conversation.sessionId, admission.localId);
+    if (admission.status === 'held') {
+      return { kind: 'needs_attention', code: admission.failureCause?.errorCode ?? admission.code };
+    }
     const deadlineMs = params.invocation.observationDeadline?.kind === 'at'
       ? Date.parse(params.invocation.observationDeadline.expiresAt)
       : undefined;
@@ -1354,6 +1357,10 @@ export function createProductionWorkflowConversationOwner(deps: Readonly<{
             }),
             ...(params.signal ? { signal: params.signal } : {}) });
           if (!resumed.ok) {
+            // An authored Pending input can be accepted even while the readiness check reports a Stop hold.
+            if (resumed.code === 'held_by_person' && params.step.inputMode !== 'none' && prepared.inputPath !== 'origin_session') {
+              return prepared.existing;
+            }
             const reason = resumed.spawnRefusalReason;
             const launchDetail = resumed.errorDetail?.kind === 'launch_error' ? resumed.errorDetail : undefined;
             const custodyRefusal = readRequesterSessionCustodyRefusalCode(reason);

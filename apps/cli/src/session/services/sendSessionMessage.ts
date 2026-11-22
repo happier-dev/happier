@@ -37,7 +37,6 @@ import type { SessionMessageReplyMutationResultV1, SessionMessageReplyOutcomeV1,
 import { resolveSessionReceiverDeliveryV1, type SessionReceiverDeliveryDecisionV1 } from '@happier-dev/protocol/sessions/follow/sessionReceiverDeliveryV1';
 import {
   readSessionExplicitStopV1FromMetadata,
-  resolveSessionAutoResumeAdmissionV1,
 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 
@@ -134,8 +133,8 @@ export type SendSessionMessageResult =
       message?: string;
       providerError?: ProviderErrorV1;
       admissionResult?: SessionInputEnqueueResultV1;
-      /** Waiting failed or settled; admission separately records retained Pending custody. */
-      settlementResult?: Extract<SessionMessageSendResultV1, { status: 'failed' | 'cancelled' }>;
+      /** Delivery settled; admission separately records retained Pending custody. */
+      settlementResult?: Extract<SessionMessageSendResultV1, { status: 'failed' | 'cancelled' | 'held' }>;
     }> & Pick<Extract<InactiveSessionResumeResult, { ok: false }>, 'errorDetail' | 'spawnErrorCode' | 'runtimeFailureReason'>);
 
 /**
@@ -1903,15 +1902,16 @@ export async function sendSessionMessage(
   // turns are counted separately, so its receiver projection is not a Run gate.
   const receiverControlled = executionRunRecipient === undefined
     && (informationDelivery || senderSessionId !== undefined || discussionAddressing !== undefined);
-  const crossesStopHold = params.explicitMessageSend === true && resolveSessionAutoResumeAdmissionV1({
-    metadata: decryptedMetadata, archivedAt: sessionTarget.rawSession.archivedAt, machineAvailable: true, authorityAvailable: true,
-  }) === 'held_by_person';
-  const stop = receiverControlled && !crossesStopHold ? readSessionExplicitStopV1FromMetadata(decryptedMetadata) : null;
+  const explicitSessionSend = executionRunRecipient === undefined && params.explicitMessageSend === true;
+  const stop = receiverControlled || explicitSessionSend ? readSessionExplicitStopV1FromMetadata(decryptedMetadata) : null;
+  const explicitSendHasHold = explicitSessionSend && stop !== null && !('status' in stop);
+  const crossesStopHold = explicitSendHasHold && params.executionAuthority === 'present_user';
+  const heldExplicitSend = explicitSendHasHold && !crossesStopHold;
   const activity = receiverControlled ? detectSessionTurnActivityFromProjection(sessionTarget.rawSession) : null;
   const receiverDelivery = receiverControlled ? resolveSessionReceiverDeliveryV1({
     facts: {
       archived: false,
-      explicitStop: stop === null ? 'clear' : 'status' in stop ? 'unavailable' : 'held',
+      explicitStop: stop === null || crossesStopHold ? 'clear' : 'status' in stop ? 'unavailable' : 'held',
       // An inactive runtime needs an exact-machine resume attempt. Its success
       // is not inferred from this projection; the existing resume owner decides.
       availability: !receiverPolicyAvailable ? 'unavailable' : sessionTarget.rawSession.active !== true ? 'idle'
@@ -1928,9 +1928,10 @@ export async function sendSessionMessage(
   const shouldResumeInactiveSession = !usesSharedAccountPending && executionRunRecipient === undefined
     && sessionTarget.rawSession.active !== true
     && params.resumeInactiveSession !== false
+    && !heldExplicitSend
     && (receiverDelivery === undefined || receiverDelivery.disposition === 'wake');
   const authoredRequestedAction = resolveSessionUserMessageRequestedAction({
-    ...(receiverControlled ? { requestedAction: { v: 1, kind: 'enqueue' } as const }
+    ...(receiverControlled || heldExplicitSend ? { requestedAction: { v: 1, kind: 'enqueue' } as const }
       : params.requestedAction ? { requestedAction: params.requestedAction } : {}),
   });
   const requestedAction = shouldResumeInactiveSession
@@ -2281,6 +2282,13 @@ export async function sendSessionMessage(
       terminal: true,
       ...(admissionResult ? { admissionResult } : {}),
     };
+  }
+
+  if (heldExplicitSend) {
+    const code = 'held_by_person';
+    return { ok: false, code, admissionResult,
+      settlementResult: { status: 'held', code: 'session_input_target_unavailable', localId,
+        failureCause: projectActionFailureCauseV1({ code }, 'session.message.send', { allowUnknownErrorCode: true }) } };
   }
 
   if (receiverDelivery?.disposition === 'hold' || receiverDelivery?.disposition === 'next_turn') {

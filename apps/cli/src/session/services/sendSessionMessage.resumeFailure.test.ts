@@ -4,7 +4,7 @@ import { AxiosError } from 'axios';
 import { sendSessionMessage } from './sendSessionMessage';
 import { projectSpawnValidationFailure, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
-import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { buildTrustedHostSessionInputAdmissionV1, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -15,6 +15,8 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createProductionWorkflowSessionStepExecutor } from '@/daemon/workflows/sessionStepExecutor';
+import { enqueueWorkflowSessionInput } from '@/daemon/workflows/stepExecution';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { handleSessionCommand } from '@/cli/commands/session/handleSessionCommand';
 import { captureStdoutJsonOutput } from '@/testkit/logger/captureOutput';
@@ -66,6 +68,7 @@ beforeEach(() => {
   receiverMuteScopes = [];
   muteReadAvailable = true;
   sockets.refuseMachineRpc = false;
+  sockets.connect.mockReset();
   http.get.mockReset();
   http.post.mockReset();
   http.get.mockImplementation(async (url: string) => {
@@ -277,7 +280,7 @@ describe('a message send after Stop', () => {
     },
   );
 
-  it.each(['account', 'managed_account', 'cli', 'present_user', 'automation'] as const)('%s send resumes through the Resume authority, once', async source => {
+  it.each(['account', 'managed_account', 'cli'] as const)('present-person %s Send resumes through the Resume authority once', async source => {
     const stop = heldStop();
     const machineResumeTransport = transport();
     if (source === 'managed_account') {
@@ -285,38 +288,13 @@ describe('a message send after Stop', () => {
     }
     expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
       idOrPrefix: sessionId, message: 'Pick this back up', localId: 'send-1', wait: false, timeoutMs: 1000,
-      explicitMessageSend: true, machineResumeTransport,
+      explicitMessageSend: true, executionAuthority: 'present_user', machineResumeTransport,
       ...(source === 'cli' ? { inputAdmission: buildTrustedHostSessionInputAdmissionV1('cli') } : {}),
-      ...(source === 'present_user' ? { executionAuthority: 'present_user' as const } : {}),
-      ...(source === 'automation' ? { executionAuthority: 'account_automation' as const } : {}),
     })).toMatchObject({ ok: true, localId: 'send-1' });
     expect(machineResumeTransport).toHaveBeenCalledOnce();
     expect(machineResumeTransport.mock.calls[0]?.[1]).toMatchObject({
       executionAuthorization: { provenance: 'user_request', requestId: 'send-1' } });
     // Only the launch owner clears the hold, after an exact successful resume.
-    expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
-  });
-
-  it('an agent or manager Session send wakes the stopped receiver through the same rule', async () => {
-    heldStop();
-    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId: 'agent-send' } as const));
-    const machineResumeTransport = transport();
-    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null }, idOrPrefix: sessionId,
-      message: 'new instruction', localId: 'agent-send', wait: false, timeoutMs: 1000, explicitMessageSend: true,
-      inputAdmission: protectedSender, machineAdmissionTransport, machineResumeTransport,
-    })).toMatchObject({ ok: true, receiverDelivery: { disposition: 'wake' } });
-    expect(machineResumeTransport).toHaveBeenCalledOnce();
-    expect(machineResumeTransport.mock.calls[0]?.[1]).toMatchObject({ executionAuthorization: { provenance: 'user_request' } });
-  });
-
-  it('an automatic delivery that is not a new send stays held and starts nothing', async () => {
-    const stop = heldStop();
-    const machineResumeTransport = transport();
-    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
-      idOrPrefix: sessionId, message: 'Continue after the limit', localId: 'automatic-1', wait: false, timeoutMs: 1000,
-      machineResumeTransport,
-    })).toMatchObject({ ok: false, code: 'held_by_person', admissionResult: { status: 'accepted', localId: 'automatic-1' } });
-    expect(machineResumeTransport).not.toHaveBeenCalled();
     expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
   });
 
@@ -347,6 +325,140 @@ describe('a message send after Stop', () => {
       sessionId, message: 'Pick this back up', localId: 'person-send', reply: 'none',
     }, { surface: 'ui', authority: 'present_user' });
     expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'person-send' } });
+  });
+
+  it.each([
+    { stopped: true, reply: 'none' },
+    { stopped: true, reply: 'wait' },
+    { stopped: true, reply: 'return' },
+    { stopped: false, reply: 'none' },
+  ] as const)('settles an agent Send with reply=$reply, stopped=$stopped', async ({ stopped, reply }) => {
+    if (stopped) heldStop();
+    const localId = 'agent-send';
+    const credentials = { token: 'account-token', encryption: null };
+    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId } as const));
+    const observer = new AbortController();
+    const machineResumeTransport = vi.fn(async (_method: string, _request: unknown) => {
+      // If a stopped receiver wakes, end the test's observation at that boundary.
+      if (stopped) observer.abort();
+      return { type: 'success', sessionId };
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: senderSessionId,
+      mode: 'plain', ctx: null, getCurrentTurnWorkDepth: () => 0, getCurrentSessionWorkDepth: () => 0,
+      sessionMessageReplyPublisher: { sessionId: senderSessionId,
+        mutateSessionMessageReply: vi.fn(), publishSessionMessageReply: vi.fn() },
+      machineAdmissionTransport,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport },
+    });
+    const actionCaller = { kind: 'session', sessionId: senderSessionId, starterDepth: 0, turnDepth: 0 } as const;
+    const result = await deps.sessionSendMessage({ context: { authority: 'account_automation', actionCaller },
+      actionCaller, sessionId, localId, message: 'new instruction', reply, signal: observer.signal,
+      requestedAction: { v: 1, kind: 'send_now' },
+      sessionInputSource: { ...protectedSender.request.sourceSession,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } },
+    });
+    if (stopped) {
+      expect.soft(machineResumeTransport).not.toHaveBeenCalled();
+      expect(SessionMessageSendResultV1Schema.parse(result)).toMatchObject({ status: 'held', localId,
+        code: 'session_input_target_unavailable', failureCause: { errorCode: 'held_by_person' } });
+      expect(machineAdmissionTransport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        localId, requestedAction: { v: 1, kind: 'enqueue' },
+      }), expect.anything());
+      expect(sockets.connect).not.toHaveBeenCalled();
+    } else {
+      expect(result).toMatchObject({ status: 'accepted', localId });
+      expect(machineResumeTransport).toHaveBeenCalledOnce();
+      expect(machineResumeTransport.mock.calls[0]?.[1]).not.toHaveProperty('executionAuthorization');
+    }
+  });
+
+  it.each(['confirmed', 'autonomous'] as const)('settles %s plugin Send after person Stop', async intent => {
+    heldStop();
+    const credentials = { token: 'account-token', encryption: null };
+    const actionCaller = { kind: 'plugin', pluginId: 'acme.triage', contributionLocalId: 'send',
+      occurrenceId: 'triage-send', sourceCustody: { kind: 'development', registeredRootId: 'registered-root' },
+    } as const;
+    const idempotencyKey = 'plugin-send';
+    const localId = derivePluginSessionInputLocalIdV1({ caller: actionCaller, sessionId, idempotencyKey });
+    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId } as const));
+    const machineResumeTransport = transport();
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId,
+      mode: 'plain', ctx: null, machineAdmissionTransport,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: machineResumeTransport },
+    });
+    const result = await deps.sessionSendMessage({
+      context: { surface: 'plugin', authority: 'account_automation', actionCaller,
+        ...(intent === 'confirmed' ? { presentUserSessionSend: sessionId } : {}) },
+      actionCaller, callerSurface: 'plugin', sessionId, message: 'Continue this task', idempotencyKey,
+      reply: 'none', requestedAction: { v: 1, kind: 'send_now' },
+    });
+    expect(machineAdmissionTransport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ localId }), expect.anything());
+    if (intent === 'confirmed') {
+      expect(result).toMatchObject({ status: 'accepted', localId });
+      expect(machineResumeTransport).toHaveBeenCalledOnce();
+      expect(machineResumeTransport.mock.calls[0]?.[1]).toMatchObject({ executionAuthorization: { provenance: 'user_request' } });
+    } else {
+      expect.soft(machineResumeTransport).not.toHaveBeenCalled();
+      expect(SessionMessageSendResultV1Schema.parse(result)).toMatchObject({ status: 'held', localId,
+        code: 'session_input_target_unavailable', failureCause: { errorCode: 'held_by_person' } });
+    }
+  });
+
+  it('retains a Workflow step input in Pending and returns the person hold', async () => {
+    heldStop();
+    const workflow = { purpose: 'invocation', runId: 'workflow', invocationRecordId: 'step' } as const;
+    const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
+    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId } as const));
+    sockets.refuseMachineRpc = true;
+    const result = await enqueueWorkflowSessionInput({ credentials: { token: 'account-token', encryption: null },
+      sessionId, workflow, text: 'Continue this task', machineAdmissionTransport });
+    expect(machineAdmissionTransport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      localId, requestedAction: { v: 1, kind: 'enqueue' },
+    }), expect.anything());
+    expect(result).toMatchObject({ status: 'held', localId,
+      code: 'session_input_target_unavailable', failureCause: { errorCode: 'held_by_person' } });
+  });
+
+  it('queues an existing-Session Workflow step before reporting the person hold', async () => {
+    heldStop();
+    const machineId = 'machine-1';
+    const workflow = { purpose: 'invocation', runId: 'workflow', invocationRecordId: 'step' } as const;
+    const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
+    const machineAdmissionTransport = vi.fn(async () => ({ status: 'accepted', localId } as const));
+    const onInputAccepted = vi.fn();
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials: { token: 'account-token', encryption: null }, machineId, machineAdmissionTransport,
+      createFreshConversation: async () => { throw new Error('Expected the existing Session'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId, machineId, directory: '/repo' }),
+    });
+    const result = await execute({
+      runId: workflow.runId, step: { kind: 'step', id: 'send', result: { kind: 'text' },
+        document: { text: 'Continue', references: [], attachments: [] }, input: [] },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'send', scope: [] },
+        attempt: '0', logicalInvocationRecordId: workflow.invocationRecordId },
+      input: { text: 'Continue', references: [], attachments: [], values: [] },
+      execution: { conversation: { kind: 'existing_session', sessionId, machineId } }, executionTarget: { kind: 'session' },
+      authorization: { admittedPermissionCeiling: 'default', principal: { kind: 'host' } },
+      workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
+      beforeInputAdmission: async () => {}, onInputAccepted,
+    });
+    expect(result).toMatchObject({ kind: 'needs_attention', code: 'held_by_person' });
+    expect(machineAdmissionTransport).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      localId, requestedAction: { v: 1, kind: 'enqueue' },
+    }), expect.anything());
+    expect(onInputAccepted).toHaveBeenCalledWith({ kind: 'session', sessionId, localInputId: localId });
+  });
+
+  it('an automatic delivery that is not a new send stays held and starts nothing', async () => {
+    const stop = heldStop();
+    const machineResumeTransport = transport();
+    expect(await sendSessionMessage({ credentials: { token: 'account-token', encryption: null },
+      idOrPrefix: sessionId, message: 'Continue after the limit', localId: 'automatic-1', wait: false, timeoutMs: 1000,
+      machineResumeTransport,
+    })).toMatchObject({ ok: false, code: 'held_by_person', admissionResult: { status: 'accepted', localId: 'automatic-1' } });
+    expect(machineResumeTransport).not.toHaveBeenCalled();
+    expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
   });
 
   it('a send into a Session without a hold mints no Resume authority', async () => {
