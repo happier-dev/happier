@@ -239,12 +239,6 @@ const ProjectDeploymentsPage = React.memo(
     const routeDeploymentId = readProjectRouteStringParam(params.deployment);
     const routeDatabase = readProjectRouteStringParam(params.deploymentService);
     const routeDefaults = readProjectRouteStringParam(params.deploymentSettings) === 'defaults';
-    const collectionVisible = !(phone && routeEnvironmentId && (routeDeploymentId || routeDatabase));
-    const collection = useDeploymentCollection(props.controller, {
-      ...props.demand,
-      visible: props.demand.visible && collectionVisible,
-      focused: props.demand.focused && collectionVisible,
-    });
     const routeTab = readProjectRouteStringParam(params.deploymentTab);
     const routeSection = readProjectRouteStringParam(params.deploymentSection);
     const destination = React.useMemo(
@@ -273,6 +267,14 @@ const ProjectDeploymentsPage = React.memo(
       deploymentId: routeEnvironmentId ? routeDeploymentId : null,
       database: routeEnvironmentId && !routeDeploymentId ? routeDatabase : null,
     }, [drafting, sourceAvailable, routeDatabase, routeDefaults, routeDeploymentId, routeEnvironmentId]);
+    // The phone Overview, like a Receipt or Database, replaces the list and reads its own selected Environment.
+    const collectionVisible = !(phone && selection.environmentId
+      && (selection.deploymentId || selection.database || destination.tab === 'overview'));
+    const collection = useDeploymentCollection(props.controller, {
+      ...props.demand,
+      visible: props.demand.visible && collectionVisible,
+      focused: props.demand.focused && collectionVisible,
+    });
     const selectionRef = React.useRef(selection);
     selectionRef.current = selection;
     const setSelection = React.useCallback((next: Selection) => {

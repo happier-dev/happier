@@ -66,8 +66,38 @@ describe('receipt route read demand', () => {
         try {
             expect(screen.findByTestId('project-deployments.environment.state')).toBeNull();
             expect(screen.findByTestId('project-deployments.environment')).not.toBeNull();
-            expect(counts).toEqual({ collections: entry === 'standalone' ? 0 : 1, environments: 1 });
+            expect(counts).toEqual({ collections: 0, environments: 1 });
             expect(requestedEnvironmentIds).toEqual([detail.environment.id]);
+        } finally { await screen.unmount(); controller.retire(); }
+    });
+
+    it('reads the phone collection on return from Overview and does not reload the selected Environment', async () => {
+        viewport.width = 390;
+        router.resetParams();
+        router.module.router.setParams({ deployment: undefined });
+        const detail = createDeploymentEnvironmentDetailV1();
+        const counts = { collections: 0, environments: 0 };
+        const scope = { serverId: 'home', accountId: 'account-owner', projectSourceId: 'source-app' };
+        const controller = createDeploymentReadControllerV1({ scope, transport: {
+            listEnvironments: async () => {
+                counts.collections++;
+                return { ok: true, value: { items: [{ environment: detail.environment, title: detail.content.name }], nextCursor: null } };
+            },
+            readEnvironment: async () => { counts.environments++; return { ok: true, value: detail }; },
+            listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+            readReceipt: async () => ({ ok: true, value: createDeploymentReceiptDetailV1() }),
+        } });
+        const lifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const screen = await renderScreen(<AccountNoticeInvestigationBoundary>
+            <ProjectDeploymentsView controller={controller} lifetime={lifetime} sourceId={scope.projectSourceId}
+                serverId={scope.serverId} accountId={scope.accountId} demand={{ mounted: true, visible: true, focused: true }} />
+        </AccountNoticeInvestigationBoundary>);
+        try {
+            expect(screen.findByTestId('project-deployments.environment')).not.toBeNull();
+            expect(counts).toEqual({ collections: 0, environments: 1 });
+            await act(async () => { router.module.router.setParams({ deploymentEnvironment: undefined }); });
+            expect(screen.findByTestId('project-deployments.environment')).toBeNull();
+            expect(counts).toEqual({ collections: 1, environments: 1 });
         } finally { await screen.unmount(); controller.retire(); }
     });
 
