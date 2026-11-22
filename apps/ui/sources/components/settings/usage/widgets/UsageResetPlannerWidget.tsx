@@ -313,6 +313,8 @@ function ResetTimeline(
         label: [name?.primaryLabel ?? name?.title, name?.qualifier, eventText(event)].filter(Boolean).join(' · '),
         // A lane is the plan: its identity, never its title alone, so two "Leeroy" accounts keep their own lanes.
         lane: name ? name.identity ? `${name.primaryLabel ?? name.title} · ${name.identity}` : name.title : '',
+        // Drawn as the pool cell draws an account: the name, its address beneath with the local part whole (11-22 #34).
+        ...(name?.identity ? { laneTitle: name.primaryLabel ?? name.title, laneDetail: name.identity } : {}),
         datum: datum ?? { keyboard: false, label: name?.title ?? '', value: formatMoment(event.atMs, props.nowMs) },
         annotation: datum?.value,
         start: event.atMs, end: event.atMs };
@@ -357,7 +359,7 @@ function ResetList(
               <ResetMarker kind={event.kind} />
             </View>
             <View style={styles.listText}>
-              {name ? <UsagePlanIdentity name={name} compact /> : null}
+              {name ? <UsagePlanIdentity name={name} compact column /> : null}
               <Text style={[styles.listEvent, text.detail, event.kind === 'ends' ? styles.warning : null]} numberOfLines={2}>
                 {what}
               </Text>

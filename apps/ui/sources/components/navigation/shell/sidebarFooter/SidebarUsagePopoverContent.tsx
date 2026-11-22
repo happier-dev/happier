@@ -127,6 +127,9 @@ export type UsagePopoverSession = Readonly<{
     nextMove: string | null;
 }>;
 
+/** From this many signed-out accounts on, they are one line with their count (each still one press away). */
+const SIGNED_OUT_FOLD_AT = 3;
+
 const NO_FACTS: SidebarUsageAccountFacts = Object.freeze({ accountsNeedingSignIn: [], keysWithoutLimits: 0 });
 
 /**
@@ -257,13 +260,18 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const { usage, privacy, session } = props;
     const facts = props.facts ?? NO_FACTS;
     const [widened, setWidened] = React.useState(false);
+    const [signedOutOpen, setSignedOutOpen] = React.useState(false);
     // The accounts that can take work lead and the used-up ones follow, each in its own order: five "0% left" rows
     // before the only usable account pushed it below the fold (acceptance 11-21 #7). Nothing here ranks accounts:
     // the switching order is the pool selector's, shown on Plans.
+    // One story per row: an account leads only when it can take work, which is the verdict's "not exhausted" AND a
+    // window that still shows room; a row whose every window reads used up (an old reading the verdict cannot prove)
+    // follows with the used-up ones (acceptance 11-22 #7).
     const accounts = React.useMemo(() => {
         const all = groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account })));
-        const exhausted = (entry: (typeof all)[number]) => facts.accounts?.[entry.account.key]?.quotaExhausted === true;
-        return [...all.filter((entry) => !exhausted(entry)), ...all.filter(exhausted)];
+        const canTakeWork = (entry: (typeof all)[number]) => facts.accounts?.[entry.account.key]?.quotaExhausted !== true
+            && entry.account.windows.some((window) => window.remainingPct === null || window.remainingPct > 0);
+        return [...all.filter(canTakeWork), ...all.filter((entry) => !canTakeWork(entry))];
     }, [facts.accounts, usage.accounts]);
     const now = Date.now();
 
@@ -363,12 +371,24 @@ export function SidebarUsagePopoverView(props: Readonly<{
         // Several accounts with nothing to show are one quiet line after the ones that answer; a lone one keeps its row.
         const silent = accounts.filter(({ account }) => account.windows.length === 0 && account.state !== 'loading');
         const collapsed = silent.length > 1 ? new Set(silent) : null;
+        // Then what cannot take work, by reason: used up (in the list above), no usage data, signed out. A long
+        // signed-out run is one line with its count, opened in place (acceptance 11-22 #7).
+        const signedOut = facts.accountsNeedingSignIn;
+        const foldSignedOut = signedOut.length >= SIGNED_OUT_FOLD_AT;
         body = withDividers([
             ...accounts.filter(entry => !collapsed?.has(entry)).map(renderAccount),
-            ...facts.accountsNeedingSignIn.map(renderSignedOut),
             ...(collapsed ? [<Text key="silent" testID="usage-popover-unavailable-accounts" style={styles.scopeLine}>
                 {t('sidebarFooter.usageUnavailableAccounts', { count: collapsed.size })}
             </Text>] : []),
+            ...(foldSignedOut ? [<ActionListSection key="signedOut" actions={[{
+                id: 'signed-out',
+                testID: 'usage-popover-signed-out-accounts',
+                label: t('sidebarFooter.usageSignedOutAccounts', { count: signedOut.length }),
+                icon: <Icon name="warning" size={16} color={theme.colors.state.warning.foreground} />,
+                right: <Icon name={signedOutOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+                onPress: () => setSignedOutOpen((open) => !open),
+            }]} />] : []),
+            ...(!foldSignedOut || signedOutOpen ? signedOut.map(renderSignedOut) : []),
         ]);
     }
 

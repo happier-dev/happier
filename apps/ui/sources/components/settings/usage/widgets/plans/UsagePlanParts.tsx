@@ -73,7 +73,9 @@ export function readPendingPlanAccountCount(accounts: readonly UsagePlanAccount[
 export function readPlanAccountsStatement(
   accounts: readonly UsagePlanAccount[],
   nameOf: (account: UsagePlanAccount) => UsagePlanAccountName,
-): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number; canRetry: boolean }> | null {
+): Readonly<{ kind: PlanAccountReadKind; reason: string; asOf: number | null; accounts: number; canRetry: boolean;
+  /** The accounts whose ownership is unconfirmed, and the statement's other causes without them. */
+  ownershipNames: readonly string[]; otherReason: string }> | null {
   const ownershipNames: string[] = [];
   const affected: { account: UsagePlanAccount; kind: PlanAccountReadKind }[] = [];
   for (const account of accounts) {
@@ -89,9 +91,7 @@ export function readPlanAccountsStatement(
   const kind: PlanAccountReadKind = affected.some((entry) => entry.kind === 'failed') ? 'failed'
     : affected.some((entry) => entry.kind === 'pending') ? 'pending' : 'partial';
   const reasons: string[] = [];
-  if (ownershipNames.length > 0) {
-    reasons.push(t('connectedServices.errors.quotaOwnershipUnproven', { accounts: ownershipNames.join(', ') }));
-  }
+  const otherReasons: string[] = [];
   if (affected.length > 0) {
     const sources = kind === 'pending' ? t('connectedServices.purposeTargets.poolAccounts', { count: readPendingPlanAccountCount(accounts) })
       : affected.length === accounts.length && accounts.length > 1
@@ -100,9 +100,13 @@ export function readPlanAccountsStatement(
     // An older reading is said by its time (the line's "As of"), not as partial history: only an account with no
     // current reading makes the history partial (acceptance 11-22 #24).
     const partialHistory = affected.some((entry) => !entry.account.read?.current);
-    if (kind !== 'partial') reasons.push(t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
-    else if (partialHistory) reasons.push(usagePartialHistoryLabel());
+    if (kind !== 'partial') otherReasons.push(t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
+    else if (partialHistory) otherReasons.push(usagePartialHistoryLabel());
   }
+  if (ownershipNames.length > 0) {
+    reasons.push(t('connectedServices.errors.quotaOwnershipUnproven', { accounts: ownershipNames.join(', ') }));
+  }
+  reasons.push(...otherReasons);
   const times = affected
     .map((entry) => entry.account.read?.current ? entry.account.state.asOfMs ?? entry.account.observedAtMs : null)
     .filter((time): time is number => typeof time === 'number');
@@ -114,6 +118,8 @@ export function readPlanAccountsStatement(
     canRetry: ownershipNames.length > 0 || kind === 'failed'
       ? affected.some(({ account }) => canRetryUsageCoverageFailure(account.state))
       : kind === 'partial',
+    ownershipNames,
+    otherReason: otherReasons.join(' · '),
   };
 }
 
@@ -171,8 +177,14 @@ export function UsagePlanAccountStates(props: Readonly<{
   replacesContent?: boolean;
   /** The headline already names this pending read; hold the footer's room quietly. */
   pendingInHeadline?: boolean;
+  /**
+   * This body says why accounts are held back for the whole sheet (Limits): the count with the names one press
+   * away. Every other body says it in one short line, so a sheet never repeats a list of names (acceptance 11-22 #31).
+   */
+  leadsAccountStates?: boolean;
 }>) {
   const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
+  const text = usePlanText();
   const statement = readPlanAccountsStatement(props.accounts, props.nameOf);
   const mode = statement ? planAccountStatesMode(statement.kind, pageHasDetail, props.replacesContent === true,
     props.accounts.map(account => account.state)) : 'hidden';
@@ -186,12 +198,22 @@ export function UsagePlanAccountStates(props: Readonly<{
     return <UsageCoverageLine slice={props.slice} sources={['quota']} onRetry={props.onRetry} testID={`${props.testID}.coverage`} />;
   }
   if (mode === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} />;
-  if (mode === 'reason') return <UsageBodyInsufficient testID={`${props.testID}.reason`} title={statement.reason} />;
   if (mode === 'hidden') return null;
+  const held = statement.ownershipNames.length;
+  const reason = held === 0 ? statement.reason : [props.leadsAccountStates
+    ? t('connectedServices.errors.quotaOwnershipUnproven', { accounts: t('connectedServices.purposeTargets.poolAccounts', { count: held }) })
+    : t('usage.board.plans.heldBackOwnership'), statement.otherReason].filter(Boolean).join(' · ');
+  const names = held > 0 && props.leadsAccountStates ? (
+    <UsagePlanDisclosure title={t('common.details')} testID={`${props.testID}.heldBack`}>
+      <Text style={[styles.identityQualifier, text.detail]}>{statement.ownershipNames.join(', ')}</Text>
+    </UsagePlanDisclosure>
+  ) : null;
   const pending = statement.kind === 'pending';
-  return <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={statement.reason} busy={pending}
-    tone={statement.kind === 'failed' ? 'warning' : 'neutral'}
-    {...(statement.canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
+  const line = mode === 'reason' ? <UsageBodyInsufficient testID={`${props.testID}.reason`} title={reason} />
+    : <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={reason} busy={pending}
+      tone={statement.kind === 'failed' ? 'warning' : 'neutral'}
+      {...(statement.canRetry ? { action: { label: t('common.retry'), onPress: retry } } : {})} />;
+  return names ? <View style={styles.heldBack}>{line}{names}</View> : line;
 }
 
 export function formatPlanPercent(fraction: number): string {
@@ -494,6 +516,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   identityMark: { flexShrink: 0 },
   identityStack: { minWidth: 0, gap: theme.space.s2 },
+  heldBack: { gap: theme.space.s4 },
   identityText: {
     flexShrink: 1,
     minWidth: 0,

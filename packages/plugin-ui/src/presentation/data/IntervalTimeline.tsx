@@ -48,6 +48,12 @@ export type IntervalTimelineInterval = Readonly<{
   datum?: HappierChartDatum;
   /** `layout="lanes"`: the lane this interval is drawn in (a machine, an agent). */
   lane?: string;
+  /**
+   * `layout="lanes"`: how the lane's label is drawn when its identity is longer than its name: the name, and a quiet
+   * second line beneath it (an account's address) cut at its end. `lane` stays the lane's identity and spoken name.
+   */
+  laneTitle?: string;
+  laneDetail?: string;
   /** `layout="lanes"`: intervals sharing a track id (one run's busy spans and waits) stay on one line. */
   track?: string;
 }>;
@@ -89,7 +95,7 @@ export type IntervalTimelineProps = Readonly<{
 const validDomainFor = (domain: Readonly<{ start: number; end: number }>) =>
   Number.isFinite(domain.start) && Number.isFinite(domain.end) && domain.start < domain.end;
 
-type PackedLane = Readonly<{ label: string; tracks: readonly (readonly IntervalTimelineInterval[])[] }>;
+type PackedLane = Readonly<{ label: string; title?: string; detail?: string; tracks: readonly (readonly IntervalTimelineInterval[])[] }>;
 
 type IntervalMarks = Readonly<{
   /** The original start's and end's positions, only where they fall inside the domain. */
@@ -145,8 +151,10 @@ function packIntervalLanes(intervals: readonly IntervalTimelineInterval[], markO
       if (track) { track.end = span.end; track.members.push(...span.members); }
       else tracks.push({ end: span.end, members: [...span.members] });
     }
+    const first = [...runs.values()][0]?.[0];
     // Texture last, so a wait reads on top of the run it interrupts.
-    return { label, tracks: tracks.map((track) => [...track.members].sort((a, b) => Number(a.pattern === 'hatched') - Number(b.pattern === 'hatched'))) };
+    return { label, ...(first?.laneTitle ? { title: first.laneTitle } : {}), ...(first?.laneDetail ? { detail: first.laneDetail } : {}),
+      tracks: tracks.map((track) => [...track.members].sort((a, b) => Number(a.pattern === 'hatched') - Number(b.pattern === 'hatched'))) };
   }).filter((lane) => lane.tracks.length > 0);
 }
 
@@ -271,7 +279,8 @@ export function IntervalTimeline(props: IntervalTimelineProps) {
         style={sideLabels ? { flexDirection: 'row', alignItems: 'flex-start', gap: HAPPIER_DATA_METRICS.blockGapPx } : { gap: HAPPIER_DATA_METRICS.axisGapPx }}>
         <View aria-hidden importantForAccessibility="no-hide-descendants" style={sideLabels ? { width: HAPPIER_DATA_METRICS.laneLabelWidthPx,
           marginTop: (trackHeight - captionLine) / 2 } : undefined}>
-          <HappierText style={text.caption} numberOfLines={1}>{lane.label}</HappierText>
+          <HappierText style={text.caption} numberOfLines={1}>{lane.title ?? lane.label}</HappierText>
+          {lane.detail ? <HappierText style={{ ...text.caption, color: props.theme.colors.mutedText }} numberOfLines={1}>{lane.detail}</HappierText> : null}
         </View>
         <View style={{ flex: sideLabels ? 1 : undefined, minWidth: 0, gap: trackGap }}>
           {lane.tracks.map((track, trackIndex) => {

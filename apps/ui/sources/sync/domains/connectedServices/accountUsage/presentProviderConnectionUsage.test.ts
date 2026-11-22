@@ -9,6 +9,8 @@ import { DaemonProviderUsageRefreshResponseV1Schema } from '@happier-dev/protoco
 
 import { presentConnectedServiceQuotaReportedAmount, presentProviderConnectionUsage, selectProviderConnectionUsageSummaryMeter } from './presentProviderConnectionUsage';
 import type { ProviderConnectionUsageRefreshView } from './providerConnectionUsageRefreshResource';
+import { formatConnectedServiceQuotaReportedAmount } from './formatProviderUsageAmount';
+import { t } from '@/text';
 
 const keySource = ProviderUsageSourceV1Schema.parse({
   id: 'key-usage',
@@ -121,6 +123,16 @@ describe('Provider connection usage presentation', () => {
         remaining: limit, utilizationPct: limit === 10 ? 0 : null },
     ]).meters;
     expect(presentConnectedServiceQuotaReportedAmount(meter!)?.amount).toEqual(amount);
+  });
+  it('says a reported zero cap is no allowance, never "0 of 0 left" (acceptance 11-22 #7)', () => {
+    const [none, ten] = snapshot([
+      { ...usd, meterId: 'on-demand', label: 'On-demand spend', unit: 'unknown', used: 0, limit: 0, remaining: 0, utilizationPct: null },
+      { ...usd, meterId: 'monthly', label: 'Monthly included', unit: 'unknown', used: 0, limit: 10, remaining: 10, utilizationPct: 0 },
+    ]).meters;
+    expect(formatConnectedServiceQuotaReportedAmount(presentConnectedServiceQuotaReportedAmount(none!)))
+      .toBe(t('settingsProvidersCollection.usage.amountNoAllowance'));
+    expect(formatConnectedServiceQuotaReportedAmount(presentConnectedServiceQuotaReportedAmount(ten!)))
+      .not.toBe(t('settingsProvidersCollection.usage.amountNoAllowance'));
   });
   it.each([
     { planLabel: 'Enterprise', visible: ['spend'] },

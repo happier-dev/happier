@@ -12,6 +12,7 @@ export const en = {
             scopeAccount: 'Account',
             amountLeft: ({ amount }: { amount: string }) => `${amount} left`,
             amountLeftOfLimit: ({ amount, limit }: { amount: string; limit: string }) => `${amount} of ${limit} left`,
+            amountNoAllowance: 'No allowance',
             notChecked: 'Not checked yet. Refresh to see the latest figures.',
             needsMachine: 'Choose a machine to check usage.',
             unsupported: 'This connection doesn’t report usage.',

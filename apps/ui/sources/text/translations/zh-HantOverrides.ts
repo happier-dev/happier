@@ -13830,7 +13830,8 @@ settingsSession: {
             disabledCount: ({ count }: { count: string | number }) => `${count} 項檢查已關閉`,
             summary_unused_mcp_binding_observed: "已包含的 MCP 連線未被使用",
         }, plans: {
-            capacityNextKnownRetry: ({ account, time }: { account: string; time: string }) => `下次已知重試：${account}，${time}`,
+            capacityNextKnownRetry: ({ account }: { account: string }) => `最先恢復：${account}`,
+            heldBackOwnership: "確認歸屬前暫不顯示",
             approvalDeclined: '這項請求未獲核准，因此沒有任何變更。',
             planValueInsufficient: "價值需要歸屬於此帳號的已記錄用量。",
             insufficientSummary: ({ items }: { items: string }) => `記錄尚不足：${items}`,

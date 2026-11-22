@@ -26,6 +26,7 @@ export type SidebarFooterTranslation = Readonly<{
     usageAllAccounts: string;
     usageMoreAccounts: (params: Readonly<{ count: number }>) => string;
     usageUnavailableAccounts: (params: Readonly<{ count: number }>) => string;
+    usageSignedOutAccounts: (params: Readonly<{ count: number }>) => string;
     /** How the session signs in: through a pool, with one account, or on its own. */
     usageSessionThroughPool: (params: Readonly<{ agent: string; pool: string }>) => string;
     usageSessionWithAccount: (params: Readonly<{ agent: string }>) => string;
@@ -63,6 +64,7 @@ export const sidebarFooterTranslationsEnglish = { en: {
         usageAllAccounts: 'All accounts',
         usageMoreAccounts: ({ count }) => `${count} more`,
         usageUnavailableAccounts: ({ count }) => `${count} accounts with no usage data`,
+        usageSignedOutAccounts: ({ count }) => `${count} accounts signed out`,
         usageSessionThroughPool: ({ agent, pool }) => `${agent} signs in through ${pool}`,
         usageSessionWithAccount: ({ agent }) => `${agent} signs in with this account`,
         usageSessionOwnSignIn: ({ agent }) => `${agent} uses its own sign-in`,

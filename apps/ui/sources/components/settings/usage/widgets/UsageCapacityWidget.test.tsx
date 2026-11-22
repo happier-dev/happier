@@ -561,7 +561,7 @@ it.each([null, 0, 10])('shows the reported spend allowance in the pool cell for 
       model={{ refresh: async () => {} }} />
   </InjectedAuthProvider>);
   const cell = screen.findHostByTestId('capacity.cell.billing');
-  const amount = limit === null ? `0 · ${t('usage.board.plans.cellNoAllowance')}`
+  const amount = limit === null ? `0 · ${t('usage.board.plans.cellNoAllowance')}` : limit === 0 ? t('settingsProvidersCollection.usage.amountNoAllowance')
     : t('settingsProvidersCollection.usage.amountLeftOfLimit', { amount: String(limit), limit: String(limit) });
   expect(cell?.props.accessibilityLabel).toContain(amount);
   expect(screen.getTextContent()).toContain(amount);

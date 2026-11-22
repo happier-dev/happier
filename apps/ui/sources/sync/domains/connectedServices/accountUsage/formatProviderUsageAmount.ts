@@ -27,6 +27,8 @@ export function formatProviderUsageAmount(
                 ? formatMoney(amount.remaining, unit, currency)
                 : t('settingsProvidersCollection.usage.amountLeft', { amount: formatMoney(amount.remaining, unit, currency) });
         case 'remainingOfLimit':
+            // A reported cap of zero is no allowance at all, not a reading of "0 of 0 left" (acceptance 11-22 #7).
+            if (amount.limit === 0) return t('settingsProvidersCollection.usage.amountNoAllowance');
             return t('settingsProvidersCollection.usage.amountLeftOfLimit', {
                 amount: formatMoney(amount.remaining, unit, currency),
                 limit: formatMoney(amount.limit, unit, currency),

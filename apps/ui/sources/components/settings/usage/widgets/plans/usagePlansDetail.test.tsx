@@ -1437,12 +1437,14 @@ it.each([
   };
   const screen = await renderScreen(widgets(slice));
 
-  for (const id of ['cap.state', 'fit.state']) {
-    const line = screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === id);
-    expect.soft(line?.props.reason).toMatch(/Vercel/);
-    expect.soft(line?.props.reason).toMatch(/ownership/i);
-    expect.soft(line?.props.action).toBeUndefined();
-  }
+  // Said once: Limits gives the count with the names one press away; every other body one short line (11-22 #31).
+  const lineOf = (id: string) => screen.findAllByType(SurfaceFreshnessLine).find(node => node.props.testID === id);
+  expect.soft(lineOf('cap.state')?.props.reason).toMatch(/ownership/i);
+  expect.soft(lineOf('cap.state')?.props.reason).not.toMatch(/Vercel/);
+  expect.soft(screen.findByTestId('cap.state.heldBack')).toBeTruthy();
+  expect.soft(lineOf('fit.state')?.props.reason).toContain(t('usage.board.plans.heldBackOwnership'));
+  expect.soft(lineOf('fit.state')?.props.reason).not.toMatch(/Vercel/);
+  for (const id of ['cap.state', 'fit.state']) expect.soft(lineOf(id)?.props.action).toBeUndefined();
   expect.soft(screen.findByTestId('cap.none')).toBeFalsy();
   expect.soft(screen.findByTestId('fit.none')).toBeFalsy();
   expect.soft(screen.findByTestId(`cap.cell.${accountId}`)).toBeFalsy();

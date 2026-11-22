@@ -184,7 +184,7 @@ function readNextLimitsQuotaRetry(
   for (const pool of pools) {
     const state = selections.get(pool.key);
     if (!state || typeof state === 'string' || 'status' in state) continue;
-    const retry = readUsagePoolNextQuotaRetry(state.selection, nowMs);
+    const retry = readUsagePoolNextQuotaRetry(pool, accounts, state.selection, nowMs);
     if (!retry) continue;
     const account = readUsagePoolAccount(pool, accounts, retry.profileId);
     if (account) return { account, retryAtMs: retry.retryAtMs };
@@ -353,13 +353,15 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       />
       {spentRetry !== null ? (
         <View style={styles.hero} testID={`${props.testID}.firstBack`}>
+          {/* The hero is the fact (when work can resume), one line at every width; the account is its caption, as
+              "4% left on <account>" is (acceptance 11-22 #29). */}
           <View style={styles.heroLine}>
             <HappierDataMetric testID={`${props.testID}.firstBack.time`} theme={chartTheme} size="hero"
-              label={t('usage.widgets.usage_capacity')}
-              value={t('usage.board.plans.capacityNextKnownRetry', {
-                account: nameOf(spentRetry.account).title,
-                time: formatMoment(spentRetry.retryAtMs, nowMs),
-              })} />
+              label={t('usage.board.plans.capacityNextKnownRetry', { account: nameOf(spentRetry.account).title })}
+              value={formatMoment(spentRetry.retryAtMs, nowMs)} />
+            <Text style={[styles.heroUnit, text.title]} numberOfLines={2}>
+              {t('usage.board.plans.capacityNextKnownRetry', { account: nameOf(spentRetry.account).title })}
+            </Text>
           </View>
           <Text style={[styles.subline, text.detail]}>
             {[
@@ -501,6 +503,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         testID={`${props.testID}.state`}
         pendingInHeadline={reading || provisionalReading}
         replacesContent={drawn.length === 0}
+        leadsAccountStates
       />
     </View>
   );

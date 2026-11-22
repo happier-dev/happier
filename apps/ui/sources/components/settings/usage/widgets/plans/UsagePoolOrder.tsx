@@ -109,9 +109,20 @@ export function readUsagePoolMembers(
   });
 }
 
-/** A retained deadline only describes an upcoming retry while it is in the future. */
-export function readUsagePoolNextQuotaRetry(selection: Selection, nowMs: number): Selection['nextQuotaRetry'] {
+/**
+ * When the pool's first account comes back, which also says every member is used up. A retained deadline only
+ * describes an upcoming retry while it is in the future, and only when every member the page lists has a reading:
+ * an account that was not read is unknown, never used up (acceptance 11-22 #31).
+ */
+export function readUsagePoolNextQuotaRetry(
+  pool: Pick<UsagePlanPool, 'accountKeys'>,
+  accounts: readonly Pick<UsagePlanAccount, 'key' | 'observedAtMs'>[],
+  selection: Selection,
+  nowMs: number,
+): Selection['nextQuotaRetry'] {
   const retry = selection.nextQuotaRetry;
+  const members = accounts.filter((account) => pool.accountKeys.includes(account.key));
+  if (members.length === 0 || members.some((account) => account.observedAtMs === null)) return undefined;
   return retry && retry.retryAtMs > nowMs ? retry : undefined;
 }
 
@@ -368,7 +379,7 @@ function PoolQueue(
       />
       {/* Every member used up: there is no order to follow until one comes back, and the pool above already says when
           each returns, so the list is one line; Why keeps every member's reason (acceptance 11-18 #3, #7). */}
-      {readUsagePoolNextQuotaRetry(selection, props.nowMs) ? (
+      {readUsagePoolNextQuotaRetry(props.pool, props.accounts, selection, props.nowMs) ? (
         <Text testID={`${props.testID}.allUsedUp`} style={[styles.quiet, text.detail]}>{t('usage.board.plans.queueAllUsedUp')}</Text>
       ) : <>
       <Text style={[styles.quiet, text.detail]}>{strategy.description}</Text>
@@ -509,7 +520,7 @@ export function UsagePoolSteps(props: PoolOrderProps) {
         if (state.memberStatus === 'none_known') {
           return <UsagePlanSectionHead key={pool.key} title={label} meta={!sharedCause && state.refreshError ? unreadText(state.refreshError) : null} />;
         }
-        if (readUsagePoolNextQuotaRetry(state.selection, props.nowMs)) {
+        if (readUsagePoolNextQuotaRetry(pool, props.accounts, state.selection, props.nowMs)) {
           // No step to take until one comes back; each member's return is in the rows above (acceptance 11-18 #7).
           return (
             <View key={pool.key} testID={`${props.testID}.${pool.groupId}`} style={styles.pool}>

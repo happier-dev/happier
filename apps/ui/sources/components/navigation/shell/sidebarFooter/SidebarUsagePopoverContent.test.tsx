@@ -112,6 +112,38 @@ describe('the Usage popover header', () => {
 });
 
 describe('SidebarUsagePopoverContent', () => {
+    it('leads with an account that can take work: a row that reads used up follows it even without a proven verdict (acceptance 11-22 #7)', async () => {
+        state.summaries = [summary('claude:a', 'Old zero', 0), summary('claude:b', 'Usable', 40)];
+        const screen = await renderContent();
+        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[ab]$/.test(node.props.testID))
+            .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
+        expect(order).toEqual(['sidebar-usage-account-claude:b', 'sidebar-usage-account-claude:a']);
+    });
+    it('keeps a dated quota reading and reset after it expires without a read failure', async () => {
+        const reading = summary('claude:a', 'Work', 40);
+        state.summaries = [{ ...reading, fetchedAt: Date.now() - 5 * 60_000, staleAfterMs: 120_000,
+            meters: reading.meters.map(meter => ({ ...meter, resetsAt: Date.now() + 60 * 60_000 })) }];
+        const screen = await renderContent();
+        expect.soft(screen.getTextContent()).toMatch(/40%/);
+        expect.soft(screen.getTextContent()).toMatch(/reset/i);
+        const freshness = screen.findByTestId('sidebar-usage-account-claude:a.freshness');
+        expect(freshness).toBeTruthy();
+        expect(screen.findByTestId('sidebar-usage-refresh-error')).toBeFalsy();
+    });
+
+    it('folds a long signed-out run behind one line with its count', async () => {
+        state.summaries = [summary('claude:a', 'Usable', 40)];
+        state.needingSignIn = ['p', 'q', 'r'].map(id => ({
+            key: `codex:${id}`, ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: id },
+            serviceLabel: 'ChatGPT', legacyServiceId: 'openai-codex', serviceGroupKey: 'happier.agent.codex/openai-codex',
+            accountLabel: `Work ${id}`, accountEmail: null, accountId: id,
+        }));
+        const screen = await renderContent();
+        expect(screen.findByTestId('sidebar-usage-signed-out-codex:p')).toBeFalsy();
+        expect(screen.getTextContent()).toContain('sidebarFooter.usageSignedOutAccounts(count=3)');
+        await screen.pressByTestIdAsync('usage-popover-signed-out-accounts');
+        expect(screen.findByTestId('sidebar-usage-signed-out-codex:p')).toBeTruthy();
+    });
     it('lists the accounts with room before the used-up ones, keeping each group in its order (acceptance 11-21 #7)', async () => {
         state.summaries = [summary('claude:a', 'Spent one', 0), summary('claude:b', 'Spent two', 0), summary('claude:c', 'Usable', 5),
             summary('claude:d', 'Roomy', 80)];
@@ -143,7 +175,8 @@ describe('SidebarUsagePopoverContent', () => {
     });
     it.each([
         [null, '0 · usage.board.plans.cellNoAllowance'],
-        [0, 'settingsProvidersCollection.usage.amountLeftOfLimit(amount=0,limit=0)'],
+        // A reported zero cap is no allowance, never "0 of 0 left" (acceptance 11-22 #7).
+        [0, 'settingsProvidersCollection.usage.amountNoAllowance'],
         [10, 'settingsProvidersCollection.usage.amountLeftOfLimit(amount=10,limit=10)'],
     ] as const)('shows the on-demand spend cap report for %s', async (limit, expected) => {
         const { buildSummaryMeters } = await import('@/sync/domains/connectedServices/connectedServiceQuotaBadges');
