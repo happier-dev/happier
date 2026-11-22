@@ -78,7 +78,11 @@ describe('Home runtime Action parity', () => {
         previousAuthenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'github' }] },
         authenticationPolicy: null,
       },
-      summary: /use Home sign-in/i,
+      summary: /^Use the Home’s sign-in policy \(may allow more sign-in methods\)\.$/,
+    },
+    {
+      change: { previousAuthenticationPolicy: null, authenticationPolicy: null },
+      summary: /^Use the Home’s sign-in policy\.$/,
     },
     {
       change: { managedDefaults: null },

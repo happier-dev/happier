@@ -588,8 +588,11 @@ function createTeamActionSpecs(): TeamActionSpecs {
       summary: input => {
         const change = readRecord(input);
         const groupChange = readRecord(change?.managedGroupDefaults);
+        const homeSignInSummary = change?.previousAuthenticationPolicy === null
+          ? 'Use the Home’s sign-in policy'
+          : 'Use the Home’s sign-in policy (may allow more sign-in methods)';
         return [
-          change?.authenticationPolicy === null ? 'Use Home sign-in policy' : null,
+          change?.authenticationPolicy === null ? homeSignInSummary : null,
           change?.managedDefaults === null ? 'Clear Team member defaults and all Group overrides' : null,
           groupChange?.defaults === null ? 'Clear Group member defaults' : null,
         ].filter(Boolean).join('. ') || null;
