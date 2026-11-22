@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { expect } from 'vitest';
 import { z } from 'zod';
+import { readDeploymentEnvironmentArtifactV1 } from '@happier-dev/deployments';
 import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/registries/registryActionsV1';
 import { DeploymentTemplateInstantiateResultV1Schema,
     type DeploymentTemplateInstantiateInputV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
@@ -8,11 +9,13 @@ import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptResultV1Schema
     DeploymentDomainMutationResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentAppMachineAssociationV1Schema } from '@happier-dev/protocol/machines/enrollmentV1';
 import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../../../../packages/cli-common/src/systemTasks/executors/enrollMachineFlowExecutor';
 import { createHappierJsonExecutorFromTextRunner } from '../../../../packages/cli-common/src/systemTasks/executors/happierJsonExecutorFromTextRunner';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../../../packages/cli-common/src/systemTasks/ssh/remoteFirstPartyInstallPath';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { ApiClient } from '@/api/api';
+import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { resolveOwnServerDeploymentIdentityForHost } from './targets/ownServer/paths';
@@ -63,15 +66,16 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
             }
         }
     });
-    const readCollector = async () => {
-        const detail = DeploymentEnvironmentGetResultV1Schema.parse(await initiator.accepted('deployments.environments.get', {
-            serverId: home.serverId, environmentId }));
-        if (!detail.ok) throw new Error(detail.error);
-        return detail;
-    };
-    const detail = await readCollector();
-    if (detail.content.definition.kind !== 'stored') throw new Error('The collector template must create a stored definition');
-    const document = ComposeDocument.parse(JSON.parse(detail.content.definition.document));
+    const detail = DeploymentEnvironmentGetResultV1Schema.parse(await initiator.accepted('deployments.environments.get', {
+        serverId: home.serverId, environmentId }));
+    if (!detail.ok) throw new Error(detail.error);
+    const artifactStore = createCredentialedAccountArtifactStore(initiator.credentials);
+    const artifact = await runWithServerHttpBaseUrl(home.baseUrl, () => artifactStore.read(detail.environment.contentArtifactId));
+    const opened = readDeploymentEnvironmentArtifactV1(detail.environment, artifact);
+    if (!opened.ok) throw new Error(`Collector Environment content unavailable: ${opened.error}`);
+    const definition = opened.content.definition;
+    if (definition.kind !== 'stored') throw new Error('The collector template must create a stored definition');
+    const document = ComposeDocument.parse(await parseDeploymentComposeSourceV1(definition.document));
     const serviceName = selected.payload.app.compose.primaryService;
     const service = serviceName ? document.services[serviceName] : undefined;
     if (!serviceName || !service) throw new Error('The collector template must select its native service');
@@ -88,7 +92,7 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
         expectedRevision: detail.environment.revision, contentArtifactId: detail.environment.contentArtifactId,
         contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
         patch: { definition: { from: 'compose', document: JSON.stringify(document),
-            profiles: detail.content.definition.profiles, services: detail.content.definition.services } } });
+            profiles: definition.profiles, services: definition.services } } });
     const receipt = DeploymentReceiptResultV1Schema.parse(await initiator.accepted('deployments.deploy', {
         serverId: home.serverId, environmentId, targetLinkId: applied.targetLinkId, requestKey: randomUUID() }));
     if (!receipt.ok || receipt.state !== 'succeeded') throw new Error('The collector App deployment must settle successfully');
@@ -128,7 +132,7 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
         start: async () => { await nativeDocker(['start', containerId]); await assertReady(); },
         prepareEnvironment: async monitoredId => {
             const current = await context.readEnvironment(monitoredId);
-            const link = current.targetLinks.find(item => item.targetLink.id === current.environment.runtimeTargetLinkId)?.targetLink;
+            const link = current.targetLinks.find(item => item.id === current.environment.runtimeTargetLinkId);
             if (!link) throw new Error('The monitored Environment must retain its runtime target');
             const existing = domains.get(monitoredId);
             const id = existing?.id ?? randomUUID();
