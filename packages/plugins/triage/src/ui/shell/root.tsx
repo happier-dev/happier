@@ -2496,7 +2496,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         }}
         onClose={dismissDetail}
       />
-    ) : headerHosted && !pushed && absentRoute === null && !readFailed && routedIdentity?.kind !== undefined ? (
+    ) : headerHosted && absentRoute === null && !readFailed && routedIdentity?.kind !== undefined ? (
       // A deep link the list has not listed yet keeps the listed detail's geometry from its route (F10).
       <TriageDetailRouteReading
         workflowSubject={routedIdentity.kind.workflowSubject ?? null}

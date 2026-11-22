@@ -304,6 +304,47 @@ describe('the mounted configured entry action controls', () => {
     expect(row()).toEqual(settledRow);
   });
 
+  it('leads the wide row with Ask and ⋯, so the primary grows into free space when its agent lands (F10)', async () => {
+    // A cold document reads the default agent after first paint: the primary draws "Review" and then names its
+    // agent. Ask and ⋯ come first, so that growth moves neither of them; the primary ends the row as the lab's write does.
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'pr-order', kindId: 'pull-request' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        workflowSubject="pullRequest"
+        viewerIsAuthor={false}
+        reviewPreparation="ready"
+        onAction={() => null}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-row-order', mountNonce: 'fixture-mount-row-order' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { executeAction: async ({ action }) => {
+        const id = typeof action === 'string' ? action : action.localId;
+        if (id === 'agents.backends.list') return { defaultTargetKey: 'backend:claude', items: [{
+          targetKey: 'backend:claude', label: 'Claude Code', enabled: true,
+          identity: { pluginId: 'happier.claude', localId: 'claude' },
+        }] } as never;
+        if (id === 'projects.list') return { items: [], truncated: false } as never;
+        throw new Error(`Unexpected Action ${id}`);
+      } },
+    });
+    mounted.push(fixture);
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    await expect(fixture.getByRole('button', { name: 'Review with Claude Code' })).resolves.toBeDefined();
+    const names = Array.from(document.querySelectorAll('button, [role="button"]'))
+      .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '');
+    const primary = names.indexOf('Review with Claude Code');
+    expect(names.indexOf('Ask')).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf('Ask')).toBeLessThan(primary);
+    expect(names.indexOf('More actions')).toBeLessThan(primary);
+  });
+
   it('dispatches the exact formal review action that was pressed', async () => {
     const requests: TriageEntryActionRequestV1[] = [];
     const actions = [

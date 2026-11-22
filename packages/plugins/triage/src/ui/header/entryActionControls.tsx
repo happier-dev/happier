@@ -641,7 +641,7 @@ export function TriageEntryActionControls(
     extraItems.find((item) => `${EXTRA_ITEM_PREFIX}${item.id}` === id)?.onPress();
   };
 
-  const controls = (
+  const primaryControl = (
     <>
       {primary === null ? null : !startDestinations ? (
         compact ? <Stack style={COMPACT_PRIMARY_STYLE_V1}>{button(primary, press)}</Stack> : button(primary, press)
@@ -663,6 +663,10 @@ export function TriageEntryActionControls(
           {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}
         />
       )}
+    </>
+  );
+  const secondaryControls = (
+    <>
       {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}
       {hasOverflow ? (
         <Menu
@@ -678,6 +682,15 @@ export function TriageEntryActionControls(
           onSelect={selectMenuItem}
         />
       ) : null}
+    </>
+  );
+  // The wide row leads with Ask and ⋯ and ends with the primary (as the lab's write ends its row), so the primary grows
+  // into free space when its agent lands on a cold document and moves neither of them (F10). The pinned phone band keeps
+  // the primary first: there it holds its word and Ask yields into ⋯ by the band's own measured room.
+  const controls = (
+    <>
+      {compact ? primaryControl : secondaryControls}
+      {compact ? secondaryControls : primaryControl}
       {/* The source's own write follows ⋯. It arrives with the source's body, after the row has painted, so in this
           place it joins the row without moving anything already there (lab b4/c7 drew it before ⋯). */}
       {props.sourceWrite === undefined || (compact && writeShown) ? null

@@ -3480,6 +3480,9 @@ describe('opening a row into the source detail', () => {
         await act(async () => { await shell.updatePageLocation(''); });
         requestedLocations.length = 0;
         await act(async () => { await shell.updatePageLocation(subPath); });
+        // The reopened route draws its reading frame first (its tab row publishes through the host), then the exact
+        // read's settled failure replaces it.
+        await vi.waitFor(async () => { await expect(shell.getByRole('button', { name: 'Details' })).resolves.toBeDefined(); });
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         await expect(shell.getByText(code)).resolves.toBeDefined();
         await expect(shell.getByText(detail)).resolves.toBeDefined();
@@ -3634,13 +3637,16 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText('Reading this pull request from Example forge')).resolves.toBeUndefined();
     });
 
-    it('draws a cold deep link\'s facts and tab row from its route before the entry is listed (F10)', async () => {
+    it.each([
+        { layout: 'the wide details pane', hostedDetail: true },
+        { layout: 'the pushed phone page', hostedDetail: false },
+    ])('draws a cold deep link\'s facts and tab row from its route before the entry is listed, in $layout (F10)', async ({ hostedDetail }) => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
             selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
         const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true, tabbedDetail: true,
-            hostedDetail: true, secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
+            hostedDetail, secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
         const tabNames = () => Array.from(document.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent?.trim() ?? '');
         const facts = () => document.querySelector('[data-testid="triage-detail-facts"]');
         let readingTabs: string[] = [];
