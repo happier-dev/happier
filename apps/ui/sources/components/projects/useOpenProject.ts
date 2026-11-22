@@ -11,6 +11,7 @@ import { getDeviceType } from '@/utils/platform/responsive';
 import { buildProjectPaneScopeId } from './detail/projectPaneScope';
 import { buildProjectRouteHref, resolveProjectOpenHref, type ProjectAttachedDashboardSelection } from './detail/projectRouteState';
 import { createProjectCommitDetailsTab } from './detail/projectDetailsTabBuilders';
+import { PROJECT_USE_SHARED_SETUP_PARAM } from './projectSetup/sharedSetupRoute';
 import { useWorkspaceFileOpener, type WorkspaceFileOpenOptions } from '@/components/workspaces/files/useWorkspaceFileOpener';
 import type { FileTargetAnchor } from '@/utils/url/sessionFileDeepLink';
 import type { ReviewCommentSource } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
@@ -34,6 +35,8 @@ export type OpenProjectOptions = Readonly<{
     /** Open on one of the person's own dashboards: its layout id, or `null` for the default. */
     layoutId?: string | null;
     initialResource?: Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; find?: FindSeed }> | Readonly<{ kind: 'commit'; sha: string }>;
+    /** "Use for this project": the checkout's Scripts page opens with this Source's shared setup review. */
+    sharedSetupSourceId?: string;
     /** Open one of this Project's Environments on its Deployments page (the Projects tree's Environment rows). */
     environmentId?: string;
     /** With `environmentId`: one of that Environment's databases, in place (the tree's database rows). */
@@ -94,6 +97,11 @@ export function useOpenProject(): OpenProject {
             return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
                 segment: 'overview', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
                 ...(options.attachedDashboard ? { attachedDashboard: options.attachedDashboard } : { layoutId: options.layoutId })}));
+        }
+        if (options?.sharedSetupSourceId) {
+            return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,
+                segment: 'scripts', activeRootPath, defaultRootPath: workspaceRef.rootPath, activeWorktreeId,
+                routeParams: { [PROJECT_USE_SHARED_SETUP_PARAM]: options.sharedSetupSourceId } }));
         }
         if (options?.environmentId) {
             return await openHref(buildProjectRouteHref({ workspaceRefId: workspaceRef.id, serverId: workspaceRef.serverId,

@@ -14,6 +14,7 @@ import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { buildProjectSourceSetupUrlV1 } from '@happier-dev/protocol/projects/sources/projectSourceSetupLinkV1';
 import { createDbMaintenanceClient, db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { inTx } from '@/storage/inTx';
@@ -527,6 +528,30 @@ describe('Source catalog real SQLite owner', () => {
             .toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { actorAccountId: reader.id, artifactId: artifact.id })))
             .toEqual({ ok: false, error: 'artifact_not_found' });
+    });
+    it('renders the Home setup link on a Source read only when the Source carries a setup', async () => {
+        const publisher = await account();
+        const own = await source(publisher.id);
+        const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: publisher.id,
+            kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1,
+            header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'project_setup.v1', title: 'Setup' })),
+            body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify({ kind: 'project_setup.v1', manifest: { version: 1 } }) })),
+            dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
+        const target = { applicationOrigin: 'https://app.example.test/', homeTarget: '{"kind":"descriptor"}' };
+        let linkTarget: { applicationOrigin: string | null; homeTarget: string | null } = target;
+        await withAuthenticatedTestApp(app => projectSourceRoutes(app, { resolveSetupLinkTarget: async () => linkTarget }), async app => {
+            const headers = { 'x-test-user-id': publisher.id };
+            const read = () => app.inject({ method: 'GET', url: `/v1/projects/sources/${own.id}?serverId=home`, headers });
+            expect((await read()).json()).not.toHaveProperty('setupLink');
+            const attached = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId, sourceId: own.id, expectedRevision: own.revision,
+                patch: { attachment: { kind: 'attach', attachment: { purpose: 'setup', ref: { kind: 'doc', artifactId: artifact.id },
+                    contentRevision: { headerVersion: 1, bodyVersion: 1 } } } } }));
+            expect(attached).toMatchObject({ ok: true });
+            expect((await read()).json()).toMatchObject({ ok: true, setupLink: buildProjectSourceSetupUrlV1({ sourceId: own.id,
+                homeTarget: target.homeTarget, applicationOrigin: target.applicationOrigin }) });
+            linkTarget = { applicationOrigin: null, homeTarget: null };
+            expect((await read()).json()).toMatchObject({ ok: true, setupLink: null });
+        });
     });
     it('wraps Source setup keys only for admitted readers, never an outside-Group Team admin', async () => {
         const [publisher, administrator, member] = await Promise.all([0, 1, 2].map(() =>

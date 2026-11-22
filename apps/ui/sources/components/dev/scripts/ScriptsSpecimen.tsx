@@ -30,7 +30,8 @@ import type { ProjectSetupScope } from '@/components/projects/projectSetup/Proje
 import { ProjectSetupReviewPage } from '@/components/projects/projectSetup/ProjectSetupReviewPage';
 import { readProjectSetupLayers } from '@/components/projects/projectSetup/projectSetupLayers';
 import { ProjectSetupShareView } from '@/components/projects/projectSetup/ProjectSetupShareSheet';
-import { withoutPersonalProjectSetup, type ProjectSetupSharingSnapshot } from '@/components/projects/projectSetup/projectSetupSharing';
+import type { ProjectSetupSharingSnapshot } from '@/components/projects/projectSetup/projectSetupSharing';
+import { projectSetupExportV1, selectProjectSetupExportV1, type ProjectSetupExportPathV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupExportV1';
 
 /**
  * Dev-only specimen of the Scripts page, project file editor and setup review (Lane 12 lab
@@ -226,25 +227,28 @@ function PhoneReviewFrame() {
     sharedSetupName="Acme web setup" />;
 }
 
-/** Share setup (lab L6 share) on the layered definition: the personal change stays out and says so. */
+/** Share setup (lab L6 share) on the layered definition: repository lines start unchecked (plan A §2). */
 function shareSnapshot(state: string): ProjectSetupSharingSnapshot {
-  const base = { selection: null, warningAcknowledged: false, publication: null, pending: false, issue: null, personalOmitted: 0 };
+  const base = { selection: null, warningAcknowledged: false, publication: null, pending: false, issue: null, units: [] };
   if (state === 'reading') return { ...base, status: 'loading', manifest: null, preview: null };
   if (state === 'unreadable') return { ...base, status: 'unavailable', manifest: null, preview: null, issue: 'project_setup_review_unavailable' };
-  const { manifest, omitted } = withoutPersonalProjectSetup(LAYERED_DEFINITION);
-  return { ...base, status: 'ready', manifest, personalOmitted: omitted, pending: state === 'sharing',
-    preview: { manifest, bytes: `${JSON.stringify(manifest, null, 2)}\n` } };
+  const exported = projectSetupExportV1(LAYERED_DEFINITION);
+  return { ...base, status: 'ready', manifest: LAYERED_DEFINITION.effectiveManifest, units: exported.units, selection: exported.selected,
+    pending: state === 'sharing', preview: { manifest: exported.manifest, bytes: exported.bytes } };
 }
 
 function ShareFrame(props: Readonly<{ state: string }>) {
-  const snapshot = React.useMemo(() => shareSnapshot(props.state), [props.state]);
+  const initial = React.useMemo(() => shareSnapshot(props.state), [props.state]);
+  const [selection, setSelection] = React.useState<readonly ProjectSetupExportPathV1[] | null>(null);
+  const snapshot = React.useMemo(() => selection && initial.manifest ? { ...initial, selection,
+    preview: { manifest: selectProjectSetupExportV1(initial.manifest, selection), bytes: '' } } : initial, [initial, selection]);
   const result = props.state === 'notAttached'
     ? { kind: 'savedNotAttached' as const, publication: { artifactId: 'a', revision: { headerVersion: 1, bodyVersion: 1 } }, code: 'source_conflict' }
     : null;
   return (
     <View style={styles.sheet}>
       <ProjectSetupShareView snapshot={snapshot} sourceName="acme/web" audience="Acme · everyone" result={result}
-        approval={null} onRetryRead={() => {}} onShare={() => {}} onOpenSourceSharing={() => {}} onClose={() => {}} />
+        approval={null} onRetryRead={() => {}} onSelect={setSelection} onShare={() => {}} onOpenSourceSharing={() => {}} onClose={() => {}} />
     </View>
   );
 }

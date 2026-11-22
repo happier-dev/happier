@@ -42,6 +42,7 @@ import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/pro
 import type { ProjectAttachedDashboardSelection } from '../detail/projectRouteState';
 import { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
 import { useProjectSourceSetupTarget } from './useProjectSourceSetupTarget';
+import { PROJECT_OPEN_SHARED_SETUP_PARAM } from '../projectSetup/sharedSetupRoute';
 import { buildHomeRecoveryHref } from '@/components/settings/server/navigation/serverSettingsRouteParams';
 export { PROJECT_SOURCES_ROUTE, projectSourceRoute } from './projectSourceNavigation';
 
@@ -132,17 +133,19 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
   const { state, controller } = useProjectSources(props.scope, { lifetime: props.lifetime, catalog: props.selectedSourceId === undefined });
   const [query, setQuery] = React.useState('');
   const openProject = useOpenProject();
-  const openSource = React.useCallback((source: ProjectSourceV1, attachedDashboard?: ProjectAttachedDashboardSelection) => {
+  const openSource = React.useCallback((source: ProjectSourceV1, attachedDashboard?: ProjectAttachedDashboardSelection,
+    sharedSetup?: true) => {
     const lifetime = props.lifetime ?? captureActiveServerAccountScopeLifetime();
     if (!lifetime?.isCurrent() || lifetime.scope.serverId !== props.scope.serverId) return;
     const route = buildProjectSourceOpenRoute(props.scope.serverId, source);
-    const selection = route ? readProjectOpenRouteDraft(route.params) : null;
+    // A setup-only Source has no repository to open: the person picks the checkout it applies to in Open.
+    const selection = route ? readProjectOpenRouteDraft(route.params) : sharedSetup ? { serverId: props.scope.serverId } : null;
     if (!selection) return;
     fireAndForget(seedAndOpenProjectDraft({ lifetime, selection, navigate: retained => navigateToOpen({ ...retained,
       params: { ...retained.params, ...(attachedDashboard ? {
         dashboardSourceId: attachedDashboard.sourceId, dashboardArtifactId: attachedDashboard.artifactId,
         ...(attachedDashboard.serverId === undefined ? {} : { dashboardServerId: attachedDashboard.serverId }),
-      } : {}) } }) }), { tag: 'ProjectSources.open' });
+      } : {}), ...(sharedSetup ? { [PROJECT_OPEN_SHARED_SETUP_PARAM]: source.id } : {}) } }) }), { tag: 'ProjectSources.open' });
   }, [navigateToOpen, props.scope.serverId, props.lifetime]);
   const teamsDirectory = useTeamsDirectory({
     serverIds: [props.scope.serverId],
@@ -275,6 +278,12 @@ const ProjectSourcesCollection = React.memo(function ProjectSourcesCollection(
         if (!workspaceAddress) { openSource(source, attachedDashboard); return; }
         fireAndForget(openProject(workspaceAddress.workspaceId, { serverId: props.scope.serverId, workspaceAddress,
           attachedDashboard }), { tag: 'ProjectSources.openDashboard' });
+      }}
+      onUseSetup={(source, workspaceAddress) => {
+        // An existing checkout goes straight to its Scripts review; otherwise Open admits one first.
+        if (!workspaceAddress) { openSource(source, undefined, true); return; }
+        fireAndForget(openProject(workspaceAddress.workspaceId, { serverId: props.scope.serverId, workspaceAddress,
+          sharedSetupSourceId: source.id }), { tag: 'ProjectSources.useSetup' });
       }}
       onDeleted={() => navigate(projectSourceRoute(null), true)}
       onBack={() => safeRouterBack({ router, fallbackHref: PROJECT_SOURCES_ROUTE })}

@@ -7,6 +7,7 @@ import { ProjectDefinitionDetectionV1Schema, ProjectDefinitionImportCandidateV1S
 import { ProjectManifestDiagnosticSchema, ProjectManifestFileBasisV1Schema, ProjectManifestUpdateResultSchema } from '../workspaces/projectSetup/projectManifestDocument.js';
 import { ProjectManifestV1Schema } from '../workspaces/projectSetup/projectManifestV1.js';
 import { ProjectSharedSetupChangeV1Schema } from '../projects/projectSetupChangeV1.js';
+import { ProjectSetupExportUnitV1Schema, ProjectSetupExportV1Schema } from '../workspaces/projectSetup/projectSetupExportV1.js';
 import { ProjectEffectiveDefinitionV1Schema } from '../workspaces/projectSetup/projectDefinitionCompositionV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import type { PreNormalizedActionSpec } from './actionSpecs.js';
@@ -26,6 +27,8 @@ export const ProjectDefinitionInspectReadSchema = lazyZodSchema(() => z.discrimi
   z.strictObject({ kind: z.enum(['overview', 'rail']), detectedRows: z.number().check(z.int(), z.nonnegative()) }),
   z.strictObject({ kind: z.enum(['scripts', 'imports', 'guidance', 'create', 'tools', 'services', 'setup', 'placement', 'applications']) }),
   z.strictObject({ kind: z.literal('editor'), target: z.optional(z.literal('repository')) }),
+  /** What a share would carry: every declaration with its layer, the chosen subset (default: not the repository) and exact bytes. */
+  z.strictObject({ kind: z.literal('export'), select: z.optional(z.array(ProjectSetupExportUnitV1Schema.shape.path)) }),
   z.strictObject({ kind: z.literal('detail'), sources: ProjectDefinitionDetectionV1Schema.shape.entries }),
   z.strictObject({ kind: z.literal('execution'), command: z.optional(z.strictObject({
     usage: z.enum(['script', 'service', 'setup']), name: z.string().check(z.minLength(1)),
@@ -73,6 +76,7 @@ export const ProjectDefinitionInspectOutputSchema = lazyZodSchema(() => z.strict
   definitionScope: z.optional(z.literal('statusOnly')),
   definition: ProjectManifestInspectionSnapshotSchema, detection: ProjectDefinitionDetectionV1Schema,
   sharedSetupChange: z.optional(ProjectSharedSetupChangeV1Schema),
+  setupExport: z.optional(ProjectSetupExportV1Schema),
   effectiveDefinition: z.optional(ProjectEffectiveDefinitionV1Schema),
   detectionSummary: z.optional(z.strictObject({ total: z.number().check(z.int(), z.nonnegative()),
     scripts: z.number().check(z.int(), z.nonnegative()), services: z.number().check(z.int(), z.nonnegative()),

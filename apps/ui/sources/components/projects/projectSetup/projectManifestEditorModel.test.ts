@@ -132,6 +132,22 @@ describe('project manifest editor model', () => {
     expect(transport.writes[0].bytes).not.toContain('sentinel');
   });
 
+  it('lets the person classify an imported name as a secret and decide whether it is required', async () => {
+    const definition = present(JSON.stringify({ version: 1, environmentVariables: [
+      { name: 'TOKEN', kind: 'config', required: false }, { name: 'PORT', kind: 'config', required: false },
+    ] }));
+    const transport = boundary(definition);
+    const model = createProjectManifestEditorModel({ workspace, expectedAccountId: 'alice', definition, actions: transport.actions });
+    expect(model.setEnvironmentRequirement('TOKEN', { kind: 'secret', required: true })).toBe(true);
+    expect(model.setEnvironmentRequirement('MISSING', { required: true })).toBe(false);
+    expect(model.getSnapshot().draft).toMatchObject({ manifest: { environmentVariables: [
+      { name: 'TOKEN', kind: 'secret', required: true }, { name: 'PORT', kind: 'config', required: false },
+    ] } });
+    expect(model.removeEnvironmentRequirement('PORT')).toBe(true);
+    await model.save();
+    expect(JSON.parse(transport.writes[0].bytes).environmentVariables).toEqual([{ name: 'TOKEN', kind: 'secret', required: true }]);
+  });
+
   it('restores a compact persisted draft against its matching disk basis without persisting original bytes', () => {
     const persisted: unknown[] = [];
     const draftBytes = '{"version":1,"future":"restored"}';

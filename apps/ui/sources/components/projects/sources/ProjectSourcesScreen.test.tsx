@@ -401,6 +401,44 @@ describe('Projects › Sources', () => {
     expect(shared.navigation).toEqual([]);
   });
 
+  it('uses a setup-only Source for a checkout the person chooses in Open, never a direct Open of a repository', async () => {
+    signIn();
+    shared.routes.params = { source: 'setup-source' };
+    shared.sources = [{ id: 'setup-source', revision: 2, name: 'Acme web setup', audience: [], createdByAccountId: 'account-2',
+      attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId: 'setup-doc' }, contentRevision: { headerVersion: 1, bodyVersion: 4 } }] }];
+    const { Modal } = await import('@/modal');
+    vi.mocked(Modal.show).mockClear();
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.setup')).not.toBeNull());
+    expect(screen.findByTestId('projects.sources.detail.open')).toBeNull();
+    await act(async () => screen.pressByTestId('projects.sources.detail.useSetup'));
+    await vi.waitFor(() => expect(Modal.show).toHaveBeenCalled());
+    const shown = vi.mocked(Modal.show).mock.calls.at(-1)![0];
+    expect(shown.chrome?.testID).toBe('projects.open.dialog');
+    expect((shown.props as { routeParams: Record<string, string> }).routeParams)
+      .toMatchObject({ serverId: 'server-1', draftId: expect.any(String), sharedSetupSourceId: 'setup-source' });
+    expect(shared.calls.some(call => call.actionId === 'projects.open' || call.actionId === 'projects.setup.set')).toBe(false);
+  });
+
+  it('takes a Source setup straight to the review on its one existing checkout', async () => {
+    signIn();
+    storage.setState({ projectAccountRows: createProjectAccountRowsFixture({ serverId: 'server-1', accountId: 'account-1' }, {
+      workspaceRefs: [{ id: 'web-checkout', serverId: 'server-1', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
+        projectKey: 'web', source: { sourceId: 'setup-source', revision: 2 } }],
+    }) });
+    shared.routes.params = { source: 'setup-source' };
+    shared.sources = [{ id: 'setup-source', revision: 2, name: 'Acme web setup', audience: [], createdByAccountId: 'account-2',
+      attachments: [{ purpose: 'setup', ref: { kind: 'doc', artifactId: 'setup-doc' }, contentRevision: { headerVersion: 1, bodyVersion: 4 } }] }];
+    const screen = await renderScreen(<ProjectSourcesScreen />);
+    await vi.waitFor(() => expect(screen.findByTestId('projects.sources.detail.useSetup')).not.toBeNull());
+    await act(async () => screen.pressByTestId('projects.sources.detail.useSetup'));
+    await vi.waitFor(() => expect(shared.navigation.length).toBeGreaterThan(0));
+    const url = new URL(String(shared.navigation.at(-1)), 'https://happier.test');
+    expect(url.pathname).toBe('/projects/web-checkout/scripts');
+    expect(url.searchParams.get('useSharedSetup')).toBe('setup-source');
+    expect(shared.calls.some(call => call.actionId === 'projects.setup.set')).toBe(false);
+  });
+
   it('draws Back in the Source page header only where the detail stands alone, and Back leaves it', async () => {
     signIn();
     shared.routes.params = { source: 'stored-source' };

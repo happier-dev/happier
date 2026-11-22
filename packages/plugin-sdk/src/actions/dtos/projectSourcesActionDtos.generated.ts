@@ -1619,6 +1619,7 @@ export type ProjectSourcesActionResultById = {
                 };
             };
         };
+        setupLink?: null | string | undefined;
     };
     readonly "projects.sources.setupRequirements": {
         kind: 'published';
@@ -2069,6 +2070,7 @@ export type ProjectSourcesActionResultById = {
                 };
             };
         };
+        setupLink?: null | string | undefined;
     };
     readonly "projects.sources.update": {
         ok: false;
@@ -2498,6 +2500,7 @@ export type ProjectSourcesActionResultById = {
                 };
             };
         };
+        setupLink?: null | string | undefined;
     };
     readonly "projects.sources.delete": {
         ok: false;

@@ -109,7 +109,9 @@ export const ProjectSourcesFailureV1Schema = lazyZodSchema(() => z.strictObject(
 export type ProjectSourcesFailureV1 = z.infer<typeof ProjectSourcesFailureV1Schema>;
 const ProjectSourcesReadSuccessV1Schema = lazyZodSchema(() => z.strictObject({ ok: z.literal(true), source: ProjectSourceV1Schema, canManage: z.boolean(),
   /** Source owner side only (the Account owner, or the owning Team's settings managers); audience admins never write defaults. Absent = no authority. */
-  canManageSessionDefaults: z.optional(z.boolean()), sessionDefaults: z.optional(ProjectSessionDefaultsLeafV1Schema) }));
+  canManageSessionDefaults: z.optional(z.boolean()), sessionDefaults: z.optional(ProjectSessionDefaultsLeafV1Schema),
+  /** A Source that carries a setup: the link this Home renders for it (null when the Home cannot render one). */
+  setupLink: z.optional(z.nullable(z.string().check(z.minLength(1)))) }));
 export const ProjectSourcesReadOutputV1Schema = lazyZodSchema(() => z.union([ProjectSourcesReadSuccessV1Schema, ProjectSourcesFailureV1Schema]));
 export const ProjectSourcesCreateOutputV1Schema = ProjectSourcesReadOutputV1Schema;
 /** The Action can also link the saved Source to an accepted private checkout. */

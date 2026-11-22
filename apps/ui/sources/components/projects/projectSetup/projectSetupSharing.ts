@@ -1,17 +1,14 @@
-import { ProjectManifestV1Schema, type ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import type { ArtifactActionResultV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import type { ProjectSourceV1, ProjectSourcePublicationPatchV1, ProjectSourcesFailureV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ProjectManifestActionClient } from './projectManifestActionClient';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
-import { createProjectDefinitionOriginLookupV1, type ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
+import { formatProjectSetupExportBytesV1, projectSetupExportV1, selectProjectSetupExportV1, type ProjectSetupExportPathV1, type ProjectSetupExportUnitV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupExportV1';
 
-export type ProjectSetupShareSelection = Readonly<{
-    sections: readonly Exclude<keyof ProjectManifestV1, 'version' | 'scripts' | 'services'>[];
-    scripts: readonly string[];
-    services: readonly string[];
-}>;
+/** The declarations chosen for the share, as composed-definition paths (`['scripts', 'seed']`). */
+export type ProjectSetupShareSelection = readonly ProjectSetupExportPathV1[];
 export type ProjectSetupSharePreview = Readonly<{ manifest: ProjectManifestV1; bytes: string }>;
 type Publication = ArtifactActionResultV1<'artifact.create'>;
 export type ProjectSetupShareTarget = Readonly<{
@@ -31,60 +28,19 @@ export type ProjectSetupSharingSnapshot = Readonly<{
     publication: Publication | null;
     pending: boolean;
     issue: string | null;
-    /** Declarations decided just for this person; the share leaves them out. */
-    personalOmitted: number;
+    /** Every declaration the share can carry, with the layer that decides it today. */
+    units: readonly ProjectSetupExportUnitV1[];
 }>;
 
-/** Select declarations, never runtime assignments, private binding values, or unknown author fields. */
-export function selectProjectSetupShareManifest(manifest: ProjectManifestV1, selection: ProjectSetupShareSelection): ProjectManifestV1 {
-    const selectedEntries = (field: 'scripts' | 'services', names: readonly string[]) => Object.fromEntries(
-        names.flatMap(name => manifest[field] && Object.hasOwn(manifest[field], name) ? [[name, manifest[field][name]]] : []));
-    return ProjectManifestV1Schema.parse({ version: 1,
-        ...Object.fromEntries(selection.sections.flatMap(field => manifest[field] !== undefined ? [[field, manifest[field]]] : [])),
-        ...(selection.scripts.length ? { scripts: selectedEntries('scripts', selection.scripts) } : {}),
-        ...(selection.services.length ? { services: selectedEntries('services', selection.services) } : {}),
-    });
-}
-/**
- * The shareable base: the composed definition without any declaration this person decided just for
- * themselves. A personal change to a repository entry leaves that entry out rather than sharing either side.
- */
-export function withoutPersonalProjectSetup(definition: Pick<ProjectEffectiveDefinitionV1, 'effectiveManifest' | 'origins'>) {
-    const manifest: ProjectManifestV1 = definition.effectiveManifest ?? { version: 1 };
-    const decider = createProjectDefinitionOriginLookupV1(definition);
-    let omitted = 0;
-    const personal = (path: readonly string[]) => {
-        const mine = decider(path)?.layer === 'personal';
-        if (mine) omitted += 1;
-        return mine;
-    };
-    const kept: Record<string, unknown> = { version: 1 };
-    for (const [field, value] of Object.entries(manifest)) {
-        if (field === 'version' || value === undefined) continue;
-        if (field === 'scripts' || field === 'services' || field === 'workspace') {
-            const entries = Object.entries(value as Record<string, unknown>).filter(([name]) => !personal([field, name]));
-            if (entries.length) kept[field] = Object.fromEntries(entries);
-        } else if (field === 'environmentVariables') {
-            const requirements = (value as NonNullable<ProjectManifestV1['environmentVariables']>).filter(requirement => !personal([field, requirement.name]));
-            if (requirements.length) kept[field] = requirements;
-        } else if (!personal([field])) kept[field] = value;
-    }
-    return { manifest: ProjectManifestV1Schema.parse(kept), omitted };
-}
-function allSelection(manifest: ProjectManifestV1): ProjectSetupShareSelection {
-    return { sections: (Object.keys(manifest) as Array<keyof ProjectManifestV1>)
-        .filter((key): key is ProjectSetupShareSelection['sections'][number] => key !== 'version' && key !== 'scripts' && key !== 'services'),
-        scripts: Object.keys(manifest.scripts ?? {}), services: Object.keys(manifest.services ?? {}) };
-}
 function preview(manifest: ProjectManifestV1, selection: ProjectSetupShareSelection): ProjectSetupSharePreview {
-    const selected = selectProjectSetupShareManifest(manifest, selection);
-    return { manifest: selected, bytes: `${JSON.stringify(selected, null, 2)}\n` };
+    const selected = selectProjectSetupExportV1(manifest, selection);
+    return { manifest: selected, bytes: formatProjectSetupExportBytesV1(selected) };
 }
 
 /** Ephemeral sharing draft. The existing Artifact and Source Actions retain every custody/sharing decision. */
 export function createProjectSetupSharing(input: Readonly<{ client: ProjectManifestActionClient }>) {
     const initial: ProjectSetupSharingSnapshot = { status: 'initial', manifest: null, selection: null, preview: null,
-        warningAcknowledged: false, publication: null, pending: false, issue: null, personalOmitted: 0 };
+        warningAcknowledged: false, publication: null, pending: false, issue: null, units: [] };
     let state = initial;
     let active = true;
     let loading: Promise<void> | null = null;
@@ -110,12 +66,12 @@ export function createProjectSetupSharing(input: Readonly<{ client: ProjectManif
                     const inspected = await input.client.inspect({ kind: 'editor' });
                     const effective = readProjectEffectiveDefinition(inspected);
                     if (effective.kind === 'unavailable') { publish({ ...state, status: 'unavailable', issue: effective.code }); return; }
-                    const { manifest, omitted } = withoutPersonalProjectSetup(effective.value);
-                    if (state.manifest && sameStrictJsonValue(state.manifest, manifest)) publish({ ...state, status: 'ready', personalOmitted: omitted });
-                    else {
-                        const selection = allSelection(manifest);
-                        publish({ ...initial, status: 'ready', manifest, selection, preview: preview(manifest, selection), personalOmitted: omitted });
-                    }
+                    // One export decision with agents (`projects.inspect` export): repository entries start unchosen.
+                    const exported = projectSetupExportV1(effective.value);
+                    const manifest = effective.value.effectiveManifest ?? { version: 1 };
+                    if (state.manifest && sameStrictJsonValue(state.manifest, manifest)) publish({ ...state, status: 'ready', units: exported.units });
+                    else publish({ ...initial, status: 'ready', manifest, units: exported.units, selection: exported.selected,
+                        preview: { manifest: exported.manifest, bytes: exported.bytes } });
                 } catch (error) { publish({ ...state, status: 'unavailable', issue: readActionErrorCodeV1(error) ?? 'action_failed' }); }
                 finally { loading = null; }
             })();

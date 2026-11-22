@@ -8,6 +8,7 @@ import {
     ProjectSourcesDeleteInputV1Schema, ProjectSourcesDeleteOutputV1Schema,
     ProjectSourcesFailureV1Schema,
 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { buildProjectSourceSetupUrlV1 } from '@happier-dev/protocol/projects/sources/projectSourceSetupLinkV1';
 import { inReadSnapshot, inTx } from '@/storage/inTx';
 import { readTeamOperationAuthenticationFromRequest } from '@/app/teams/actorContext';
 import { createProjectSourceInTx, readProjectSourceInTx, listProjectSourcesInTx, updateProjectSourceInTx, deleteProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -37,8 +38,22 @@ function resultStatus(result: { ok: boolean; error?: string }): 200 | 400 | 403 
     : result.error === 'artifact_unavailable' || result.error === 'source_backend_unavailable' ? 503 : 400;
 }
 
+export type ProjectSourceRouteDeps = Readonly<{
+    /** The Home's application origin and portable carrier: the one producer every Home link renders from. */
+    resolveSetupLinkTarget?: () => Promise<Readonly<{ applicationOrigin: string | null; homeTarget: string | null }>>;
+}>;
+
+/** A Source that carries a setup gets the link this Home renders for it; null when the Home has no link target. */
+async function renderSetupLink(deps: ProjectSourceRouteDeps, sourceId: string): Promise<string | null> {
+    const target = await deps.resolveSetupLinkTarget?.();
+    if (!target?.applicationOrigin || !target.homeTarget?.trim()) return null;
+    try {
+        return buildProjectSourceSetupUrlV1({ sourceId, homeTarget: target.homeTarget, applicationOrigin: target.applicationOrigin });
+    } catch { return null; }
+}
+
 /** Metadata-only front doors share one admission, membership and CAS owner. */
-export function projectSourceRoutes(app: Fastify): void {
+export function projectSourceRoutes(app: Fastify, deps: ProjectSourceRouteDeps = {}): void {
     const defaultsResponse = { 200: ProjectDeploymentDefaultsOutputV1Schema,
         400: ProjectDeploymentDefaultsFailureV1Schema, 403: ProjectDeploymentDefaultsFailureV1Schema,
         404: ProjectDeploymentDefaultsFailureV1Schema, 409: ProjectDeploymentDefaultsFailureV1Schema };
@@ -83,6 +98,9 @@ export function projectSourceRoutes(app: Fastify): void {
         }
         const result = admittedSource ? { ok: true as const, ...admittedSource }
             : await inReadSnapshot(tx => readProjectSourceInTx(tx, request.userId, { serverId: request.query.serverId, sourceId: request.params.id }, readTeamOperationAuthenticationFromRequest(request)));
+        if (result.ok && result.source.attachments?.some(attachment => attachment.purpose === 'setup')) {
+            return reply.code(200).send({ ...result, setupLink: await renderSetupLink(deps, result.source.id) });
+        }
         return reply.code(resultStatus(result)).send(result);
     });
     app.post('/v1/projects/sources', { preHandler: app.authenticate, config: { allowApiToken: true }, attachValidation: true, schema: {

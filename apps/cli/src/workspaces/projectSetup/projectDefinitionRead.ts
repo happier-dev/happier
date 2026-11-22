@@ -52,7 +52,7 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
             ? { observedAtMs: detection.observedAtMs } : {}),
         ...(fullDetection && detection.tools ? { tools: detection.tools } : {}) };
     const document = definition.document;
-    const statusOnly = read.kind === 'detail' || read.kind === 'tools' || read.kind === 'imports' || read.kind === 'applications';
+    const statusOnly = read.kind === 'detail' || read.kind === 'tools' || read.kind === 'imports' || read.kind === 'applications' || read.kind === 'export';
     let projectedDefinition = definition;
     if (read.kind !== 'editor' && read.kind !== 'create' && document) {
         if (document.status === 'valid') {
@@ -78,7 +78,7 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
             workspace: { ...manifest.workspace,
                 setup: usage === 'setup' ? manifest.workspace?.setup : [], teardown: usage === 'setup' ? manifest.workspace?.teardown : [] } };
     }
-    if (read.kind === 'editor' || read.kind === 'imports' || read.kind === 'detail' || read.kind === 'guidance') commandManifest = undefined;
+    if (read.kind === 'editor' || read.kind === 'export' || read.kind === 'imports' || read.kind === 'detail' || read.kind === 'guidance') commandManifest = undefined;
     // The Scripts list shows each found reference's name and file; an opened row resolves
     // its own native candidate through `detail`, so the list resolves none.
     const candidateEntries = read.kind === 'scripts' ? [] : entries;
@@ -87,7 +87,7 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
             : compact ? { ...manifest, services: undefined } : manifest : null,
         origins: compact ? effectiveDefinition.origins.filter(origin => origin.path[0] !== 'services')
             : read.kind === 'editor' || read.kind === 'setup' || read.kind === 'scripts' ? effectiveDefinition.origins : [] };
-    return { read, definition: projectedDefinition, effectiveDefinition: projectedEffective, ...(statusOnly ? { definitionScope: 'statusOnly' as const } : {}),
+    return { read, definition: projectedDefinition, effectiveDefinition: projectedEffective, effectiveDefinitionForExport: effectiveDefinition, ...(statusOnly ? { definitionScope: 'statusOnly' as const } : {}),
         detection: projectedDetection, detectionSummary, entries, candidateEntries, commandManifest,
         includeTools: read.kind === 'create' || read.kind === 'tools',
         includeInvocation: read.kind === 'create' || read.kind === 'detail' || read.kind === 'execution' || read.kind === 'overview' || read.kind === 'services',

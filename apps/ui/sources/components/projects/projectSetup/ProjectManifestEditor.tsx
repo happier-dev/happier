@@ -27,9 +27,11 @@ import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { Text } from '@/components/ui/text/Text';
 import { Item } from '@/components/ui/lists/Item';
+import { Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { Typography } from '@/constants/Typography';
 import { useServerScopedMachine } from '@/sync/store/hooks';
@@ -161,7 +163,13 @@ function ProjectManifestEnvironmentSection(props: Readonly<{
   disabled: boolean;
 }>) {
   const { document } = props;
+  const { theme } = useUnistyles();
   const none = document.environmentImportChecked && document.environmentImport === null;
+  // The Machine names what it skipped (line and reason, never the line's text); the editor says it once.
+  const skipped = React.useMemo(() => (document.environmentImport?.diagnostics ?? []).map(diagnostic =>
+    diagnostic.code === 'malformed_dotenv' && diagnostic.line !== undefined
+      ? t('projects.scripts.editor.environment.skippedLine', { line: diagnostic.line })
+      : t('projects.scripts.editor.environment.exampleUnreadable')), [document.environmentImport]);
   return (
     <ItemGroup
       title={t('projects.scripts.editor.environment.title')}
@@ -182,6 +190,16 @@ function ProjectManifestEnvironmentSection(props: Readonly<{
         <SurfaceStateCard size="line" kind="unavailable" title={t('projects.scripts.editor.environment.failed')}
           diagnosticCode={document.error} testID="project-manifest-editor.environment.error" />
       ) : null}
+      {skipped.length > 0 ? (
+        <Item
+          testID="project-manifest-editor.environment.skipped"
+          icon={<Icon name="warning" size={18} color={theme.colors.state.warning.foreground} />}
+          title={t('projects.scripts.editor.environment.skippedTitle')}
+          subtitle={skipped.join(' · ')}
+          subtitleLines={3}
+          showChevron={false}
+        />
+      ) : null}
       {props.requirements.length === 0 ? (
         <Item
           testID="project-manifest-editor.environment.empty"
@@ -199,11 +217,71 @@ function ProjectManifestEnvironmentSection(props: Readonly<{
             requirement.required ? t('projects.scripts.environment.required') : t('projects.scripts.environment.optional'),
           ].join(' · ')}
           showChevron={false}
+          rightElementOutsidePressable
+          rightElement={document.model ? (
+            <EnvironmentRequirementMenu requirement={requirement} model={document.model} disabled={props.disabled} />
+          ) : undefined}
         />
       ))}
     </ItemGroup>
   );
 }
+
+/**
+ * How one declared name is supplied and whether a launch needs it (plan A §4): the person decides,
+ * an imported name never classifies itself. One "…" per row keeps the row a single decision on phones.
+ */
+const EnvironmentRequirementMenu = React.memo(function EnvironmentRequirementMenu(props: Readonly<{
+  requirement: EnvVarRequirement;
+  model: ProjectManifestEditorModel;
+  disabled: boolean;
+}>) {
+  const [open, setOpen] = React.useState(false);
+  const { requirement, model } = props;
+  const testID = `project-manifest-editor.environment:${requirement.name}.more`;
+  const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => [
+    { id: 'kind', testID: `${testID}:kind`, title: requirement.kind === 'secret'
+      ? t('projects.scripts.editor.environment.markValue') : t('projects.scripts.editor.environment.markSecret') },
+    { id: 'required', testID: `${testID}:required`, title: requirement.required
+      ? t('projects.scripts.editor.environment.markOptional') : t('projects.scripts.editor.environment.markRequired') },
+    { id: 'remove', testID: `${testID}:remove`, title: t('projects.scripts.editor.environment.remove'), destructive: true },
+  ], [testID, requirement.kind, requirement.required]);
+  const select = React.useCallback((id: string) => {
+    setOpen(false);
+    if (id === 'kind') model.setEnvironmentRequirement(requirement.name, { kind: requirement.kind === 'secret' ? 'config' : 'secret' });
+    if (id === 'required') model.setEnvironmentRequirement(requirement.name, { required: !requirement.required });
+    if (id === 'remove') model.removeEnvironmentRequirement(requirement.name);
+  }, [model, requirement.name, requirement.kind, requirement.required]);
+  return (
+    <DropdownMenu
+      testID={`${testID}:menu`}
+      open={open}
+      onOpenChange={setOpen}
+      items={items}
+      onSelect={select}
+      placement="bottom"
+      popoverAnchorAlign="end"
+      matchTriggerWidth={false}
+      maxWidthCap={320}
+      showCategoryTitles={false}
+      popoverPortalWebTarget="body"
+      trigger={({ toggle }) => (
+        <IconButton
+          testID={testID}
+          iconName="dots-three"
+          variant="plain"
+          disabled={props.disabled}
+          accessibilityLabel={t('projects.scripts.editor.environment.moreA11y', { name: requirement.name })}
+          tooltip={t('projects.scripts.editor.environment.moreA11y', { name: requirement.name })}
+          tooltipHidden={open}
+          hasPopup="menu"
+          expanded={open}
+          onPress={toggle}
+        />
+      )}
+    />
+  );
+});
 
 /** The personal target before its setup is read, or when it can't be: the same page, with its state. */
 function ProjectManifestEditorPendingTarget(

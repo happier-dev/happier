@@ -67,6 +67,7 @@ import {
 } from './ProjectSourcesRail';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import { SourceTeamSetupRow } from './SourceTeamSetupRow';
+import { SourceSetupSection, readSourceSetupAttachment, useSourceCheckouts } from './SourceSetupSection';
 
 function lastSegment(nameWithOwner: string): string {
   return nameWithOwner.split('/').filter(Boolean).pop() ?? nameWithOwner;
@@ -278,6 +279,8 @@ export type ProjectSourceDetailProps = Readonly<{
   onOpen: (source: ProjectSourceV1) => void;
   onOpenCheckout: (workspaceRefId: string) => void;
   onOpenDashboard?: (source: ProjectSourceV1, reference: PromptArtifactRefV1, workspace?: WorkspaceAddressV2) => void;
+  /** "Use for this project": its one checkout's Scripts review, or Open to choose the checkout first. */
+  onUseSetup?: (source: ProjectSourceV1, workspace?: WorkspaceAddressV2) => void;
   onDeleted: () => void;
   /** Leaves the page for the list where the detail stands alone (a phone); the hosted web page has no native header to do it. */
   onBack?: () => void;
@@ -434,6 +437,19 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
     [controller, current],
   );
 
+  const detachSetup = React.useCallback((attachment: Extract<SourceAttachmentV1, { purpose: 'setup' }>) => {
+    if (!current) return;
+    void controller.updateSource({ attachment: { kind: 'detach', purpose: 'setup', ref: attachment.ref } }, current);
+  }, [controller, current]);
+  const setupAttachment = readSourceSetupAttachment(current);
+  const setupCheckouts = useSourceCheckouts(current?.id ?? null, props.controller.scope.serverId);
+  const onUseSetup = props.onUseSetup;
+  const useSetup = React.useCallback(() => {
+    if (!current || !onUseSetup) return;
+    // Exactly one checkout of this Source goes straight to its review; several or none choose in Open.
+    onUseSetup(current, setupCheckouts.length === 1 ? setupCheckouts[0] : undefined);
+  }, [current, onUseSetup, setupCheckouts]);
+
   if (!props.creating && !current) {
     const banner = presentProjectSourceIssue(state.issue, props.homeName);
     // The loading and unavailable states have no page identity of their own, but a detail that stands alone
@@ -565,6 +581,12 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
                   loading: saving,
                   testID: 'projects.sources.detail.save',
                 }
+              : setupAttachment && props.onUseSetup && !compact
+                ? {
+                    title: t('projects.sources.useForProject'),
+                    onPress: useSetup,
+                    testID: 'projects.sources.detail.useSetup',
+                  }
               : current?.repository && !compact
                 ? {
                     title: t('projects.sources.open'),
@@ -773,6 +795,17 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
         />
         {current ? <SourceTeamSetupRow serverId={props.controller.scope.serverId} source={current} /> : null}
       </ItemGroup>
+      {current ? (
+        <SourceSetupSection
+          source={current}
+          serverId={props.controller.scope.serverId}
+          canEdit={canEdit && !state.conflict}
+          setupLink={state.setupLink}
+          audience={presentShareAudience({ owner: current.owner, grants: view?.audience ?? [], teamName: props.teamName })}
+          onOpenSourceSharing={() => showProjectSourceShareSheet({ controller, name: current.name })}
+          onDetach={detachSetup}
+        />
+      ) : null}
       {current && dashboards.length > 0 ? (
         <ItemGroup
           title={t('projects.sources.dashboardsTitle')}
@@ -833,13 +866,13 @@ export const ProjectSourceDetail = React.memo(function ProjectSourceDetail(
         </ItemGroup>
       ) : null}
     </ItemList>
-    {compact && current?.repository && !dirty ? (
+    {compact && (current?.repository || (setupAttachment && props.onUseSetup)) && !dirty ? (
       <KeyboardStickyFooter>
         <PagePinnedBar>
           <RoundButton
-            testID="projects.sources.detail.open"
-            title={t('projects.sources.open')}
-            onPress={() => props.onOpen(current)}
+            testID={setupAttachment && props.onUseSetup ? 'projects.sources.detail.useSetup' : 'projects.sources.detail.open'}
+            title={setupAttachment && props.onUseSetup ? t('projects.sources.useForProject') : t('projects.sources.open')}
+            onPress={() => { if (setupAttachment && props.onUseSetup) useSetup(); else if (current) props.onOpen(current); }}
           />
         </PagePinnedBar>
       </KeyboardStickyFooter>

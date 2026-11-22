@@ -4,7 +4,8 @@ import { ProjectSharedSetupChangeV1Schema } from '@happier-dev/protocol/projects
 import { createActionExecutorBoundaryFixture, createUiActionExecutorBoundary } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createProjectManifestActionClient } from './projectManifestActionClient';
-import { createProjectSetupSharing, selectProjectSetupShareManifest } from './projectSetupSharing';
+import { selectProjectSetupExportV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupExportV1';
+import { createProjectSetupSharing } from './projectSetupSharing';
 import { createProjectSharedSetupReview } from './projectSharedSetupReview';
 import type { ProjectManifestV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
@@ -14,7 +15,7 @@ const manifest: ProjectManifestV1 = { version: 1, toolchain: { kind: 'host' },
   scripts: { build: { source: { kind: 'command', command: 'build with literal-secret' } },
     test: { source: { kind: 'command', command: 'test' } } },
   services: { web: { source: { kind: 'command', command: 'serve' } } } };
-const selection = { sections: ['environmentVariables'] as const, scripts: ['build'], services: [] };
+const selection = [['environmentVariables', 'TOKEN'], ['scripts', 'build']];
 const publication = { artifactId: 'saved-draft', revision: { headerVersion: 1, bodyVersion: 1 } };
 const inspect = { definition: { basis: { kind: 'absent' }, document: null },
   detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
@@ -26,7 +27,7 @@ function client(overrides: Parameters<typeof createActionExecutorBoundaryFixture
 
 describe('Project setup share and selected review', () => {
   it('exports only the chosen closed declarations and retains literal command bytes for explicit review', () => {
-    expect(selectProjectSetupShareManifest(manifest, selection)).toEqual({ version: 1,
+    expect(selectProjectSetupExportV1(manifest, selection)).toEqual({ version: 1,
       environmentVariables: manifest.environmentVariables, scripts: { build: manifest.scripts!.build } });
     expect(manifest.scripts!.test).toBeDefined();
   });
@@ -55,19 +56,19 @@ describe('Project setup share and selected review', () => {
     expect(retry).toMatchObject({ kind: 'attached', publication, source: { revision: 3 } });
     expect(calls.filter(call => call.kind === 'artifact.create')).toEqual([{ kind: 'artifact.create', input: {
       header: { kind: 'project_setup.v1', title: 'Reviewed setup' },
-      body: JSON.stringify({ kind: 'project_setup.v1', manifest: selectProjectSetupShareManifest(manifest, selection) }),
+      body: JSON.stringify({ kind: 'project_setup.v1', manifest: selectProjectSetupExportV1(manifest, selection) }),
     } }]);
     expect(calls.filter(call => call.kind === 'attach').map(call => call.input)).toEqual([1, 2].map(expectedRevision => ({
       serverId: 'home', sourceId: 'source', expectedRevision, patch: { attachment: { kind: 'attach', attachment: {
         purpose: 'setup', ref: { kind: 'doc', serverId: 'home', artifactId: publication.artifactId }, contentRevision: publication.revision,
       } } },
     })));
-    owner.select({ sections: [], scripts: ['test'], services: [] });
+    owner.select([['scripts', 'test']]);
     expect(owner.export()).toEqual({ kind: 'warningRequired' });
     expect(owner.getSnapshot().publication).toBeNull();
   });
 
-  it('leaves every declaration decided just for this person out of the share and counts them', async () => {
+  it('shares the shared copy and personal changes by default and leaves repository entries for the person to add (plan A §2)', async () => {
     const composed = { ...inspect, effectiveDefinition: { effectiveManifest: {
       ...manifest, workspace: { setup: [{ kind: 'command', command: 'pnpm install' }], teardown: [{ kind: 'command', command: 'rm -rf .cache' }] },
     }, origins: [
@@ -83,11 +84,13 @@ describe('Project setup share and selected review', () => {
     const owner = createProjectSetupSharing({ client: client({ projectDefinitionAction: async () => composed }) });
     await owner.load();
     const snapshot = owner.getSnapshot();
-    expect(snapshot.preview?.manifest).toEqual({ version: 1, environmentVariables: manifest.environmentVariables,
-      workspace: { setup: [{ kind: 'command', command: 'pnpm install' }] },
-      scripts: { test: manifest.scripts!.test }, services: manifest.services });
-    expect(snapshot.preview?.bytes).not.toContain('literal-secret');
-    expect(snapshot.personalOmitted).toBe(3);
+    expect(snapshot.preview?.manifest).toEqual({ version: 1, toolchain: { kind: 'host' },
+      workspace: { teardown: [{ kind: 'command', command: 'rm -rf .cache' }] },
+      scripts: { build: manifest.scripts!.build, test: manifest.scripts!.test } });
+    expect(snapshot.units.filter(unit => unit.layer === 'repository').map(unit => unit.path))
+      .toEqual([['environmentVariables', 'TOKEN'], ['workspace', 'setup'], ['services', 'web']]);
+    owner.select([...snapshot.selection!, ['services', 'web']]);
+    expect(owner.getSnapshot().preview?.manifest.services).toEqual(manifest.services);
   });
 
   it('refuses an unavailable effective projection instead of exporting repository fallback bytes', async () => {

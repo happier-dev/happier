@@ -216,6 +216,21 @@ export function createProjectManifestEditorModel(
       });
       return additions.length === 0 || edit([{ kind: 'set', path: ['environmentVariables'], value: [...existing, ...additions] }]);
     },
+    /** The person decides how a declared name is supplied and whether launch needs it (plan A §4). */
+    setEnvironmentRequirement(name: string, patch: Readonly<{ kind?: EnvVarRequirement['kind']; required?: boolean }>) {
+      if (snapshot.draft.status !== 'valid') return false;
+      const existing = snapshot.draft.manifest.environmentVariables ?? [];
+      const index = existing.findIndex(requirement => requirement.name === name);
+      if (index < 0) return false;
+      const parsed = EnvVarRequirementSchema.safeParse({ ...existing[index], ...patch });
+      return parsed.success && edit([{ kind: 'set', path: ['environmentVariables', index], value: parsed.data }]);
+    },
+    removeEnvironmentRequirement(name: string) {
+      if (snapshot.draft.status !== 'valid') return false;
+      const existing = snapshot.draft.manifest.environmentVariables ?? [];
+      if (!existing.some(requirement => requirement.name === name)) return false;
+      return edit([{ kind: 'set', path: ['environmentVariables'], value: existing.filter(requirement => requirement.name !== name) }]);
+    },
     importNative(
       selection: Readonly<{
         usage: 'script' | 'service' | 'setup';

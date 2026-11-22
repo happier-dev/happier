@@ -77,6 +77,20 @@ describe('project definition Actions through registered Machine RPC', () => {
     expect(list).not.toHaveProperty('environmentImport');
   });
 
+  it('exports the setup an agent would share through the same subset decision as the share sheet', async () => {
+    const h = await setup();
+    await mkdir(join(h.root, '.happier'), { recursive: true });
+    await writeFile(join(h.root, '.happier', 'project.json'), JSON.stringify({ version: 1,
+      scripts: { build: { source: { kind: 'command', command: 'pnpm build' } }, test: { source: { kind: 'command', command: 'pnpm test' } } } }));
+    const inspect = (read: unknown) => h.handlers.get('daemon.projects.inspect.v1')!({ workspace: h.workspace, read });
+    const byDefault = ProjectDefinitionInspectOutputSchema.parse(await inspect({ kind: 'export' }));
+    expect(byDefault.setupExport).toEqual({ units: [{ path: ['scripts', 'build'], layer: 'repository' }, { path: ['scripts', 'test'], layer: 'repository' }],
+      selected: [], manifest: { version: 1 }, bytes: '{\n  "version": 1\n}\n' });
+    const chosen = ProjectDefinitionInspectOutputSchema.parse(await inspect({ kind: 'export', select: [['scripts', 'build']] }));
+    expect(chosen.setupExport?.manifest).toEqual({ version: 1, scripts: { build: { source: { kind: 'command', command: 'pnpm build' } } } });
+    expect(chosen.detection.entries).toEqual([]);
+  });
+
   it('keeps all 6230 Script summaries compact and performs no native discovery for the author document', async () => {
     const resolveTool = vi.fn(async () => ({ executablePath: '/installed/pnpm', version: '10' }));
     const h = await setup({ resolveTool });

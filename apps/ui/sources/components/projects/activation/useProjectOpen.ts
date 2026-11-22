@@ -17,6 +17,8 @@ export type UseProjectOpenOptions = Readonly<{
     initialDraft?: OpenProjectDraftSelectionV1;
     seedIfMissing?: boolean;
     attachedDashboard?: ProjectAttachedDashboardSelection;
+    /** "Use for this project": the opened checkout's Scripts page reviews this Source's shared setup. */
+    sharedSetupSourceId?: string | null;
     onOpened?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
     /** Return the admitted checkout to a containing chooser instead of focusing its Project. */
     onSelected?: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => void;
@@ -32,10 +34,12 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
     const onOpenedRef = React.useRef(options.onOpened);
     const onSelectedRef = React.useRef(options.onSelected);
     const attachedDashboardRef = React.useRef(options.attachedDashboard);
+    const sharedSetupRef = React.useRef(options.sharedSetupSourceId);
     const openExistingRef = React.useRef(openExistingProject);
     onOpenedRef.current = options.onOpened;
     onSelectedRef.current = options.onSelected;
     attachedDashboardRef.current = options.attachedDashboard;
+    sharedSetupRef.current = options.sharedSetupSourceId;
     openExistingRef.current = openExistingProject;
     const controller = React.useMemo<ProjectOpenController>(() => createProjectOpenController({
             initialDraft: options.initialDraft, seedIfMissing: options.seedIfMissing, scope: options.scope, draftId: options.draftId,
@@ -51,10 +55,13 @@ export function useProjectOpen(options: UseProjectOpenOptions) {
                 // The accepting host Open already listed the Project for its requester (owner 11-08).
                 if (!isCurrent()) return;
                 const attachedDashboard = attachedDashboardRef.current;
+                // The person picked this checkout for the setup, whatever Source or folder Open admitted it from.
+                const sharedSetupSourceId = sharedSetupRef.current;
                 const focused = await openExistingRef.current(result.workspace.workspaceId, {
                     serverId: result.workspace.serverId, workspaceAddress: result.workspace, activeRootPath: result.directory,
                     // The chooser can change Sources; carry this intent only for the Source actually accepted by Open.
                     ...(attachedDashboard && result.facts?.source?.sourceId === attachedDashboard.sourceId ? { attachedDashboard } : {}),
+                    ...(sharedSetupSourceId ? { sharedSetupSourceId } : {}),
                 });
                 setFocusUnavailable(!focused);
                 if (focused) onOpenedRef.current?.(result);

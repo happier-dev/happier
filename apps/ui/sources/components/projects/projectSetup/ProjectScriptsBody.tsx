@@ -57,6 +57,10 @@ import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
 import { readProjectSetupLayers } from './projectSetupLayers';
 import { openProjectSharedSetupUpdate } from './ProjectSharedSetupUpdateSheet';
 import { PendingSharedSetupRow } from './PendingSharedSetupRow';
+import { SharedSetupRouteContinuation } from './SharedSetupRouteContinuation';
+import { useProjectSetupRow } from './useProjectSetupRow';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import { useProjectSetupShareEntry } from './ProjectSetupShareSheet';
 import { projectSourceRoute } from '@/components/projects/sources/projectSourceNavigation';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
@@ -335,6 +339,8 @@ export function ProjectScriptsBody({
   );
   return (
     <ProjectCommandOutputHost scopeId={outputScopeId}>
+      <SharedSetupRouteContinuation workspace={workspace} binding={binding} ready={read?.key === key && 'value' in read}
+        decide={controller.decideSharedSetupUpdate} />
       <ItemList testID={testID}>
         {approval}
         {read && 'value' in read ? inspectionFailure : null}
@@ -496,6 +502,8 @@ function DeclaredScripts(
     onEdit: ((seed: boolean, mode?: 'form' | 'raw') => void) | null;
     onOpenWorkers?: (() => void) | null;
     phoneReview?: PhoneSetupReview | null;
+    /** Re-reads the checkout's definition after a setup choice made from the header. */
+    onRetry: () => void;
     /** Sections that continue the list (found scripts and services), before the settings sections. */
     children?: React.ReactNode;
   }>,
@@ -568,8 +576,20 @@ function DeclaredScripts(
   const checkShared = props.page && sharedSourceId && binding ? () => openProjectSharedSetupUpdate({
     workspace: props.workspace, binding, sourceId: sharedSourceId, sourceName: sharedName, machineName,
     decide: decideSharedSetupUpdate }) : null;
-  const sharedMenu = props.page && (checkShared || share) ? (
-    <ProjectSetupHeaderMenu testID={`${props.testID}.more`} onShare={share} onCheckShared={checkShared} />
+  const setupRow = useProjectSetupRow(props.workspace);
+  const client = props.controller.client;
+  const onRetry = props.onRetry;
+  // Stop using the shared copy (plan A §8 `projects.setup.set` detach): personal changes stay, nothing runs.
+  const detachShared = props.page && sharedSourceId && setupRow && client ? () => {
+    fireAndForget(client.setSetup({ projectRef: setupRow.projectRef, expectedRevision: setupRow.expectedRevision,
+      intent: { kind: 'detach' } }).then(result => {
+      if (!result.ok) publishPresentationNotice({ key: `project-setup-detach:${props.workspace.workspaceId}`, severity: 'warning',
+        message: t('projects.scripts.sharedUpdate.detachFailed') });
+      onRetry();
+    }), { tag: 'ProjectScripts.detachShared' });
+  } : null;
+  const sharedMenu = props.page && (checkShared || share || detachShared) ? (
+    <ProjectSetupHeaderMenu testID={`${props.testID}.more`} onShare={share} onCheckShared={checkShared} onDetachShared={detachShared} />
   ) : null;
   // Without a shared setup the header keeps its one action; the "…" joins it only when there is something to offer.
   const headerActions = sharedMenu ? <View style={styles.headerActions}>{editButton}{sharedMenu}</View> : editButton;
@@ -1584,21 +1604,25 @@ function PhoneSetupReviewPage(
 
 /** The header's "…" beside Edit project file (lab L6 menu): share this setup, or check the shared one. */
 const ProjectSetupHeaderMenu = React.memo(function ProjectSetupHeaderMenu(
-  props: Readonly<{ testID: string; onShare: (() => void) | null; onCheckShared: (() => void) | null }>,
+  props: Readonly<{ testID: string; onShare: (() => void) | null; onCheckShared: (() => void) | null;
+    onDetachShared: (() => void) | null }>,
 ) {
   const [open, setOpen] = React.useState(false);
-  const { onShare, onCheckShared } = props;
+  const { onShare, onCheckShared, onDetachShared } = props;
   const items = React.useMemo((): ReadonlyArray<DropdownMenuItem> => [
     ...(onShare ? [{ id: 'share', testID: `${props.testID}:share`, title: t('projects.scripts.share.menu'),
       icon: <Icon name="users" size={16} /> }] : []),
     ...(onCheckShared ? [{ id: 'checkShared', testID: `${props.testID}:checkShared`, title: t('projects.scripts.sharedUpdate.check'),
       icon: <Icon name="arrows-clockwise" size={16} /> }] : []),
-  ], [props.testID, onShare, onCheckShared]);
+    ...(onDetachShared ? [{ id: 'detachShared', testID: `${props.testID}:detachShared`, title: t('projects.scripts.sharedUpdate.detach'),
+      icon: <Icon name="x" size={16} /> }] : []),
+  ], [props.testID, onShare, onCheckShared, onDetachShared]);
   const select = React.useCallback((id: string) => {
     setOpen(false);
     if (id === 'share') onShare?.();
     if (id === 'checkShared') onCheckShared?.();
-  }, [onShare, onCheckShared]);
+    if (id === 'detachShared') onDetachShared?.();
+  }, [onShare, onCheckShared, onDetachShared]);
   return (
     <DropdownMenu
       testID={`${props.testID}:menu`}

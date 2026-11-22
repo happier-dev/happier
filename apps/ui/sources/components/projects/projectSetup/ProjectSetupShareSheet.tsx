@@ -35,6 +35,11 @@ import type {
   ProjectSetupShareResult,
   ProjectSetupSharingSnapshot,
 } from './projectSetupSharing';
+import type { ProjectSetupExportPathV1, ProjectSetupExportUnitV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupExportV1';
+import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+
+const NO_UNITS: readonly ProjectSetupExportUnitV1[] = Object.freeze([]);
+const NO_SELECTION: readonly ProjectSetupExportPathV1[] = Object.freeze([]);
 import { useProjectSetupSharing } from './useProjectSetupSharing';
 
 export type ProjectSetupShareInput = Readonly<{
@@ -157,6 +162,7 @@ function ProjectSetupShareModal(
       onRetryRead={() => {
         void controller?.load();
       }}
+      onSelect={(selection) => controller?.select(selection)}
       onShare={() => {
         void share();
       }}
@@ -169,75 +175,86 @@ function ProjectSetupShareModal(
   );
 }
 
-type ShareRow = Readonly<{ key: string; title: string; subtitle: string }>;
+type ShareRowKind = 'setup' | 'scripts' | 'services' | 'environment' | 'teardown' | 'options';
+type ShareRow = Readonly<{
+  key: string;
+  title: string;
+  subtitle: string;
+  layer: ProjectSetupExportUnitV1['layer'];
+  paths: readonly ProjectSetupExportPathV1[];
+  selected: boolean;
+}>;
+const ROW_ORDER: readonly ShareRowKind[] = ['setup', 'scripts', 'services', 'environment', 'teardown', 'options'];
+const LAYER_ORDER: readonly ProjectSetupExportUnitV1['layer'][] = ['shared', 'personal', 'repository'];
+const samePath = (a: readonly string[], b: readonly string[]) => a.length === b.length && a.every((part, index) => part === b[index]);
 
-/** What the share carries, as the person recognises it: commands and names, never values. */
+function shareRowKind(path: readonly string[]): ShareRowKind {
+  if (path[0] === 'workspace') return path[1] === 'setup' ? 'setup' : path[1] === 'teardown' ? 'teardown' : 'options';
+  if (path[0] === 'scripts' || path[0] === 'services') return path[0];
+  return path[0] === 'environmentVariables' ? 'environment' : 'options';
+}
+
+/**
+ * What the share can carry, as the person recognises it: one row per kind and origin, commands and
+ * names, never values. A kind decided by two layers splits so the repository's own lines can stay out.
+ */
 export function listProjectSetupShareRows(
   manifest: ProjectManifestV1,
+  units: readonly ProjectSetupExportUnitV1[],
+  selection: readonly ProjectSetupExportPathV1[],
 ): readonly ShareRow[] {
-  const counted = (items: readonly string[]) =>
-    `${items.length} · ${items.join(', ')}`;
-  const commands = (
-    sources: NonNullable<NonNullable<ProjectManifestV1['workspace']>['setup']>,
-  ) => sources.map((source) => describeProjectCommandSource(source).reference);
-  const rows: ShareRow[] = [];
-  const setup = manifest.workspace?.setup ?? [];
-  if (setup.length)
-    rows.push({
-      key: 'setup',
-      title: t('projects.scripts.share.setupSteps'),
-      subtitle: counted(commands(setup)),
-    });
-  const scripts = Object.keys(manifest.scripts ?? {});
-  if (scripts.length)
-    rows.push({
-      key: 'scripts',
-      title: t('projects.scripts.share.scripts'),
-      subtitle: counted(scripts),
-    });
-  const services = Object.keys(manifest.services ?? {});
-  if (services.length)
-    rows.push({
-      key: 'services',
-      title: t('projects.scripts.share.services'),
-      subtitle: counted(services),
-    });
-  const names = (manifest.environmentVariables ?? []).map(
-    (variable) => variable.name,
-  );
-  if (names.length)
-    rows.push({
-      key: 'environment',
-      title: t('projects.scripts.share.environment'),
-      subtitle: `${names.join(', ')} · ${t('projects.scripts.share.namesOnly')}`,
-    });
-  const teardown = manifest.workspace?.teardown ?? [];
-  if (teardown.length)
-    rows.push({
-      key: 'teardown',
-      title: t('projects.scripts.share.cleanupSteps'),
-      subtitle: counted(commands(teardown)),
-    });
-  const options = [
-    // The tool itself (as the setup review names it), not the word "Tools".
-    manifest.toolchain && manifest.toolchain.kind !== 'host'
+  const counted = (items: readonly string[]) => `${items.length} · ${items.join(', ')}`;
+  const commands = (sources: NonNullable<NonNullable<ProjectManifestV1['workspace']>['setup']>) =>
+    sources.map((source) => describeProjectCommandSource(source).reference);
+  const option = (path: readonly string[]): string | null => {
+    const [field, key] = path;
+    if (field === 'toolchain') return manifest.toolchain && manifest.toolchain.kind !== 'host'
       ? manifest.toolchain.kind === 'toolchain' ? manifest.toolchain.tool : manifest.toolchain.adapter.localId
-      : null,
-    manifest.devcontainer
-      ? t('projects.scripts.sharedUpdate.devcontainer')
-      : null,
-    manifest.worktreePorts ? t('projects.scripts.sharedUpdate.ports') : null,
-    manifest.workspace?.setupInputs?.length
-      ? t('projects.scripts.sharedUpdate.inputs')
-      : null,
-  ].filter((value): value is string => value !== null);
-  if (options.length)
+      : t('projects.scripts.share.hostTools');
+    if (field === 'devcontainer') return t('projects.scripts.sharedUpdate.devcontainer');
+    if (field === 'worktreePorts') return t('projects.scripts.sharedUpdate.ports');
+    if (field === 'workspace' && key === 'setupInputs') return t('projects.scripts.sharedUpdate.inputs');
+    return null;
+  };
+  const groups = new Map<string, { kind: ShareRowKind; layer: ProjectSetupExportUnitV1['layer']; paths: ProjectSetupExportPathV1[] }>();
+  for (const unit of units) {
+    const kind = shareRowKind(unit.path);
+    const key = `${kind}:${unit.layer}`;
+    const group = groups.get(key) ?? { kind, layer: unit.layer, paths: [] };
+    group.paths.push(unit.path);
+    groups.set(key, group);
+  }
+  const rows: ShareRow[] = [];
+  for (const kind of ROW_ORDER) for (const layer of LAYER_ORDER) {
+    const group = groups.get(`${kind}:${layer}`);
+    if (!group) continue;
+    const names = group.paths.map((path) => path[1] ?? path[0]!);
+    const what = kind === 'setup' ? counted(commands(manifest.workspace?.setup ?? []))
+      : kind === 'teardown' ? counted(commands(manifest.workspace?.teardown ?? []))
+        : kind === 'environment' ? `${names.join(', ')} · ${t('projects.scripts.share.namesOnly')}`
+          : kind === 'options' ? group.paths.map(option).filter((value): value is string => value !== null).join(', ')
+            : counted(names);
+    const origin = layer === 'repository' ? t('projects.scripts.share.fromRepository')
+      : layer === 'personal' ? t('projects.scripts.share.justForYou') : t('projects.scripts.share.fromShared');
     rows.push({
-      key: 'options',
-      title: t('projects.scripts.share.options'),
-      subtitle: options.join(', '),
+      key: `${kind}:${layer}`,
+      title: t(`projects.scripts.share.${kind === 'setup' ? 'setupSteps' : kind === 'teardown' ? 'cleanupSteps' : kind}`),
+      subtitle: what ? `${what} · ${origin}` : origin,
+      layer,
+      paths: group.paths,
+      selected: group.paths.every((path) => selection.some((chosen) => samePath(chosen, path))),
     });
+  }
   return rows;
+}
+
+/** Toggles one row's declarations in the selection, keeping every other choice as it was. */
+export function toggleProjectSetupShareRow(
+  selection: readonly ProjectSetupExportPathV1[],
+  row: Pick<ShareRow, 'paths' | 'selected'>,
+): ProjectSetupExportPathV1[] {
+  const rest = selection.filter((chosen) => !row.paths.some((path) => samePath(chosen, path)));
+  return row.selected ? rest : [...rest, ...row.paths];
 }
 
 /** What the share sheet shows for one sharing state; the specimen mounts it with fixture snapshots. */
@@ -249,6 +266,7 @@ export function ProjectSetupShareView(
     result: ProjectSetupShareResult | null;
     approval: Readonly<{ summary: string | null; open: () => void }> | null;
     onRetryRead: () => void;
+    onSelect: (selection: ProjectSetupExportPathV1[]) => void;
     onShare: () => void;
     onOpenSourceSharing: () => void;
     onClose: () => void;
@@ -257,11 +275,14 @@ export function ProjectSetupShareView(
   const { theme } = useUnistyles();
   const { snapshot, result } = props;
   const [exact, setExact] = React.useState(false);
-  const manifest = snapshot?.preview?.manifest ?? null;
+  const manifest = snapshot?.manifest ?? null;
+  const units = snapshot?.units ?? NO_UNITS;
+  const selection = snapshot?.selection ?? NO_SELECTION;
   const rows = React.useMemo(
-    () => (manifest ? listProjectSetupShareRows(manifest) : []),
-    [manifest],
+    () => (manifest ? listProjectSetupShareRows(manifest, units, selection) : []),
+    [manifest, units, selection],
   );
+  const chosen = rows.some((row) => row.selected);
   const ready = snapshot?.status === 'ready' && snapshot.preview !== null;
   const pending = snapshot?.pending === true;
 
@@ -312,25 +333,27 @@ export function ProjectSetupShareView(
             rows.map((row, index) => (
               <Item
                 key={row.key}
-                mode="info"
                 testID={`project-setup-share.row:${row.key}`}
+                accessibilityRole="checkbox"
+                selected={row.selected}
+                disabled={pending}
+                icon={<SelectionCheckGlyph state={row.selected ? 'checked' : 'unchecked'} />}
                 title={row.title}
                 subtitle={row.subtitle}
                 subtitleLines={2}
                 showChevron={false}
                 showDivider={index < rows.length - 1}
+                onPress={() => props.onSelect(toggleProjectSetupShareRow(selection, row))}
               />
             ))
           )}
         </ItemGroup>
-        {snapshot.personalOmitted > 0 ? (
+        {rows.some((row) => row.layer === 'repository' && !row.selected) ? (
           <Text
-            testID="project-setup-share.personal"
+            testID="project-setup-share.repository"
             style={[styles.fact, { color: theme.colors.text.secondary }]}
           >
-            {t('projects.scripts.share.personalOmitted', {
-              count: snapshot.personalOmitted,
-            })}
+            {t('projects.scripts.share.repositoryLeftOut')}
           </Text>
         ) : null}
         <ItemGroup
@@ -421,7 +444,7 @@ export function ProjectSetupShareView(
             testID="project-setup-share.share"
             title={t('projects.scripts.share.share')}
             loading={pending}
-            disabled={!ready || rows.length === 0 || pending}
+            disabled={!ready || !chosen || pending}
             onPress={props.onShare}
           />
         </View>

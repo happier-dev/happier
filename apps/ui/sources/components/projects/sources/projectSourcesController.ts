@@ -39,6 +39,8 @@ export type ProjectSourcesState = Readonly<{
     selectedId: string | null;
     current: ProjectSourceV1 | null;
     canManage: boolean;
+    /** The selected Source's setup link as its Home renders it, from the last detail read. */
+    setupLink: string | null;
     detailStatus: 'initial' | 'loading' | 'ready' | 'offline' | 'refused';
     draft: ProjectSourceDraft | null;
     creationDraft: ProjectSourceCreationDraft | null;
@@ -118,7 +120,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
     readAddressMachines: () => ProjectSourceAddressMachines = () => ({ machines: [], inventoryStatus: 'loading' }),
     readCatalog?: ReadProjectSourcesCatalog, sharedWithTeamId?: string) {
     let state: ProjectSourcesState = { rows: [], hasLoaded: false, query: '', audience: undefined, catalogQuery: '', catalogAudience: undefined, coverage: { complete: false, nextCursor: null }, status: 'initial',
-        selectedId: null, current: null, canManage: false, detailStatus: 'initial', draft: null, creationDraft: null, conflict: null,
+        selectedId: null, current: null, canManage: false, setupLink: null, detailStatus: 'initial', draft: null, creationDraft: null, conflict: null,
         mutation: 'idle', issue: null, uncertainCreate: false, addressResolution: { kind: 'idle' }, addressSaveDisabledReason: null };
     let catalog = readCatalog?.('', undefined, sharedWithTeamId);
     if (catalog) state = { ...state, ...catalogFields(catalog.getSnapshot()) };
@@ -362,7 +364,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
             detailRequest = request;
             const cached = details.get(sourceId);
             publish({ selectedId: sourceId, current: cached?.source ?? null, canManage: cached?.canManage ?? false,
-                detailStatus: 'loading', draft: drafts.get(sourceId) ?? null, conflict: conflicts.get(sourceId) ?? null, issue: null });
+                setupLink: state.selectedId === sourceId ? state.setupLink : null, detailStatus: 'loading', draft: drafts.get(sourceId) ?? null, conflict: conflicts.get(sourceId) ?? null, issue: null });
             try {
                 const result = ProjectSourcesReadOutputV1Schema.parse(await invoke('projects.sources.read', { serverId: scope.serverId, sourceId }, request.signal));
                 if (disposed || detailRequest !== request || request.signal.aborted) return;
@@ -371,6 +373,7 @@ export function createProjectSourcesController(scope: ServerAccountScope, execut
                         domainFailure({ error: 'source_invalid' }, sourceId, true);
                         return;
                     }
+                    publish({ setupLink: result.setupLink ?? null });
                     if (state.draft && cached && cached.source.revision !== result.source.revision) {
                         conflicts.set(sourceId, result.source);
                         publish({ detailStatus: 'ready', canManage: result.canManage, conflict: result.source, issue: 'source_conflict' });

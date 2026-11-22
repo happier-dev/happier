@@ -89,6 +89,7 @@ import { describeManagedCheckoutPlace } from '../shell/projectCheckoutPlace';
 import { ProjectOpenSourceChooser, ProjectOpenSourceSheet, useProjectSourceTeamName } from './ProjectOpenSourceChooser';
 import { useProjectOpen } from './useProjectOpen';
 import { readProjectAttachedDashboardSelection } from '../detail/projectRouteState';
+import { readProjectOpenSharedSetupSourceId } from '../projectSetup/sharedSetupRoute';
 import { projectOpenRefusalPresentation } from './projectOpenRefusalPresentation';
 
 /** The source list's width beside the choices (lab `p-open` OPEN), and the narrowest choices column. */
@@ -183,7 +184,7 @@ const ProjectOpenForm = React.memo(function ProjectOpenForm(
   const requestedDraftId = readParam(params.draftId);
   const draftId = props.draftId;
   const open = useProjectOpen({ scope: props.scope, draftId, seedIfMissing: props.seedIfMissing, initialDraft: seed ?? undefined,
-    attachedDashboard: readProjectAttachedDashboardSelection(params), onOpened: opened,
+    attachedDashboard: readProjectAttachedDashboardSelection(params), sharedSetupSourceId: readProjectOpenSharedSetupSourceId(params), onOpened: opened,
     ...(props.onSelected ? { onSelected: (result: Extract<OpenProjectResultV1, { kind: 'opened' }>) => {
       props.onSelected?.(result);
       props.onClose?.();

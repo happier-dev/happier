@@ -22,6 +22,7 @@ import type { ProjectSetupInspection } from '@/workspaces/projectSetup/projectSe
 import { projectSetupInspectionFailure } from '@/workspaces/projectSetup/projectSetupInspectionFailure';
 import { isReviewedServiceMoveChild } from '@/api/externalActionExecutionAuthorization';
 import { logger } from '@/ui/logger';
+import { projectSetupExportV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupExportV1';
 import { selectProjectDefinitionRead } from '@/workspaces/projectSetup/projectDefinitionRead';
 import { inspectProjectEnvironmentImport } from '@/workspaces/projectSetup/projectDotenv';
 import type { ProjectEffectiveDefinitionV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectDefinitionCompositionV1';
@@ -171,7 +172,7 @@ export function createProjectDefinitionAction(params: Readonly<{
       return await updateProjectManifest({ root, expectedBasis: request.expectedBasis, bytes: request.bytes });
     }
     const request = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].parse(input);
-    const needsDiscovery = !['editor', 'detail', 'setup', 'placement', 'execution'].includes(request.read?.kind ?? 'scripts');
+    const needsDiscovery = !['editor', 'export', 'detail', 'setup', 'placement', 'execution'].includes(request.read?.kind ?? 'scripts');
     const [definition, detection] = await phase('definition_files', () => Promise.all([readProjectManifest({ root }),
       needsDiscovery ? inspectProjectDefinitions(root) : Promise.resolve<ProjectDefinitionDetectionV1>({
         entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [],
@@ -217,7 +218,11 @@ export function createProjectDefinitionAction(params: Readonly<{
       : importedEnvironment?.kind === 'refused' ? { kind: 'environment' as const, file: '.env.example' as const,
         requirements: [], diagnostics: [{ code: importedEnvironment.code }] } : undefined;
     context.signal?.throwIfAborted();
+    // The share sheet and agents read one export decision over the same composed definition.
+    const setupExport = selection.read.kind === 'export'
+      ? projectSetupExportV1(selection.effectiveDefinitionForExport, selection.read.select) : undefined;
     const output = { definition: selection.definition,
+      ...(setupExport ? { setupExport } : {}),
       ...(!repositoryOnly ? { effectiveDefinition: selection.effectiveDefinition } : {}),
       ...(sharedSetupChange ? { sharedSetupChange } : {}),
       ...(selection.definitionScope ? { definitionScope: selection.definitionScope } : {}), detection: selection.detection,

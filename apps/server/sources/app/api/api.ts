@@ -243,7 +243,7 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
     connectRoutes(typed);
     machinesRoutes(typed);
     artifactsRoutes(typed);
-    projectSourceRoutes(typed);
+    projectSourceRoutes(typed, { resolveSetupLinkTarget: async () => await resolveAuthEmailApplicationLinkTarget() });
     registerDeploymentRoutes(typed);
     accessKeysRoutes(typed);
     devRoutes(typed);
