@@ -540,77 +540,13 @@ it.each(['fresh', 'public stamped owner', 'retained', 'continuation'] as const)(
   });
   if (shape === 'retained') delete h.tracked.requesterSessionRuntimeContext;
   if (shape === 'public stamped owner') {
-    // The public creator reads the canonical active catalog. Publish the same
-    // genuine installed Agent on that controller, rather than a private twin.
-    const serverId = h.f.bootstrap.attribution.serverId;
-    await writeDaemonSettingsFixture(h.f.directory, { activeServerId: serverId,
-      servers: { [serverId]: { id: serverId, name: 'Session Home', serverUrl: 'https://session-home.test',
-        webappUrl: 'https://session-home.test', createdAt: 0, updatedAt: 0, lastUsedAt: 0 } },
-      machineIdByServerId: { [serverId]: 'machine' }, lastTokenSubByServerId: { [serverId]: 'requester' },
-    });
-    reloadConfiguration();
-    expect(configuration.activeServerId).toBe(serverId);
-    onTestFinished(installDaemonMachineAdmissionTransport({ serverId, transport: async () => {
-      throw new Error('Public native spawn requested no initial input');
-    } }));
-    const getHome = vi.mocked(axios.get).getMockImplementation();
-    const postHome = vi.mocked(axios.post).getMockImplementation();
-    if (!getHome || !postHome) throw new Error('Missing canonical Home HTTP fixture boundaries');
+    const installedAgent = h.plugin.registry.contributes.agentDefinitionsById.get(h.retainedAgent.agentId);
+    if (!installedAgent?.identity) throw new Error('Missing installed public Agent identity');
     let launched: SpawnSessionOptions | undefined;
-    const homeRequestPaths: string[] = [];
-    const fetchHome = globalThis.fetch;
-    vi.stubGlobal('fetch', async (url: Parameters<typeof fetch>[0], init?: RequestInit) => {
-      const path = new URL(String(url)).pathname;
-      homeRequestPaths.push(`FETCH ${path}`);
-      if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(FeaturesResponseSchema.parse({
-        features: {}, capabilities: { serverIdentity: { serverIdentityId: home } },
-      }));
-      return await fetchHome(url, init);
-    });
-    // Home HTTP is the system boundary. Session creation, the public Action
-    // executor, direct transport and lifecycle all remain production owners.
-    vi.spyOn(axios, 'get').mockImplementation(async (url, options) => {
-      const path = new URL(String(url)).pathname;
-      homeRequestPaths.push(`GET ${path}`);
-      if (path === '/v1/account/settings') return { status: 200, data: { settings: null, settingsVersion: 0 } };
-      if (launched && path === `/v2/sessions/${h.sessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
-        id: h.sessionId, active: true, encryptionMode: 'plain', dataEncryptionKey: null, share: null,
-        metadata: JSON.stringify({ machineId: 'machine', sessionCreationCorrespondenceV1: launched.sessionCreationCorrespondence }),
-      }) } };
-      return await getHome(url, options);
-    });
-    vi.spyOn(axios, 'post').mockImplementation(async (url, body, options) => {
-      homeRequestPaths.push(`POST ${new URL(String(url)).pathname}`);
-      if (new URL(String(url)).pathname === '/v2/sessions/lookup-by-tags') return { status: 200, data: { sessions: [] } };
-      return await postHome(url, body, options);
-    });
-    const handlers = new Map<string, RpcHandler>();
-    const lifecycle = createSpawnNewSessionLifecycleActionHandler({ serverId: configuration.activeServerId,
-      // The real process launch is the first replaceable boundary. Retain the
-      // exact producer output as ordinary daemon tracking would do at spawn.
-      spawnSession: async options => {
-        launched = options;
-        h.tracked.spawnOptions = options;
-        h.tracked.requesterWorkAttributionV1 = options.requesterWorkAttributionV1;
-        return { type: 'success', sessionId: h.sessionId,
-          sessionCreationOutcome: { disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
-      } });
-    registerSessionSpawnNewRpcHandlers({ rpcHandlerManager: {
-      registerHandler: (method, handler) => { handlers.set(method, handler); },
-    }, sessionSpawnDirectTargetTransport: createMachineSessionDirectTargetTransport({ machineId: 'machine', spawnLifecycleHandler: lifecycle }) });
-    const spawn = handlers.get(RPC_METHODS.SESSION_SPAWN_NEW);
-    if (!spawn) throw new Error('Missing registered public Session creation RPC');
-    const result = SessionSpawnNewResultV1Schema.parse(await spawn(SessionSpawnNewInputV2Schema.parse({
-      creationKey: 'native-project-stamped-owner', executionTarget: { serverId: configuration.activeServerId, machineId: 'machine' },
-      directory: { kind: 'path', path: h.cwd }, organizationPlacement: { folderId: null, tagIds: [] },
-      agentTarget: { kind: 'agent', identity: { pluginId: h.retainedAgent.pluginId, localId: 'agent' } },
-      connectedServices: { v: 2, bindingsByServiceId: {} },
-    }), { signal: h.signal, callerAuthority: 'present_user', machineAdmission: {
-      actorAccountId: 'requester', custodianAccountId: 'requester', machineId: 'machine',
-      installationId: h.f.installation.installationId, role: 'manage', encryptionMode: 'plain',
-    }, verifyMachineAdmissionCurrent: async () => h.f.isHomeCurrent() }));
-    if (result.type === 'error') throw new Error(`Public spawn refused before native dispatch: ${result.code}/${result.incompatibleTarget?.reason ?? 'none'}; launched=${launched !== undefined}; paths=${homeRequestPaths.join(',')}`);
-    expect(result).toMatchObject({ type: 'success', sessionId: h.sessionId });
+    expect(await spawnPublicInstalledProjectAgentSession({ fixture: h, actor: 'owner', homeServerIdentityId: home,
+      agentTarget: { kind: 'agent', identity: installedAgent.identity },
+      onSpawn: options => { launched = options; },
+    })).toBe(true);
     expect(launched).toMatchObject({ requesterWorkAttributionV1: {
       serverId: configuration.activeServerId, accountId: 'requester', machineId: 'machine', installationId: h.f.installation.installationId,
     }, verifyRequesterMachineAdmissionCurrent: expect.any(Function) });
