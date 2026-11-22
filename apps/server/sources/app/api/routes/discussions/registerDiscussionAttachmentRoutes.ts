@@ -154,7 +154,7 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
         });
         routes.delete(DISCUSSION_HTTP_PATHS_V1.attachment, {
             preHandler: [scoped.authenticate, requireRouteActionAuthority(DISCUSSION_ATTACHMENT_REMOVE_ACTION_ID_V1)],
-            config: { allowApiToken: true, rateLimit }, errorHandler,
+            config: { rateLimit }, errorHandler,
             schema: { params: DiscussionAttachmentReadRequestV1Schema,
                 response: { 200: DiscussionAttachmentRemovedV1Schema, ...DiscussionAttachmentErrorResponses,
                     403: z.union([DiscussionErrorResponseV1Schema, PresentUserRequiredResponseSchema]) } },
