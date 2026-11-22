@@ -1,5 +1,5 @@
 import type { ProjectManagedServiceHandle, WorkspaceProjectManagedServiceHandle, EnvironmentProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { selectServerProfileHomeIdentityMatches } from '@/server/serverProfiles';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
@@ -29,16 +29,16 @@ export async function selectVisibleMachineProjectServices<T extends DisclosableP
         && binding.accountId === binding.custodianAccountId
         && binding.machineId === target.machineId && binding.serverIdentityId === target.serverId
         && await custody.isCustodyCurrent?.() === true;
-    const projects: T[] = [];
-    for (const handle of services) {
+    const candidates = services.flatMap(handle => {
         // Narrow through the constraint: a generic `T` does not narrow on its `kind`.
         const disclosable: DisclosableProjectService = handle;
         const authority = disclosable.kind === 'workspace' ? disclosable.workspace : disclosable;
         if (serviceId && handle.serviceId !== serviceId || authority.machineId !== target.machineId
-            || !handle.isCurrent() || handle.retirementSignal.aborted
-            || !await isServerProfileHomeIdentity(target.serverId, authority.serverId)) continue;
-        projects.push(handle);
-    }
+            || !handle.isCurrent() || handle.retirementSignal.aborted) return [];
+        return [{ handle, serverId: authority.serverId }];
+    });
+    const matches = await selectServerProfileHomeIdentityMatches(candidates.map(candidate => candidate.serverId), target.serverId);
+    const projects = candidates.filter(candidate => matches.has(candidate.serverId)).map(candidate => candidate.handle);
     const environmentIds = [...new Set(projects.flatMap(handle => handle.kind === 'environment' ? [handle.environmentId] : []))];
     // The Source owner admits the demanded set under one current Account read.
     const readable = environmentIds.length ? await request.canReadEnvironments?.(environmentIds) : undefined;

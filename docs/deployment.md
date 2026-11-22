@@ -4568,6 +4568,9 @@ observation, plus the exact deployment/installation/service witness. Clock-only
 native refreshes preserve row identity and publish nothing; an explicit Services
 detail read still exposes the latest raw observation clock. Reading these rows
 does not inspect native processes or disclose their private configuration.
+For each list read, native disclosure resolves the candidate rows' distinct
+Home aliases against one saved profile snapshot and authorizes the selected
+Environment IDs as one set.
 
 Saved watched-service checks use the existing Automation Event authoring and
 materialization path. The plugin's setup opener carries the exact watched

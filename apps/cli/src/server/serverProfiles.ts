@@ -281,13 +281,29 @@ function findProfilesByHomeServerIdentityId(
 
 /** Exact Home target admission, without treating profile names or URLs as authority. */
 export async function isServerProfileHomeIdentity(profileId: string, homeServerIdentityId: string): Promise<boolean> {
+  return (await selectServerProfileHomeIdentityMatches([profileId], homeServerIdentityId)).has(profileId);
+}
+
+/** Admit all aliases against the same saved profile snapshot for this read. */
+export async function selectServerProfileHomeIdentityMatches(
+  profileIds: readonly string[],
+  homeServerIdentityId: string,
+): Promise<ReadonlySet<string>> {
+  const aliases = new Set(profileIds);
+  const matched = new Set<string>();
   // Preserve the existing local-profile target contract for in-process callers.
-  if (profileId === homeServerIdentityId) return profileId.length > 0;
-  const [profileHomeId, targetHomeId] = await Promise.all([
-    resolveServerProfileHomeIdentityId(profileId), resolveServerProfileHomeIdentityId(homeServerIdentityId),
-  ]);
-  return areServerProfileIdentifiersEquivalent(profileId, homeServerIdentityId,
-    identifier => identifier === profileId ? profileHomeId : identifier === homeServerIdentityId ? targetHomeId : null);
+  if (aliases.delete(homeServerIdentityId) && homeServerIdentityId.length > 0) matched.add(homeServerIdentityId);
+  if (aliases.size === 0) return matched;
+  const servers = (await readSettings().catch(() => undefined))?.servers ?? {};
+  const targetHomeId = resolveSavedServerProfileHomeIdentityId(servers, homeServerIdentityId);
+  for (const profileId of aliases) {
+    const profileHomeId = resolveSavedServerProfileHomeIdentityId(servers, profileId);
+    if (areServerProfileIdentifiersEquivalent(profileId, homeServerIdentityId,
+      identifier => identifier === profileId ? profileHomeId : identifier === homeServerIdentityId ? targetHomeId : null)) {
+      matched.add(profileId);
+    }
+  }
+  return matched;
 }
 
 /** True when more than one saved profile claims this Home, so no profile can stand for it. Fails closed. */
@@ -301,9 +317,12 @@ export async function isServerProfileHomeIdentityAmbiguous(homeServerIdentityId:
 
 /** Canonical portable identity of one exactly admitted saved profile or Home id. */
 export async function resolveServerProfileHomeIdentityId(profileId: string): Promise<string | null> {
+  const servers = (await readSettings().catch(() => undefined))?.servers ?? {};
+  return resolveSavedServerProfileHomeIdentityId(servers, profileId);
+}
+
+function resolveSavedServerProfileHomeIdentityId(servers: NonNullable<Settings['servers']>, profileId: string): string | null {
   try {
-    const settings = await readSettings();
-    const servers = settings.servers ?? {};
     const savedProfileId = Object.prototype.hasOwnProperty.call(servers, profileId) ? profileId
       : findProfilesByHomeServerIdentityId(servers, profileId)[0]?.[0];
     const profile = savedProfileId ? coerceProfile(servers[savedProfileId]) : null;
