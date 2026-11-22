@@ -8,6 +8,7 @@ import tweetnacl from 'tweetnacl';
 import { NATIVE_AUTH_EMAIL_PRELOGIN_PATH_V1, NATIVE_AUTH_EMAIL_LOGIN_PATH_V1, NATIVE_AUTH_EMAIL_UNLOCK_PATH_V1, NATIVE_AUTH_EMAIL_PROVISION_PATH_V1, NATIVE_AUTH_EMAIL_VERIFY_REQUEST_PATH_V1, NATIVE_AUTH_PASSWORD_RESET_REQUEST_PATH_V1, NativeAuthEmailAcceptedResponseV1Schema, NativeEmailVerifyRequestV1Schema, NativePasswordResetRequestV1Schema, NativeEmailPasswordLoginResponseV1Schema, NativeEmailPasswordErrorResponseV1Schema, NativeEmailPasswordLoginRequestV1Schema, NativeEmailPasswordPreloginRequestV1Schema, NativeEmailPasswordPreloginResponseV1Schema, NativeEmailPasswordUnlockRequestV1Schema, NativeEmailPasswordUnlockResponseV1Schema, NativeEmailPasswordProvisionRequestV1Schema, NativeEmailPasswordProvisionResponseV1Schema } from '@happier-dev/protocol/auth/nativeAuthEmailRoutes';
 import { NATIVE_AUTH_PASSWORD_RESET_SUBMIT_PATH_V1, PlainPasswordResetSubmitResponseV1Schema, PlainPasswordResetSubmitRequestV1Schema, ACCOUNT_EMAIL_CHANGE_PATH_V1, AccountSecurityRouteErrorV1Schema, AccountPasswordMutationResponseV1Schema, AccountEmailChangeCompleteRequestV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { normalizeVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/protocol/account/encryptionMode';
 import { parseRecoveryKey } from '@happier-dev/protocol/auth/recoveryKey';
 import { KeyChallengeV2AuthRequestSchema, KeyChallengeV2IssueResponseSchema, canonicalizeKeyChallengeV2AudienceOrigin, createKeyChallengeV2SigningInput } from '@happier-dev/protocol/auth/keyChallenge';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -21,7 +22,8 @@ import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { hasStoredSessionCredentialProvenance, readStoredCredentials, writeCredentialsLegacy, writeCredentialsTokenOnly } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, readStoredCredentialCustodyForServerId, readStoredCredentials, writeCredentialsLegacy, writeCredentialsTokenOnly } from '@/persistence';
+import { admitCliReportedAccountMode, CliAccountModeDowngradeUnverifiedError } from '@/api/client/accountModeAdmission';
 import {
   deriveNativeEmailPasswordKeys,
   openNativeEmailPasswordEnvelope,
@@ -398,6 +400,7 @@ async function handleNativeLogin(args: string[], signal?: AbortSignal): Promise<
       }
     }
     if (routing.kind !== 'plain_password') throw new NativeEmailCommandError('unsupported');
+    await admitPlainPasswordSignIn(captured.serverId);
     const loginRequest = NativeEmailPasswordLoginRequestV1Schema.parse({ v: 1, email: emailFlag, password, credentialKind: 'terminal' });
     const login = await postNative({
       path: NATIVE_AUTH_EMAIL_LOGIN_PATH_V1,
@@ -443,6 +446,27 @@ async function handleNativeLogin(args: string[], signal?: AbortSignal): Promise<
       console.error(message);
       process.exitCode = 1;
     }
+  }
+}
+
+/**
+ * The Home's prelogin answer chooses the flow, so a Home claiming `plain_password`
+ * is a Home-reported plain mode. Prelogin names no Account, so this computer
+ * cannot tell whether its stored keys belong to the Account signing in; while
+ * this Home's stored credential pins active keys, it refuses before the raw
+ * password leaves the process. A computer without active keys is unaffected.
+ */
+async function admitPlainPasswordSignIn(serverId: string): Promise<void> {
+  const stored = await readStoredCredentialCustodyForServerId(serverId);
+  if (!stored) return;
+  try {
+    await admitCliReportedAccountMode('plain', stored);
+  } catch (error) {
+    if (!(error instanceof CliAccountModeDowngradeUnverifiedError)) throw error;
+    throw new NativeEmailCommandError(ACCOUNT_MODE_DOWNGRADE_UNVERIFIED,
+      'The Home asks for an unencrypted password sign-in, but this computer holds active encryption keys for an Account on this Home. '
+      + 'Your password was not sent. If you switched this Account to unencrypted on another device, run `happier auth keep-encryption-keys` first; '
+      + 'to sign in to a different Account, run `happier auth logout` first.');
   }
 }
 

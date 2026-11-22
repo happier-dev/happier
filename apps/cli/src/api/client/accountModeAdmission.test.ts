@@ -5,7 +5,10 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 // Boundary: a temporary HAPPIER_HOME_DIR holds real stored credentials and only
 // the Home HTTP answer is injected; persistence and both mode owners are real.
 const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_API_TOKEN', 'HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE']);
-const token = (nonce: string) => `e30.${Buffer.from(JSON.stringify({ sub: 'alice', nonce })).toString('base64url')}.sig`;
+const terminalProvenance = { v: 1, kind: 'terminal', authority: 'account_automation' };
+const tokenFor = (sub: string, nonce: string) =>
+  `e30.${Buffer.from(JSON.stringify({ sub, nonce, tokenEpoch: 0, provenance: terminalProvenance })).toString('base64url')}.sig`;
+const token = (nonce: string) => tokenFor('alice', nonce);
 const DOWNGRADE = { code: 'account_mode_downgrade_unverified', canTryAgain: false };
 const plainCurrentness = { mode: 'plain', version: 2, settingsVersion: 2, updatedAt: 2, signingKeyFingerprint: null, contentKeyFingerprint: null };
 afterEach(() => { env.restore(); vi.resetModules(); });
@@ -67,16 +70,44 @@ describe('CLI Account mode downgrade pin', () => {
     });
   });
 
-  it('keyless re-auth keeps retained keys as history and admits plain', async () => {
+  it('keyless re-auth to the same Account keeps an active pin, so a Home-reported plain stays refused', async () => {
     await withHome(async m => {
       const secret = new Uint8Array(32).fill(8);
       await m.persistence.writeCredentialsLegacy({ token: token('old'), secret });
       const bearer = token('reauth');
       await m.persistence.writeCredentialsTokenOnly({ token: bearer });
       const { configuration } = await import('@/configuration');
+      const stored = await m.persistence.readStoredCredentialsForServerId(configuration.activeServerId);
+      expect(stored).toMatchObject({ token: bearer, encryption: { type: 'legacy', secret } });
+      expect(m.persistence.readAccountE2eeCustody(stored!)).toBe('active');
+      await expect(reads(bearer, m).mode()).rejects.toMatchObject(DOWNGRADE);
+    });
+  });
+
+  it('keyless re-auth after the explicit reclassification keeps the keys historical and admits plain', async () => {
+    await withHome(async m => {
+      const secret = new Uint8Array(32).fill(8);
+      const old = token('old');
+      await m.persistence.writeCredentialsLegacy({ token: old, secret });
+      const { configuration } = await import('@/configuration');
+      await expect(m.persistence.writeAccountE2eeCustodyForServerId(configuration.activeServerId, old, 'historical')).resolves.toBe(true);
+      const bearer = token('reauth');
+      await m.persistence.writeCredentialsTokenOnly({ token: bearer });
       expect(await m.persistence.readStoredCredentialsForServerId(configuration.activeServerId))
         .toMatchObject({ token: bearer, encryption: { type: 'legacy', secret }, accountE2eeCustody: 'historical' });
       await expect(reads(bearer, m).mode()).resolves.toEqual({ kind: 'resolved', mode: 'plain' });
+    });
+  });
+
+  it('a different Account signing in keyless does not inherit the first Account pin', async () => {
+    await withHome(async m => {
+      await m.persistence.writeCredentialsLegacy({ token: token('alice'), secret: new Uint8Array(32).fill(8) });
+      const bob = tokenFor('bob', 'bob');
+      await m.persistence.writeCredentialsTokenOnly({ token: bob });
+      const { configuration } = await import('@/configuration');
+      expect(await m.persistence.readStoredCredentialsForServerId(configuration.activeServerId))
+        .toMatchObject({ token: bob, encryption: null });
+      await expect(reads(bob, m).mode()).resolves.toEqual({ kind: 'resolved', mode: 'plain' });
     });
   });
 

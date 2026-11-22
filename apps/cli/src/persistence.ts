@@ -739,8 +739,9 @@ export type Credentials = CredentialProvenanceMarker & {
   token: string,
   encryption: AccountEncryptionCredentials,
   /**
-   * Only this computer writes `historical` (keyless re-auth or the person's
-   * confirmation); a Home's reported mode never does. Absent means active.
+   * Only this computer's explicit custody write bound to the expected
+   * credential writes `historical`; a Home's reported mode or a keyless
+   * re-auth never does. Absent means active.
    */
   accountE2eeCustody?: 'historical',
 }
@@ -1103,9 +1104,10 @@ export async function prepareCredentialsTokenOnlyForServerId(
     throw new HistoricalEncryptionIdentityUnavailableError();
   }
   if (previousAccountId.trim() !== accountId.trim()) return { token, encryption: null };
-  // A keyless sign-in to the same Account keeps the keys for encrypted
-  // history; they no longer pin this computer to E2EE mode.
-  return { token, encryption, accountE2eeCustody: 'historical' };
+  // A keyless sign-in to the same Account keeps the keys and their custody:
+  // an active pin stays active (a Home steering a keyless flow must not
+  // reclassify it); only writeAccountE2eeCustodyForServerId does that.
+  return { token, encryption, ...(previous.custody === 'historical' ? { accountE2eeCustody: 'historical' as const } : {}) };
 }
 
 export async function writeCredentialsTokenOnly(
@@ -1121,7 +1123,7 @@ export async function writeCredentialsTokenOnly(
   }
 }
 
-/** Refresh a profile bearer, preserving genuine same-Account historical key custody. */
+/** Refresh a profile bearer, preserving genuine same-Account key material and its custody. */
 export async function writeCredentialsTokenOnlyForServerId(
   serverIdRaw: string,
   credentials: Readonly<{ token: string }>,

@@ -25,7 +25,13 @@ import { captureConsoleJsonOutput, captureConsoleText } from '@/testkit/logger/c
 import { expandAuthSecretsFromStdin } from './auth/stdinSecrets';
 import { handleAuthCommand } from './auth';
 import { logger } from '@/ui/logger';
-import { readStoredCredentials, writeCredentialsTokenOnly } from '@/persistence';
+import {
+  readAccountE2eeCustody,
+  readStoredCredentials,
+  writeAccountE2eeCustodyForServerId,
+  writeCredentialsLegacy,
+  writeCredentialsTokenOnly,
+} from '@/persistence';
 
 const terminalBearer = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', tokenEpoch: 0,
   provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
@@ -112,6 +118,57 @@ describe('native email and recovery CLI commands', () => {
       const envelope = output.json();
       expect(envelope).toEqual(expect.objectContaining({ ok: true, data: expect.objectContaining({ accountId: 'account-1' }) }));
       expect(output.logs.join('\n')).not.toContain(password);
+    } finally {
+      output.restore();
+      restore();
+      await app.close();
+    }
+  });
+
+  it('refuses a Home-chosen plain_password sign-in before the password leaves a computer holding active keys', async () => {
+    const app = fastify();
+    const password = 'secret password that must stay local';
+    let loginReached = false;
+    app.post('/v1/auth/email/prelogin', async () => ({ v: 1, kind: 'plain_password' }));
+    app.post('/v1/auth/email/login', async () => {
+      loginReached = true;
+      return { token: terminalBearer };
+    });
+    const restore = installNativeAuthTransport(app);
+    const secret = new Uint8Array(32).fill(5);
+    await writeCredentialsLegacy({ token: terminalBearer, secret });
+    const output = captureConsoleJsonOutput<unknown>();
+    try {
+      await handleAuthCommand(['email', 'login', '--email', 'person@example.test', '--password', password, '--json']);
+      expect(output.json()).toMatchObject({ ok: false, error: { code: 'account_mode_downgrade_unverified' } });
+      expect(loginReached).toBe(false);
+      const stored = await readStoredCredentials();
+      expect(stored).toMatchObject({ token: terminalBearer, encryption: { type: 'legacy', secret } });
+      expect(readAccountE2eeCustody(stored!)).toBe('active');
+    } finally {
+      output.restore();
+      restore();
+      await app.close();
+    }
+  });
+
+  it('signs in with plain_password after the person kept this computer’s keys as history', async () => {
+    const app = fastify();
+    app.post('/v1/auth/email/prelogin', async () => ({ v: 1, kind: 'plain_password' }));
+    app.post('/v1/auth/email/login', async () => ({ token: terminalBearer }));
+    const restore = installNativeAuthTransport(app);
+    const secret = new Uint8Array(32).fill(5);
+    const previous = `header.${Buffer.from(JSON.stringify({ sub: 'account-1', nonce: 'previous' })).toString('base64url')}.signature`;
+    await writeCredentialsLegacy({ token: previous, secret });
+    const { configuration } = await import('@/configuration');
+    expect(await writeAccountE2eeCustodyForServerId(configuration.activeServerId, previous, 'historical')).toBe(true);
+    const output = captureConsoleJsonOutput<unknown>();
+    try {
+      await handleAuthCommand(['email', 'login', '--email', 'person@example.test', '--password', 'pw', '--json']);
+      expect(output.json()).toMatchObject({ ok: true, data: { accountId: 'account-1' } });
+      expect(await readStoredCredentials()).toMatchObject({
+        token: terminalBearer, encryption: { type: 'legacy', secret }, accountE2eeCustody: 'historical',
+      });
     } finally {
       output.restore();
       restore();

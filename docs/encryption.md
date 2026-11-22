@@ -3159,10 +3159,13 @@ Custody becomes historical only through this device:
 - another app device shows **Switched to unencrypted on another device** in
   Account encryption settings with one action, **Keep keys and continue**. It is a
   local human decision, deliberately not an Agent-invocable Action;
-- a CLI keyless sign-in to the same Account keeps retained keys as historical, and
-  `happier auth keep-encryption-keys` asks one y/N after confirming the Home reports
+- `happier auth keep-encryption-keys` asks one y/N after confirming the Home reports
   plain. A running daemon re-reads custody on its next fresh read and re-admits at
-  its next reconnect or restart.
+  its next reconnect or restart. A CLI keyless sign-in to the same Account keeps
+  retained keys with their current custody, so an active pin stays active, and
+  `happier auth email login` refuses a Home-chosen `plain_password` flow with
+  `account_mode_downgrade_unverified` before the password is sent while the
+  selected Home's stored credential pins active keys.
 
 An enrolled daemon that detects this refusal while refreshing its Machine
 snapshot retires its RPC codec. On the current authenticated Home transport it
