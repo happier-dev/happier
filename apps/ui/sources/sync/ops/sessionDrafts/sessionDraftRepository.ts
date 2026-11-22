@@ -1124,16 +1124,27 @@ export class SessionDraftRepository {
         const scopeKey = this.scopeKey(scope);
         const cached = this.scopeStates.get(scopeKey);
         if (cached) return cached;
-        const state: ScopeState = { loaded: true, replicas: new Map(), persisted: new Map() };
+        const state: ScopeState = { loaded: false, replicas: new Map(), persisted: new Map() };
         const recordKey = this.storageKey(scope);
-        // A refused migration keeps the whole-scope record, which then fails the envelope read
-        // below: this scope alone reads as unreadable retained custody.
+        // A refused migration keeps the whole-scope record for recovery.
         this.migrateLegacyScopeRecord(scope, recordKey);
-        let unreadableRecords = this.isScopeEnvelopeUnreadable(recordKey) ? 1 : 0;
-        const rowPrefix = sessionDraftRowKey(recordKey, '');
+        if (this.isScopeEnvelopeUnreadable(recordKey)) {
+            state.unreadableRetainedContent = true;
+            console.warn('Session drafts: 1 stored record(s) could not be read and were left in place.');
+        }
+        this.scopeStates.set(scopeKey, state);
+        return state;
+    }
+
+    private getScopeStateWithAllReplicas(scope: SessionDraftRepositoryScope): ScopeState {
+        const state = this.getScopeState(scope);
+        if (state.loaded) return state;
+        let unreadableRecords = 0;
+        const rowPrefix = sessionDraftRowKey(this.storageKey(scope), '');
         for (const key of this.storage.getAllKeys()) {
             if (!key.startsWith(rowPrefix)) continue;
             const replicaKey = key.slice(rowPrefix.length);
+            if (state.replicas.has(replicaKey)) continue;
             const restored = this.readStoredReplica(replicaKey, this.storage.getString(key));
             if (restored === 'unreadable') unreadableRecords += 1;
             else if (restored !== 'retained') {
@@ -1146,7 +1157,7 @@ export class SessionDraftRepository {
             // A count only: stored drafts, their addresses and the Account stay out of logs.
             console.warn(`Session drafts: ${unreadableRecords} stored record(s) could not be read and were left in place.`);
         }
-        this.scopeStates.set(scopeKey, state);
+        state.loaded = true;
         return state;
     }
 
@@ -1431,7 +1442,24 @@ export class SessionDraftRepository {
     }
 
     private readReplica(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV2): PersistedReplica | null {
-        return this.getScopeState(scope).replicas.get(canonicalSessionDraftAddressV2(address)) ?? null;
+        const state = this.getScopeState(scope);
+        const key = canonicalSessionDraftAddressV2(address);
+        const existing = state.replicas.get(key);
+        if (existing || state.loaded) return existing ?? null;
+        const raw = this.storage.getString(sessionDraftRowKey(this.storageKey(scope), key));
+        if (raw === undefined) return null;
+        const restored = this.readStoredReplica(key, raw);
+        if (restored === 'unreadable') {
+            if (!state.unreadableRetainedContent) {
+                state.unreadableRetainedContent = true;
+                console.warn('Session drafts: 1 stored record(s) could not be read and were left in place.');
+            }
+            return null;
+        }
+        if (restored === 'retained') return null;
+        state.replicas.set(key, restored);
+        state.persisted.set(key, restored);
+        return restored;
     }
 
     private readSnapshotCacheEntry(scope: SessionDraftRepositoryScope, address: SessionDraftAddressV2) {
@@ -1769,7 +1797,7 @@ export class SessionDraftRepository {
         materializationIntent?: SessionDraftMaterializationIntent;
     }>): void {
         const address = SessionDraftAddressV2Schema.parse({ kind: 'projectOpen', draftId: params.draftId });
-        const state = this.getScopeState(params.scope);
+        const state = this.getScopeStateWithAllReplicas(params.scope);
         const existing = this.readReplica(params.scope, address);
         if (state.unreadableRetainedContent || (existing && (!existing.localRawDocument
             || !ProjectOpenDraftDocumentV2Schema.safeParse(existing.localRawDocument).success))) {
@@ -1797,7 +1825,7 @@ export class SessionDraftRepository {
         const key = canonicalSessionDraftAddressV2(params.address);
         const recordKey = sessionDraftRowKey(this.storageKey(params.scope), key);
         await this.storage.refresh?.(recordKey);
-        const state = this.getScopeState(params.scope);
+        const state = this.getScopeStateWithAllReplicas(params.scope);
         const raw = this.storage.getString(recordKey);
         const restored = raw === undefined ? undefined : this.readStoredReplica(key, raw);
         if (restored === 'unreadable' || state.unreadableRetainedContent || this.isScopeEnvelopeUnreadable(this.storageKey(params.scope))) {
@@ -2274,7 +2302,7 @@ export class SessionDraftRepository {
         const runtime = this.syncRuntime(scope);
         if (!runtime) return;
         const isCurrent = () => this.isCurrentRuntime(runtime);
-        const addresses = [...this.getScopeState(scope).replicas.values()].map(replica => replica.address);
+        const addresses = [...this.getScopeStateWithAllReplicas(scope).replicas.values()].map(replica => replica.address);
         let firstFailure: { error: unknown } | undefined;
         for (const address of addresses) {
             await this.flushInFlight.get(this.replicaListenerKey(scope, address));
@@ -2633,8 +2661,7 @@ export class SessionDraftRepository {
      */
     async prepareLocalSessionDraftScope(scope: SessionDraftRepositoryScope): Promise<void> {
         if (this.storage.prepare) await this.storage.prepare();
-        // One serialized scope owns all exact addresses. Loading it is the complete local
-        // hydration boundary; individual reads below reuse the same parsed scope state.
+        // Prepare scope metadata and migrate the legacy envelope before exact row reads.
         this.getScopeState(scope);
     }
 
@@ -2890,7 +2917,7 @@ export class SessionDraftRepository {
         const progress: SessionDraftCensusProgress = resumable?.runtime === params.runtime ? resumable : {
             runtime: params.runtime,
             after: undefined,
-            requestedBaseRevisions: new Map([...this.getScopeState(scope).replicas.entries()]
+            requestedBaseRevisions: new Map([...this.getScopeStateWithAllReplicas(scope).replicas.entries()]
                 .map(([key, replica]) => [key, replica.baseRevision] as const)),
             staged: new Map(),
             listedAddresses: new Set(),
@@ -2954,7 +2981,7 @@ export class SessionDraftRepository {
                 throw error;
             }
         }
-        const localAddressesMissingFromActiveList = knownGap ? [] : [...this.getScopeState(scope).replicas.values()]
+        const localAddressesMissingFromActiveList = knownGap ? [] : [...this.getScopeStateWithAllReplicas(scope).replicas.values()]
             .map((replica) => replica.address)
             .filter((address) => !listedAddresses.has(canonicalSessionDraftAddressV2(address)));
         const missingReads = await Promise.all(localAddressesMissingFromActiveList.map(async (address) => {
@@ -3048,7 +3075,7 @@ export class SessionDraftRepository {
         const scopeKey = this.scopeKey(scope);
         const cached = this.newListProjectionCache.get(scopeKey);
         if (cached) return cached;
-        const projection = [...this.getScopeState(scope).replicas.values()]
+        const projection = [...this.getScopeStateWithAllReplicas(scope).replicas.values()]
             .flatMap((replica) => {
                 if (replica.address.kind !== 'newSession' || !replica.materialized
                     || replica.localRawDocument?.target?.kind !== 'newSession') return [];
@@ -3110,7 +3137,7 @@ export class SessionDraftRepository {
         baseRevision: number;
         document: SessionDraftDocumentV2;
     }>[] {
-        return [...this.getScopeState(scope).replicas.values()]
+        return [...this.getScopeStateWithAllReplicas(scope).replicas.values()]
             .filter((replica): replica is PersistedReplica & {
                 address: AccountOwnedDraftAddressV2;
                 baseRevision: number;

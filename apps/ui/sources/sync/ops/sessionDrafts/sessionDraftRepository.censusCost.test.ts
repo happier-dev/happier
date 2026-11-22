@@ -15,6 +15,38 @@ const memoryStorage = () => {
 };
 
 describe('draft census request cost after remote cleanup', () => {
+    it('opens a retained draft by exact key without reading sibling bodies', async () => {
+        const storage = memoryStorage();
+        const getString = vi.spyOn(storage, 'getString');
+        const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,
+            getSessionContext: () => null, randomBytes: length => new Uint8Array(length) });
+        const options = { storage, cipher, syncEnabled: false };
+        const writer = createSessionDraftRepository(options);
+        const draftIds = Array.from({ length: 250 }, (_, index) => (
+            `20000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`
+        ));
+        for (const draftId of draftIds) {
+            writer.writeNewSessionDraft({ scope, draftId, materializationIntent: 'userEdit', patch: { text: draftId } });
+        }
+        getString.mockClear();
+        const reader = createSessionDraftRepository(options);
+        const draftId = draftIds.at(-1)!;
+        const address = { kind: 'newSession' as const, draftId };
+
+        await reader.prepareLocalSessionDraftScope(scope);
+        expect(reader.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value).toBe(draftId);
+        reader.writeNewSessionDraft({ scope, draftId, materializationIntent: 'userEdit', patch: { text: 'kept edit' } });
+        const draftBodyReads = getString.mock.calls.filter(([key]) => draftIds.some(id => key.endsWith(id)));
+        expect(draftBodyReads).toHaveLength(1);
+        expect(draftBodyReads[0]?.[0]).toMatch(new RegExp(draftId + '$'));
+
+        expect(reader.listNewSessionDraftProjections(scope)).toHaveLength(draftIds.length);
+        expect(reader.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value).toBe('kept edit');
+        const restarted = createSessionDraftRepository(options);
+        expect(restarted.getSessionComposerDraftSnapshot(scope, address)?.composer.text.value).toBe('kept edit');
+        expect(restarted.listNewSessionDraftProjections(scope)).toHaveLength(draftIds.length);
+    });
+
     it('resumes a cut-off census from its next page and applies nothing until the listing completes', async () => {
         // P03-RECONNECT-REST: a census cut off by a hide/outage restarted from page 1 on the next show.
         const cipher = createSessionDraftCipher({ accountMode: 'plain', accountCryptoMaterial: null,

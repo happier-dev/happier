@@ -867,8 +867,8 @@ describe('sessionDraftRepository', () => {
         const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
         try {
             const repository = createSessionDraftRepository({ storage, cipher: plainCipher(), syncEnabled: false });
-            repository.getSessionDraftSnapshot(scope, sessionAddress);
-            repository.getSessionDraftSnapshot(scope, sessionAddress);
+            repository.listNewSessionDraftProjections(scope);
+            repository.listNewSessionDraftProjections(scope);
             expect(warn).toHaveBeenCalledTimes(1);
             const message = String(warn.mock.calls[0]?.[0]);
             expect(message).toContain(String(count));
