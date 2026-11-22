@@ -11,6 +11,7 @@ import { encodeBase64 } from '@/encryption/base64';
 import { createArtifactWithHeaderViaApi, updateArtifactWithHeaderViaApi, fetchArtifactForViewFromApi, fetchArtifactWithBodyFromApi,
     fetchArtifactBodyRevisionsFromApi, type ArtifactDataKeyCache } from './syncArtifacts';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { THEME_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 
 const artifactId = '29c6d6dd-8a45-4b30-a362-acdc5c700247';
 const blobId = 'f3d86e48-5552-4b66-af88-709c083bd134';
@@ -25,6 +26,20 @@ function detailBatch(artifact: Artifact) {
 }
 
 describe('Artifact HTML private preview', () => {
+    it('refuses a theme profile on the addressed document path while its own reader can open it', async () => {
+        const stored: Artifact = { id: artifactId, ownerAccountId: 'owner', access: 'owner', encryptionMode: 'plain',
+            dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent({ kind: THEME_PROFILE_ARTIFACT_KIND_V1 }),
+            body: encodePlainArtifactStoredContent({ body: 'native theme content' }),
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+        const params = { artifactId, credentials: { token: 'fixture-auth' },
+            request: async (path: string) => Response.json(path === '/v1/artifacts/read' ? detailBatch(stored) : stored),
+            encryption: null, artifactDataKeys: new Map() };
+        await expect(fetchArtifactForViewFromApi({ ...params, readPolicy: 'addressed' }))
+            .rejects.toMatchObject({ code: 'artifact_kind_internal' });
+        await expect(fetchArtifactForViewFromApi(params)).resolves.toMatchObject({ artifact: { body: 'native theme content' } });
+    });
+
     it.each(['plain', 'e2ee'] as const)('retains %s approval replay custody while refusing generic Document and history reads', async mode => {
         const encryption = mode === 'e2ee' ? await Encryption.create(new Uint8Array(32).fill(12)) : null;
         const dataKey = new Uint8Array(32).fill(9);

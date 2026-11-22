@@ -230,7 +230,7 @@ import { WaitActionInputV1Schema } from './specs/wait.js';
 import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } from './specs/actionOperations.js';
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
 import { AccountNoticeArtifactBodyV1Schema, readAccountNoticeArtifactV1, readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
-import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema, ProjectSetupContentV1Schema } from '../projects/projectSetupV1.js';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema } from '../projects/projectSetupV1.js';
 import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
 import { isProjectSetupSetChildInputV1 } from '../projects/projectSetupSetV1.js';
 import { ARTIFACT_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
@@ -418,7 +418,7 @@ import { BotTemplateActionIdV1Schema, BotTemplateActionOutputSchemasV1,
   BotTemplateInstantiateAgentAuthoringInputV1Schema } from '../bots/templates/botTemplateActionsV1.js';
 import { executeDocReadV1, executeDocDiscussionWriteV1, executeDocEditDecisionV1,
   prepareDocEditProposalInputV1 } from './executor/docCollaborationActions.js';
-import { getArtifactKindPolicyV1 } from '../artifacts/artifactSharingV1.js';
+import { getArtifactKindPolicyV1, isAddressedArtifactReadAllowedV1 } from '../artifacts/artifactSharingV1.js';
 import { WorkflowActionFailureV1Schema } from '../workflows/workflowProgressV1.js';
 import type { ActionUiPlacement } from './actionUiPlacements.js';
 import type { MemorySearchQueryV1, MemorySearchResultV1 } from '../memory/memorySearch.js';
@@ -5171,14 +5171,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (approval.success) return { ok: true, result: approval.data };
         if (artifactActionId === 'artifact.get') {
           const opened = ArtifactActionOutputSchemasV1['artifact.get'].parse(result);
-          let acceptedSetupRead = false;
-          if (opened.artifact?.access === 'owner' && opened.artifact.header.kind === PROJECT_SETUP_ARTIFACT_KIND_V1
-            && typeof opened.artifact.body === 'string') {
-            try { acceptedSetupRead = ProjectSetupContentV1Schema.safeParse(JSON.parse(opened.artifact.body) as unknown).success; }
-            catch { acceptedSetupRead = false; }
-          }
-          if (opened.artifact && !getArtifactKindPolicyV1(opened.artifact.header.kind).addressedReadAllowed
-            && !isSharedSetupArtifact(opened.artifact) && !readOwnedNotice(opened.artifact) && !acceptedSetupRead) return internalKindRefusal;
+          if (opened.artifact && !isAddressedArtifactReadAllowedV1(opened.artifact)
+            && !readOwnedNotice(opened.artifact)) return internalKindRefusal;
           return { ok: true, result: opened };
         }
         if (artifactActionId === 'artifact.list') {

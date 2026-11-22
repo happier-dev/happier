@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
+import { isAddressedArtifactReadAllowedV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { storage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
@@ -10,7 +11,9 @@ import type { ArtifactViewRead } from '@/sync/engine/artifacts/syncArtifacts';
 export type ArtifactBodyState = 'ready' | 'loading' | 'missing' | 'failed';
 
 /** A preview's opened row and content come from one finite authenticated operation, not the global store. */
-export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact | null, options?: Readonly<{ readMissing?: boolean }>): Readonly<{
+export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact | null, options?: Readonly<{
+    readMissing?: boolean; readPolicy?: 'addressed';
+}>): Readonly<{
     state: ArtifactBodyState; result: ArtifactViewRead | null; failure?: unknown; retry: () => void;
 }> {
     const lifetime = useActiveServerAccountScopeLifetime();
@@ -25,7 +28,12 @@ export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact 
         && (isArtifactHtmlHeaderV1(artifact.rawHeader ?? artifact.header)
             || (artifact.body !== null && typeof artifact.body === 'object'
                 && resolveFileViewerKind({ path: artifact.title ?? '', mimeType: artifact.body.mime }).previewable));
-    const requiresRead = needsBody || needsAuthority || requiresPreview;
+    const readPolicy = options?.readPolicy;
+    const cachedReadRefused = readPolicy === 'addressed' && artifact !== null && artifact.isDecrypted
+        && !needsBody && !needsAuthority && !isAddressedArtifactReadAllowedV1({
+            header: artifact.rawHeader ?? artifact.header ?? {}, body: artifact.body, access: artifact.access,
+        });
+    const requiresRead = !cachedReadRefused && (needsBody || needsAuthority || requiresPreview);
     const [read, setRead] = React.useState<Readonly<{ state: ArtifactBodyState; result: ArtifactViewRead | null; failure?: unknown }>>({
         state: requiresRead ? 'loading' : 'ready', result: null,
     });
@@ -50,7 +58,7 @@ export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact 
         if (!requiresRead) { setRead({ state: 'ready', result: null }); return; }
         const controller = new AbortController();
         setRead({ state: 'loading', result: null });
-        void sync.fetchArtifactForView(artifactId, { signal: controller.signal }).then((full) => {
+        void sync.fetchArtifactForView(artifactId, { signal: controller.signal, readPolicy }).then((full) => {
             if (controller.signal.aborted) return;
             if (full) {
                 // Acknowledge this operation before publishing its own row, so
@@ -62,8 +70,10 @@ export function useArtifactBody(artifactId: string, artifact: DecryptedArtifact 
             setRead({ state: full ? 'ready' : 'missing', result: full });
         }, failure => { if (!controller.signal.aborted) setRead({ state: 'failed', result: null, failure }); });
         return () => controller.abort();
-    }, [artifactId, source, requiresRead, attempt, lifetime]);
+    }, [artifactId, source, requiresRead, readPolicy, attempt, lifetime]);
     const current = completed.current?.source === source && completed.current.attempt === attempt && completed.current.lifetime === lifetime;
+    const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
+    if (cachedReadRefused) return { state: 'failed', result: null, failure: { code: 'artifact_kind_internal' }, retry };
     return { state: requiresRead && !current && read.state === 'ready' ? 'loading' : read.state,
-        result: current ? read.result : null, failure: read.failure, retry: React.useCallback(() => setAttempt((value) => value + 1), []) };
+        result: current ? read.result : null, failure: read.failure, retry };
 }

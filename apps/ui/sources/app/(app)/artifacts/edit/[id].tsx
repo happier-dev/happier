@@ -29,7 +29,7 @@ export function EditArtifactContent(props: Readonly<{ id: string; artifact: Decr
 }
 
 function EditDocument(props: Readonly<{ id: string; artifact: DecryptedArtifact | null }>): React.ReactElement {
-    const body = useArtifactBody(props.id, props.artifact);
+    const body = useArtifactBody(props.id, props.artifact, { readPolicy: 'addressed' });
     const artifact = body.result?.artifact ?? props.artifact;
     if (body.state === 'failed') {
         return (

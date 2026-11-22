@@ -74,7 +74,7 @@ export function ArtifactView(props: Readonly<{
  * every other kind reads as a Document.
  */
 function ArtifactKindView(props: React.ComponentProps<typeof ArtifactView>): React.ReactElement {
-    const body = useArtifactBody(props.artifactId, props.artifact);
+    const body = useArtifactBody(props.artifactId, props.artifact, { readPolicy: 'addressed' });
     const artifact = body.result?.artifact ?? props.artifact;
     if (artifact && artifact.isDecrypted !== false && isReviewArtifact(artifact)) {
         return <ReviewDetailHost artifact={artifact} bodyState={body.state} onRetry={body.retry}
@@ -87,7 +87,9 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> &
     body: ReturnType<typeof useArtifactBody>;
 }>): React.ReactElement {
     const { body } = props;
-    const artifact = body.result?.artifact ?? props.artifact;
+    const kindRefused = body.state === 'failed' && typeof body.failure === 'object' && body.failure !== null
+        && 'code' in body.failure && body.failure.code === 'artifact_kind_internal';
+    const artifact = kindRefused ? null : body.result?.artifact ?? props.artifact;
     const router = useRouter();
     const [bodyActions, publishBodyActions] = useArtifactBodyActionsHost();
     // Deleting the row retires its toolbar, not this destination's pending operation.

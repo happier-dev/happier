@@ -5,6 +5,7 @@ import type { ArtifactBodyV1 } from './artifactBinaryV1.js';
 import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, PROMPT_DOC_ARTIFACT_KIND_V2, PROMPT_BUNDLE_ARTIFACT_KIND_V2,
   WORKFLOW_DEFINITION_ARTIFACT_KIND_V1, THEME_PROFILE_ARTIFACT_KIND_V1, getArtifactContentDeliveryPolicyV1,
   type ArtifactContentDeliveryPolicyV1 } from './artifactKindV1.js';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSetupContentV1Schema, ProjectSharedSetupV1Schema } from '../projects/projectSetupV1.js';
 import { isArtifactHtmlHeaderV1 } from './artifactHtmlV1.js';
 import { APPROVAL_ARTIFACT_KINDS_V1, SESSION_APPROVAL_CONSENTS_ARTIFACT_KIND_V1 } from '../approvals/approvalArtifactKindV1.js';
 import { DEPLOYMENT_DOMAIN_ARTIFACT_KIND_V1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1 } from './deploymentArtifactKindsV1.js';
@@ -258,6 +259,19 @@ export function getArtifactKindPolicyV1(kind: unknown, audience: 'anonymous' | '
   return { ...policy, ...getArtifactContentDeliveryPolicyV1(kind),
     ...(audience === 'signed_in' && 'signedInLinkAllowed' in policy && policy.signedInLinkAllowed === true
       ? { publicLinkAllowed: true } : {}) };
+}
+
+/** Addressed document readers consume the same rule after the resource owner admits access. */
+export function isAddressedArtifactReadAllowedV1(artifact: Readonly<{
+  header: Readonly<{ kind?: unknown }>; body?: unknown; access?: string;
+}>): boolean {
+  if (getArtifactKindPolicyV1(artifact.header.kind).addressedReadAllowed) return true;
+  if (artifact.header.kind !== PROJECT_SETUP_ARTIFACT_KIND_V1 || typeof artifact.body !== 'string') return false;
+  let content: unknown;
+  try { content = JSON.parse(artifact.body); }
+  catch { return false; }
+  return ProjectSharedSetupV1Schema.safeParse(content).success
+    || (artifact.access === 'owner' && ProjectSetupContentV1Schema.safeParse(content).success);
 }
 
 /** The server combines kind policy with admitted access before collecting audience details. */
