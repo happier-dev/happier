@@ -86,7 +86,7 @@ import {
     machinePluginUiTargetedContributionsRead,
 } from '@/sync/ops/machineContributionRegistryProjection';
 import { observeDaemonActionRead } from './daemonActionRead';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import {
@@ -168,7 +168,7 @@ import {
 import { createPluginSurfaceLocalHostHandlers } from './pluginSurfaceLocalHostHandlers';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { executePreparedPluginSurfaceAction, type PluginSurfaceSpokenActionRequest } from './pluginSurfaceActionPreparation';
-import { settlePluginAccountExecution } from '@/sync/domains/plugins/availability/reader';
+import { settlePluginAccountExecution, type PluginAccountExecutionAdmission } from '@/sync/domains/plugins/availability/reader';
 import { derivePluginUiEphemeralSharedScopeIdentity, getPluginUiEphemeralSharedScope } from './pluginUiEphemeralSharedScope';
 import { createPluginOpenNewSessionHandler } from './pluginOpenNewSessionHostApi';
 import {
@@ -407,6 +407,8 @@ export type DispatchPluginSurfaceActionInput = Readonly<{
     requestCurrentIntent?: PluginSurfaceActionCurrentIntentPresenter;
     /** Admitted UI projection; resolves the author's confirmation wording. */
     pluginUiProjection?: PluginUiProjectionModel | null;
+    /** Current Account publication for an unpinned Action that joins startup. */
+    readPluginUiProjection?: () => PluginUiProjectionModel | null;
     /** UI is the default; Voice supplies its own canonical invoking surface. */
     invocationSurface?: PluginSurfaceActionInvocationSurface;
     /** Host-private root origin, retained across autonomous plugin continuations. */
@@ -452,11 +454,23 @@ type PluginSurfaceActionDispatchFailure = Extract<
     Readonly<{ ok: false }>
 >;
 
+type SettledPluginAccountExecution = Extract<PluginAccountExecutionAdmission, { kind: 'available' }>;
+
 type PluginSurfaceContributedActionSettlement = (
     identity: PluginContributionIdentityV1,
     options: Readonly<{ signal?: AbortSignal; requestId?: string; placement: 'daemon' | 'client' | 'account'; expectedAction?: PluginUiActionProjection;
         machineAvailability?: ActionExecutionOptions['machineAvailability'] }>,
 ) => Promise<Readonly<{ ok: true; binding: PluginSurfaceContributedActionBinding | undefined }> | PluginSurfaceActionDispatchFailure>;
+
+/** Occurrence custody supplied by an exact target or a mounted Machine caller. */
+export function isPluginSurfaceClientActionOccurrencePinned(input: Pick<DispatchPluginSurfaceActionInput,
+    'expectedContributorOccurrenceId' | 'hostAction' | 'callerBinding' | 'invocation' | 'resourceCaller' | 'contributedAction'>): boolean {
+    const caller = input.callerBinding ?? (input.invocation?.kind === 'clientPluginAction'
+        ? input.invocation.clientActionBinding : input.resourceCaller);
+    return input.expectedContributorOccurrenceId !== undefined
+        || input.hostAction?.context?.externalActionTarget?.kind === 'machine'
+        || (caller ? caller.pluginVersion === undefined : input.contributedAction !== undefined);
+}
 
 function readActionOriginSurface(input: DispatchPluginSurfaceActionInput) {
     const surface = input.invocationSurface ?? 'ui';
@@ -1275,6 +1289,7 @@ async function prepareClientContributedAction(
     projectedAction: PluginUiActionProjection,
     /** The dispatcher-settled input, already carrying any selected Account ref. */
     settledInput: PluginUiJsonValueV1 | undefined,
+    accountExecution: SettledPluginAccountExecution | undefined,
 ) {
     const initial = resolveClientContributedActionSelection(input, identity, projectedAction);
     if (!initial) {
@@ -1282,6 +1297,23 @@ async function prepareClientContributedAction(
         return refusal ? failure(refusal.code, refusal.code, { ...refusal,
             message: resolveReasonCopy({ kind: 'pluginRuntime', reasonCode: refusal.code }).body })
             : failure('unavailable', 'plugin_surface_client_action_unavailable');
+    }
+    const accountLifetime = initial.registration.accountLifetime ?? null;
+    if (accountExecution && (!input.actionAccountLifetime || !accountLifetime
+        || !areServerAccountScopesEqual(input.actionAccountLifetime.scope, accountLifetime.scope))) {
+        return clientActionFailure('plugin_action_generation_retired', { actionHandlerInvocation: 'notStarted' });
+    }
+    const sharedScopeIdentity = initial.action.execution.target === 'client' && initial.registration.occurrenceId
+        ? derivePluginUiEphemeralSharedScopeIdentity({
+            accountLifetime,
+            pluginId: initial.action.pluginId,
+            occurrenceId: initial.registration.occurrenceId,
+            accountExecutionOrigin: readPluginUiAccountExecutableOrigin(initial.action),
+            artifactDigest: initial.registration.artifactDigest,
+            executionOrigin: initial.registration.executionOrigin,
+        }, { admission: accountExecution, pluginVersion: initial.pluginVersion }) : undefined;
+    if (accountExecution && sharedScopeIdentity?.pluginGenerationId !== accountExecution.custodyId) {
+        return clientActionFailure('plugin_action_generation_retired', { actionHandlerInvocation: 'notStarted' });
     }
     try {
         await initial.registration.prepare?.(input.signal);
@@ -1367,7 +1399,7 @@ async function prepareClientContributedAction(
             return clientActionFailure('plugin_action_read_observation_session_unresolved');
         }
     }
-    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput };
+    return { kind: 'prepared' as const, initial, authority, invocationAuthority, invocation, preparedInput, sharedScopeIdentity };
 }
 
 /** Both execution placements enter the same retained canonical Session admission. */
@@ -1489,7 +1521,7 @@ async function executeClientContributedAction(
     projectedAction: PluginUiActionProjection,
     preparation: PreparedClientContributedAction,
 ): Promise<PluginSurfaceActionDispatchOutcome> {
-    const { initial, authority, invocationAuthority, invocation, preparedInput } = preparation;
+    const { initial, authority, invocationAuthority, invocation, preparedInput, sharedScopeIdentity } = preparation;
     let environmentAdmission: ActionEnvironmentApprovalScopeAdmissionV1 | undefined;
     if (projectedAction.approvalScope === 'environment') {
         if (!isPluginActionInputRecord(preparedInput.input) || typeof preparedInput.input.serverId !== 'string') {
@@ -1671,7 +1703,6 @@ async function executeClientContributedAction(
         ? mergeAbortSignals(input.signal
             ? [input.signal, admittedAccountLifetimeController.signal]
             : [admittedAccountLifetimeController.signal]) : null;
-    let sharedScopeIdentity: ReturnType<typeof derivePluginUiEphemeralSharedScopeIdentity> | undefined;
     const invocationResult = await (input.readObservation
         ? preparedInput.observe : preparedInput.invoke)({
         ...(admittedAccountInvocationLifetime
@@ -1716,34 +1747,6 @@ async function executeClientContributedAction(
                 && !await input.hostAction.context.verifyMachineAdmissionCurrent()) {
                 return Object.freeze({ status: 'unavailable' as const, code: 'plugin_action_generation_retired',
                     message: 'Plugin action generation is no longer current' });
-            }
-            if (initial.action.execution.target === 'client' && initial.registration.occurrenceId) {
-                const accountLifetime = initial.registration.accountLifetime ?? null;
-                const caller = input.callerBinding ?? (input.invocation?.kind === 'clientPluginAction'
-                    ? input.invocation.clientActionBinding : input.resourceCaller);
-                const exactOccurrence = input.expectedContributorOccurrenceId !== undefined
-                    || hostTarget?.kind === 'machine'
-                    || (caller ? caller.pluginVersion === undefined : input.contributedAction !== undefined);
-                const admission = accountLifetime && !exactOccurrence
-                    ? await settlePluginAccountExecution(readPluginAccountAvailability(accountLifetime.scope),
-                        initial.action.pluginId, handlerInput.signal)
-                    : undefined;
-                if (admission === null) return null; // The invocation owner projects cancellation.
-                if (admission?.kind === 'unavailable') {
-                    return { status: 'unavailable' as const, code: admission.code, message: admission.code };
-                }
-                sharedScopeIdentity = derivePluginUiEphemeralSharedScopeIdentity({
-                    accountLifetime,
-                    pluginId: initial.action.pluginId,
-                    occurrenceId: initial.registration.occurrenceId,
-                    accountExecutionOrigin: readPluginUiAccountExecutableOrigin(initial.action),
-                    artifactDigest: initial.registration.artifactDigest,
-                    executionOrigin: initial.registration.executionOrigin,
-                }, { admission, pluginVersion: initial.pluginVersion });
-                if (admission && !sharedScopeIdentity.pluginGenerationId) {
-                    return { status: 'unavailable' as const, code: 'plugin_action_generation_retired',
-                        message: 'Plugin action generation is no longer current' };
-                }
             }
             return null;
         },
@@ -2493,6 +2496,31 @@ async function executeContributedAction(
         if (acquired && 'ok' in acquired) return acquired;
         if (acquired) input = acquired;
     }
+    // Join Account startup before borrowing any executable occurrence. The
+    // initial declaration only determines whether this is a client Action.
+    let accountExecution: SettledPluginAccountExecution | undefined;
+    const accountLifetime = input.actionAccountLifetime;
+    if (!input.admissionOnly && input.clientAction && accountLifetime
+        && !isPluginSurfaceClientActionOccurrencePinned(input)
+        && input.resolveContributedAction?.(identity)?.execution.target === 'client') {
+        const retirement = new AbortController();
+        const link = accountLifetime.onRetire(() => retirement.abort());
+        const cancellation = mergeAbortSignals([input.signal, retirement.signal]);
+        try {
+            const admission = await settlePluginAccountExecution(readPluginAccountAvailability(accountLifetime.scope),
+                identity.pluginId, cancellation.signal);
+            const stopped = preflightFailure(input);
+            if (stopped) return stopped;
+            if (!admission || !accountLifetime.isCurrent()) {
+                return clientActionFailure('plugin_action_generation_retired', { actionHandlerInvocation: 'notStarted' });
+            }
+            if (admission.kind === 'unavailable') return clientActionFailure(admission.code, { actionHandlerInvocation: 'notStarted' });
+            accountExecution = admission;
+        } finally {
+            link.dispose();
+            cancellation.dispose();
+        }
+    }
     let projectedAction = resolveProjectedContributedAction(input, identity);
     // A retained declaration can precede its Machine binding or exact client
     // registration. Both placements borrow this mount's existing admission
@@ -2507,11 +2535,20 @@ async function executeContributedAction(
         if (stopped) return stopped;
         input = { ...input, contributedAction: readiness.binding };
         projectedAction = resolveProjectedContributedAction(input, identity);
-        if (projectedAction && !resolvePluginUiExecutionDeclaration(declaredAction, { current: projectedAction })) {
+        // Exact mounts keep their captured declaration. An Account startup
+        // join leaves the caller unpinned through executable activation.
+        if (!accountExecution && projectedAction && !resolvePluginUiExecutionDeclaration(declaredAction, { current: projectedAction })) {
             return failure('stale_surface', 'plugin_ui_generation_retired');
         }
     }
+    if (accountExecution && input.readPluginUiProjection) {
+        input = { ...input, pluginUiProjection: input.readPluginUiProjection() };
+    }
     if (!projectedAction) {
+        if (declaredAction?.execution.target === 'client' && input.expectedContributorOccurrenceId !== undefined
+            && declaredAction.occurrenceId !== input.expectedContributorOccurrenceId) {
+            return clientActionFailure('plugin_action_generation_retired', { actionHandlerInvocation: 'notStarted' });
+        }
         input.onPreInvocationUnavailable?.();
         return failure('unavailable', 'plugin_surface_action_projection_unavailable');
     }
@@ -2599,7 +2636,7 @@ async function executeContributedAction(
     let daemonPreparedInput: Readonly<{ input: unknown }> | undefined;
     let invocationAuthority: ActionRequiredAuthority;
     if (projectedAction.execution.target !== 'daemon') {
-        const prepared = await prepareClientContributedAction(input, identity, projectedAction, settlement.input);
+        const prepared = await prepareClientContributedAction(input, identity, projectedAction, settlement.input, accountExecution);
         if (!('kind' in prepared)) return prepared;
         clientPreparation = prepared;
         normalizedInput = prepared.preparedInput.input;

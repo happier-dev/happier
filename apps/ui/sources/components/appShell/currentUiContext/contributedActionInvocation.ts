@@ -9,7 +9,7 @@ import { getInstalledPluginUiClientExecutableComposition, resolvePluginUiClientA
 import { isPluginUiClientActionPending, isPluginUiClientExecutableAccountCurrent, type PluginUiClientActionAdmissionSource } from '@/components/plugins/reactNative/clientActionAdmission';
 import { createPluginConnectionSettlement } from '@/components/plugins/surfaces/connectionSettlement';
 import { readPluginUiAccountExecutableOrigin, type PluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
-import { dispatchPluginSurfaceAction, type PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { dispatchPluginSurfaceAction, isPluginSurfaceClientActionOccurrencePinned, type PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { createPluginUiProjectedActionResolver, type PluginUiActionProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration, type PluginUiContributionOriginV1 } from '@/sync/domains/plugins/ui/projectionUnion';
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
@@ -136,8 +136,11 @@ export async function executeCapturedScopeContributedAction(
     if (resolved && request.context.expectedContributedActionOccurrenceId !== undefined
         && request.context.expectedContributedActionOccurrenceId !== resolved.action.occurrenceId) return refused('plugin_action_generation_retired');
     if (resolved && invokeMounted) return invokeMounted();
+    const followsAccountPublication = resolved?.action.execution.target === 'client'
+        && !isPluginSurfaceClientActionOccurrencePinned({ hostAction,
+            expectedContributorOccurrenceId: request.context.expectedContributedActionOccurrenceId });
     const isCurrent = () => !request.signal?.aborted && accountLifetime.isCurrent()
-        && (!resolved || isResolvedContributedActionCurrent(readProjection, request.action, resolved));
+        && (!resolved || followsAccountPublication || isResolvedContributedActionCurrent(readProjection, request.action, resolved));
     // A cold exact Machine has no AppShell declaration yet. The common
     // dispatcher joins that Machine's current Action projection before admission.
     const daemonMachineId = resolved
@@ -152,6 +155,7 @@ export async function executeCapturedScopeContributedAction(
             ? { managedBootstrapCredential: request.context.invocationServices.managedBootstrapCredential } : {}),
         ...(request.context.actionRequestId ? { actionRequestId: request.context.actionRequestId } : {}),
         invocationSurface: 'ui', hostAction, actionAccountLifetime: accountLifetime, pluginUiProjection: readProjection(),
+        ...(followsAccountPublication ? { readPluginUiProjection: readProjection } : {}),
         ...(resolved ? {
             resolveContributedAction: identity => createPluginUiProjectedActionResolver(readProjection()?.actionsById)(identity),
         } : {}),

@@ -25,6 +25,7 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import {
     dispatchPluginSurfaceAction,
+    isPluginSurfaceClientActionOccurrencePinned,
     type PluginSurfaceHostActionBinding,
     type PluginSurfaceHostActionExecute,
     type PluginSurfaceActionInvocationSurface,
@@ -50,6 +51,7 @@ import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { PluginActionSurfaceV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { unavailable } from './currentUiContextVoiceToolBinding';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { resolveCurrentContributedAction as resolveCurrentAction, isResolvedContributedActionCurrent as isResolvedActionCurrent,
     acquireCurrentContributedAction,
@@ -281,6 +283,25 @@ export function createCurrentUiContextVoiceToolPort(
         if (request.expectedContributorOccurrenceId !== undefined && request.expectedContributorOccurrenceId !== resolved.action.occurrenceId) {
             return { ok: false, code: 'stale_surface', errorCode: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted' };
         }
+        const resource = input.hostAction?.context?.resourceActionInvocation;
+        const retainedInvocation = input.hostAction?.context?.contributedActionInvocation;
+        const occurrenceBinding = {
+            ...retainedInvocation?.caller,
+            expectedContributorOccurrenceId: request.expectedContributorOccurrenceId,
+            hostAction: input.hostAction,
+            resourceCaller: resource?.resourceCaller,
+            contributedAction: retainedInvocation?.contributedAction,
+        };
+        const followsAccountPublication = resolved.action.execution.target === 'client'
+            && !isPluginSurfaceClientActionOccurrencePinned(occurrenceBinding);
+        const admittedAccountLifetime = followsAccountPublication
+            ? retainedInvocation?.caller.actionAccountLifetime ?? input.clientExecutableAdmission?.read()?.accountLifetime
+            : undefined;
+        const actionAccountLifetime = admittedAccountLifetime
+            && (!scope || areServerAccountScopesEqual(scope, admittedAccountLifetime.scope))
+            ? admittedAccountLifetime : undefined;
+        const serverId = followsAccountPublication
+            ? actionAccountLifetime?.scope.serverId ?? scope?.serverId : resolved.origin.serverId;
         const currentSessionId = input.reader.readCurrentSessionId?.() ?? null;
         const sessionId = request.defaultSessionId ?? request.messageActionReference?.sessionId ?? currentSessionId;
         // Only an implicit viewed-Session binding retires on navigation. An
@@ -301,7 +322,8 @@ export function createCurrentUiContextVoiceToolPort(
             !mergedSignal.signal.aborted
             && (!followsViewedSession || (input.reader.readCurrentSessionId?.() ?? null) === currentSessionId)
             && isCallerCurrent()
-            && isResolvedActionCurrent(input.readProjection, request.action, resolved)
+            && (actionAccountLifetime?.isCurrent() !== false)
+            && (followsAccountPublication || isResolvedActionCurrent(input.readProjection, request.action, resolved))
         );
         if (!isCurrent()) {
             unsubscribe();
@@ -329,8 +351,6 @@ export function createCurrentUiContextVoiceToolPort(
             }
         };
         try {
-            const resource = input.hostAction?.context?.resourceActionInvocation;
-            const retainedInvocation = input.hostAction?.context?.contributedActionInvocation;
             const origin = PluginActionSurfaceV2Schema.safeParse(input.hostAction?.context?.actionCaller?.kind === 'plugin'
                 ? input.hostAction.context.actionCaller.originSurface : undefined);
             const outcome = await dispatchPluginSurfaceAction({
@@ -342,6 +362,16 @@ export function createCurrentUiContextVoiceToolPort(
                     ? { managedBootstrapCredential: input.hostAction.context.invocationServices.managedBootstrapCredential } : {}),
                 ...(request.input === undefined ? {} : { input: request.input }),
                 ...retainedInvocation?.caller,
+                expectedContributorOccurrenceId: request.expectedContributorOccurrenceId,
+                ...(actionAccountLifetime ? { actionAccountLifetime, readPluginUiProjection: input.readProjection } : {}),
+                settleContributedAction: actionAccountLifetime ? async (identity, { signal }) => {
+                    const current = await acquireCurrentContributedAction({ readProjection: input.readProjection,
+                        identity, admission: input.clientExecutableAdmission, scope, signal, isCurrent });
+                    return current ? { ok: true, binding: undefined } : {
+                        ok: false, code: 'unavailable', reason: 'plugin_surface_client_action_unavailable',
+                        actionHandlerInvocation: 'notStarted',
+                    };
+                } : undefined,
                 ...(onInvocationAdmitted ? { onInvocationAdmitted } : {}),
                 ...(resource ? { resourceCaller: resource.resourceCaller,
                     callerPluginId: resource.resourceCaller?.pluginId,
@@ -356,7 +386,7 @@ export function createCurrentUiContextVoiceToolPort(
                 hostAction: {
                     execute: input.hostAction?.execute ?? createFrontDoorActionExecute(),
                     context: { ...input.hostAction?.context,
-                        ...(input.hostAction?.context?.sessionTargetsV1 ? {} : resolved.origin.serverId ? { serverId: resolved.origin.serverId } : {}),
+                        ...(input.hostAction?.context?.sessionTargetsV1 ? {} : serverId ? { serverId } : {}),
                         ...(sessionId ? { defaultSessionId: sessionId } : {}),
                     },
                 },

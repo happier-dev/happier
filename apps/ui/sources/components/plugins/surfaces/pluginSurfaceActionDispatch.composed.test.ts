@@ -832,7 +832,7 @@ function resolveDaemonTargetAction(
     };
 }
 
-it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'published before subscription', 'cancelled while cold'] as const)(
+it.each(['cold', 'cold with projection replacement', 'pinned Machine mount', 'unavailable', 'already settled', 'published before subscription', 'cancelled while cold'] as const)(
     'settles Tasks draft custody through the client Action and destination (%s)', async mode => {
         const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-triage/manifest');
         const { activate } = await import('@happier-dev/plugins-triage/happier-plugin-ui/triage-mounted-ui-action-native');
@@ -857,6 +857,12 @@ it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'publ
         const lifetime = clientAccountLifetime(resolveServerProfileScopeIdForIdentifier(rpcHomes.get('server-client-action')!.id));
         const activation = createClientActionActivation({ ...identity, pluginVersion: manifest.version,
             accountLifetime: lifetime, accountAvailabilityStartsCold: true, handler, inputSchema: declaration.inputSchema });
+        const settledHandler = vi.fn(registered as PluginClientActionHandler);
+        const replacement = mode === 'cold with projection replacement'
+            ? createClientActionActivation({ ...identity, pluginVersion: manifest.version,
+                accountLifetime: lifetime, accountAvailabilityStartsCold: true, handler: settledHandler,
+                inputSchema: declaration.inputSchema, occurrenceId: 'settled-tasks-occurrence' })
+            : activation;
         const pinned = mode === 'pinned Machine mount';
         const memory = new AbortController();
         onTestFinished(() => memory.abort());
@@ -884,12 +890,14 @@ it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'publ
         await activation.composition.unload();
         onTestFinished(() => activation.composition.unload());
         expect((await activation.composition.reconcile([activation.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
-        const dispatch = () => dispatchPluginSurfaceAction({
+        let publication = activation;
+        const dispatch = (expectedOccurrence = pinned ? activation.action.occurrenceId : undefined) => dispatchPluginSurfaceAction({
             action: identity, input: { originReview: { reviewId: 'cold-review', findingIds: ['selected-finding'] } },
             signal: memory.signal, invocationSurface: 'ui', clientAction: { openSurface: open },
-            pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
-            ...(pinned ? { expectedContributorOccurrenceId: activation.action.occurrenceId,
-                contributedAction: { machineId: getPluginMachineExecutionOriginRef(activation.activation.executionOrigin!).machineId,
+            actionAccountLifetime: lifetime, pluginUiProjection: publication.projection,
+            resolveContributedAction: candidate => resolveExactClientAction(publication.action)(candidate),
+            ...(expectedOccurrence ? { expectedContributorOccurrenceId: expectedOccurrence } : {}),
+            ...(pinned ? { contributedAction: { machineId: getPluginMachineExecutionOriginRef(activation.activation.executionOrigin!).machineId,
                     serverId: lifetime.scope.serverId, accountLifetime: lifetime } } : {}),
         });
         const invocation = dispatch();
@@ -906,8 +914,12 @@ it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'publ
         // On the old dispatch, the synchronous custody snapshot lets the Action finish before
         // Account publication. With the fix, publication releases the one scoped subscription.
         const enabled = mode !== 'unavailable';
-        if (mode === 'cold' || mode === 'unavailable' || pinned) {
+        if (mode === 'cold' || mode === 'cold with projection replacement' || mode === 'unavailable' || pinned) {
             await Promise.race([invocation, subscribed.promise]);
+            if (replacement !== activation) {
+                expect((await activation.composition.reconcile([replacement.activation])).map(attempt => attempt.result)).toEqual([{ ok: true }]);
+                publication = replacement;
+            }
             publishClientActionAvailabilityFixture(lifetime.scope, manifest, enabled);
         }
         const outcome = await invocation;
@@ -920,6 +932,14 @@ it.each(['cold', 'pinned Machine mount', 'unavailable', 'already settled', 'publ
             expect(open).not.toHaveBeenCalled();
         } else {
             expect(outcome).toEqual({ ok: true, result: { status: 'applied' } });
+            if (replacement !== activation) {
+                expect(handler).not.toHaveBeenCalled();
+                expect(settledHandler).toHaveBeenCalledTimes(1);
+                expect(await dispatch(activation.action.occurrenceId)).toMatchObject({
+                    ok: false, code: 'stale_surface', reason: 'plugin_action_generation_retired', actionHandlerInvocation: 'notStarted',
+                });
+                expect(settledHandler).toHaveBeenCalledTimes(1);
+            }
             if (admission.kind !== 'available') throw new Error('Expected Account custody after publication');
             const launch = TriageTaskDraftLaunchV1Schema.parse(open.mock.calls[0]?.[0].input);
             const fixture = await createPluginUiTestkit({
