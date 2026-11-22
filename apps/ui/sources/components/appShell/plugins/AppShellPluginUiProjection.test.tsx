@@ -42,7 +42,7 @@ import {
 } from './AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION, createPluginUiProjectedActionResolver, normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projection';
 import { getCurrentAppShellVoiceProviderActivation, publishCommittedAppShellPluginUiProjection, readCurrentAppShellPluginUiProjection,
-    subscribeCommittedAppShellPluginUiProjection } from './committedPluginUiProjection';
+    subscribeCommittedAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from './committedPluginUiProjection';
 import { createAppShellPluginUiProjectionPublication } from './appShellPluginUiProjectionPublication';
 import * as appShellProjectionPublication from './appShellPluginUiProjectionPublication';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
@@ -115,6 +115,7 @@ import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } fr
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { commitPreferredLanguage, getPreferredLanguage } from '@/text/preferredLanguage';
 import { pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -385,6 +386,7 @@ const storageState = {
             return { ...machine, ...input, metadata: input.metadata === null
                 ? null : { ...machine.metadata, ...input.metadata } };
         });
+        publishMachineActivityForTest(machines);
         const serverId = this.activeServer.serverId;
         persistentStorage.setState((state) => ({
             machines: Object.fromEntries(machines.map((machine) => [machine.id, machine])),
@@ -803,6 +805,11 @@ const PresentedFixtureMachineTarget = React.memo(function PresentedFixtureMachin
     return null;
 });
 
+function PresentedFixturePluginOrigin({ pluginId }: Readonly<{ pluginId: string }>) {
+    React.useEffect(() => subscribeCommittedAppShellPluginUiExecutionOriginCandidates(pluginId, () => {}), [pluginId]);
+    return null;
+}
+
 function ProjectionProbe() {
     const value = useAppShellPluginUiProjection();
     return React.createElement('ProjectionProbe', { value });
@@ -1163,8 +1170,9 @@ describe('AppShellPluginUiProjectionProvider', () => {
         expect(artifactByteRead).not.toHaveBeenCalled();
     });
 
-    it('keeps 20 execution-origin reporters quiet for unrelated updates and scopes a real candidate change', async () => {
+    it('reports origins for presented plugins only and scopes a real candidate change', async () => {
         const pluginIds = Array.from({ length: 20 }, (_, index) => `acme.origin-fanout-${index}`);
+        const presentedIds = pluginIds.slice(0, 2);
         const machineId = 'origin-fanout-supplier';
         const unrelatedId = 'origin-fanout-unrelated';
         storageState.machines = [createLiveMachine(machineId), createLiveMachine(unrelatedId)];
@@ -1208,16 +1216,24 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const reporterCalls = () => selectionReads.mock.calls.filter(([input]) =>
             input.includeMachineCandidates === false && pluginIds.includes(input.pluginId));
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
-        const screen = await renderScreen(<AppShellPluginUiProjectionProvider><PresentedFixtureMachineTargets />
-            <ProjectionProbe /></AppShellPluginUiProjectionProvider>);
+        const render = (open: boolean) => <AppShellPluginUiProjectionProvider>
+            <PresentedFixtureMachineTargets />
+            <ProjectionProbe />
+            {open && presentedIds.map(id => <PresentedFixturePluginOrigin key={id} pluginId={id} />)}
+        </AppShellPluginUiProjectionProvider>;
+        const screen = await renderScreen(render(false));
         onTestFinished(() => screen.unmount());
         await flushHookEffects({ cycles: 8 });
         const readProjection = () => screen.tree.findByType('ProjectionProbe' as never).props.value
             .pluginUiProjection as AppShellPluginUiProjectionValue['pluginUiProjection'];
         const selected = (pluginId: string) => Object.values(readProjection()!.surfacePlacementsById)
             .find(entry => entry.pluginId === pluginId);
-        expect(new Set(reporterCalls().map(([input]) => input.pluginId)).size).toBe(20);
-        for (const pluginId of pluginIds) expect(readPluginUiContributionOrigin(selected(pluginId)))
+        expect(pluginIds.filter(id => selected(id))).toEqual(pluginIds);
+        expect(reporterCalls()).toHaveLength(0);
+        await screen.update(render(true));
+        await flushHookEffects({ cycles: 8 });
+        expect(new Set(reporterCalls().map(([input]) => input.pluginId))).toEqual(new Set(presentedIds));
+        for (const pluginId of presentedIds) expect(readPluginUiContributionOrigin(selected(pluginId)))
             .toMatchObject({ machineId, executionOrigin: makeOrigin(pluginId) });
         const initialSelection = selectionReads.mock.results.flatMap((result, index) => result.type === 'return'
             && selectionReads.mock.calls[index]?.[0].pluginId === pluginIds[0] ? [result.value] : []).at(-1)!;
@@ -1316,7 +1332,10 @@ describe('AppShellPluginUiProjectionProvider', () => {
         // Observe the real hook without replacing Administration's decisions.
         const selection = vi.spyOn(executionOriginSelection, 'usePluginMachineExecutionOriginSelection');
         onTestFinished(() => selection.mockRestore());
-        const screen = await renderScreen(<AppShellPluginUiProjectionProvider><PresentedFixtureMachineTargets />{null}</AppShellPluginUiProjectionProvider>);
+        const render = () => <AppShellPluginUiProjectionProvider>
+            <PresentedFixtureMachineTargets /><PresentedFixturePluginOrigin pluginId={pluginId} />
+        </AppShellPluginUiProjectionProvider>;
+        const screen = await renderScreen(render());
         await flushHookEffects({ cycles: 5 });
         const reads = () => selection.mock.calls.filter(([input]) => input.pluginId === pluginId).length;
         expect(reads()).toBeGreaterThan(0);
@@ -1324,7 +1343,7 @@ describe('AppShellPluginUiProjectionProvider', () => {
         const settledTraversals = sourceTraversals();
         expect(settledTraversals).toBeGreaterThan(0);
         for (let index = 0; index < 3; index++) {
-            await screen.update(<AppShellPluginUiProjectionProvider><PresentedFixtureMachineTargets />{null}</AppShellPluginUiProjectionProvider>);
+            await screen.update(render());
         }
         expect(reads()).toBe(settled);
         console.info('R-C AppShell unchanged parent renders', { renders: 3,
@@ -3887,7 +3906,40 @@ describe('AppShellPluginUiProjectionProvider', () => {
             }) };
         });
         const { AppShellPluginUiProjectionProvider } = await import('./AppShellPluginUiProjection');
-        const screen = await renderScreen(<AppShellPluginUiProjectionProvider><PresentedFixtureMachineTargets /><ProjectionProbe /></AppShellPluginUiProjectionProvider>);
+        const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+        const { buildPluginSurfacePaneLaunchKey, usePluginSurfaceDestinationNavigationBinding, usePluginSurfacePaneLaunchScope } =
+            await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
+        const navigation: {
+            binding?: ReturnType<typeof usePluginSurfaceDestinationNavigationBinding>;
+            launch?: ReturnType<typeof usePluginSurfacePaneLaunchScope>;
+        } = {};
+        function NavigationProbe() {
+            navigation.binding = usePluginSurfaceDestinationNavigationBinding();
+            navigation.launch = usePluginSurfacePaneLaunchScope();
+            return null;
+        }
+        const render = (mounted: boolean) => <AppPaneProvider>
+            <AppShellPluginUiProjectionProvider><PresentedFixtureMachineTargets /><ProjectionProbe /><NavigationProbe />
+                {mounted ? <SourceExecutionProbe pluginId={pluginId} /> : null}
+            </AppShellPluginUiProjectionProvider>
+        </AppPaneProvider>;
+        const screen = await renderScreen(render(false));
+        await flushHookEffects({ cycles: 8 });
+        const destination = { pluginId, localId: 'panel' };
+        const launchInput = { request: 'first-open' };
+        const firstOpen = navigation.binding!.openSurface({ destination, input: launchInput });
+        await flushHookEffects({ cycles: 8 });
+        await expect(firstOpen).resolves.toEqual({ ok: true });
+        const automaticExecutionOrigin = PluginMachineExecutionOriginV1Schema.parse({
+            serverIdentityId: APP_SCOPE_FIXTURE.serverIdentityId,
+            sourceRef: { machineId: 'machine-a', pluginId, sourceCustody },
+        });
+        expect(navigation.launch!.store.peek({
+            authority: { serverId: accountLifetime.scope.serverId, machineId: 'machine-a', accountLifetime,
+                executionOrigin: automaticExecutionOrigin, occurrenceId: `${pluginId}:panel:occurrence` },
+            handoffKey: buildPluginSurfacePaneLaunchKey({ container: 'rightSidebarTab', destination }),
+        })?.input).toEqual(launchInput);
+        await screen.update(render(true));
         await flushHookEffects({ cycles: 8 });
         const readPlacements = () => selectPluginSurfacePlacementsForBinding(
             screen.tree.findByType('ProjectionProbe' as never).props.value.pluginUiProjection,

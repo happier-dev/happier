@@ -284,7 +284,7 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
     value: AppShellPluginUiProjectionValue;
     declarationReady?: boolean;
     publication?: Pick<AppShellPluginUiProjectionPublication, 'getSnapshot' | 'subscribe'>
-        & Partial<Pick<AppShellPluginUiProjectionPublication, 'publishMountedActions'>>;
+        & Partial<Pick<AppShellPluginUiProjectionPublication, 'publishMountedActions' | 'acquireExecutionOriginDemand' | 'readExecutionOriginCandidates'>>;
     children: React.ReactNode;
 }>): React.ReactElement {
     // Subscribe to the fields a consumer uses. Machine/source reports must not
@@ -363,8 +363,7 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         }
         if (!props.publication && standaloneBasis.current !== standaloneProjection) {
             standaloneBasis.current = standaloneProjection;
-            standaloneCandidates.publish(standaloneProjection, [],
-                Object.keys(standaloneProjection?.installedPackagesById ?? {}));
+            standaloneCandidates.publish(standaloneProjection, [], []);
         }
         const read = (input?: AppShellPluginUiProjectionRead) => {
             if (!lifetime?.isCurrent() || (input && !areServerAccountScopesEqual(input.scope, lifetime.scope))) return null;
@@ -377,10 +376,11 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         };
         const readCandidates = (pluginId: string, input?: AppShellPluginUiProjectionRead) => {
             if (!lifetime?.isCurrent() || (input && !areServerAccountScopesEqual(input.scope, lifetime.scope))) return null;
-            if (!props.publication) return standaloneCandidates.getSnapshot().get(pluginId) ?? null;
+            if (!props.publication) return standaloneProjection?.installedPackagesById[pluginId]
+                ? standaloneCandidates.read(pluginId) : null;
             const snapshot = props.publication.getSnapshot();
             return snapshot.accountLifetime === lifetime
-                ? snapshot.candidateFactsByPluginId.get(pluginId) ?? null : null;
+                ? props.publication.readExecutionOriginCandidates?.(pluginId) ?? snapshot.candidateFactsByPluginId.get(pluginId) ?? null : null;
         };
         // Until the publication serves this Account, its registry sources are still owed.
         const readRegistrySourcesPending = (input?: AppShellPluginUiProjectionRead) => {
@@ -394,7 +394,8 @@ export function AppShellPluginUiProjectionValueProvider(props: Readonly<{
         const publication = props.publication;
         committedProjectionCleanup.current = publishCommittedAppShellPluginUiProjection(read, readCandidates,
             publication ? listener => publication.subscribe(listener, 'committed') : undefined, translationRuntime,
-            providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending);
+            providerId => valueRef.current.getVoiceProviderActivation?.(providerId) ?? null, readRegistrySourcesPending,
+            publication?.acquireExecutionOriginDemand);
     }, [lifetime, props.publication, standaloneProjection, standalonePhase, standaloneDeclarationReady, standaloneCandidates, standaloneSkills, translationRuntime]);
     React.useLayoutEffect(() => () => {
         committedProjectionCleanup.current?.();
@@ -462,7 +463,7 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         onlineMachineIds, projectionPublication, selectableMachineIds, serverProfilesGeneration]);
     React.useEffect(() => () => projectionPublication.dispose(), [projectionPublication]);
     const {
-        accountUiProjection, accountCensusPending, executionOriginPluginIds, projectionTargets,
+        accountUiProjection, accountCensusPending, projectionTargets,
         currentnessForActiveAccountByMachineId, projectionUnion, pluginUiProjection, mountedActionProjections,
         candidateFactsByPluginId, connectedAccountResolution, destinationSurfacePlacements, settingsPages,
         registrySourcesPending, registrySourcesPendingTargets,
@@ -719,10 +720,18 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
         && settledClientExecutableActivation?.request.basis === clientExecutableActivationBasis
         ? settledClientExecutableActivation.state
         : ESTABLISHING_CLIENT_EXECUTABLE_ACTIVATION;
+    const prepareExecutionOrigin = React.useCallback(async (pluginId: string) => {
+        if (!accountLifetime) return null;
+        const prepared = await projectionPublication.prepareExecutionOriginSelection(pluginId, accountLifetime);
+        if (!prepared) return null;
+        return { placements: prepared.snapshot.destinationSurfacePlacements, settingsPages: prepared.snapshot.settingsPages,
+            release: prepared.release };
+    }, [accountLifetime, projectionPublication]);
     const appNavigationBinding = usePluginSurfaceDestinationNavigationBindingForScope({
         projection: pluginUiProjection,
         placements: destinationSurfacePlacements,
         settingsPages,
+        prepareExecutionOrigin,
         targetKind: 'app',
         accountLifetime,
     });
@@ -867,12 +876,12 @@ export function AppShellPluginUiProjectionProvider(props: Readonly<{
                     onCurrentness={publishMachineProjectionCurrentness}
                 />
             ))}
-            {executionOriginPluginIds.map((pluginId) => (
+            {[...candidateFactsByPluginId].map(([pluginId, facts]) => (
                 <AppShellPluginExecutionOriginSelection
                     key={`${currentAccountLifetimeKey}:${pluginId}`}
                     pluginId={pluginId}
                     accountLifetime={accountLifetime}
-                    facts={candidateFactsByPluginId.get(pluginId)!}
+                    facts={facts}
                     onOrigin={publishPluginExecutionOrigin}
                 />
             ))}

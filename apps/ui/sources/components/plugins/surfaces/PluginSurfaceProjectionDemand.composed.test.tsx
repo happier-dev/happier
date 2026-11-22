@@ -57,7 +57,12 @@ import { normalizePluginUiProjection } from '@/sync/domains/plugins/ui/projectio
 import { ModalProvider } from '@/modal';
 import { PluginPresentedExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
-import { readCurrentAppShellPluginUiExecutionOriginCandidates, readCurrentAppShellPluginUiProjection, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import {
+    readCurrentAppShellPluginUiExecutionOriginCandidates,
+    readCurrentAppShellPluginUiProjection,
+    subscribeCommittedAppShellPluginUiExecutionOriginCandidates,
+    subscribeCommittedAppShellPluginUiProjection,
+} from '@/components/appShell/plugins/committedPluginUiProjection';
 import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -936,7 +941,9 @@ it('admits opened origin rows in a cold 20-Machine fleet without acquiring their
         let facts: ReturnType<typeof readCurrentAppShellPluginUiExecutionOriginCandidates> | undefined;
         function PublishedCandidates() {
             const read = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId), []);
-            facts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, read, read);
+            const subscribe = React.useCallback((listener: () => void) =>
+                subscribeCommittedAppShellPluginUiExecutionOriginCandidates(pluginId, listener), []);
+            facts = React.useSyncExternalStore(subscribe, read, read);
             return null;
         }
         const targets = machines.slice(0, 2).map(machine => ({ serverIdentityId: 'srv_source_fleet', machineId: machine.id }));

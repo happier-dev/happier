@@ -3,7 +3,7 @@ import type { PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/
 import { HappierBanner } from '@happier-dev/plugin-ui/presentation';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiExecutionOriginCandidates } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     useActivePluginAccountAvailabilityReader,
@@ -47,7 +47,9 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     const status = readAutomationHistoryGapRecoveryStatus(props.automation, props.triggerId);
     const watcherPluginId = status?.eventRef.pluginId ?? '';
     const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
-    React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
+    const subscribeWatcherFacts = React.useCallback((listener: () => void) => watcherPluginId
+        ? subscribeCommittedAppShellPluginUiExecutionOriginCandidates(watcherPluginId, listener) : () => {}, [watcherPluginId]);
+    React.useSyncExternalStore(subscribeWatcherFacts, readWatcherFacts, readWatcherFacts);
     const resolveExecutionOrigin = React.useCallback(() => {
         const facts = readWatcherFacts();
         return resolveAutomationHistoryGapRecoveryExecutionOrigin({

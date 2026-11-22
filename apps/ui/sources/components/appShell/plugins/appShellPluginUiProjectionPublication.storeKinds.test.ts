@@ -61,7 +61,7 @@ it('retains admitted Machine Store kinds when the installed census contains only
         publishRuntime(runtime(true));
         owner.publishExecutionOrigin(pluginId, null, executionOrigin, [executionOrigin]);
         const admitted = owner.getSnapshot();
-        expect(admitted.candidateFactsByPluginId.get(pluginId)).toMatchObject({
+        expect(owner.readExecutionOriginCandidates(pluginId)).toMatchObject({
             sourceCandidates: [{ validation: { kind: 'admitted' }, releaseContent: 'matched' }],
         });
         expect.soft(admitted.pluginUiProjection?.storeKindsById[storeKind.id]?.definition).toEqual(storeKind.definition);

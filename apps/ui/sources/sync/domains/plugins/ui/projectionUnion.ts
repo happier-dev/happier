@@ -1520,10 +1520,28 @@ export function createPluginUiExecutionOriginCandidatePublication() {
     let publishedPluginIds: readonly string[] | null = null;
     let projectionIndex: PublishedProjectionPluginIndex | null = null;
     let membersByPluginId = new Map<string, PluginUiProjectionUnionMember[]>();
-    let inputs = new Map<string, CandidatePublicationInput>();
+    const inputs = new Map<string, Readonly<{ input: CandidatePublicationInput; facts: PluginUiExecutionOriginCandidateFacts }>>();
     let snapshot: ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> = new Map();
     const noEntries: readonly unknown[] = Object.freeze([]);
+    const read = (id: string): PluginUiExecutionOriginCandidateFacts => {
+        const input: CandidatePublicationInput = {
+            entries: projectionIndex?.slices[id]?.entries ?? noEntries,
+            installed: projection?.installedPackagesById[id],
+            establishing: establishing?.[id],
+            members: membersByPluginId.get(id) ?? [],
+        };
+        const previous = inputs.get(id);
+        if (previous && previous.input.entries === input.entries && previous.input.installed === input.installed
+            && previous.input.establishing === input.establishing && sameCandidateMembers(previous.input.members, input.members, id)) {
+            return previous.facts;
+        }
+        const facts = derivePluginUiExecutionOriginCandidates({ projection, pluginId: id, members: input.members,
+            previous: previous?.facts, establishingTargets: input.establishing }, input.entries);
+        inputs.set(id, { input, facts });
+        return facts;
+    };
     return {
+        read,
         getSnapshot: (): ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> => snapshot,
         publish(nextProjection: PluginUiProjectionModel | null, nextMembers: readonly PluginUiProjectionUnionMember[],
             nextPluginIds: readonly string[], nextEstablishing?: EstablishingTargetsByPluginId): ReadonlyMap<string, PluginUiExecutionOriginCandidateFacts> {
@@ -1555,32 +1573,18 @@ export function createPluginUiExecutionOriginCandidatePublication() {
                 }
                 membersByPluginId = grouped;
             }
-            const nextInputs = new Map<string, CandidatePublicationInput>();
+            projection = nextProjection;
+            establishing = nextEstablishing;
             const nextSnapshot = new Map<string, PluginUiExecutionOriginCandidateFacts>();
-            for (const id of requested) {
-                const input: CandidatePublicationInput = {
-                    entries: projectionIndex?.slices[id]?.entries ?? noEntries,
-                    installed: nextProjection?.installedPackagesById[id],
-                    establishing: nextEstablishing?.[id],
-                    members: membersByPluginId.get(id) ?? [],
-                };
-                const previous = inputs.get(id);
-                const facts = previous && previous.entries === input.entries && previous.installed === input.installed
-                    && previous.establishing === input.establishing && sameCandidateMembers(previous.members, input.members, id)
-                    ? snapshot.get(id)!
-                    : derivePluginUiExecutionOriginCandidates({ projection: nextProjection, pluginId: id, members: input.members,
-                        previous: snapshot.get(id), establishingTargets: input.establishing }, input.entries);
-                nextInputs.set(id, input);
-                nextSnapshot.set(id, facts);
-            }
+            for (const id of requested) nextSnapshot.set(id, read(id));
+            // Closed surfaces release their derived inputs. An exact imperative
+            // read is reused only while it still describes this source publication.
+            for (const id of inputs.keys()) if (!nextSnapshot.has(id)) inputs.delete(id);
             if (pluginIds.length !== requested.length || requested.some((id, index) => id !== pluginIds[index] || snapshot.get(id) !== nextSnapshot.get(id))) {
                 snapshot = nextSnapshot;
             }
-            projection = nextProjection;
-            establishing = nextEstablishing;
             members = [...nextMembers];
             pluginIds = requested;
-            inputs = nextInputs;
             publishedMembers = nextMembers;
             publishedPluginIds = nextPluginIds;
             return snapshot;

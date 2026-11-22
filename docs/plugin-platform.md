@@ -6703,6 +6703,14 @@ reader asks for the snapshot. Listeners hear one notification per burst.
 Administration and Connected Account facts remain separate; actual source,
 trust and currentness changes still invalidate the affected composition.
 
+AppShell derives execution-origin candidates for plugin IDs with active demand.
+Mounted readers and Machine Connected Account descriptors demand the IDs they
+consume. An `openSurface` request for an App sidebar destination acquires
+demand for the named plugin before the sidebar mounts, so Administration
+can select its exact origin before the navigation owner stages launch input.
+The request releases its demand after the handoff, and mounted readers hold
+their own demand while presented.
+
 In the unreleased UI implementation, the existing Availability reader store,
 Machine execution-origin producer and Account-lifetime AppShell publisher prepare
 their descriptive slices when their actual source inputs change. Union and

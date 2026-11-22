@@ -10,6 +10,7 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { readPluginUiContributionSupplies } from '@/sync/domains/plugins/ui/projectionUnion';
 import * as projectionUnion from '@/sync/domains/plugins/ui/projectionUnion';
+import * as originCandidates from '@/sync/domains/plugins/ui/projectionUnionCandidates';
 import { BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { projectConnectedAccountDescriptorV1 } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { advanceConnectedAccountDescriptorProjectionState, createConnectedAccountDescriptorProjectionLoadingState } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
@@ -22,6 +23,7 @@ import {
     publishCommittedAppShellPluginUiProjection,
     readCurrentAppShellPluginUiExecutionOriginCandidates,
     readCurrentAppShellPluginUiProjection,
+    subscribeCommittedAppShellPluginUiExecutionOriginCandidates,
     subscribeCommittedAppShellPluginUiProjection,
 } from './committedPluginUiProjection';
 
@@ -111,6 +113,48 @@ describe('AppShell projection source publication', () => {
                 expect(hook.getCurrent()).toBeDefined();
             } finally { await hook.unmount(); }
         } finally { counter.mockRestore(); owner.dispose(); store.clear(); }
+    });
+
+    it('derives execution origins only for a demanded plugin in an installed catalog', () => {
+        const owner = createAppShellPluginUiProjectionPublication();
+        const derive = vi.spyOn(originCandidates, 'derivePluginUiExecutionOriginCandidateFacts');
+        const pluginId = 'acme.publication';
+        const packages = {
+            ...translationProjection(1, 'Visible').installedPackagesById,
+            ...Object.fromEntries(Array.from({ length: 65 }, (_, index) => {
+                const id = `acme.closed-${index}`;
+                return [id, { id, displayName: id, version: '1.0.0', enabled: true,
+                    source: { kind: 'registryPackage' as const, locator: id } }];
+            })),
+        };
+        const projection = Object.freeze({ ...translationProjection(1, 'Visible'), installedPackagesById: Object.freeze(packages) });
+        const unbind = publishCommittedAppShellPluginUiProjection(() => owner.getSnapshot().pluginUiProjection,
+            owner.readExecutionOriginCandidates, listener => owner.subscribe(listener, 'committed'),
+            undefined, undefined, undefined, owner.acquireExecutionOriginDemand);
+        try {
+            owner.publishSources({ accountLifetime: null, availabilityInputs: null, hostBundledUiEnabled: false,
+                activeServerId: null, serverProfilesGeneration: 0, activeInventoryLoaded: true,
+                onlineMachineIds: ['machine'], selectableMachineIds: [] });
+            owner.publishMachineCurrentness('machine', null, currentness(projection));
+            expect(owner.getSnapshot().pluginUiProjection?.installedPackagesById).toHaveProperty([pluginId]);
+            expect(owner.getSnapshot().candidateFactsByPluginId.size).toBe(0);
+            expect(derive).not.toHaveBeenCalled();
+            const exact = readCurrentAppShellPluginUiExecutionOriginCandidates(pluginId);
+            expect(exact).toBe(owner.readExecutionOriginCandidates(pluginId));
+            expect(owner.getSnapshot().candidateFactsByPluginId.size).toBe(0);
+            expect(derive.mock.calls.map(([input]) => input.pluginId)).toEqual([pluginId]);
+            const close = subscribeCommittedAppShellPluginUiExecutionOriginCandidates(pluginId, () => {});
+            const closeSecond = subscribeCommittedAppShellPluginUiExecutionOriginCandidates(pluginId, () => {});
+            try {
+                expect([...owner.getSnapshot().candidateFactsByPluginId.keys()]).toEqual([pluginId]);
+                const facts = owner.getSnapshot().candidateFactsByPluginId.get(pluginId);
+                expect(facts).toBe(exact);
+                close();
+                expect(owner.getSnapshot().candidateFactsByPluginId.get(pluginId)).toBe(facts);
+            } finally { close(); closeSecond(); }
+            expect(owner.getSnapshot().candidateFactsByPluginId.size).toBe(0);
+            expect(derive.mock.calls.map(([input]) => input.pluginId)).toEqual([pluginId]);
+        } finally { unbind(); owner.dispose(); derive.mockRestore(); }
     });
 
     it('is pending until it first publishes, and unavailable only once its sources say so (Deploy an app starters)', () => {
@@ -1100,6 +1144,7 @@ describe('AppShell projection source publication', () => {
     it('does not rederive the UI union or feed back candidate reports for native-only origin reports', () => {
         const owner = createAppShellPluginUiProjectionPublication();
         const nativeId = 'acme.native-provisioner';
+        owner.acquireExecutionOriginDemand(nativeId);
         const origin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId: 'srv_test',
             sourceRef: { machineId: 'machine', pluginId: nativeId,
                 sourceCustody: { kind: 'development', registeredRootId: 'native-root' } } });
@@ -1144,6 +1189,7 @@ describe('AppShell projection source publication', () => {
             activeServerId: 'server-1', serverProfilesGeneration: 0, activeInventoryLoaded: true,
             onlineMachineIds: Object.freeze(['machine']), selectableMachineIds: Object.freeze(['machine']) };
         const pluginId = 'acme.native-only';
+        owner.acquireExecutionOriginDemand(pluginId);
         let sourceReads = 0;
         const publishNative = (occurrence: number) => {
             const sourceCustody = Object.freeze({ kind: 'development' as const, registeredRootId: 'native-only-root' });

@@ -27,7 +27,7 @@ import {
     type PluginExecutionOriginCandidateV1,
 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
-import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiExecutionOriginCandidates } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { readSeededPluginEventAutomationSetupFailure, readPluginEventAutomationWatcherFailure, resolvePluginEventAutomationObserverMaterialization,
     type PluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import { useAllProfileMachineInventorySnapshots } from '@/sync/domains/machines/useMachineInventorySnapshots';
@@ -489,7 +489,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         });
     }, [availabilityReader, monitoringMachineId, watcherPluginId]);
     const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
-    const suppliedWatcherFacts = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
+    const subscribeWatcherFacts = React.useCallback((listener: () => void) => watcherPluginId
+        ? subscribeCommittedAppShellPluginUiExecutionOriginCandidates(watcherPluginId, listener) : () => {}, [watcherPluginId]);
+    const suppliedWatcherFacts = React.useSyncExternalStore(subscribeWatcherFacts, readWatcherFacts, readWatcherFacts);
     const executionOriginCandidates = React.useMemo(() => combinePluginMachineExecutionOriginCandidates(buildPluginMachineExecutionOriginCandidates({
         pluginId: watcherPluginId,
         materializations: materializationAdmission?.kind === 'available'

@@ -174,6 +174,12 @@ export type AppShellPluginUiProjectionPublication = Readonly<{
     publishMachineCurrentness(machineId: string, lifetime: ActiveServerAccountScopeLifetime | null, currentness: PluginUiProjectionCurrentness): void;
     publishExecutionOrigin(pluginId: string, lifetime: ActiveServerAccountScopeLifetime | null, origin: PluginMachineExecutionOriginV1 | null,
         selectableOrigins: readonly PluginMachineExecutionOriginV1[], hasStoredTarget?: boolean): void;
+    acquireExecutionOriginDemand(pluginId: string): () => void;
+    prepareExecutionOriginSelection(pluginId: string, lifetime: ActiveServerAccountScopeLifetime): Promise<Readonly<{
+        snapshot: AppShellPluginUiProjectionSnapshot;
+        release: () => void;
+    }> | null>;
+    readExecutionOriginCandidates(pluginId: string): PluginUiExecutionOriginCandidateFacts | null;
     getSnapshot(): AppShellPluginUiProjectionSnapshot;
     /** The published Home, read without deriving pending origin reports. */
     readActiveServerId(): AppShellPluginUiProjectionSnapshot['activeServerId'];
@@ -202,6 +208,8 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     }>> = new Map();
     let selections: PluginUiProjectionUnionOriginSelections = new Map();
     let explicitSelections: PluginUiProjectionUnionOriginSelections = new Map();
+    const originDemand = new Map<string, number>();
+    let descriptorOriginDemand: ReadonlySet<string> = new Set();
     let installedInput: InstalledPlugins | undefined;
     let installedByMachineId: ReadonlyMap<string, InstalledMachineDeclarations> = new Map();
     let reportedMachines: PluginAccountUiProjectionInputs['reportedMachines'];
@@ -233,6 +241,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         retirement: ReturnType<ActiveServerAccountScopeLifetime['onRetire']>;
     }>>();
     const listeners = new Map<() => void, 'committed' | undefined>();
+    const originSelectionWaiters = new Set<() => void>();
     // React layout effects report a wave of Machine changes. Stage only the
     // changed subjects and publish the aggregate once, including any origins
     // reported in the same turn. An exact read can settle the wave early.
@@ -254,6 +263,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             || (previous.accountUiProjection === null) !== (snapshot.accountUiProjection === null)
             || previous.registrySourcesPending !== snapshot.registrySourcesPending;
         for (const [listener, scope] of listeners) if (scope !== 'committed' || committedChanged) listener();
+        for (const settle of originSelectionWaiters) settle();
     };
 
     function resetDerived() {
@@ -269,6 +279,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         selectableByMachine = new Map();
         selections = new Map();
         explicitSelections = new Map();
+        descriptorOriginDemand = new Set();
         installedInput = undefined;
         installedByMachineId = new Map();
         reportedMachines = undefined;
@@ -300,13 +311,34 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         else notify(previous);
     }
 
+    function dropOriginReport(pluginId: string): boolean {
+        if (!originReports.has(pluginId)) return false;
+        const reports = new Map(originReports);
+        reports.delete(pluginId);
+        originReports = reports;
+        if (selections.has(pluginId)) {
+            const next = new Map(selections);
+            next.delete(pluginId);
+            selections = next;
+        }
+        if (explicitSelections.has(pluginId)) {
+            const next = new Map(explicitSelections);
+            next.delete(pluginId);
+            explicitSelections = next;
+        }
+        return true;
+    }
+
     function schedulePublication() {
         if (publicationScheduled) return;
         publicationScheduled = true;
         queueMicrotask(() => {
             publicationScheduled = false;
+            const previous = snapshot;
             derivePendingReports(false);
             if (unnotifiedPrevious) notify(unnotifiedPrevious);
+            // A report with no selected origin can settle first open without changing the catalog.
+            else if (snapshot === previous) for (const settle of originSelectionWaiters) settle();
         });
     }
 
@@ -316,7 +348,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
     }
 
     function publishConnectedAccounts(targets: readonly AppShellPluginProjectionTarget[], currentness: ReadonlyMap<string, PluginUiProjectionCurrentness>,
-        admitted: ReadonlySet<string>, accountLifetime: ActiveServerAccountScopeLifetime | null) {
+        admitted: ReadonlySet<string>, accountLifetime: ActiveServerAccountScopeLifetime | null, duringDerivation = false) {
         // Account discovery already supplies authoring metadata to the registry.
         // Its completed answer must participate even when passive Machine
         // observers have no descriptor answer. This grants no native execution;
@@ -324,6 +356,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const descriptorInputs: ConnectedAccountDescriptorMachineProjection[] = sources?.availabilityInputs
             ? [{ kind: 'ready', descriptors: [] }] : [];
         const selectable = new Set(sources?.selectableMachineIds ?? NO_IDS);
+        const demanded = new Set<string>();
         for (const { machineId } of targets) {
             const current = currentness.get(machineId);
             const projection = current?.connectedAccountProjection;
@@ -345,6 +378,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             } else {
                 const executionUnavailablePluginIds = projection.descriptors.flatMap(descriptor => {
                     if (!descriptor.pluginId || !admitted.has(descriptor.pluginId)) return [];
+                    demanded.add(descriptor.pluginId);
                     const report = originReports.get(descriptor.pluginId);
                     if (!report || report.accountLifetime !== accountLifetime || !isCurrent(report.accountLifetime)) {
                         descriptorInputs.push({ kind: 'loading' });
@@ -355,6 +389,14 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
                 });
                 descriptorInputs.push({ kind: 'ready', descriptors: projection.descriptors, executionUnavailablePluginIds });
             }
+        }
+        if (demanded.size !== descriptorOriginDemand.size || [...demanded].some(id => !descriptorOriginDemand.has(id))) {
+            let dropped = false;
+            for (const id of descriptorOriginDemand) {
+                if (!demanded.has(id) && !originDemand.has(id)) dropped = dropOriginReport(id) || dropped;
+            }
+            descriptorOriginDemand = demanded;
+            if (!duringDerivation || dropped) scheduleOriginDerivation();
         }
         const resolution = connectedAccounts.publish(descriptorInputs);
         const unavailableReasonCode = sources?.availabilityInputs?.unavailableReasonCode;
@@ -646,7 +688,6 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         if (candidateMembers.length !== nextCandidateMembers.length || nextCandidateMembers.some((member, index) => member !== candidateMembers[index])) {
             candidateMembers = nextCandidateMembers.every((member, index) => member === members[index]) ? members : Object.freeze(nextCandidateMembers);
         }
-        const candidateFactsByPluginId = candidates.publish(pluginUiProjection, candidateMembers, pluginIds);
         const skillSourceIdentity = skills.publish(pluginUiProjection);
         const destinationSurfacePlacements = previous.pluginUiProjection?.surfacePlacementsById === pluginUiProjection?.surfacePlacementsById
             ? previous.destinationSurfacePlacements
@@ -654,7 +695,11 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         const settingsPages = previous.pluginUiProjection?.settingsPagesById === pluginUiProjection?.settingsPagesById
             ? previous.settingsPages
             : pluginUiProjection ? Object.freeze(Object.values(pluginUiProjection.settingsPagesById)) : NO_SETTINGS_PAGES;
-        const connectedAccountResolution = publishConnectedAccounts(targets, currentness, admitted, accountLifetime);
+        const connectedAccountResolution = publishConnectedAccounts(targets, currentness, admitted, accountLifetime, true);
+        const candidatePluginIds = originDemand.size + descriptorOriginDemand.size === 0 ? NO_IDS
+            : [...new Set([...originDemand.keys(), ...descriptorOriginDemand])].filter(id => admitted.has(id));
+        const candidateFactsByPluginId = candidates.publish(pluginUiProjection, candidateMembers, candidatePluginIds,
+            projectionUnion.establishingExecutionTargetsByPluginId);
         // A Machine owes its registry sources until it answers them (registry read or a current catalogue) or settles.
         const owing = targets.filter(target => {
             const report = currentness.get(target.machineId);
@@ -678,7 +723,7 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         if (!quiet) notify(previous);
     }
 
-    return {
+    const publication: AppShellPluginUiProjectionPublication = {
         publishMountedActions(owner, lifetime, source) {
             const previous = mountedActions.get(owner);
             if (!source) {
@@ -758,6 +803,44 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             }
             scheduleOriginDerivation();
         },
+        acquireExecutionOriginDemand(pluginId) {
+            const count = originDemand.get(pluginId) ?? 0;
+            originDemand.set(pluginId, count + 1);
+            if (count === 0) scheduleOriginDerivation();
+            return () => {
+                const remaining = originDemand.get(pluginId);
+                if (remaining === undefined) return;
+                if (remaining > 1) originDemand.set(pluginId, remaining - 1);
+                else {
+                    originDemand.delete(pluginId);
+                    if (!descriptorOriginDemand.has(pluginId)) dropOriginReport(pluginId);
+                    scheduleOriginDerivation();
+                }
+            };
+        },
+        prepareExecutionOriginSelection(pluginId, lifetime) {
+            const release = publication.acquireExecutionOriginDemand(pluginId);
+            return new Promise(resolve => {
+                const settle = () => {
+                    const current = publication.getSnapshot();
+                    if (current.accountLifetime !== lifetime) {
+                        originSelectionWaiters.delete(settle);
+                        release();
+                        resolve(null);
+                    } else if (!current.candidateFactsByPluginId.has(pluginId) || originReports.has(pluginId)) {
+                        originSelectionWaiters.delete(settle);
+                        resolve({ snapshot: current, release });
+                    }
+                };
+                originSelectionWaiters.add(settle);
+                settle();
+            });
+        },
+        readExecutionOriginCandidates(pluginId) {
+            if (!sources || !isCurrent(sources.accountLifetime)) return null;
+            derivePendingReports(true);
+            return snapshot.executionOriginPluginIds.includes(pluginId) ? candidates.read(pluginId) : null;
+        },
         getSnapshot: () => {
             if (!sources || !isCurrent(sources.accountLifetime)) return EMPTY_SNAPSHOT;
             derivePendingReports(true);
@@ -765,6 +848,15 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
         },
         readActiveServerId: () => (sources && isCurrent(sources.accountLifetime) ? snapshot : EMPTY_SNAPSHOT).activeServerId,
         subscribe(listener: () => void, scope?: 'committed') { listeners.set(listener, scope); return () => { listeners.delete(listener); }; },
-        dispose() { retirement?.dispose(); retirement = undefined; sources = null; resetDerived(); listeners.clear(); },
+        dispose() {
+            retirement?.dispose();
+            retirement = undefined;
+            sources = null;
+            originDemand.clear();
+            resetDerived();
+            for (const settle of originSelectionWaiters) settle();
+            listeners.clear();
+        },
     };
+    return publication;
 }

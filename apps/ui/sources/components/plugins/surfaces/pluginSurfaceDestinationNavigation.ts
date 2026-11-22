@@ -160,6 +160,10 @@ export type PluginSurfaceDestinationNavigationBindingInput = Omit<
 > & Readonly<{
     /** The current catalog owned by this navigation scope, including resource handlers. */
     projection?: PluginUiProjectionModel | null;
+    /** AppShell can acquire exact origin demand before the destination has mounted. */
+    prepareExecutionOrigin?: (pluginId: string) => Promise<(Pick<
+        PluginSurfaceDestinationOpenSurfaceHandlerInput, 'placements' | 'settingsPages'
+    > & Readonly<{ release: () => void }>) | null>;
 }>;
 
 type PluginSurfaceDestinationPlacementOwner = {
@@ -446,30 +450,41 @@ function createPluginSurfaceDestinationNavigationBindingFromReader(
         if (sourceAccount && !areServerAccountScopesEqual(sourceAccount, input.accountLifetime?.scope)) {
             return unavailable('plugin_surface_open_origin_unavailable');
         }
-        const resolved = resolvePluginSurfaceDestinationOpen({
-            placements: input.placements,
-            ...(input.settingsPages === undefined ? {} : { settingsPages: input.settingsPages }),
-            targetKind: input.targetKind,
-            ...(input.accountLifetime === undefined ? {} : { accountLifetime: input.accountLifetime }),
-            ...(input.scopedLaunchFacts === undefined ? {} : { scopedLaunchFacts: input.scopedLaunchFacts }),
-            ...(input.policyContext === undefined ? {} : { policyContext: input.policyContext }),
-            ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
-            request,
-        });
-        if (!resolved.ok) {
-            return input.enclosingOpenSurface && isDestinationOutsideTargetScope(resolved)
-                ? await input.enclosingOpenSurface(request)
-                : resolved;
+        const prepare = input.prepareExecutionOrigin && input.placements?.some(placement => (
+            isExactDestination(placement, request, input.targetKind)
+            && (placement.binding.container === 'rightSidebarTab' || request.input !== undefined)
+        )) ? input.prepareExecutionOrigin : null;
+        const prepared = prepare ? await prepare(request.destination.pluginId) : undefined;
+        if (prepared === null) return unavailable('plugin_surface_open_origin_unavailable');
+        try {
+            const catalog = prepared ?? input;
+            const resolved = resolvePluginSurfaceDestinationOpen({
+                placements: catalog.placements,
+                settingsPages: catalog.settingsPages,
+                targetKind: input.targetKind,
+                ...(input.accountLifetime === undefined ? {} : { accountLifetime: input.accountLifetime }),
+                ...(input.scopedLaunchFacts === undefined ? {} : { scopedLaunchFacts: input.scopedLaunchFacts }),
+                ...(input.policyContext === undefined ? {} : { policyContext: input.policyContext }),
+                ...(input.runtimeAdmission === undefined ? {} : { runtimeAdmission: input.runtimeAdmission }),
+                request,
+            });
+            if (!resolved.ok) {
+                return input.enclosingOpenSurface && isDestinationOutsideTargetScope(resolved)
+                    ? await input.enclosingOpenSurface(request)
+                    : resolved;
+            }
+            const container = resolved.placement.binding.container;
+            const owners = ownersByContainer.get(container);
+            if (!owners || owners.size !== 1) {
+                return unavailable('plugin_surface_open_destination_owner_unavailable');
+            }
+            const owner = owners.values().next().value as RegisteredPluginSurfaceDestinationOwner | undefined;
+            return owner
+                ? await owner(resolved)
+                : unavailable('plugin_surface_open_destination_owner_unavailable');
+        } finally {
+            prepared?.release();
         }
-        const container = resolved.placement.binding.container;
-        const owners = ownersByContainer.get(container);
-        if (!owners || owners.size !== 1) {
-            return unavailable('plugin_surface_open_destination_owner_unavailable');
-        }
-        const owner = owners.values().next().value as RegisteredPluginSurfaceDestinationOwner | undefined;
-        return owner
-            ? await owner(resolved)
-            : unavailable('plugin_surface_open_destination_owner_unavailable');
     };
 
     // A scope host keeps one binding identity while its facts change, so the

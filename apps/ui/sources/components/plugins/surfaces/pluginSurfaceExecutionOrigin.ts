@@ -3,8 +3,9 @@ import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginR
 import { usePluginExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 
-import { readCurrentAppShellPluginUiProjection, readCurrentAppShellPluginUiExecutionOriginCandidates,
-    subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { EMPTY_PLUGIN_UI_EXECUTION_ORIGIN_CANDIDATES, readCurrentAppShellPluginUiProjection, readCurrentAppShellPluginUiExecutionOriginCandidates,
+    subscribeCommittedAppShellPluginUiExecutionOriginCandidates } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { useActivePluginAccountAvailabilityReleaseClassifier } from '@/sync/domains/plugins/availability/projection';
 import { usePluginMachineExecutionOriginSelection } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { createPluginUiProjectedActionResolver, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
@@ -105,6 +106,8 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     contextualTarget?: PluginExecutionOriginContextualTarget | null;
     surfaceTarget?: PluginUiHostApiSurfaceTargetV1 | null;
 }>) {
+    const presented = useLayoutPresentationActive();
+    const active = params.enabled && presented;
     const classifyRelease = useActivePluginAccountAvailabilityReleaseClassifier(params.pluginId);
     const checkout = params.surfaceTarget?.kind === 'project' ? params.surfaceTarget.checkout : undefined;
     const projectMachineId = checkout?.machineId;
@@ -119,12 +122,16 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
     // Uncontextual selection is plugin-scoped, like the shell's Administration
     // reporter. An accepted contextual target uses that same selection owner.
     const readCurrentCandidates = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(params.pluginId), [params.pluginId]);
-    const supplied = React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readCurrentCandidates, readCurrentCandidates);
+    const readPresentedCandidates = React.useCallback(() => active ? readCurrentCandidates()
+        : EMPTY_PLUGIN_UI_EXECUTION_ORIGIN_CANDIDATES, [active, readCurrentCandidates]);
+    const subscribeCandidates = React.useCallback((listener: () => void) => active
+        ? subscribeCommittedAppShellPluginUiExecutionOriginCandidates(params.pluginId, listener) : () => {}, [active, params.pluginId]);
+    const supplied = React.useSyncExternalStore(subscribeCandidates, readPresentedCandidates, readPresentedCandidates);
     const readSourceCandidates = React.useCallback(() => readCurrentCandidates().sourceCandidates, [readCurrentCandidates]);
     const readMachineRejections = React.useCallback(() => readCurrentCandidates().machineRejections, [readCurrentCandidates]);
     const readDeclaredDefaultOrigins = React.useCallback(() => readCurrentCandidates().declaredDefaultOrigins, [readCurrentCandidates]);
     const selection = usePluginMachineExecutionOriginSelection({
-        pluginId: params.pluginId, enabled: params.enabled, classifyRelease,
+        pluginId: params.pluginId, enabled: active, classifyRelease,
         includeMachineCandidates: params.includeMachineCandidates,
         ...supplied, readSourceCandidates, readMachineRejections, readDeclaredDefaultOrigins,
         contextualTarget,
