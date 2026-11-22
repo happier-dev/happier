@@ -2,9 +2,10 @@ import { createExternalActionHeaderRefusalError } from '@/api/externalActionHead
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import axios from '@/api/client/credentialAxios';
 import { HttpStatusError } from '@/api/client/httpStatusError';
+import { admitCliReportedAccountMode } from '@/api/client/accountModeAdmission';
 import { createHash, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
+import { isAccountModeDowngradeUnverifiedError, waitForAccountEncryptionObservation } from '@happier-dev/sync-client';
 
 import type { AgentId } from '@happier-dev/agents';
 import { computeManagedConnectionBackoffMs, DEFAULT_MANAGED_CONNECTION_POLICY, readRetryLaterHints, type RetryLaterHints } from '@happier-dev/connection-supervisor';
@@ -23,7 +24,7 @@ import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol
 import type { ConnectedPresentationCatalogSnapshotV1, ConnectedAcknowledgementsCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import type { Credentials, StoredCredentials } from '@/persistence';
+import { readAccountE2eeCustody, type Credentials, type StoredCredentials } from '@/persistence';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
@@ -130,7 +131,8 @@ function createAccountSettingsScopeChangedError(
 }
 
 function isAccountSettingsContentUnavailableError(error: unknown): boolean {
-  if (isAccountSettingsEncryptionMaterialUnavailableError(error) || isAccountSettingsContentInvalidError(error)) return true;
+  if (isAccountSettingsEncryptionMaterialUnavailableError(error) || isAccountSettingsContentInvalidError(error)
+    || isAccountModeDowngradeUnverifiedError(error)) return true;
   if (!error || typeof error !== 'object' || !('code' in error)) return false;
   return error.code === 'ACCOUNT_SETTINGS_DECRYPT_FAILED'
     || error.code === 'ACCOUNT_SETTINGS_SCOPE_CHANGED'
@@ -855,35 +857,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const cacheContent: AccountSettingsContentEnvelope | null = cache?.version === 2
     ? cache.settingsContent
     : cache?.settingsCiphertext ? { t: 'encrypted', c: cache.settingsCiphertext } : null;
-  let expectedAccountEncryptionMode = params.expectedAccountEncryptionMode;
-  const isCacheModeStale = async (): Promise<boolean> => {
-    if (cacheContent?.t !== 'encrypted') return false;
-    if (expectedAccountEncryptionMode === undefined) {
-      const path = '/v1/account/encryption';
-      const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
-        ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.credentials.token}` });
-      if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
-      const { readAccountEncryptionModeOnce } = await import('@/api/client/accountEncryptionMode');
-      const result = await readAccountEncryptionModeOnce({
-        credentials: params.credentials,
-        request: () => axios.get(`${resolveAccountSettingsHttpBaseUrl()}${path}`, {
-          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders },
-          signal: params.signal,
-          timeout: ACCOUNT_SETTINGS_REQUEST_TIMEOUT_MS,
-          validateStatus: () => true,
-        }),
-      });
-      params.signal?.throwIfAborted();
-      if (result.kind === 'http_error') {
-        throw new HttpStatusError(result.status, `Failed to fetch ${path} (${result.status})`);
-      }
-      if (result.kind === 'invalid_response') {
-        throw new AccountSettingsContentInvalidError(new Error('account_encryption_mode_invalid'));
-      }
-      expectedAccountEncryptionMode = result.mode;
-    }
-    return expectedAccountEncryptionMode === 'plain';
-  };
+  const { expectedAccountEncryptionMode } = params;
+  // Retained keys still open history. Only active custody permits reusing an
+  // encrypted projection as current Settings without Home.
+  const staleCache = cacheContent?.t === 'encrypted'
+    && (expectedAccountEncryptionMode === 'plain' || readAccountE2eeCustody(params.credentials) !== 'active');
 
   const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<Readonly<{
     rawSettings: Readonly<Record<string, unknown>>;
@@ -934,6 +912,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   };
 
   const useCache = async (): Promise<PublishedAccountSettingsContext> => {
+    params.signal?.throwIfAborted();
     const parsed = await parseFromContent(cacheContent);
     const settingsVersion = cache?.settingsVersion ?? 0;
     const ctx: AccountSettingsContext = {
@@ -1003,6 +982,11 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   const fetchAndPersist = async (start = initialIncumbent): Promise<AccountSettingsContext> => {
     const { settingsContent, settingsVersion, parsed } = await (params.publication === 'invocation'
       ? readRequesterSettings() : fetchAndParse(params.signal));
+    // A Plain response alongside an encrypted projection is a mode claim.
+    // The caller's custody admits it before the response can be published.
+    if (settingsContent?.t === 'plain' && cacheContent?.t === 'encrypted' && expectedAccountEncryptionMode === undefined) {
+      await admitCliReportedAccountMode('plain', params.credentials);
+    }
     params.signal?.throwIfAborted();
     const candidate: AccountSettingsContext = {
       source: 'network',
@@ -1075,12 +1059,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   };
   const effectiveMode = minSettingsVersion !== null || incumbentUsesDifferentKeys ? 'blocking' : mode;
 
-  // Durable Settings are a Home projection. Before opening cached ciphertext,
-  // verify it belongs to the currently admitted mode. A stale cache needs a
-  // blocking Home read even when normal startup can use the cache immediately.
   const cacheBeforeFetch = effectiveMode === 'fast'
     || (!incumbentUsesDifferentKeys && ((!shouldForceFetch && cacheFresh) || refreshBackedOff));
-  const staleCache = cacheBeforeFetch && await isCacheModeStale();
 
   if (effectiveMode === 'fast' && !staleCache) {
     const basePublication = await useCache();
@@ -1112,7 +1092,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     params.signal?.throwIfAborted();
     if (isClientE2eeRequiredError(err)) throw err;
     if (incumbentUsesDifferentKeys || params.allowCacheFallback === false || minSettingsVersion !== null
-      || isAccountSettingsContentUnavailableError(err) || staleCache || await isCacheModeStale()) {
+      || isAccountSettingsContentUnavailableError(err) || staleCache) {
       throw err;
     }
     logRefreshFailure('[accountSettings] fetch failed; falling back to cache', err);

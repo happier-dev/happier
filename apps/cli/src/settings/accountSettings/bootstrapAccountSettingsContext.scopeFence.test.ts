@@ -335,12 +335,7 @@ describe('bootstrapAccountSettingsContext active Account scope fence', () => {
       randomBytes: length => new Uint8Array(length).fill(1) });
     await bootstrapAccountSettingsContext({ credentials, refresh: 'force',
       deps: { fetchFromServer: async () => ({ settingsContent: { t: 'encrypted', c: ciphertext }, settingsVersion: 1 }) } });
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
-      if (new URL(url).pathname === '/v1/account/encryption') {
-        return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
-      }
-      throw new Error('Network unavailable');
-    });
+    vi.spyOn(axios, 'get').mockRejectedValue(new Error('Network unavailable'));
     const pending = reader === 'live'
       ? applyAccountSettingsV2Update({ credentials: nextCredentials, update: { content: { t: 'encrypted', c: ciphertext }, version: 1 } })
       : reader === 'bootstrap' ? bootstrapAccountSettingsContext({ credentials: nextCredentials, minSettingsVersion: 1 })

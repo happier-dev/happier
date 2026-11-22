@@ -398,17 +398,64 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(getActiveAccountSettingsSnapshot()).toBe(catalogSnapshot);
   });
 
-  it('preserves a required network failure without a Settings floor while ordinary bootstrap retains cache fallback', async () => {
-    Object.assign(mutableConfigurationForTest(), { clientEncryptionRequirement: 'follow_account' });
-    const failure = Object.assign(new Error('Settings Home unavailable'), { response: { status: 503 } });
-    vi.spyOn(axios, 'get').mockRejectedValue(failure);
-    const options = { credentials: createTokenOnlyCredentialsStub(), refresh: 'force' as const,
-      deps: { resolveCachePath: () => '/tmp/happier-settings-network-required',
-        readCache: async () => ({ version: 2 as const, cachedAt: 0, settingsVersion: 7,
-          settingsContent: null }),
-        writeCache: async () => {}, applySideEffects: () => {} } };
-    await expect(bootstrapAccountSettingsContext({ ...options, allowCacheFallback: false })).rejects.toBe(failure);
-    expect(await bootstrapAccountSettingsContext(options)).toMatchObject({ source: 'cache', settingsVersion: 7 });
+  it.each(['fast', 'blocking'] as const)('starts from encrypted disk Settings with Home offline in %s mode', async mode => {
+    const failure = new Error('Settings Home unavailable');
+    const get = vi.spyOn(axios, 'get').mockRejectedValue(failure);
+    const dir = await mkdtemp(join(tmpdir(), 'account-settings-offline-cache-'));
+    const path = join(dir, 'account.settings.cache.json');
+    try {
+      await writeAccountSettingsCacheAtomic(path, {
+        version: 2, cachedAt: 1_000_000, settingsVersion: 7,
+        settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
+      });
+      const options = { credentials: createCredentialsStub(), mode, refresh: 'force' as const,
+        nowMs: 1_000_000, deps: { resolveCachePath: () => path } };
+      if (mode === 'blocking') {
+        await expect(bootstrapAccountSettingsContext({ ...options, allowCacheFallback: false })).rejects.toBe(failure);
+        get.mockClear();
+      }
+      const result = await bootstrapAccountSettingsContext(options);
+      expect(result).toMatchObject({ source: 'cache', settingsVersion: 7, settings: { themePreference: 'light' } });
+      if (mode === 'fast') await expect(result.whenRefreshed).resolves.toMatchObject({ source: 'cache', settingsVersion: 7 });
+      expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('makes no Home requests on a fresh encrypted disk cache fast start', async () => {
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(url).pathname) {
+        case '/v1/account/encryption':
+          return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
+        case '/v2/account/settings':
+          return { status: 200, data: { version: 8, content: {
+            t: 'encrypted', c: sealSettings({ themePreference: 'dark' }),
+          } } };
+        default:
+          throw new Error('Unexpected Home request');
+      }
+    });
+    const dir = await mkdtemp(join(tmpdir(), 'account-settings-fast-cache-'));
+    const path = join(dir, 'account.settings.cache.json');
+    try {
+      await writeAccountSettingsCacheAtomic(path, {
+        version: 2, cachedAt: 1_000_000, settingsVersion: 7,
+        settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
+      });
+      const options = { credentials: createCredentialsStub(), mode: 'fast' as const,
+        nowMs: 1_000_000, ttlMs: 60_000, deps: { resolveCachePath: () => path } };
+      await expect(bootstrapAccountSettingsContext(options)).resolves.toMatchObject({
+        source: 'cache', settingsVersion: 7, settings: { themePreference: 'light' }, whenRefreshed: null,
+      });
+      expect(get).toHaveBeenCalledTimes(0);
+      await expect(bootstrapAccountSettingsContext({ ...options, mode: 'blocking', refresh: 'force' })).resolves.toMatchObject({
+        source: 'network', settingsVersion: 8, settings: { themePreference: 'dark' },
+      });
+      expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 
   it.each([{ mode: 'plain' as const, custodian: true }, { mode: 'e2ee' as const, custodian: true },
@@ -1246,16 +1293,17 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(writeCache).not.toHaveBeenCalled();
   });
 
-  it.each(['plain', 'e2ee'] as const)('checks Home mode before using a fresh encrypted cache for a %s Account', async mode => {
+  it.each(['plain', 'e2ee'] as const)('reads Home Settings for a %s Account when an old encrypted cache has no keys', async mode => {
     const dir = await mkdtemp(join(tmpdir(), 'account-settings-mode-cache-'));
     const path = join(dir, 'account.settings.cache.json');
-    const credentials = createTokenOnlyCredentialsStub();
     const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
       switch (new URL(url).pathname) {
         case '/v1/account/encryption':
           return { status: 200, data: { mode, updatedAt: 1 } };
         case '/v2/account/settings':
-          return { status: 200, data: { version: 14, content: { t: 'plain', v: { themePreference: 'dark' } } } };
+          return { status: 200, data: { version: 14, content: mode === 'plain'
+            ? { t: 'plain', v: { themePreference: 'dark' } }
+            : { t: 'encrypted', c: sealSettings({ themePreference: 'dark' }) } } };
         default:
           throw new Error('Unexpected Home request');
       }
@@ -1266,7 +1314,7 @@ describe('bootstrapAccountSettingsContext', () => {
         settingsVersion: 13,
       });
       const result = bootstrapAccountSettingsContext({
-        credentials, mode: 'fast', nowMs: 1_000_000, ttlMs: 60_000,
+        credentials: createTokenOnlyCredentialsStub(), mode: 'fast', nowMs: 1_000_000, ttlMs: 60_000,
         deps: { resolveCachePath: () => path },
       });
       if (mode === 'plain') {
@@ -1275,8 +1323,32 @@ describe('bootstrapAccountSettingsContext', () => {
         });
       } else {
         await expect(result).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
-        expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v1/account/encryption']);
+        expect(getActiveAccountSettingsSnapshot()).toBeNull();
       }
+      expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('refuses an unadmitted Plain Settings response while the encrypted cache has active custody', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'account-settings-active-custody-'));
+    const path = join(dir, 'account.settings.cache.json');
+    const get = vi.spyOn(axios, 'get').mockResolvedValue({
+      status: 200, data: { version: 14, content: { t: 'plain', v: { themePreference: 'dark' } } },
+    });
+    try {
+      await writeAccountSettingsCacheAtomic(path, {
+        version: 2, cachedAt: 1_000_000, settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
+        settingsVersion: 13,
+      });
+      const failure = await bootstrapAccountSettingsContext({
+        credentials: createCredentialsStub(), mode: 'blocking', refresh: 'force', nowMs: 1_000_000,
+        deps: { resolveCachePath: () => path },
+      }).then(() => undefined, (error: unknown) => error);
+      expect(failure).toMatchObject({ code: 'account_mode_downgrade_unverified' });
+      expect(getActiveAccountSettingsSnapshot()).toBeNull();
+      expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v2/account/settings']);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
