@@ -14,7 +14,7 @@ import {
     DeploymentReceiptGetResultV1Schema, DeploymentReceiptListResultV1Schema,
     DeploymentDomainListResultV1Schema, DeploymentDomainPageResultV1Schema, DeploymentDataPageResultV1Schema,
     DeploymentTargetLinksListResultV1Schema, type DeploymentTargetLinksListInputV1,
-    type DeploymentDataPageSuccessV1,
+    type DeploymentDataPageSuccessV1, hasDeploymentReceiptContentV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import {
     readDeploymentReceiptArtifactV1, readDeploymentTargetLinkArtifactV1,
@@ -54,12 +54,11 @@ function readEnvironmentPresentation(environment: DeploymentEnvironmentCollectio
     return { opened, label, projectSourceName: sourceNames.get(environment.projectSourceId) ?? null };
 }
 
-async function readArtifactsByRow<T>(artifactIds: readonly string[], read: (ids: string[]) => Promise<T[]>): Promise<(T | undefined)[]> {
-    if (artifactIds.length === 0) return [];
-    const ids = [...new Set(artifactIds)];
-    const results = await read(ids);
+async function readArtifactsByRow<T>(artifactIds: readonly (string | null)[], read: (ids: string[]) => Promise<T[]>): Promise<(T | undefined)[]> {
+    const ids = [...new Set(artifactIds.filter((id): id is string => id !== null))];
+    const results = ids.length ? await read(ids) : [];
     const byId = new Map(ids.map((id, index) => [id, results[index]]));
-    return artifactIds.map(id => byId.get(id));
+    return artifactIds.map(id => id === null ? undefined : byId.get(id));
 }
 
 /** Open the same private Link candidates that write admission compares on its executor. */
@@ -173,6 +172,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         const receipt = parsed.data;
         if (!receipt.ok) return failure(receipt.error);
         if (receipt.deployment.environmentId !== environmentId || receipt.deployment.id !== deploymentId) return failure('invalid_response');
+        if (!hasDeploymentReceiptContentV1(receipt.deployment)) {
+            return { ok: true, value: { deployment: receipt.deployment, content: null } };
+        }
         const artifact = await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: options.signal });
         const content = readDeploymentReceiptArtifactV1(receipt.deployment, artifact);
         if (!content.ok) return failure(content.error);
@@ -301,7 +303,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (databaseSubjectFailure && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
                     && data.some(service => service.engine === 'postgres' || service.engine === 'mysql')) {
                     const serving = await readReceipt(scope, environment.id, runtimeTargetLink.activeDeploymentId, options);
-                    if (serving.ok && serving.value.deployment.targetLinkId === runtimeTargetLink.id) {
+                    if (serving.ok && serving.value.content && serving.value.deployment.targetLinkId === runtimeTargetLink.id) {
                         const basis = serving.value.content.ownServer?.approvedInputBasis;
                         if (basis?.environmentId === environment.id && basis.targetLinkId === runtimeTargetLink.id) {
                             projectDeclaredDatabaseSubjects(basis.bindings, basis.services);
@@ -436,7 +438,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 if (!opened.ok) coverage = 'partial';
                 const current = currentByEnvironment.get(environment.id);
                 let currentDeployment: DeploymentEnvironmentCollectionV1['items'][number]['currentDeployment'] = null;
-                if (current) {
+                if (current && hasDeploymentReceiptContentV1(current.receipt)) {
                     const receiptHeader = contents[page.items.length + current.index];
                     const artifact = receiptHeader?.status === 'fulfilled' ? receiptHeader.value : null;
                     const projection = readDeploymentReceiptArtifactHeaderV1(current.receipt, artifact);
@@ -446,14 +448,14 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                             ...(opened.ok ? projectDeploymentReceiptSourceFactsV1(opened.content) : {}) };
                         if (!opened.ok) coverage = 'partial';
                     } else coverage = 'partial';
-                }
+                } else if (current) currentDeployment = current.receipt;
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
                 let liveAddress: string | null | undefined;
                 if (addressMetadata && (runtimeTargetLink || environment.runtimeTargetLinkId === undefined)) {
                     if (!runtimeTargetLink?.activeDeploymentId) liveAddress = null;
                     else {
                         const active = servingById.get(runtimeTargetLink.activeDeploymentId);
-                        if (active) {
+                        if (active && hasDeploymentReceiptContentV1(active.receipt)) {
                             const read = contents[servingOffset + active.index];
                             const opened = readDeploymentReceiptArtifactV1(active.receipt, read?.status === 'fulfilled' ? read.value : null);
                             if (opened.ok) {
@@ -545,6 +547,10 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 // The History view projects the recorded Artifact failure.
                 const { requiredFact: _requiredFact, remedy: _remedy, ...receipt }:
                     typeof row & { requiredFact?: string; remedy?: string } = row;
+                if (!hasDeploymentReceiptContentV1(receipt)) {
+                    items.push(receipt);
+                    continue;
+                }
                 const read = contents[index];
                 if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
                 const opened = readDeploymentReceiptArtifactV1(receipt, read.value);

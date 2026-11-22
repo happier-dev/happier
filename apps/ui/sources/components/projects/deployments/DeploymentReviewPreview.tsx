@@ -35,7 +35,7 @@ export const DeploymentReviewPreview = React.memo(function DeploymentReviewPrevi
   const domains = useDeploymentEnvironmentDomains(props.controller, preview ? props.environmentId : null, props.demand);
   if (!preview) return null;
   const active = serving.snapshot.value;
-  const address = active ? resolveDeploymentLiveAddress(active, domains.result.items, true) : null;
+  const address = active?.content ? resolveDeploymentLiveAddress(active, domains.result.items, true) : null;
   const health = deploymentHealthFact(detail.healthAggregate ?? undefined, active?.deployment.state);
   const toneColor = health.tone === 'danger' ? theme.colors.state.danger.textForeground
     : health.tone === 'attention' ? theme.colors.state.warning.textForeground : undefined;

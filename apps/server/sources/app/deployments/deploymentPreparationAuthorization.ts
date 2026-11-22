@@ -261,7 +261,7 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
                 contentArtifactId: { in: [...requestedArtifactIds] } },
                 select: { contentArtifactId: true } });
             for (const receipt of receipts) {
-                artifactIds.add(receipt.contentArtifactId);
+                if (receipt.contentArtifactId !== null) artifactIds.add(receipt.contentArtifactId);
             }
         }
     }

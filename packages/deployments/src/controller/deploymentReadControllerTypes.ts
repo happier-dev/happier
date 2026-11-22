@@ -1,4 +1,4 @@
-import type { DeploymentEnvironmentDetailV1, DeploymentEnvironmentHeaderV1, DeploymentEnvironmentContentV1, DeploymentEnvironmentCollectionV1, DeploymentReceiptHistoryV1, DeploymentReceiptDetailV1, DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
+import type { DeploymentEnvironmentDetailV1, DeploymentEnvironmentHeaderV1, DeploymentEnvironmentContentV1, DeploymentEnvironmentCollectionV1, DeploymentReceiptHistoryV1, DeploymentReceiptPresentationV1, DeploymentReceiptHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentHealthStatusV1, DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
@@ -107,7 +107,10 @@ export type DeploymentReadPageFactsV1 = Readonly<{ hasNextPage: boolean; hasPrev
 export type DeploymentEnvironmentReadCollectionV1 = Omit<DeploymentEnvironmentCollectionV1, 'nextCursor' | 'items'> & DeploymentReadPageFactsV1 & Readonly<{
     items: readonly (DeploymentEnvironmentCollectionV1['items'][number] & Readonly<{ chip: DeploymentChipV1 | null }>)[];
 }>;
-export type DeploymentReceiptReadDetailV1 = DeploymentReceiptDetailV1 & Readonly<{ chip: DeploymentChipV1; facts: DeploymentReceiptFactsV1 }>;
+export type DeploymentReceiptReadDetailV1 = (
+    | (Extract<DeploymentReceiptPresentationV1, { content: null }> & Readonly<{ facts: null }>)
+    | (Exclude<DeploymentReceiptPresentationV1, { content: null }> & Readonly<{ facts: DeploymentReceiptFactsV1 }>)
+) & Readonly<{ chip: DeploymentChipV1 }>;
 export type DeploymentHistoryPageV1 = Omit<DeploymentReceiptHistoryV1, 'nextCursor'> & DeploymentReadPageFactsV1;
 export type DeploymentReadPageLeaseV1<T, PageOption extends string = never> = DeploymentReadLeaseV1<T> & Readonly<{
     nextPage(option?: PageOption): void;

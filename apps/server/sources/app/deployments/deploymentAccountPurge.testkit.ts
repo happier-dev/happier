@@ -1,9 +1,12 @@
 import { randomUUID } from 'node:crypto';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
+import * as blobFiles from '@/storage/blob/files';
 import { deleteAccountForErasure } from '@/app/plugins/data/accountDataErase';
+import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { createDeploymentAcceptedExecution, deploymentAcceptedExecutionColumns } from './deploymentAcceptedExecution';
 import { projectDeploymentReceiptHeader } from './deploymentService';
+import { listDeploymentReceiptsInTx, readDeploymentReceiptInTx } from './deploymentReadService';
 import { DeploymentTeardownProofV1Schema } from '@happier-dev/protocol';
 
 function teardownProof(machine: { id: string; installationId: string | null }, retainedProviderResource: boolean) {
@@ -56,6 +59,7 @@ export function deploymentAccountPurgeCases() {
         { first: 'grantee', separateReceiptArtifact: false },
         { first: 'owner', separateReceiptArtifact: false },
         { first: 'owner', separateReceiptArtifact: true },
+        { first: 'grantee', separateReceiptArtifact: true },
     ] as const)('erases $first first after Rollback and teardown (grantee owns Artifact: $separateReceiptArtifact)', async ({ first, separateReceiptArtifact }) => {
         const f = await fixture(false);
         const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -71,8 +75,9 @@ export function deploymentAccountPurgeCases() {
         const deployed = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
             operation: 'deploy', state: 'succeeded', requestKey: randomUUID(), requestedByAccountId: f.account.id,
             actionOperationId: randomUUID(), requestedAt: new Date(settledAt.getTime() - 2_000), settledAt, ...content } });
+        const privateNote = 'Private grantee Rollback note that must be erased';
         const receiptArtifact = separateReceiptArtifact ? await db.artifact.create({ data: { id: randomUUID(), accountId: grantee.id,
-            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            header: new Uint8Array(), body: new TextEncoder().encode(privateNote), dataEncryptionKey: new Uint8Array(),
             grants: { create: { principalKind: 'account', accountId: f.account.id, accessLevel: 'admin', createdByAccountId: grantee.id } } },
         }) : f.artifact;
         const rollback = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
@@ -88,18 +93,53 @@ export function deploymentAccountPurgeCases() {
             purpose: 'deploy', principalKind: 'account', principalId: grantee.id } });
         await db.projectSource.update({ where: { id: f.source.id }, data: { audience: [], deletedAt: settledAt } });
 
-        if (separateReceiptArtifact) {
-            // The remaining dependency is the grantee's actual private Artifact, rather than authorship.
-            expect(await deleteAccountForErasure({ accountId: grantee.id })).toEqual({ status: 'failed', code: 'account_erasure_deployment_cleanup_required' });
-            expect(await db.account.findUnique({ where: { id: grantee.id }, select: { status: true } })).toEqual({ status: 'active' });
+        if (first === 'grantee' && separateReceiptArtifact) {
+            // The incumbent erasure owner must keep custody and report pending
+            // if the private object store cannot delete the Receipt's bytes.
+            const blobId = randomUUID();
+            const storageKey = `artifacts/${receiptArtifact.id}/${blobId}`;
+            await db.artifactBlob.create({ data: { id: blobId, artifactId: receiptArtifact.id, storageKey,
+                encryptionMode: 'plain', storedSizeBytes: 1n } });
+            const removePrivate = vi.spyOn(blobFiles, 'deletePrivateFile')
+                .mockRejectedValueOnce(new Error('private store unavailable')).mockResolvedValueOnce(undefined);
+            try {
+                expect(await deleteAccountForErasure({ accountId: grantee.id })).toEqual({ status: 'disabled_pending_completion' });
+                expect(await db.artifactBlob.findUnique({ where: { id: blobId } })).not.toBeNull();
+                expect(await db.deployment.findUnique({ where: { id: rollback.id } })).toEqual(rollback);
+                expect(await deleteAccountForErasure({ accountId: grantee.id })).toEqual({ status: 'deleted' });
+                expect(removePrivate.mock.calls).toEqual([[storageKey], [storageKey]]);
+                expect(await db.artifactBlob.findUnique({ where: { id: blobId } })).toBeNull();
+            } finally {
+                removePrivate.mockRestore();
+            }
         }
         const accountOrder = first === 'grantee' ? [grantee.id, f.account.id] : [f.account.id, grantee.id];
-        expect(await deleteAccountForErasure({ accountId: accountOrder[0] })).toEqual({ status: 'deleted' });
+        if (!(first === 'grantee' && separateReceiptArtifact)) {
+            expect(await deleteAccountForErasure({ accountId: accountOrder[0] })).toEqual({ status: 'deleted' });
+        }
         expect(await db.account.findUnique({ where: { id: accountOrder[0] } })).toBeNull();
         if (first === 'grantee') {
             const retained = await db.deployment.findUniqueOrThrow({ where: { id: rollback.id } });
-            expect(retained).toEqual({ ...rollback, requestedByAccountId: null });
-            expect(projectDeploymentReceiptHeader(retained)).toMatchObject({ id: rollback.id, requestedByAccountId: null });
+            const contentArtifactId = separateReceiptArtifact ? null : receiptArtifact.id;
+            expect(retained).toEqual({ ...rollback, requestedByAccountId: null, contentArtifactId });
+            expect(projectDeploymentReceiptHeader(retained)).toMatchObject({
+                id: rollback.id, operation: 'rollback', state: 'succeeded', settledAtMs: settledAt.getTime(),
+                requestedByAccountId: null, contentArtifactId,
+            });
+            expect(await db.account.findUnique({ where: { id: f.account.id }, select: { status: true } })).toEqual({ status: 'active' });
+            if (separateReceiptArtifact) {
+                expect(await db.artifact.findUnique({ where: { id: receiptArtifact.id } })).toBeNull();
+                const serverId = await getOrCreateServerIdentityId();
+                const input = { serverId, environmentId: f.environment.id };
+                const expected = { ...projectDeploymentReceiptHeader(rollback), requestedByAccountId: null, contentArtifactId: null };
+                expect(await readDeploymentReceiptInTx(db, f.account.id, { ...input, deploymentId: rollback.id }))
+                    .toEqual({ ok: true, deployment: expected, cancellable: false });
+                const history = await listDeploymentReceiptsInTx(db, f.account.id, input);
+                expect(history).toMatchObject({ ok: true, items: expect.arrayContaining([expected]) });
+                expect(JSON.stringify(history)).not.toContain(grantee.id);
+                expect(JSON.stringify(history)).not.toContain(privateNote);
+                expect(JSON.stringify(history)).not.toContain(receiptArtifact.id);
+            }
             expect(await db.artifact.findUnique({ where: { id: f.artifact.id } })).toEqual(f.artifact);
         } else {
             expect(await db.deployment.findUnique({ where: { id: rollback.id } })).toBeNull();
@@ -126,6 +166,17 @@ export function deploymentAccountPurgeCases() {
         await db.deployment.update({ where: { id: f.receipt.id }, data: { operation: 'rollback', requestedByAccountId: grantee.id } });
         expect(await deleteAccountForErasure({ accountId: grantee.id })).toEqual({ status: 'failed', code: 'account_erasure_deployment_cleanup_required' });
         expect(await db.account.findUnique({ where: { id: grantee.id }, select: { status: true } })).toEqual({ status: 'active' });
+    });
+
+    it('refuses erasure while the grantee’s private Receipt Artifact is used by running work on another Account', async () => {
+        const f = await fixture(false);
+        const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: grantee.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { contentArtifactId: artifact.id } });
+        expect(await deleteAccountForErasure({ accountId: grantee.id }))
+            .toEqual({ status: 'failed', code: 'account_erasure_deployment_cleanup_required' });
+        expect(await db.artifact.findUnique({ where: { id: artifact.id } })).toEqual(artifact);
     });
 
     it('refuses a retired graph when teardown retained a provider resource', async () => {

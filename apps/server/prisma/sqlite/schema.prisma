@@ -4021,8 +4021,9 @@ model Deployment {
     promotions Deployment[] @relation("DeploymentPromotion")
     approvalId String?
     cancelRequestedAt DateTime?
-    contentArtifactId String
-    contentArtifact Artifact @relation(fields: [contentArtifactId], references: [id], onDelete: Restrict)
+    /// A settled Receipt retains history after the Artifact owner is erased.
+    contentArtifactId String?
+    contentArtifact Artifact? @relation(fields: [contentArtifactId], references: [id], onDelete: SetNull)
     contentHeaderVersion Int
     contentBodyVersion Int
     requestedAt DateTime @default(now())

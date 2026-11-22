@@ -7976,7 +7976,10 @@ and private dependency closure before retirement, then purges the graph after
 blob cleanup and before Artifacts and Machines; see [deployment erasure](deployment.md#account-erasure-03-development).
 In 0.3 development, retained Deployment Receipts report `requestedByAccountId: null`
 after the requester is erased. Earlier development clients require a string.
-Reload their Receipt readers with the server. The actor filter still takes an Account ID.
+Erasing the Account that owns a settled Receipt’s Artifact also clears
+`contentArtifactId`. The read endpoint returns the header and clients show the
+recorded outcome, with details unavailable. Reload the Protocol, SDK, CLI and UI
+Receipt readers with the server. The actor filter still takes an Account ID.
 A typed database failure in the final deletion transaction preserves that partial
 result after the retirement transaction committed. Revocation is immediate. An
 active Home owner resumes cleanup through `home.accounts.delete` for the same

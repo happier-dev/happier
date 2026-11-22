@@ -14824,7 +14824,7 @@ export type DeploymentsActionResultById = {
             requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
-            contentArtifactId: string;
+            contentArtifactId: null | string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
             originRunId?: string | undefined;
@@ -15298,7 +15298,7 @@ export type DeploymentsActionResultById = {
                 requestedByAccountId: null | string;
                 actionOperationId: string;
                 requestedAtMs: number;
-                contentArtifactId: string;
+                contentArtifactId: null | string;
                 contentHeaderVersion: number;
                 contentBodyVersion: number;
                 originRunId?: string | undefined;
@@ -15649,7 +15649,7 @@ export type DeploymentsActionResultById = {
             requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
-            contentArtifactId: string;
+            contentArtifactId: null | string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
             originRunId?: string | undefined;
@@ -15826,7 +15826,7 @@ export type DeploymentsActionResultById = {
             requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
-            contentArtifactId: string;
+            contentArtifactId: null | string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
             originRunId?: string | undefined;
@@ -15953,7 +15953,7 @@ export type DeploymentsActionResultById = {
             requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
-            contentArtifactId: string;
+            contentArtifactId: null | string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
             originRunId?: string | undefined;
@@ -15987,7 +15987,7 @@ export type DeploymentsActionResultById = {
             requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
-            contentArtifactId: string;
+            contentArtifactId: null | string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
             requiredFact: 'deploymentActionResult';

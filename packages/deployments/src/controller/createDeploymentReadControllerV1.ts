@@ -1,5 +1,5 @@
 import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
-import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema, DeploymentReceiptDetailV1Schema, DeploymentReceiptHistoryV1Schema, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentCollectionV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentEnvironmentDetailV1Schema, DeploymentEnvironmentCollectionV1Schema, DeploymentReceiptPresentationV1Schema, DeploymentReceiptHistoryV1Schema, type DeploymentEnvironmentHeaderV1, type DeploymentEnvironmentDetailV1, type DeploymentEnvironmentCollectionV1, type DeploymentReceiptDetailV1, type DeploymentReceiptPresentationV1 } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentProjectionV1 } from '../projection/deploymentStore.js';
 import { deriveDeploymentMemberVersionsV1 } from '../projection/deploymentStepProjection.js';
 import { selectDeploymentRuntimeTargetLinkV1 } from '../projection/deploymentSelectors.js';
@@ -121,7 +121,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         entry.rereadWhenSettled = false;
     }
     function receipt(entry: Entry): DeploymentReceiptDetailV1 | null {
-        return entry.resource.kind === 'receipt' ? entry.projection.getSnapshot().value as DeploymentReceiptDetailV1 | null : null;
+        if (entry.resource.kind !== 'receipt') return null;
+        const detail = entry.projection.getSnapshot().value as DeploymentReceiptReadDetailV1 | null;
+        return detail?.content ? detail : null;
     }
     function withMemberVersions(detail: DeploymentEnvironmentDetailV1): DeploymentEnvironmentReadDetailV1 {
         const link = selectDeploymentRuntimeTargetLinkV1(detail);
@@ -202,8 +204,9 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             }) };
         }
         if (entry.resource.kind === 'receipt') {
-            const detail = value as DeploymentReceiptDetailV1;
-            value = { ...detail, chip: projectDeploymentChipV1(detail.deployment), facts: projectDeploymentReceiptFactsV1(detail) };
+            const detail = value as DeploymentReceiptPresentationV1;
+            value = { ...detail, chip: projectDeploymentChipV1(detail.deployment),
+                facts: detail.content === null ? null : projectDeploymentReceiptFactsV1(detail) };
         }
         if (entry.resource.kind === 'collection') {
             const page = value as DeploymentEnvironmentCollectionV1;
@@ -513,7 +516,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
                 key: JSON.stringify(['receipt', environmentId, deploymentId]), kind: 'receipt', environmentId, deploymentId,
                 read: signal => transport.readReceipt(scope, environmentId, deploymentId, { signal }),
                 admit(value) {
-                    const detail = DeploymentReceiptDetailV1Schema.parse(value);
+                    const detail = DeploymentReceiptPresentationV1Schema.parse(value);
                     if (detail.deployment.environmentId !== environmentId || detail.deployment.id !== deploymentId) throw new Error('Foreign receipt');
                     return detail;
                 },

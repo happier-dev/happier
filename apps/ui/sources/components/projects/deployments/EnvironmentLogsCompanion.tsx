@@ -107,7 +107,7 @@ export function EnvironmentLogsCompanion(
           environmentId={props.environmentId}
           service={serviceName}
         />
-      ) : value ? (
+      ) : value?.content ? (
         <ItemList testID="environment-logs.build">
           <DeploymentUploadProvenance testID="environment-logs.build.upload"
             provenance={value.content.platform?.observation.uploadProvenance} />

@@ -58,6 +58,35 @@ describe('retained stored deployment source', () => {
     vi.unstubAllGlobals();
   });
 
+  it('renders the retained Rollback outcome and removed author without a details error', async () => {
+    const serverId = await homes.addHome({ name: 'Home', serverUrl: 'https://receipt-history.test',
+      serverIdentityId: `srv_${'a'.repeat(32)}`, accountId: 'account-owner', currentAccount: true });
+    const environment = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+    const deployment = { ...createDeploymentReceiptDetailV1().deployment, environmentId: environment.environment.id,
+      operation: 'rollback', state: 'succeeded', contentArtifactId: null, requestedByAccountId: null };
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner' }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: environment }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [deployment], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: { deployment, content: null } }),
+    } });
+    try {
+      const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller}
+        environmentId={environment.environment.id} deploymentId={deployment.id} environmentName="Staging"
+        demand={{ mounted: true, visible: true, focused: true }} accountId="account-owner" serverId={serverId}
+        readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null} phone={false} linkPath={null}
+        review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      await waitForReceipt(screen);
+      const text = screen.getTextContent();
+      expect(text).toContain(t('projects.deployments.receipt.operationRollback'));
+      expect(text).toContain('Removed person');
+      expect(text).toContain('Receipt details were removed with their owner’s account.');
+      expect(screen.findAllByType(SurfaceStateCard)).toHaveLength(0);
+    } finally {
+      controller.retire();
+    }
+  });
+
   it.each(['current', 'historical', 'other-target', 'pending-domain', 'other-service', 'no-share', 'platform', 'platform-no-share'] as const)(
     'exposes only the current native serving address and available share sheet: %s', async scenario => {
       const share = vi.fn(async () => {});

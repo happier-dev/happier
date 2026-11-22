@@ -7,7 +7,7 @@ import { DeploymentIdentifierV1Schema } from '../artifacts/deploymentIdentity.js
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { DeploymentReviewRevisionV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DeploymentCancellationConsequenceV1Schema, type DeploymentCancellationConsequenceV1 } from '@happier-dev/protocol/deployments/deploymentStateV1';
-import { DeploymentControllerAvailabilityV1Schema, type DeploymentReceiptGetInputV1, type DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentControllerAvailabilityV1Schema, hasDeploymentReceiptContentV1, type DeploymentReceiptGetInputV1, type DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
@@ -90,13 +90,22 @@ export const DeploymentEnvironmentDetailV1Schema = z.strictObject({
 export type DeploymentEnvironmentDetailV1 = z.infer<typeof DeploymentEnvironmentDetailV1Schema>;
 
 export const DeploymentReceiptDetailV1Schema = z.strictObject({
-    deployment: DeploymentReceiptHeaderV1Schema,
+    deployment: z.safeExtend(DeploymentReceiptHeaderV1Schema, { contentArtifactId: DeploymentIdentifierV1Schema }),
     content: DeploymentContentV1Schema,
     /** Supplied by the admitted receipt read, not private Artifact content or a client-side permission check. */
     cancellable: z.optional(z.boolean()),
     cancellationConsequence: z.optional(DeploymentCancellationConsequenceV1Schema),
 });
 export type DeploymentReceiptDetailV1 = z.infer<typeof DeploymentReceiptDetailV1Schema>;
+
+export const DeploymentReceiptPresentationV1Schema = z.union([
+    DeploymentReceiptDetailV1Schema,
+    z.strictObject({
+        deployment: z.safeExtend(DeploymentReceiptHeaderV1Schema, { contentArtifactId: z.null() }),
+        content: z.null(),
+    }),
+]);
+export type DeploymentReceiptPresentationV1 = z.infer<typeof DeploymentReceiptPresentationV1Schema>;
 
 type DeploymentReceiptActionSuccessV1 = Extract<z.infer<typeof DeploymentReceiptGetResultV1Schema>, { ok: true }>;
 
@@ -111,6 +120,7 @@ export async function readDeploymentReceiptActionFactsV1(
         && deployment.environmentId !== address.environmentId) {
         return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
     }
+    if (!hasDeploymentReceiptContentV1(deployment)) return receipt;
     const opened = await open(deployment);
     if ('errorCode' in opened) return opened;
     const { sourceIntent, failure: recorded, platform } = opened.content;

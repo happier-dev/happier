@@ -645,7 +645,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 // Recovery records its reason through the same atomic receipt
                 // Artifact update as ordinary transitions.
                 const prepared = content ? await (async () => {
-                    const resource = await atHome(() => artifacts.readForUpdate(receipt.contentArtifactId, {
+                    const artifactId = receipt.contentArtifactId;
+                    if (artifactId === null) return failure('deployment_content_unavailable');
+                    const resource = await atHome(() => artifacts.readForUpdate(artifactId, {
                         signal: request.context.signal, prepareRecipients: false, includeSharedAudience: false,
                         authorizationHeaders: artifactAuthorization(request.context) }));
                     if (!resource) return failure('deployment_content_unavailable');

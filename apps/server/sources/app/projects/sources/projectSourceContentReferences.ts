@@ -39,11 +39,13 @@ export function projectSourceContentTeamCustodyLevels(storedKind: string): Resou
 
 /** Existing private-content relations only; ordinary Source attachments keep independent Artifact access. */
 export async function readProjectSourceContentReferencesInTx(tx: Tx,
-    input: Readonly<{ sourceIds: readonly string[] }> | Readonly<{ artifactIds: readonly string[] }>,
+    input: Readonly<{ sourceIds: readonly string[] }>
+        | Readonly<{ artifactIds: readonly string[]; receiptStates?: readonly string[] }>,
 ): Promise<ProjectSourceContentReference[]> {
     const references: ProjectSourceContentReference[] = [];
+    const receiptStates = 'artifactIds' in input ? input.receiptStates : undefined;
     for (const ids of portableQueryChunks({ values: [...new Set('sourceIds' in input ? input.sourceIds : input.artifactIds)],
-        bindingsPerValue: 1, fixedBindings: 1 })) {
+        bindingsPerValue: 1, fixedBindings: 1 + (receiptStates?.length ?? 0) })) {
         const sourceWhere = 'sourceIds' in input ? { projectSourceId: { in: [...ids] } } : {};
         const artifactWhere = 'artifactIds' in input ? { contentArtifactId: { in: [...ids] } } : {};
         const environmentWhere = 'sourceIds' in input ? { environment: sourceWhere } : {};
@@ -54,7 +56,8 @@ export async function readProjectSourceContentReferencesInTx(tx: Tx,
                 select: { projectSourceId: true, ...contentSelect } }),
             tx.deploymentTargetLink.findMany({ where: { ...environmentWhere, ...artifactWhere },
                 select: { environment: { select: { projectSourceId: true } }, ...contentSelect } }),
-            tx.deployment.findMany({ where: { ...environmentWhere, ...artifactWhere },
+            tx.deployment.findMany({ where: { ...environmentWhere, ...artifactWhere,
+                ...(receiptStates ? { state: { in: [...receiptStates] } } : {}) },
                 select: { environment: { select: { projectSourceId: true } }, ...contentSelect } }),
             tx.deploymentDomain.findMany({ where: { ...environmentWhere, ...artifactWhere },
                 select: { environment: { select: { projectSourceId: true } }, ...contentSelect } }),
@@ -70,7 +73,9 @@ export async function readProjectSourceContentReferencesInTx(tx: Tx,
             [receipts, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1],
             [domains, DEPLOYMENT_DOMAIN_ARTIFACT_STORED_KIND_V1],
         ] as const) for (const { environment, ...content } of rows) {
-            references.push({ ...content, projectSourceId: environment.projectSourceId, expectedStoredKind });
+            if (content.contentArtifactId !== null) {
+                references.push({ ...content, contentArtifactId: content.contentArtifactId, projectSourceId: environment.projectSourceId, expectedStoredKind });
+            }
         }
     }
     return references;

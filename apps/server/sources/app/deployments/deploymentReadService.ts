@@ -1,4 +1,4 @@
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, projectDeploymentControllerAvailabilityV1,
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema, projectDeploymentControllerAvailabilityV1, hasDeploymentReceiptContentV1,
     type DeploymentEnvironmentAccessInputV1, type DeploymentEnvironmentAccessResultV1, type DeploymentEnvironmentControllerResultV1,
     type DeploymentEnvironmentGetInputV1, type DeploymentReceiptGetInputV1,
     type DeploymentEnvironmentListInputV1, type DeploymentReceiptListInputV1, DeploymentStateV1Schema } from '@happier-dev/protocol';
@@ -272,14 +272,15 @@ export async function readDeploymentReceiptInTx(tx: Tx, actorAccountId: string,
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, row.environmentId, authentication,
         acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id));
     if (!loaded.ok) return loaded;
-    const contentFailure = acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id)
+    const hasContent = hasDeploymentReceiptContentV1(row);
+    const contentFailure = !hasContent || acceptedRead?.contentCustody && acceptedEnvironmentRead(acceptedRead, row.environmentId, row.id)
         ? null : await admitDeploymentStoredContentInTx(tx, actorAccountId, loaded.admission.owner, row, DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, 'read');
     if (contentFailure) return contentFailure;
     const deployment = projectDeploymentReceiptHeader(row);
     return DeploymentReceiptGetResultV1Schema.parse({ ok: true, deployment,
         // Same Source admission and lifecycle rule as requestCancelDeploymentInTx.
         // This is presentation, not a second authority or an admission proof.
-        cancellable: canDeployDeploymentEnvironment(loaded.admission, loaded.row)
+        cancellable: hasContent && canDeployDeploymentEnvironment(loaded.admission, loaded.row)
             && deployment.cancelRequestedAtMs === undefined && canTransitionDeploymentV1(deployment.state, 'outcome_unknown') });
 }
 

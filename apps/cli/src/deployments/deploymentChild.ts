@@ -7,6 +7,7 @@ import { DeploymentChildRpcV1Schema, DeploymentReceiptGetResultV1Schema, Deploym
     type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps, type DeploymentPromoteInputV1 } from '@happier-dev/protocol';
 import { createActionExecuteFailureError, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import { DeploymentOwnServerContentV1Schema, type DeploymentContentV1 } from '@happier-dev/deployments/contracts/v1';
@@ -155,6 +156,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
                 || job.actionId === 'deployments.deploy' && semanticRoot) {
                 // Stages advance the Artifact versions but never its stable id.
                 // Build consumes this same admitted header and opened content.
+                if (!hasDeploymentReceiptContentV1(deployment)) return failure('deployment_content_unavailable');
                 const current = readDeploymentReceiptArtifactV1(deployment, await open(deployment.contentArtifactId, context));
                 if (!current.ok) return failure(current.error, current);
                 if (job.actionId === 'deployments.deploy') await admitSource(current.content, true, environment);

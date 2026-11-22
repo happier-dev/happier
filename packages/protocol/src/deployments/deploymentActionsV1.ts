@@ -218,9 +218,15 @@ export const DeploymentReceiptMetadataV1Schema = lazyZodSchema(() => z.strictObj
       .every(parentId => parentId !== receipt.id),
   { message: 'Receipt chronology and lineage must refer to earlier work.' })));
 export const DeploymentReceiptHeaderV1Schema = lazyZodSchema(() => z.extend(DeploymentReceiptMetadataV1Schema,
-  DeploymentArtifactContentReferenceV1Schema.shape));
+  { ...DeploymentArtifactContentReferenceV1Schema.shape, contentArtifactId: z.nullable(DeploymentIdentifierV1Schema) }));
 export type DeploymentEnvironmentHeaderV1 = z.infer<typeof DeploymentEnvironmentHeaderV1Schema>;
 export type DeploymentReceiptHeaderV1 = z.infer<typeof DeploymentReceiptHeaderV1Schema>;
+/** Retained history can outlive the Account that owned the private Receipt Artifact. */
+export function hasDeploymentReceiptContentV1<T extends { contentArtifactId: string | null }>(
+  receipt: T,
+): receipt is T & { contentArtifactId: string } {
+  return receipt.contentArtifactId !== null;
+}
 const home = { serverId: DeploymentIdentifierV1Schema };
 const environment = { ...home, environmentId: DeploymentIdentifierV1Schema, expectedRevision: DeploymentRevisionV1Schema };
 const intent = { requestKey: DeploymentIdentifierV1Schema };

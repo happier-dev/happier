@@ -130,7 +130,8 @@ function DeploymentDispositionSheet(
   const blockedId = blocked.success && blocked.data.error === 'deployment_in_progress' ? blocked.data.deploymentId : null;
   const blockedReceipt = useReceiptRead(props.recovery?.controller ?? null,
     props.recovery?.environmentId ?? null, blockedId, PRESENTED);
-  const cancellation = useDeploymentCancellation({ receipt: blockedId ? blockedReceipt.snapshot.value : null,
+  const blockedValue = blockedReceipt.snapshot.value;
+  const cancellation = useDeploymentCancellation({ receipt: blockedId && blockedValue?.content ? blockedValue : null,
     cancel: props.recovery?.cancel ?? null, review: props.recovery?.review ?? NO_REVIEW,
     onOpenReceipt: props.recovery?.onOpenReceipt ?? (() => {}) });
   const machine = keepNamesWhole(props.provider ?? props.machine ?? t('projects.deployments.aMachine'));

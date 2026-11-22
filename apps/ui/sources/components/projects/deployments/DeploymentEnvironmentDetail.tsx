@@ -328,8 +328,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         && target.targetId === platformRef.localId) : undefined;
     const platformRuntime = React.useMemo<Extract<PluginUiHostReadReferenceV1, { hostRead: 'deployments.logs' }> | undefined>(() => {
       const receipt = active.snapshot.value;
-      const providerDeploymentId = receipt?.content.platform?.observation.providerDeploymentId;
-      const reference = receipt?.facts.logs[0]?.reference;
+      const providerDeploymentId = receipt?.content?.platform?.observation.providerDeploymentId;
+      const reference = receipt?.facts?.logs[0]?.reference;
       if (!platform?.runtimeLogs || !providerDeploymentId || !reference) return undefined;
       return { hostRead: 'deployments.logs', sourceRevision: providerDeploymentId,
         input: { ...reference, kind: 'runtime', serverId: props.serverId } };
@@ -493,7 +493,8 @@ export const DeploymentEnvironmentDetail = React.memo(
 
     const machineName = (machineId: string) =>
       machineNames[machineId] ?? t('projects.deployments.aMachine');
-    const activeReceipt = active.snapshot.value;
+    const activeValue = active.snapshot.value;
+    const activeReceipt = activeValue?.content ? activeValue : null;
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // What serves is live at its address; a first deploy that serves ends there (P60 §1 step 5): its address
     // leads the page and Open is the one primary until the Environment has deployed again.
@@ -569,7 +570,7 @@ export const DeploymentEnvironmentDetail = React.memo(
       await press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), ...(sourceMethod ? { sourceMethod } : {}) }));
     };
     const liveSha =
-      active.snapshot.value?.content.sourceIntent?.kind === 'repository'
+      active.snapshot.value?.content?.sourceIntent?.kind === 'repository'
         ? active.snapshot.value.content.sourceIntent.sha
         : null;
     const pressRedeploy = async () => {
@@ -737,7 +738,7 @@ export const DeploymentEnvironmentDetail = React.memo(
     } : null;
     // Restore a backup: the pre-migration dump the serving deploy kept, read from the active receipt the page
     // already holds. The restore Action decides admission at each press.
-    const servingReceipt = active.snapshot.value;
+    const servingReceipt = activeReceipt;
     const fleetLink = runtime?.targetKind === 'ownServer' && runtime.source.kind === 'host'
       ? { ...runtime, source: runtime.source } : null;
     const openFleet = lifetime && detail.environment.capabilities.manageTargets && fleetLink
@@ -1101,7 +1102,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={() => openTab('settings')}
                 onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
                   ? () => openTab('settings') : null} /> : null}
-              {active.snapshot.value?.content.sourceIntent ? <DeploymentVersionComparison
+              {active.snapshot.value?.content?.sourceIntent ? <DeploymentVersionComparison
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
@@ -1183,7 +1184,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               {detail.content.definition.kind === 'repository' ? <DeploymentPullRequestDeploy
                 key={`${props.serverId}:${props.accountId}:${detail.environment.projectSourceId}:${projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision}:${props.workspaceRef?.id}`}
                 workspaceRef={props.workspaceRef} projectSourceId={detail.environment.projectSourceId}
-                checkoutLedByVersion={active.snapshot.value?.content.sourceIntent?.kind === 'repository'}
+                checkoutLedByVersion={active.snapshot.value?.content?.sourceIntent?.kind === 'repository'}
                 sourceRevision={projectSource.source?.source.revision ?? props.workspaceRef?.source?.revision ?? null}
                 compose={detail.content.definition.compose} serverId={props.serverId} accountId={props.accountId}
                 disabled={!ready || deployBlocked} onDeploy={async sourceIntent => {
@@ -1308,7 +1309,7 @@ export const DeploymentEnvironmentDetail = React.memo(
             <DeploymentDomainsPanel
               environment={detail.environment}
               builtInUrls={detail.builtInUrls ?? undefined}
-              runtimeProjections={active.snapshot.value?.content.ownServer?.approvedInputBasis.runtimeProjections}
+              runtimeProjections={active.snapshot.value?.content?.ownServer?.approvedInputBasis.runtimeProjections}
               controller={props.controller}
               environmentId={props.environmentId}
               healthSetup={props.lifetime && controllerMachineId
@@ -1701,8 +1702,11 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
   // A settled success says nothing; trouble and work in progress lead the facts line in their tone. "Running, not
   // verified" is about what serves now, so only the live row says it; a superseded run reads as the run it was (D17).
   const settledPast = !props.live && receipt.state === 'running_unverified';
+  const headerOnly = receipt.contentArtifactId === null;
   const lead = receipt.title && !settledPast ? deploymentHistoryLead(receipt, receipt.failure) : null;
-  const facts = props.actor ? [props.actor] : [];
+  const actor = headerOnly && receipt.requestedByAccountId === null ? t('projects.deployments.receipt.removedPerson') : props.actor;
+  const facts = actor ? [actor] : [];
+  if (headerOnly) facts.unshift(deploymentStateLabel(receipt.state));
   // A phone keeps the title's width: duration and age join the facts line instead of a right column.
   if (props.phone) facts.push(...(duration !== null ? [formatElapsedDuration(duration)] : []), age);
   // A failed or running deploy shows where it is or stopped (dHist): the compact strip with its caption. A settled
@@ -1721,7 +1725,7 @@ const DeploymentReceiptRow = React.memo(function DeploymentReceiptRow(
       // The receipt's own title names what was deployed; without one its state is the title.
       // What the operation did to which version ("Rolled back to 302cf72"), so same-revision rows read apart.
       title={receipt.source ? deploymentReceiptTitle(receipt, deploymentRevisionLabel(receipt.source))
-        : receipt.title ?? deploymentStateLabel(receipt.state)}
+        : receipt.title ?? (headerOnly ? deploymentOperationLabel(receipt.operation) : deploymentStateLabel(receipt.state))}
       accessibilityRole="button"
       titleAccessory={
         props.live ? (

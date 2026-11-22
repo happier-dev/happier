@@ -18,13 +18,19 @@ lineage refuses the purge without deleting part of the graph. The HTTP 409 code 
 shared dependencies before retrying.
 
 Settled Receipts belong to their Environment's history. Erasing the requester
-clears their attribution from retained Receipts. If the requester
-owns a private Artifact still referenced by a foreign Environment, its content
-dependency remains. Once that Environment is retired and unshared, its owner
-can erase the Environment and Receipt without touching the foreign Artifact.
-The Artifact can then be erased with its own Account. This requires no transfer
-of Artifact ownership, keys or content. A 0.3 server migration makes Receipt
-attribution nullable and asks the database to clear it when the Account is erased.
+clears their attribution. Erasing the Account that owns a settled Receipt's
+private Artifact deletes the Artifact and clears the Receipt's content reference.
+The retained header records the operation, outcome and dates. Receipt detail
+shows that the private details were removed. Failed private-object cleanup
+leaves Account erasure pending so it can be retried.
+
+After teardown and sharing withdrawal, either Account can erase first. If the
+Environment owner goes first, their Receipts disappear with the Environment
+and the other Account keeps its own Artifact until it erases. In-progress
+Receipts still require their Artifact and can block erasure. The 0.3 development
+server migrations make both requester attribution and Receipt content custody
+nullable. Clients on the same cut can read the retained header without an
+Artifact.
 
 ## Browser exception setup (0.3 development)
 

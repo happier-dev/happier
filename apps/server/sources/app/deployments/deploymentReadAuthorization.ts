@@ -19,6 +19,7 @@ import { admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
 type DeploymentTargetAuthorization = Readonly<{ ok: true; artifactIds: readonly string[];
     deploymentDatabaseEditor?: ExternalActionExecutionAuthorizationBindingV1['deploymentDatabaseEditor'];
@@ -84,7 +85,8 @@ export async function readAdmittedDeploymentReadScopeInTx(tx: Tx,
         tx.deployment.findFirst({ where: { id: deploymentId, environmentId: admission.environmentId },
             select: { ...select, targetLinkId: true } }),
     ]);
-    if (!environment || !receipt || admission.targetLinkId !== undefined && receipt.targetLinkId !== admission.targetLinkId) return null;
+    if (!environment || !receipt || !hasDeploymentReceiptContentV1(receipt)
+        || admission.targetLinkId !== undefined && receipt.targetLinkId !== admission.targetLinkId) return null;
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: receipt.targetLinkId, environmentId: admission.environmentId }, select });
     return link ? { artifactContents: [environment, link, receipt] } : null;
 }
@@ -217,22 +219,23 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             || !copy && !link.machines.some(member => member.machineId === admission.machineId
                 && member.installationId === admission.installationId && member.state === 'active')) return null;
     }
-    let artifactIds = [environment.contentArtifactId, link.contentArtifactId, receipt.contentArtifactId];
+    const receiptContents = !copy && hasDeploymentReceiptContentV1(receipt) ? [receipt] : [];
+    if (!copy && !receiptContents.length) return null;
+    let artifactIds = [environment.contentArtifactId, link.contentArtifactId, ...receiptContents.map(row => row.contentArtifactId)];
     if (scope.target === 'restore_receipt') {
         const active = link.activeDeploymentId ? await tx.deployment.findFirst({ where: { id: link.activeDeploymentId,
             environmentId: environment.id, targetLinkId: link.id },
             select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } }) : null;
-        if (!active) return null;
+        if (!active || !hasDeploymentReceiptContentV1(active)) return null;
         if (contentAdmission) {
             const failures = await admitDeploymentStoredContentsInTx(tx, contentAdmission.actorAccountId, contentAdmission.owner, [
                 { reference: environment, expectedStoredKind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1, access: 'read' },
                 { reference: link, expectedStoredKind: DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, access: 'read' },
-                ...(copy ? [active] : [receipt, active]).map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
+                ...[...receiptContents, active].map(reference => ({ reference, expectedStoredKind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1, access: 'read' as const })),
             ]);
             if (failures.some(failure => failure !== null)) return null;
         }
-        artifactIds = [environment.contentArtifactId, link.contentArtifactId,
-            ...(copy ? [] : [receipt.contentArtifactId]), active.contentArtifactId];
+        artifactIds.push(active.contentArtifactId);
     }
     // Historical logs deliberately do not infer captured build placement from
     // today's builder or active head. Their native owner proves that private fact.

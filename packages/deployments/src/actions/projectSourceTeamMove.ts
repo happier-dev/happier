@@ -100,7 +100,7 @@ export async function readProjectSourceTeamMoveInventoryV1(account: ProjectSourc
     if (!defaults.ok) refuse(defaults.error);
     if (defaults.sourceRevision !== source.revision || defaults.projectSourceId !== source.id) refuse('source_conflict');
     const artifacts = [...new Set(environments.flatMap(detail => [detail.environment.contentArtifactId,
-        ...detail.targetLinks.map(link => link.contentArtifactId), ...detail.receipts.map(receipt => receipt.contentArtifactId)])
+        ...detail.targetLinks.map(link => link.contentArtifactId), ...detail.receipts.flatMap(receipt => receipt.contentArtifactId ?? [])])
         .concat(defaults.content ? [defaults.content.contentArtifactId] : []))];
     // Only Environment bodies supply Move operands. The existing sharing writer
     // opens every other Artifact when it prepares that grant's recipients.

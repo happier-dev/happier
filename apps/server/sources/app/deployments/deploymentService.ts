@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { DeploymentReceiptHeaderV1Schema, DeploymentReceiptResultV1Schema, DeploymentTeardownDispositionV1Schema, computeDeploymentTransitionRequestDigestV1,
+    hasDeploymentReceiptContentV1,
     selectDeploymentTeardownDomainScopeV1,
     type DeploymentDeployAdmissionInputV1, type DeploymentRollbackAdmissionInputV1, type DeploymentPromoteAdmissionInputV1, type DeploymentTeardownAdmissionInputV1, type DeploymentTransitionInputV1,
     type DeploymentCancelInputV1, type DeploymentCancelTransitionInputV1 } from '@happier-dev/protocol';
@@ -50,7 +51,8 @@ export function projectDeploymentReceiptHeader(row: Receipt) {
     return DeploymentReceiptHeaderV1Schema.parse({
         v: 1, id: row.id, environmentId: row.environmentId, targetLinkId: row.targetLinkId, revision: row.revision,
         operation: row.operation, state: row.state, requestKey: row.requestKey, requestedByAccountId: row.requestedByAccountId,
-        actionOperationId: row.actionOperationId, ...deploymentContentReference(row),
+        actionOperationId: row.actionOperationId, contentArtifactId: row.contentArtifactId,
+        contentHeaderVersion: row.contentHeaderVersion, contentBodyVersion: row.contentBodyVersion,
         ...(row.originRunId ? { originRunId: row.originRunId } : {}),
         ...(acceptedExecution ? { acceptedExecution } : {}),
         ...(row.predecessorDeploymentId ? { predecessorDeploymentId: row.predecessorDeploymentId } : {}),
@@ -73,6 +75,7 @@ function receiptResult(row: Pick<Receipt, 'id' | 'environmentId' | 'revision' | 
 
 /** Submitted content versions describe the incumbent receipt; only the Artifact writer advances them. */
 function transitionContentReference(row: Receipt, input: DeploymentTransitionInputV1) {
+    if (!hasDeploymentReceiptContentV1(row)) return null;
     if (input.contentArtifactId !== undefined && input.contentArtifactId !== row.contentArtifactId) return null;
     const reference = input.contentArtifactId !== undefined && input.contentHeaderVersion !== undefined && input.contentBodyVersion !== undefined
         ? deploymentContentReference({ contentArtifactId: input.contentArtifactId, contentHeaderVersion: input.contentHeaderVersion, contentBodyVersion: input.contentBodyVersion })

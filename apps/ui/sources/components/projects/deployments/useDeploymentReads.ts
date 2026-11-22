@@ -195,7 +195,7 @@ export function useEnvironmentBackupSummary(controller: DeploymentReadController
     receiptId: string | null, demand: DeploymentReadDemandV1, backupId?: string | null) {
     const read = useReceiptRead(controller, environmentId, receiptId, demand);
     const receipt = read.snapshot.value;
-    const capture = receipt?.content.ownServer?.preMigrationBackup;
+    const capture = receipt?.content?.ownServer?.preMigrationBackup;
     const summary: DeploymentRetainedBackupSummary | null = receipt && capture
         && (backupId == null || capture.source.snapshot.snapshotId === backupId)
         ? { deploymentId: receipt.deployment.id, targetLinkId: receipt.deployment.targetLinkId,
@@ -286,14 +286,15 @@ export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | nu
     const detail = environment.snapshot.value;
     const runtime = detail?.runtimeTargetLink;
     const value = read.snapshot.value;
-    const selection = React.useMemo(() => value && detail && runtime && history.snapshot.status === 'ready' && history.snapshot.value
+    const selection = React.useMemo(() => value?.facts && detail && runtime && history.snapshot.status === 'ready' && history.snapshot.value
         ? selectDeploymentReceiptRetainedHistoryV1({ receipt: value.deployment, items: history.snapshot.value.items,
             complete: !history.snapshot.value.hasNextPage && history.snapshot.value.coverage !== 'partial',
             runtime, targetLinks: detail.targetLinks.map(row => row.targetLink),
             retainPreviousDeployments: detail.content.retainPreviousDeployments, placement: value.facts.placement }) : null,
     [value, detail, runtime, history.snapshot]);
-    const snapshot = React.useMemo(() => !value ? read.snapshot : { ...read.snapshot, value: { ...value,
-        facts: selection ? { ...value.facts, ...selection } : value.facts } }, [read.snapshot, value, selection]);
+    const snapshot = React.useMemo(() => !value?.facts || !selection ? read.snapshot
+        : { ...read.snapshot, value: { ...value, facts: { ...value.facts, ...selection } } },
+    [read.snapshot, value, selection]);
     return { ...read, snapshot, retainedHistory: history.snapshot, environmentSnapshot: environment.snapshot, healthFeed: detail?.healthFeed ?? null,
         refresh: React.useCallback(() => Promise.all([read.refresh(), environment.refresh(), history.refresh()]).then(() => {}),
             [read.refresh, environment.refresh, history.refresh]) };
@@ -302,7 +303,7 @@ export function useDeploymentReceipt(controller: DeploymentReadControllerV1 | nu
 export type EnvironmentRollbackMenuResult =
     | Readonly<{ status: 'idle' | 'loading' | 'empty' }>
     | Readonly<{ status: 'unavailable'; reason: string; retryable: boolean }>
-    | Readonly<{ status: 'ready'; target: NonNullable<NonNullable<ReturnType<typeof useDeploymentReceipt>['snapshot']['value']>['facts']['retainedRollbackTarget']>;
+    | Readonly<{ status: 'ready'; target: NonNullable<NonNullable<NonNullable<ReturnType<typeof useDeploymentReceipt>['snapshot']['value']>['facts']>['retainedRollbackTarget']>;
         input: DeploymentUiRollbackInput }>;
 
 /** Menus share the receipt owner's retained target. Closed menus acquire no record or history leases.

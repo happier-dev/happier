@@ -29,7 +29,9 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     if (await tx.deployment.findFirst({ where: { requestedByAccountId: accountId, state: { in: busy } },
         select: { id: true } })) return refused();
     const artifacts = await tx.artifact.findMany({ where: { accountId }, select: { id: true } });
-    const references = await readProjectSourceContentReferencesInTx(tx, { artifactIds: artifacts.map(row => row.id) });
+    // The database clears settled Receipt references when their Artifact is
+    // erased. Only Receipts still holding work add Sources to the closure.
+    const references = await readProjectSourceContentReferencesInTx(tx, { artifactIds: artifacts.map(row => row.id), receiptStates: busy });
     const authored = await tx.deploymentEnvironment.findMany({ where: { createdByAccountId: accountId },
         select: { projectSourceId: true } });
     const ownedSources = await tx.projectSource.findMany({ where: { createdByAccountId: accountId } });
@@ -79,7 +81,7 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const definitionArtifactIds = new Set([...environments.map(row => row.contentArtifactId), ...links.map(row => row.contentArtifactId),
         ...environments.flatMap(row => row.domains.map(domain => domain.contentArtifactId)),
         ...sources.flatMap(row => row.deploymentDefaults?.contentArtifactId ? [row.deploymentDefaults.contentArtifactId] : [])]);
-    const artifactIds = [...new Set([...definitionArtifactIds, ...receipts.map(row => row.contentArtifactId)])];
+    const artifactIds = [...new Set([...definitionArtifactIds, ...receipts.flatMap(row => row.contentArtifactId ?? [])])];
     for (const source of sources) {
         if (!source.deploymentDefaults && source.deploymentEnvironments.length === 0) continue;
         const parsed = sourceFromRow(source);
@@ -132,7 +134,7 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
                 || row.keyEnvelopes.some(envelope => envelope.recipientAccountId !== accountId)) return refused();
             ownedIds.push(row.id);
         }
-        const refs = await readProjectSourceContentReferencesInTx(tx, { artifactIds: ownedIds });
+        const refs = await readProjectSourceContentReferencesInTx(tx, { artifactIds: ownedIds, receiptStates: busy });
         if (refs.some(ref => !sourceIds.has(ref.projectSourceId))) return refused();
         purgeArtifactIds.push(...ownedIds);
     }

@@ -4,7 +4,8 @@ import type { ActionExecutorContext, DeploymentReceiptGetResultV1Schema } from '
 import { readDeploymentReceiptArtifactV1 } from '@happier-dev/deployment-protocol';
 import { type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1, DeploymentOwnServerContentV1Schema, isDeploymentSettledV1, projectDeploymentCancellationConsequenceV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
-import { DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentReceiptListResultV1Schema, hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { deploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 
 type ReceiptHistoryPages = Readonly<{
     environmentId: string;
@@ -33,6 +34,7 @@ export async function* readOwnServerDeploymentReceiptHistoryForHost(input: Recei
     open(deployment: DeploymentReceiptHeaderV1): Promise<DeploymentReceiptDetailV1>;
 }>) {
     for await (const deployment of readDeploymentReceiptHistoryHeadersForHost(input)) {
+        if (!hasDeploymentReceiptContentV1(deployment)) continue;
         let receipt: DeploymentReceiptDetailV1;
         if (deployment.operation === 'teardown' || !isDeploymentSettledV1(deployment.state)) {
             receipt = await input.readCurrent(deployment.id);
@@ -54,6 +56,7 @@ export async function openDeploymentReceiptForHost(deployment: DeploymentReceipt
         open(artifactId: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
         assertCurrent(context: ActionExecutorContext): Promise<void>;
     }>): Promise<DeploymentReceiptDetailV1> {
+    if (!hasDeploymentReceiptContentV1(deployment)) return refuseDeploymentArtifactRead(deploymentArtifactReadFailureV1('missing'));
     const content = readDeploymentReceiptArtifactV1(deployment, await host.open(deployment.contentArtifactId, context));
     if (!content.ok) return refuseDeploymentArtifactRead(content);
     await host.assertCurrent(context);

@@ -173,19 +173,21 @@ it.each(['delete', 'unlink'] as const)('allows %s with explicit detach after Sto
 it('publishes receipt cancellation availability from the admitted lifecycle owner without changing protected content', async () => {
     const f = await fixture();
     const receipt = await f.receipt('running');
+    const artifactId = receipt.contentArtifactId;
+    if (!artifactId) throw new Error('Expected the running Receipt to have private content');
     const input = { serverId, environmentId: f.environment.id, deploymentId: receipt.id };
     const read = (actor = f.owner.id) => inTx(tx => readDeploymentReceiptInTx(tx, actor, input));
     expect(await read()).toMatchObject({ ok: true, cancellable: true });
-    await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: receipt.contentArtifactId, accountId: f.reader.id,
+    await db.artifactGrant.create({ data: { principalKind: 'account', artifactId, accountId: f.reader.id,
         accessLevel: 'view', createdByAccountId: f.owner.id } });
     expect(await read(f.reader.id)).toMatchObject({ ok: true, cancellable: false });
     expect(await read(f.foreign.id)).toMatchObject({ ok: false });
-    const contentBefore = await db.artifact.findUniqueOrThrow({ where: { id: receipt.contentArtifactId } });
+    const contentBefore = await db.artifact.findUniqueOrThrow({ where: { id: artifactId } });
     expect(await inTx(tx => requestCancelDeploymentInTx(tx, f.owner.id,
         { ...input, expectedReceiptRevision: receipt.revision }))).toMatchObject({ ok: true, state: 'outcome_unknown' });
     expect(await read()).toMatchObject({ ok: true, cancellable: false,
         deployment: { cancelRequestedAtMs: expect.any(Number) } });
-    expect(await db.artifact.findUniqueOrThrow({ where: { id: receipt.contentArtifactId } })).toEqual(contentBefore);
+    expect(await db.artifact.findUniqueOrThrow({ where: { id: artifactId } })).toEqual(contentBefore);
     const settled = await f.receipt('succeeded');
     expect(await inTx(tx => readDeploymentReceiptInTx(tx, f.owner.id, { ...input, deploymentId: settled.id })))
         .toMatchObject({ ok: true, cancellable: false });

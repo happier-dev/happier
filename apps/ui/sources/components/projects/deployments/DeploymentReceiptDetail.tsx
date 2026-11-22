@@ -59,6 +59,7 @@ import {
   deploymentHeadline,
   deploymentHealthFact,
   deploymentMachineHealthLabel,
+  deploymentOperationLabel,
   deploymentRevisionLabel,
   deploymentSourceLabel,
   deploymentStateLabel,
@@ -144,8 +145,9 @@ export const DeploymentReceiptDetail = React.memo(
       props.demand,
     );
     const value = receipt.snapshot.value;
+    const opened = value?.content ? value : null;
     const runtime = environmentValue?.runtimeTargetLink;
-    const platformRef = runtime?.source.kind === 'plugin' && value?.deployment.targetLinkId === runtime.id
+    const platformRef = runtime?.source.kind === 'plugin' && opened?.deployment.targetLinkId === runtime.id
       ? runtime.source.contribution : null;
     const running = value?.deployment.state === 'running' || value?.deployment.state === 'queued';
     const platforms = useDeploymentPlatformTargets(platformRef && (running || props.promote || props.rollback)
@@ -158,22 +160,22 @@ export const DeploymentReceiptDetail = React.memo(
       && environmentValue?.runtimeTargetLink?.id === value.deployment.targetLinkId;
     // Native addresses belong to current Domains; a historical receipt never borrows them.
     // The live-address owner decides which serving receipts read current Domains, as it does for the Overview.
-    const nativeAddressDemand = deploymentLiveAddressDemand(value, serving);
+    const nativeAddressDemand = deploymentLiveAddressDemand(opened, serving);
     const domains = useDeploymentEnvironmentDomains(nativeAddressDemand ? props.controller : null,
       nativeAddressDemand ? props.environmentId : null, props.demand);
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
-      receipt: value, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
+      receipt: opened, cancel: props.cancel, review: props.review, onOpenReceipt: props.onOpenReceipt,
       onRequest: () => setLatestPress('cancel'),
     });
     const pressed = latestPress === 'rollback' ? rollbackPress : latestPress === 'deploy' ? againPress : cancelPress;
     const pressAttention = latestPress !== null && hasDeploymentPressAttention(pressed.banner, latestPress);
     // Who acted is the receipt's captured actor through the one actor display owner; the requester is audit only.
-    const receiptActors = React.useMemo(() => [value?.facts.actor ?? null], [value?.facts.actor]);
+    const receiptActors = React.useMemo(() => [opened?.facts.actor ?? null], [opened?.facts.actor]);
     const [actorPresentation] = useDeploymentActorPresentations({ actors: receiptActors,
       scope: props.lifetime?.scope ?? NO_ACTOR_SCOPE, accountLifetime: props.lifetime ?? null, active: props.lifetime != null });
     const machineIds = React.useMemo(
-      () => value?.content.machines ?? [],
-      [value?.content.machines],
+      () => opened?.content.machines ?? [],
+      [opened?.content.machines],
     );
     const machineNames = useMachineDisplayNamesById(machineIds);
     const { theme } = useUnistyles();
@@ -184,7 +186,7 @@ export const DeploymentReceiptDetail = React.memo(
     const promotionDestination = React.useRef<DeploymentPromotionDestination | null>(null);
     // A failed receipt is evidence: Investigate hands this exact receipt to configured Triage (D5),
     // through the Account's one investigation owner, never a page-local investigator.
-    const failed = value?.deployment.state === 'failed';
+    const failed = opened?.deployment.state === 'failed';
     const investigateSubject = React.useMemo(() => failed ? { kind: 'deploymentReceipt' as const,
       serverId: props.serverId, environmentId: props.environmentId, deploymentId: props.deploymentId } : null,
     [failed, props.serverId, props.environmentId, props.deploymentId]);
@@ -237,7 +239,29 @@ export const DeploymentReceiptDetail = React.memo(
         </ItemList>
       );
     }
-    const { deployment, content, facts } = value;
+    if (!opened) {
+      const { deployment } = value;
+      const actor = deployment.requestedByAccountId === null ? t('projects.deployments.receipt.removedPerson') : null;
+      return (
+        <NavigationBackChromeProvider control={backControl}>
+          <View style={styles.page}>
+            <ItemList testID="project-deployments.receipt">
+              <PageHeader
+                testID="project-deployments.receipt.header"
+                title={deploymentOperationLabel(deployment.operation)}
+                alwaysShowTitle
+                description={t('projects.deployments.receipt.detailsRemoved')}
+                meta={[
+                  { key: 'outcome', text: deploymentStateLabel(deployment.state) },
+                  { key: 'when', text: describeReceipt(deployment, actor) },
+                ]}
+              />
+            </ItemList>
+          </View>
+        </NavigationBackChromeProvider>
+      );
+    }
+    const { deployment, content, facts } = opened;
     // Where it ran is the facts owner's answer (placement), never re-read from the content here.
     const platform = facts.placement === 'platform';
     // The canonical remedy and next action for the recorded cause (RECOVERY-COPY); no page-local copy.

@@ -54,6 +54,7 @@ import { ArtifactReadBatchHttpInputV1Schema, ArtifactReadHeadersBatchInputV1Sche
 import { ArtifactSignedInLinkCreateRequestV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/machineReadBatchV1';
 import { isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
+import { hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { readDeploymentDatabaseReadAccessBindingChildV1, readDeploymentDatabaseReadAccessSetupV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -3461,7 +3462,9 @@ async function readDeploymentBackupHttpPurpose(verified: VerifiedSignedChildRequ
         if (!isReadOnlyArtifactHttpPurpose(proof)) return false;
         if (isAccountEncryptionCurrentnessHttpRead(proof)) return {};
         const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
-        const content = artifact && [environment, link, ...receipts].find(reference => encodeURIComponent(reference.contentArtifactId) === artifact[1]);
+        const content = artifact && [environment, link, ...receipts].find(
+            (reference): reference is typeof reference & { contentArtifactId: string } =>
+                hasDeploymentReceiptContentV1(reference) && encodeURIComponent(reference.contentArtifactId) === artifact[1]);
         if (content) return copySource ? { deploymentChildArtifactRead: { content, requesterAccountId: verified.binding.accountId } } : {};
         if (!copySource && artifact) {
             let artifactId: string;
