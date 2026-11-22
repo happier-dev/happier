@@ -130,7 +130,10 @@ describe('native confirmation of a carried executor review', () => {
         sources: { controllerMachineId: 'project', buildMachineId: 'account', retainPreviousDeployments: 'project' } },
       creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null },
       copy: { sourceEnvironmentId: 'staging', sourceRevision: 3,
-        included: ['definition:repository', 'retainPreviousDeployments:copy', 'ownServer', 'app settings'], omitted: ['production database'] },
+        included: ['definition:repository', 'retainPreviousDeployments:copy', 'ownServer', 'app settings',
+          'binding:["variable","runtime","QA_SWEEP_197_172"]:include',
+          'binding:["variable","runtime","QA_SWEEP_PRIVATE_URL"]:include'],
+        omitted: ['production database', 'binding:["variable","runtime","OLD_URL"]'] },
     });
     const prepared = await prepareApprovalRequest({ actionId, input: actionArgs, actionArgs, deploymentReview,
       context: { surface: 'ui' }, deps: {} });
@@ -150,7 +153,10 @@ describe('native confirmation of a carried executor review', () => {
       expect(copyReview).toContain('A machine');
       expect(copyReview).toContain('app settings');
       expect(copyReview).toContain('production database');
-      expect(copyReview).not.toMatch(/definition:repository|retainPreviousDeployments:copy|ownServer/);
+      expect(copyReview).toContain('QA_SWEEP_197_172');
+      expect(copyReview).toContain('QA_SWEEP_PRIVATE_URL');
+      expect(copyReview).toContain('OLD_URL');
+      expect(copyReview).not.toMatch(/definition:repository|retainPreviousDeployments:copy|ownServer|binding:\[/);
       const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome;
       const visible = `${chrome?.kind === 'card' ? chrome.subtitle ?? '' : ''} ${screen.getTextContent()}`;
       if (spec.inputHints?.description) expect(visible).not.toContain(spec.inputHints.description);

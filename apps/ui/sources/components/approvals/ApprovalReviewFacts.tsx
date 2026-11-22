@@ -261,8 +261,17 @@ function deploymentCopyReviewLabel(value: string): string {
     case 'definition:repository': return t('projects.sources.repositoryTitle');
     case 'retainPreviousDeployments:copy': return t('projects.deployments.keptForRollback');
     case 'ownServer': return t('projects.deployments.platformLink.onMachine');
-    default: return value;
   }
+  // Binding review facts carry the stored identity followed by the reviewed choice.
+  // Keep the full identity as the row key, and use the variable name or registry origin as its title.
+  const encoded = /^binding:(\[.*\])(?::[a-zA-Z]+)?$/u.exec(value)?.[1];
+  if (!encoded) return value;
+  try {
+    const identity: unknown = JSON.parse(encoded);
+    if (Array.isArray(identity) && identity.length === 3
+      && (identity[0] === 'variable' || identity[0] === 'registry') && typeof identity[2] === 'string') return identity[2];
+  } catch { /* Preserve facts from older or unrecognized review producers. */ }
+  return value;
 }
 
 function DeploymentTemplateFacts(props: Readonly<{
