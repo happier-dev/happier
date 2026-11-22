@@ -134,6 +134,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
       requestProxy = await startHttpRequestRecordingProxy({ ...requestObservation, targetBaseUrl: server.baseUrl });
     }
     const actionServerApiUrl = requestProxy?.baseUrl ?? server.baseUrl;
+    // The observer carries bytes for this Home; the device profile keeps its canonical address.
+    const personActionConnection = { serverUrl: actionServerApiUrl, addressAnchorUrl: server.baseUrl };
     const features = await fetchJson<unknown>(`${server.baseUrl}/v1/features`);
     const advertisedServerId = FeaturesResponseSchema.parse(features.data).capabilities.serverIdentity.serverIdentityId;
     if (!advertisedServerId) throw new Error('Fixture Home identity unavailable');
@@ -253,8 +255,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
           },
           async executeViaVoiceSpawn(input: unknown) {
             const { connectUiPersonActionClient } = await import('@happier-tests/ui-action-client');
-            const ui = await connectUiPersonActionClient({ serverUrl: actionServerApiUrl,
-              addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed });
+            const ui = await connectUiPersonActionClient({ ...personActionConnection, accountSecret: auth.accountSigningSeed });
             try { return await ui.executeVoiceSpawn(input, randomUUID()); }
             finally { await ui.close(); }
           },
@@ -285,7 +286,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
             options: Readonly<{ presentation?: Readonly<{ action: PluginContributionIdentityV1; machineId: string }>;
               surface?: 'coreAction' }> = {}): Promise<T> {
             const { connectUiPersonActionClient, connectUiSignedInActionClient } = await (personActions ?? loadPersonActions());
-            const signIn = { serverUrl: actionServerApiUrl, addressAnchorUrl: server.baseUrl, accountSecret: auth.accountSigningSeed };
+            const signIn = { ...personActionConnection, accountSecret: auth.accountSigningSeed };
             const { presentation } = options;
             const personUi = (options.surface ?? params.personActionSurface) === 'coreAction' && !presentation
               ? undefined
@@ -318,7 +319,7 @@ export async function startProjectDaemonFixture(params: Readonly<{
         throw error;
       }
     }
-    return { server, serverId, sourceOptions, actionServerApiUrl, requestProxy, createAccount,
+    return { server, serverId, sourceOptions, actionServerApiUrl, personActionConnection, requestProxy, createAccount,
       // Public fixture CA only; native guests install it through ordinary OS trust.
       guestHomeCaCertificatePath: tls?.caCertificatePath,
       takeRequestObservations() {

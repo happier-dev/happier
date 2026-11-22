@@ -1197,3 +1197,172 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
     });
   });
 });
+
+describe('Linked Project setup', () => {
+  let linkedHome: ProjectDaemonFixture;
+  let focusedHome: ProjectDaemonFixture;
+  let linkedAccount: SetupAccount;
+  let firstFocusedAccount: SetupAccount;
+  let nextFocusedAccount: SetupAccount;
+
+  beforeAll(async () => {
+    const [linkedDir, focusedDir, agentConfig] = await Promise.all([
+      mkdtemp(join(tmpdir(), 'team-setup-a-link-')),
+      mkdtemp(join(tmpdir(), 'team-setup-a-link-focus-')),
+      mkdtemp(join(tmpdir(), 'team-setup-a-agent-')),
+    ]);
+    const [linked, focused] = await Promise.allSettled([
+      startProjectDaemonFixture({ testDir: linkedDir, dbProvider: 'postgres', daemonAuthentication: 'existing-terminal',
+        daemonEnv: { HAPPIER_CLAUDE_PATH: fakeClaudeFixturePath(), HAPPIER_CLAUDE_CONFIG_DIR: agentConfig },
+        observeActionRequests: true, advertiseRequestObservationEndpoint: true,
+        personActionSurface: 'coreAction', personActionClient }),
+      startProjectDaemonFixture({ testDir: focusedDir, dbProvider: 'postgres', daemonAuthentication: 'existing-terminal',
+        observeActionRequests: true, advertiseRequestObservationEndpoint: true,
+        personActionSurface: 'coreAction', personActionClient }),
+    ]);
+    if (linked.status === 'fulfilled') linkedHome = linked.value;
+    if (focused.status === 'fulfilled') focusedHome = focused.value;
+    if (linked.status === 'rejected') throw linked.reason;
+    if (focused.status === 'rejected') throw focused.reason;
+  });
+  beforeAll(async () => {
+    [linkedAccount, firstFocusedAccount, nextFocusedAccount] = await Promise.all([
+      linkedHome.createAccount('linked-source-owner'),
+      focusedHome.createAccount('first-focused-account'),
+      focusedHome.createAccount('next-focused-account'),
+    ]);
+    const machine = await linkedHome.enrollDaemon(linkedAccount);
+    await proveAdmittedProjectControl(linkedAccount, machine);
+    await linkedHome.assertKnownGoodSessionControl(linkedAccount, machine);
+  });
+  afterAll(async () => {
+    const results = await Promise.allSettled([linkedHome?.stop(), focusedHome?.stop()]);
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'Linked Project fixture cleanup failed');
+  });
+
+  it('TS.A.link retains the linked Home detail and Open draft across delayed credentials and another Account', async () => {
+    const [React, { vi }] = await Promise.all([import('react'), import('vitest')]);
+    const { act, projectSetupRouter: router, connectUiSignedInActionClient, renderScreen, createDeferred, TokenStorage,
+      resolveServerCredentialAccountScope, captureServerCredentialAccountScopeLifetime,
+      readProjectSourcesCatalog, createFrontDoorActionExecute, projectSetupStorage: storage, ModalProvider,
+      ProjectSourcesScreen, ProjectOpenScreen, getSessionDraftSnapshot } = personActionClient;
+    let ui: Awaited<ReturnType<typeof connectUiSignedInActionClient>> | undefined;
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    let restoreCredentialRead: (() => void) | undefined;
+    const releaseRead = createDeferred<void>();
+    let phase = 'linked Home sign-in';
+    onTestFailed(() => { console.info('[TS.A.link] phase at failure:', phase); });
+    try {
+      expect(focusedHome.serverId).not.toBe(linkedHome.serverId);
+      ui = await connectUiSignedInActionClient({ ...linkedHome.personActionConnection,
+        accountSecret: linkedAccount.auth.accountSigningSeed, withAccountLifecycle: false });
+      phase = 'linked Account scope';
+      await waitFor(async () => ui!.isAccountReady());
+      phase = 'empty linked inventory';
+      const linkedServerId = ui.serverId;
+      const linkedAccountId = readAccountIdFromToken(linkedAccount.credentials.token);
+      const resolution = await resolveServerCredentialAccountScope(linkedServerId);
+      if (resolution.kind !== 'bound') throw new Error('Known-good linked Home credentials did not bind');
+      const lifetime = captureServerCredentialAccountScopeLifetime(resolution);
+      const catalog = readProjectSourcesCatalog(lifetime, createFrontDoorActionExecute()).read('', undefined);
+      // The real authorized read produces the retained empty state; no store/cache is seeded.
+      await catalog.load();
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+      phase = 'linked Source creation';
+      const sourceAction = await ui.executeConfirmed('projects.sources.create', { serverId: linkedHome.serverId,
+        name: 'Linked Source after empty inventory', requestKey: randomUUID(), repository: {
+          provider: { id: 'happier.scm.forge.github/github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+          repository: { nameWithOwner: 'acme/linked-source' }, protocol: 'https',
+        } }, { actionRequestId: randomUUID(), surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+          serverId: linkedServerId, serverIdentityId: linkedHome.serverId });
+      if (!sourceAction.ok) throw new Error(sourceAction.errorCode);
+      const { ProjectSourcesReadOutputV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+      const source = ProjectSourcesReadOutputV1Schema.parse(sourceAction.result);
+      if (!source.ok) throw new Error(source.error);
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+
+      phase = 'first focused Account sign-in';
+      await ui.close();
+      ui = await connectUiSignedInActionClient({ ...focusedHome.personActionConnection,
+        accountSecret: firstFocusedAccount.auth.accountSigningSeed, withAccountLifecycle: false });
+      await waitFor(async () => storage.getState().profileScope?.accountId === readAccountIdFromToken(firstFocusedAccount.credentials.token));
+      const focusedServerId = ui.serverId;
+      const url = buildProjectSourceSetupUrl({ applicationOrigin: 'https://app.test', sourceId: source.source.id,
+        homeTarget: linkedHome.serverId });
+      const link = parseProjectSourceSetupLink(url);
+      if (!link) throw new Error('Source link did not reach its canonical route parser');
+      let readStarted = false;
+      const readCredentials = TokenStorage.getCredentialsForServerUrl.bind(TokenStorage);
+      let delayNextLinkedRead = true;
+      // Secure storage is the external boundary. Preserve its real answer, delaying only delivery.
+      const readSpy = vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async (...args) => {
+        const credentials = await readCredentials(...args);
+        if (delayNextLinkedRead && new URL(args[0]).origin === new URL(linkedHome.personActionConnection.addressAnchorUrl).origin) {
+          delayNextLinkedRead = false;
+          readStarted = true;
+          await releaseRead.promise;
+        }
+        return credentials;
+      });
+      restoreCredentialRead = () => readSpy.mockRestore();
+      linkedHome.takeRequestObservations();
+      focusedHome.takeRequestObservations();
+      phase = 'mounted setup link and delayed credential read';
+      await act(async () => { router.setParams({ source: link.sourceId, target: link.homeTarget }); });
+      screen = await renderScreen(React.createElement(ModalProvider, null,
+        React.createElement(ProjectSourcesScreen, { setupLink: true })));
+      await waitFor(() => readStarted, { context: 'linked Home secure credential read' });
+      expect(screen.findHostByTestId('projects.sources.setup.target')).not.toBeNull();
+      expect(linkedHome.takeRequestObservations().filter(request => request.path.startsWith('/v1/projects/sources'))).toEqual([]);
+
+      // The linked credential is still pending while the real focused Home changes Account.
+      phase = 'second focused Account sign-in';
+      await ui.close();
+      ui = await connectUiSignedInActionClient({ ...focusedHome.personActionConnection,
+        accountSecret: nextFocusedAccount.auth.accountSigningSeed, withAccountLifecycle: false });
+      await waitFor(async () => storage.getState().profileScope?.accountId === readAccountIdFromToken(nextFocusedAccount.credentials.token));
+      phase = 'linked detail after releasing the credential';
+      await act(async () => { releaseRead.resolve(); });
+      await waitFor(async () => {
+        expect(screen!.findHostByTestId('projects.sources.detail.header'),
+          'Selected linked Source remains visible beside a retained empty inventory').not.toBeNull();
+        return true;
+      });
+      expect(screen.findHostByTestId('projects.sources.empty')).toBeNull();
+      expect(screen.getTextContent()).toContain(source.source.name);
+      expect(catalog.getSnapshot()).toMatchObject({ status: 'ready', rows: [] });
+      expect(linkedHome.takeRequestObservations().filter(request => request.path.startsWith('/v1/projects/sources')))
+        .toEqual([{ method: 'GET', path: `/v1/projects/sources/${encodeURIComponent(source.source.id)}?serverId=${encodeURIComponent(linkedServerId)}`, statusCode: 200 }]);
+      expect(focusedHome.takeRequestObservations().filter(request => request.path.startsWith('/v1/projects/sources'))).toEqual([]);
+
+      phase = 'Open draft on the linked Home';
+      await screen.pressByTestIdAsync('projects.sources.detail.open');
+      await waitFor(async () => {
+        expect(screen!.findHostByTestId('projects.open.dialog'),
+          'Linked Source Open retains its own Home while another Account is focused').not.toBeNull();
+        return true;
+      });
+      await waitFor(async () => screen!.findAllByType(ProjectOpenScreen).length > 0);
+      const { z } = await import('@happier-dev/protocol/zodRuntimePolicy');
+      const presentation = z.object({ routeParams: z.object({ serverId: z.string(), draftId: z.string() }) })
+        .parse(screen.findByType(ProjectOpenScreen).props);
+      expect(presentation.routeParams.serverId).toBe(linkedServerId);
+      const draft = { kind: 'projectOpen' as const, draftId: presentation.routeParams.draftId };
+      expect(getSessionDraftSnapshot({ serverId: linkedServerId, accountId: linkedAccountId }, draft)?.document)
+        .toMatchObject({ selection: { value: { serverId: linkedServerId, source: { kind: 'source', id: source.source.id } } } });
+      expect(getSessionDraftSnapshot({ serverId: focusedServerId,
+        accountId: readAccountIdFromToken(nextFocusedAccount.credentials.token) }, draft)).toBeNull();
+      expect(storage.getState().profileScope).toMatchObject({ serverId: focusedServerId,
+        accountId: readAccountIdFromToken(nextFocusedAccount.credentials.token) });
+      expect(linkedHome.takeRequestObservations().filter(request => request.method !== 'GET'
+        && request.path.startsWith('/v1/projects/sources'))).toEqual([]);
+    } finally {
+      releaseRead.resolve();
+      restoreCredentialRead?.();
+      await screen?.unmount();
+      await act(async () => { router.setParams({ source: undefined, target: undefined }); });
+      await ui?.close();
+    }
+  });
+});

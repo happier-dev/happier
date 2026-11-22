@@ -269,11 +269,41 @@ export function createMachineClientEnrollmentOutputFixture(options: Readonly<{
     close(): Promise<void>;
 }>>;
 
+/** The mounted Project setup journey's visible UI and browser state boundary. */
+export { createDeferred } from './hooks/createDeferred.js';
+export { router as projectSetupRouter } from 'expo-router';
+export { act } from 'react-test-renderer';
 type ProjectSetupLinkSelection = Readonly<{ sourceId: string; homeTarget: string }>;
 export function buildProjectSourceSetupUrl(input: ProjectSetupLinkSelection & Readonly<{applicationOrigin: string}>): string;
 export function parseProjectSourceSetupLink(raw: string): (ProjectSetupLinkSelection & Readonly<{path: `/projects/setup?${string}`}>) | null;
+export const TokenStorage: Readonly<{getCredentialsForServerUrl(serverUrl: string): Promise<AuthCredentials | null>}>;
 type ProjectSetupScope = import('../../sync/domains/scope/serverAccountScope.js').ServerAccountScope;
+type ProjectSetupScopeLifetime = import('../../sync/domains/scope/serverAccountScope.js').ServerAccountScopeLifetime;
+type BoundProjectSetupScope = Readonly<{kind: 'bound'; scope: ProjectSetupScope}>;
+export function resolveServerCredentialAccountScope(serverId: string): Promise<BoundProjectSetupScope | Readonly<{
+    kind: 'unknown_home' | 'unavailable' | 'signed_out';
+}>>;
+export function captureServerCredentialAccountScopeLifetime(resolution: BoundProjectSetupScope): ProjectSetupScopeLifetime;
 type ProjectSetupActionExecute = Awaited<ReturnType<typeof connectUiActionClient>>['execute'];
+export function createFrontDoorActionExecute(): ProjectSetupActionExecute;
+export function readProjectSourcesCatalog(lifetime: ProjectSetupScopeLifetime, execute: ProjectSetupActionExecute): Readonly<{
+    read(search: string, selectedId?: string): Readonly<{load(): Promise<void>; getSnapshot(): unknown}>;
+}>;
+export const projectSetupStorage: Readonly<{getState(): Readonly<{profileScope?: ProjectSetupScope | null}>}>;
+export const ModalProvider: import('react').ComponentType<import('react').PropsWithChildren>;
+export const ProjectSourcesScreen: import('react').ComponentType<Readonly<{setupLink?: boolean}>>;
+export const ProjectOpenScreen: import('react').ComponentType<Readonly<{routeParams?: Readonly<Record<string, string>>}>>;
+export function renderScreen(element: import('react').ReactElement): Promise<Readonly<{
+    findHostByTestId(id: string): import('react-test-renderer').ReactTestInstance | null;
+    findByType: import('react-test-renderer').ReactTestInstance['findByType'];
+    findAllByType: import('react-test-renderer').ReactTestInstance['findAllByType'];
+    getTextContent(): string;
+    pressByTestIdAsync(id: string): Promise<void>;
+    unmount(): Promise<void>;
+}>>;
+export function getSessionDraftSnapshot(scope: ProjectSetupScope,
+    address: import('@happier-dev/protocol/drafts/sessionDraftsV2').SessionDraftAddressV2,
+): Readonly<{document: import('@happier-dev/protocol/drafts/sessionDraftsV2').SessionDraftDocumentV2}> | null;
 type SharedSetupInput = import('@happier-dev/protocol/projects/projectSetupSetV1').ProjectSetupSetInputV1;
 type AcceptedSharedSetup = Extract<import('@happier-dev/protocol/projects/projectSetupSetV1').ProjectSetupSetOutputV1, {ok: true}>;
 export function decideProjectSharedSetupUpdate(input: Readonly<{
