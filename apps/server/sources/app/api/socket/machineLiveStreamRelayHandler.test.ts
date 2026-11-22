@@ -247,9 +247,11 @@ describe('machineLiveStreamRelayHandler observability', () => {
       const sentBeforeDuplicateAck = emitted.length;
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 4 } }));
       expect(emitted).toHaveLength(sentBeforeDuplicateAck);
-      // A consuming viewer releases bytes and receives the retained newest log.
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 306 }) }));
+      // A consuming viewer releases bytes and receives the retained newest log
+      // plus the next picture, rather than being starved by steady metadata.
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: emitted.at(-1)!.sequence + 1 } }));
-      expect(emitted.at(-1)?.sequence).toBe(305);
+      expect(emitted.slice(-2).map(value => [value.sequence, value.payloadKind])).toEqual([[305, 'metadata'], [306, 'image_keyframe']]);
       // Regressing behind an already accepted ACK remains stale.
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2 } }));
       expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR,
