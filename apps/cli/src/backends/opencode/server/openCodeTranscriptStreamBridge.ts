@@ -90,7 +90,7 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     run.publishedText = text;
   };
 
-  const updateThinking = (args: StreamArgs, text: string, append: boolean) => {
+  const appendThinking = (args: StreamArgs, text: string) => {
     if (!text) return;
     const scope = scopeKey(args);
     let run = activeRuns.get(scope);
@@ -101,10 +101,10 @@ export function createOpenCodeTranscriptStreamBridge(params: {
     }
     const previousText = run.parts.get(args.streamKey);
     if (previousText === undefined) run.tailStreamKey = args.streamKey;
-    run.parts.set(args.streamKey, append ? (previousText ?? '') + text : text);
+    run.parts.set(args.streamKey, (previousText ?? '') + text);
     // The normal delta path appends only the new bytes; rebuild the run only
     // for snapshot corrections, delayed role admission, or interleaved messages.
-    if (append && isAdmitted(args, args.streamKey) && run.tailStreamKey === args.streamKey) {
+    if (isAdmitted(args, args.streamKey) && run.tailStreamKey === args.streamKey) {
       const deltaText = !previousText && run.publishedText ? `\n\n${text}` : text;
       bridge.enableDurableCommitsForStream(run.args);
       bridge.appendThinkingDelta({ ...run.args, deltaText });
@@ -117,10 +117,19 @@ export function createOpenCodeTranscriptStreamBridge(params: {
   return {
     mergeAssistantMeta: bridge.mergeAssistantMeta,
     appendThinkingDelta(args: StreamArgs & { deltaText: string }) {
-      updateThinking(args, args.deltaText, true);
+      appendThinking(args, args.deltaText);
     },
     overrideThinkingText(args: StreamArgs & { text: string }) {
-      updateThinking(args, args.text, false);
+      if (!args.text) return;
+      // The snapshot corrects an existing part. A reply can close the run
+      // to new parts, and a tool can settle it before the snapshot arrives.
+      let owningRun: ThinkingRun | undefined;
+      for (const run of runs) {
+        if (run.parts.has(args.streamKey)) owningRun = run;
+      }
+      if (!owningRun) return;
+      owningRun.parts.set(args.streamKey, args.text);
+      publishRun(owningRun);
     },
     appendAssistantDelta(args: StreamArgs & { deltaText: string }) {
       if (args.deltaText) activeRuns.delete(scopeKey(args));

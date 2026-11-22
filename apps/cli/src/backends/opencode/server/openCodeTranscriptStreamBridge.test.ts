@@ -118,6 +118,32 @@ describe('createOpenCodeTranscriptStreamBridge', () => {
     expect(new Set(completed.map((row) => row.localId)).size).toBe(4);
   });
 
+  it.each(['reply', 'tool'] as const)('keeps a late correction out of the next run after a %s', async (boundary) => {
+    const { session, durableCalls } = createSessionStub();
+    const bridge = createOpenCodeTranscriptStreamBridge({ provider: 'opencode', session });
+    const first = { streamKey: 'before', remoteSessionId: 'ses_1', messageId: 'before', sidechainId: null };
+    const next = { ...first, streamKey: 'after', messageId: 'after' };
+    bridge.enableDurableCommitsForStream(first);
+    bridge.appendThinkingDelta({ ...first, deltaText: 'Original thought' });
+
+    if (boundary === 'tool') {
+      await bridge.flushStreamsMatching({ reason: 'tool-call-boundary', matches: () => true });
+    } else {
+      bridge.appendAssistantDelta({ ...first, deltaText: 'Reply' });
+    }
+    bridge.enableDurableCommitsForStream(next);
+    bridge.appendThinkingDelta({ ...next, deltaText: 'Next thought' });
+    bridge.overrideThinkingText({ ...first, text: 'Corrected thought' });
+    await bridge.flushAll({ reason: 'turn-end' });
+
+    const thoughts = durableCalls.filter((row) => (row.body as ACPMessageData).type === 'thinking');
+    const transcript = Array.from(new Map(thoughts.map((row) => [row.localId, row.body])).values());
+    expect(transcript).toEqual([
+      { type: 'thinking', text: boundary === 'tool' ? 'Original thought' : 'Corrected thought' },
+      { type: 'thinking', text: 'Next thought' },
+    ]);
+  });
+
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
