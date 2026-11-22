@@ -1157,12 +1157,14 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         // A refused delegated review (a pool with no machine, an unavailable controller) is this page's read failure too.
         const readError = presetQuery.state.error ?? catalog.error ?? (error?.during === 'read' ? error.code : undefined);
         const keyPending = describeManagedPresetKeyPending(presetQuery.state.error);
+        // The selection review's host already supplies the New machine heading.
+        const hasReviewHeader = props.onUse !== undefined && !props.createOnUse;
         return <ItemList pageColumn="wide">
-            <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip}
+            {hasReviewHeader ? null : <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip}
                 cancelAction={cancelContinuation ? { title: t('common.cancel'), onPress: cancelContinuation, disabled: busy,
-                    testID: 'managed-config.continuation-cancel' } : undefined} />
+                    testID: 'managed-config.continuation-cancel' } : undefined} />}
             {creationDisabledNotice}
-            {compact && pageChip ? <ManagedScopeRow testID="managed-config.scope" chip={pageChip} /> : null}
+            {(compact || hasReviewHeader) && pageChip ? <ManagedScopeRow testID="managed-config.scope" chip={pageChip} /> : null}
             <ItemGroup surface="none">
                 <SurfaceStateCard kind={keyPending ? 'unavailable' : loadingCatalog ? 'loading' : readError ? 'error' : 'empty'} size="line"
                     title={keyPending?.title ?? (presetQuery.state.error && !loadingCatalog ? t('machinePresets.loadFailed')

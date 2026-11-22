@@ -4428,7 +4428,7 @@ describe('mounted managed configurator', () => {
       } finally { await screen.unmount(); }
     },
   );
-  it('reads as loading, not as a verdict, while a named controller waits for the machine list to sync', async () => {
+  it.each(['standalone', 'embedded review'] as const)('reads as loading while the machine list syncs (%s)', async (presentation) => {
     const serverId = await addPresetHome({
       name: 'Compute',
       serverUrl: 'https://unsynced-list.example',
@@ -4442,6 +4442,7 @@ describe('mounted managed configurator', () => {
     // publish a null scoped list so the resolver cannot treat an older Home's row as a verdict.
     storage.setState({ machines: {}, machineListByServerId: { [scopeId]: null }, machineRecordsByServerId: { [scopeId]: {} },
       machineListStatusByServerId: { [scopeId]: 'loading' } });
+    const { t } = await import('@/text');
     const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
     const { ManagedMachineConfigurationView } =
       await import('./ManagedMachineConfigurationView');
@@ -4452,6 +4453,7 @@ describe('mounted managed configurator', () => {
           provisioner.contribution,
         )}
         initialController={defaultController}
+        onUse={presentation === 'embedded review' ? () => {} : undefined}
       />,
     );
     await flushHookEffects();
@@ -4464,6 +4466,7 @@ describe('mounted managed configurator', () => {
       .map(node => ({ kind: node.props.kind, title: node.props.title, diagnosticCode: node.props.diagnosticCode })))
       + JSON.stringify(harness.requests.map(request => request.path))).toContain('loading');
     expect(catalogState()).not.toContain('empty');
+    expect(screen.getTextContent().includes(t('managedMachines.picker.newMachine'))).toBe(presentation === 'standalone');
     // Once the Home's list has really synced without the named controller, the empty verdict is true.
     await act(async () => {
       await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
