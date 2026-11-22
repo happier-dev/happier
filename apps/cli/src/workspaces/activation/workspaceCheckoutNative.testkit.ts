@@ -8,6 +8,7 @@ type Mount = Readonly<{ path: string; backing: string; uid: number; gid: number;
 export const workspaceCheckoutNativeBoundary = {
   privateRoot: '',
   privateRoots: [] as string[],
+  memberUnreadableRoots: [] as string[],
   identity: new AsyncLocalStorage<'daemon' | 'member'>(),
   mounts: [] as Mount[],
   accountLookups: new Map<string, string>(),
@@ -18,7 +19,7 @@ export const workspaceCheckoutNativeBoundary = {
   completed: false,
   reset() {
     this.identity.disable();
-    this.privateRoot = ''; this.privateRoots = []; this.mounts = []; this.accountLookups.clear(); this.launch = undefined;
+    this.privateRoot = ''; this.privateRoots = []; this.memberUnreadableRoots = []; this.mounts = []; this.accountLookups.clear(); this.launch = undefined;
     this.childFailure = undefined; this.phases = []; this.runAsUsers = []; this.completed = false;
   },
 };
@@ -38,6 +39,9 @@ export function workspaceCheckoutFilesystemBoundary(actual: typeof import('node:
       return mount ? Object.assign(state, { uid: mount.uid, gid: mount.gid, mode: mount.mode }) : state;
     },
     async realpath(path: Parameters<typeof actual.realpath>[0], ...args: unknown[]) {
+      if (boundary.identity.getStore() === 'member' && boundary.memberUnreadableRoots.some(root => String(path) === root || String(path).startsWith(`${root}/`))) {
+        throw Object.assign(new Error('Other member traversal denied'), { code: 'EACCES' });
+      }
       if (boundary.identity.getStore() !== 'member' && [boundary.privateRoot, ...boundary.privateRoots].some(root => root
         && (String(path) === root || String(path).startsWith(`${root}/`)))) {
         boundary.phases.push('daemon_private_readback_denied');

@@ -133,12 +133,15 @@ export function createProjectDefinitionAction(params: Readonly<{
       let runtime: NativeInspectionRuntimeLease | undefined;
       try {
         const source = currentWorkspaceSource();
+        // Target sources traverse one admitted checkout; local custody also matches physical aliases.
+        const matchesAcceptedWorkspace = (workspaceRefId: string) => source.kind === 'local' || workspaceRefId === workspace.workspaceId;
         const physicalRoot = await source.realpath(root);
         const commands = params.readActiveProjectCommands?.();
         if (!commands) return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
         for (const command of commands) {
           // The attachment starts at the accepted root, then follows the current native step's cwd.
           if (command.machineId === params.machineId
+            && matchesAcceptedWorkspace(command.workspaceRefId)
             && isCanonicalAbsolutePathInsideRoot(physicalRoot, await source.realpath(command.cwd))) {
             return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });
           }
@@ -149,6 +152,7 @@ export function createProjectDefinitionAction(params: Readonly<{
         if (terminalActivity.coverage !== 'complete') return { kind: 'unavailable' as const, code: 'project_worktree_ports_unavailable' as const, reason: 'activity_unavailable' as const };
         for (const terminal of terminals.readGuardResources()) {
           if (!terminal.custody || terminal.custody.kind !== undefined
+            || !matchesAcceptedWorkspace(terminal.custody.workspaceRefId)
             || !terminalActivity.items.some(item => item.ownerRef === terminal.terminalId && item.state !== 'settled')) continue;
           if (canonicalAbsolutePathsEqual(physicalRoot, await source.realpath(terminal.custody.rootPath))) {
             return await getHostWorktreePortsOwner().reassign({ rootPath: physicalRoot, isActive: true });

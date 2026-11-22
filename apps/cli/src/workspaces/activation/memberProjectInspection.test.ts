@@ -1,7 +1,7 @@
 import { mkdir, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFinished, vi } from 'vitest';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
@@ -15,6 +15,8 @@ import { runWorkspaceEffectWorker } from './workspaceEffectWorker';
 import { workspaceCheckoutNativeBoundary as boundary } from './workspaceCheckoutNative.testkit';
 import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
+import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
 
 // Only OS permissions and process launch are replaced. The framed worker,
 // read port, source lifetime and canonical Project inspection remain real.
@@ -75,6 +77,7 @@ it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_
         if (mode === 'symlink') await symlink(foreignRoot, join(workspaceRoot, 'escaped'), 'dir');
         const root = mode === 'own' ? ownRoot : mode === 'foreign' ? foreignRoot : join(workspaceRoot, 'escaped');
         boundary.privateRoots = [ownRoot, foreignRoot, join(workspaceRoot, 'escaped')];
+        boundary.memberUnreadableRoots = [foreignRoot];
         const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
             requester: { serverId: 'profile', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
         const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'home' }),
@@ -90,6 +93,9 @@ it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_
         };
         const signal = new AbortController().signal;
         const operations = createActionOperationStore();
+        operations.create({ operationId: 'other-preparing', scope: { accountId: 'other-member', machineId: 'machine' },
+            actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
+            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'other-accepted', cwd: foreignRoot } });
         operations.create({ operationId: 'preparing', scope: { accountId: 'member', machineId: 'machine' },
             actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
             domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'accepted', cwd: root } });
@@ -161,15 +167,25 @@ it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_
                     } }) },
             }) } };
         const operations = createActionOperationStore();
-        operations.create({ operationId: 'preparing', scope: { accountId: 'member', machineId: 'machine' },
-            actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
-            domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: 'home', machineId: 'machine', workspaceRefId: 'accepted', cwd: root } });
+        const terminals = createTerminalPtySessionManager({ config: readDaemonTerminalPtyConfig({}).sessionManager,
+            platform: 'linux', env: {}, ptyProvider: { spawn: () => ({ pid: 0, write() {}, resize() {}, kill() {},
+                onData: () => ({ dispose() {} }), onExit: () => ({ dispose() {} }) }) } });
+        onTestFinished(() => terminals.dispose());
+        const otherRoot = join(directory, 'other-member', 'accepted');
+        boundary.memberUnreadableRoots = [otherRoot];
+        for (const [workspaceRefId, rootPath] of [['other-accepted', otherRoot], ['accepted', root]] as const) {
+            expect(await terminals.ensure({ terminalKey: workspaceRefId, cwd: rootPath,
+                launchProcess: { file: '/bin/sh', args: [], env: {} },
+                custody: { serverId: 'home', requesterAccountId: workspaceRefId === 'accepted' ? 'member' : 'other-member',
+                    machineId: 'machine', installationId: 'installation', workspaceRefId,
+                    projectKey: workspaceRefId, rootPath } })).toMatchObject({ ok: true });
+        }
         const client: ApiMachineClient = Object.assign(Object.create(ApiMachineClient.prototype), {
             machine: { id: 'machine' }, machineRpcWorkingDirectory: directory,
             filesystemAccessPolicy: { kind: 'restrictedRoots', roots: [directory] },
             lifecycleDependencies: { agentIsolation: { read: () => snapshot } },
             rpcLifecycleRegistrations: [{ resolveProjectFiniteRuntime: async () => runtime,
-                readActiveProjectCommands: operations.readActiveProjectCommands }],
+                readActiveProjectCommands: operations.readActiveProjectCommands, getFiniteTerminalSessions: () => terminals }],
         });
         const result = await client.createProjectDefinitionAction('home', ingress)({ actionId,
             input: { workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },

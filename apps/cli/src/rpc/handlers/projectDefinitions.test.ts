@@ -628,7 +628,7 @@ it('refuses port reassignment when the installed worktree activity owners are un
   expect(result).toMatchObject({ kind: 'unavailable', code: 'project_worktree_ports_unavailable', reason: 'activity_unavailable' });
 });
 
-it('refuses reassignment for a preparing Project command in a nested directory through a symlink root', async () => {
+it.each([false, true])('refuses reassignment for a preparing Project command in a nested directory through a symlink root (distinct accepted row: %s)', async distinctRow => {
   const h = await setup();
   const nested = join(h.root, 'package');
   const alias = join(h.root, 'alias');
@@ -638,7 +638,7 @@ it('refuses reassignment for a preparing Project command in a nested directory t
   store.create({ operationId: 'preparing', scope: { accountId: 'account', machineId: h.workspace.machineId },
     actionId: 'projects.prepare', title: 'Prepare', cancellation: 'supported', inputIdentity: '{}',
     domainRef: { kind: 'projectCommand', purpose: 'setup', serverId: h.workspace.serverId,
-      machineId: h.workspace.machineId, workspaceRefId: h.workspace.workspaceId, cwd: nested } });
+      machineId: h.workspace.machineId, workspaceRefId: distinctRow ? 'other-accepted-row' : h.workspace.workspaceId, cwd: nested } });
   const action = createProjectDefinitionAction({ serverId: h.workspace.serverId, machineId: h.workspace.machineId,
     workingDirectory: h.root, accessPolicy: { kind: 'restrictedRoots', roots: [h.root] },
     readActiveProjectCommands: store.readActiveProjectCommands });
