@@ -632,6 +632,7 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
       accessibilityLabel={`${title}: ${label ?? none}`}
       accessoryLayout="adaptive"
       fieldAccessory
+      rightElementPassive
       showChevron={false}
       disabled={state.disabled}
       rightElement={renderDropdownItemTriggerRightElement({
