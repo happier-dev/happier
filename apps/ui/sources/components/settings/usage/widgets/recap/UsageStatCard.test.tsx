@@ -117,12 +117,12 @@ describe('private stat card renderer', () => {
                 accounting: { ...accounting, breakdowns: { agent: [agent, { ...agent, key: 'codex', label: 'Codex', tokens: { ...tokens, total: 1 } }] } } } });
         if (result.kind !== 'composed') throw new Error('Expected composed Agent mix');
         const model = buildUsageStatCardModel(result);
-        expect(model.mixGroups[0]?.rows[0]).toMatchObject({ agentId: 'claude', label: t('agentInput.agent.claude') });
+        expect(model.mixGroups[0]?.rows[0]).toMatchObject({ agentId: 'claude', label: agent.label });
         const screen = await renderScreen(<UsageStatCard model={model} tone="dark" testID="agent-identity" />);
         try {
             const labels = screen.tree.root.findAll(node => node.props.accessibilityRole === 'listitem' || node.props.role === 'listitem')
                 .map(node => node.props.accessibilityLabel).filter(Boolean).join(' ');
-            expect(screen.getTextContent()).toContain(t('agentInput.agent.claude'));
+            expect(screen.getTextContent()).toContain(agent.label);
             expect(labels).not.toContain('0.75');
             expect(labels).toContain('75%');
         } finally { standardCleanup(); }
