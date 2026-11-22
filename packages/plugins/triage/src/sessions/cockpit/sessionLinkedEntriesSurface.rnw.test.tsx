@@ -38,7 +38,7 @@ import { projectTriageSessionLinkedEntrySummary } from './linkedEntrySummary.js'
 import { useTriageSessionLinkCandidates } from './useSessionLinkCandidates.js';
 import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 import { testkitEntryRef, testkitObservation, testkitSnapshot } from '../../corpus/testkit/observations.test-support.js';
-import { acquireTriageListWindow, refreshTriageListWindow } from '../../ui/window/mountedWindow.js';
+import { acquireTriageListWindow, refreshTriageListWindow, setTriageListWindowLens } from '../../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../../ui/window/ephemeralSharedScope.test-support.js';
 import { foldTriageListWindow, TRIAGE_LIST_DEFAULT_LENS_V1 } from '../../projection/listWindow.js';
 import { toTriageListWireRows } from '../../projection/listWindowWire.js';
@@ -790,6 +790,8 @@ describe('expanded PR status from the exact linked source observation', () => {
         TriageListEntriesResultV1Schema.parse(await seedHost.executeAction());
         const lease = acquireTriageListWindow(seedHost, scope);
         await refreshTriageListWindow('manual', seedHost, scope);
+        // The list has read this entry, but its current search hides it.
+        setTriageListWindowLens({ ...TRIAGE_LIST_DEFAULT_LENS_V1, query: 'unrelated search' }, seedHost, scope);
         lease.release();
         const status: TriagePullRequestStatusV1 = {
             kind: 'status', observedAtMs: observation.observedAtMs,

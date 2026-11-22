@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { useLivePluginResourceProjection, usePluginUiEphemeralSharedScope, useSurfaceContext, type PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui';
 
+import { triageEntryRowKey } from '../../projection/listWindow.js';
 import { useTriageListWindow } from '../../ui/window/useTriageListWindow.js';
 import { resolveTriageSourceWorkflowSubjectV1 } from '../../ui/detail/sourceSurface.js';
 import type { TriageReadSourceSessionLinksResultV1, TriageSourceSessionLinksLaneV1 } from '../../actions/sessionLinksProtocol.js';
@@ -45,7 +46,20 @@ export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionL
         if (resource.value === undefined) return null;
         return resource.value.links.every(link => link.sessionId === sessionId) ? resource.value : null;
     }, [resource.value, sessionId]);
+    const readOwner = window.readOwner;
+    const links = admitted?.links;
+    const [rowRevision, rowChanged] = React.useReducer(revision => revision + 1, 0);
+    React.useLayoutEffect(() => {
+        if (links === undefined || readOwner === null) return;
+        const stop = links.map(link => readOwner.subscribeRow(triageEntryRowKey(link.entryRef), rowChanged));
+        return () => { for (const unsubscribe of stop) unsubscribe(); };
+    }, [links, readOwner]);
     const view = React.useMemo(() => {
+        // The Session relation names the entries. The list lens only names which ones it is displaying.
+        const entries = links?.flatMap(link => {
+            const row = readOwner?.getRow(triageEntryRowKey(link.entryRef));
+            return row == null ? [] : [row];
+        });
         const projected = projectTriageSessionLinkedEntries({
             links: admitted?.links ?? [],
             status: resource.error !== undefined || (resource.value !== undefined && admitted === null) ? 'failed'
@@ -54,14 +68,14 @@ export function useTriageSessionLinkedEntries(sessionId: string): TriageSessionL
                         : admitted.kind === 'complete' ? 'ready' : admitted.kind,
             lanes: admitted?.lanes,
             error: resource.error,
-            entries: window.snapshot.window?.rows,
+            entries,
             workflowSubject: entryRef => resolveTriageSourceWorkflowSubjectV1(targetedContributions, entryRef),
             summaryBaseline: summaryScope.current.rows,
             previous: summaryScope.current.view,
         });
         summaryScope.current.view = projected;
         return projected;
-    }, [admitted, owner, sessionId, resource.error, resource.pending, resource.value, targetedContributions, window.snapshot.window?.rows]);
+    }, [admitted, owner, sessionId, resource.error, resource.pending, resource.value, targetedContributions, links, readOwner, rowRevision]);
 
     // Every selected corpus page is already included by the relation owner.
     const sourceHealth = resource.error === undefined && resource.pending === 'idle' ? admitted?.lanes : undefined;
