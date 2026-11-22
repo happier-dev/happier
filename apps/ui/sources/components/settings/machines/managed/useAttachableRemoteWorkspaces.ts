@@ -9,6 +9,7 @@ import { createManagedCredentialSelectionV1, type ManagedControllerV1 } from '@h
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
+import { useRemoteHostCatalogSnapshot } from '@/sync/store/settings/remoteHostCatalogSnapshot';
 import { t } from '@/text';
 import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useManagedControllerScope } from './useManagedControllerScope';
@@ -18,9 +19,14 @@ import { attachRemoteWorkspace, readAttachableRemoteWorkspaces,
     type AttachRemoteWorkspaceChoice, type AttachRemoteWorkspaceOutcome } from './attachableRemoteWorkspaceActions';
 
 const attachSelectors = { attachExisting: true } as const;
+function bindsSavedRemoteHost({ workspaceAttachment }: AttachableRemoteWorkspaceRequest['descriptor']): boolean {
+    return workspaceAttachment?.resourceIdentityPaths?.includes('remoteHostId') === true;
+}
+
 type Account = Readonly<{
     bindingId: string;
     title: string;
+    workspaceId?: string;
     controller: ManagedControllerV1 & Readonly<{ name: string }>;
     workspaces: AttachableRemoteWorkspaceAccount['workspaces'];
 }>;
@@ -65,25 +71,34 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     });
     const { binding, current, homeId, provisioners, isCurrentFor } = catalog;
     const { remoteHostId } = input;
+    const available = React.useMemo(() => current ? provisioners.filter(({ contribution }) =>
+        isCurrentFor(buildQualifiedPluginContributionKey(contribution))) : [], [current, provisioners, isCurrentFor]);
+    const readSavedHosts = !remoteHostId && available.some(({ descriptor }) => bindsSavedRemoteHost(descriptor));
+    const hostCatalog = useRemoteHostCatalogSnapshot(readSavedHosts ? binding?.scope : null);
+    const savedHosts = hostCatalog?.data;
     const candidates = React.useMemo<readonly Candidate[]>(() => {
         if (!input.open || !binding?.isCurrent() || !current || !homeId || !machineId || !installationId || !controllerName) return [];
         const selectedController = { machineId, installationId };
-        const selectors = remoteHostId ? { remoteHostId } : attachSelectors;
-        return provisioners.flatMap(provisioner => {
-            const { descriptor, contribution } = provisioner;
-            if (!isCurrentFor(buildQualifiedPluginContributionKey(contribution))
-                || !isMachineProvisionerWorkspaceAttachmentV1(descriptor, selectors, 'options')) return [];
-            const required = provisioner.credentialPurposes?.filter(({ purpose }) =>
-                isMachineProvisionerCredentialPurposeRequiredV1(descriptor, purpose.purpose, selectors));
-            if (remoteHostId) {
-                // The saved host carries its own credential, bound on the controller: no account to pick.
-                if (required?.length) return [];
-                return [{
-                    account: { bindingId: JSON.stringify([selectedController, provisioner.occurrenceId]),
-                        title: resolvePluginLocalizedStringV2Text(descriptor.title), controller: { ...selectedController, name: controllerName } },
-                    request: { scope: binding.scope, homeId, controller: selectedController, contribution, descriptor, selectors },
-                }];
+        return available.flatMap<Candidate>(({ descriptor, contribution, occurrenceId, credentialPurposes }) => {
+            const request = { scope: binding.scope, homeId, controller: selectedController, contribution, descriptor };
+            const controller = { ...selectedController, name: controllerName };
+            if (bindsSavedRemoteHost(descriptor)) {
+                const hosts = remoteHostId ? [{ id: remoteHostId, name: resolvePluginLocalizedStringV2Text(descriptor.title) }]
+                    : savedHosts ?? [];
+                return hosts.flatMap(({ id, name }) => {
+                    const selectors = { remoteHostId: id };
+                    if (!isMachineProvisionerWorkspaceAttachmentV1(descriptor, selectors, 'options')
+                        || credentialPurposes?.some(({ purpose }) =>
+                            isMachineProvisionerCredentialPurposeRequiredV1(descriptor, purpose.purpose, selectors))) return [];
+                    return [{
+                        account: { bindingId: JSON.stringify([selectedController, occurrenceId, id]), title: name, controller, workspaceId: id },
+                        request: { ...request, selectors },
+                    }];
+                });
             }
+            if (remoteHostId || !isMachineProvisionerWorkspaceAttachmentV1(descriptor, attachSelectors, 'options')) return [];
+            const required = credentialPurposes?.filter(({ purpose }) =>
+                isMachineProvisionerCredentialPurposeRequiredV1(descriptor, purpose.purpose, attachSelectors));
             // The attachment listing is for a person's own connected Account.
             // F8 authorizes the exact selected binding on each Home Action.
             if (required?.length !== 1) return [];
@@ -92,15 +107,15 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
                 if (!('accountId' in value)) return [];
                 return [{
                     account: {
-                        bindingId: JSON.stringify([selectedController, provisioner.occurrenceId, purpose, value]),
-                        title: label, controller: { ...selectedController, name: controllerName },
+                        bindingId: JSON.stringify([selectedController, occurrenceId, purpose, value]),
+                        title: label, controller,
                     },
-                    request: { scope: binding.scope, homeId, controller: selectedController, contribution, descriptor,
+                    request: { ...request,
                         credentials: [createManagedCredentialSelectionV1(purpose, value)], selectors: attachSelectors },
                 }];
             });
         });
-    }, [binding, current, homeId, input.open, installationId, isCurrentFor, machineId, controllerName, provisioners, remoteHostId]);
+    }, [binding, current, homeId, input.open, installationId, machineId, controllerName, available, remoteHostId, savedHosts]);
 
     const candidate = input.bindingId ? candidates.find(({ account }) => account.bindingId === input.bindingId) : undefined;
     const request = candidate?.request;
@@ -134,8 +149,9 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     if (catalog.error) return { kind: 'failed', code: catalog.error, message: null, retry: catalog.refresh };
     if (!controller && controllerScope.machineList === 'settled') return { kind: 'choose_account', accounts: [] };
     if (!binding || !current) return { kind: 'loading' };
-    // An empty account list is an answer only once the provisioner catalog has settled, never while it loads.
-    if (!candidate && catalog.loading) return { kind: 'loading' };
+    // Wait to choose a source until the host catalog answers, so an Account cannot auto-open ahead of its hosts.
+    const loadingHosts = readSavedHosts && !savedHosts && (!hostCatalog || hostCatalog.catalog.status === 'loading');
+    if (!candidate && (catalog.loading || loadingHosts)) return { kind: 'loading' };
     if (!candidate) return { kind: 'choose_account', accounts: candidates.map(({ account }) => account) };
     if (!selection) return { kind: 'loading' };
     const { result } = selection;

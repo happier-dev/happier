@@ -212,6 +212,88 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   }));
 
+  it('offers a saved Remote Host alongside a connected Account in Add Project and acquires only the chosen host', () => withPopoverWebGlobals(async () => {
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const homeId = 'srv_add_project_hosts';
+    const serverId = await harness.addHome({ name: 'Project hosts', serverUrl: 'https://project-hosts.example.test',
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+    const { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostRecordV1Schema } = await import('@happier-dev/protocol/remoteHosts/remoteHostRecordV1');
+    const host = RemoteHostRecordV1Schema.parse({ id: 'host-a', name: 'Build host', createdAt: 1, updatedAt: 1, lastUsedAt: null,
+      ssh: { target: 'builder@example.test', authMode: 'agent' } });
+    harness.answer(serverId, `GET ${REMOTE_HOST_ROWS_ROUTE_V1}`, {
+      body: { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, hosts: [host] } } },
+    });
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    const ssh = await import('../../../../../../../packages/plugins/machine-ssh/src/manifest');
+    const { REMOTE_HOST_SSH_PROVISIONER } = await import('@happier-dev/plugin-sdk/machine-provisioners/ssh');
+    const coder = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
+    const { ACCOUNT_SERVICE, ACCOUNT_PURPOSE, CONTRIBUTION } =
+      await import('../../../../../../../packages/plugins/machine-coder/src/machine/schemas');
+    const list = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{
+      contribution: REMOTE_HOST_SSH_PROVISIONER, occurrenceId: 'ssh-installation', acquireExecutionTarget: 'daemon',
+      descriptor: ssh.PLUGIN_MANIFEST.contributes.machineProvisioners?.[0], credentialPurposes: [],
+    }, {
+      contribution: CONTRIBUTION, occurrenceId: 'coder-installation', acquireExecutionTarget: 'daemon',
+      descriptor: coder.PLUGIN.manifest.contributes.machineProvisioners?.[0],
+      credentialPurposes: [{ purpose: { consumer: CONTRIBUTION, purpose: ACCOUNT_PURPOSE },
+        options: [{ label: 'Coder account', value: { service: ACCOUNT_SERVICE, accountId: 'coder-account' } }] }],
+    }] });
+    const { machine } = await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.list', tokenEpoch: 0, requesterInvocation: 'optional', execute: () => list,
+    });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.options', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+        expect(input).toEqual({ homeId, controller, contribution: REMOTE_HOST_SSH_PROVISIONER, selectors: { remoteHostId: host.id } });
+        return ssh.options({ remoteHostId: host.id });
+      },
+    });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+        expect(input).toMatchObject({ selection: { kind: 'one-off', homeId, controller, attachWorkspace: true,
+          launch: { provider: REMOTE_HOST_SSH_PROVISIONER, choices: { remoteHostId: host.id } } } });
+        expect(input).not.toHaveProperty('selection.launch.credentials');
+        return { managedId: 'attached-host' };
+      },
+    });
+    harness.answer(serverId, '/v1/machines', { body: [machine] });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+      [createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now() })]);
+    const { ProjectsAddMenu } = await import('@/components/projects/ProjectsAddMenu');
+    const attached = vi.fn();
+    const onAdd = vi.fn<import('@/components/projects/ProjectsAddMenu').ProjectsAddMenuRemote['onAdd']>(async input => {
+      attached(await input.attach({ signal: new AbortController().signal, onApprovalPending: vi.fn() }));
+    });
+    const screen = await renderScreen(<ProjectsAddMenu testID="add-project" machines={[]} onAdd={vi.fn()} remote={{ serverId, onAdd }} />, {
+      createNodeMock: () => ({
+        offsetTop: 48, offsetHeight: 32,
+        getBoundingClientRect: () => ({ x: 48, y: 48, width: 160, height: 32, left: 48, top: 48, right: 208, bottom: 80 }),
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(48, 48, 160, 32),
+      }),
+    });
+    try {
+      expect(harness.requestsFor(REMOTE_HOST_ROWS_ROUTE_V1)).toHaveLength(0);
+      await screen.pressByTestIdAsync('add-project');
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('A folder on a server'));
+      await act(async () => reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }));
+      await screen.pressByTestIdAsync('add-project:remote');
+      await act(async () => reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }));
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(1));
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(host.name));
+      expect(screen.getTextContent()).toContain('Coder account');
+      expect(harness.requestsFor(REMOTE_HOST_ROWS_ROUTE_V1)).toHaveLength(1);
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(0);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+      const hostOption = screen.find(node => typeof node.type === 'string' && node.props.testID?.startsWith('add-project:remote:workspace:')
+        && typeof node.props.onPress === 'function');
+      await screen.pressByTestIdAsync(hostOption.props.testID);
+      await waitForHomeGovernance(() => expect(attached).toHaveBeenCalledWith({ kind: 'attached', managedId: 'attached-host', controller }));
+      expect(onAdd).toHaveBeenCalledWith(expect.objectContaining({ name: host.name, controllerMachineId: controller.machineId }));
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    } finally { await screen.unmount(); }
+  }));
+
   it('offers a saved Remote Host through its SSH provisioner with no account choice, then attaches it', async () => {
     const homeId = 'srv_remote_host_folders';
     const serverId = await harness.addHome({ name: 'Remote host folders', serverUrl: 'https://remote-host-folders.example.test',

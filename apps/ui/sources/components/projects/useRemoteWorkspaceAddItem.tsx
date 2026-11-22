@@ -5,7 +5,6 @@ import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMe
 import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { useAttachableRemoteWorkspaces } from '@/components/settings/machines/managed/useAttachableRemoteWorkspaces';
-import type { AttachableRemoteWorkspace } from '@/components/settings/machines/managed/attachableRemoteWorkspaceActions';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -29,8 +28,8 @@ const STATUS_KEY = {
 } as const;
 
 /**
- * "A folder on a server…" in the Projects "+" (lab add-*): one row whose submenu lists the connected account's
- * workspaces, read only while the submenu is open (or a chosen workspace is still being prepared).
+ * "A folder on a server…" lists workspaces from connected Accounts and saved Remote Hosts.
+ * Reads follow the open submenu and continue through preparation of the chosen workspace.
  */
 export function useRemoteWorkspaceAddItem(
   input: Readonly<{
@@ -62,6 +61,7 @@ export function useRemoteWorkspaceAddItem(
   if (
     state.kind === 'choose_account' &&
     state.accounts.length === 1 &&
+    !state.accounts[0]!.workspaceId &&
     chosenAccount !== state.accounts[0]!.bindingId
   ) {
     // One connected account: its workspaces are the list, with no account step.
@@ -126,13 +126,13 @@ export function useRemoteWorkspaceAddItem(
             ]
           : [
               ...state.accounts.map((account) =>
-                row(`account:${account.bindingId}`, {
+                row(`${account.workspaceId ? 'workspace' : 'account'}:${account.bindingId}`, {
                   title: account.title,
                   subtitle: t('projects.checkouts.via', {
                     machine: account.controller.name,
                   }),
                   keepMenuOpen: true,
-                  icon: <Icon name="user-circle" size={16} />,
+                  icon: <Icon name={account.workspaceId ? 'terminal' : 'user-circle'} size={16} />,
                 }),
               ),
               connect,
@@ -181,7 +181,6 @@ export function useRemoteWorkspaceAddItem(
       id: 'remoteFolder',
       testID: `${testID}:remote`,
       title: t('projects.identity.addServerFolder'),
-      subtitle: t('projects.identity.addServerFolderSubtitle'),
       icon: <Icon name="hard-drives" size={16} />,
       submenu: {
         items,
@@ -245,12 +244,13 @@ export function useRemoteWorkspaceAddItem(
         setChosenAccount(id.slice('account:'.length));
         return true;
       }
-      if (!id.startsWith('workspace:') || state.kind !== 'ready') return true;
-      const account = state.accounts[0]!;
-      const workspace: AttachableRemoteWorkspace | undefined =
-        account.workspaces.find(
-          (row) => row.id === id.slice('workspace:'.length),
-        );
+      if (!id.startsWith('workspace:')) return true;
+      const selected = id.slice('workspace:'.length);
+      const account = state.kind === 'ready' ? state.accounts[0]
+        : state.kind === 'choose_account' ? state.accounts.find(choice => choice.bindingId === selected) : undefined;
+      if (!account) return true;
+      const workspace = state.kind === 'ready' ? state.accounts[0]!.workspaces.find(row => row.id === selected)
+        : account.workspaceId ? { id: account.workspaceId, name: account.title } : undefined;
       if (!workspace) return true;
       setPreparing(true);
       setChosenAccount(account.bindingId);
