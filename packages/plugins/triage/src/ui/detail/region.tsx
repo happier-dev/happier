@@ -9,6 +9,7 @@ import {
   Banner,
   Button,
   DetailsPaneFooter,
+  HAPPIER_PAGE_METRICS,
   EmptyState,
   ErrorState,
   Form,
@@ -109,6 +110,7 @@ import { readTriageSessionTitle } from './sessionTitle.js';
 import { TriageFixPullRequests } from './fixPullRequests.js';
 import { useTriageDetailFixPullRequest } from './useTriageDetailFixPullRequest.js';
 import { planTriageDetailTabsV1 } from './tabs.js';
+import { projectPullRequestStatusFactsV1 } from '../../sessions/pullRequestGlance/glanceModel.js';
 import { TRIAGE_DETAIL_ACTIONS_PANEL_V1, describeTriageSourceFailureV1, formatTriageTimestampV1, isReviewTriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 import { useReviewEntryWorkV1 } from '../../reviews/decisionPending.js';
 import { TriageEditTaskScope, type TriageEditTaskPlacementV1 } from './taskFields.js';
@@ -732,6 +734,54 @@ export function TriageInlineDetailIdentity({ identity, controls }: Readonly<{
     )}
   </>;
 }
+
+/**
+ * A deep-linked entry that the list has not listed yet (F10): the route already names its kind, so the detail draws the
+ * geometry the listed entry will have — the change request's facts strip, the action row's place and the kind's tab
+ * row over the reading lines — in the same frame the listed detail uses. The entry's arrival fills them in place, and
+ * nothing is inserted above the story. The controls themselves wait for the entry, whose display facts a start needs.
+ */
+export function TriageDetailRouteReading(props: Readonly<{
+  workflowSubject: Parameters<typeof planTriageDetailTabsV1>[0]['workflowSubject'];
+  entryTabs: Parameters<typeof planTriageDetailTabsV1>[0]['entryTabs'];
+  reading: string;
+  pushed: boolean;
+}>): React.ReactElement {
+  const { workflowSubject, entryTabs } = props;
+  const composition = React.useMemo(() => planTriageDetailTabsV1({ workflowSubject, entryTabs, fixPullRequest: null }),
+    [workflowSubject, entryTabs]);
+  const facts = React.useMemo(() => ({
+    attention: null,
+    pullRequestFacts: workflowSubject === 'pullRequest' ? projectPullRequestStatusFactsV1(null, undefined, { reading: true }) : null,
+  }), [workflowSubject]);
+  const readingLines = (
+    <Stack gap="small">
+      <Text variant="micro" tone="neutral" value={props.reading} />
+      <TriageStoryLoadingLines label={props.reading} />
+    </Stack>
+  );
+  return (
+    <Stack style={DETAIL_FILL_STYLE_V1}>
+      <Stack gap="medium" style={DETAIL_FILL_STYLE_V1}>
+        <ScrollArea clipContentOverflow style={DETAIL_HEADER_SCROLL_STYLE_V1}>
+          <Stack gap="small">
+            <TriageDetailHeaderFacts header={facts} narrow={props.pushed} />
+            {workflowSubject === null ? null : <Stack style={ROUTE_ACTION_ROW_STYLE_V1} />}
+          </Stack>
+        </ScrollArea>
+        <Stack style={DETAIL_FILL_STYLE_V1}>
+          {composition.kind !== 'tabs' ? readingLines : (
+            <TriageDetailTabbedBody pushed={props.pushed} tabs={composition.tabs}
+              entry={null} reading={readingLines} fixPullRequest={null} overviewTail={null} fallback={null} />
+          )}
+        </Stack>
+      </Stack>
+    </Stack>
+  );
+}
+
+/** The action row's place while its controls wait for the entry: one small control's height. */
+const ROUTE_ACTION_ROW_STYLE_V1 = Object.freeze({ height: HAPPIER_PAGE_METRICS.smallControlHeightPx });
 
 export function TriageDetailHeaderView(props: TriageDetailHeaderViewProps): React.ReactElement {
   const text = usePluginTranslation();

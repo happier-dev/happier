@@ -196,6 +196,14 @@ Button.happierPageOperation = (
   };
 };
 
+/** A busy button's content keeps its box but is not drawn under the spinner. */
+const BUSY_HIDDEN_STYLE = Object.freeze({ opacity: 0 });
+/** The spinner over a busy button's content, centred in its box, taking no room in the row. */
+const BUSY_SPINNER_OVERLAY_STYLE = Object.freeze({
+  position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0,
+  alignItems: 'center' as const, justifyContent: 'center' as const, pointerEvents: 'none' as const,
+});
+
 /**
  * @internal The face of a labelled button: its chrome in every press state, the fill's finish, the
  * leading glyph and the label. `Button` draws it, and so does every built-in trigger drawn as a button
@@ -254,21 +262,16 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
     const iconSurface = bindSurface({ surface: 'button', part: 'icon', state: surfaceState });
     return <>
       <HappierSurfaceGradientLayer overrideBackgroundColor={rootSurface.style?.backgroundColor} gradient={resolveHappierButtonChrome({ theme, variant, disabled: state.disabled, focused: state.focused, pressed: state.pressed }).gradient} borderRadius={theme.radii.control} />
-      {state.busy ? (
-        <HappierSpinner
-          size={iconMatchedSpinnerSize(theme.typography.label.fontSize)}
-          color={foreground}
-          testID={content.spinnerTestID}
-        />
-      ) : content.icon === undefined ? null : (
-        <View {...{ dataSet: iconSurface.dataSet }} style={iconSurface.style}><PluginUiLeadingGlyphInkContext.Provider value={foreground}>{content.icon}</PluginUiLeadingGlyphInkContext.Provider></View>
-      )}
       {/*
-        The label keeps its box while busy instead of being replaced, so the
-        button does not change width the moment it is pressed — a control
-        that resizes under the pointer is the reason a second press lands
-        somewhere else.
+        The glyph and the label keep their boxes while busy instead of being replaced, and the spinner is laid over
+        them, so the button does not change width the moment it is pressed or while it waits — a control that
+        resizes under the pointer is the reason a second press lands somewhere else. Hidden, they stay named.
       */}
+      {content.icon === undefined ? null : (
+        <View style={state.busy ? BUSY_HIDDEN_STYLE : undefined}>
+          <View {...{ dataSet: iconSurface.dataSet }} style={iconSurface.style}><PluginUiLeadingGlyphInkContext.Provider value={foreground}>{content.icon}</PluginUiLeadingGlyphInkContext.Provider></View>
+        </View>
+      )}
       <View style={state.busy ? { opacity: 0, flexShrink: 1 } : { flexShrink: 1 }}>
         {typeof content.children === 'string' || content.children === undefined ? (
           <HappierText {...{ dataSet: labelSurface.dataSet }} variant="label" {...(content.singleLine === true ? { numberOfLines: 1 } : {})} style={[{ color: labelColor, textAlign: 'center' }, labelSurface.style]}>
@@ -276,6 +279,16 @@ export function useButtonFace(variant: ButtonVariant, size: ButtonSize, disabled
           </HappierText>
         ) : content.children}
       </View>
+      {state.busy ? (
+        <View style={BUSY_SPINNER_OVERLAY_STYLE}
+          {...(content.spinnerTestID === undefined ? {} : { testID: `${content.spinnerTestID}-overlay` })}>
+          <HappierSpinner
+            size={iconMatchedSpinnerSize(theme.typography.label.fontSize)}
+            color={foreground}
+            testID={content.spinnerTestID}
+          />
+        </View>
+      ) : null}
     </>;
   };
   return { foreground, style, renderContent };

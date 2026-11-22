@@ -82,6 +82,7 @@ import { readTriageEntryGlyphV1 } from '../window/entryDisplay.js';
 import {
   renderTriageDetailHeaderV1,
   TriageDetailReadFailure,
+  TriageDetailRouteReading,
   TriageInlineDetailIdentity,
   TriageDetailRegion,
 } from '../detail/region.js';
@@ -2494,6 +2495,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           handlers: pinHandlers,
         }}
         onClose={dismissDetail}
+      />
+    ) : headerHosted && !pushed && absentRoute === null && !readFailed && routedIdentity?.kind !== undefined ? (
+      // A deep link the list has not listed yet keeps the listed detail's geometry from its route (F10).
+      <TriageDetailRouteReading
+        workflowSubject={routedIdentity.kind.workflowSubject ?? null}
+        entryTabs={routedIdentity.kind.detailTabs}
+        reading={readTriageDetailReadingLineV1(text, routedIdentity.kind.displayName, routedIdentity.sourceLabel)}
+        pushed={pushed}
       />
     ) : (
       <Stack gap="small">

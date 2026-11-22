@@ -3634,6 +3634,36 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText('Reading this pull request from Example forge')).resolves.toBeUndefined();
     });
 
+    it('draws a cold deep link\'s facts and tab row from its route before the entry is listed (F10)', async () => {
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true, tabbedDetail: true,
+            hostedDetail: true, secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
+        const tabNames = () => Array.from(document.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent?.trim() ?? '');
+        const facts = () => document.querySelector('[data-testid="triage-detail-facts"]');
+        let readingTabs: string[] = [];
+        try {
+            await act(async () => {
+                await vi.waitFor(() => { expect(currentHarness?.initialScanInstanceIds).toContain(SECOND_INSTANCE); });
+            });
+            await expect(shell.getByText('Reading this pull request from Example forge')).resolves.toBeDefined();
+            // The route already names the entry's kind: its facts strip and tab row stand while the list still reads,
+            // so neither is inserted above the story when the entry arrives.
+            readingTabs = tabNames();
+            expect(readingTabs).toContain('Files');
+            expect(facts()).not.toBeNull();
+        } finally {
+            await act(async () => { release(); });
+        }
+        await vi.waitFor(async () => {
+            await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
+        });
+        expect(tabNames()).toEqual(readingTabs);
+        expect(facts()).not.toBeNull();
+    });
+
     it('keeps the wide routed detail region mounted through the first list pass', async () => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });

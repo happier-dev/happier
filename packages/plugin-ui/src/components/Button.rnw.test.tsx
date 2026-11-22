@@ -409,6 +409,25 @@ describe('plugin-ui Button renders real React Native pressable semantics', () =>
     mount.unmount();
   });
 
+  it.each([
+    { name: 'a long label', icon: false },
+    { name: 'a leading glyph', icon: true },
+  ])('keeps its idle box while busy, with $name (spinner over the hidden content)', ({ icon }) => {
+    const mount = mountSurface(
+      <Button title="Review this pull request with Claude Code" busy testID="busy"
+        {...(icon ? { icon: <View testID="glyph" style={{ width: 16, height: 16 }} /> } : {})} />,
+    );
+    const spinner = mount.container.querySelector<HTMLElement>('[data-testid="busy-spinner"]');
+    expect(spinner).not.toBeNull();
+    // The spinner takes no room in the row: it is laid over the content, which keeps its box (glyph and words).
+    const overlay = spinner?.closest<HTMLElement>('[data-testid="busy-spinner-overlay"]');
+    expect(overlay === null || overlay === undefined ? null : getComputedStyle(overlay).position).toBe('absolute');
+    expect(mount.container.textContent).toContain('Review this pull request with Claude Code');
+    if (icon) expect(mount.container.querySelector('[data-testid="glyph"]')).not.toBeNull();
+    expect(findButton(mount.container).getAttribute('aria-busy')).toBe('true');
+    mount.unmount();
+  });
+
   it('does not steal focus moved to a sibling after an Enter-activated pending press settles', async () => {
     let settle: () => void = () => {};
     const pending = new Promise<void>((resolve) => { settle = resolve; });
