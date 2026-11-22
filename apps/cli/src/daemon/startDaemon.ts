@@ -4710,6 +4710,7 @@ export async function startDaemon(
             homeTransportReplacementPending = !attemptedApiMachine.requestServerTransportReconnect();
           }
           apiMachineForSessions = attemptedApiMachineForSessions;
+          machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
           attemptedApiMachineForSessions?.registerDeploymentChildRoutes(daemonWorkSignal, managedMachinePolicyAdapter.snapshotAdmitted);
           machineActivity.notifyChanged();
           syncActivity.notifyChanged();
@@ -4723,23 +4724,6 @@ export async function startDaemon(
           sessionSpawnDirectTargetTransport =
             attemptedSessionSpawnDirectTargetTransport;
           resolveMachineProviderBindingSettled();
-          await pluginRuntimeInitialization;
-          publishPluginMachineRoles();
-          if (!pluginWebhookWorker) {
-            const installationIdentity = await readOrCreateInstallationIdentity();
-            pluginWebhookWorker = startPluginWebhookDaemonWorkerV1({
-              credentials,
-              machineId: () => machineId,
-              machineInstallationId: installationIdentity.installationId,
-              enabled: () => {
-                const snapshot = serverFeaturesSnapshotStore.getSnapshot();
-                return snapshot?.status === 'ready'
-                  ? readServerEnabledBit(snapshot.features, 'plugins.webhooks') === true
-                  : false;
-              },
-              logger,
-            });
-          }
           // Direct-material preparation is woken by the relevant AccountChange
           // (grant, recipient, Team and connected-service changes) and by every
           // reconnect, whose census reconstructs missing work (teams-lane-10 06 §11).
@@ -4750,14 +4734,6 @@ export async function startDaemon(
                 wakeReason => reconcileTeamCredentialDirectMaterialAfterSourceChange(wakeReason),
               )
             : null;
-          pluginWebhookWakeCleanup?.();
-          pluginWebhookWakeCleanup = attemptedApiMachine
-            ? attachPluginWebhookDaemonWakeV1({
-                apiMachine: attemptedApiMachine,
-                getWorker: () => pluginWebhookWorker,
-              })
-            : null;
-          machineRpcRouteAttachments.attachApiMachineForSessions(apiMachineForSessions);
           if (attemptedApiMachineForSessions) {
             attemptedApiMachineForSessions.registerManagedFiniteWake({
               readCurrent: readCurrentManagedMachinePolicy,
@@ -4789,6 +4765,36 @@ export async function startDaemon(
           stopMachineIrohAcceptor = machineSyncRuntime.stopMachineIrohAcceptor;
           resumeQuiescedMachineConnectionPublications =
             machineSyncRuntime.resumeMachineConnectionPublications;
+          void settleDaemonOptionalCapability(
+            'connected_service_reconcile',
+            reconcileReattachedConnectedServiceCredentialProjection(),
+            reportOptionalCapabilityUnavailable,
+          );
+          await pluginRuntimeInitialization;
+          if (homeTransportCancellation.signal.aborted) return;
+          publishPluginMachineRoles();
+          if (!pluginWebhookWorker) {
+            const installationIdentity = await readOrCreateInstallationIdentity();
+            pluginWebhookWorker = startPluginWebhookDaemonWorkerV1({
+              credentials,
+              machineId: () => machineId,
+              machineInstallationId: installationIdentity.installationId,
+              enabled: () => {
+                const snapshot = serverFeaturesSnapshotStore.getSnapshot();
+                return snapshot?.status === 'ready'
+                  ? readServerEnabledBit(snapshot.features, 'plugins.webhooks') === true
+                  : false;
+              },
+              logger,
+            });
+          }
+          pluginWebhookWakeCleanup?.();
+          pluginWebhookWakeCleanup = attemptedApiMachine
+            ? attachPluginWebhookDaemonWakeV1({
+                apiMachine: attemptedApiMachine,
+                getWorker: () => pluginWebhookWorker,
+              })
+            : null;
         } catch (error) {
           await attemptedManagedMachinePolicyRuntime?.stop();
           if (managedMachinePolicyRuntime === attemptedManagedMachinePolicyRuntime) managedMachinePolicyRuntime = null;
@@ -4820,11 +4826,6 @@ export async function startDaemon(
           }
           throw error;
         }
-        void settleDaemonOptionalCapability(
-          'connected_service_reconcile',
-          reconcileReattachedConnectedServiceCredentialProjection(),
-          reportOptionalCapabilityUnavailable,
-        );
       },
       filesystemAccessPolicy,
       takeoverRequested,
