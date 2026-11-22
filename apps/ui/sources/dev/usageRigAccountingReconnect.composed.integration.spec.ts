@@ -24,7 +24,7 @@ import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQu
 import { getServerFeaturesSnapshot } from '../sync/api/capabilities/serverFeaturesClient';
 import { subscribeHomeAccountChange } from '../sync/runtime/orchestration/homeAccountChange';
 import { buildUsageRigPresetPlans } from './testkit/fixtures/usageRigPresets';
-import { USAGE_RIG_DAY, USAGE_RIG_NOW } from './testkit/fixtures/usageRigAccounting';
+import { USAGE_RIG_DAY } from './testkit/fixtures/usageRigAccounting';
 import { allowRealServerSocketBoundary, restoreServerAccountForTest } from './testkit/harness/serverAccountConnectionHarness';
 import { createDeferred } from './testkit/hooks/createDeferred';
 
@@ -73,7 +73,7 @@ it.each([
         const allowSocket = allowRealServerSocketBoundary(origin);
         try {
             const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' }, select: { id: true } });
-            const now = USAGE_RIG_NOW;
+            const now = Date.now();
             const session = await db.session.create({ data: { accountId: account.id, tag: 'usage-rig-reconnect',
                 encryptionMode: 'plain', metadata: '{}', createdAt: new Date(now - 3 * USAGE_RIG_DAY) }, select: { id: true } });
             await db.usageEvent.createMany({ data: Array.from({ length: duringGap ? 1 : 6 }, (_, index) => {
@@ -234,8 +234,10 @@ it.each([
                         await refused.refresh();
                         const snapshot = refused.getSnapshot();
                         expect(snapshot.pending).toBe('idle');
-                        expect(snapshot.error).toMatchObject({ code: 'denied' });
-                        expect(snapshot.value).toBeUndefined();
+                        expect(snapshot.value).toBeDefined();
+                        const [slice] = decodeUsageQueryResource(snapshot.value!).results;
+                        expect(slice?.sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'denied' });
+                        expect(slice?.accounting).toBeUndefined();
                         expect(accountingRequests.length - beforeRefusal).toBe(1);
                         console.info(JSON.stringify({ kind: 'usage-accounting-refusal', code: 'denied', accountingRequests: accountingRequests.length - beforeRefusal }));
                     } finally { releaseRefusal(); }
