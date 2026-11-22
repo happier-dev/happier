@@ -17917,6 +17917,7 @@ settingsSession: {
             coverageHowFromLogs: "Прочитано из журналов сессий",
             coverageHowNotAdded: "Пока не учитывается",
             coverageHowUnknown: "Неизвестно, как учитывается",
+            capturesTitle: "Откуда берётся использование каждого агента",
             continueInHappier: "Продолжить в Happier",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} на ${machine}`,
             defaultFolder: "Папка по умолчанию",

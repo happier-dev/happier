@@ -18340,6 +18340,7 @@ settingsSession: {
             coverageHowFromLogs: "Letto dai log delle sessioni",
             coverageHowNotAdded: "Non ancora conteggiato",
             coverageHowUnknown: "Non si sa come viene conteggiato",
+            capturesTitle: "Da dove proviene l'utilizzo di ogni agente",
             continueInHappier: "Continua in Happier",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} su ${machine}`,
             defaultFolder: "Cartella predefinita",

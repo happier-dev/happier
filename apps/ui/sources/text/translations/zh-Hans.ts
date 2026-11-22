@@ -17614,6 +17614,7 @@ settingsSession: {
             coverageHowFromLogs: "从会话日志读取",
             coverageHowNotAdded: "尚未计入",
             coverageHowUnknown: "不清楚如何计入",
+            capturesTitle: "每个智能体的用量来自哪里",
             continueInHappier: "在 Happier 中继续",
             rootOnMachine: ({ machine, path }: { machine: string | number; path: string | number }) => `${machine} 上的 ${path}`,
             defaultFolder: "默认文件夹",

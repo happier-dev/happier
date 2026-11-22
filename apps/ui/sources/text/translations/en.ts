@@ -21351,6 +21351,7 @@ const enUsage = {
       coverageHowFromLogs: "Read from its session logs",
       coverageHowNotAdded: "Not counted yet",
       coverageHowUnknown: "Not known how it's counted",
+      capturesTitle: "Where each agent's usage comes from",
       continueInHappier: "Continue in Happier",
       rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} on ${machine}`,
       defaultFolder: "Default folder",

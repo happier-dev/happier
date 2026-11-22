@@ -17969,6 +17969,7 @@ settingsSession: {
             coverageHowFromLogs: "Leído de los registros de sus sesiones",
             coverageHowNotAdded: "Aún no se cuenta",
             coverageHowUnknown: "No se sabe cómo se cuenta",
+            capturesTitle: "De dónde sale el uso de cada agente",
             continueInHappier: "Continuar en Happier",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} en ${machine}`,
             defaultFolder: "Carpeta predeterminada",

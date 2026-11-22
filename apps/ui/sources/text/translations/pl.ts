@@ -16944,6 +16944,7 @@ settingsSession: {
       coverageHowFromLogs: "Odczytane z logów sesji",
       coverageHowNotAdded: "Jeszcze nie liczone",
       coverageHowUnknown: "Nie wiadomo, jak jest liczone",
+      capturesTitle: "Skąd pochodzi użycie każdego agenta",
       continueInHappier: "Kontynuuj w Happier",
       rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} na ${machine}`,
       defaultFolder: "Domyślny folder",

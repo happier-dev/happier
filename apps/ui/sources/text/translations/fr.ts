@@ -17843,6 +17843,7 @@ settingsSession: {
             coverageHowFromLogs: "Lu dans les journaux de ses sessions",
             coverageHowNotAdded: "Pas encore compté",
             coverageHowUnknown: "On ne sait pas comment c'est compté",
+            capturesTitle: "D'où vient l'utilisation de chaque agent",
             continueInHappier: "Continuer dans Happier",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} sur ${machine}`,
             defaultFolder: "Dossier par défaut",

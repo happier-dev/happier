@@ -15991,6 +15991,7 @@ settingsSession: {
             coverageHowFromLogs: "Llegit dels registres de les sessions",
             coverageHowNotAdded: "Encara no es compta",
             coverageHowUnknown: "No se sap com es compta",
+            capturesTitle: "D'on surt l'ús de cada agent",
           continueInHappier: "Continua a Happier",
           rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} a ${machine}`,
           defaultFolder: "Carpeta per defecte",

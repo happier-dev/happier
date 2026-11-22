@@ -578,27 +578,34 @@ describe('one selected money basis across Usage bodies', () => {
     const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'complete' as const,
         reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: true }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
-    const tableOf = async (sources: readonly CoverageSource[]) => (await renderScreen(<UsageSourceCoverageWidget {...props}
-      id="usage_source_coverage" testID="coverage" slice={coverageOf(sources)} />)).findByType(HappierDataRows).props;
-    const rowsOf = async (sources: readonly CoverageSource[]) => (await tableOf(sources)).rows as readonly (readonly string[])[];
+    const mount = (sources: readonly CoverageSource[]) => renderControls(<UsageSourceCoverageWidget {...props}
+      id="usage_source_coverage" testID="coverage" slice={coverageOf(sources)} />);
+    const rowsOf = async (sources: readonly CoverageSource[]) => (await mount(sources)).findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
     // Two installed Agents with distinct routing identities that display under the same name stay two rows.
     expect(usageAgentTitle('research-tool')).toBe(usageAgentTitle('research_tool'));
     const twins = await rowsOf([{ ...source, source: 'native:research-tool', machineId: 'm1' }, { ...source, source: 'native:research_tool', machineId: 'm2' }]);
     expect(twins.map(([title]) => title)).toEqual([usageAgentTitle('research-tool'), usageAgentTitle('research_tool')]);
     // One Agent with two capture kinds is one row. Its visible line says how its usage is known (acceptance 1122 #9);
-    // the captures stay its spoken detail.
-    const claude = await tableOf([{ ...source, source: 'claude-assistant-usage' }, { ...source, source: 'claude-sdk-result' }]);
-    expect(claude.rows).toHaveLength(1);
-    expect(claude.rows[0]![0]).toBe(usageAgentTitle('claude'));
-    expect(claude.rows[0]![1]).toContain(t('usage.board.sources.coverageHowUnknown'));
-    expect(claude.rows[0]![1]).not.toContain(usageSourceTitle('claude-assistant-usage'));
-    expect(claude.rowDatums[0].value).toContain(usageSourceTitle('claude-assistant-usage'));
-    expect(claude.rowDatums[0].value).toContain(usageSourceTitle('claude-sdk-result'));
-    // One Agent with a single capture still names that capture in its spoken detail ("Measured" says how, not which).
-    const summaries = await tableOf([{ ...source, source: 'claude-sdk-result' }]);
-    expect(summaries.rows).toHaveLength(1);
-    expect(summaries.rows[0]![0]).toBe(usageAgentTitle('claude'));
-    expect(summaries.rowDatums[0].value).toContain(usageSourceTitle('claude-sdk-result'));
+    // which captures it comes from is secondary detail behind one disclosure, reachable and spoken (review J-B15).
+    const claude = await mount([{ ...source, source: 'claude-assistant-usage' }, { ...source, source: 'claude-sdk-result' }]);
+    const claudeRows = claude.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    expect(claudeRows).toHaveLength(1);
+    expect(claudeRows[0]![0]).toBe(usageAgentTitle('claude'));
+    // The row's line is the cost-basis sentence only; the capture names are not on it.
+    expect(claudeRows[0]![1]).not.toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude.getTextContent()).not.toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude.getTextContent()).toContain(t('usage.board.sources.capturesTitle'));
+    // An exposed disclosure: its header says whether it is open, and opening it shows and speaks the names.
+    const header = () => claude.findHostByTestId('coverage.captures-header')!;
+    expect(header().props.accessibilityState).toMatchObject({ expanded: false });
+    await claude.pressByTestIdAsync('coverage.captures-header');
+    expect(header().props.accessibilityState).toMatchObject({ expanded: true });
+    expect(claude.getTextContent()).toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude.getTextContent()).toContain(usageSourceTitle('claude-sdk-result'));
+    // One Agent with a single capture still names that capture ("Measured" says how, not which).
+    const summaries = await mount([{ ...source, source: 'claude-sdk-result' }]);
+    await summaries.pressByTestIdAsync('coverage.captures-header');
+    expect(summaries.getTextContent()).toContain(`${usageAgentTitle('claude')}: ${usageSourceTitle('claude-sdk-result')}`);
     // Without monetary evidence, both captures have an unknown cost basis.
     const unknown = await rowsOf([{ ...source, source: 'acp-usage-update', captureKind: undefined }]);
     expect(unknown[0]![1]).toContain(t('usage.board.sources.coverageHowUnknown'));

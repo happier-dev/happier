@@ -18138,6 +18138,7 @@ settingsSession: {
             coverageHowFromLogs: "Aus den Sitzungsprotokollen gelesen",
             coverageHowNotAdded: "Noch nicht gezählt",
             coverageHowUnknown: "Unbekannt, wie es gezählt wird",
+            capturesTitle: "Woher die Nutzung jedes Agenten stammt",
             continueInHappier: "In Happier fortsetzen",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} auf ${machine}`,
             defaultFolder: "Standardordner",

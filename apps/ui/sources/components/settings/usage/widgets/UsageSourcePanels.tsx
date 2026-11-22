@@ -12,6 +12,9 @@ import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { useUsageRetryCommand } from './usageMountedControls';
+import { UsagePlanDisclosure, usePlanText } from './plans/UsagePlanParts';
+import { Text } from '@/components/ui/text/Text';
+import { StyleSheet } from 'react-native-unistyles';
 import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAllRows, leadingUsageRows, readUsageCoverageGaps, usagePartialHistoryLabel,
   usageCoverageDescription, usageCoverageSummary, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 
@@ -31,6 +34,7 @@ const costBasisKeys = {
 /** Witnessed accounting coverage, never a guessed Agent support table or a second discovery read. */
 export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const theme = useUsagePluginTheme();
+  const text = usePlanText();
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   const [expanded, setExpanded] = React.useState(false);
   const failed = !!props.slice.accounting && readUsageCoverageGaps(props.slice, ['accounting']).some(gap => gap.status === 'error');
@@ -41,22 +45,29 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
     props.slice.accounting?.agentCostBasis ?? [], summary === usagePartialHistoryLabel()),
     [props.slice.accounting, summary]);
   const led = leadingUsageRows(rows, expanded);
+  // Which captures each Agent's usage comes from is secondary detail: one disclosure under the rows, reachable by
+  // pointer, touch and keyboard and spoken, never a second line on each row (review J-B15).
+  const captured = rows.filter(row => row.captures);
   // The caveat is one compact line; its sources and reasons are one press away (detail on demand), never a paragraph.
   const [detailOpen, setDetailOpen] = React.useState(false);
   const hasMore = !!description && description !== summary;
   const retry = useUsageRetryCommand(props.model.refresh, failed && !!description);
   if (!props.slice.accounting) return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   return <UsageSourceCoverageBody theme={theme} testID={props.testID} label={t('usage.widgets.usage_source_coverage')}
-    columns={[t('usage.widgets.usage_sources'), t('usage.widgets.usage_source_coverage')]} rows={led.rows}
+    columns={[t('usage.widgets.usage_sources'), t('usage.widgets.usage_source_coverage')]} rows={led.rows.map(({ title, label }) => ({ title, label }))}
     showAll={<UsageShowAllRows label={t('usage.widgets.usage_source_coverage')} testID={`${props.testID}.showAll`} total={rows.length}
       hidden={led.hidden} expanded={expanded} onToggle={() => setExpanded(value => !value)} />}
     empty={<UsageBodyInsufficient testID={`${props.testID}.unknown`} replacesContent={false} title={t('usage.board.sources.coverageUnknown')} />}
-    detail={description ? <View>
-      <SurfaceFreshnessLine testID={`${props.testID}.detail`} reason={(detailOpen ? description : summary) || description}
+    detail={description || captured.length ? <View>
+      {captured.length ? <UsagePlanDisclosure title={t('usage.board.sources.capturesTitle')} testID={`${props.testID}.captures`}>
+        {captured.map(row => <Text key={row.title} style={[styles.capture, text.detail]} testID={`${props.testID}.captures.row`}>
+          {`${row.title}: ${row.captures}`}</Text>)}
+      </UsagePlanDisclosure> : null}
+      {description ? <SurfaceFreshnessLine testID={`${props.testID}.detail`} reason={(detailOpen ? description : summary) || description}
         tone={failed ? 'warning' : 'neutral'}
         {...(failed ? { action: { label: t('common.retry'), onPress: retry } }
           : hasMore ? { action: { label: detailOpen ? t('usage.showLess') : t('common.details'), testID: `${props.testID}.detail.action`,
-            onPress: () => setDetailOpen(open => !open) } } : {})} />
+            onPress: () => setDetailOpen(open => !open) } } : {})} /> : null}
     </View> : null} />;
 }
 
@@ -98,7 +109,7 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
     return { title,
       label: [how, !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
         shared ? null : t(statusKeys[status])].filter(Boolean).join(' · '),
-      ...(captures.size > 0 ? { detail: [...captures].join(', ') } : {}) };
+      ...(captures.size > 0 ? { captures: [...captures].join(', ') } : {}) };
   });
 }
 
@@ -129,3 +140,7 @@ export function UsageUnpricedWidget(props: UsageBodyProps) {
     <UsageCoverageLine slice={props.slice} sources={['accounting']} onRetry={props.model.refresh} testID={`${props.testID}.coverage`} />
   </View>;
 }
+
+const styles = StyleSheet.create((theme) => ({
+  capture: { color: theme.colors.text.secondary },
+}));

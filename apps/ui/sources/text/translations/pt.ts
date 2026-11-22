@@ -18077,6 +18077,7 @@ settingsSession: {
             coverageHowFromLogs: "Lido dos registos das sessões",
             coverageHowNotAdded: "Ainda não contado",
             coverageHowUnknown: "Não se sabe como é contado",
+            capturesTitle: "De onde vem o uso de cada agente",
             continueInHappier: "Continuar no Happier",
             rootOnMachine: ({ path, machine }: { path: string | number; machine: string | number }) => `${path} em ${machine}`,
             defaultFolder: "Pasta padrão",

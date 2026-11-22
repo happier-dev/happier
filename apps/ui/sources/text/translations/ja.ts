@@ -18249,6 +18249,7 @@ settingsSession: {
             coverageHowFromLogs: "セッションログから読み取り",
             coverageHowNotAdded: "まだ集計されていません",
             coverageHowUnknown: "集計方法は不明です",
+            capturesTitle: "各エージェントの使用量の出どころ",
             continueInHappier: "Happier で続ける",
             rootOnMachine: ({ machine, path }: { machine: string | number; path: string | number }) => `${machine} の ${path}`,
             defaultFolder: "既定のフォルダー",
