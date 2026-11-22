@@ -117,7 +117,7 @@ import { getActionSpec, resolveActionExecutionPlacementForInput, isPluginProvena
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionIdSchema, SESSION_ORGANIZATION_PIN_SET_ACTION_ID_V1,
     isMachineDeploymentEnvironmentAccessActionIdV1, isDeploymentPrepareSessionMessageEffectV1,
-    SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+    SESSION_SPAWN_NEW_ACTION_ID_V1, ACTION_INVOKE_ACTION_ID_V1, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, getManagedBoundSetupReportActionIdsV1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { MachineAccessActionIdSchema } from '@happier-dev/protocol/actions';
 import { isMachineGrantSetAccessReadV1 } from '@happier-dev/protocol/actions/machineAccessActionFamily';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -4036,6 +4036,29 @@ function isDiscussionCandidateReadHttpPurpose(verified: VerifiedExternalActionEx
     } catch { return false; }
 }
 
+/**
+ * Session status reads the Session's accepted-workspace row by exact id, or the Home/kind-filtered census for
+ * path-associated Sessions. The roots that reach that status read are status itself, installed contributed Actions,
+ * and an approved PR open, whose Session post-step attaches the PR through Channels. The signed proof names only the
+ * root, so the root is matched here. Each spends the root's Account-wide, unrestricted read authority; a
+ * target-restricted grant stays refused. Null when the request is not this read.
+ */
+function readAcceptedWorkspaceStatusRowsHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
+    proof: ExternalActionExecutionRequestProof): boolean | null {
+    const rootActionId = verified.binding.actionId;
+    if (rootActionId !== 'session.status.get' && rootActionId !== ACTION_INVOKE_ACTION_ID_V1
+        && rootActionId !== SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1) return null;
+    if (verified.effectActionId !== rootActionId || proof.method.toUpperCase() !== 'POST' || proof.sessionRouteTarget) return null;
+    const rows = proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`
+        ? ProjectAccountRowReadRequestV1Schema.safeParse(proof.body)
+        : proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
+            ? ProjectAccountRowListRequestV1Schema.safeParse(proof.body) : null;
+    if (!rows?.success) return null;
+    return ('authentication' in verified.binding
+        || verified.binding.grant.targets === null && !isApiTokenGrantRestrictedV1(verified.binding.grant))
+        && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, rows.data));
+}
+
 /** Selector preparation spends its declared root, never a Follow or Discussion child Action. */
 function isSessionTargetPreparationHttpPurpose(verified: VerifiedExternalActionExecutionRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): boolean {
@@ -4071,17 +4094,8 @@ function isSessionTargetPreparationHttpPurpose(verified: VerifiedExternalActionE
             method, path: proof.path, routeInput: proof.routeInput,
         })) return true;
     }
-    // Status and installed contributed Actions read accepted-workspace rows
-    // by exact id or Home/kind-filtered census for path-associated Sessions.
-    // Both spend the same Account-wide read authority checked above.
-    if ((root.data === 'session.status.get' || root.data === 'action.invoke') && method === 'POST' && !proof.sessionRouteTarget) {
-        const rows = proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`
-            ? ProjectAccountRowReadRequestV1Schema.safeParse(proof.body)
-            : proof.path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`
-                ? ProjectAccountRowListRequestV1Schema.safeParse(proof.body) : null;
-        if (rows?.success) return ('authentication' in verified.binding || !isApiTokenGrantRestrictedV1(verified.binding.grant))
-            && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, rows.data));
-    }
+    const acceptedWorkspaceRows = readAcceptedWorkspaceStatusRowsHttpPurpose(verified, proof);
+    if (acceptedWorkspaceRows !== null) return acceptedWorkspaceRows;
     // Follow's existing transport owns the closed Project/assignment fact reads.
     return isSessionFollowActionHttpRequestV1('follow.preview', { method, path: proof.path, body: proof.body,
         routeInput: proof.routeInput, sessionRouteSessionId: proof.sessionRouteTarget?.sessionId });
@@ -4899,9 +4913,11 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (verified.binding.actionId === 'artifact.update' && verified.effectActionId === 'artifact.update'
         && isArtifactJsonUpdateHttpPurpose(proof)) {
         // The signed bytes retain approval authority; Artifact routes retain access and revision fencing.
-    } else if (isSessionTargetPreparationHttpPurpose(verified, proof, snapshotBatch)) {
+    } else if (isSessionTargetPreparationHttpPurpose(verified, proof, snapshotBatch)
+        || readAcceptedWorkspaceStatusRowsHttpPurpose(verified, proof) === true) {
         // Specialized roots above retain their narrower native-purpose contract.
         // General Session operands prepare only the signed selector read phases.
+        // A PR-open root is no Session-target root; it reaches only the status row read.
     } else if (verified.binding.actionId === 'session.targets.resolve') {
         // Inspection has no final Session effect. A non-preparation read must
         // not borrow the generic read-root admission below (for example messages).

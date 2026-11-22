@@ -264,7 +264,7 @@ import { PLUGIN_INSTALLATION_MANIFEST_PUBLISHER_HEADER_V1 } from '@happier-dev/p
 import { materializeWorkflowAcceptedSnapshotFixture } from '@/testkit/workflowAcceptedSnapshot';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
-import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
 import { createWorkflowRunActionOwner } from '../../../../../../cli/src/session/actions/workflowRunActions';
@@ -5697,7 +5697,11 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); vi.unstubAllEnvs(); }
     });
 
-    it.each(['session.status.get', 'action.invoke'])('composes fresh Session status with accepted checkout through signed requester HTTP under %s', async (rootActionId) => {
+    // An approved PR open attaches its PR to the Session; Channels reads the accepted checkout through status under
+    // that root. The agent's root is Session-origin with Account authentication, so no unrestricted-PAT rule admits it.
+    it.each([
+        ['session.status.get', 'pat'], ['action.invoke', 'pat'], [SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, 'session-agent'],
+    ] as const)('composes fresh Session status with accepted checkout through signed requester HTTP under %s (%s root)', async (rootActionId, rootCaller) => {
         const fixture = await createFixture({ qualifiedPat: false });
         const homeId = await getOrCreateServerIdentityId();
         const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
@@ -5714,11 +5718,26 @@ describe("external Action execution authorization", () => {
             encryptionMode: 'plain', metadataLayoutVersion: fields.metadataLayoutVersion,
             metadata: fields.sharedMetadata.ciphertext, ownerMetadata: JSON.stringify(fields.ownerMetadata), agentState: fields.agentState } });
         const reads: Array<{ path: string; status: number }> = [];
-        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, routes => {
-            routes.addHook('onResponse', async (request, reply) => {
-                if (request.url.startsWith('/v1/account/project-rows/')) reads.push({ path: request.url, status: reply.statusCode });
+        const sessionAgent = rootCaller === 'session-agent';
+        // The agent's Session source custody and publisher presence; the publisher is the external socket boundary.
+        if (sessionAgent) {
+            await db.machine.update({ where: { id: fixture.machine.id }, data: {
+                operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } },
+                operationProtocolCapabilitiesRevision: 1,
+            } });
+            await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+                sessionId: session.id, data: 'source-key' } });
+        }
+        const { app } = await createApp(fixture.team.id, false, sessionAgent ? async () => fixture.machine.id : undefined,
+            undefined, false, routes => {
+                if (sessionAgent) {
+                    startSocket(routes);
+                    routes.resolveCurrentSessionMachine = async () => fixture.machine.id;
+                }
+                routes.addHook('onResponse', async (request, reply) => {
+                    if (request.url.startsWith('/v1/account/project-rows/')) reads.push({ path: request.url, status: reply.statusCode });
+                });
             });
-        });
         const channel = await createRequesterCurrentnessSocketHarness();
         try {
             const key = { kind: 'workspace-ref', serverId: homeId, id: ref.id } as const;
@@ -5731,8 +5750,31 @@ describe("external Action execution authorization", () => {
             expect(seeded.statusCode, seeded.body).toBe(200);
             reads.length = 0;
             const input = { sessionId: session.id, includeAcceptedWorkspace: true };
-            const authorization = await mint(app, fixture, rootActionId, { ...fixture.envelope,
-                input: rootActionId === 'action.invoke'
+            const issueSessionAgentRoot = async () => {
+                const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+                    caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
+                    sourceTurnId: 'pr-turn', callerPermissionMode: 'default', causalPermissionAuthority: null,
+                    requestId: crypto.randomUUID() });
+                const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+                    target: fixture.envelope.target, input: { cwd: ref.rootPath, base: 'main', head: 'feature', title: 'Feature' } });
+                const source = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+                const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId, actionId: rootActionId, requestId: origin.requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin,
+                    } } });
+                const issued = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(rootActionId),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
+                        envelope, sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+                expect(issued.statusCode, issued.body).toBe(200);
+                const issuedRoot = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+                expect(issuedRoot.binding).toMatchObject({ authentication: { kind: 'account' }, sessionActionOrigin: origin });
+                authorizationRequests.set(issuedRoot.token, { target: issuedRoot.binding.target,
+                    installationId: source.installationId, requestId: origin.requestId });
+                return issuedRoot;
+            };
+            const authorization = sessionAgent ? await issueSessionAgentRoot() : await mint(app, fixture, rootActionId, {
+                ...fixture.envelope, input: rootActionId === 'action.invoke'
                     ? { action: { pluginId: 'example.session-reader', localId: 'read-status' }, input } : input });
             const serverHttpBaseUrl = await app.listen({ port: 0, host: '127.0.0.1' });
             const http = await projectExternalActionRequesterHttpAuthorization({ authorization, serverId: homeId,
@@ -5741,6 +5783,7 @@ describe("external Action execution authorization", () => {
             if (!http) throw new Error('Signed requester HTTP was not admitted');
             const projected = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: homeId,
                 bootstrap: { credentials, serverHttpBaseUrl, isCurrent: async () => true,
+                    ...(sessionAgent ? { getBoundSessionId: () => session.id } : {}),
                     attribution: { serverId: homeId, accountId: fixture.account.id, machineId: fixture.machine.id,
                         installationId: fixture.machine.installationId! } } });
             if (!projected) throw new Error('Requester Account projection was not admitted');
@@ -5772,6 +5815,25 @@ describe("external Action execution authorization", () => {
             })).toMatchObject({ ok: true, result: { acceptedWorkspace: { checkout: { workspaceId: ref.id } } } });
             expect(reads).toEqual([{ path: '/v1/account/project-rows/list', status: 200 }]);
         } finally { await channel.close(); await app.close(); }
+    });
+
+    it('keeps the accepted-workspace row read refused for a target-restricted PR-open root', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const homeId = await getOrCreateServerIdentityId();
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false);
+        try {
+            const restricted = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(),
+                label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Machine only'),
+                grant: { ...API_TOKEN_FULL_GRANT_V1, targets: { sessions: [], machines: [fixture.machine.id] } } });
+            const authorization = await mint(app, fixture, SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1, { ...fixture.envelope,
+                input: { cwd: '/fresh-project', base: 'main', head: 'feature', title: 'Feature' } }, restricted.token);
+            const path = '/v1/account/project-rows/read';
+            const body = { key: { kind: 'workspace-ref', serverId: homeId, id: crypto.randomUUID() } };
+            const response = await app.inject({ method: 'POST', url: path, payload: body, headers: machineHeaders({
+                authorizationToken: authorization.token, effectActionId: SCM_PULL_REQUEST_OPEN_OR_REUSE_ACTION_ID_V1,
+                method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            expect(response.statusCode, response.body).toBe(401);
+        } finally { await app.close(); }
     });
 
     it('reads the selected Machine for a saved health Action under its admitted Account root', async () => {
