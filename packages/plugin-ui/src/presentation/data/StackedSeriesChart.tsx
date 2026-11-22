@@ -110,6 +110,8 @@ export type StackedSeriesChartProps = Readonly<{
   unknownLabel?: string;
   /** Names the hatch drawn on a bucket with no known value; the legend keys it only while such a bucket is drawn. */
   gapLabel?: string;
+  /** Limit hatching to these missing buckets. With no restriction, hatch every missing bar bucket. */
+  gapBucketIds?: readonly string[];
   valueFormatter?: (value: number) => string;
   /**
    * Say each value in an accessible name as `valueFormatter` reads it (unit and display precision) instead of with every
@@ -350,8 +352,10 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
     target?.focus();
   }, [denseLine, selectedId, geometry.buckets]);
   const unknown = props.unknownLabel ?? formatHappierDataValue(null, text.locale);
-  const gapKey = props.gapLabel && props.variant === 'bar'
-    && geometry.buckets.some(bucket => bucket.values.every(entry => entry.value === null)) ? props.gapLabel : null;
+  const gapBucketIds = props.gapBucketIds && new Set(props.gapBucketIds);
+  const showsGap = (bucket: HappierSeriesBucket) => (!gapBucketIds || gapBucketIds.has(bucket.id))
+    && bucket.values.every(entry => entry.value === null);
+  const gapKey = props.gapLabel && props.variant === 'bar' && geometry.buckets.some(showsGap) ? props.gapLabel : null;
   const magnitude = (value: number) => props.mirrored ? Math.abs(value) : value;
   const format = (value: number) => props.valueFormatter ? props.valueFormatter(magnitude(value)) : formatHappierDataValue(magnitude(value), text.locale);
   const reading = { formatCoordinate: props.coordinateFormatter, ...(props.formattedReadings && props.valueFormatter ? { formatValue: props.valueFormatter } : {}), locale: text.locale };
@@ -648,7 +652,7 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
               fillPattern={props.series[seriesIndex]?.fillPattern} patternInk={props.theme.colors.surface}
               motion={props.barMotion} reducedMotion={reducedMotion} />;
           })}</StackRise>
-          {bucket.values.every(entry => entry.value === null) ? <View pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
+          {showsGap(bucket) ? <View pointerEvents="none" aria-hidden importantForAccessibility="no-hide-descendants"
             testID={props.testID ? `${props.testID}-gap-${bucket.id}` : undefined}
             style={{ position: 'absolute', left: 0, right: 0, top: Math.max(0, geometry.yAt(0) - HAPPIER_DATA_METRICS.blockGapPx),
               // The hatch draws in the secondary-text ink, so a day with no figure reads in light and dark alike (R138).

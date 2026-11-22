@@ -197,6 +197,11 @@ export function UsageDailyWidget(props: UsageBodyProps) {
       ? costTrend?.filter(point => point.partialCost)
       : view?.trend.filter(point => point.tokensFromParts);
     const incompleteTrendStarts = new Set(incompleteTrend?.map(point => point.timestamp * 1000));
+    // Cost hatching describes actual usage without a price. A calendar-only slot
+    // can still have an unknown value without carrying that meaning.
+    const unpricedStarts = byAgent ? incompleteBucketStarts : new Set(costTrend
+      ?.filter(point => point.reportCount > 0 && point.cost === null)
+      .map(point => point.timestamp * 1000));
     const buckets = (series[0]?.points ?? []).flatMap((point, index) => {
       if (typeof point.x !== 'number' || !Number.isFinite(point.x)) return [];
       const startMs = byAgent ? point.x : point.x * 1000;
@@ -205,9 +210,13 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         && values.every(value => typeof value === 'number' && Number.isFinite(value));
       const total = complete
         ? values.reduce<number>((sum, value) => sum + (value ?? 0), 0) : null;
-      return [{ id: point.id, startMs, total }];
+      const gap = (metric !== 'cost' || unpricedStarts.has(startMs)) && values.every(value => value == null);
+      return [{ id: point.id, startMs, total, gap }];
     });
-    const peak = { peakEligibleBucketIds: buckets.filter(bucket => bucket.total !== null).map(bucket => bucket.id) };
+    const peak = {
+      peakEligibleBucketIds: buckets.filter(bucket => bucket.total !== null).map(bucket => bucket.id),
+      gapBucketIds: buckets.filter(bucket => bucket.gap).map(bucket => bucket.id),
+    };
     if (props.query.granularity !== 'day') return { ...empty, ...peak };
     const now = Date.now();
     const days = buckets.map(bucket => ({ ...bucket, ...resolveUsageCalendarInstant(bucket.startMs, props.query.timeZoneOffsetMinutes) }));
@@ -246,7 +255,6 @@ export function UsageDailyWidget(props: UsageBodyProps) {
   const details = useUsageChartDetails(t(`usage.widgets.${props.id}`), Boolean(view && count > 0));
   const compact = presentation?.size === 'small' || presentation?.size === 'wide';
   const shape = useUsageDailyChartShape();
-  const hasGapDay = (series[0]?.points ?? []).some((_, index) => series.every(entry => entry.points[index]?.y == null));
   const height = shape.plotPx;
   // A period that recorded nothing says so once, rather than drawing its days as unrecorded on a 0-to-0 axis. An empty
   // population is a measured 0 (its totals are zeros and no read reported a gap): beside a partner the card draws its
@@ -277,8 +285,7 @@ export function UsageDailyWidget(props: UsageBodyProps) {
         ...(metric === 'cost' ? {} : { minimumMaximum: 1 }),
         showScaleValues: !measuredZeroWeek,
         showPeakValue: !measuredZeroWeek && dailyShowsPeak(phone, compact),
-        // A hatched day is keyed in the legend, so a day with no figure (Cost: no price) reads as one beside the totals.
-        showLegend: !compact && !measuredZeroWeek && (series.length > 1 || hasGapDay),
+        showLegend: !compact && !measuredZeroWeek && (series.length > 1 || dailyContext.gapBucketIds.length > 0),
         gapLabel: metric === 'cost' ? t('usage.board.page.factUnpriced') : t('usage.board.howYouWork.notRecorded'),
         ...dailyContext,
         ...motion,

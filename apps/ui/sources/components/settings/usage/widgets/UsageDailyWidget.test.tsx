@@ -159,6 +159,26 @@ describe('Daily period chart', () => {
     expect(screen.findHostByTestId('daily.chart-peak')?.props.children).toBe(hasCompleteDay ? '$1.50' : undefined);
   });
 
+  it.each([true, false])('hatches recorded usage without selected cost, and leaves earlier missing buckets blank (by Agent: %s)', async (byAgent) => {
+    const endMs = start + 3 * day;
+    const props = fixture([null, 10, 20], endMs, byAgent);
+    const query = normalizeUsageQuery({ ...props.query, metric: 'cost', costBasis: 'reported' });
+    const accounting = props.slice.accounting!;
+    const unknownCost = { ...accounting.totals.cost, reportedUsd: null, estimatedUsd: null };
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: {
+      ...accounting,
+      series: accounting.series?.map((bucket, index) => index === 0 ? { ...bucket, cost: unknownCost } : bucket),
+      engineTimeline: accounting.engineTimeline?.map((bucket, index) => index === 0 ? {
+        ...bucket, leaders: bucket.leaders.map(leader => ({ ...leader, cost: unknownCost })),
+      } : bucket),
+    } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    const screen = await renderScreen(<UsageDailyWidget {...props} query={query} slice={slice} />);
+    const bucketId = (ms: number) => String(byAgent ? ms : ms / 1000);
+    expect(screen.findHostByTestId(`daily.chart-gap-${bucketId(start)}`)).toBeFalsy();
+    expect(screen.findHostByTestId(`daily.chart-gap-${bucketId(start + day)}`)).toBeTruthy();
+    expect(screen.findHostByTestId('daily.chart-gap-key')).toBeTruthy();
+  });
+
   it('includes a completed historical last day, skips uncovered days, and draws no today comparison', async () => {
     vi.spyOn(Date, 'now').mockReturnValue(start + 20 * day);
     const screen = await renderScreen(<UsageDailyWidget {...fixture([10, null, 0, 30], start + 4 * day)} />);
