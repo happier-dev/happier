@@ -40,7 +40,7 @@ import { startHttpRequestRecordingProxy, type HttpRequestRecordingProxy, type Re
 import { startServerLight, type TestDbProvider } from '../process/serverLight';
 import { claimTestHomeOwner } from '../homeOwner';
 import { fetchSessionMetadataV2 } from '../sessionHandoffMetadata';
-import { startTestDaemon, type StartedDaemon } from './daemon';
+import { replaceTestDaemonWithoutStoppingSessions, startTestDaemon, type StartedDaemon } from './daemon';
 import { resolveMachineIdForServerFromSettings } from '../../../../../apps/cli/src/daemon/resolveMachineIdForServerFromSettings';
 import { type CliTestLaunchSpec } from '../process/cliLaunchSpec';
 import { withWorkspaceSourceRuntime } from '../process/tsxImportHook';
@@ -367,6 +367,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
         /** Keep a journey's checkout independent of its retained log directory's SCM ancestry. */
         workspaceDir?: string;
         cliLaunchSpec?: Parameters<typeof startTestDaemon>[0]['cliLaunchSpec'];
+        beforeDaemonSpawn?: Parameters<typeof startTestDaemon>[0]['__beforeSpawn'];
+        preserveRuntimeOnRestart?: boolean;
         pairedHome?: Readonly<{ homeDir: string; serverId: string; machineId: string }>;
       }> = {}) {
         const directory = join(params.testDir, account.name);
@@ -390,20 +392,29 @@ export async function startProjectDaemonFixture(params: Readonly<{
             serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec, env: enrollmentEnv,
             completeTerminalConnect: await terminalApprover });
         })();
-        const launch = () => startTestDaemon({ testDir: directory, happyHomeDir: homeDir, requireMachineControlReady: true,
-          ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}), env: {
+        const env = {
           ...process.env, ...enrollmentEnv, CI: '1', HAPPIER_HOME_DIR: homeDir, HAPPIER_SERVER_URL: actionServerApiUrl,
           HAPPIER_WEBAPP_URL: server.baseUrl, HAPPIER_VARIANT: 'dev', HAPPIER_DISABLE_CAFFEINATE: '1',
           HAPPIER_CLAUDE_CONFIG_DIR: claudeConfigDir,
           HAPPIER_E2E_PROVIDER_USE_CLI_SOURCE_ENTRYPOINT: '1', NODE_OPTIONS: sourceOptions,
           HAPPIER_E2E_PROVIDER_SKIP_CLI_SHARED_DEPS_BUILD: '1', ...params.daemonEnv, ...options.env,
-        } });
+        };
+        const daemonOptions = { testDir: directory, happyHomeDir: homeDir, env, requireMachineControlReady: true,
+          ...(options.cliLaunchSpec ? { cliLaunchSpec: options.cliLaunchSpec } : {}),
+          ...(options.preserveRuntimeOnRestart ? { cleanupDescendantsOnExit: false } : {}),
+        };
+        const launch = () => startTestDaemon({ ...daemonOptions,
+          ...(options.beforeDaemonSpawn ? { __beforeSpawn: options.beforeDaemonSpawn } : {}) });
         let daemon = await launch();
         const daemonIndex = daemons.push(daemon) - 1;
         return { get daemon() { return daemon; }, homeDir, workspaceDir, cliServerId: enrollment.serverId, target: { serverId, machineId: enrollment.machineId },
           async restart() {
-            await daemon.stop();
-            daemon = await launch();
+            if (options.preserveRuntimeOnRestart) {
+              daemon = await replaceTestDaemonWithoutStoppingSessions({ ...daemonOptions, originalDaemon: daemon });
+            } else {
+              await daemon.stop();
+              daemon = await launch();
+            }
             daemons[daemonIndex] = daemon;
           },
         };

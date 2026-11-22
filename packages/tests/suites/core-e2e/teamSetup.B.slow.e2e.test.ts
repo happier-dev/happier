@@ -4,21 +4,28 @@ import { createServer } from 'node:http';
 import { access, mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { connectUiActionClient } from '@happier-tests/ui-action-client';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
+import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
+import { ApprovalRequestGetResultV1Schema } from '@happier-dev/protocol/approvals/approvalRequestPublicRead';
+import { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } from '@happier-dev/protocol/scm';
+import { WORKTREE_RELATIVE_PARENT_DIR } from '@happier-dev/protocol/scm/worktreeName';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { DaemonLocalServicePreviewOpenOrCreateResponseV1Schema, parseLocalServiceDeclarationPreviewLandingUrlV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { ProjectPrepareResultV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { WorktreePortsResultV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
-import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
+import { MachineAccessMutationResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
-import { ActionOperationGetV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { ActionOperationGetV1ResponseSchema, FiniteCommandFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { SESSION_TERMINAL_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/sessionTerminalActionFamily';
 import { SessionTerminalTargetV1Schema, type SessionTerminalViewTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 import { decodeTerminalStreamBytesFrame, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
-import { createProjectServiceDeclarationTargetIdV1, LocalServiceActionResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
+import { MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machineTerminal';
+import { createProjectServiceDeclarationTargetIdV1, LocalServiceActionResultV1Schema, LocalServiceCopyUrlResultV1Schema } from '@happier-dev/protocol/local/services/actions/v1';
 import type { LocalServiceManagedServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
@@ -29,12 +36,13 @@ import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwt
 import { appPaneReduce, createAppPaneState } from '../../../../apps/ui/sources/components/appShell/panes/model/appPaneReducer';
 import { buildProjectPaneScopeId } from '../../../../apps/ui/sources/components/projects/detail/projectPaneScope';
 import { registerSessionTerminalWorkspaceOwner } from '../../../../apps/ui/sources/components/sessions/terminal/sessionTerminalWorkspaceRuntime';
-import { storage } from '../../../../apps/ui/sources/sync/domains/state/storage';
 
 import { repoRootDir } from '../../src/testkit/paths';
+import { PROJECT_TRUST_ROUTE_V1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { startProjectDaemonFixture, type ProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
 import { execGit, initGitRepo } from '../../src/testkit/uiE2e/gitRepoFixtures';
 import { waitFor } from '../../src/testkit/timing';
+import { addFriend, setUsername } from '../../src/testkit/socialFriends';
 import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import type { CliTestLaunchSpec } from '../../src/testkit/process/cliLaunchSpec';
 import { registerMachineIdentity } from '../../src/testkit/machineIdentity';
@@ -43,8 +51,10 @@ import { encryptDataKeyBase64 } from '../../src/testkit/rpcCrypto';
 import { runStressTasksWithConcurrencyLimit } from '../../src/testkit/stress/scenarios/runStressTasksWithConcurrencyLimit';
 import { spawnLoggedProcess } from '../../src/testkit/process/spawnProcess';
 import { sanitizeCliTestEnv } from '../../src/testkit/process/cliTestEnv';
+import { ensureProductionIrohNodeAddon, stageProductionIrohNodeAddonForConsumer } from '../../src/testkit/iroh/productionIrohNodeAddon';
 
 let fixture: ProjectDaemonFixture | undefined;
+let restartDaemon: () => Promise<void>;
 let starter: Awaited<ReturnType<ProjectDaemonFixture['createAccount']>>;
 let ui: Awaited<ReturnType<typeof connectUiActionClient>> | undefined;
 let retireTerminalPresentation: (() => void) | undefined;
@@ -54,9 +64,10 @@ let testDir: string;
 let serverId: string;
 let machineId: string;
 let cliServerId: string;
+let nativePreview: Extract<ReturnType<typeof loadIrohNodeNative>, { available: true }>['native'];
 const startedServices = new Map<string, LocalServiceManagedServiceActionTargetV1>();
 const finiteOperations = new Set<string>();
-const nativeRoots = new Set<string>();
+const nativeRoots = new Map<string, string>();
 const nativeProjects = new Map<string, { project: string; port: string }>();
 
 beforeAll(async () => {
@@ -66,20 +77,30 @@ beforeAll(async () => {
     if (!databaseUrl) throw new Error('TS.B requires the disposable PostgreSQL harness URL');
     testDir = await mkdtemp(resolve(tmpdir(), 'team-setup-b-'));
     console.info(`[TS.B.fixture] ${testDir}`);
-    fixture = await startProjectDaemonFixture({ testDir, serverEnv: {
+    fixture = await startProjectDaemonFixture({ testDir, requestObservation: {}, advertiseRequestObservationEndpoint: true, serverEnv: {
         DATABASE_URL: databaseUrl, HAPPIER_E2E_PROVIDER_SKIP_SERVER_GENERATE: '1',
         HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: '1',
         HAPPIER_FEATURE_MACHINES_TUNNEL_SERVER_ROUTED__ENABLED: '1',
+        HAPPIER_FEATURE_SOCIAL_FRIENDS__ENABLED: '1', HAPPIER_FEATURE_SOCIAL_FRIENDS__ALLOW_USERNAME: '1',
     } });
     const account = await fixture.createAccount('member');
     starter = account;
     cliLaunchSpec = { command: process.execPath, args: ['--import',
         resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
         resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() };
-    const enrolled = await fixture.enrollDaemon(account, { cliLaunchSpec,
+    const enrolled = await fixture.enrollDaemon(account, { cliLaunchSpec, preserveRuntimeOnRestart: true,
         env: { HAPPIER_E2E_CLI_SNAPSHOT_NODE_MODULES_MODE: 'symlink' },
+        async beforeDaemonSpawn() {
+            const packageRoot = process.env.HAPPIER_IROH_TEST_PACKAGE_ROOT;
+            const { addonPath, build } = await ensureProductionIrohNodeAddon({ testDir, packageRoot });
+            stageProductionIrohNodeAddonForConsumer({ sourceAddonPath: addonPath, consumerDir: resolve(repoRootDir(), 'apps/cli') });
+            const loaded = loadIrohNodeNative(build.cwd);
+            if (!loaded.available) throw new Error(loaded.message);
+            nativePreview = loaded.native;
+        },
     });
     happyHomeDir = enrolled.homeDir;
+    restartDaemon = enrolled.restart;
     serverId = enrolled.target.serverId;
     machineId = enrolled.target.machineId;
     cliServerId = enrolled.cliServerId;
@@ -90,19 +111,9 @@ beforeAll(async () => {
 beforeEach(async () => {
     if (!fixture) throw new Error('Fixture is unavailable');
     ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: starter.uiCredentials });
-    try {
-        await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId));
-    } catch (cause) {
-        const state = storage.getState();
-        throw new Error(`B fixture readiness unavailable: ${JSON.stringify({
-            accountReady: ui.isAccountReady(), machineActive: ui.isMachineActive(machineId),
-            expectedMachineId: machineId, serverId, uiServerId: ui.serverId,
-            profileScopeServerId: state.profileScope?.serverId ?? null,
-            displayedMachines: Object.values(state.machines).map(machine => ({
-                id: machine.id, active: machine.active, daemonStatus: machine.daemonState?.status ?? null,
-            })),
-        })}`, { cause });
-    }
+    // Enrollment already waited for the daemon's Machine control registration.
+    // The UI Account must be ready after the renderer reset.
+    await waitFor(() => ui!.isAccountReady(), { context: 'B UI Account readiness' });
 }, 0);
 
 afterEach(async () => {
@@ -121,12 +132,12 @@ afterEach(async () => {
             requestId: randomUUID(), target, action: 'stop_managed',
         }); } catch (error) { failures.push(error); }
     }
-    for (const root of nativeRoots) {
+    for (const root of nativeRoots.keys()) {
         try { await retainNativeProject(root); } catch (error) {
             if (!(error instanceof Error && 'code' in error && error.code === 'ENOENT')) failures.push(error);
         }
     }
-    for (const root of nativeRoots) {
+    for (const [root, cleanupFile] of nativeRoots) {
         try {
             // Native Stop retains stopped containers. Discover only containers
             // labelled with this exact fixture root, then use their observed
@@ -142,7 +153,7 @@ afterEach(async () => {
             }
             for (const project of projects) {
                 if (!project) throw new Error('Fixture container has no Compose project');
-                execFileSync('docker', ['compose', '-f', resolve(testDir, 'compose-retire-compose-cleanup.yaml'),
+                execFileSync('docker', ['compose', '-f', cleanupFile,
                     '-p', project, 'down', '--remove-orphans'], {
                     env: { ...process.env, HAPPIER_WORKTREE_SLUG: project,
                         HAPPIER_WORKTREE_PORT: nativeProjects.get(root)?.port ?? '1' }, stdio: 'pipe',
@@ -161,22 +172,22 @@ afterEach(async () => {
 
 afterAll(async () => { await fixture?.stop(); }, 0);
 
-async function action(actionId: ActionId, input: unknown): Promise<unknown> {
-    const execution = await invoke(actionId, input);
-    expect(execution, `${actionId} must succeed at the real UI Action receiver`).toMatchObject({ ok: true });
-    if (!execution.ok) throw new Error(`${actionId} refused: ${execution.errorCode}`);
+async function action(actionId: ActionId, input: unknown, target?: ActionExecutorContext['externalActionTarget']): Promise<unknown> {
+    const execution = await invoke(actionId, input, target);
+    if (!execution.ok) throw new Error(`${actionId} refused (${execution.errorCode}): ${execution.error}`);
     return execution.result;
 }
 
-async function invoke(actionId: ActionId, input: unknown) {
+async function invoke(actionId: ActionId, input: unknown, target?: ActionExecutorContext['externalActionTarget']) {
     if (!ui) throw new Error('Fixture UI is not ready');
-    return invokeAs(ui, actionId, input);
+    return invokeAs(ui, actionId, input, target);
 }
 
-async function invokeAs(client: Awaited<ReturnType<typeof connectUiActionClient>>, actionId: ActionId, input: unknown) {
+async function invokeAs(client: Awaited<ReturnType<typeof connectUiActionClient>>, actionId: ActionId, input: unknown,
+    target?: ActionExecutorContext['externalActionTarget']) {
     return client.executeConfirmed(actionId, input, {
         surface: 'ui', authority: 'present_user', serverId: client.serverId,
-        actionCaller: { kind: 'host' },
+        actionCaller: { kind: 'host' }, ...(target ? { externalActionTarget: target } : {}),
     });
 }
 
@@ -197,6 +208,13 @@ async function invokeCli(actionId: ActionId, input: unknown, observeApproval?: (
     let decisions = Promise.resolve();
     let failDecision!: (error: unknown) => void;
     const decisionFailure = new Promise<never>((_resolve, reject) => { failDecision = reject; });
+    const approve = (artifactId: string) => {
+        if (pendingDecisions.has(artifactId)) return;
+        pendingDecisions.add(artifactId);
+        observeApproval?.(artifactId);
+        decisions = decisions.then(async () => { await action('approval.request.decide', { artifactId, decision: 'approve' }); });
+        void decisions.catch(failDecision);
+    };
     let stderr = '';
     launched.child.stderr?.on('data', chunk => {
         stderr += String(chunk);
@@ -208,13 +226,8 @@ async function invokeCli(actionId: ActionId, input: unknown, observeApproval?: (
             try { notification = JSON.parse(line); } catch { continue; }
             if (!notification || typeof notification !== 'object' || !('data' in notification)) continue;
             const data = notification.data;
-            if (!data || typeof data !== 'object' || !('kind' in data) || data.kind !== 'approval_request_created'
-                || !('artifactId' in data) || typeof data.artifactId !== 'string' || pendingDecisions.has(data.artifactId)) continue;
-            const artifactId = data.artifactId;
-            pendingDecisions.add(artifactId);
-            observeApproval?.(artifactId);
-            decisions = decisions.then(async () => { await action('approval.request.decide', { artifactId, decision: 'approve' }); });
-            void decisions.catch(failDecision);
+            const receipt = ActionApprovalRequestCreatedResultSchema.safeParse(data);
+            if (receipt.success) approve(receipt.data.artifactId);
         }
     });
     const exited = new Promise<void>((resolve, reject) => {
@@ -227,7 +240,21 @@ async function invokeCli(actionId: ActionId, input: unknown, observeApproval?: (
         const lines = (await readFile(launched.stdoutPath, 'utf8')).trim().split(/\r?\n/);
         const result: unknown = JSON.parse(lines.at(-1) ?? '');
         expect(result).toMatchObject({ v: 1, ok: expect.any(Boolean) });
-        return result;
+        if (!result || typeof result !== 'object' || !('data' in result)) return result;
+        const receipt = ActionApprovalRequestCreatedResultSchema.safeParse(result.data);
+        if (!receipt.success) return result;
+        // A headless terminal can return a durable approval receipt. The
+        // person decides it once and reads the original Action's recorded result.
+        const { artifactId } = receipt.data;
+        approve(artifactId);
+        await decisions;
+        const draft = ApprovalRequestGetResultV1Schema.parse(await action('approval.request.get', { artifactId }));
+        const settled = buildActionExecuteResultFromRecordedApprovalExecution(draft.request);
+        if (!settled) throw new Error(`${actionId} approval has no recorded execution`);
+        if (!settled.ok) return { v: 1, ok: false,
+            error: { code: settled.errorCode, message: settled.error, details: settled.details },
+        };
+        return { ...result, data: settled.result };
     } finally { await launched.stop(); }
 }
 
@@ -281,6 +308,42 @@ async function start(workspace: WorkspaceAddressV1, receiver: 'ui' | 'cli' = 'ui
     return { result, target, url: target.endpointUrl };
 }
 
+async function readLauncher(workspaceRoot: string) {
+    return LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
+        machineId, workspaceRoot, scope: 'workspace',
+    }));
+}
+
+async function withOtherMachineManager(label: string, run: (client: Awaited<ReturnType<typeof connectUiActionClient>>) => Promise<void>) {
+    if (!fixture) throw new Error('Fixture is unavailable');
+    const manager = await fixture.createAccount(`other-manager-${label}`);
+    const accountId = readAccountIdFromToken(manager.credentials.token);
+    const starterId = readAccountIdFromToken(starter.credentials.token);
+    if (!accountId || !starterId) throw new Error('Machine sharing requires both Account identities');
+    await Promise.all([
+        setUsername(fixture.server.baseUrl, starter.credentials.token, 'worktree_service_starter'),
+        setUsername(fixture.server.baseUrl, manager.credentials.token, `worktree_manager_${label}`),
+    ]);
+    await addFriend(fixture.server.baseUrl, starter.credentials.token, accountId);
+    await addFriend(fixture.server.baseUrl, manager.credentials.token, starterId);
+    const target = { serverId, machineId };
+    expect(MachineAccessMutationResultV1Schema.parse(await action('machines.access.grant.set', {
+        ...target, principal: { kind: 'account', accountId }, level: 'admin',
+    }))).toMatchObject({ kind: 'saved', grant: { level: 'admin' } });
+    expect(await action('machines.access.prepareKeys', target)).toMatchObject({ kind: 'prepared' });
+    await ui!.close();
+    ui = undefined;
+    const otherUi = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: manager.uiCredentials });
+    try {
+        await waitFor(() => otherUi.isAccountReady() && otherUi.isMachineActive(machineId), { context: 'other Machine manager access ready' });
+        await run(otherUi);
+    } finally {
+        await otherUi.close();
+        ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: starter.uiCredentials });
+        await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId));
+    }
+}
+
 async function withOccupiedPort(port: number, run: () => Promise<void>) {
     const foreign = createServer((_request, response) => response.end('foreign-marker'));
     try {
@@ -296,11 +359,15 @@ async function withOccupiedPort(port: number, run: () => Promise<void>) {
     }
 }
 
+function takePreviewRegistrations() {
+    if (!fixture) throw new Error('Fixture is unavailable');
+    return fixture.takeRequestObservations()
+        .filter(row => row.method === 'POST' && row.path === '/v1/local-services/preview').length;
+}
+
 async function previewTunnel(previewId: string) {
     if (!fixture) throw new Error('Fixture is unavailable');
-    const loaded = loadIrohNodeNative(process.env.HAPPIER_IROH_TEST_PACKAGE_ROOT ?? resolve(repoRootDir(), 'packages/iroh-native'));
-    if (!loaded.available) throw new Error('The real native preview addon is unavailable');
-    const native = loaded.native;
+    const native = nativePreview;
     const viewer = await native.createEndpoint({ relayPolicy: 'disabled', capProfile: 'machineBulk' });
     const proof = createEphemeralPeerRouteProofHandleV2({ randomBytes });
     let leaseId: string | undefined;
@@ -361,9 +428,9 @@ response.setHeader('content-type','application/json');response.end(JSON.stringif
 }
 
 async function createWorktrees(label: string, runtime: Readonly<Record<string, unknown>> = {}, native = false) {
-    const fixtureDir = resolve(testDir, label);
+    const fixtureDir = await mkdtemp(resolve(testDir, `${label}-`));
     const firstRoot = resolve(fixtureDir, 'first-worktree');
-    const secondRoot = resolve(fixtureDir, 'second-worktree');
+    const secondRoot = resolve(native ? resolve(firstRoot, WORKTREE_RELATIVE_PARENT_DIR) : fixtureDir, 'second-worktree');
     await initGitRepo({ repoDir: firstRoot });
     await mkdir(resolve(firstRoot, '.happier'), { recursive: true });
     await writeFile(resolve(firstRoot, 'server.cjs'), `
@@ -397,11 +464,12 @@ services:
 `);
         await writeFile(resolve(firstRoot, 'setup.cjs'), "const fs=require('node:fs');if(fs.existsSync('fail-setup'))process.exit(13);fs.appendFileSync('setup-runs','setup\\n');fs.writeFileSync('setup-facts.json',JSON.stringify({project:process.env.HAPPIER_WORKTREE_SLUG,port:process.env.HAPPIER_WORKTREE_PORT}));");
         await writeFile(resolve(firstRoot, 'teardown.cjs'), "const fs=require('node:fs'); if(fs.existsSync('fail-teardown'))process.exit(17);fs.appendFileSync('teardown-runs','teardown\\n');");
-        await writeFile(resolve(firstRoot, '.gitignore'), 'launches.jsonl\nsetup-runs\nsetup-facts.json\nteardown-runs\nfail-teardown\nfail-setup\n');
-        const cleanupFile = resolve(testDir, `${label}-compose-cleanup.yaml`);
+        await writeFile(resolve(firstRoot, '.gitignore'), 'launches.jsonl\nsetup-runs\nsetup-facts.json\nteardown-runs\nfail-teardown\nfail-setup\n'
+            + `/${WORKTREE_RELATIVE_PARENT_DIR}/\n`);
+        const cleanupFile = resolve(fixtureDir, 'compose-cleanup.yaml');
         await writeFile(cleanupFile, await readFile(resolve(firstRoot, 'compose.yaml')));
-        nativeRoots.add(firstRoot);
-        nativeRoots.add(secondRoot);
+        nativeRoots.set(firstRoot, cleanupFile);
+        nativeRoots.set(secondRoot, cleanupFile);
     }
     await writeFile(resolve(firstRoot, '.happier/project.json'), JSON.stringify({ version: 1,
         scripts: { hold: { source: { kind: 'command', command: `"${process.execPath}" ./hold.cjs` } } },
@@ -445,7 +513,7 @@ it('TS.B.environment: two opted-in worktrees receive distinct retained ports and
     expect(physicalRoots.map(root => retained.assignments[root]?.ports.length)).toEqual([1, 1]);
     for (const [index, started] of [first, second].entries()) {
         expect(started.target.portSource).toBe('assigned');
-        expect(started.result.snapshot.worktreePorts).toMatchObject({ rootPath: physicalRoots[index], declaredSlots: 1,
+        expect((await readLauncher(physicalRoots[index]!)).worktreePorts).toMatchObject({ rootPath: physicalRoots[index], declaredSlots: 1,
             result: { kind: 'ready', assignment: retained.assignments[physicalRoots[index]!] } });
     }
     // These are real unrelated encrypted records delivered by the same Home,
@@ -496,9 +564,9 @@ it('TS.B.environment: two opted-in worktrees receive distinct retained ports and
     await admittedControl('environment-cli', 'cli');
     await withOccupiedPort(Number(facts[0].port), async () => {
         expect(await invokeCli('localServices.launcher.start', serviceRequest(workspaces[0]!)))
-            .toMatchObject({ ok: true, data: { status: 'failed', reasonCode: 'project_service_start_unavailable',
-                establishmentFailure: { cause: 'port_in_use', port: Number(facts[0].port),
-                    lastStderrLine: expect.stringContaining('EADDRINUSE') } } });
+            .toMatchObject({ ok: false, error: { code: 'project_service_start_unavailable', details: {
+                    establishmentFailure: { cause: 'port_in_use', port: Number(facts[0].port),
+                        lastStderrLine: expect.stringContaining('EADDRINUSE') } } } });
         expect((await assignments()).assignments).toEqual(retained.assignments);
     });
     const finite = ProjectCommandActionOutputV1Schema.parse(await action('projects.script.run', {
@@ -511,8 +579,9 @@ it('TS.B.environment: two opted-in worktrees receive distinct retained ports and
             kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active',
         });
     } finally {
-        await action('action.operations.cancel', { operationId: finite.operation.operationId });
-        await action('action.operations.get', { operationId: finite.operation.operationId, waitForTerminal: true });
+        const target = { serverId: workspaces[0]!.serverId, machineId, operationId: finite.operation.operationId };
+        await action('action.operations.cancel', target);
+        await action('action.operations.get', { ...target, waitForTerminal: true });
         finiteOperations.delete(finite.operation.operationId);
     }
     const reassigned = WorktreePortsResultV1Schema.parse(
@@ -526,27 +595,32 @@ it('TS.B.environment: two opted-in worktrees receive distinct retained ports and
     const restarted = await start(workspaces[0]!, 'cli');
     expect(new URL(restarted.url).port).toBe(String(afterReassign.assignments[physicalRoots[0]!]!.ports[0]));
     expect(restarted.target.portSource).toBe('assigned');
-    expect(restarted.result.snapshot.worktreePorts).toMatchObject({ rootPath: physicalRoots[0],
+    expect((await readLauncher(physicalRoots[0]!)).worktreePorts).toMatchObject({ rootPath: physicalRoots[0],
         result: reassigned });
     expect(await readMarker(restarted.url)).toMatchObject({ marker: 'first-worktree',
         port: String(afterReassign.assignments[physicalRoots[0]!]!.ports[0]) });
 });
 
-async function prepare(workspace: WorkspaceAddressV1, phase: 'setup' | 'teardown' = 'setup', expectedState: 'succeeded' | 'failed' = 'succeeded') {
+async function prepare(workspace: WorkspaceAddressV1, phase: 'setup' | 'teardown' = 'setup',
+    expectedState: 'succeeded' | 'failed' = 'succeeded', consentScope: 'thisTime' | 'untilChanged' = 'thisTime') {
     const started = ProjectPrepareResultV1Schema.parse(await action('projects.prepare', { workspace, phase }));
     if (!('operation' in started)) return started;
+    const operation = { serverId: workspace.serverId, machineId: workspace.machineId, operationId: started.operation.operationId };
     const observed = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', {
-        operationId: started.operation.operationId, waitForTerminal: true, includeSetupReview: true,
+        ...operation, waitForTerminal: true, includeSetupReview: true,
     }));
     if (observed.kind !== 'found') throw new Error('Project preparation operation disappeared');
-    if (observed.operation.setupReview) {
+    const review = observed.operation.setupReview;
+    if (consentScope === 'untilChanged' && !review) throw new Error('Teardown did not offer a Project Trust decision');
+    if (review) {
         await action('projects.prepare', { workspace, phase, heldOperationId: started.operation.operationId,
-            expectedEffectDigest: observed.operation.setupReview.reviewedEffectDigest, consentScope: 'thisTime' });
+            expectedEffectDigest: review.reviewedEffectDigest, consentScope });
     }
     const settled = ActionOperationGetV1ResponseSchema.parse(await action('action.operations.get', {
-        operationId: started.operation.operationId, waitForTerminal: true,
+        ...operation, waitForTerminal: true,
     }));
-    expect(settled).toMatchObject({ kind: 'found', operation: { state: expectedState } });
+    expect(settled, settled.kind === 'found' ? JSON.stringify(settled.operation.error) : settled.kind)
+        .toMatchObject({ kind: 'found', operation: { state: expectedState } });
     return settled;
 }
 
@@ -565,8 +639,8 @@ async function retainNativeProject(root: string) {
     nativeProjects.set(root, { project: facts.project, port: facts.port });
 }
 
-it('TS.B.composeRetire: setup autostarts once, failed teardown retains the root, and successful removal releases only it', async () => {
-    await admittedControl('compose-retire');
+it('TS.B.composeRetire: failed setup leaves no autostarted native occurrence', async () => {
+    await admittedControl('compose-failed-setup');
     const failedSetup = await createWorktrees('compose-failed-setup', { autostart: true }, true);
     await writeFile(resolve(failedSetup.roots[0]!, 'fail-setup'), 'fail');
     expect(await prepare(failedSetup.workspaces[0]!, 'setup', 'failed')).toMatchObject({
@@ -576,85 +650,134 @@ it('TS.B.composeRetire: setup autostarts once, failed teardown retains the root,
     expect(execFileSync('docker', ['ps', '--all', '--quiet', '--filter',
         `label=com.docker.compose.project.working_dir=${failedSetup.roots[0]}`], { encoding: 'utf8' }).trim()).toBe('');
     await expect(readFile(resolve(failedSetup.roots[0]!, 'setup-facts.json'))).rejects.toMatchObject({ code: 'ENOENT' });
-    const { roots, workspaces } = await createWorktrees('compose-retire', { autostart: true }, true);
-    await Promise.all(workspaces.map(workspace => prepare(workspace)));
-    await Promise.all(roots.map(retainNativeProject));
-    for (const root of roots) {
-        const native = nativeProjects.get(root);
-        if (!native) throw new Error('Successful setup did not record its native Project identity');
-        await waitFor(async () => (await fetch(`http://127.0.0.1:${native.port}`)).ok);
-    }
-    // Start now adopts autostarted native instances. It must not launch another
-    // Compose project, nor may preparing again replay the setup/autostart effect.
-    await admittedControl('compose-retire-cli', 'cli');
-    const [first, second] = await Promise.all(workspaces.map(workspace => start(workspace, 'cli')));
-    const markers = await Promise.all([first.url, second.url].map(async url => (await fetch(url)).text()));
-    expect(markers[0]).not.toBe(markers[1]);
-    const nativeOccurrence = () => execFileSync('docker', ['ps', '--quiet', '--filter',
-        `label=com.docker.compose.project.working_dir=${roots[0]}`], { encoding: 'utf8' }).trim();
-    const beforeShowLogs = nativeOccurrence();
-    expect(beforeShowLogs).not.toBe('');
-    const logs = ManagedServiceNativeLogResultV1Schema.parse(await action('machines.services.logs.read', {
-        serverId, machineId, serviceId: first.target.id,
-    }));
-    expect(logs).toMatchObject({ kind: 'page' });
-    expect(nativeOccurrence(), 'Show logs keeps the already-running native container').toBe(beforeShowLogs);
-    expect(await (await fetch(first.url)).text()).toBe(markers[0]);
-    const physicalRoots = await Promise.all(roots.map(root => realpath(root)));
-    const before = await assignments();
-    expect(before.assignments[physicalRoots[0]!]?.ports[0]).not.toBe(before.assignments[physicalRoots[1]!]?.ports[0]);
-    if (!second.result.currentTarget) throw new Error('Native Start lost its control target');
-    await stop(second.result.currentTarget);
-    await withOccupiedPort(Number(new URL(second.url).port), async () => {
-        expect(await invokeCli('localServices.launcher.start', serviceRequest(workspaces[1]!)))
-            .toMatchObject({ ok: true, data: { status: 'failed', reasonCode: 'deployment_port_in_use' } });
-        expect((await assignments()).assignments).toEqual(before.assignments);
-    });
-    await prepare(workspaces[1]!);
-    expect(await readFile(resolve(roots[1]!, 'setup-runs'), 'utf8')).toBe('setup\n');
-    const stopped = await invoke('localServices.preview.openOrCreate', { machineId, launchTargetId: second.target.id });
-    expect(stopped).toMatchObject({ ok: false, errorCode: 'service_not_listening',
-        error: 'local_service_preview_lifecycle_refused:service_not_listening' });
-    await writeFile(resolve(roots[1]!, 'fail-teardown'), 'fail');
-    const request = { machineId, cwd: roots[0], worktreePath: roots[1], confirmed: true,
-        authorizationToken: 'remove-worktree' };
-    const refused = await invoke('scm.worktree.remove', request);
-    expect(refused).toMatchObject({ ok: false, errorCode: 'project_setup_step_failed', details: {
-        kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 17, signal: null,
-    } });
-    await access(roots[1]!);
-    expect((await assignments()).assignments).toEqual(before.assignments);
-    await unlink(resolve(roots[1]!, 'fail-teardown'));
-    const removalAlias = resolve(testDir, 'compose-retire-removal-alias');
-    await symlink(roots[1]!, removalAlias, process.platform === 'win32' ? 'junction' : 'dir');
-    expect(await realpath(removalAlias)).toBe(physicalRoots[1]);
-    const removed = await action('scm.worktree.remove', { ...request, worktreePath: removalAlias });
-    expect(removed).toMatchObject({ success: true });
-    await expect(access(roots[1]!)).rejects.toMatchObject({ code: 'ENOENT' });
-    await waitFor(async () => !Object.hasOwn((await assignments()).assignments, physicalRoots[1]!));
-    const after = await assignments();
-    expect(after.assignments).not.toHaveProperty(physicalRoots[1]!);
-    expect(after.assignments[physicalRoots[0]!]).toEqual(before.assignments[physicalRoots[0]!]);
-    expect(await (await fetch(first.url)).text()).toBe(markers[0]);
+});
 
-    // Explicit removal reconciles Git's retained physical registration after
-    // the checkout disappears outside Happier. Availability alone never releases it.
+describe('TS.B.composeRetire native setup', () => {
+    let worktrees: Awaited<ReturnType<typeof createWorktrees>>;
+
+    beforeEach(async () => {
+        worktrees = await createWorktrees('compose-retire', { autostart: true }, true);
+        const { roots, workspaces } = worktrees;
+        await Promise.all(workspaces.map(workspace => prepare(workspace)));
+        await Promise.all(roots.map(retainNativeProject));
+        await Promise.all(roots.map(async root => {
+            const native = nativeProjects.get(root);
+            if (!native) throw new Error('Successful setup did not record its native Project identity');
+            await waitFor(async () => (await fetch(`http://127.0.0.1:${native.port}`)).ok);
+        }));
+    });
+
+    it('autostarts once, preserves the native occurrence and refuses a CLI port collision', async () => {
+        const { roots, workspaces } = worktrees;
+        // The second Start proves the same CLI receiver and Worktree used for
+        // collision. Both Starts adopt the already-running native occurrences.
+        const [first, second] = await Promise.all([start(workspaces[0]!), start(workspaces[1]!, 'cli')]);
+        console.info('[TS.B.composeRetire] both auto-started occurrences were adopted');
+        const markers = await Promise.all([first.url, second.url].map(async url => (await fetch(url)).text()));
+        expect(markers[0]).not.toBe(markers[1]);
+        for (const root of roots) expect(await readFile(resolve(root, 'setup-runs'), 'utf8')).toBe('setup\n');
+        const physicalRoots = await Promise.all(roots.map(root => realpath(root)));
+        const before = await assignments();
+        expect(before.assignments[physicalRoots[0]!]?.ports[0]).not.toBe(before.assignments[physicalRoots[1]!]?.ports[0]);
+        if (!second.result.currentTarget) throw new Error('Native Start lost its control target');
+        await stop(second.result.currentTarget);
+        await withOccupiedPort(Number(new URL(second.url).port), async () => {
+            expect(await invokeCli('localServices.launcher.start', serviceRequest(workspaces[1]!)))
+                .toMatchObject({ ok: false, error: { code: 'deployment_port_in_use', details: {
+                        establishmentFailure: { cause: 'port_in_use', port: Number(new URL(second.url).port) } } } });
+            expect((await assignments()).assignments).toEqual(before.assignments);
+        });
+        console.info('[TS.B.composeRetire] CLI collision retained both assignments');
+        expect(await open(roots[1]!)).toMatchObject({ workspaceId: workspaces[1]!.workspaceId });
+        expect(await readFile(resolve(roots[1]!, 'setup-runs'), 'utf8')).toBe('setup\n');
+        console.info('[TS.B.composeRetire] reopening kept one setup effect');
+        const stopped = await invoke('localServices.preview.openOrCreate', { machineId, launchTargetId: second.target.id });
+        expect(stopped).toMatchObject({ ok: false, errorCode: 'service_not_listening',
+            error: 'local_service_preview_lifecycle_refused:service_not_listening' });
+    });
+
+    it('retains a Worktree on teardown failure and releases only the approved root on retry', async () => {
+        const { roots, workspaces } = worktrees;
+        const selected = await start(workspaces[1]!);
+        if (!selected.result.currentTarget) throw new Error('Native Start lost its control target');
+        await stop(selected.result.currentTarget);
+        expect(await action('actions.policy.set', { actionId: 'projects.prepare', audience: 'ui', mode: 'ask_first' }))
+            .toMatchObject({ mode: 'ask_first' });
+        const teardownTrustRequests = () => fixture.takeRequestObservations()
+            .filter(row => row.path.startsWith(`${PROJECT_TRUST_ROUTE_V1}/`))
+            .map(({ method, path, statusCode }) => ({ method, path, statusCode }));
+        teardownTrustRequests();
+        await prepare(workspaces[1]!, 'teardown', 'succeeded', 'untilChanged');
+        expect(teardownTrustRequests()).toContainEqual({ method: 'POST', path: `${PROJECT_TRUST_ROUTE_V1}/mutate`, statusCode: 200 });
+        console.info('[TS.B.composeRetire] native teardown completed and consent was remembered');
+        expect(await readFile(resolve(roots[1]!, 'teardown-runs'), 'utf8')).toBe('teardown\n');
+        const sibling = nativeProjects.get(roots[0]!);
+        if (!sibling) throw new Error('Successful setup did not record the sibling Project');
+        const siblingUrl = `http://127.0.0.1:${sibling.port}`;
+        const siblingMarker = await (await fetch(siblingUrl)).text();
+        const physicalRoots = await Promise.all(roots.map(root => realpath(root)));
+        const before = await assignments();
+        await writeFile(resolve(roots[1]!, 'fail-teardown'), 'fail');
+        const request = { machineId, cwd: roots[0], worktreePath: roots[1], confirmed: true,
+            authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN };
+        const removalContext = { externalActionTarget: { kind: 'machine', machineId,
+            project: { machineId, directory: roots[0]! } } } as const;
+        const oneTrustRead = [{ method: 'POST', path: `${PROJECT_TRUST_ROUTE_V1}/read`, statusCode: 200 }];
+        teardownTrustRequests();
+        console.info('[TS.B.composeRetire] sibling responded; invoking reviewed Git removal');
+        const refused = await starter.executeReviewed('scm.worktree.remove', request, removalContext);
+        expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'project_setup_step_failed', details: {
+            kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 17,
+        } });
+        const details = FiniteCommandFailureDetailsV1Schema.parse(refused.ok ? undefined : refused.details);
+        expect([0, null]).toContain(details.signal);
+        expect(teardownTrustRequests()).toEqual(oneTrustRead);
+        await access(roots[1]!);
+        expect((await assignments()).assignments).toEqual(before.assignments);
+        console.info('[TS.B.composeRetire] refused teardown retained the selected root');
+        await unlink(resolve(roots[1]!, 'fail-teardown'));
+        const removalAlias = resolve(roots[0]!, WORKTREE_RELATIVE_PARENT_DIR, 'removal-alias');
+        await symlink(roots[1]!, removalAlias, process.platform === 'win32' ? 'junction' : 'dir');
+        expect(await realpath(removalAlias)).toBe(physicalRoots[1]);
+        const removed = await starter.executeReviewed('scm.worktree.remove',
+            { ...request, worktreePath: removalAlias }, removalContext);
+        expect(removed).toMatchObject({ ok: true, result: { success: true } });
+        expect(teardownTrustRequests()).toEqual(oneTrustRead);
+        await expect(access(roots[1]!)).rejects.toMatchObject({ code: 'ENOENT' });
+        const after = await assignments();
+        expect(after.assignments).not.toHaveProperty(physicalRoots[1]!);
+        expect(after.assignments[physicalRoots[0]!]).toEqual(before.assignments[physicalRoots[0]!]);
+        expect(await (await fetch(siblingUrl)).text()).toBe(siblingMarker);
+    });
+});
+
+it('TS.B.composeRetire: explicit removal reconciles a vanished Worktree without changing its sibling', async () => {
+    await admittedControl('compose-external-removal');
     const external = await createWorktrees('compose-external-removal', { autostart: true }, true);
-    await prepare(external.workspaces[1]!);
-    await retainNativeProject(external.roots[1]!);
-    const externalService = await start(external.workspaces[1]!);
+    await Promise.all(external.workspaces.map(workspace => prepare(workspace)));
+    await Promise.all(external.roots.map(retainNativeProject));
+    const [sibling, externalService] = await Promise.all(external.workspaces.map(workspace => start(workspace)));
+    const siblingMarker = await (await fetch(sibling.url)).text();
+    const retainedPhysicalRoot = await realpath(external.roots[0]!);
     if (!externalService.result.currentTarget) throw new Error('Native Start lost its control target');
     await stop(externalService.result.currentTarget);
     const externallyRemovedPhysicalRoot = await realpath(external.roots[1]!);
     const beforeExternalRemoval = await assignments();
+    const retainedFile = resolve(happyHomeDir, 'worktree-ports.json');
+    const beforeRefresh = await stat(retainedFile, { bigint: true });
     expect(beforeExternalRemoval.assignments).toHaveProperty(externallyRemovedPhysicalRoot);
     await rm(external.roots[1]!, { recursive: true });
+    await readLauncher(retainedPhysicalRoot);
+    await readLauncher(retainedPhysicalRoot);
     expect((await assignments()).assignments).toEqual(beforeExternalRemoval.assignments);
+    const afterRefresh = await stat(retainedFile, { bigint: true });
+    expect([afterRefresh.ino, afterRefresh.mtimeNs]).toEqual([beforeRefresh.ino, beforeRefresh.mtimeNs]);
     expect(await action('scm.worktree.remove', { machineId, cwd: external.roots[0], worktreePath: external.roots[1],
-        confirmed: true, authorizationToken: 'remove-worktree' })).toMatchObject({ success: true });
-    await waitFor(async () => !Object.hasOwn((await assignments()).assignments, externallyRemovedPhysicalRoot));
-    expect((await assignments()).assignments[physicalRoots[0]!]).toEqual(beforeExternalRemoval.assignments[physicalRoots[0]!]);
-    expect(await (await fetch(first.url)).text()).toBe(markers[0]);
+        confirmed: true, authorizationToken: SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN }, { kind: 'machine', machineId })).toMatchObject({ success: true });
+    const afterRemoval = await assignments();
+    expect(afterRemoval.assignments).not.toHaveProperty(externallyRemovedPhysicalRoot);
+    expect(afterRemoval.assignments[retainedPhysicalRoot]).toEqual(beforeExternalRemoval.assignments[retainedPhysicalRoot]);
+    expect(await (await fetch(sibling.url)).text()).toBe(siblingMarker);
 });
 
 it('TS.B.terminal: interactive Start returns the existing service terminal without a second process', async () => {
@@ -686,31 +809,21 @@ it('TS.B.terminal: interactive Start returns the existing service terminal witho
     expect(await (await fetch(initial.url)).json()).toEqual(firstBody);
     await present(terminal);
     expect((await readFile(resolve(roots[0]!, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
-    if (!fixture) throw new Error('Fixture is unavailable');
-    const manager = await fixture.createAccount('other-manager');
-    const accountId = readAccountIdFromToken(manager.credentials.token);
-    if (!accountId) throw new Error('The second real Account has no identity');
-    await action('machines.access.grant.set', { serverId, machineId,
-        principal: { kind: 'account', accountId }, level: 'admin' });
-    await ui!.close();
-    ui = undefined;
-    const otherUi = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: manager.uiCredentials });
-    try {
-        await waitFor(() => otherUi.isAccountReady() && otherUi.isMachineActive(machineId));
+    await withOtherMachineManager('terminal', async otherUi => {
         const terminalIdentity = { serverId: workspaces[0]!.serverId, machineId, terminalId: terminal.terminalId };
-        expect(await invokeAs(otherUi, 'machines.terminal.read', { ...terminalIdentity, byteOffset: 0 }))
-            .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-        expect(await invokeAs(otherUi, 'machines.terminal.write', { ...terminalIdentity,
-            event: { t: 'key', key: 'c', modifiers: ['ctrl'] } }))
-            .toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
+        const readRefusal = await invokeAs(otherUi, 'machines.terminal.read', { ...terminalIdentity, byteOffset: 0 });
+        if (!readRefusal.ok) throw new Error(`Other Account terminal read failed at Action transport (${readRefusal.errorCode})`);
+        expect(MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS['machines.terminal.read'].parse(readRefusal.result))
+            .toMatchObject({ ok: false, code: 'terminal_forbidden' });
+        const writeRefusal = await invokeAs(otherUi, 'machines.terminal.write', { ...terminalIdentity,
+            event: { t: 'key', key: 'c', modifiers: ['ctrl'] } });
+        if (!writeRefusal.ok) throw new Error(`Other Account terminal write failed at Action transport (${writeRefusal.errorCode})`);
+        expect(MACHINE_TERMINAL_ACTION_OUTPUT_SCHEMAS['machines.terminal.write'].parse(writeRefusal.result))
+            .toMatchObject({ ok: false, code: 'terminal_forbidden' });
         expect(await invokeAs(otherUi, 'machines.services.logs.read', {
             serverId: workspaces[0]!.serverId, machineId, serviceId: initial.target.id,
         })).toMatchObject({ ok: false, errorCode: 'terminal_forbidden' });
-    } finally {
-        await otherUi.close();
-        ui = await connectUiActionClient({ serverUrl: fixture.server.baseUrl, credentials: starter.uiCredentials });
-        await waitFor(() => ui!.isAccountReady() && ui!.isMachineActive(machineId));
-    }
+    });
     const again = await start(workspaces[0]!);
     expect(again.result).toMatchObject({ terminalView: expect.objectContaining({ kind: 'terminal_view' }) });
     const retainedMember = await present(terminal);
@@ -723,6 +836,14 @@ it('TS.B.terminal: interactive Start returns the existing service terminal witho
     expect((await readFile(resolve(roots[0]!, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
     if (!initial.result.currentTarget) throw new Error('Interactive Start lost its control target');
     await stop(initial.result.currentTarget);
+    const port = Number(new URL(initial.url).port);
+    await withOccupiedPort(port, async () => {
+        const refused = await invoke('localServices.launcher.start', serviceRequest(workspaces[0]!));
+        expect(refused).toMatchObject({ ok: true, result: {
+            status: 'failed', reasonCode: 'project_service_start_unavailable',
+            establishmentFailure: { cause: 'port_in_use', port },
+        } });
+    });
     const restarted = await start(workspaces[0]!);
     expect(await (await fetch(restarted.url)).json()).not.toEqual(firstBody);
     const restartedTerminal = SessionTerminalTargetV1Schema.parse(restarted.result.terminalView);
@@ -745,24 +866,47 @@ it('TS.B.actionParity: CLI Copy/Open preserve the destination and approved Resta
     if (!initial.result.currentTarget) throw new Error('Initial service lost its control target');
     const beforeCliRestart = await (await fetch(initial.url)).json();
     const siblingBefore = await (await fetch(sibling.url)).json();
-    const copyDestination = async (target: LocalServiceManagedServiceActionTargetV1) => {
-        const copied = await cliAction('localServices.actions.copyUrl', { requestId: randomUUID(), target, action: 'copy_url' });
-        expect(copied).toMatchObject({ status: 'succeeded', action: 'copy_url', destinationUrl: expect.any(String) });
-        if (!copied || typeof copied !== 'object' || !('destinationUrl' in copied) || typeof copied.destinationUrl !== 'string')
-            throw new Error('CLI Copy returned no canonical destination');
+    const copyDestination = async (target: LocalServiceManagedServiceActionTargetV1, observeApproval?: (artifactId: string) => void) => {
+        const execution = await invokeCli('localServices.actions.copyUrl', { requestId: randomUUID(), target, action: 'copy_url' }, observeApproval);
+        const failure = execution && typeof execution === 'object' && 'error' in execution ? execution.error : undefined;
+        expect(execution, JSON.stringify(failure)).toMatchObject({ ok: true, data: {
+            status: 'succeeded', action: 'copy_url', destinationUrl: expect.any(String),
+        } });
+        if (!execution || typeof execution !== 'object' || !('data' in execution))
+            throw new Error('CLI Copy returned no Action result');
+        const copied = LocalServiceCopyUrlResultV1Schema.parse(execution.data);
+        if (!copied.destinationUrl) throw new Error('CLI Copy returned no canonical destination');
         return copied.destinationUrl;
     };
-    const copiedUrl = await copyDestination(initial.result.currentTarget);
+    const policy = { actionId: 'localServices.actions.copyUrl', audience: 'cli' };
+    expect(await action('actions.policy.set', { ...policy, mode: 'ask_first' })).toMatchObject({ mode: 'ask_first' });
+    const copyApprovals = new Set<string>();
+    const copiedUrl = await copyDestination(initial.result.currentTarget, artifactId => copyApprovals.add(artifactId));
+    expect(copyApprovals.size).toBe(1);
     expect(copiedUrl).toBe(beforeCliRestart.worktreeUrl);
+    expect(await action('actions.policy.set', { ...policy, mode: 'allowed' })).toMatchObject({ mode: 'allowed' });
+    try {
+        const directCopyApprovals = new Set<string>();
+        expect(await copyDestination(initial.result.currentTarget, artifactId => directCopyApprovals.add(artifactId))).toBe(copiedUrl);
+        expect(directCopyApprovals.size).toBe(0);
+    } finally {
+        await action('actions.policy.set', { ...policy, mode: 'default' });
+    }
     const copiedLocator = parseLocalServiceDeclarationPreviewLandingUrlV1(copiedUrl);
     expect(copiedLocator).toEqual({ serverId, machineId, targetId: initial.target.id });
     if (!copiedLocator) throw new Error('CLI Copy did not return a stable declaration locator');
-    // CI is deliberately headless. Open reaches its real presentation owner
-    // and reports that OS prerequisite rather than claiming browser success.
-    expect(await invokeCli('localServices.actions.openPreview', { requestId: randomUUID(),
-        target: initial.result.currentTarget, action: 'open_preview' })).toMatchObject({
-        ok: false, error: { code: 'browser_unavailable', details: { destinationUrl: copiedUrl } },
-    });
+    const openedPreview = await invokeCli('localServices.actions.openPreview', { requestId: randomUUID(),
+        target: initial.result.currentTarget, action: 'open_preview' });
+    if (openedPreview && typeof openedPreview === 'object' && 'data' in openedPreview) {
+        const receipt = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(openedPreview.data);
+        expect(receipt.preview.resource).toMatchObject({ browserTarget: {
+            kind: 'localServicePreview', machineId: copiedLocator.machineId, targetId: copiedLocator.targetId,
+        } });
+    } else {
+        expect(openedPreview).toMatchObject({
+            ok: false, error: { code: 'browser_unavailable', details: { destinationUrl: copiedUrl } },
+        });
+    }
     expect(await (await fetch(initial.url)).json()).toEqual(beforeCliRestart);
     expect((await readFile(resolve(roots[0]!, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
     const approvals = new Set<string>();
@@ -772,7 +916,8 @@ it('TS.B.actionParity: CLI Copy/Open preserve the destination and approved Resta
     expect(restartResult, 'The real CLI receiver must admit service Restart').toMatchObject({ ok: true });
     if (!restartResult || typeof restartResult !== 'object' || !('data' in restartResult)) throw new Error('CLI Restart returned no data');
     const cliRestart = LocalServiceActionResultV1Schema.parse(restartResult.data);
-    expect(cliRestart).toMatchObject({ status: 'succeeded', action: 'restart_managed' });
+    expect(cliRestart, JSON.stringify({ reasonCode: cliRestart.reasonCode, approvals: approvals.size }))
+        .toMatchObject({ status: 'succeeded', action: 'restart_managed' });
     expect(approvals.size, 'One parent approval admits the service Restart').toBe(1);
     const afterCliRestart = LocalServiceLauncherSnapshotV1Schema.parse(await action('localServices.launcher.snapshot', {
         machineId, workspaceRoot: roots[0],
@@ -803,19 +948,23 @@ it('TS.B.actionParity: CLI Copy/Open preserve the destination and approved Resta
         target: { terminalId: cliTerminal.terminalId, terminalKey: cliTerminal.terminalKey } }] }]);
 });
 
-it('TS.B.preview: the declaration locator follows explicit restart and refuses a stopped service', async () => {
+it('TS.B.preview: two worktrees reconnect, then the same declaration locator follows an explicit service restart', async () => {
     await admittedControl('preview');
     const { roots, workspaces } = await createWorktrees('preview');
-    const initial = await start(workspaces[0]!);
+    const [initial, sibling] = await Promise.all(workspaces.map(workspace => start(workspace)));
     const initialFacts = await (await fetch(initial.url)).json();
+    const siblingFacts = await (await fetch(sibling.url)).json();
+    expect(siblingFacts.marker).toBe('second-worktree');
     expect(initialFacts.worktreeUrl, 'The service receives its stable private destination').toEqual(expect.any(String));
     const suppliedUrl = String(initialFacts.worktreeUrl);
     const locator = parseLocalServiceDeclarationPreviewLandingUrlV1(suppliedUrl);
     expect(locator).toEqual({ serverId, machineId, targetId: initial.target.id });
     if (!locator) throw new Error('The supplied worktree URL is not a canonical declaration locator');
     const request = { machineId: locator.machineId, launchTargetId: locator.targetId };
+    takePreviewRegistrations();
     const opened = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(
         await action('localServices.preview.openOrCreate', request));
+    expect(takePreviewRegistrations()).toBe(1);
     expect(opened.preview.resource).toMatchObject({ machineId, serviceTarget: {
         managedServiceId: initial.result.currentTarget?.managedServiceId,
     } });
@@ -823,11 +972,36 @@ it('TS.B.preview: the declaration locator follows explicit restart and refuses a
     try {
         expect(await (await fetch(oldTunnel.url)).json()).toMatchObject({ marker: 'first-worktree',
             pid: initialFacts.pid, worktreeUrl: suppliedUrl });
-        expect((await readFile(resolve(roots[0]!, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
+    } finally { await oldTunnel.close(); }
+    const retainedFile = resolve(happyHomeDir, 'worktree-ports.json');
+    const retainedBytes = await readFile(retainedFile, 'utf8');
+    const retainedStat = await stat(retainedFile, { bigint: true });
+    takePreviewRegistrations();
+    await restartDaemon();
+    expect(await (await fetch(initial.url)).json()).toEqual(initialFacts);
+    expect(await (await fetch(sibling.url)).json()).toEqual(siblingFacts);
+    await action('localServices.preview.status', { machineId });
+    expect(takePreviewRegistrations()).toBe(0);
+    const reconnected = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(
+        await action('localServices.preview.openOrCreate', request));
+    expect(takePreviewRegistrations()).toBe(1);
+    expect(reconnected.preview.resource).toMatchObject({
+        previewId: opened.preview.resource.previewId,
+        serviceTarget: opened.preview.resource.serviceTarget,
+    });
+    const reconnectedTunnel = await previewTunnel(reconnected.preview.resource.previewId);
+    try {
+        expect(await (await fetch(reconnectedTunnel.url)).json()).toEqual(initialFacts);
+        for (const root of roots) {
+            expect((await readFile(resolve(root, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(1);
+        }
+        expect(await readFile(retainedFile, 'utf8')).toBe(retainedBytes);
+        const reconnectedStat = await stat(retainedFile, { bigint: true });
+        expect([reconnectedStat.ino, reconnectedStat.mtimeNs]).toEqual([retainedStat.ino, retainedStat.mtimeNs]);
         if (!initial.result.currentTarget) throw new Error('Preview service lost its control target');
         await stop(initial.result.currentTarget);
         await withOccupiedPort(Number(new URL(initial.url).port), async () => {
-            const oldGrant = await fetch(oldTunnel.url).then(async response => ({ status: response.status, body: await response.text() }),
+            const oldGrant = await fetch(reconnectedTunnel.url).then(async response => ({ status: response.status, body: await response.text() }),
                 error => ({ refused: error as unknown }));
             if ('refused' in oldGrant) expect(oldGrant.refused).toBeInstanceOf(TypeError);
             else {
@@ -840,8 +1014,8 @@ it('TS.B.preview: the declaration locator follows explicit restart and refuses a
             const oldOccurrence = await invoke('localServices.preview.openOrCreate', {
                 machineId, serviceTarget: opened.preview.resource.serviceTarget,
             });
-            expect(oldOccurrence).toMatchObject({ ok: false, errorCode: 'service_not_listening',
-                error: 'local_service_preview_lifecycle_refused:service_not_listening' });
+            expect(oldOccurrence).toMatchObject({ ok: false, errorCode: 'preview_target_unresolved',
+                error: 'local_service_preview_lifecycle_refused:preview_target_unresolved' });
         });
         const restarted = await start(workspaces[0]!);
         const restartedFacts = await (await fetch(restarted.url)).json();
@@ -859,5 +1033,5 @@ it('TS.B.preview: the declaration locator follows explicit restart and refuses a
             expect((await readFile(resolve(roots[0]!, 'launches.jsonl'), 'utf8')).trim().split('\n')).toHaveLength(2);
         }
         finally { await newTunnel.close(); }
-    } finally { await oldTunnel.close(); }
+    } finally { await reconnectedTunnel.close(); }
 });

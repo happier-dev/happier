@@ -456,13 +456,14 @@ async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> 
 async function waitForReplacementDaemonState(
   happyHomeDir: string,
   originalPid: number,
-  opts?: { timeoutMs?: number },
+  opts?: { timeoutMs?: number; requireMachineControlReady?: boolean },
 ): Promise<DaemonState> {
   const timeoutMs = opts?.timeoutMs ?? 45_000;
   const startedAt = Date.now();
   while (Date.now() - startedAt < timeoutMs) {
     const state = await readDaemonState(happyHomeDir);
-    if (state && state.httpPort > 0 && state.pid > 0 && state.pid !== originalPid) {
+    if (state && state.httpPort > 0 && state.pid > 0 && state.pid !== originalPid
+        && (!opts?.requireMachineControlReady || state.machineControlReady === true)) {
       try {
         process.kill(state.pid, 0);
         return state;
@@ -1148,6 +1149,8 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
   stdoutPath?: string;
   stderrPath?: string;
   afterOriginalDaemonExit?: () => void | Promise<void>;
+  cleanupDescendantsOnExit?: boolean;
+  requireMachineControlReady?: boolean;
   cliLaunchSpec?: CliTestLaunchSpec;
 }): Promise<StartedDaemon> {
   await mkdir(params.testDir, { recursive: true });
@@ -1264,6 +1267,7 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
       }),
       stdoutPath,
       stderrPath,
+      cleanupDescendantsOnExit: params.cleanupDescendantsOnExit,
       cleanup: cliLaunchSpec.cleanup,
     });
 
@@ -1282,7 +1286,9 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
 
     const state = await runDaemonStartupPhase(
       'waitForReplacementDaemonState',
-      waitForReplacementDaemonState(params.happyHomeDir, originalState.pid, { timeoutMs: phaseTimeoutMs }),
+      waitForReplacementDaemonState(params.happyHomeDir, originalState.pid, {
+        timeoutMs: phaseTimeoutMs, requireMachineControlReady: params.requireMachineControlReady,
+      }),
       {
         ...baseDiagnostics,
         processPid: proc.child.pid ?? null,
