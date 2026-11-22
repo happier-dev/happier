@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { setWorkflowDefaultField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
   SessionAuthoringControls,
@@ -85,7 +85,7 @@ export function WorkflowDefaultEngineControls(
       disabled={!editable}
       fields={ENGINE_FIELDS}
       values={values}
-      engine={props.defaults.engine}
+      engine={readWorkflowEngineChoiceV1(props.defaults)}
       workflowRoles={props.roles}
       onChangeEngine={changeEngine}
       onChangeFields={changeFields}

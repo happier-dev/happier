@@ -1867,4 +1867,38 @@ describe('editor workflow composer', () => {
         } finally { vi.unstubAllGlobals(); }
         expect(focus).toHaveBeenCalledTimes(fieldFocused ? 1 : 0);
     });
+
+    it('reviews Run now of a workflow whose default is an Account Role by that Role, with its Roles at rest (O32 §7.2)', async () => {
+        // The Account's prompt-library rows (role overrides) are Home HTTP; the real role catalog reads them.
+        const { PromptLibraryCatalogKeyV1Schema } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
+        const { emptyPromptLibraryRecordV1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryCatalogV1');
+        home.answer(appliedHome.serverId, 'GET /v1/account/entity-rows/prompt-library', { body: { status: 'listed',
+            rows: PromptLibraryCatalogKeyV1Schema.options.map(key => ({ key, revision: 1, content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })) } });
+        const { roleActions } = await import('@/sync/ops/roles/roleActions');
+        const { RoleActionOutputSchemasV1 } = await import('@happier-dev/protocol/prompts/roles/roleActionsV1');
+        const created = await roleActions.create({ name: 'Security reviewer', instructions: 'Review the change for security issues.',
+            engine: { agentTargetKey: 'agent:happier.agent.claude/claude' },
+            runsAs: { kind: 'session' }, workspaceWrites: 'deny', secondOpinion: 'off', enabled: true });
+        if (!created.ok) throw new Error(created.error);
+        const roleId = RoleActionOutputSchemasV1['roles.create'].parse(created.result).roleId;
+        const definitionId = '8fab3a81-5e64-4000-8000-0000000000a2';
+        await seedSavedDefinition(definitionId, createWorkflowDefinitionFixture({ defaults: { roleId } }), 'Role review');
+        const screen = await renderScreen(<AppPaneProvider><WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} /></AppPaneProvider>, {
+            createNodeMock: () => ({ scrollTo: () => {}, measureInWindow: (receive: (x: number, y: number, width: number, height: number) => void) => receive(600, 100, 160, 40) }),
+        });
+        const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
+        await vi.waitFor(() => expect(screen.root.findAllByType(WorkflowEditorBody)).toHaveLength(1));
+        await act(async () => { screen.root.findByType(WorkflowEditorBody).props.onChangeProjectTarget?.({ machineId: 'machine-1', directory: '/repo' }); });
+        await screen.pressByTestIdAsync('workflow-editor-run-now');
+        await vi.waitFor(() => expect(screen.findByTestId('workflow-run-inputs-run')).not.toBeNull());
+        const reviewEngine = () => screen.findHostByTestId('workflow-run-inputs-review-engine-agentTarget')
+            ?? screen.findHostByTestId('workflow-run-inputs-review-engine-modelSelection');
+        // The review names the Role the workflow runs with, never its id or "Choose an agent".
+        const { collectNodeText } = await import('@/dev/testkit/harness/toolViewTestHelpers');
+        const reviewText = () => { const node = reviewEngine(); return node ? node.findAllByType('Text').flatMap(collectNodeText).join(' ') : ''; };
+        await vi.waitFor(() => expect(reviewText()).toContain('Security reviewer'));
+        expect(reviewText()).not.toContain(roleId);
+        // The Roles it will use are visible at rest on the Start Review, not behind "+".
+        expect(screen.findByTestId('workflow-run-inputs-roles-chip')).not.toBeNull();
+    });
 });

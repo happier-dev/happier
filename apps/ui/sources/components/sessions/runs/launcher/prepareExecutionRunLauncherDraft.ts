@@ -4,7 +4,8 @@ import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValu
 import { randomUUID } from '@/platform/randomUUID';
 import { writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { executionRunLauncherDraftKey } from '@/components/sessions/agents/launch/agentStartDrafts';
-import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
+import { findRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
+import { readKnownRoleCatalogEntry } from '@/components/roles/catalog/useRoleCatalog';
 import { buildExecutionRunActionDraftInputForUi } from '@/sync/domains/actions/buildExecutionRunActionDraftInputForUi';
 import { createExecutionRunLauncherDetailsTab, type ExecutionRunIntent } from './executionRunLauncherModel';
 
@@ -36,7 +37,9 @@ export function prepareExecutionRunLauncherDraft(seed: ExecutionRunLauncherDraft
             }),
         } },
     } });
+    // A role names its tab once its name is known; until the Account catalog has read it, the tab says what it starts.
     return createExecutionRunLauncherDetailsTab(intent, roleId ? {
-        roleId, title: resolveRoleDisplayName(roleId),
+        roleId, title: findRoleDisplayName(roleId, undefined, readKnownRoleCatalogEntry(seed.scope, roleId))
+            ?? createExecutionRunLauncherDetailsTab(intent).title,
     } : undefined);
 }

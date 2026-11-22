@@ -9,6 +9,7 @@ import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation'
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 import { walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { readWorkflowEngineChoiceV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -29,8 +30,8 @@ type WorkflowRoleDefinition = Pick<WorkflowDefinitionV1, 'blocks' | 'defaults' |
 export function workflowUsedRoleIds(definition: WorkflowRoleDefinition): readonly string[] {
     return [...new Set(walkWorkflowBlocks(definition.blocks).flatMap((block) => {
         if (block.kind !== 'step') return [];
-        const engine = block.execution?.engine ?? definition.defaults.engine;
-        return engine && 'role' in engine ? [engine.role] : [];
+        const engine = readWorkflowEngineChoiceV1(definition.defaults, block.execution);
+        return engine && 'roleId' in engine ? [engine.roleId] : [];
     }))];
 }
 

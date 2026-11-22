@@ -5,7 +5,8 @@ import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/reso
 import { resolveRoleRunsAsKindV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
 import { describeRoleRunsAs } from '@/components/roles/catalog/rolePresentation';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
-import { walkWorkflowBlocks, type WorkflowDefinitionEditOpV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import type { WorkflowDefinitionEditOpV1 } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { workflowUsedRoleIds } from '../run/WorkflowRunRoles';
 import { useRoleCatalog } from '@/components/roles/catalog/useRoleCatalog';
 import { roleDisplayName } from '@/sync/domains/roles/roleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
@@ -39,11 +40,7 @@ export function WorkflowRolesEditor(props: Readonly<{
     const editable = props.editable !== false;
     const roleIds = [...new Set([
         ...roles.map((role) => role.roleId),
-        ...walkWorkflowBlocks(props.draft.blocks).flatMap((block) => {
-            if (block.kind !== 'step') return [];
-            const engine = block.execution?.engine ?? props.draft.defaults.engine;
-            return engine && 'role' in engine ? [engine.role] : [];
-        }),
+        ...workflowUsedRoleIds(props.draft),
     ])];
     const addInline = () => {
         let ordinal = 1;

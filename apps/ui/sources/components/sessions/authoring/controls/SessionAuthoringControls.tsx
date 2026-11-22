@@ -23,7 +23,7 @@ import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { Item } from '@/components/ui/lists/Item';
-import { resolveRoleDisplayName } from '@/sync/domains/roles/roleCatalog';
+import { useRoleDisplayName } from '@/components/roles/catalog/useRoleCatalog';
 import { Typography } from '@/constants/Typography';
 import { isPermissionMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Metadata } from '@happier-dev/session-core/state';
@@ -662,11 +662,13 @@ type SessionAuthoringEngine = WorkflowEngineChoiceV1 | NonNullable<WorkflowStepS
 export function formatSessionAuthoringEngineLabel(params: Readonly<{
     engine: SessionAuthoringEngine | undefined;
     workflowRoles: readonly WorkflowRoleV1[] | undefined;
+    /** The engine's Role by name (`useRoleDisplayName`), never its id. */
+    roleName: string | null;
     agentLabel: string;
     values: WorkflowSessionAuthoringSelection;
     modelLabel?: string;
 }>): string {
-    if (params.engine && 'roleId' in params.engine) return resolveRoleDisplayName(params.engine.roleId, params.workflowRoles);
+    if (params.engine && 'roleId' in params.engine) return params.roleName ?? t('common.loading');
     // An identity the Run supplies from a named input is that input's, not an unchosen Agent.
     if (params.engine && 'kind' in params.engine && params.engine.kind === 'input') {
         return t('workflows.page.blocks.fromInput', { name: params.engine.name });
@@ -685,6 +687,8 @@ export function useSessionAuthoringEngineSummary(params: Readonly<{
 }>): string {
     const facts = params.facts ?? EMPTY_FACTS;
     const { agentId, controls } = useResolvedSessionAuthoringControls(params.values, facts, params.metadata);
+    const roleName = useRoleDisplayName(params.engine && 'roleId' in params.engine ? params.engine.roleId : null,
+        params.workflowRoles, facts.agentPickerContext?.serverId ?? undefined);
     const enginePicker = useSessionAuthoringEnginePicker({ values: params.values, facts, disabled: true });
     const modelControl = resolveSessionAuthoringFieldControl({ field: 'modelSelection', values: params.values,
         controls, facts, agentId });
@@ -695,7 +699,7 @@ export function useSessionAuthoringEngineSummary(params: Readonly<{
             ? modelControl.selectedOptionId === 'default' ? undefined
                 : resolveSessionAuthoringOptionLabel(modelControl.options, modelControl.selectedOptionId, modelControl.unselectedLabel)
             : params.values.modelSelection.ref.modelId;
-    return formatSessionAuthoringEngineLabel({ engine: params.engine, workflowRoles: params.workflowRoles,
+    return formatSessionAuthoringEngineLabel({ engine: params.engine, workflowRoles: params.workflowRoles, roleName,
         agentLabel: enginePicker.label, values: params.values, modelLabel });
 }
 

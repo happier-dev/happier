@@ -50,6 +50,7 @@ import { PhoneDetailsStartContext } from '@/components/appShell/panes/details/Ph
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { Item } from '@/components/ui/lists/Item';
 import { formatSessionAuthoringEngineLabel } from '@/components/sessions/authoring/controls/SessionAuthoringControls';
+import { useRoleDisplayName } from '@/components/roles/catalog/useRoleCatalog';
 import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEnginePresentation';
 import { readAuthoredSessionModelRef } from '@/sync/domains/teams/teamCredentialProviderModelSelection';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
@@ -98,7 +99,7 @@ import {
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import { useWorkflowRequesterDisclosure, WorkflowRequesterDisclosureView } from '../presentation/WorkflowRequesterDisclosure';
 import type { WorkflowRunNowRequest, WorkflowRunNowRetainedRequest } from './useWorkflowRunNowController';
-import { resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
+import { readWorkflowEngineChoiceV1, resolveWorkflowStepSelectionV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { formatWorkflowWhereSummary } from '../editor/WorkflowProjectTargetControl';
 import { resolveAgentInputColumn } from '@/components/sessions/agentInput/layout/agentInputColumn';
 import { WorkflowStartDetailsLead } from './WorkflowStartDetailsLead';
@@ -316,8 +317,11 @@ function WorkflowRunAgentSummary(props: Readonly<{
   const modelId = readAuthoredSessionModelRef(values)?.modelId;
   const engine = values.agentTarget ? presentEngine({ agentTargetKey: buildBackendTargetKeyV2(values.agentTarget),
     ...(modelId ? { modelId } : {}) }) : null;
+  const engineChoice = readWorkflowEngineChoiceV1(props.definition.defaults);
+  const roleName = useRoleDisplayName(engineChoice && 'roleId' in engineChoice ? engineChoice.roleId : null,
+    props.definition.roles, props.serverId ?? undefined);
   const summary = formatSessionAuthoringEngineLabel({ values,
-    engine: props.definition.defaults.engine, workflowRoles: props.definition.roles,
+    engine: engineChoice, workflowRoles: props.definition.roles, roleName,
     agentLabel: engine?.label ?? t('workflows.input.unavailable') });
   return <Item testID={props.testID} title={t('workflows.page.sections.agentTitle')}
     subtitle={summary} showChevron={false} subtitleLines={0} />;

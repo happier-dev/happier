@@ -157,10 +157,26 @@ export function describeRolePurpose(role: Pick<ResolvedRoleV1, 'roleId' | 'instr
 }
 
 /**
- * A role as people read it ("Second opinion", "Reviewer"): a built-in's or the workflow's own name,
- * through the one role resolver. An id no layer names stays as written, so it is still findable.
+ * A role as people read it ("Second opinion", "Reviewer"): a built-in's, the reader's Account Role
+ * (its catalog entry) or the workflow's own, through the one role resolver. A role that no longer
+ * resolves keeps the name a layer still gives it; `null` when no layer names it.
  */
-export function resolveRoleDisplayName(roleId: string, workflowRoles?: readonly WorkflowRoleV1[]): string {
-    const resolved = resolveRoleSelectionV1({ roleId, workflowRoles: workflowRoles ?? [] });
-    return resolved.ok && resolved.selection.name ? roleDisplayName(resolved.selection) : roleId;
+export function findRoleDisplayName(roleId: string, workflowRoles?: readonly WorkflowRoleV1[], entry?: RoleCatalogEntry | null): string | null {
+    const resolved = resolveRoleSelectionV1({ roleId, workflowRoles: workflowRoles ?? [],
+        settingsRoles: entry ? { [roleId]: entry.role } : {}, settingsOverrides: entry?.override ? { [roleId]: entry.override } : {} });
+    if (resolved.ok && resolved.selection.name) return roleDisplayName(resolved.selection);
+    const pin = workflowRoles?.find((role) => role.roleId === roleId);
+    const name = (pin && 'name' in pin ? pin.name : undefined) ?? entry?.role.name;
+    return name ? roleDisplayName({ roleId, name }) : null;
+}
+
+/**
+ * The role's name, never its id: while the Account catalog is still reading it says so, and a role
+ * no layer names any more reads as unavailable.
+ */
+export function resolveRoleDisplayName(roleId: string, workflowRoles: readonly WorkflowRoleV1[] | undefined,
+    catalog: Readonly<{ entry: RoleCatalogEntry | null; status: 'loading' | 'ready' | 'failed' }>): string {
+    return findRoleDisplayName(roleId, workflowRoles, catalog.entry)
+        ?? (catalog.status === 'loading' ? t('common.loading')
+            : catalog.status === 'failed' ? t('common.unavailable') : t('roles.rail.unavailableRole'));
 }

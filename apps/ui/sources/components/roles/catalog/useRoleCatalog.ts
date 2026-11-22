@@ -9,7 +9,8 @@ import { observePromptLibraryCatalog } from '@/sync/engine/settings/promptLibrar
 import { areServerAccountScopesEqual, serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
-import { createRoleCatalogProjection, parseRolesListOutput, type RoleCatalogEntry, type RolesListItem } from '@/sync/domains/roles/roleCatalog';
+import { createRoleCatalogProjection, findRoleDisplayName, parseRolesListOutput, resolveRoleDisplayName, type RoleCatalogEntry, type RolesListItem } from '@/sync/domains/roles/roleCatalog';
+import type { WorkflowRoleV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 export type RoleCatalogState = Readonly<{
     status: 'loading' | 'ready' | 'failed';
@@ -120,8 +121,8 @@ function useRoleCatalogSelectionValue<T>(select: (entries: ReadonlyArray<RoleCat
     return { selection, refresh, scopeKey, scope };
 }
 
-function useRoleCatalogSelection<T>(select: (entries: ReadonlyArray<RoleCatalogEntry>) => T, refreshOnMount = true, serverId?: string | null) {
-    const { selection, refresh, scopeKey, scope } = useRoleCatalogSelectionValue(select, refreshOnMount, serverId);
+function useRoleCatalogSelection<T>(select: (entries: ReadonlyArray<RoleCatalogEntry>) => T, refreshOnMount = true, serverId?: string | null, active = true) {
+    const { selection, refresh, scopeKey, scope } = useRoleCatalogSelectionValue(select, refreshOnMount, serverId, active);
     const readStatus = React.useCallback((): RoleCatalogState['status'] => {
         if (!scope) return 'failed';
         const overrideCatalog = getPromptLibraryCatalogValue(scope, 'role-overrides');
@@ -148,6 +149,26 @@ export function useRoleCatalogEntry(roleId: string | null, serverId?: string | n
     const select = React.useCallback((entries: ReadonlyArray<RoleCatalogEntry>) => entries.find((entry) => entry.roleId === roleId) ?? null, [roleId]);
     const { selection: entry, status, refresh } = useRoleCatalogSelection(select, true, serverId);
     return React.useMemo(() => ({ entry, status, refresh }), [entry, status, refresh]);
+}
+
+/**
+ * A role's name as people read it, never its id (`null` only without a role). Built-in and workflow
+ * roles name themselves; only an Account Role reads the catalog, and says so while it loads.
+ */
+export function useRoleDisplayName(roleId: string | null, workflowRoles?: readonly WorkflowRoleV1[], serverId?: string | null): string | null {
+    const inlineName = roleId === null ? null : findRoleDisplayName(roleId, workflowRoles);
+    const select = React.useCallback((entries: ReadonlyArray<RoleCatalogEntry>) => entries.find((entry) => entry.roleId === roleId) ?? null, [roleId]);
+    const { selection: entry, status } = useRoleCatalogSelection(select, true, serverId, roleId !== null && inlineName === null);
+    if (roleId === null) return null;
+    return inlineName ?? resolveRoleDisplayName(roleId, workflowRoles, { entry, status });
+}
+
+/** The scope's last-read catalog entry, for a non-rendering caller naming a role it opens; never reads. */
+export function readKnownRoleCatalogEntry(scope: ServerAccountScope, roleId: string): RoleCatalogEntry | null {
+    const overrides = getPromptLibraryCatalogValue(scope, 'role-overrides').value?.overrides;
+    const cell = lastKnownByScope.get(serverAccountScopeKeySuffix(scope));
+    if (!cell?.snapshot.items || !overrides) return null;
+    return cell.project({ items: cell.snapshot.items, overrides }).find((entry) => entry.roleId === roleId) ?? null;
 }
 
 /** Summary readers observe the selected value, not unrelated catalog loading/status changes. */
