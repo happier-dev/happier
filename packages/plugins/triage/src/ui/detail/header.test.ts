@@ -12,7 +12,7 @@ import {
     testkitSnapshot,
     testkitViewer,
 } from '../../corpus/testkit/observations.test-support.js';
-import type { TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
+import { REVIEW_TRIAGE_SOURCE_V1, reviewTriageLocalRefV1, type TriagePullRequestStatusV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { projectTriageDetailHeaderV1, readTriageDetailAttentionBadgeV1, readTriageDetailContextLineV1 } from './header.js';
@@ -263,7 +263,8 @@ describe('the change request cells', () => {
     const REVIEW_REQUESTED = { level: 'required', fromSourceInstanceId: INSTANCE, reasonId: 'involvement/review-requested', reasonLabel: 'Review requested' } as const;
 
     const project = (input: Readonly<{ kindId?: string; pullRequestStatus?: TriagePullRequestStatusV1 | null;
-        presentation?: 'active' | 'resolved' | 'closed'; attention?: TriageListRowV1['attention']; reading?: boolean }>) => {
+        presentation?: 'active' | 'resolved' | 'closed'; attention?: TriageListRowV1['attention']; reading?: boolean;
+        entryRef?: TriageListRowV1['entryRef'] }>) => {
         const base = row();
         const outcome = testkitPresentOutcome({
             locator: testkitLocator(),
@@ -272,7 +273,7 @@ describe('the change request cells', () => {
             viewer: testkitViewer(),
         });
         return projectTriageDetailHeaderV1({
-            row: { ...base, entryRef: { ...base.entryRef, kindId: input.kindId ?? 'pull-request' },
+            row: { ...base, entryRef: input.entryRef ?? { ...base.entryRef, kindId: input.kindId ?? 'pull-request' },
                 content: { sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome },
                 observations: [{ sourceInstanceId: INSTANCE, observedAtMs: 1_000, outcome }],
                 attention: input.attention ?? null },
@@ -308,5 +309,15 @@ describe('the change request cells', () => {
         expect(readTriageDetailAttentionBadgeV1(project({ attention: REVIEW_REQUESTED }))).toBeNull();
         // An issue has no Reviewers cell: its badge stays.
         expect(readTriageDetailAttentionBadgeV1(project({ kindId: 'issue', attention: REVIEW_REQUESTED }))?.reasonLabel).toBe('Review requested');
+    });
+
+    it('lets a Review\'s own summary say its findings wait for a decision, so the badge does not say it again', () => {
+        const review = { source: REVIEW_TRIAGE_SOURCE_V1, ...reviewTriageLocalRefV1('review-1') };
+        const decision = { level: 'required', fromSourceInstanceId: INSTANCE, reasonId: 'review_needs_you', reasonLabel: 'Needs your decision' } as const;
+        expect(readTriageDetailAttentionBadgeV1(project({ entryRef: review, attention: decision }))).toBeNull();
+        // The request is not in the summary: who asked stays the header's reason.
+        expect(readTriageDetailAttentionBadgeV1(project({ entryRef: review, attention: REVIEW_REQUESTED }))?.reasonLabel).toBe('Review requested');
+        // Any other source's decision reason stays.
+        expect(readTriageDetailAttentionBadgeV1(project({ kindId: 'issue', attention: decision }))?.reasonLabel).toBe('Needs your decision');
     });
 });

@@ -3535,7 +3535,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.resource.openOnGithub": "在 GitHub 上打开",
   "plugins.triage.resource.unavailable": "这些详情暂不可用",
   "plugins.triage.resource.unavailableDescription": "请在 GitHub 上打开此资源，或在连接可用后重试。",
-  "plugins.triage.reviews.open": "打开评审",
   "plugins.triage.reviews.unavailable": "无法打开此评审",
   "plugins.triage.sessionLinks.alreadyLinked": "已关联",
   "plugins.triage.sessionLinks.approved": "已批准",

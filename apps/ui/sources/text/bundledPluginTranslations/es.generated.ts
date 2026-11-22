@@ -3535,7 +3535,6 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.triage.resource.openOnGithub": "Abrir en GitHub",
   "plugins.triage.resource.unavailable": "Estos detalles no están disponibles",
   "plugins.triage.resource.unavailableDescription": "Abre este recurso en GitHub o vuelve a intentarlo cuando la conexión esté disponible.",
-  "plugins.triage.reviews.open": "Abrir revisión",
   "plugins.triage.reviews.unavailable": "No se pudo abrir esta revisión",
   "plugins.triage.sessionLinks.alreadyLinked": "Vinculado",
   "plugins.triage.sessionLinks.approved": "Aprobado",

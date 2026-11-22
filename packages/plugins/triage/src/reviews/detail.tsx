@@ -14,7 +14,8 @@ export function readReviewDetailInput(value: unknown): TriageDetailSurfaceInputV
 
 /**
  * Triage owns the entry heading and its actions; the body is the shared Review summary (the same one a pull
- * request embeds), whose own secondary link opens the Review. Review content and decisions stay in the Review.
+ * request embeds), whose own Open review is the way to decide. The Review is this page's subject, so that way leads
+ * while a finding still waits for a decision. Review content and decisions stay in the Review.
  */
 export function ReviewDetail({ input }: Readonly<{ context: RenderContext; input: TriageDetailSurfaceInputV1 | null }>): React.ReactElement {
     const text = usePluginTranslation();
@@ -27,7 +28,7 @@ function ReviewSummary({ reviewId }: Readonly<{ reviewId: string }>): React.Reac
     const summary = React.useRef<HappierReviewSummaryHandle>(null);
     const refresh = React.useCallback(async () => { await summary.current?.refresh(); }, []);
     useTriagePageRefresh(refresh);
-    return <HappierReviewSummaryHost ref={summary} reviewId={reviewId} />;
+    return <HappierReviewSummaryHost ref={summary} reviewId={reviewId} leadsPage />;
 }
 
 export const renderSurface: RenderSurface = defineUiSurface(context => <ReviewDetail context={context} input={readReviewDetailInput(context.launchInput)} />);

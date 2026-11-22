@@ -10,7 +10,6 @@ import { HappierReviewSummary, projectHappierReviewGlance } from '../presentatio
 import { HappierPageSheet } from '../presentation/layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { resolveHappierWorkTheme } from '../presentation/work/workTheme.js';
-import { resolveHappierWorkStatusBucketLabel } from '../presentation/work/workStatus.js';
 import { HappierReviewFinding, HappierReviewFindingBody, formatHappierReviewFindingLocation } from './ReviewFinding.js';
 import { usePluginTheme, usePluginTranslation } from './PluginUiProvider.js';
 import { Stack } from './Layout.js';
@@ -30,7 +29,15 @@ export type HappierReviewFindingWindow = Readonly<{
   unavailableFindings: readonly ReviewCommentV1[];
 }>;
 export type HappierReviewSummaryHandle = Readonly<{ refresh: () => Promise<void> }>;
-export type HappierReviewSummaryHostProps = Readonly<{ reviewId: string }>;
+export type HappierReviewSummaryHostProps = Readonly<{
+  reviewId: string;
+  /**
+   * The Review is the page's own subject (Triage's Review entry), not a section of another page (a pull request):
+   * while a finding waits for the reader's decision, Open review is the page's one primary (Reviews: implementing
+   * leads only once every finding is decided).
+   */
+  leadsPage?: boolean;
+}>;
 
 function jsonProjection<T>(): PluginUiResourceProjection<T> {
   return { decode(content, previous) {
@@ -46,7 +53,7 @@ const actorName = (actor: ReviewCommentV1['author']) => actor.kind === 'user' ? 
 
 /** An admitted Review's shared summary and disclosure. Writes stay in the existing native Review. */
 export const HappierReviewSummaryHost = React.forwardRef<HappierReviewSummaryHandle, HappierReviewSummaryHostProps>(
-function HappierReviewSummaryHost({ reviewId }, ref) {
+function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
   const { palette } = resolveHappierWorkTheme(usePluginTheme());
@@ -96,14 +103,17 @@ function HappierReviewSummaryHost({ reviewId }, ref) {
       paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx }}>
       {qualityGlance === null ? detail.error ? <ErrorState title={unavailable} /> : <LoadingState /> : <>
         <HappierReviewSummary heading={text('happier.plugin-ui.review.heading', 'Review')} subject={null}
-          status={detail.value?.human.needsYou.needsYou ? { label: resolveHappierWorkStatusBucketLabel('needs_you', text), tone: 'attention' } : undefined}
-          glance={qualityGlance} rows={(window?.rows ?? []).map(value => ({ rowId: value.rowId,
-            severity: value.finding.severity, severityLabel: severityWord(value.finding.severity),
-            title: value.finding.title, reviewer: actorName(value.comment.author), accessibilityLabel: value.finding.title }))}
+          glance={qualityGlance} rows={(window?.rows ?? []).map(value => {
+            // Where it is, as the Review page's rows say it. The author here is only an id, never shown as a name.
+            const location = formatHappierReviewFindingLocation(value.finding);
+            return { rowId: value.rowId, severity: value.finding.severity, severityLabel: severityWord(value.finding.severity),
+              ...(location === null ? {} : { location }), title: value.finding.title, reviewer: null, accessibilityLabel: value.finding.title };
+          })}
           onOpenRow={id => setOpened(current => current === id ? null : id)} reviewers=""
           more={window?.cursor ? <Button title={text('happier.plugin-ui.review.more', 'More findings · Open review')}
             variant="plain" size="small" onPress={openReview} /> : undefined}
-          actions={<Button title={text('happier.plugin-ui.review.open', 'Open review')} variant="secondary" size="small" onPress={openReview} />} />
+          actions={<Button title={text('happier.plugin-ui.review.open', 'Open review')} size="small" onPress={openReview}
+            variant={leadsPage === true && detail.value?.human.needsYou.pendingDecisions === true ? 'primary' : 'secondary'} />} />
         {row && decision ? <HappierReviewFinding rowId={row.rowId} finding={row.finding}
           accessibilityLabel={row.finding.title}
           severityLabel={severityWord(row.finding.severity)} location={formatHappierReviewFindingLocation(row.finding)}
@@ -114,7 +124,6 @@ function HappierReviewSummaryHost({ reviewId }, ref) {
             labels={{ where: text('happier.plugin-ui.review.where', 'Where'),
               verification: text('happier.plugin-ui.review.verification', 'How it was verified'),
               conversation: text('happier.plugin-ui.review.conversation', 'Conversation') }}
-            reviewers={<Text value={actorName(row.comment.author)} tone="secondary" />}
             conversation={<Stack gap="small">
               <Timeline inline items={row.comment.transitions} keyForItem={event => event.transitionId}
                 renderItem={event => ({ glyph: null, heading: actorName(event.transitionedBy),

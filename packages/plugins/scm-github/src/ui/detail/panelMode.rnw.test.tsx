@@ -389,7 +389,8 @@ describe('the GitHub detail as Triage panels', () => {
     });
     await expect(fixture.getByText(verdict)).resolves.toBeDefined();
     await expect(fixture.getByText(count)).resolves.toBeDefined();
-    await expect(fixture.getByText(needsYou)).resolves.toBeDefined();
+    // The verdict sentence is the Review's one state; the summary does not say "Needs you" beside it.
+    await expect(fixture.queryByText(needsYou)).resolves.toBeUndefined();
     await expect(fixture.getByText(direct ? 'Qualité 3/5' : 'Quality 3/5')).resolves.toBeDefined();
     await expect(fixture.getByText(direct ? 'Notes des réviseurs : Claude 2, Codex 5' : 'Reviewer scores: Claude 2, Codex 5')).resolves.toBeDefined();
     expect(new Set(reads.map(input => JSON.stringify(input)))).toEqual(new Set([JSON.stringify({ reviewId: 'owned-pr-review' })]));

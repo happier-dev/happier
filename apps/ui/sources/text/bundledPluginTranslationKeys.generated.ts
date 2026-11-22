@@ -3546,7 +3546,6 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.triage.resource.openOnGithub",
   "plugins.triage.resource.unavailable",
   "plugins.triage.resource.unavailableDescription",
-  "plugins.triage.reviews.open",
   "plugins.triage.reviews.unavailable",
   "plugins.triage.sessionLinks.alreadyLinked",
   "plugins.triage.sessionLinks.approved",

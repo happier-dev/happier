@@ -1,5 +1,6 @@
 import {
   formatTriageTimestampV1,
+  isReviewTriageEntryRefV1,
   type TriageLinkedSessionProjectionV1,
   type TriagePullRequestStatusV1,
   type TriageSourceKindGlyphV1,
@@ -116,6 +117,8 @@ export type TriageDetailHeaderV1 = Readonly<{
    * until that read lands, so the header's cells hold their place; `null` for any other kind (an issue, an error group).
    */
   pullRequestFacts: PullRequestStatusFactsV1 | null;
+  /** The entry is a Review: its body is the shared Review summary, whose verdict sentence says what waits on the reader. */
+  review: boolean;
 }>;
 
 function readStatusBranches(status: TriagePullRequestStatusV1 | null | undefined): TriageDetailHeaderV1['branches'] {
@@ -236,6 +239,7 @@ export function projectTriageDetailHeaderV1(
     pullRequestFacts: kind?.workflowSubject !== 'pullRequest' ? null
       : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation),
         { reading: input.pullRequestStatusReading === true }),
+    review: isReviewTriageEntryRefV1(row.entryRef),
   });
 }
 
@@ -272,9 +276,11 @@ export function readTriageDetailContextSegmentsV1(
 
 /**
  * The attention badge the detail draws, if any: the reader's own requested review is said by the facts' Reviewers
- * cell ("Waiting on you"), so a pull request's header does not say it a second time as a badge.
+ * cell ("Waiting on you"), so a pull request's header does not say it a second time as a badge. A Review's summary
+ * says its findings wait for a decision ("1 finding to decide"), so only a request (who asked) stays a badge there.
  */
 export function readTriageDetailAttentionBadgeV1(header: TriageDetailHeaderV1): TriageDetailHeaderV1['attention'] {
+  if (header.review && header.attention?.reviewRequested !== true) return null;
   return header.attention?.reviewRequested === true && header.pullRequestFacts !== null ? null : header.attention;
 }
 

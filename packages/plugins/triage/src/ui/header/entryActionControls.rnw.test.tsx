@@ -74,6 +74,36 @@ describe('the mounted configured entry action controls', () => {
     await act(async () => { await fixture.press(await fixture.getByRole('menuitem', { name: 'Make task' })); });
     expect(writes.filter(write => write.action.startsWith('tasks/'))).toEqual([{ action: 'tasks/open-create-v1', input: { title: originError.display.title, originError } }]);
   });
+  it('quiets the agent action while the entry asks for a decision first, keeping its place and press', async () => {
+    const fillOfFix = async (decisionFirst: boolean) => {
+      const requests: TriageEntryActionRequestV1[] = [];
+      const fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'fixture-instance-decision', mountNonce: `decision-${String(decisionFirst)}` },
+        authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+        surface: defineUiSurface(() => <TriageEntryActionControls
+          target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'r1', kindId: 'issue' }),
+            sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+          actions={TRIAGE_DEFAULT_ACTIONS_V1} workflowSubject="issue" viewerIsAuthor={false}
+          reviewPreparation="unsupported" {...(decisionFirst ? { decisionFirst: true } : {})}
+          onAction={(request) => { requests.push(request); }} />),
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      });
+      try {
+        const fix = await fixture.getByRole('button', { name: 'Fix' });
+        const node = [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(candidate => candidate.textContent === 'Fix');
+        if (node === undefined) throw new Error('No Fix button');
+        const fill = getComputedStyle(node).backgroundColor;
+        await act(async () => { await fixture.press(fix); });
+        return { fill, pressed: requests.map(request => request.action.actionId) };
+      } finally { await fixture.dispose(); }
+    };
+    const leading = await fillOfFix(false);
+    const deciding = await fillOfFix(true);
+    // Same action, same press; only its emphasis yields to the body's way to decide.
+    expect(deciding.pressed).toEqual(leading.pressed);
+    expect(deciding.fill).not.toBe(leading.fill);
+  });
   it('names the seeded Fix "Start" on an entry with no code repository, and leads the row with its status control', async () => {
     const requests: TriageEntryActionRequestV1[] = [];
     const surface = defineUiSurface(() => (

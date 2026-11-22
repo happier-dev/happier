@@ -110,6 +110,12 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   /** Whether the reader opened this entry (their own pull request asks for Fix, someone else's for Review). */
   viewerIsAuthor: boolean;
   /**
+   * The entry asks the reader to decide in its own body before an agent works on it (a Review whose findings still
+   * wait): the agent action keeps its place and press but draws quiet, since the body's way to decide is the page's
+   * one primary (Reviews: implementing leads only once every finding is decided).
+   */
+  decisionFirst?: boolean;
+  /**
    * More things this entry can do that are not the one primary action: the header's More menu lists them after the
    * entry's other actions (a walkthrough, orchestration). Rows of the shared menu, never controls or a form.
    */
@@ -421,7 +427,7 @@ export function TriageEntryActionControls(
       entryRef={entryRef}
       sourceInstanceId={sourceInstanceId}
       blocked={isTriageActionBlockedV1(action, reviewPreparation)}
-      primary={action.actionId === primaryActionId}
+      primary={action.actionId === primaryActionId && props.decisionFirst !== true}
       withoutRepository={props.withoutRepository === true}
       singleLine={compact && action === primary}
       {...(glyph === undefined ? {} : { glyph })}
@@ -569,6 +575,7 @@ export function TriageEntryActionControls(
           title={startWithLabel ?? primaryWords}
           actionName={primaryWords}
           launchMode={readTriageActionLaunchModeV1(primary)}
+          {...(props.decisionFirst === true ? { emphasis: 'secondary' as const } : {})}
           {...(startUnavailable === undefined ? {} : { startUnavailableReason: startUnavailable })}
           compact={compact}
           pending={startPending}
