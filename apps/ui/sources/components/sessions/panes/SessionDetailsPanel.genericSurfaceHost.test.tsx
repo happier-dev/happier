@@ -4,11 +4,30 @@ import { describe, expect, it } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { installSessionDetailsPanelCommonModuleMocks } from './sessionDetailsPanelTestHelpers';
 import { installSessionPaneRuntimeTestHarness } from './sessionPaneRuntimeTestHarness';
+import { PanePresentationProvider, type PanePresentationIntent } from '@/components/appShell/panes/panePresentation';
 
 installSessionDetailsPanelCommonModuleMocks();
 const runtime = installSessionPaneRuntimeTestHarness();
 
 describe('SessionDetailsPanel generic details surface host adapter', () => {
+    it('presents Browser from the empty Open files strip in a constrained navigator', async () => {
+        const { SessionDetailsPanel } = await import('./SessionDetailsPanel');
+        const { BrowserSurfaceOpenButton } = await import('@/components/browser/surfaces/BrowserSurfaceOpenButton');
+        const intents: PanePresentationIntent[] = [];
+        const screen = await renderScreen(<runtime.Wrapper>
+            <PanePresentationProvider value={intent => { intents.push(intent); }}>
+                <SessionDetailsPanel sessionId="s1" routeServerId={runtime.serverId} scopeId="session:s1" />
+            </PanePresentationProvider>
+        </runtime.Wrapper>);
+        // Exercise the launcher handler with the real pane owner; feature eligibility is a
+        // separate boundary and the reported production control was already enabled.
+        await act(async () => screen.tree.findByType(BrowserSurfaceOpenButton).props.onPress());
+        expect(intents).toContainEqual(expect.objectContaining({
+            scopeId: 'session:s1', pane: 'right',
+            destination: expect.objectContaining({ kind: 'builtin', id: 'browser' }),
+        }));
+    });
+
     it.each([
         ['an unsupported resource', {
             key: 'unsupported:one', kind: 'unsupported', title: 'Unsupported surface',

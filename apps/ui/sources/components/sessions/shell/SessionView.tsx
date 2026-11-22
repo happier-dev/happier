@@ -1429,7 +1429,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
             return true;
         }
         if (actionId === SESSION_HEADER_MENU_OPEN_BROWSER_ID) {
-            paneRef.current.openRight({ tabId: getRightSidebarBuiltinTab('browser').id, present: false });
+            paneRef.current.openRight({ tabId: getRightSidebarBuiltinTab('browser').id });
             return true;
         }
         if (actionId === 'header.openSubagents') {

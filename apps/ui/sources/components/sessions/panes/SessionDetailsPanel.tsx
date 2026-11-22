@@ -225,7 +225,7 @@ const SessionDetailsPanelContent = React.memo((props: SessionDetailsPanelProps) 
     }, [openWorkspaceFile, pluginRuntime.serverId, props.paneSurfaceScope?.serverId, props.routeServerId, props.sessionId]);
 
     const openBrowserLaunchpadTab = React.useCallback(() => {
-        pane.openRight({ tabId: getRightSidebarBuiltinTab('browser').id, present: false });
+        pane.openRight({ tabId: getRightSidebarBuiltinTab('browser').id });
     }, [pane.openRight]);
 
     const openBoardTab = React.useCallback(() => {
