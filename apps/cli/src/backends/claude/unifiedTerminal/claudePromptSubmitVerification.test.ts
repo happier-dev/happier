@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runTerminalPromptSubmission } from '@/integrations/terminalHost/promptSubmitVerification';
 
 import { createClaudePromptSubmitVerificationPolicy } from './claudePromptSubmitVerification';
+import { scrolledCjkPromptText, scrolledCjkScreenText } from './tuiControls/__fixtures__/scrolledCjkComposer';
 
 describe('createClaudePromptSubmitVerificationPolicy', () => {
   it('hands a positively foreign composer back without submitting it, while ambiguous capture still waits', async () => {
@@ -189,49 +190,27 @@ describe('createClaudePromptSubmitVerificationPolicy', () => {
     })).toThrow();
   });
 
-  it('submits a scrolled CJK composer whose rows wrap without spaces', async () => {
-    // Live capture 2026-11-20 (Claude Code 2.1.329, `"tui": "fullscreen"`, detached tmux 80x24): a
-    // Chinese prompt without line breaks. Its rows wrap without a space at the break, and one visible
-    // row opens with the full-width comma that did not fit on the row above.
-    const promptText = [
-      '帮我看一下首页的加载动画，现在打开页面的时候会先白屏两三秒，然后图片一张一张地跳出来，看起来很卡。',
-      '我希望先显示一个简单的骨架屏，等图片都加载好了再一起淡入，整个过程控制在一秒以内。',
-      '另外顶部导航栏在手机上会被挡住一半，滚动的时候还会抖动，你也顺便查一下是不是样式的问题。',
-      '改完以后先在本地跑一遍，截图给我看看效果，没问题再提交，提交说明写清楚改了哪些地方、为什么这么改。',
-      '如果改动比较大，先把方案发给我确认，不要直接动线上的配置，也不要删掉旧的图片。',
-      '另外页脚的版权年份还是去年的，也一起改掉；改好以后告诉我一共动了几个文件，每个文件大概改了什么。',
-    ].join('');
-    const screenText = [
-      '                                                            ◐ medium · /effort',
-      '─── ↑ 2 more ───────────────────────────────────────────────────────────────────',
-      '  入，整个过程控制在一秒以内。另外顶部导航栏在手机上会被挡住一半，滚动的时候还',
-      '  会抖动，你也顺便查一下是不是样式的问题。改完以后先在本地跑一遍，截图给我看看',
-      '  效果，没问题再提交，提交说明写清楚改了哪些地方、为什么这么改。如果改动比较大',
-      '  ，先把方案发给我确认，不要直接动线上的配置，也不要删掉旧的图片。另外页脚的版',
-      '  权年份还是去年的，也一起改掉；改好以后告诉我一共动了几个文件，每个文件大概改',
-      '  了什么。',
-      '────────────────────────────────────────────────────────────────────────────────',
-      '  [Sonnet 5.5] │ project',
-      '  Context ░░░░░░ 0%',
-      '  ⏵⏵ bypass permissions on (shift+tab to cycle)',
-    ].join('\n');
+  it('submits the scrolled CJK prompt once and leaves an edited draft unsent', async () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const submitEnter = vi.fn(async () => 'success' as const);
-
-    expect(await runTerminalPromptSubmission({
-      promptText,
-      verifyStagedBeforeSubmit: async () => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
+    const submit = (screenText: string) => runTerminalPromptSubmission({
+      promptText: scrolledCjkPromptText,
+      verifyStagedBeforeSubmit: async ({ promptText }) => policy.isPromptStagedBeforeSubmit({ promptText, screenText }),
       submitEnter,
       verifyAfterSubmit: async () => false,
       remainingTimeoutMs: () => 0,
       wait: async () => {},
       postSubmitSettleMs: 0,
-    })).toEqual({ success: true });
+    });
+
+    expect(await submit(scrolledCjkScreenText)).toEqual({ success: true });
+    expect(await submit(scrolledCjkScreenText.replace('滚动的时候还', '滚动的时候也'))).toMatchObject({
+      success: false,
+      reason: 'verification_failed',
+      phase: 'after_write_before_enter',
+      submitMayHaveReachedPane: false,
+    });
     expect(submitEnter).toHaveBeenCalledOnce();
-    expect(() => policy.isPromptStagedBeforeSubmit({
-      promptText,
-      screenText: screenText.replace('滚动的时候还', '滚动的时候也'),
-    })).toThrow();
   });
 
   it('accepts a sufficiently long canonical visible composer window before and after submit', () => {
