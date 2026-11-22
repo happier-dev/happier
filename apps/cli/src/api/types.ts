@@ -605,7 +605,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
   & SessionCapabilityMetadataV1
   & Pick<NonNullable<SessionOwnerMetadataV1['system']>, 'attestedContext'>
   & Pick<NonNullable<SessionOwnerMetadataV1['workspace']>, 'branch' | 'projectId' | 'workspaceId'>
-  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'nativeSandbox' | 'approvalProfileId' | 'agentRuntimeCapabilitiesV1' | 'agentRuntimeFacetsV1' | 'mcpCapabilityNoticeV1'>
+  & Pick<NonNullable<SessionOwnerMetadataV1['runtime']>, 'allowedTools' | 'unlistedTools' | 'workspaceWrites' | 'nativeSandbox' | 'approvalProfileId' | 'approvalProfileTeamOrGroupDerived' | 'agentRuntimeCapabilitiesV1' | 'agentRuntimeFacetsV1' | 'mcpCapabilityNoticeV1'>
   & Pick<SessionOwnerCompatibilityViewV1, 'actionConfirmationsV1'> & {
   path: string,
   host: string,

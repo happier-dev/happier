@@ -406,7 +406,9 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
             const operation = request.context.operationAcceptance;
             // A confirmed busy birth had no effect. The existing fresh root operation
             // lets this reviewed child acquire again without replaying the occupied row.
-            const context = operation?.previousSessionCreationFailure?.launchError?.code === SESSION_MANAGED_TARGET_BUSY_CODE
+            const previousFailure = operation?.previousSessionCreationFailure;
+            const context = operation && previousFailure?.code === 'spawn_failed'
+                && previousFailure.launchError?.code === SESSION_MANAGED_TARGET_BUSY_CODE
                 ? { ...request.context, actionRequestId: operation.operationId } : request.context;
             const result = await invokeHostReviewedChildV1({
                 parent: { ...request.parent, input: projectNativeJsonValueForTransport(request.parent.input) as Record<string, JsonValue> },

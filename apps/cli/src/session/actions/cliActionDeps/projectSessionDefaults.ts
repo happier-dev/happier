@@ -37,7 +37,7 @@ export function createCliProjectSessionDefaultsActionDeps(
           ...admission.projectRowsAuthority(context, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, context?.signal),
           ...project, serverId,
         })),
-        readSource: source => ports.projectSourcesRead!({ ...source, serverId }, context),
+        readSource: source => ports.projectSourcesRead!({ ...source, serverId }, context ?? {}),
         readTeam: async teamId => {
           const raw = await ports.homeDomainAction!({ actionId: 'teams.get', input: { v: 1, teamId }, context: context ?? {},
             ...(context?.signal ? { signal: context.signal } : {}) });

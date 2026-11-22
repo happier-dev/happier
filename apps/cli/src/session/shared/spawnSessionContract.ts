@@ -185,6 +185,7 @@ export interface SpawnSessionOptions extends SessionCreateOriginFieldsV1 {
   identity?: import('@happier-dev/protocol/sessions/identity/sessionBotV1').SessionIdentityAdditions;
   memoryEnabled?: boolean;
   approvalProfileId?: string | null;
+  approvalProfileTeamOrGroupDerived?: boolean;
   promptStack?: import('@happier-dev/protocol/sessions/context/sessionContextV1').SessionPromptStackV1;
   initialAccess?: SessionInitialAccessDraftV1;
   /** Canonical host-sealed trigger intents committed with fresh Session birth. */
