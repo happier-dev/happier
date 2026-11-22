@@ -138,6 +138,80 @@ async function publishNoAccountProvisioners(serverId: string) {
 }
 
 describe('provisioner picker demand', () => {
+  it('opens the Coder workspace chooser when the controller answers and Account plugin availability fails', () => withPopoverWebGlobals(async () => {
+    runtimeHost.current = 'browser';
+    onTestFinished(() => { runtimeHost.current = null; });
+    const homeId = 'srv_project_workspace';
+    const serverId = await harness.addHome({ name: 'Project workspaces', serverUrl: 'https://project-workspaces.example.test',
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+    const { clearPluginAccountAvailabilityProjection, failPluginAccountAvailabilityProjection, readPluginAccountAvailability } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    const { PLUGIN } = await import('../../../../../../../packages/plugins/machine-coder/src/manifest');
+    const { ACCOUNT_SERVICE, ACCOUNT_PURPOSE, CONTRIBUTION } =
+      await import('../../../../../../../packages/plugins/machine-coder/src/machine/schemas');
+    const value = { service: ACCOUNT_SERVICE, accountId: 'coder-account' };
+    const purpose = { consumer: CONTRIBUTION, purpose: ACCOUNT_PURPOSE };
+    const list = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{
+      contribution: CONTRIBUTION, occurrenceId: 'coder-installation', acquireExecutionTarget: 'daemon',
+      descriptor: PLUGIN.manifest.contributes.machineProvisioners?.[0],
+      credentialPurposes: [{ purpose, options: [{ label: 'Coder account', value }] }],
+    }] });
+    const { machine } = await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.list', tokenEpoch: 0, requesterInvocation: 'optional', execute: () => list,
+    });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.options', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+        expect(input).toMatchObject({ homeId, controller, contribution: CONTRIBUTION, selectors: { attachExisting: true },
+          credentials: [{ purpose, account: value }] });
+        return { base: { launch: {} }, dimensions: { size: [], location: [], network: [], duration: [],
+          image: [{ id: 'outside-id', title: 'Outside Coder workspace',
+            assignments: [{ path: 'existingWorkspaceId', value: 'outside-id' }] }] } };
+      },
+    });
+    harness.answer(serverId, '/v1/machines', { body: [machine] });
+    const { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } =
+      await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
+    const previousRuntime = getAppliedActiveServerSnapshot();
+    const previousAvailable = isAppliedActiveServerRuntimeAvailable();
+    onTestFinished(() => publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable));
+    publishAppliedActiveServerSnapshot({ ...previousRuntime, serverId, serverUrl: 'https://project-workspaces.example.test' }, true);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+      [createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now() })]);
+    const { getActiveServerAccountScope } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const scope = getActiveServerAccountScope();
+    if (!scope) throw new Error('Expected active Project Home Account');
+    failPluginAccountAvailabilityProjection({ scope, code: 'plugin_availability_unavailable' });
+    await expect(readPluginAccountAvailability(scope).ensureCurrentAccountExecutionDeclarations({ family: 'machineProvisioners' }))
+      .resolves.toMatchObject({ code: 'plugin_availability_unavailable' });
+    const { ProjectsAddMenu } = await import('@/components/projects/ProjectsAddMenu');
+    const screen = await renderScreen(<ProjectsAddMenu testID="add-project" machines={[]} onAdd={vi.fn()}
+      remote={{ serverId, onAdd: vi.fn() }} />, {
+      createNodeMock: () => ({
+        offsetTop: 48,
+        offsetHeight: 32,
+        getBoundingClientRect: () => ({ x: 48, y: 48, width: 160, height: 32, left: 48, top: 48, right: 208, bottom: 80 }),
+        measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(48, 48, 160, 32),
+      }),
+    });
+    try {
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.list')).toHaveLength(0);
+      await screen.pressByTestIdAsync('add-project');
+      await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('A folder on a server'));
+      await act(async () => reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }));
+      await screen.pressByTestIdAsync('add-project:remote');
+      await act(async () => reportPopoverContentLayout(screen.tree, { width: 320, height: 400 }));
+      await waitForHomeGovernance(() => expect(harness.requestsFor('/v1/actions/machines.provisioners.list'),
+        screen.getTextContent()).toHaveLength(1));
+      await waitForHomeGovernance(() => expect(screen.findByTestId('add-project:remote:workspace:outside-id'),
+        screen.getTextContent()).not.toBeNull());
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+    } finally { await screen.unmount(); }
+  }));
+
   it('returns to Home selection when the parent clears its target instead of retaining the previous Home', async () => {
     const homeId = await harness.addHome({ name: 'Picker target', serverUrl: 'https://picker-target.example.test',
       serverIdentityId: 'srv_picker_target', accountId: 'owner', currentAccount: true });

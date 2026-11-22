@@ -53,7 +53,10 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     const controllerName = machineId
         ? getMachineDisplayName(controllerScope.machine ?? { id: machineId, absence: 'unlisted' })
         : null;
-    const catalog = useManagedProvisioners(input.serverId, onApprovalPending, controller, { enabled: input.open && !!controller });
+    const catalog = useManagedProvisioners(input.serverId, onApprovalPending, controller, {
+        enabled: input.open && !!controller,
+        controllerOnly: true,
+    });
     const { binding, current, homeId, provisioners, isCurrentFor } = catalog;
     const candidates = React.useMemo<readonly Candidate[]>(() => {
         if (!input.open || !binding?.isCurrent() || !current || !homeId || !machineId || !installationId || !controllerName) return [];

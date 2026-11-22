@@ -32,20 +32,21 @@ const presentations = new WeakMap<ServerAccountScopeLifetime, Map<string, Provis
 
 /** Demand belongs to the mounted Create surface, and all data retires with its exact Home credential. */
 export function useManagedProvisioners(serverId: string, onApprovalPending?: (registration: ActionApprovalRegistration) => void,
-    controller?: ManagedControllerV1, demand?: Readonly<{ enabled?: boolean; contributionKey?: string }>) {
+    controller?: ManagedControllerV1, demand?: Readonly<{ enabled?: boolean; contributionKey?: string; controllerOnly?: true }>) {
     const enabled = demand?.enabled !== false;
+    const includeAccount = !demand?.controllerOnly;
     const { binding, resolution } = useServerCredentialAccountScopeBinding(serverId);
     const homeId = getServerProfileById(serverId)?.serverIdentityId?.trim() || null;
     const contributionKey = demand?.contributionKey;
     // Account declarations arrive through sync independently of this mounted
     // catalog. Consume their publication so a cold read recovers without Retry.
-    const accountReader = usePluginAccountAvailabilityReader(binding?.scope ?? null,
-        parseQualifiedPluginContributionKey(contributionKey)?.pluginId, { enabled });
-    const requestKey = JSON.stringify([homeId, controller, contributionKey]);
+    const accountReader = usePluginAccountAvailabilityReader(includeAccount ? binding?.scope ?? null : null,
+        parseQualifiedPluginContributionKey(contributionKey)?.pluginId, { enabled: enabled && includeAccount });
+    const requestKey = JSON.stringify([homeId, controller, contributionKey, includeAccount]);
     const lifetime = captureActiveServerAccountScopeLifetime();
     // Controller resolution may still be pending on remount. As on a mounted
     // controller change, keep this Home's last cards while the new request answers.
-    const presentationKey = JSON.stringify([serverId, homeId, contributionKey]);
+    const presentationKey = JSON.stringify([serverId, homeId, contributionKey, includeAccount]);
     const retained = lifetime?.isCurrent() ? presentations.get(lifetime)?.get(presentationKey) : undefined;
     const [state, setState] = React.useState<ProvisionerPresentation>(() => retained ?? {
         lifetime, binding: null, accountId: null, requestKey: '', provisioners: EMPTY_PROVISIONERS, checks: EMPTY_CHECKS, error: null, loading: false, settled: null,
@@ -72,10 +73,10 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
             const contribution = parseQualifiedPluginContributionKey(contributionKey);
             refreshManagedProvisionerAvailability(binding, { homeId, ...(controller ? { controller } : {}),
                 ...(contribution ? { contribution } : {}) });
-            if (controller) refreshManagedProvisionerAvailability(binding, { homeId, ...(contribution ? { contribution } : {}) });
+            if (controller && includeAccount) refreshManagedProvisionerAvailability(binding, { homeId, ...(contribution ? { contribution } : {}) });
         }
         refreshCatalog();
-    }, [binding, homeId, contributionKey, controller]);
+    }, [binding, homeId, contributionKey, controller, includeAccount]);
     const approvalRef = React.useRef(onApprovalPending);
     approvalRef.current = onApprovalPending;
     const client = React.useMemo(() => binding && homeId ? createManagedProvisionerClient(binding.scope, homeId) : null, [binding, homeId]);
@@ -134,14 +135,14 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
         }, { signal: abort.signal, onApprovalPending: registration => approvalRef.current?.(registration) })
             .catch(() => ({ kind: 'failed' as const, code: 'unavailable' }));
         const selectedRead = read(selectedController);
-        const accountRead = selectedController && !contribution ? read() : undefined;
+        const accountRead = includeAccount && selectedController && !contribution ? read() : undefined;
         void selectedRead.then(async result => {
             // A controller failure cannot suppress independently available Account offers.
             if (result.kind === 'failed') publish(result);
             publish(result, await accountRead);
         });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime, accountReader]);
+    }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime, accountReader, includeAccount]);
     const boundAccountId = binding?.isCurrent() ? binding.accountId : resolution.kind === 'bound' ? resolution.scope.accountId : null;
     const sameAccount = state.lifetime === lifetime && (boundAccountId !== null ? state.accountId === boundAccountId
         : resolution.kind === 'resolving' && lifetime?.isCurrent() === true && retained === state);
