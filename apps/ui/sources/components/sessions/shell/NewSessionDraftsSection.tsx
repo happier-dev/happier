@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { getAgentPickerIconScale } from '@/agents/catalog/catalog';
+import { ActivitySpinner, iconMatchedSpinnerSize } from '@/components/ui/feedback/ActivitySpinner';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -32,6 +33,8 @@ import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/ne
 import {
     buildNewSessionDraftRowPresentation,
     resolveNewSessionDraftAgentId,
+    resolveNewSessionDraftLaunchState,
+    type NewSessionDraftLaunchState,
     type NewSessionDraftSummaryNames,
 } from '@/components/sessions/drafts/newSessionDraftPresentation';
 import type { SessionRowDensity } from '@/components/sessions/shell/row/resolveSessionRowPresentation';
@@ -46,7 +49,10 @@ import {
 import { useIsTablet } from '@/utils/platform/responsive';
 import { deleteNewSessionDraftAfterConfirmation } from '@/components/sessions/drafts/deleteNewSessionDraftAfterConfirmation';
 
-export { buildNewSessionDraftRowPresentation } from '@/components/sessions/drafts/newSessionDraftPresentation';
+export {
+    buildNewSessionDraftRowPresentation,
+    resolveNewSessionDraftLaunchState,
+} from '@/components/sessions/drafts/newSessionDraftPresentation';
 export { deleteNewSessionDraftAfterConfirmation } from '@/components/sessions/drafts/deleteNewSessionDraftAfterConfirmation';
 
 const EMPTY_DRAFTS: readonly NewSessionDraftProjection[] = Object.freeze([]);
@@ -80,7 +86,7 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
     names: NewSessionDraftSummaryNames;
     onContinue: (draftId: string) => void;
     onDelete: (draftId: string) => Promise<void>;
-    deleteDisabled: boolean;
+    launchState: NewSessionDraftLaunchState | null;
     focusRef?: React.Ref<React.ElementRef<typeof Pressable>>;
     density: SessionRowDensity;
 }>) {
@@ -119,7 +125,33 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
         readableNativePhoneMinimal,
     });
     const agentId = resolveNewSessionDraftAgentId(props.draft);
-    const subtitleTextMetrics = SESSION_LIST_ROW_STATUS_TEXT_METRICS[props.density];
+    const baseSubtitleTextMetrics = SESSION_LIST_ROW_STATUS_TEXT_METRICS[props.density];
+    const dangerStatus = presentation.statusTone === 'danger';
+    const subtitleTextMetrics = React.useMemo(
+        () => (dangerStatus
+            ? { ...baseSubtitleTextMetrics, color: theme.colors.state.danger.foreground }
+            : baseSubtitleTextMetrics),
+        [baseSubtitleTextMetrics, dangerStatus, theme.colors.state.danger.foreground],
+    );
+    // A launch the Action-operation owner still holds cannot be deleted, so the row shows what it is
+    // doing in the control's place: the spinner and the failure mark stay visible at every density,
+    // including the minimal row that has no status line.
+    const launchIndicator = props.launchState === 'launching' ? (
+        <ActivitySpinner
+            testID={`session-draft-launching:new-session:${draftId}`}
+            size={iconMatchedSpinnerSize(ICON_SIZE.xs)}
+            color={theme.colors.text.secondary}
+            accessibilityLabel={t('sessionDrafts.status.starting')}
+        />
+    ) : props.launchState === 'failed' ? (
+        <Icon
+            testID={`session-draft-start-failed:new-session:${draftId}`}
+            name="warning-circle"
+            size={ICON_SIZE.xs}
+            color={theme.colors.state.danger.foreground}
+            accessibilityLabel={t('sessionDrafts.status.startFailed')}
+        />
+    ) : null;
     const accessibleSummary = [
         presentation.title,
         status,
@@ -152,14 +184,14 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
             accessibilityRole="button"
             accessibilityLabel={accessibleSummary}
             accessibilityHint={t('sessionDrafts.continueEditing')}
-            rightElement={(
+            rightElement={launchIndicator ?? (
                 <Pressable
                     testID={`session-draft-delete:new-session:${draftId}`}
-                    style={[styles.deleteButton, props.deleteDisabled ? styles.deleteButtonDisabled : null]}
-                    disabled={props.deleteDisabled}
+                    style={[styles.deleteButton, props.launchState ? styles.deleteButtonDisabled : null]}
+                    disabled={props.launchState !== null}
                     accessibilityRole="button"
                     accessibilityLabel={t('sessionDrafts.delete.action')}
-                    accessibilityState={{ disabled: props.deleteDisabled }}
+                    accessibilityState={{ disabled: props.launchState !== null }}
                     hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
                     onPress={(event) => {
                         event.stopPropagation();
@@ -184,7 +216,7 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
     attachmentNeedsAttentionDraftIds?: ReadonlySet<string>;
     onContinue: (draftId: string) => void;
     onDelete: (draftId: string) => Promise<boolean>;
-    deleteDisabledDraftIds?: ReadonlySet<string>;
+    launchStateByDraftId?: ReadonlyMap<string, NewSessionDraftLaunchState>;
     density?: SessionRowDensity;
 }>) {
     const rowFocusTargetsRef = React.useRef(new Map<string, FocusReturnTarget>());
@@ -193,10 +225,11 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
         deletedDraftId: string;
         candidateDraftIds: readonly string[];
     }> | null>(null);
-    const names: NewSessionDraftSummaryNames = {
+    const names = React.useMemo<NewSessionDraftSummaryNames>(() => ({
         unavailableMachineIds: props.unavailableMachineIds,
         attachmentNeedsAttentionDraftIds: props.attachmentNeedsAttentionDraftIds,
-    };
+        launchStateByDraftId: props.launchStateByDraftId,
+    }), [props.attachmentNeedsAttentionDraftIds, props.launchStateByDraftId, props.unavailableMachineIds]);
     const handleDelete = React.useCallback(async (draftId: string) => {
         const deletedIndex = props.drafts.findIndex((draft) => draft.draftId === draftId);
         const candidateDraftIds = props.drafts
@@ -234,7 +267,7 @@ export const NewSessionDraftsSectionView = React.memo(function NewSessionDraftsS
                         names={names}
                         onContinue={props.onContinue}
                         onDelete={handleDelete}
-                        deleteDisabled={props.deleteDisabledDraftIds?.has(draft.draftId) === true}
+                        launchState={props.launchStateByDraftId?.get(draft.draftId) ?? null}
                         density={props.density ?? 'default'}
                         focusRef={(target) => {
                             if (target) rowFocusTargetsRef.current.set(draft.draftId, target);
@@ -272,14 +305,15 @@ export const NewSessionDraftsSection = React.memo(function NewSessionDraftsSecti
         getNewSessionAttachmentDraftsRevision,
         getNewSessionAttachmentDraftsRevision,
     );
-    const deleteDisabledDraftIds = React.useMemo(() => new Set(drafts.flatMap((draft) => (
-        resolvePersistedNewSessionOperationIdentity({
+    const launchStateByDraftId = React.useMemo(() => new Map(drafts.flatMap((draft) => {
+        const launchState = resolveNewSessionDraftLaunchState(resolvePersistedNewSessionOperationIdentity({
             draftScope: scope,
             draftId: draft.draftId,
             draft: draft.localSupplement,
             operations: actionOperations,
-        }) ? [draft.draftId] : []
-    ))), [actionOperations, drafts, scope]);
+        }));
+        return launchState ? [[draft.draftId, launchState] as const] : [];
+    })), [actionOperations, drafts, scope]);
     const unavailableMachineIds = React.useMemo(() => {
         if (!isDataReady) return new Set<string>();
         const onlineMachineIds = new Set(machines.filter((machine) => isMachineOnline(machine)).map((machine) => machine.id));
@@ -333,7 +367,7 @@ export const NewSessionDraftsSection = React.memo(function NewSessionDraftsSecti
             attachmentNeedsAttentionDraftIds={attachmentNeedsAttentionDraftIds}
             onContinue={handleContinue}
             onDelete={handleDelete}
-            deleteDisabledDraftIds={deleteDisabledDraftIds}
+            launchStateByDraftId={launchStateByDraftId}
             density={props.density}
         />
     );

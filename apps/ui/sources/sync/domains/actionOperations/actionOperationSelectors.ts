@@ -36,6 +36,11 @@ type ResolveActionOperationLocalPresentation = (
 
 const NO_LOCAL_PRESENTATION: ResolveActionOperationLocalPresentation = () => null;
 
+/** The one answer to "is this Action still running": every surface that shows live work reads it. */
+export function isActionOperationInFlight(operation: ActionOperationSnapshotV1 | null | undefined): boolean {
+    return operation?.state === 'accepted' || operation?.state === 'running';
+}
+
 export function isActionOperationCancellationRequested(operation: ActionOperationSnapshotV1 | null | undefined): boolean {
     return operation?.state === 'running' && operation.progress?.kind === 'phase' && operation.progress.phase === 'cancelling';
 }
@@ -110,7 +115,7 @@ function selectInboxActionOperationReason(
         return 'setup_needs_attention';
     }
     if (
-        (operation.state === 'accepted' || operation.state === 'running')
+        isActionOperationInFlight(operation)
         && state.unavailableOperationIds.has(operation.operationId)
     ) {
         return 'status_unavailable';
@@ -169,7 +174,7 @@ function actionOperationNeedsActivityAttention(
     resolveLocalPresentation: ResolveActionOperationLocalPresentation,
 ): boolean {
     if (state.dismissedOperationIds.has(operation.operationId)) return false;
-    if (operation.state === 'accepted' || operation.state === 'running') return true;
+    if (isActionOperationInFlight(operation)) return true;
     if (!state.terminalSeenAtById.has(operation.operationId)) return true;
     return resolveLocalPresentation(operation)?.kind === 'setup_needs_attention';
 }
@@ -211,7 +216,7 @@ export function createActionOperationActivitySummarySelector(
                 hasAttention = true;
             }
 
-            if (operation.state === 'accepted' || operation.state === 'running') {
+            if (isActionOperationInFlight(operation)) {
                 const scopeObservation = selectActionOperationObservation(state, operation.scope);
                 if (
                     scopeObservation !== 'status_unavailable'

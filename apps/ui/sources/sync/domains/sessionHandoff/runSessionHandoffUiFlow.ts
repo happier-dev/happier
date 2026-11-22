@@ -9,6 +9,7 @@ import { executeSessionHandoffAction } from './executeSessionHandoffAction';
 import { performSessionHandoffRecoveryAction } from '../../ops/sessionHandoffs';
 import { sync } from '@/sync/sync';
 import { randomUUID } from '@/platform/randomUUID';
+import { isActionOperationInFlight } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 
 type ExecuteAction = (actionId: 'session.handoff', input: unknown, context?: ActionExecutorContext) => Promise<unknown>;
@@ -71,7 +72,7 @@ export async function runSessionHandoffUiFlow(
             requestId: actionRequestId,
             origin: {
                 resolve: (snapshot) => (
-                    snapshot.state === 'accepted' || snapshot.state === 'running'
+                    isActionOperationInFlight(snapshot)
                         ? () => {
                             openObservedSessionHandoffProgressModal({
                                 requestId: actionRequestId,
