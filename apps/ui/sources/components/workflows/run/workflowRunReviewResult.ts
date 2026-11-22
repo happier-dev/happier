@@ -22,7 +22,7 @@ export function workflowResultNamesReview(
 
 /**
  * A step whose result the Run page's embedded Review already shows (lab `hunts-running`): a step that starts the
- * Review, or the final output when that output is the Review. Its pane then leaves the raw record out.
+ * Review, a step whose result names that Review, or the final output when that output is the Review. Its pane then leaves the raw record out.
  */
 export function workflowStepResultShownByRunReview(
   params: Readonly<{
@@ -31,13 +31,29 @@ export function workflowStepResultShownByRunReview(
     finalOutputInvocationId: string | null | undefined;
     selectedInvocationId: string | null;
     selectedStartsReview: boolean;
+    /** The selected step's own result: a step whose result names the Review (it produced it) is shown by it. */
+    selectedResult?: JsonValue | undefined;
   }>,
 ): boolean {
   if (params.producedReviewId === null || params.selectedInvocationId === null)
     return false;
-  if (params.selectedStartsReview) return true;
+  if (params.selectedStartsReview
+    || workflowResultNamesReview(params.selectedResult, params.producedReviewId)) return true;
   return (
     params.finalOutputIsReview &&
     params.selectedInvocationId === params.finalOutputInvocationId
   );
+}
+
+/**
+ * Whether the Review a Run produced is that Run's answer: its final output names it, or the Run declares no final
+ * output of its own (a PR preparation that ends by starting the Review). A declared output that is something else
+ * stays the Run's result (U8 R6 R4b).
+ */
+export function workflowRunReviewIsResult(params: Readonly<{
+  reviewId: string;
+  finalOutputInvocationId: string | null | undefined;
+  result: JsonValue | undefined;
+}>): boolean {
+  return params.finalOutputInvocationId == null || workflowResultNamesReview(params.result, params.reviewId);
 }

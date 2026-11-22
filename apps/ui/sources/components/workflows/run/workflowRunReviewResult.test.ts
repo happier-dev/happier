@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   workflowResultNamesReview,
+  workflowRunReviewIsResult,
   workflowStepResultShownByRunReview,
 } from './workflowRunReviewResult';
 
@@ -70,5 +71,29 @@ describe('workflowStepResultShownByRunReview', () => {
         selectedInvocationId: 'other',
       }),
     ).toBe(false);
+  });
+});
+
+describe('workflowRunReviewIsResult (U8 R6 R4b)', () => {
+  it('reads the produced Review as the Run\'s answer when the Run declares no other result', () => {
+    expect(workflowRunReviewIsResult({ reviewId: 'review-1', finalOutputInvocationId: null, result: undefined })).toBe(true);
+    expect(workflowRunReviewIsResult({ reviewId: 'review-1', finalOutputInvocationId: 'final',
+      result: { review: { reviewId: 'review-1' } } })).toBe(true);
+  });
+
+  it('keeps a declared final output that is something else as the Run\'s result', () => {
+    expect(workflowRunReviewIsResult({ reviewId: 'review-1', finalOutputInvocationId: 'final',
+      result: { summary: 'Opened #4' } })).toBe(false);
+  });
+});
+
+describe('workflowStepResultShownByRunReview for the producing step (U8 R6 R4b)', () => {
+  it('leaves out the raw record of a step whose result names the embedded Review', () => {
+    expect(workflowStepResultShownByRunReview({ producedReviewId: 'review-1', finalOutputIsReview: true,
+      finalOutputInvocationId: null, selectedInvocationId: 'step-3', selectedStartsReview: false,
+      selectedResult: { status: 'accepted', review: { reviewId: 'review-1', roundOrdinal: 1 } } })).toBe(true);
+    expect(workflowStepResultShownByRunReview({ producedReviewId: 'review-1', finalOutputIsReview: true,
+      finalOutputInvocationId: null, selectedInvocationId: 'step-2', selectedStartsReview: false,
+      selectedResult: { workspace: '/tmp/pr' } })).toBe(false);
   });
 });

@@ -1221,17 +1221,11 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             size="md"
         />
     ) : null;
-    const resultIsReview = terminalOutcome?.kind === 'open_result' && finalOutputIsReview;
-    const outcomeAction = terminalOutcome?.kind === 'result_absent' && props.view !== 'steps' ? (
-        <ToolbarButton
-            key="inspect-steps"
-            testID={`${testIDPrefix}-inspect-steps`}
-            onPress={() => selectWorkflowNavigationItem(executeNavigation, navigation.model, 'steps')}
-            label={t('workflows.run.inspectSteps')}
-            size="md"
-        />
-    ) : terminalOutcome?.kind === 'open_result' && resultIsReview && producedReviewId !== null ? (
-        // The Run's result is the Review it produced: its one way in opens that Review (U8 R4 R2).
+    // The Review the Run produced is its answer (its final output names it, or it declares none): Open review is the
+    // outcome, where Open result or Inspect steps would otherwise sit (U8 R4 R2, R6 R4b).
+    const resultIsReview = (terminalOutcome?.kind === 'open_result' || terminalOutcome?.kind === 'result_absent')
+        && finalOutputIsReview;
+    const outcomeAction = resultIsReview && producedReviewId !== null ? (
         <ToolbarButton
             key="open-result"
             testID={`${testIDPrefix}-open-result`}
@@ -1239,6 +1233,14 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 navigationScope?.serverId) as never)}
             label={t('reviewWalkthrough.detail.openReview')}
             tone="primary"
+            size="md"
+        />
+    ) : terminalOutcome?.kind === 'result_absent' && props.view !== 'steps' ? (
+        <ToolbarButton
+            key="inspect-steps"
+            testID={`${testIDPrefix}-inspect-steps`}
+            onPress={() => selectWorkflowNavigationItem(executeNavigation, navigation.model, 'steps')}
+            label={t('workflows.run.inspectSteps')}
             size="md"
         />
     ) : terminalOutcome?.kind === 'open_result' ? (
@@ -1365,7 +1367,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // in the page under the outcome they answer, so the failed page's next step is never behind a menu (lab P1).
     const hasStateControls = canResume || remedyAction !== null
         || (onRunAgain !== undefined && !runAgainFolded) || (onAnotherRound !== undefined && !anotherRoundFolded)
-        || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps'))
+        || (terminalOutcome !== null && (terminalOutcome.kind !== 'result_absent' || props.view !== 'steps' || resultIsReview))
         || (props.run.availability.pause && props.onPause !== undefined)
         || (stopAvailable && !stopFolded);
     const pageStateControls = phone && props.embedded !== true && hasStateControls;
@@ -1753,7 +1755,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
             // The embedded Review already shows this step's result, so its raw record stays out of the pane (U8 R4 R1).
             ...(workflowStepResultShownByRunReview({ producedReviewId, finalOutputIsReview,
                 finalOutputInvocationId: props.finalOutputInvocationId, selectedInvocationId: props.selectedInvocationId,
-                selectedStartsReview: selectedDetail.startsReview }) ? { resultShownAbove: true } : {}),
+                selectedStartsReview: selectedDetail.startsReview,
+                selectedResult: props.selectedInvocationProgress?.result }) ? { resultShownAbove: true } : {}),
             // The Run's own replay, offered on the failed step that has no recovery choice of its own.
             ...(onRunAgain === undefined ? {} : { onRunAgain }),
             ...(props.onOpenMachineRemedy === undefined ? {} : { onOpenMachineRemedy: props.onOpenMachineRemedy }),

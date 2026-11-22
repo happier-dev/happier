@@ -4034,6 +4034,19 @@ describe('WorkflowRunContent', () => {
     ).not.toBe(0);
   });
 
+  it('leads a successful Run with no final output of its own with Open review when it produced a Review (U8 R6 R4b)', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'succeeded', availability: { cancel: false, pause: false } }),
+      resultReview: { reviewId: 'review-49c7', isResult: true },
+    });
+    await flushHookEffects();
+    // The Run's answer is the Review: its one way in, filled, where Inspect steps would otherwise sit.
+    expect(screen.findByTestId('workflow-run-inspect-steps')).toBeNull();
+    const open = screen.findAllByType(ToolbarButton).find((button) => button.props.testID === 'workflow-run-open-result');
+    expect(open?.props.label).toBe('reviewWalkthrough.detail.openReview');
+    expect(open?.props.tone).toBe('primary');
+  });
+
   it('offers the canonical Steps view when a successful Run has no final output', async () => {
     const connection = await serveActionHomes({ homes: [{ key: 'navigation', serverUrl: 'https://workflow-run-navigation.test', accountId: 'run-navigation-account' }],
       route: request => createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined });

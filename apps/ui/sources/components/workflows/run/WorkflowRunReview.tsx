@@ -19,7 +19,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { workflowResultNamesReview } from './workflowRunReviewResult';
+import { workflowRunReviewIsResult } from './workflowRunReviewResult';
 
 /** A finding's engine by name: the Review engine option's target through the backend label owner. */
 function reviewEngineLabel(engineId: string): string {
@@ -46,13 +46,16 @@ export function useWorkflowRunResultReview(params: Readonly<{
     runId: string | null;
     scope: ServerAccountScope | null;
     result: JsonValue | undefined;
+    /** The final output's producing step; none when the Run declares no output of its own. */
+    finalOutputInvocationId: string | null | undefined;
     enabled: boolean;
 }>): WorkflowRunResultReview | null {
     const review = useWorkflowRunProducedReview(params.runId ?? '', params.scope,
         params.enabled && params.runId !== null);
     const reviewId = params.runId !== null ? review?.reviewId ?? null : null;
     return React.useMemo(() => reviewId === null ? null
-        : { reviewId, isResult: workflowResultNamesReview(params.result, reviewId) }, [reviewId, params.result]);
+        : { reviewId, isResult: workflowRunReviewIsResult({ reviewId, finalOutputInvocationId: params.finalOutputInvocationId,
+            result: params.result }) }, [reviewId, params.finalOutputInvocationId, params.result]);
 }
 
 /**
