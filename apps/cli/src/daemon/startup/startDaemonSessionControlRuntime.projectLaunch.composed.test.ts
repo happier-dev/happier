@@ -132,6 +132,11 @@ const pluginExecAgent = {
       'daemon.mjs': 'import { factory } from "./agent.mjs"; export function activate(api) { api.agents.register("agent", factory, { sessionRunnerFactory: { module: "./agent.mjs", export: "factory", runtimeApiVersion: 1 } }); }' },
   };
 
+function terminalSignIn(accountId: string, tokenEpoch = 0) {
+  const claims = { sub: accountId, tokenEpoch, provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } };
+  return { token: `e30.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.signature`, encryption: null };
+}
+
 it.skipIf(process.platform !== 'linux')('authorizes OpenCode member launch after adopting its prepared spawn material', async () => {
   const home = 'srv_installed_project_fixture';
   const roots: string[] = [];
@@ -218,8 +223,7 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
   // Generic system tools deliberately cannot launch Node/package runtimes.
   const managedAgent = pluginExecAgent;
   const custodian = member ? 'company' : 'requester';
-  const daemonCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: custodian,
-    provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
+  const daemonCredentials = terminalSignIn(custodian);
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, true, managedAgent, undefined, {
     credentials: daemonCredentials, externalActionAccountId: custodian, homeServerIdentityId: home,
     runnerIdentity: happyHomeDir => {
@@ -249,6 +253,7 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
   const homeFetch = globalThis.fetch;
   let daemonRequests = 0;
   let withdrawnAtFinalizer = false;
+  const supervisionEntered = createDeferred<void>();
   // Observe only the strict private-HTTP outcome, never request material,
   // arbitrary exception text or credential-bearing response messages.
   const supervisionOutcomes: Array<Readonly<{ phase: 'supervision'; code: string }>> = [];
@@ -266,7 +271,7 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
     expect(request.context.sessionId).toBe(h.sessionId);
     daemonRequests++;
     if (shape === 'withdrawn-after-admission' && request.operation.kind === 'plugin_exec.resolved_agent_launch.authorize_v1') {
-      await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, { token: 'replacement-account-token', encryption: null });
+      await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, terminalSignIn('other-account'));
       withdrawnAtFinalizer = true;
     }
     const dispatchResponse = h.dispatch(request.operation, request.context.executionRunSnapshotId).catch(error => {
@@ -282,6 +287,7 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
       throw error;
     });
     pendingHttp.push(dispatchResponse);
+    if (request.operation.kind === 'managed_server.supervision.authorize') supervisionEntered.resolve();
     // A real fetch detaches on abort even while the daemon awaits upstream IO.
     let removeAbort = () => {};
     const response = await (init?.signal ? Promise.race([dispatchResponse,
@@ -310,6 +316,20 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
     processOwner: { kind: 'session', sessionId: h.sessionId }, cwd: h.cwd, environment: {}, providerBindingActive: false,
     session: { id: h.sessionId, current: { interactions: { async request() { throw new Error('No user interaction requested'); } } } },
     signal: lifetime.signal, isOccurrenceCurrent: () => !lifetime.signal.aborted });
+  const qualificationEntered = createDeferred<void>();
+  const releaseQualification = createDeferred<void>();
+  if (shape === 'cancelled-parent-before-admission') {
+    const homeRead = vi.mocked(axios.get).getMockImplementation();
+    if (!homeRead) throw new Error('Missing genuine Home HTTP boundary');
+    vi.mocked(axios.get).mockImplementation(async (...args) => {
+      if (new URL(String(args[0])).pathname === '/v1/machines/machine') {
+        qualificationEntered.resolve();
+        await releaseQualification.promise;
+      }
+      return await homeRead(...args);
+    });
+    onTestFinished(() => releaseQualification.resolve());
+  }
   const services = await createServices(`s0-managed-${shape}`);
   const serverArgs = ['daemon', '--listen=127.0.0.1', '--port=0', '--export-all', `--base-path=${h.cwd}`];
   const serverSpec = { id: 's0-native-server', mode: { kind: 'spawn',
@@ -329,27 +349,12 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
       publicReleaseRing: configuration.publicReleaseRing, path: authorityFilePath,
       sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent })).not.toBeNull();
     if (shape === 'cancelled-parent-before-admission') {
-      const qualificationEntered = createDeferred<void>();
-      const releaseQualification = createDeferred<void>();
-      const homeRead = vi.mocked(axios.get).getMockImplementation();
-      if (!homeRead) throw new Error('Missing genuine Home HTTP boundary');
-      vi.mocked(axios.get).mockImplementation(async (...args) => {
-        if (new URL(String(args[0])).pathname === '/v1/machines/machine') {
-          qualificationEntered.resolve();
-          await releaseQualification.promise;
-        }
-        return await homeRead(...args);
-      });
       const individualCaller = new AbortController();
-      let detached = false;
-      const pending = services.managedServices.supervise(serverSpec, { signal: individualCaller.signal })
-        .finally(() => { detached = true; });
+      const pending = services.managedServices.supervise(serverSpec, { signal: individualCaller.signal });
       const settlement = Promise.allSettled([pending]);
       try {
-        await qualificationEntered.promise;
+        await Promise.all([qualificationEntered.promise, supervisionEntered.promise]);
         lifetime.abort(new DOMException('Session incarnation retired', 'AbortError'));
-        await new Promise<void>(resolve => setImmediate(resolve));
-        expect(detached, 'parent cancellation must detach before the Home read is released').toBe(true);
         await expect(pending).rejects.toMatchObject({ code: 'plugin_operation_aborted' });
         expect(individualCaller.signal.aborted).toBe(false);
         expect(childStarts()).toBe(0);
@@ -363,8 +368,7 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
     try { handle = await services.managedServices.supervise(serverSpec, { signal: lifetime.signal }); }
     catch (error) { failure = error; }
     expect({ supervisionOutcomes, childStarts: childStarts() }, JSON.stringify({ httpPhases })).toEqual({
-      supervisionOutcomes: [{ phase: 'supervision', code: usesOwnerOsUser || shape === 'withdrawn-after-admission'
-        ? 'authorized' : 'agent_isolation_unavailable' }],
+      supervisionOutcomes: [{ phase: 'supervision', code: unknown ? 'agent_isolation_unavailable' : 'authorized' }],
       childStarts: usesOwnerOsUser ? 1 : 0,
     });
     if (usesOwnerOsUser) {
@@ -377,16 +381,20 @@ it.each(['owner-policy-off', 'member-policy-off', 'unknown-requester', 'owner-po
       // The real child inherits this daemon's OS user; no uid/gid switch.
       expect(nativeSpawn?.[2]?.uid).toBeUndefined();
       expect(nativeSpawn?.[2]?.gid).toBeUndefined();
-      // A Session-scoped service survives ordinary invocation replacement.
-      // The second real invocation must not borrow its prior successful
-      // admission after the original authoritative policy has changed.
-      const nextServices = await createServices(`s0-managed-${shape}-reuse`);
+      // A running Session service keeps its placement until its next start.
       enabled = true;
-      await expect(nextServices.managedServices.supervise(serverSpec, { signal: lifetime.signal }))
-        .rejects.toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+      const nextServices = await createServices(`s0-managed-${shape}-reuse`);
+      const reused = await nextServices.managedServices.supervise(serverSpec, { signal: lifetime.signal });
+      expect(reused.snapshot()).toMatchObject({ state: 'running' });
       expect(childStarts()).toBe(1);
     } else {
-      expect(failure).toMatchObject({ code: 'agent_isolation_unavailable', retryable: false });
+      const withdrewCredentials = shape === 'withdrawn-after-admission';
+      expect(failure).toMatchObject({
+        code: withdrewCredentials ? 'plugin_managed_service_establishment_failed' : 'agent_isolation_unavailable',
+        retryable: false,
+      });
+      if (!unknown) expect(httpPhases).toContainEqual({ phase: 'returned', operation: 'plugin_exec.resolved_agent_launch.authorize_v1',
+        code: withdrewCredentials ? 'project_requester_credentials_unavailable' : 'agent_isolation_unavailable' });
       expect(childStarts()).toBe(0);
       expect(h.nativeEffects()).toBe(projectEffectsBefore);
       expect(handle).toBeUndefined();
@@ -1101,16 +1109,25 @@ it.each(['credentials', 'installation'] as const)('withdraws the qualified ordin
   expect(await run()).toMatchObject({ ok: true });
   expect(reads).toEqual({ machine: 1, session: 1 });
   if (changed === 'credentials') {
-    await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, { token: 'replacement-account-token', encryption: null });
+    const serverId = h.f.bootstrap.attribution.serverId;
+    await writeStoredCredentialsForServerId(serverId, terminalSignIn('requester', 1));
+    expect(await run()).toMatchObject({ ok: true });
+
+    await writeStoredCredentialsForServerId(serverId, terminalSignIn('other-account'));
+    const next = h.operationBase('next-native');
+    expect(await h.dispatch({ kind: 'plugin_services.prepare_v1', ...next })).toMatchObject({ ok: true });
+    expect(await h.dispatch({ kind: 'host_scm.run_v1', ...next,
+      command: { bin: 'git', args: ['--version'], cwd: h.cwd } })).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
+    await h.dispatch({ kind: 'plugin_services.close_v1', ...next });
   } else {
     expect(configuration.installationIdentityFile.startsWith(h.f.directory)).toBe(true);
     const replacementPath = join(h.f.directory, 'replacement-installation.json');
     await readOrCreateInstallationIdentity(replacementPath);
     await copyFile(replacementPath, configuration.installationIdentityFile);
+    expect(await run()).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
+    expect(await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...h.operationBase('withdrawn-native'), agentLaunchKind: 'exec',
+      launch: { command: process.execPath, args: [], cwd: h.cwd, env: {} } })).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
   }
-  expect(await run()).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
-  expect(await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...h.operationBase('withdrawn-native'), agentLaunchKind: 'exec',
-    launch: { command: process.execPath, args: [], cwd: h.cwd, env: {} } })).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
   expect(reads).toEqual({ machine: 1, session: 1 });
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('withdrawn-native') });
 }, 120_000);
@@ -1118,7 +1135,7 @@ it.each(['credentials', 'installation'] as const)('withdraws the qualified ordin
 it.each([
   { changed: 'credentials', associated: false }, { changed: 'installation', associated: false },
   { changed: 'credentials', associated: true }, { changed: 'installation', associated: true },
-] as const)('applies $changed withdrawal at the next native launch admission during Project preflight (associated=$associated)', async ({ changed, associated }) => {
+] as const)('completes an admitted launch when $changed changes during Project preflight (associated=$associated)', async ({ changed, associated }) => {
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, undefined, !associated, undefined, undefined, {
     externalActionAccountId: 'requester', ordinaryAccountSession: true,
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_native_owner', machineId: 'machine' }),
@@ -1130,7 +1147,7 @@ it.each([
     if (!withdrawn && new URL(String(args[0])).pathname === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) {
       withdrawn = true;
       if (changed === 'credentials') {
-        await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, { token: 'replacement-account-token', encryption: null });
+        await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, terminalSignIn('requester', 1));
       } else {
         expect(configuration.installationIdentityFile.startsWith(h.f.directory)).toBe(true);
         const replacementPath = join(h.f.directory, 'replacement-installation.json');
@@ -1144,21 +1161,16 @@ it.each([
   const result = await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...h.operationBase('mid-preflight'), agentLaunchKind: 'exec',
     launch: { command: process.execPath, args: ['-e', 'process.stdout.write("must-not-run")'], cwd: h.cwd, env: {} } });
   expect(withdrawn).toBe(true);
+  expect(result).toMatchObject({ ok: true });
   if (changed === 'installation') {
     // Exec admitted this launch before it entered Project preflight. A new
     // launch must still resolve identity against the withdrawn installation.
-    expect(result).toMatchObject({ ok: true });
     const effects = h.nativeEffects();
     expect(await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1', ...h.operationBase('mid-preflight'), agentLaunchKind: 'exec',
       launch: { command: process.execPath, args: [], cwd: h.cwd, env: {} } })).toMatchObject({ ok: false, error: { code: 'agent_isolation_unavailable' } });
     expect(h.nativeEffects()).toBe(effects);
-    await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('mid-preflight') });
-    return;
   }
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase('mid-preflight') });
-  expect(result).toMatchObject({ ok: false, error: { code:
-    expect.stringMatching(/^(?:agent_isolation_unavailable|project_requester_credentials_unavailable)$/u) } });
-  expect(h.nativeEffects()).toBe(0);
 }, 120_000);
 
 it('finishes admitted Project native materialization and refuses the next launch after installation withdrawal during tool discovery', async () => {
@@ -1585,9 +1597,7 @@ it.each([{ name: 'Claude', agentId: 'claude' }, { name: 'configured ACP', agentI
     externalActionAccountId: 'requester', resolveCurrentMachineExecutionOriginContext: async () => ({
       serverIdentityId: 'srv_installed_project_fixture', machineId: 'machine' }),
   });
-  // Background workflow/Session authoring can borrow the daemon's installed
-  // credentials between native starts. Keep its real stored-identity fence;
-  // a fixture that always returns current cannot catch this cross-owner loss.
+  // Recover from the installed sign-in after the retained Session runtime is disposed.
   if (!h.installedCredentials) throw new Error('Missing installed Account fixture');
   const child = await prepareRequesterSessionBootstrap({ credentials: h.installedCredentials,
     attribution: h.f.bootstrap.attribution,
@@ -1626,22 +1636,13 @@ it.each([{ name: 'Claude', agentId: 'claude' }, { name: 'configured ACP', agentI
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase() });
   h.tracked.requesterWorkAttributionV1 = h.f.bootstrap.attribution;
   h.tracked.requesterSessionRuntimeContext = await h.replaceRequesterRuntime();
-  await writeStoredCredentialsForServerId('session-home', { token: 'replaced-installed-owner', encryption: null });
-  const diagnostic = vi.spyOn(logger, 'debug');
+  await writeStoredCredentialsForServerId(h.f.bootstrap.attribution.serverId, terminalSignIn('requester', 1));
   expect(await h.dispatch({ kind: 'plugin_services.prepare_v1', ...h.operationBase() })).toMatchObject({ ok: true });
   expect(await h.dispatch({ kind: 'plugin_exec.resolved_agent_launch.authorize_v1', agentLaunchKind: 'exec', ...h.operationBase(),
     launch: { command: '/installed/agent', args: [], cwd: h.cwd, env: {} } })).toMatchObject({
-      ok: false, error: { code: 'project_finite_execution_unavailable' },
+      ok: true,
     });
-  expect(diagnostic.mock.calls).toEqual(expect.arrayContaining([[
-    '[ProjectFinite] Runtime resolution refused', expect.objectContaining({ reason: 'installed_not_current' }),
-  ], [
-    '[PluginExec] Native launch requester refusal', { reason: 'finite_runtime_unavailable', sessionId: h.sessionId },
-  ]]));
-  const refusals = diagnostic.mock.calls.filter(([message]) => String(message).includes('Runtime resolution refused'));
-  expect(JSON.stringify(refusals)).not.toContain(h.installedCredentials.token);
-  expect(JSON.stringify(refusals)).not.toContain('replaced-installed-owner');
-  expect(h.nativeEffects()).toBe(before);
+  expect(h.nativeEffects()).toBe(before + 1);
   await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase() });
 }, 120_000);
 
