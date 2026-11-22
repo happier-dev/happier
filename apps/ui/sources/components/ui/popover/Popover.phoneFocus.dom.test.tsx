@@ -391,7 +391,7 @@ it('keeps a desktop anchored popover open as focus moves into its declared in-pa
     }
 });
 
-it('keeps a desktop anchored popover open when an inside label blurs Search', async () => {
+it.each(['inside label', 'window blur and return'] as const)('keeps an anchored popover open after %s', async cause => {
     viewport.width = 1440;
     const container = document.createElement('div');
     document.body.append(container);
@@ -420,17 +420,26 @@ it('keeps a desktop anchored popover open when an inside label blurs Search', as
         search.focus();
         expect(document.activeElement).toBe(search);
         await act(async () => {
-            label.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
-            // JSDOM leaves the default pointer focus transition to the caller.
-            search.blur();
-            label.click();
+            if (cause === 'inside label') {
+                label.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+                // JSDOM leaves the default pointer focus transition to the caller.
+                search.blur();
+                label.click();
+            } else {
+                search.blur();
+                window.dispatchEvent(new FocusEvent('blur'));
+            }
         });
         expect(document.activeElement).toBe(document.body);
         expect(blurTarget).toHaveBeenCalledWith(null);
         expect(trigger.getAttribute('aria-expanded')).toBe('true');
         expect(label.isConnected).toBe(true);
         await act(async () => {
+            if (cause === 'window blur and return') window.dispatchEvent(new FocusEvent('focus'));
             search.focus();
+        });
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        await act(async () => {
             search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         });
         expect(trigger.getAttribute('aria-expanded')).toBe('false');

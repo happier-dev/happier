@@ -176,11 +176,30 @@ describe('desktop Usage Agents picker at 1440px', () => {
             const option = document.querySelector<HTMLElement>('[role="option"][aria-label="All agents"]')!;
             expect(option).not.toBeNull();
             const destination = control(shift ? 'before' : 'after');
+            option.focus();
+            const focusOut = vi.fn();
+            option.addEventListener('focusout', event => focusOut(event.relatedTarget), { once: true });
             await act(async () => {
-                option.focus();
                 // JSDOM does not perform the browser's default Tab traversal.
-                if (pressKey(option, 'Tab', shift)) destination.focus();
+                expect(pressKey(option, 'Tab', shift)).toBe(true);
+                if (shift) {
+                    destination.focus();
+                } else {
+                    option.blur();
+                    window.dispatchEvent(new FocusEvent('blur'));
+                }
             });
+            expect(focusOut).toHaveBeenCalledWith(shift ? destination : null);
+            if (!shift) {
+                // Chromium leaves the document from its last stop. Home receives focus after this frame.
+                await act(async () => { await new Promise(resolve => requestAnimationFrame(resolve)); });
+                expect(document.activeElement).toBe(document.body);
+                expect(trigger.getAttribute('aria-expanded')).toBe('true');
+                await act(async () => {
+                    window.dispatchEvent(new FocusEvent('focus'));
+                    destination.focus();
+                });
+            }
             expect(document.activeElement).toBe(destination);
             expect(trigger.getAttribute('aria-expanded')).toBe('false');
         });

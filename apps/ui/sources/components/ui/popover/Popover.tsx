@@ -2338,13 +2338,25 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
             setTimeout(() => requestClose('dismiss'), 0);
         };
 
+        const dismissIfFocusOutside = (target: Node) => {
+            if (getWebPopoverTargetScope(openEntry, target, 'focus') === 'outside') requestClose('dismiss');
+        };
+        const handleNextFocusIn = ({ target }: FocusEvent) => {
+            if (closeRequested.current || !(target instanceof Element) || target === document.body || target !== document.activeElement) return;
+            dismissIfFocusOutside(target);
+        };
         const handleFocusOut = (event: FocusEvent) => {
-            // Removing focused content can blur it without moving focus outside the popover.
-            if (closeRequested.current || !(event.target instanceof Node) || !(event.relatedTarget instanceof Node)) return;
+            document.removeEventListener('focusin', handleNextFocusIn, true);
+            if (closeRequested.current || !(event.target instanceof Node)) return;
             const origin = getWebPopoverTargetScope(openEntry, event.target, 'focus');
             // A global dialog can receive this popover's focus without giving it ownership of later dialog focus.
-            if (origin === 'outside' || origin === 'modal' || getWebPopoverTargetScope(openEntry, event.relatedTarget, 'focus') !== 'outside') return;
-            requestClose('dismiss');
+            if (origin === 'outside' || origin === 'modal') return;
+            if (event.relatedTarget === null) {
+                // Crossing the document end can blur the window before focus returns to its first control.
+                document.addEventListener('focusin', handleNextFocusIn, { capture: true, once: true });
+            } else if (event.relatedTarget instanceof Node) {
+                dismissIfFocusOutside(event.relatedTarget);
+            }
         };
 
         if (shouldAttachPointerDownCapture) {
@@ -2353,6 +2365,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         document.addEventListener('focusout', handleFocusOut, true);
         return () => {
             document.removeEventListener('focusout', handleFocusOut, true);
+            document.removeEventListener('focusin', handleNextFocusIn, true);
             const index = OPEN_WEB_POPOVERS.indexOf(openEntry);
             if (index >= 0) OPEN_WEB_POPOVERS.splice(index, 1);
             if (shouldAttachPointerDownCapture) {
