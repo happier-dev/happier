@@ -1,5 +1,6 @@
 import { requestHomeDomain } from '@/sync/api/home/homeServerActionTransport';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
+import { AutomationDatabaseSubjectV1Schema } from '@happier-dev/protocol/automations/automationSubjectV1';
 import { DeploymentPendingDeployStoredIntentV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
@@ -31,7 +32,7 @@ import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRun
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
-    deploymentDataTargetOperands, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployments';
+    deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1, findExistingDeploymentTargetLinkV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -165,6 +166,23 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         }
         return { ok: true as const, value: page };
     };
+    const readReceipt: DeploymentReadTransportV1['readReceipt'] = (scope, environmentId, deploymentId, options) => scoped(scope, options, async account => {
+        const parsed = DeploymentReceiptGetResultV1Schema.safeParse(await execute('deployments.receipts.get',
+            { ...home, environmentId, deploymentId }, { signal: options.signal }));
+        if (!parsed.success) return failure('invalid_response');
+        const receipt = parsed.data;
+        if (!receipt.ok) return failure(receipt.error);
+        if (receipt.deployment.environmentId !== environmentId || receipt.deployment.id !== deploymentId) return failure('invalid_response');
+        const artifact = await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: options.signal });
+        const content = readDeploymentReceiptArtifactV1(receipt.deployment, artifact);
+        if (!content.ok) return failure(content.error);
+        const cancellationConsequence = projectDeploymentCancellationConsequenceV1({
+            deployment: receipt.deployment, content: content.content,
+        });
+        return { ok: true, value: { deployment: receipt.deployment, content: content.content,
+            ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }),
+            ...(cancellationConsequence ? { cancellationConsequence } : {}) } };
+    });
     const transport = {
         listDomainPage: (scope, query, options) => scoped(scope, options, async account => {
             const parsed = DeploymentDomainPageResultV1Schema.safeParse(await execute('deployments.domains.page',
@@ -238,8 +256,33 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const previous = previousById.get(environment.id);
                 let databaseTargets: DatabaseTargetsListResultV1 | undefined;
                 let databaseSubjectFailure: ReturnType<typeof failure>['failure'] | undefined;
-                // The exact Database page reads Automation subjects. Services inventory only reads declared databases and sizes.
-                if (query.environmentId !== undefined) {
+                const data = row.content.template?.data ?? [];
+                const runtimeLink = runtimeByEnvironment.get(environment.id);
+                const runtimeEnvironment = selectedMetadata?.environment ?? metadataEnvironments.get(environment.id);
+                const runtimeTargetLink = runtimeEnvironment ? selectDeploymentRuntimeTargetLinkV1({
+                    environment: runtimeEnvironment,
+                    targetLinks: (selectedMetadata?.targetLinks ?? (runtimeLink ? [runtimeLink] : [])).map(targetLink => ({ targetLink })),
+                }) : null;
+                const databaseSubjects = new Map<string, AutomationDatabaseSubjectReadV1>();
+                const projectDeclaredDatabaseSubjects = (bindings: DeploymentEnvironmentDetailV1['content']['bindings'],
+                    deployedServices?: readonly string[]) => {
+                    const declaredServices = row.content.template?.services;
+                    for (const service of data) {
+                        if (service.engine !== 'postgres' && service.engine !== 'mysql') continue;
+                        if (!declaredServices?.includes(service.service) || data.filter(other => other.service === service.service).length !== 1) continue;
+                        if (deployedServices && !deployedServices.includes(service.service)) continue;
+                        const database = readDeploymentDatabaseRuntimeNameV1(service, bindings);
+                        if (database === null) continue;
+                        const parsed = AutomationDatabaseSubjectV1Schema.safeParse({ kind: 'database', serverId: environment.serverId,
+                            target: { kind: 'environment', environmentId: environment.id, service: service.service, database } });
+                        if (parsed.success) databaseSubjects.set(service.service, { ok: true, subject: parsed.data });
+                    }
+                };
+                // Before the first deploy the authored declaration owns native identity.
+                if (selectedMetadata && !runtimeTargetLink?.activeDeploymentId) projectDeclaredDatabaseSubjects(row.content.bindings);
+                const hasManagedData = selectedMetadata?.targetLinks.some(link => link.role === 'data'
+                    && link.source.kind === 'plugin' && link.deletedAtMs === undefined && link.detachedAtMs === undefined);
+                if (selectedMetadata && (runtimeTargetLink?.activeDeploymentId || hasManagedData)) {
                     if (environment.controllerMachineId) {
                         try {
                             databaseTargets = DatabaseTargetsListResultV1Schema.parse(await execute('action.invoke', {
@@ -248,22 +291,26 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                                     projectSourceId: environment.projectSourceId, environmentId: environment.id } } },
                             }, { signal: options.signal, externalActionTarget: { kind: 'machine', machineId: environment.controllerMachineId } }));
                         } catch (error) {
-                            coverage = 'partial';
                             databaseSubjectFailure = failureFromError(error).failure;
                         }
                     } else {
-                        coverage = 'partial';
                         databaseSubjectFailure = failure('machine_unavailable').failure;
                     }
                 }
+                // The controller can be unavailable while the saved serving receipt still identifies the native Database.
+                if (databaseSubjectFailure && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
+                    && data.some(service => service.engine === 'postgres' || service.engine === 'mysql')) {
+                    const serving = await readReceipt(scope, environment.id, runtimeTargetLink.activeDeploymentId, options);
+                    if (serving.ok && serving.value.deployment.targetLinkId === runtimeTargetLink.id) {
+                        const basis = serving.value.content.ownServer?.approvedInputBasis;
+                        if (basis?.environmentId === environment.id && basis.targetLinkId === runtimeTargetLink.id) {
+                            projectDeclaredDatabaseSubjects(basis.bindings, basis.services);
+                            if (!hasManagedData && data.every(service => (service.engine !== 'postgres' && service.engine !== 'mysql') || databaseSubjects.has(service.service))) databaseSubjectFailure = undefined;
+                        }
+                    }
+                }
+                if (databaseSubjectFailure) coverage = 'partial';
                 const databaseSizes: DeploymentDatabaseSizeV1[] = [];
-                const data = row.content.template?.data ?? [];
-                const runtimeLink = runtimeByEnvironment.get(environment.id);
-                const runtimeEnvironment = selectedMetadata?.environment ?? metadataEnvironments.get(environment.id);
-                const runtimeTargetLink = runtimeEnvironment ? selectDeploymentRuntimeTargetLinkV1({
-                    environment: runtimeEnvironment,
-                    targetLinks: (selectedMetadata?.targetLinks ?? (runtimeLink ? [runtimeLink] : [])).map(targetLink => ({ targetLink })),
-                }) : null;
                 const nativeTarget = deploymentDataTargetOperands({ environment,
                     runtimeTargetLink });
                 for (const service of data) {
@@ -285,7 +332,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                         databaseSizes.push(unavailable(failureFromError(error).failure.code));
                     }
                 }
-                const databaseSubjects = Object.fromEntries<AutomationDatabaseSubjectReadV1>((databaseTargets?.targets ?? []).flatMap<readonly [string, AutomationDatabaseSubjectReadV1]>(descriptor => {
+                for (const descriptor of databaseTargets?.targets ?? []) {
                     const target = descriptor.target;
                     // Native deployment_service identity is fully determined by the target. Keep the section visible
                     // when an older daemon omits the optional projected subject; managed targets still require the
@@ -294,15 +341,12 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                         ?? (target.kind === 'deployment_service'
                             ? readAutomationDatabaseSubjectV1(target.environment.serverId, target)
                             : undefined);
-                    if (!automationSubject) return [];
-                    if (target.kind === 'deployment_service') return [[target.serviceId, automationSubject]];
-                    if (target.kind === 'managed_deployment' && !automationSubject.ok) {
-                        return [[target.targetLinkId, automationSubject]];
-                    }
-                    return [];
-                }));
+                    if (!automationSubject) continue;
+                    if (target.kind === 'deployment_service') databaseSubjects.set(target.serviceId, automationSubject);
+                    if (target.kind === 'managed_deployment' && !automationSubject.ok) databaseSubjects.set(target.targetLinkId, automationSubject);
+                }
                 items.push({ environment, title: row.title, content: row.content,
-                    projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects,
+                    projectSourceName: sourceNames.get(environment.projectSourceId) ?? null, databaseSizes, databaseSubjects: Object.fromEntries(databaseSubjects),
                     ...(databaseSubjectFailure ? { databaseSubjectFailure } : {}) });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
@@ -511,23 +555,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             }
             return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
         }),
-        readReceipt: (scope, environmentId, deploymentId, options) => scoped(scope, options, async account => {
-            const parsed = DeploymentReceiptGetResultV1Schema.safeParse(await execute('deployments.receipts.get',
-                { ...home, environmentId, deploymentId }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const receipt = parsed.data;
-            if (!receipt.ok) return failure(receipt.error);
-            if (receipt.deployment.environmentId !== environmentId || receipt.deployment.id !== deploymentId) return failure('invalid_response');
-            const artifact = await account.readArtifactContent(receipt.deployment.contentArtifactId, { signal: options.signal });
-            const content = readDeploymentReceiptArtifactV1(receipt.deployment, artifact);
-            if (!content.ok) return failure(content.error);
-            const cancellationConsequence = projectDeploymentCancellationConsequenceV1({
-                deployment: receipt.deployment, content: content.content,
-            });
-            return { ok: true, value: { deployment: receipt.deployment, content: content.content,
-                ...(receipt.cancellable === undefined ? {} : { cancellable: receipt.cancellable }),
-                ...(cancellationConsequence ? { cancellationConsequence } : {}) } };
-        }),
+        readReceipt,
     } satisfies DeploymentReadTransportV1;
     return { ...transport,
         readEnvironmentNames: (scope, query, options) => scoped(scope, options, async account => {

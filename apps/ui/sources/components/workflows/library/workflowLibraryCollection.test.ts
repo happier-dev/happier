@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
     return createTextModuleMock();
 });
 
-const { projectWorkflowLibraryRecords } = await import('./workflowLibraryCollection');
+const { describeAccountWorkflowLibraryRecord, projectWorkflowLibraryRecords } = await import('./workflowLibraryCollection');
 
 const schedule = (id: string, hour: number) => ({ id, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'schedule',
     triggerDefinitionEnvelope: null, nextRunAt: null,
@@ -57,13 +57,29 @@ describe('retained triggers whose Workflow is gone', () => {
         expect(project([trigger, trigger])).toHaveLength(1);
     });
 
-    it('keeps a named standalone Workflow in the Library through the saved definitions load', () => {
+    it('publishes the first count only after both inventories have settled', () => {
         const input = { definitions: { library: [], sharedWithYou: [] },
             accountTriggers: [set('digest', { name: 'Morning digest' })], summaries: null, automationSummaries: null };
-        expect(projectWorkflowLibraryRecords({ ...input, savedLibraryIncomplete: true }))
-            .toMatchObject([{ key: 'account-trigger:digest', group: 'library', name: 'Morning digest' }]);
+        expect(projectWorkflowLibraryRecords({ ...input, inventoryPending: true })).toEqual([]);
+        const settled = projectWorkflowLibraryRecords(input);
+        expect(projectWorkflowLibraryRecords({ ...input, inventoryPending: true, previous: settled })).toBe(settled);
         expect(projectWorkflowLibraryRecords(input))
             .toMatchObject([{ key: 'account-trigger:digest', group: 'library' }]);
+    });
+
+    it('names an unnamed standalone Action and describes its before trigger without a saved Workflow', () => {
+        const standalone = set('action-only', {
+            target: { kind: 'inline', definition: { version: 1, inputs: [], blocks: [
+                { kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+                    input: { message: { kind: 'literal', value: 'The review is ready' } } },
+            ] } },
+            triggers: [{ id: 'before', kind: 'action', phase: 'before', actionIds: ['machines.command.run'],
+                mode: 'wait', enabled: true, revision: 1, createdAt: 1, updatedAt: 1 }],
+        });
+        expect(describeAccountWorkflowLibraryRecord(standalone)).toMatchObject({
+            name: 'workflows.triggers.then.notifyMe',
+            triggerSummary: expect.stringContaining('workflows.triggers.link.beforeAction'),
+        });
     });
 
     it('reserves the linked Workflow row until its definition supplies the name', () => {

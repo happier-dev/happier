@@ -2,6 +2,7 @@ import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/trigg
 
 import { createWorkflowDefinitionRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
+import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { describeLegacyTriggerSet, describeTriggerTarget, isWorkflowTriggerSourceGone } from '../triggers/sessionTriggerGroups';
 import type { WorkflowLibraryDefinition } from './workflowLibraryReads';
@@ -35,15 +36,26 @@ export type WorkflowLibraryRecordRow = LibraryRecordFacts & (Readonly<{
     triggerOpenTargets: readonly AccountWorkflowOpenTarget[];
 }>);
 
+/** Turned off as a whole: the set or every trigger it has. */
+export function isWorkflowLibraryTriggerSetOff(set: WorkflowTriggerSetV1): boolean {
+    return !set.enabled || (set.triggers.length > 0 && set.triggers.every(trigger => !trigger.enabled));
+}
+
 export function describeAccountWorkflowLibraryRecord(set: WorkflowTriggerSetV1, summary?: WorkflowAutomationRunSummary) {
     const sourceGone = isWorkflowTriggerSourceGone(set);
-    const triggerSummary = formatTriggerSetSummary(set.triggers, summary?.lastRun?.state);
+    const inline = set.target?.kind === 'inline' ? set.target.definition.blocks : null;
+    const standaloneAction = inline?.length === 1 && inline[0]?.kind === 'action' ? inline[0] : undefined;
+    const triggerSummary = formatTriggerSetSummary(set.triggers, summary?.lastRun?.state, {
+        offSaidElsewhere: isWorkflowLibraryTriggerSetOff(set),
+        ...(inline === null ? {} : { form: 'clause' }),
+    });
     // Automatic deployment observers can store their Environment identity as the name.
     const named = set.name === set.automationId || set.name === set.observationOnly?.deploymentEnvironment?.environmentId
         ? undefined : set.name;
     const name = sourceGone ? t('workflows.triggers.row.workflowUnavailable')
         : named ?? describeLegacyTriggerSet(set)?.title
-            ?? (set.observationOnly ? triggerSummary : describeTriggerTarget(set.target, () => null));
+            ?? (standaloneAction ? workflowBlockReferenceLabel(standaloneAction)
+                : set.observationOnly ? triggerSummary : describeTriggerTarget(set.target, () => null));
     return { name, sourceGone, triggerSummary };
 }
 
@@ -54,8 +66,10 @@ export function projectWorkflowLibraryRecords(input: Readonly<{
     summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null;
     automationSummaries: ReadonlyMap<string, WorkflowAutomationRunSummary> | null;
     savedLibraryIncomplete?: boolean;
+    inventoryPending?: boolean;
     previous?: readonly WorkflowLibraryRecordRow[];
 }>): readonly WorkflowLibraryRecordRow[] {
+    if (input.inventoryPending) return input.previous ?? [];
     const projectDefinition = (definition: WorkflowLibraryDefinition, group: 'library' | 'sharedWithYou'): WorkflowLibraryRecordRow => ({
         key: definition.definitionId,
         group,

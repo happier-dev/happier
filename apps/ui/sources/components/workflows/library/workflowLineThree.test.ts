@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WorkflowDefinitionListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -60,6 +61,23 @@ function savedRow(
   });
   return row!;
 }
+it('keeps the standalone trigger clause when its Library row is Off', () => {
+  const accountTrigger = WorkflowTriggerSetV1Schema.parse({ automationId: 'standalone', revision: 1, enabled: false,
+    health: 'available', target: { kind: 'inline', definition: { version: 1, inputs: [], blocks: [
+      { kind: 'action', id: 'notify', actionId: 'notifications.notify_me',
+        input: { message: { kind: 'literal', value: 'Review ready' } } },
+    ] } },
+    triggers: [{ kind: 'action', id: 'before', revision: 1, enabled: false, createdAt: 1, updatedAt: 1,
+      phase: 'before', mode: 'wait', actionIds: ['machines.command.run'] }],
+  });
+  const [row] = projectWorkflowLibraryRecords({ definitions: { library: [], sharedWithYou: [] }, accountTriggers: [accountTrigger],
+    summaries: null, automationSummaries: null });
+  const state = readWorkflowLibraryRowFacts(row!);
+  expect(state).toMatchObject({ state: 'off', triggerLine: row!.triggerSummary });
+  expect(state.triggerLine).toContain('workflows.triggers.link.beforeAction');
+  expect(state.triggerLine).not.toContain('workflows.triggers.row.off');
+});
+
 const lineThree = (row: ReturnType<typeof savedRow>, details = ALL) =>
   readWorkflowLineThree(row, readWorkflowLibraryRowFacts(row), details, NOW);
 

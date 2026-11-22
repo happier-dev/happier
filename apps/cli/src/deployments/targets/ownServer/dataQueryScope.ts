@@ -2,6 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { readDeploymentDatabaseRuntimeNameV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentContentV1, DeploymentEnvironmentDetailV1, EnvironmentSecretBindingV1 } from '@happier-dev/deployments/contracts/v1';
 import { configuration } from '@/configuration';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
@@ -37,10 +38,9 @@ export function resolveOwnServerDataServiceDeclarationForHost(content: Deploymen
 export function resolveOwnServerDataQueryDefinitionForHost(content: DeploymentEnvironmentContentV1, service: string,
     runtimeBindings: readonly EnvironmentSecretBindingV1[] = content.bindings) {
     const { engine, data } = resolveOwnServerDataServiceDeclarationForHost(content, service);
-    const key = data.variables?.database ?? data.logicalBackup?.database;
-    const binding = key ? runtimeBindings.find(row => row.purpose === 'variable' && row.phase === 'runtime' && row.name === key) : undefined;
-    if (binding?.purpose !== 'variable' || binding.source.kind !== 'value' || !binding.source.value) return refuse('deployment_invalid');
-    return { engine, database: binding.source.value, service, ...(data.port ? { port: data.port } : {}) };
+    const database = readDeploymentDatabaseRuntimeNameV1(data, runtimeBindings);
+    if (database === null) return refuse('deployment_invalid');
+    return { engine, database, service, ...(data.port ? { port: data.port } : {}) };
 }
 
 export type OwnServerDataServiceHost = Pick<OwnServerDeploymentTargetHostInput,

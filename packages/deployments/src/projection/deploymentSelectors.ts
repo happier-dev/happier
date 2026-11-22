@@ -1,5 +1,14 @@
 import type { DeploymentBackupConfigurationV1, DeploymentEnvironmentDetailV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
-import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { parseDeploymentComposeSourceV1, type EnvironmentSecretBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+
+type TemplateDatabase = NonNullable<NonNullable<DeploymentEnvironmentDetailV1['content']['template']>['data']>[number];
+
+/** The exact literal database name declared in a template's runtime bindings. */
+export function readDeploymentDatabaseRuntimeNameV1(data: TemplateDatabase, bindings: readonly EnvironmentSecretBindingV1[]): string | null {
+    const key = data.variables?.database ?? data.logicalBackup?.database;
+    const binding = key ? bindings.find(row => row.purpose === 'variable' && row.phase === 'runtime' && row.name === key) : undefined;
+    return binding?.purpose === 'variable' && binding.source.kind === 'value' ? binding.source.value || null : null;
+}
 
 /** Move extracts into a dedicated PostgreSQL service on the supported native data target. */
 export async function isDeploymentDatabaseMoveCandidateV1(

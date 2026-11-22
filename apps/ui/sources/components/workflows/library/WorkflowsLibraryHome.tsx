@@ -345,14 +345,14 @@ export function WorkflowsLibraryHome(): React.ReactElement {
             action={{ label: t('workflows.retry'), onPress: library.retry }}
             accessibilitySemantics="alert"
         />
-    ) : needle.length > 0 && (library.status === 'loaded' || library.definitions.length > 0) ? (
+    ) : needle.length > 0 && !libraryView.inventoryPending ? (
         <EmptyState
             testID="workflows-home:noMatch"
             layout="inline"
             iconName="magnifying-glass"
             title={t('workflows.destination.noMatch', { query: query.trim() })}
         />
-    ) : library.status === 'loaded' && libraryView.accountWorkflows.status !== 'loading' ? (
+    ) : library.status === 'loaded' && !libraryView.inventoryPending ? (
         // Nothing saved yet, but runs exist (else this is the first visit): say what goes here.
         <EmptyState
             testID="workflows-home:empty"

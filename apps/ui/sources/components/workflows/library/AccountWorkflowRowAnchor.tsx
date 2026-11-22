@@ -11,7 +11,7 @@ import { t } from '@/text';
 import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { resolveTriggerEventGroup } from '../triggers/triggerEventGroups';
 import type { useAccountWorkflowEditor } from '../triggers/AccountTriggersSection';
-import type { WorkflowLibraryRecordRow } from './workflowLibraryCollection';
+import { isWorkflowLibraryTriggerSetOff, type WorkflowLibraryRecordRow } from './workflowLibraryCollection';
 
 export type AccountWorkflowLibraryRow = Extract<
   WorkflowLibraryRecordRow,
@@ -21,35 +21,13 @@ type AccountWorkflowEditor = ReturnType<typeof useAccountWorkflowEditor>;
 
 /** Turned off as a whole: the set, or every trigger it has. */
 export function isAccountWorkflowOff(row: AccountWorkflowLibraryRow): boolean {
-  const set = row.accountTrigger;
-  return (
-    !set.enabled ||
-    (set.triggers.length > 0 &&
-      set.triggers.every((trigger) => !trigger.enabled))
-  );
+  return isWorkflowLibraryTriggerSetOff(row.accountTrigger);
 }
 
 export function isAccountWorkflowReviewRequired(
   row: AccountWorkflowLibraryRow,
 ): boolean {
   return row.accountTrigger.legacy?.lockedReason === 'review_required';
-}
-
-/**
- * The quiet line a Library row gives an Account Workflow (Q7): its trigger, as a saved workflow's row
- * gives its own. A manual one is its name alone, like a manual saved workflow; turned off, the line
- * says so first.
- */
-export function formatAccountWorkflowLine(
-  row: AccountWorkflowLibraryRow,
-): string | null {
-  if (isAccountWorkflowReviewRequired(row))
-    return t('workflows.triggers.legacy.reviewRequired');
-  const when =
-    row.accountTrigger.triggers.length > 0 ? row.triggerSummary : null;
-  // A first trigger that is off already says so in `triggerSummary` (the set summary owner).
-  if (!isAccountWorkflowOff(row) || (when !== null && row.accountTrigger.triggers[0]?.enabled === false)) return when;
-  return [t('workflows.triggers.row.off'), when].filter(Boolean).join(' · ');
 }
 
 /**

@@ -12,9 +12,9 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1,
-    createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+    createDeploymentReceiptHeaderV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
-import { DeploymentPlatformContentV1Schema, DeploymentEnvironmentCollectionV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentOwnServerContentV1Schema, DeploymentPlatformContentV1Schema, DeploymentEnvironmentCollectionV1Schema } from '@happier-dev/deployments/contracts/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
@@ -164,6 +164,87 @@ describe('deployment scoped read transport', () => {
         expect(metadata[0]?.searchParams.getAll('environmentIds')).toEqual(environments.map(environment => environment.id));
         expect(result).toMatchObject({ ok: true, value: { items: environments.map(environment => ({ environment,
             databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] })) } });
+    });
+
+    it('resolves Automations for the exact authored Database before its first deployment', async () => {
+        const serverId = await homes.addHome({ name: 'Undeployed Database', serverUrl: 'https://undeployed-db.test',
+            serverIdentityId: 'srv_undeployed_db', accountId: 'account-owner', currentAccount: true, active: true });
+        const scope = { serverId, accountId: 'account-owner' };
+        const { environment, content } = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+            serverId, controllerMachineId: 'offline-controller', runtimeTargetLinkId: 'unused-runtime-link' }) });
+        const selected = { ...content, bindings: [createDeploymentVariableBindingV1({ name: 'DB_NAME', phase: 'runtime',
+            source: { kind: 'value', value: 'fixture-db' } })],
+            template: { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                services: ['database'], data: [{ service: 'database', engine: 'postgres', variables: { database: 'DB_NAME' } }] } };
+        homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [] } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const writer = await captureLazyActionAccountContext(serverId);
+        try { await writer.createArtifactDocument({ artifactId: environment.contentArtifactId,
+            header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Database' }, body: JSON.stringify(selected) }); }
+        finally { writer.dispose(); }
+        const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const start = homes.requests.length;
+        const result = await createDeploymentReadTransport(lifetime).listDataServicePage(scope,
+            { environmentId: environment.id }, { signal: new AbortController().signal });
+        expect(result).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+            database: { ok: true, subject: { kind: 'database', serverId, target: {
+                kind: 'environment', environmentId: environment.id, service: 'database', database: 'fixture-db' } } },
+        }, databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] }] } });
+        expect(homes.requests.slice(start).some(request => /\/v1\/actions\/(action.invoke|deployments.data.size)/.test(request.path))).toBe(false);
+    });
+
+    it('recovers the serving Database Automation subject from the exact receipt when discovery fails', async () => {
+        const serverId = await homes.addHome({ name: 'Serving Database', serverUrl: 'https://serving-db.test',
+            serverIdentityId: 'srv_serving_db', accountId: 'account-owner', currentAccount: true, active: true });
+        const scope = { serverId, accountId: 'account-owner' };
+        const { environment, content } = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+            serverId, controllerMachineId: 'offline-controller', runtimeTargetLinkId: 'runtime-link' }) });
+        const binding = (value: string) => createDeploymentVariableBindingV1({ name: 'DB_NAME', phase: 'runtime',
+            source: { kind: 'value', value } });
+        const selected = { ...content, bindings: [binding('next-draft-db')],
+            template: { templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '1', ref: { kind: 'version', version: '1' } },
+                definition: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'a'.repeat(64)}` },
+                services: ['database'], data: [{ service: 'database', engine: 'postgres', variables: { database: 'DB_NAME' } }] } };
+        const receipt = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+            id: 'serving-receipt', environmentId: environment.id, targetLinkId: 'runtime-link',
+            contentArtifactId: 'serving-receipt-artifact', state: 'succeeded',
+        }) });
+        const targetLink = createDeploymentTargetLinkHeaderV1({ id: receipt.deployment.targetLinkId, environmentId: environment.id,
+            activeDeploymentId: receipt.deployment.id });
+        const receiptContent = DeploymentOwnServerContentV1Schema.parse({ ...receipt.content, ownServer: {
+            approvedInputBasis: { v: 1, environmentId: environment.id, environmentRevision: 1,
+                targetLinkId: targetLink.id, targetLinkRevision: 1, sourceIntent: receipt.content.sourceIntent,
+                manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'project', toolVersion: '2.40.1',
+                services: ['database'], profiles: [], members: [{ machineId: 'machine-a', installationId: 'installation-a' }],
+                bindings: [binding('serving-db')], images: [] },
+        } });
+        homes.answer(serverId, `/v1/deployments/environments/${environment.id}`, {
+            body: { ok: true, environment, targetLinks: [targetLink] } });
+        const receiptPath = `/v1/deployments/receipts/${receipt.deployment.id}`;
+        homes.answer(serverId, receiptPath, { body: { ok: true, deployment: receipt.deployment, cancellable: false } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const writer = await captureLazyActionAccountContext(serverId);
+        try {
+            await writer.createArtifactDocument({ artifactId: environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Database' }, body: JSON.stringify(selected) });
+            await writer.createArtifactDocument({ artifactId: receipt.deployment.contentArtifactId,
+                header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Serving Database', steps: receiptContent.steps },
+                body: JSON.stringify(receiptContent) });
+        } finally { writer.dispose(); }
+        const lifetime: ServerAccountScopeLifetime = { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const before = homes.requests.length;
+        const result = await createDeploymentReadTransport(lifetime).listDataServicePage(scope,
+            { environmentId: environment.id }, { signal: new AbortController().signal });
+        expect(result).toMatchObject({ ok: true, value: { items: [{ databaseSubjects: {
+            database: { ok: true, subject: { kind: 'database', serverId, target: {
+                kind: 'environment', environmentId: environment.id, service: 'database', database: 'serving-db' } } },
+        } }] } });
+        const reads = homes.requests.slice(before);
+        const receiptPaths = reads.filter(request => request.path.includes('/receipts/'))
+            .map(request => new URL(request.path, 'https://home.invalid').pathname);
+        expect([...new Set(receiptPaths)]).toEqual([receiptPath]);
     });
 
     it.each(['deployment_service', 'managed_deployment', 'deployment_service_disabled', 'selected_environment', 'selected_environment_refused',

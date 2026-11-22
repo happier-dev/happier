@@ -344,7 +344,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
         : groupWorkflowRowsByProject<WorkflowLibraryItem>([...visibleLibraryRows, ...split.sharedWithYou, ...split.fromPlugins],
             props.libraryView.projectsByWorkflow),
     [props.groupBy, props.libraryView.projectsByWorkflow, split, visibleLibraryRows]);
-    const firstLoad = empty && (library.status === 'loading' || accountWorkflows.status === 'loading');
+    const firstLoad = empty && props.libraryView.inventoryPending;
     const libraryFailed = empty && !firstLoad && library.status === 'failed' && !homeUnavailable;
     // The Account half failed while saved workflows show: said once, under the rows, so they never move.
     const accountFailed = accountWorkflows.status === 'failed' && !libraryFailed && !homeUnavailable;
