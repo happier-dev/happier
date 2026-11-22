@@ -2,7 +2,9 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { AgentIsolationLaunchMaterialFailureCode } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { requireAgentIsolationMaterialNativeIdentity, projectAgentIsolationOperationMaterial,
   type AgentLaunchMaterialization, type AgentLaunchOperationMaterialization } from './agentLaunchMaterials';
-import { resolveHostRequesterAgentPlacementForHost, selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
+import { isUnqualifiedSharedAgentIsolationStatus, projectMemberNativeOperationSnapshot,
+  resolveHostRequesterAgentPlacementForHost, selectHostRequesterExecutionIdentity,
+  type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot } from './agentIsolationLaunchPolicy';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
 import type { AgentIsolationMemberRequester, AgentIsolationDaemonObservation } from './provisioning';
@@ -69,6 +71,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
   const requesterIdentity = selectHostRequesterExecutionIdentity({ sessionRequester: input.sessionRequester,
     sessionRequesterHomeServerIdentityId: input.sessionRequesterHomeServerIdentityId,
     sessionCustodianAccountId: input.sessionCustodianAccountId, hostHomeServerIdentityId: input.hostHomeServerIdentityId });
+  const home = input.sessionRequesterHomeServerIdentityId ?? input.hostHomeServerIdentityId;
   return {
     ...(input.managedHappierBinaryPath ? { managedHappierBinaryPath: input.managedHappierBinaryPath } : {}),
     ...(input.resolveRequesterIdentity ? { resolveRequesterIdentity: input.resolveRequesterIdentity } : {}),
@@ -77,8 +80,19 @@ export function createAgentIsolationSessionContext(input: Readonly<{
     read: () => {
       const snapshot = input.machine?.read();
       if (!snapshot?.enabled || requesterIdentity.kind !== 'isolated') return snapshot;
-      const memberIdentity = input.readMaterial()?.memberIdentity;
-      return withWorkspaceRoot({ ...snapshot, ...(memberIdentity ? { memberIdentity } : {}) }, memberIdentity?.workspaceRoot);
+      const material = input.readMaterial();
+      if (!material?.memberIdentity) return snapshot;
+      const { memberIdentity } = material;
+      const memberSnapshot = { ...snapshot, memberIdentity };
+      // A cold daemon's shared-user proof is pending. This Session already has
+      // a prepared member lease from its own native admission.
+      if (home && isUnqualifiedSharedAgentIsolationStatus(snapshot.status)
+        && resolveHostRequesterAgentPlacementForHost({ identity: requesterIdentity, snapshot }) === 'member'
+        && isCanonicalAbsolutePathInsideRoot(memberIdentity.home, material.runtimeHome)) {
+        requireAgentIsolationMaterialNativeIdentity(memberIdentity, { ...requesterIdentity, homeServerIdentityId: home });
+        return withWorkspaceRoot(projectMemberNativeOperationSnapshot(memberSnapshot), memberIdentity.workspaceRoot);
+      }
+      return withWorkspaceRoot(memberSnapshot, memberIdentity.workspaceRoot);
     },
     ...(input.machine ? { async prepareLaunch({ requesterIdentity, sessionMcpContext, mcpLaunchMaterial, agentNativeLaunch, signal }: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]) {
       const material = input.readMaterial();
@@ -91,7 +105,6 @@ export function createAgentIsolationSessionContext(input: Readonly<{
           : !managedHappierBinaryPath ? 'managed_binary_missing' : 'session_mcp_context_missing') satisfies AgentIsolationLaunchMaterialFailureCode } });
       // Ordinary Account Sessions use the Home already qualified by the
       // requester resolver; protected requester birth keeps its retained Home.
-      const home = input.sessionRequesterHomeServerIdentityId ?? input.hostHomeServerIdentityId;
       if (requesterIdentity?.kind !== 'isolated' || !home) throw new PluginError({
         code: 'agent_isolation_unavailable', message: 'Current Session requester is unavailable', retryable: false });
       if (member) {

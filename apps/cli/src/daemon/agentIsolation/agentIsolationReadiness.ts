@@ -8,7 +8,7 @@ import type { MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1,
   MachineAgentIsolationProbeFailureV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
-import type { HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
+import { isUnqualifiedSharedAgentIsolationStatus, type HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
 import type { SessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
@@ -44,9 +44,7 @@ export async function observeUnqualifiedAgentIsolationNativeReadiness(input: Rea
   signal?: AbortSignal;
 }>): Promise<MachineAgentIsolationStatusV1 | undefined> {
   const { snapshot, effects, signal } = input;
-  const status = snapshot?.status;
-  if (!snapshot?.enabled || status?.kind !== 'unavailable' || status.code !== 'provisioning_unavailable'
-    || status.setup || status.prerequisite || status.probeFailure || !effects.nativeReadiness) return;
+  if (!snapshot?.enabled || !isUnqualifiedSharedAgentIsolationStatus(snapshot.status) || !effects.nativeReadiness) return;
   const roots = effects.readRoots();
   if (!roots) return;
   signal?.throwIfAborted();

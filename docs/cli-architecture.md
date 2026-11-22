@@ -2383,6 +2383,10 @@ identity with the native member-readiness owner. Their operation snapshot carrie
 that observed member readiness; an unavailable shared-user readiness projection
 does not prevent member preparation. This does not publish global effectiveness,
 infer member consent from legacy enablement, or admit a failed native probe.
+Retained Session launches use the same member readiness projection when their
+prepared native lease matches the requester and the guest's shared-user startup
+proof is still unqualified. Exec keeps the member's RunAs and Session material
+checks.
 
 In current 0.3 development, a Session's native attachment channel retains its
 exact admitted requester alongside its workspace, upload state and issued

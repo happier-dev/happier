@@ -8,7 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { materializeQualifiedConnectedAccountLaunchUses } from '@/daemon/connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
-import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { authorizePluginExecLaunchForHost, authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService,
+  issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { prepareAgentIsolationEffects, applyAgentIsolationMemberEffects } from './agentIsolationProvisioner';
@@ -144,9 +145,11 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
         if (!material) throw new Error('Selected material producer returned no projection');
         members.push({ requester, material });
         const memberManagedHappierBinaryPath = '/opt/happier-member-cli/current/happier';
+        const sharedStartup = accountId === 'member-a';
         const context = createAgentIsolationSessionContext({
           machine: { memberManagedHappierBinaryPath,
-            read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: input.status, workspaceRoots: [activeServerDir] }) },
+            read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1', status: sharedStartup
+              ? { kind: 'unavailable', code: 'provisioning_unavailable' } : input.status, workspaceRoots: [activeServerDir] }) },
           managedHappierBinaryPath: effects.installedCli,
           sessionRequester: requester.requester, sessionRequesterHomeServerIdentityId: requester.homeServerIdentityId,
           hostHomeServerIdentityId: requester.homeServerIdentityId, sessionCustodianAccountId: 'owner',
@@ -155,6 +158,20 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
         });
         expect(context.requesterIdentity).toEqual({ kind: requester.kind, requester: requester.requester,
           separationRequired: requester.separationRequired });
+        if (sharedStartup) {
+          // Claude JSON-stream clients delegate this authorization to the daemon before spawning.
+          const exec = createStablePluginExecService({ signal, isOccurrenceCurrent: () => true,
+            resolveExecutable: async () => ({ command: '/bin/cat' }), resolvePath: async () => expected.home });
+          const launch = await authorizePluginExecLaunchForHost(exec, {
+            executable: { kind: 'systemTool', id: 'claude-cli' }, cwd: { root: 'workspace', relativePath: '' },
+          }, { signal, agentIsolation: context, prepareAgentNativeLaunch: async () => undefined,
+            nativeLaunch: issueAgentNativeLaunchQualifierForHost(exec,
+            () => transport.localContext) });
+          try {
+            const frame = await readAgentLaunchFrame(Readable.from([launch.stdinPreamble], { objectMode: false }));
+            expect(frame.nativeIdentity).toEqual({ username: expected.username, agentUid: uid, agentGid: uid, home: expected.home });
+          } finally { await launch.release(); }
+        }
         // The controller retains daemon authority; only the native Agent enters
         // the private member home. Exercise the real route before its delegate.
         await withTempHappyCliEntrypoint(async entrypoint => {
@@ -248,8 +265,8 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
       expect(new Set(usernames).size).toBe(3);
       const a = members[0]!, b = members[1]!;
       const copiedMaterial = createAgentIsolationSessionContext({
-        machine: { read: () => ({ enabled: true,
-          status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [activeServerDir] }) },
+        machine: { read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+          status: { kind: 'unavailable', code: 'provisioning_unavailable' }, workspaceRoots: [activeServerDir] }) },
         managedHappierBinaryPath: '/opt/happier/cli/current/happier',
         sessionRequester: a.requester.requester, sessionRequesterHomeServerIdentityId: 'canonical-home',
         hostHomeServerIdentityId: 'canonical-home', sessionCustodianAccountId: 'owner',

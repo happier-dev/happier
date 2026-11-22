@@ -7,7 +7,7 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { prepareRequesterOperationMaterial } from '@/daemon/connectedServices/purposeBindings/requesterOperationMaterial';
 import { resolveInstalledMachineEffectCli } from '@/machines/adminAccess/runElevatedEffect';
-import { assertHostRequesterExecutionAdmissionForHost, resolveHostRequesterAgentPlacementForHost,
+import { assertHostRequesterExecutionAdmissionForHost, projectMemberNativeOperationSnapshot, resolveHostRequesterAgentPlacementForHost,
   type HostAgentIsolationLaunchContext, type HostAgentIsolationLaunchSnapshot, type HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import { createAgentIsolationOperationContext } from './agentIsolationSessionContext';
@@ -49,11 +49,6 @@ export async function prepareAgentIsolationMemberForIntent(machine: HostAgentIso
     if (!machine.prepareMember) throw error;
     return machine.prepareMember(input);
   });
-}
-
-/** A committed member binding is ready independently of the shared agent user. */
-export function projectMemberNativeOperationSnapshot(snapshot: HostAgentIsolationLaunchSnapshot | undefined): HostAgentIsolationLaunchSnapshot | undefined {
-  return snapshot && { ...snapshot, status: { kind: 'effective', platform: 'linux' } };
 }
 
 export type PrepareRequesterNativeOperationInput = Readonly<{

@@ -320,6 +320,16 @@ export function resolveHostRequesterAgentPlacementForHost(input: Readonly<{
         platform: input.platform ?? process.platform });
 }
 
+/** A committed member binding is ready independently of the shared agent user. */
+export function projectMemberNativeOperationSnapshot(snapshot: HostAgentIsolationLaunchSnapshot | undefined): HostAgentIsolationLaunchSnapshot | undefined {
+    return snapshot && { ...snapshot, status: { kind: 'effective', platform: 'linux' } };
+}
+
+export function isUnqualifiedSharedAgentIsolationStatus(status: HostAgentIsolationLaunchSnapshot['status'] | undefined): boolean {
+    return status?.kind === 'unavailable' && status.code === 'provisioning_unavailable'
+        && !status.setup && !status.prerequisite && !status.probeFailure;
+}
+
 /** A terminal opened by a person with full Machine control uses their person placement. */
 export function resolveHostRequesterTerminalPlacementForHost(input: Readonly<{
     identity: HostRequesterExecutionIdentity;

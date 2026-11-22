@@ -28,7 +28,8 @@ import { prepareDaemonSpawnChildEnvironment } from './prepareDaemonSpawnChildEnv
 import { resolveSpawnLaunchProfileDefaults } from './resolveSpawnLaunchProfileDefaults';
 import type { ResolveInactiveSessionControlLaunchScope, InactiveSessionControlLaunchScope } from './inactiveSessionControlLaunchScope';
 import { createAgentIsolationOperationContext } from '../agentIsolation/agentIsolationSessionContext';
-import { projectMemberNativeOperationSnapshot, type PreparedRequesterNativeIdentity } from '../agentIsolation/prepareNativeOperation';
+import { projectMemberNativeOperationSnapshot } from '../agentIsolation/agentIsolationLaunchPolicy';
+import type { PreparedRequesterNativeIdentity } from '../agentIsolation/prepareNativeOperation';
 
 type ConnectedAdmission = Parameters<typeof prepareDaemonConnectedServices>[0];
 type ProviderAdmission = Parameters<typeof prepareDaemonProviderLaunch>[0];
