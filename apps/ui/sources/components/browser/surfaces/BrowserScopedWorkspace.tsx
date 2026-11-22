@@ -67,10 +67,15 @@ export function BrowserScopedWorkspace(props: Readonly<{
     /** Session-only action context; project Browser surfaces deliberately pass `null`. */
     pluginBrowserActionSessionId?: string | null;
     /**
-     * A phone page (lab Qp): with one tab or none there is no tab strip, the page is the pane, and
-     * New tab and Close tab live in the page's ⋯. The strip returns once a second tab exists.
+     * A phone page (lab Qp): there is no tab strip, the page is the pane, and New tab, pin, Close tab
+     * and the other pages live in the page's ⋯ (the Details group lends them; one tab bar on a phone).
      */
     collapseSingleTab?: boolean;
+    /**
+     * A phone page: closing its last tab leaves the Browser for where the person came from, as a phone Details pane
+     * does (`DetailsTabGroupPanel` `closeLastTab`); the retained page then waits for the next open.
+     */
+    closeLastTab?: (() => void) | null;
     /** The surface's pane header, told whether a page (not the launchpad) is what the pane shows. */
     renderPaneHeader?: (state: Readonly<{ pageOpen: boolean }>) => React.ReactNode;
     testID?: string;
@@ -86,14 +91,18 @@ export function BrowserScopedWorkspace(props: Readonly<{
     const details = pane.scopeState?.details ?? null;
     const selectedTab = selectBrowserWorkspaceViewerTab(details);
     const pageOpen = Boolean(selectedTab && readBrowserViewDetailsResource(selectedTab.resource));
-    const stripCollapsed = props.collapseSingleTab === true && props.presentation !== 'viewer' && (details?.tabs.length ?? 0) <= 1;
+    // A phone page (lab Qp): the Details group owns its tabs as everywhere else, and on a phone it folds its strip
+    // into the Browser's one `⋯` (pin or unpin, close, the other pages). Only the empty group, which has no tab to
+    // pin or close, draws the launchpad bare.
+    const phonePage = props.collapseSingleTab === true && props.presentation !== 'viewer';
+    const emptyPhonePage = phonePage && (details?.tabs.length ?? 0) === 0;
     // The launchpad IS the new-tab page: render it as the empty-group state, and the strip `+`
     // (or, without a strip, the page's ⋯) re-opens it as a pinned tab so choosing a row routes
     // through the canonical opener.
     const openLaunchpad = React.useCallback(() => {
         pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
     }, [pane]);
-    const onOpenNewTab = stripCollapsed && pageOpen ? openLaunchpad : undefined;
+    const onOpenNewTab = phonePage && pageOpen ? openLaunchpad : undefined;
 
     const openBrowserViewTarget = useOpenBrowserTargetInWorkspace({
         scopeId: props.scopeId,
@@ -200,7 +209,9 @@ export function BrowserScopedWorkspace(props: Readonly<{
     // web bundle, so the declared target did not exist on two of three platforms (and was clipped to
     // the parent on Android). `IconButton` grows a real press frame with box model instead, and
     // brings the pressed/hover/focus-visible states this control had none of.
-    const renderHeaderActions = React.useCallback(() => (
+    // A launcher belongs to the strip (`renderStripActions`): when a phone folds the strip, New tab moves into the
+    // page's ⋯ and the `+` leaves with it, so it is never lent as a pane control.
+    const renderStripActions = React.useCallback(() => (
         <IconButton
             testID={`${props.testID ?? 'browser-scoped-workspace'}-new-tab`}
             iconName="plus"
@@ -233,7 +244,7 @@ export function BrowserScopedWorkspace(props: Readonly<{
     }), [pane]);
 
     const paneHeader = props.renderPaneHeader?.({ pageOpen }) ?? null;
-    if (props.presentation === 'viewer' || stripCollapsed) {
+    if (props.presentation === 'viewer' || emptyPhonePage) {
         return <>
             {paneHeader}
             {renderTabContent(selectedTab ?? {
@@ -251,7 +262,8 @@ export function BrowserScopedWorkspace(props: Readonly<{
             resolveTabIconName={resolveTabIconName}
             resolveTabPresentation={resolveTabPresentation}
             renderTabContent={renderTabContent}
-            renderHeaderActions={renderHeaderActions}
+            renderStripActions={renderStripActions}
+            closeLastTab={phonePage ? props.closeLastTab ?? null : null}
             renderEmptyState={renderEmptyState}
             testIds={{ root: props.testID }}
         />

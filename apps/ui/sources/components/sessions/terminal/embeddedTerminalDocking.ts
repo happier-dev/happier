@@ -32,7 +32,10 @@ export function openEmbeddedToolInDockLocation(params: Readonly<{
     tool: EmbeddedDockTool;
 }>): void {
     if (params.tool === 'browser') {
-        params.pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned' });
+        // A rail stands in the main column (`PaneColumnsHost`), whichever column's pane API it calls: a tool it
+        // launches is the Session's, not a pick from the side column's list. Opened from main, Details docks beside
+        // the chat at its minimum width and a side column that cannot also fit folds to its rail (`resolvePaneLayout`).
+        params.pane.openDetailsTab(createBrowserLaunchpadDetailsTab(), { intent: 'pinned', origin: 'main' });
         return;
     }
     if (params.tool === 'terminal') {

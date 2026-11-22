@@ -13984,7 +13984,7 @@ const enBrowserLaunchpad = {
   },
   guidance: {
     title: 'Nothing running yet',
-    body: 'Start a dev server and its localhost ports for this workspace appear here automatically. You can also type any address above.',
+    body: 'When a dev server starts in this workspace, its pages appear here. You can also type any address above.',
   },
   urlEntry: {
     label: 'Open an address',

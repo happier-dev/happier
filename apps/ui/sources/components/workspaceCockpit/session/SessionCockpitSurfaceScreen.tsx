@@ -437,6 +437,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
         revealMobileBoardItem(itemId);
         return { status: 'applied' as const };
     }, [revealMobileBoardItem]);
+    const returnToChat = React.useCallback(() => { switchSurface('chat'); }, [switchSurface]);
     const presentChatSurface = React.useCallback(() => {
         switchSurface('chat');
         return { status: 'applied' as const };
@@ -897,6 +898,7 @@ const SessionCockpitSurfaceScreenContent = React.memo((props: SessionCockpitSurf
                         sessionId={props.sessionId}
                         scopeId={`${props.scopeId}:browser`}
                         pluginProjection={pluginProjection}
+                        onCloseLastPage={returnToChat}
                     />
                 </React.Suspense>
             </SessionCockpitFullscreenSurface>,

@@ -37,6 +37,8 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
      * Browser routes retain the incumbent scoped lookup below.
      */
     pluginProjection?: PluginUiProjectionCurrentness;
+    /** The phone cockpit's way back to the chat: closing the Browser's last page returns there. */
+    onCloseLastPage?: () => void;
 }>): React.ReactElement {
     // An enclosing pane supplies its admitted target (its plugin projection's machine and Home);
     // that wins over ambient Session lookup, and an explicit unavailable target stays unavailable.
@@ -114,6 +116,7 @@ export function BrowserMobileSurfaceScreen(props: Readonly<{
                 pluginProjection={pluginProjection}
                 pluginBrowserActionSessionId={props.sessionId}
                 collapseSingleTab
+                closeLastTab={props.onCloseLastPage}
                 renderPaneHeader={renderPaneHeader}
                 testID={props.testID ?? 'session-mobile-browser'}
             />

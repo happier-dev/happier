@@ -41,7 +41,7 @@ describe('openEmbeddedToolInDockLocation', () => {
 
         openEmbeddedToolInDockLocation({ pane, tool: 'browser' });
 
-        expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({ kind: 'browser-view' }), { intent: 'pinned' });
+        expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({ kind: 'browser-view' }), { intent: 'pinned', origin: 'main' });
         expect(pane.openRight).not.toHaveBeenCalled();
     });
 });
