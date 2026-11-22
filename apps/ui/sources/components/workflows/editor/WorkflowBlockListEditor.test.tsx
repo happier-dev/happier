@@ -460,7 +460,7 @@ async function renderStepOptions(harness: Harness, options: Readonly<{
         subject: { kind: 'block', blockId: options.blockId }, presentation: 'popover',
         draft: options.draft, onChange: (next) => options.onChange?.(next as ReturnType<typeof buildDraft>),
         ...(options.documentEditable === undefined ? {} : { documentEditable: options.documentEditable }),
-        machineName: null, testIDPrefix: 'workflow-editor-inspector',
+        testIDPrefix: 'workflow-editor-inspector',
     }));
 }
 

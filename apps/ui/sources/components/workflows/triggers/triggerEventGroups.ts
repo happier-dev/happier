@@ -29,6 +29,7 @@ export function resolveTriggerEventGroup(trigger: TriggerSummarySource): Trigger
     const title = formatTriggerSummary(trigger);
     switch (trigger.kind) {
         case 'action':
+            if (!('phase' in trigger)) return { id: 'action:consent', glyph: 'play', title };
             return { id: `action:${JSON.stringify([trigger.phase, trigger.actionIds, trigger.mode, trigger.onFailure])}`,
                 glyph: ACTION_PHASE_GLYPHS[trigger.phase], title };
         case 'sessionLifecycle': {

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
-import { findWorkflowBlock } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { findWorkflowBlock, setWorkflowStepExecutionField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import {
   createWorkflowEditorDraft,
   type WorkflowEditorDraft,
@@ -39,8 +39,8 @@ function field(initial: WorkflowEditorDraft, blockId: string) {
     return buildWorkflowStepWorkspace({
       draft,
       step: block,
-      onChange: (next) => {
-        draft = next;
+      write: (next) => {
+        draft = setWorkflowStepExecutionField(draft, blockId, 'workspace', next);
       },
     });
   };

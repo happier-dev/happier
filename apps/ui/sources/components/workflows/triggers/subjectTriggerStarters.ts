@@ -36,7 +36,7 @@ export function subjectStarterEventSeed(
     const { serverId, environmentId } = params.deploymentEnvironment;
     return { eventRef, ...observer, setupInput: { v: 1, serverId, environmentId } };
   }
-  const subject = params.subject?.kind === 'environment'
+  const subject: Parameters<typeof createHealthCheckSourceInstanceIdV1>[0] | null = params.subject?.kind === 'environment'
     ? { kind: 'environment' as const, environmentId: params.subject.environmentId }
     : params.subject?.kind === 'service'
       ? { kind: 'machineService' as const, machineId: params.subject.machineId, serviceId: params.subject.serviceId }

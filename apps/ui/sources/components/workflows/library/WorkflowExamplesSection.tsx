@@ -105,7 +105,7 @@ export function WorkflowExamplesSection(props: Readonly<{
     const outcome = catalog?.accountLifetime === accountLifetime && catalog?.attempt === attempt
         && accountLifetime?.isCurrent() !== false ? catalog.outcome : null;
     if (outcome === null) {
-        return <EmptyState layout="line" title={t('common.loading')} loading />;
+        return <EmptyState layout="line" title={t('common.loading')} />;
     }
     if ('error' in outcome) {
         return <EmptyState testID="workflow-examples-load-failed" layout="line" iconName="warning"

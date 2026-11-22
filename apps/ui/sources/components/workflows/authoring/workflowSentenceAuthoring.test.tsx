@@ -139,7 +139,7 @@ it.each(['session', 'project', 'machine', 'any', 'chooseAny', 'chooseSession'] a
     expect(hook.getCurrent().triggers.draft.adds).toMatchObject([{ trigger: { kind: 'sessionLifecycle' } }]);
     if (kind === 'chooseAny' || kind === 'chooseSession') {
         const add = hook.getCurrent().triggers.draft.adds[0]!;
-        if (add.trigger.kind !== 'sessionLifecycle' || !('events' in add.trigger)) throw new Error('Expected lifecycle habit');
+        if (add.trigger.kind !== 'sessionLifecycle' || !('events' in add.trigger) || 'triggerDefinitionEnvelope' in add.trigger) throw new Error('Expected lifecycle habit');
         const { subject: _subject, ...allSessions } = add.trigger;
         await act(async () => hook.getCurrent().triggers.setDraft(editWorkflowTriggerDraft(hook.getCurrent().triggers.draft,
             { kind: 'add', clientId: add.clientId, trigger: kind === 'chooseSession' ? { ...allSessions, subject } : allSessions })));

@@ -177,7 +177,8 @@ describe('WorkflowsColumn', () => {
         const events = commands.find(row => row.title === 'workflows.tabs.events');
         expect(events?.command.kind).toBe('hostLocal');
         if (events?.command.kind !== 'hostLocal') throw new Error('Events command unavailable');
-        await act(async () => { expect(await events.command.invoke({ signal: new AbortController().signal,
+        const eventsCommand = events.command;
+        await act(async () => { expect(await eventsCommand.invoke({ signal: new AbortController().signal,
             context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
         expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(routerPush).toHaveBeenCalledWith('/workflows/events');
@@ -188,7 +189,8 @@ describe('WorkflowsColumn', () => {
         routerPush.mockClear();
         const pageEvents = commands.find(row => row.title === 'workflows.tabs.events');
         if (pageEvents?.command.kind !== 'hostLocal') throw new Error('Page Events command unavailable');
-        await act(async () => { expect(await pageEvents.command.invoke({ signal: new AbortController().signal,
+        const pageEventsCommand = pageEvents.command;
+        await act(async () => { expect(await pageEventsCommand.invoke({ signal: new AbortController().signal,
             context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
         expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(routerPush).not.toHaveBeenCalled();
@@ -237,7 +239,8 @@ describe('WorkflowsColumn', () => {
         const create = commands.find(row => row.title === 'workflows.triggers.editor.title');
         expect(create?.command.kind).toBe('hostLocal');
         if (create?.command.kind !== 'hostLocal') throw new Error('New automation command unavailable');
-        await act(async () => { expect(await create.command.invoke({ signal: new AbortController().signal,
+        const createCommand = create.command;
+        await act(async () => { expect(await createCommand.invoke({ signal: new AbortController().signal,
             context: { surface: 'agent' } })).toMatchObject({ ok: true }); });
         expect(screen.findHostByTestId('workflow-builder')).not.toBeNull();
     });

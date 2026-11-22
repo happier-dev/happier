@@ -19,6 +19,7 @@ const { CollectionRowMenu } = await import('./CollectionRowMenu');
 function treeRow(key: string, webTabIndex: 0 | -1) {
   return (
     <CollectionNavigationRow
+      selected={false}
       key={key}
       testID={`row:${key}`}
       title={`Project ${key}`}

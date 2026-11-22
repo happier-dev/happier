@@ -134,6 +134,7 @@ it.each([{ query: 'fix' }, { query: 'fix', limit: 3 }])('uses contributed page d
         const forwarded = ExternalActionRequestEnvelopeV1Schema.safeParse(request.body);
         const envelope = forwarded.success ? forwarded.data : ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.body).envelope;
         expect(envelope.target).toEqual({ kind: 'machine', machineId });
+        if (envelope.v !== 1) throw new Error('Expected a v1 Action request envelope');
         expect(envelope.input).toMatchObject({ action });
         const input = Reflect.get(envelope.input as object, 'input');
         pages.push(input);

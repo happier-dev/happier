@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import type { StoredApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import type { TargetActionApprovalRequestV1 } from '@happier-dev/protocol/approvals/targetActionApprovalRequestV1';
 import type { ArtifactAccessGrantsListResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { readApprovalAutomaticConsentCanAllowV1 } from '@happier-dev/protocol/actions/executor/automaticApprovalContinuation';
@@ -11,7 +11,7 @@ import { useApprovalAccountLabel } from './useApprovalAccountLabel';
 
 /** Both card families consume the request they already hold; this projection never fetches it again. */
 export function useApprovalAutomaticChecksPresentation(input: Readonly<{
-  request: ApprovalRequestV2 | TargetActionApprovalRequestV1 | null;
+  request: StoredApprovalRequestV2 | TargetActionApprovalRequestV1 | null;
   serverId: string | null;
   scope: ServerAccountScope | null;
   artifactId: string;

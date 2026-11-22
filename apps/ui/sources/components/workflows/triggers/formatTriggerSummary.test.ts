@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AutomationActionConsentTriggerSchema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 
 const language = vi.hoisted(() => ({ value: 'en' }));
 
@@ -23,6 +24,13 @@ function interval(everyMs: number) {
 }
 
 describe('formatTriggerSummary', () => {
+    it('summarizes a consent-only Action trigger without reading undisclosed matching details', () => {
+        const consent = AutomationActionConsentTriggerSchema.parse({ kind: 'action',
+            consentFor: { automationId: 'check', triggerId: 'shared-check' }, consentedWorkflowRevision: 1 });
+        expect(formatTriggerSummary(consent)).toBe('workflows.triggers.card.action');
+        expect(formatTriggerResultDecides([consent])).toBeNull();
+        expect(resolveTriggerEventGroup(consent).title).toBe('workflows.triggers.card.action');
+    });
     it('names an Action clause without moving its wait or notify policy into the workflow name', () => {
         const trigger = { kind: 'action' as const, phase: 'before' as const, actionIds: ['scm.commit.create'] };
         const actionTitle = () => 'Commit';

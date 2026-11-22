@@ -18,10 +18,14 @@ const EMPTY_SETS: readonly WorkflowTriggerSetV1[] = [];
  * `demanded: false` keeps the held sets and their change observation but issues no read; demand
  * returning reads again only when a change arrived meanwhile or the last read did not settle.
  */
+export type AttachedTriggerPage = Readonly<Omit<WorkflowAttachedTriggerPageV1, 'attached'> & {
+    attached: Readonly<WorkflowAttachedTriggerPageV1['attached']>;
+}>;
+
 export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | null, accountLifetime?: ServerAccountScopeLifetime | null,
     options?: Readonly<{ demanded?: boolean; context?: NonNullable<Parameters<typeof listWorkflowTriggerPage>[1]>['context'] }>): {
     sets: readonly WorkflowTriggerSetV1[];
-    attachedPage: WorkflowAttachedTriggerPageV1 | undefined;
+    attachedPage: AttachedTriggerPage | undefined;
     /** Session context from the same admitted lifetime page, never a second list read. */
     pullRequestLinks?: SessionTriggerPullRequestLinksV1;
     loadMore: () => void;
@@ -68,7 +72,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             || (focused && getStorage().getState().workflowTriggerSetIdsByQuery[queryKey] !== undefined) ? 'ready' : 'loading' }),
     );
     const snapshot = React.useRef<Readonly<{ identity: object; sets: readonly WorkflowTriggerSetV1[] }> | null>(null);
-    const [attachments, setAttachments] = React.useState<Readonly<{ identity: object; page: WorkflowAttachedTriggerPageV1 }> | null>(null);
+    const [attachments, setAttachments] = React.useState<Readonly<{ identity: object; page: AttachedTriggerPage }> | null>(null);
     const [sessionContext, setSessionContext] = React.useState<Readonly<{
         identity: object; pullRequestLinks: SessionTriggerPullRequestLinksV1;
     }> | null>(null);
@@ -150,7 +154,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
                 }
                 if (selected) setAttachments(current => {
                     const previous = current?.identity === identity ? current.page : undefined;
-                    const page: WorkflowAttachedTriggerPageV1 = {
+                    const page: AttachedTriggerPage = {
                         attached: retainKeyedRows(previous?.attached,
                             [...(cursor ? previous?.attached ?? [] : []), ...(result.attached ?? [])],
                             row => JSON.stringify([row.automationId, row.triggerId, row.relation])),

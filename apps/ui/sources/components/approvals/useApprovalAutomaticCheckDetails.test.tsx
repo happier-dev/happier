@@ -90,7 +90,7 @@ describe('approval check detail demand', () => {
     const readsBefore = home.requests.length;
     const hook = await renderHook((props: { reviewWorkflowId: string | null }) => useApprovalAutomaticCheckDetails({
       runId, serverId, reviewWorkflowId: props.reviewWorkflowId,
-    }), { initialProps: { reviewWorkflowId: null } });
+    }), { initialProps: { reviewWorkflowId: null as string | null } });
     await waitForHomeGovernance(() => expect(hook.getCurrent().progress).not.toBeNull());
     expect(home.requests.length).toBe(readsBefore);
     expect(hook.getCurrent().runSummary).toEqual(summary);

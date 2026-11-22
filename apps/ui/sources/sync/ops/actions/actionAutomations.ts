@@ -40,8 +40,7 @@ export function createUiActionAutomationPortV1(account: LazyActionAccountContext
     try {
       const response = await requestAccount.request(path, { method: init.method,
         headers: { Authorization: `Bearer ${requestAccount.credentials.token}`, 'Content-Type': 'application/json' },
-        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }), signal: init.signal },
-      { auth: true });
+        ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }), signal: init.signal });
       return await readAutomationJsonOrThrow(response);
     } finally { requestAccount.dispose(); }
   } });

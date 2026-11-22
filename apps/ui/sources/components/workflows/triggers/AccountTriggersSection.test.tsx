@@ -911,7 +911,7 @@ describe('Account Workflow Library and settings', () => {
                 { accountLifetime: props.accountLifetime });
             return { ...section, catalogPhase: catalog.phase, catalogSpecs: catalog.specs };
         }, {
-            initialProps: { accountLifetime: physicalAccount },
+            initialProps: { accountLifetime: physicalAccount as typeof physicalAccount | null },
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));

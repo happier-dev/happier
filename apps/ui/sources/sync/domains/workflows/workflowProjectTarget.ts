@@ -135,7 +135,7 @@ export function setWorkflowProjectDirectory(input: Readonly<{
         return withWorkspaceRefId(sameProject ? { ...target, sessionPlacement: previous } : target, workspaceRefId);
     }
     const source = previous?.projectFilesSource;
-    const sessionPlacement = previous && source?.target.machineId === input.current.machineId
+    const sessionPlacement = previous && source && 'target' in source && source.target.machineId === input.current.machineId
         ? { ...previous, projectFilesSource: { ...source, directory: input.directory } }
         : previous;
     return withWorkspaceRefId({ ...target, ...(sessionPlacement ? { sessionPlacement } : {}) }, workspaceRefId);

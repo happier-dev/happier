@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 
 // The projection reaches Session authoring's native style boundary; use the
 // complete canonical theme fixture rather than the historical global stub.
@@ -121,6 +122,24 @@ describe('legacy Automation recipe → shared Workflow draft', () => {
 });
 
 describe('detached legacy Automation editing', () => {
+    it('keeps a connected Account model selection editable', () => {
+        const backendTarget = { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } as const;
+        const modelSelection = {
+            source: 'connected_account',
+            purpose: { consumer: { pluginId: 'happier.provider.vercel-ai-gateway', localId: 'vercel-ai-gateway' }, purpose: 'gateway-inference' },
+            endpointTemplateId: 'anthropic-messages',
+            agentTargetKey: buildBackendTargetKeyV2(backendTarget),
+            modelId: 'anthropic/claude-sonnet',
+        };
+        const target = AutomationRunExecutionTargetV1Schema.parse({ kind: 'executionRun', request: {
+            intent: 'task', backendTarget,
+            permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
+            modelSelection,
+        } });
+        if (target.kind !== 'executionRun') throw new Error('Expected an execution Run target fixture');
+        expect(legacyDraft(target).draft.defaults.modelSelection).toEqual({ v: 2, ref: modelSelection, updatedAt: 0 });
+    });
+
     it('projects a bundled runtime target through the canonical Agent identity owner', () => {
         const target = AutomationRunExecutionTargetV1Schema.parse({ kind: 'executionRun', request: {
             intent: 'task', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },

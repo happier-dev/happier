@@ -239,7 +239,7 @@ export function buildInitialTriggerDefinition(params: Readonly<{
         const trigger = buildTriggerDefinition({ ...params, sessionId: null });
         return trigger?.kind === 'schedule' ? trigger : null;
     }
-    if (when.kind === 'prComment' || when.kind === 'ciFailed') {
+    if ('pullRequest' in when) {
         return when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
     }
     if (when.filterInvalid) return null;

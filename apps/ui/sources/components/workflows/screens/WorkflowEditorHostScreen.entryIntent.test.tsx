@@ -197,7 +197,8 @@ it('expands a sentence keeping every complete trigger and an unfinished When', a
     if (!lifetime) throw new Error('Expected the sentence Account');
     const first = { kind: 'schedule', enabled: true,
         schedule: { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: null } } as const;
-    const second = { kind: 'action', phase: 'after', actionIds: ['scm.commit.create'], enabled: true } as const;
+    const second = { kind: 'action', phase: 'after', actionIds: ['scm.commit.create'], enabled: true } satisfies
+        Extract<Parameters<typeof editWorkflowTriggerDraft>[1], { kind: 'add' }>['trigger'];
     const sentence = await renderHook(() => useWorkflowSentenceDraft({ name: 'Several starts',
         definition: savedDefinition().definition, trigger: first }, lifetime));
     await act(async () => {

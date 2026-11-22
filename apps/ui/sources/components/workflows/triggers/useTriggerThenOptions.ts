@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { WorkflowAttachedTriggerPageV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { AttachedTriggerPage } from './useWorkflowTriggerSets';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import {
     listBuiltinWorkflowReferenceOptions,
@@ -24,7 +25,7 @@ const KEEP_GOING_REF = 'builtin:keep-going';
  * and the Account's definition list. Rows read a workflow's name through the same resolver.
  */
 export function useTriggerThenOptions(options?: Readonly<{ libraryEnabled?: boolean; accountLifetime?: ServerAccountScopeLifetime | null;
-    sets?: readonly WorkflowTriggerSetV1[]; attachedPage?: WorkflowAttachedTriggerPageV1 }>): Readonly<{
+    sets?: readonly WorkflowTriggerSetV1[]; attachedPage?: AttachedTriggerPage }>): Readonly<{
     workflowOptions: readonly TriggerWorkflowOption[];
     resolveWorkflowTitle: (ref: string) => string | null;
     /** A named workflow whose header is still being read: its row holds the title slot. */

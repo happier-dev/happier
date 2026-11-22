@@ -1,5 +1,6 @@
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
-import type { WorkflowAttachedTriggerPageV1, WorkflowAttachedTriggerV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { AttachedTriggerPage } from './useWorkflowTriggerSets';
+import type { WorkflowAttachedTriggerV1, WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import type { IconName } from '@/components/ui/icons/Icon';
 
@@ -57,7 +58,7 @@ export type TriggerSubject = Readonly<
 export function projectAccountTriggerRows(params: Readonly<{
     sets: readonly WorkflowTriggerSetV1[];
     /** The query owner already selected membership; placement never filters this page. */
-    attachedPage?: WorkflowAttachedTriggerPageV1;
+    attachedPage?: AttachedTriggerPage;
     accountId?: string;
     resolveWorkflowTitle: (ref: string) => string | null;
     isWorkflowTitlePending?: (ref: string) => boolean;

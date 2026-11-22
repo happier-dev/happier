@@ -54,7 +54,7 @@ export type WorkflowSentenceChipProps = Readonly<{
   /** `compact`: the card's smaller sentence (lab `.lw-sent`), at the meta size. The editor keeps the reading size. */
   size?: 'compact';
   anchorRef?: React.Ref<View>;
-  testID: string;
+  testID?: string;
 }>;
 
 /**

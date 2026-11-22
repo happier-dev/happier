@@ -51,10 +51,10 @@ describe('projectAccountTriggerRows', () => {
                 enabled: false, revision: 1, summary: { kind: 'schedule', enabled: false, schedule: daily('t1', '0 7 * * *').schedule },
                 setUpBy: { accountId: 'viewer', displayName: null } },
         ], nextCursor: null, skippedNotSharedCount: 0 });
-        const [attached] = projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer' });
+        const [attached] = projectAccountTriggerRows({ sets: [], attachedPage, accountId: 'viewer', resolveWorkflowTitle: () => null });
         expect(attached?.off).toBe(true);
         expect(attached?.title).not.toContain('workflows.triggers.row.off');
-        const [inlineRow] = projectAccountTriggerRows({ sets: [set('off-inline', { enabled: false, triggers: [daily('t2', '0 7 * * *', false)] })], accountId: 'viewer' });
+        const [inlineRow] = projectAccountTriggerRows({ sets: [set('off-inline', { enabled: false, triggers: [daily('t2', '0 7 * * *', false)] })], accountId: 'viewer', resolveWorkflowTitle: () => null });
         expect(inlineRow?.off).toBe(true);
         expect(inlineRow?.title).not.toContain('workflows.triggers.row.off');
     });

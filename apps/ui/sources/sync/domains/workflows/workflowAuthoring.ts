@@ -195,7 +195,7 @@ export function doWorkflowParallelBranchesUseSeparateConversations(
 /** The Session-authoring fields a step overrode, in the editor's chip order. */
 export function listWorkflowStepOverriddenFields(
   step: WorkflowStep,
-): readonly (keyof WorkflowStepExecutionSelection)[] {
+): readonly (typeof WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS)[number][] {
   const execution = step.execution;
   if (execution === undefined) return [];
   return WORKFLOW_SESSION_AUTHORING_SELECTION_FIELD_IDS.filter((field) => Object.hasOwn(execution, field));

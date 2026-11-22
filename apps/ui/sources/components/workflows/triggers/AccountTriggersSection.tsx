@@ -101,7 +101,7 @@ export function useAccountWorkflowEditor(props: Readonly<{ accountLifetime?: Ser
     const thenOptions = useTriggerThenOptions({ ...actionOptions, libraryEnabled: open !== null, sets, attachedPage: props.read.attachedPage });
     const openTriggerAsWorkflow = useOpenTriggerAsWorkflow(props.accountLifetime);
     const add = React.useCallback(async (request: Parameters<typeof addWorkflowTrigger>[0],
-        accountLifetime: ServerAccountScopeLifetime | null) => {
+        accountLifetime: ServerAccountScopeLifetime | null | undefined) => {
         const write = await addWorkflowTrigger(request, { accountLifetime });
         refresh();
         return write;

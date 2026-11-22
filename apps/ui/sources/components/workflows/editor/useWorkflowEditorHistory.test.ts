@@ -47,7 +47,7 @@ describe('workflow editor snapshot equality', () => {
 function promptDraft(text: string) {
     return buildWorkflowEditorDraftFromDefinition({ draftId: 'typing', name: 'Fix it',
         definition: createWorkflowDefinitionFixture({ blocks: [{ kind: 'step', id: 'fix',
-            document: { text, references: [], attachments: [] }, input: [] }] }) });
+            document: { text, references: [], attachments: [] }, input: [], result: { kind: 'text' } }] }) });
 }
 
 describe('workflow editor history while a prompt is still being typed (WF-ACCEPT-1119 fix 6)', () => {

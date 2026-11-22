@@ -331,7 +331,7 @@ const WorkflowsColumnDefinitions = React.memo(function WorkflowsColumnDefinition
     // Shared and plugin workflows are rows of the same projection the page reads, so every row draws the same facts.
     const { rows } = props.libraryView;
     const split = React.useMemo(() => ({
-        sharedWithYou: rows.filter((row): row is SharedLibraryRow => row.group === 'sharedWithYou' && isVisible(row.key) && sectionOf(row) === null),
+        sharedWithYou: rows.filter((row): row is DefinitionLibraryRow => row.group === 'sharedWithYou' && isVisible(row.key) && sectionOf(row) === null),
         fromPlugins: rows.filter((row): row is PluginLibraryRow => row.group === 'fromPlugins' && isVisible(row.key)),
     }), [isVisible, rows, sectionOf]);
     const sectioned = React.useMemo(() => workflowSections.sections.flatMap(section => {
@@ -465,7 +465,6 @@ function ColumnRowWindow(props: Readonly<{ id: string; index: number; pinned: bo
         estimatedTop={props.index * rowHeight} estimatedHeight={rowHeight}>{props.children}</NearViewportWindow>;
 }
 
-type SharedLibraryRow = Extract<WorkflowLibraryItem, { group: 'sharedWithYou' }>;
 type PluginLibraryRow = Extract<WorkflowLibraryItem, { group: 'fromPlugins' }>;
 type DefinitionLibraryRow = Extract<WorkflowLibraryItem, { definition: unknown }>;
 

@@ -45,7 +45,7 @@ export type WorkflowRunCollectionRow = Readonly<{
     title: string;
     route: ReturnType<typeof createWorkflowRunListRowRoute>;
     run: WorkflowRunRow;
-    facts: WorkflowRunListFilterFactsV1;
+    facts: WorkflowRunListFilterFactsV1 & Readonly<{ startedBy: NonNullable<WorkflowRunRow['summary']>['startedBy'] }>;
     date: GroupLabel;
     project: GroupLabel;
     workflow: GroupLabel;

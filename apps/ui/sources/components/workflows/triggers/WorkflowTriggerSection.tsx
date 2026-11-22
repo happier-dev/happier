@@ -138,6 +138,7 @@ function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null,
     }
     // A drafted before/after Action trigger is its own When.
     if (input?.kind === 'action' && 'phase' in input) {
+        if (!('enabled' in input)) return input;
         const { enabled: _enabled, ...when } = input;
         return when;
     }
@@ -208,7 +209,7 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
 
     const change = props.onChangeDraft;
     const sessionContext = props.startContext?.session;
-    const lifetimeSessionId = sessionContext?.subject.sessionId ?? props.set?.scopeSessionId;
+    const lifetimeSessionId = sessionContext?.subject.sessionId ?? props.set?.scopeSessionId ?? undefined;
     // One Runs on per trigger set: a pending change, the set's, or the editor's Where for a new set.
     const runsOn = props.draft.context?.project ?? props.set?.project ?? props.whereTarget;
     const runsOnDiffers = runsOn !== null && props.whereTarget !== null
@@ -220,8 +221,8 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     const runsBeforeActions = rowWhens.some((when) => when?.kind === 'action' && when.phase === 'before');
     // The Home decides at write whether a before-trigger reaches other people's Actions (R22); until it says so
     // (a new trigger, no subject, a subject the author only views) it runs on the author's own Actions.
-    const reachesOthers = rows.some((row) => row.trigger.kind === 'action' && row.trigger.phase === 'before')
-        && rows.every((row) => row.trigger.kind !== 'action' || row.trigger.phase !== 'before'
+    const reachesOthers = rows.some((row) => row.trigger.kind === 'action' && 'phase' in row.trigger && row.trigger.phase === 'before')
+        && rows.every((row) => row.trigger.kind !== 'action' || !('phase' in row.trigger) || row.trigger.phase !== 'before'
             || ('reachesOthers' in row.trigger && row.trigger.reachesOthers === true));
     const catalog = useWorkflowTriggerEventOptions({ ...placement, enabled: catalogDemanded || showsEvent });
     // The pending fact names the watched resource; only this selected controller resolves its declaration.

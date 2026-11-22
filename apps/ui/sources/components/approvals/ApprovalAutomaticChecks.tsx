@@ -377,7 +377,7 @@ export const ApprovalAutomaticChecks = React.memo(
         t('workflows.triggers.checks.skipped', { workflow: nameOf(row, 'inline') }),
       ),
       ...skippedNotices.map(({ notice, reason }) => formatAutomaticCheckSkipNotice({
-        reason, workflow: nameOf(notice, 'inline'), executionAccountName: props.automaticChecksExecutionAccountName,
+        reason, workflow: nameOf(notice, 'inline'), executionAccountName: props.automaticChecksExecutionAccountName ?? undefined,
       })),
     ];
     if (!readApprovalAutomaticChecksShown(checks)) return null;

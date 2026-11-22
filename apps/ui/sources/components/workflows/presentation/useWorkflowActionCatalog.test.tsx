@@ -162,7 +162,7 @@ describe('useWorkflowActionCatalog', () => {
         const fact = { key: 'presence', kind: 'machine', machineId: 'offline-machine', event: 'offline',
             sourceRevision: 999_999, occurredAt: 10, coverage: 'live' } as const;
         const hook = await renderHook(() => useWorkflowEventIntents({ fact, title: 'Machine went offline',
-            subtitle: null, glyph: 'desktop', needsYou: false, lines: [], open: null, runsStarted: [] }, true));
+            subtitle: null, glyph: 'desktop', agentId: null, rowTitle: null, needsYou: false, lines: [], open: null, runsStarted: [] }, true));
         try {
             expect(hook.getCurrent().open).not.toBeNull();
             await act(async () => hook.getCurrent().open?.());
@@ -201,7 +201,7 @@ describe('useWorkflowActionCatalog', () => {
                 stepsUnsaved: false, whereTarget: machineId === null ? null : { machineId, directory: '/repo' },
                 whereSummary: null, inputs: [], incomplete: { state: incomplete, onChange: updateIncomplete } });
             return { incomplete, block: findBlock(element) };
-        }, { initialProps: null });
+        }, { initialProps: null as string | null });
         try {
             expect(hook.getCurrent().block?.props.when).toEqual({ kind: 'pluginEvent', value: null });
             expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toEqual([]);

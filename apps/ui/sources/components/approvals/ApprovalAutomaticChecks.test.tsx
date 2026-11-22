@@ -4,6 +4,7 @@ import {
   ApprovalAutomaticChecksV1Schema,
   type ApprovalAutomaticChecksV1,
 } from '@happier-dev/protocol/approvals/approvalAutomaticChecks';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { resolveBuiltinWorkflowDefinitionV1 } from '@happier-dev/protocol/workflows';
 
 import { act, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -36,12 +37,12 @@ const selected = {
   mode: 'wait',
   onFailure: 'ask',
   automationId: 'automation-freeze',
-  triggerId: 'trigger-freeze',
+  triggerId: AutomationTriggerIdSchema.parse('trigger-freeze'),
   triggerRevision: 1,
   workflowId: 'artifact-release-freeze',
   workflowRevision: 3,
   ownerAccountId: 'account-mara',
-};
+} satisfies ApprovalAutomaticChecksV1['selected'][number];
 const ref = {
   automationId: selected.automationId,
   triggerId: selected.triggerId,
@@ -140,7 +141,7 @@ describe('Action before checks on the approval card', () => {
     const definition = resolveBuiltinWorkflowDefinitionV1('open-a-pull-request')?.definition;
     const changedBlockId = definition?.blocks[0]?.id;
     if (!changedBlockId) throw new Error('Expected the built-in check to have a reviewable step');
-    const next = { ...selected, automationId: 'automation-next', triggerId: 'trigger-next', workflowId };
+    const next = { ...selected, automationId: 'automation-next', triggerId: AutomationTriggerIdSchema.parse('trigger-next'), workflowId };
     const nextRef = { automationId: next.automationId, triggerId: next.triggerId };
     const review = { reason: 'steps' as const, changedSteps: [{ sourceKey: 'workflow', blockId: changedBlockId }] };
     const initial = checks({ selected: [{ ...selected, workflowId }, next],

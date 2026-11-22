@@ -171,7 +171,7 @@ describe('workflow trigger draft', () => {
             add: async (request) => {
                 requests.push(request);
                 current = false;
-                return { set: triggerSet(8, []), triggerId: 'written' };
+                return { set: triggerSet(8, []), triggerId: AutomationTriggerIdSchema.parse('written') };
             },
         };
         let draft = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'add', clientId: 'first', trigger: { ...schedule('0 7 * * *'), enabled: true } });

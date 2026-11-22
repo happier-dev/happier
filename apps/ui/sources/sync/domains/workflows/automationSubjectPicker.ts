@@ -41,7 +41,7 @@ export type AutomationSubjectPickerActionPageRequest =
         cursor?: string }>
     | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'app' }>; cursor?: string; query?: string; limit?: number }>
     | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'healthCheck' }>;
-        page: Omit<WorkflowSubjectsListRequestV1, 'kind'> }>
+        page: Omit<WorkflowSubjectsListRequestV1, 'kind' | 'limit'> & Partial<Pick<WorkflowSubjectsListRequestV1, 'limit'>> }>
     | Readonly<{ kind: Extract<AutomationSubjectKind, { kind: 'plugin' }>;
         page: PluginSubjectKindListInputV1; subjectKinds: readonly PluginAutomationSubjectKindDeclarationV1[] }>;
 

@@ -197,7 +197,7 @@ describe('useApprovalArtifact', () => {
         });
         const { storage } = await import('@/sync/domains/state/storage');
         storage.getState().applyUsers({ 'bot-holder': {
-            id: 'bot-holder', name: 'Release owner', firstName: null, lastName: null,
+            id: 'bot-holder', name: 'Release owner', firstName: 'Release', lastName: 'owner',
             username: 'release-owner', bio: null, avatar: null, badges: [], status: 'friend', publicKey: null,
         } });
         if (typeof stored.body !== 'string') throw new Error('Expected the fixture approval body');

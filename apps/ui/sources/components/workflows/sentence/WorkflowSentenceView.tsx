@@ -301,7 +301,7 @@ function WorkflowSentenceSteps(
   const conditionalDraft = useWorkflowEditorSelector(props.draftStore, readConditionalDraft);
   const stepChip = (block: WorkflowBlock, selected: boolean) => {
     const agentTarget =
-      block.kind === 'step' ? (block.agentTarget ?? defaultAgent) : undefined;
+      block.kind === 'step' ? (block.execution?.agentTarget ?? defaultAgent) : undefined;
     const mark =
       agentTarget == null
         ? null

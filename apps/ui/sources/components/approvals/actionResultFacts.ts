@@ -32,7 +32,7 @@ export function readAcknowledgedActionResult(input: Readonly<{
     const parsed = SessionSectionSetResultV1Schema.safeParse(envelope
         ? envelope.ok === true && 'result' in envelope ? envelope.result : null
         : input.result);
-    if (!parsed.success) return null;
+    if (!parsed.success || !('sessionId' in parsed.data)) return null;
     const { sessionId, sectionId, previousSectionId } = parsed.data;
     return {
         kind: 'session_section_changed', sessionId, sectionId, previousSectionId,

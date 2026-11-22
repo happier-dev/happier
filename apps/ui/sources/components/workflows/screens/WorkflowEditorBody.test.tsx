@@ -450,7 +450,7 @@ async function renderBody(
     const draft = (overrides.draft as ReturnType<typeof buildDraft>) ?? buildDraft(harness);
     function Body() {
         const [selected, select] = React.useState<string | null>(null);
-        const [view, changeView] = React.useState<'steps' | 'flow'>('steps');
+        const [view, changeView] = React.useState<React.ComponentProps<typeof harness.WorkflowEditorBody>['view']>('steps');
         return React.createElement(harness.WorkflowEditorBody, {
             draft,
             onChange: () => {},
@@ -502,7 +502,7 @@ it('detail-navigation.T1/T2/T6 keeps the editor draft and undo across page and c
             setDraft(next);
         };
         undo = history.controls.undo;
-        const [view, setView] = React.useState<'steps' | 'flow'>('steps');
+        const [view, setView] = React.useState<React.ComponentProps<typeof harness.WorkflowEditorBody>['view']>('steps');
         return <harness.WorkflowEditorBody accountLifetime={binding} draft={draft} onChange={setDraft}
             history={history.controls} machineName="Mac Studio" composerScope={MACHINE_COMPOSER_SCOPE}
             selectedBlockId={null} onSelectBlock={() => {}} onCustomizeBlock={() => {}}
@@ -1484,7 +1484,7 @@ describe('workflow editor body', () => {
         // WF-ACCEPT-1118 item 1 (lab 1116b bstep-v-Aopen): the "…" is both the anchor and where focus returns;
         // the panel opens below or above it by room, bounded by the editor so it never covers the tab bar.
         expect(popover!.props.anchorRef).toBe(popover!.props.focusReturnRef);
-        expect(popover!.props.portal.anchorAlign).toBe('end');
+        expect(popover!.props.portal?.anchorAlign).toBe('end');
         expect(popover!.props.placement).toBe('auto-vertical');
         expect(popover!.props.boundaryRef).not.toBeNull();
         expect(popover!.props.boundaryRef).toBeDefined();
@@ -1581,7 +1581,9 @@ describe('workflow editor body', () => {
         expect(picker).toHaveLength(1);
         expect(picker[0]!.props.place.target).toEqual({ machineId: 'machine-1', directory: '/repo/payments' });
         // A choice writes the step's own Workspace through the draft owner.
-        picker[0]!.props.workspace.onChange({ kind: 'new_worktree', source: { kind: 'original' } });
+        const change = picker[0]!.props.workspace.onChange;
+        if (!change) throw new Error('Expected the Workspace picker to accept changes');
+        change({ kind: 'new_worktree', source: { kind: 'original' } });
         expect(changed.mock.calls.at(-1)?.[0].blocks.find((block: { id: string }) => block.id === 'analyze').execution.workspace)
             .toEqual({ kind: 'new_worktree', source: { kind: 'original' } });
         expect(picker[0]!.props.workspace.step.sameAsWorkflow).toBeDefined();
@@ -3056,7 +3058,7 @@ describe('workflow editor body', () => {
     it('switches to Flow and restores the exact prompt focus through the existing focus owner', async () => {
         const harness = await loadHarness();
         function ControlledBody() {
-            const [view, setView] = React.useState<'steps' | 'flow'>('flow');
+            const [view, setView] = React.useState<React.ComponentProps<typeof harness.WorkflowEditorBody>['view']>('flow');
             const [selectedBlockId, setSelectedBlockId] = React.useState<string | null>('analyze');
             return React.createElement(harness.WorkflowEditorBody, {
                 draft: buildDraft(harness),
@@ -3131,7 +3133,7 @@ describe('workflow editor body', () => {
     it('keeps the active step composer mounted across Steps and Flow instead of remounting it', async () => {
         const harness = await loadHarness();
         function ControlledBody() {
-            const [view, setView] = React.useState<'steps' | 'flow'>('steps');
+            const [view, setView] = React.useState<React.ComponentProps<typeof harness.WorkflowEditorBody>['view']>('steps');
             return React.createElement(harness.WorkflowEditorBody, {
                 draft: buildDraft(harness),
                 onChange: () => {},
@@ -4115,6 +4117,24 @@ describe('the Sentence view (round 1116c)', () => {
         await flushHookEffects();
         // Opening the view selects the step it shows, in the editor's one selection (Steps and Flow see it too).
         expect(selections).toEqual(['analyze']);
+        await screen.unmount();
+    });
+
+    it('uses the step Agent for its Sentence chip', async () => {
+        const harness = await loadHarness();
+        const initial = twoStepDraft(harness);
+        const codex = { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } as const;
+        const draft: WorkflowEditorDraft = { ...initial, defaults: { ...initial.defaults, agentTarget: AGENT_TARGET },
+            blocks: initial.blocks.map(block => block.kind === 'step' && block.id === 'fix'
+                ? { ...block, execution: { agentTarget: codex } } : block) };
+        const screen = await renderScreen(<Controlled harness={harness} initial={draft} />);
+        const { AgentCatalogIdentityIcon } = await import('@/agents/presentation/AgentCatalogIdentityIcon');
+        const readChipAgent = (id: string) => {
+            const chip = screen.findHostByTestId(`workflow-editor-sentence-step:${id}`)!;
+            return chip.findAllByType(AgentCatalogIdentityIcon)[0]?.props.entry.identity;
+        };
+        expect(readChipAgent('analyze')).toEqual(AGENT_TARGET.identity);
+        expect(readChipAgent('fix')).toEqual(codex.identity);
         await screen.unmount();
     });
 

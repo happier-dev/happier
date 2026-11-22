@@ -86,7 +86,10 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
     const events = AutomationActionOutcomeV1Schema.options.map(completionOutcome => ({
       eventRef: { pluginId: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.pluginId, localId: completionOutcome },
       title: `Deployment ${completionOutcome}`, pluginName: 'Deployments',
-      automation: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], completionOutcome },
+      automation: { v: 1 as const, eligible: true as const, completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], completionOutcome,
+        source: { sourceContractVersion: 1, supportedObservationTransports: [],
+          setupActionRef: { pluginId: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.pluginId, localId: 'setup' },
+          sourceConfigSchema: { type: 'object' as const } } },
     }));
     const options = buildWorkflowTriggerStartOptions([...events, {
       eventRef: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, title: 'Deployment receipt changed', pluginName: 'Deployments',

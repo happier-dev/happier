@@ -803,7 +803,7 @@ it('keeps a declared contributed Action\'s raw input in Technical details withou
         inputFields: [{ path: 'instance.locator.displayLabel', title: 'Connected Account' }, { path: 'fields.title', title: 'Title' }] });
     const screen = await renderScreen(<ActionApprovalFieldsCard anatomy="page" presentation={presentation} />);
     expect(screen.getTextContent()).toContain('happier-dev (GitHub)');
-    const labels = screen.findAllByType(TechnicalDetailsDisclosure).flatMap(node => node.props.lines.map(line => line.label));
+    const labels = screen.findAllByType(TechnicalDetailsDisclosure).flatMap(node => (node.props as React.ComponentProps<typeof TechnicalDetailsDisclosure>).lines.map(line => line.label));
     expect(labels).toEqual(expect.arrayContaining(['Instance', 'Fields']));
     expect(labels).not.toContain('V');
 });

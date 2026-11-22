@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { act } from 'react-test-renderer';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { PluginUiScrollActivityProvider, type PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
@@ -144,7 +145,7 @@ it('shows and clears pushed observation backoff in trigger History without rerea
     const sourceStatus: AutomationEventSourceStatusV1 = {
         automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId), triggerRevision: 2,
         eventRef: { pluginId: 'happier.scm.forge.github', localId: 'automation/repository-pushed-v1' },
-        sourceSelectorId: '065e3616-1601-41f9-b0ac-576178f10cdf',
+        sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('065e3616-1601-41f9-b0ac-576178f10cdf'),
         reporterMaterializationRef: { machineId: 'watcher', materializationId: 'github-watcher', pluginId: 'happier.scm.forge.github' },
         reporterSourceCustody: { kind: 'development', registeredRootId: '/repo' },
         state: 'backingOff', code: 'rateLimited', nextRetryAt: 1_794_641_418_000,
@@ -171,9 +172,9 @@ it('shows and clears pushed observation backoff in trigger History without rerea
     const warningId = `session-work-trigger-history:${automationId}-observation`;
     expect(screen.findByTestId(warningId)).toBeNull();
     const publishStatus = async (status: AutomationEventSourceStatusV1 | null, enabled = true) => {
-        await act(async () => storage.getState().applyAutomations([createAutomationDefinitionSummary({ ...summary, enabled,
+        await act(async () => { await storage.getState().applyAutomations([createAutomationDefinitionSummary({ ...summary, enabled,
             triggers: summary.triggers.map(trigger => trigger.kind === 'pluginEvent' ? { ...trigger, sourceStatus: status } : trigger),
-        })], null));
+        })], null); });
     };
     await publishStatus(sourceStatus);
     expect(screen.findByTestId(warningId)).not.toBeNull();

@@ -333,7 +333,7 @@ describe('workflow trigger editing lifetime', () => {
         const before = hook.getCurrent().captureSnapshot();
         await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'remove', triggerId: savedId })));
         expect(hook.getCurrent().triggerEvents).toEqual([]);
-        await act(async () => hook.getCurrent().restoreSnapshot(before));
+        await act(async () => { await hook.getCurrent().restoreSnapshot(before); });
         expect(hook.getCurrent().triggerEvents).toEqual([{ event: privateEvent.eventRef, payloadSchema }]);
         const newEvent = { ...privateEvent, eventRef: { ...privateEvent.eventRef, localId: 'created' } };
         await act(async () => {
@@ -344,7 +344,7 @@ describe('workflow trigger editing lifetime', () => {
         });
         const added = hook.getCurrent().captureSnapshot();
         await act(async () => hook.getCurrent().setDraft(editWorkflowTriggerDraft(hook.getCurrent().draft, { kind: 'discardAdd', clientId: 'created' })));
-        await act(async () => hook.getCurrent().restoreSnapshot(WorkflowDraftTriggerSnapshotV1Schema.parse(added)));
+        await act(async () => { await hook.getCurrent().restoreSnapshot(WorkflowDraftTriggerSnapshotV1Schema.parse(added)); });
         expect(hook.getCurrent().triggerEvents).toEqual([{ event: privateEvent.eventRef, payloadSchema }, { event: newEvent.eventRef, payloadSchema }]);
         expect(hook.getCurrent().intendedTriggers).toMatchObject([{ kind: 'pluginEvent', triggerId: savedId },
             { kind: 'pluginEvent', eventRef: newEvent.eventRef, observationTransport: newEvent.observationTransport }]);
@@ -1301,7 +1301,7 @@ describe('workflow trigger editing lifetime', () => {
         await act(async () => { saving = hook.getCurrent().save(definitionId, () => true); });
         await waitForHomeGovernance(() => expect(writes).toHaveLength(1));
         await hook.rerender({ definitionId, sourceKey: 'saved-b', projectTarget });
-        let outcome: string | undefined;
+        let outcome: Awaited<typeof saving> | undefined;
         await act(async () => { deferred.resolve(); outcome = await saving; });
         expect(outcome).toBe('stale');
         expect(writes).toHaveLength(1);

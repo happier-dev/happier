@@ -156,7 +156,7 @@ let subjectQueries: unknown[] = [];
 /** The Home returns direct Session attachments and inherited all-Session Account habits. */
 function attachedTo(sessionId: string) {
   return rows.flatMap(row => row.triggers.filter(trigger => row.scopeSessionId === sessionId
-    || (row.scopeSessionId === null && trigger.kind === 'sessionLifecycle' && trigger.subject === undefined)).map(trigger => ({
+    || (row.scopeSessionId === null && trigger.kind === 'sessionLifecycle' && !('subject' in trigger && trigger.subject !== undefined))).map(trigger => ({
     automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
     relation: row.scopeSessionId === sessionId ? 'direct' as const : 'context' as const,
     enabled: row.enabled && trigger.enabled, revision: trigger.revision,

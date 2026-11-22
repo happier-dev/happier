@@ -72,7 +72,6 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
     draft: null,
     setDraft: vi.fn(),
     missingAudience,
-    issue: null,
     loading: false,
     retryWhen: vi.fn(),
     retryReview: vi.fn(),

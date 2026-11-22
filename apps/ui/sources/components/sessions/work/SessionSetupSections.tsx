@@ -202,7 +202,7 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
     if (destination.loadMoreFailed) destination.loadMore();
     else destination.retry();
   }, [read.retry, sessionRetry, destination.loadMoreFailed, destination.loadMore, destination.retry]);
-  const status = read.status === 'failed' || sessionStatus === 'failed' || destination.status === 'failed' || destination.loadMoreFailed
+  const status: typeof read.status = read.status === 'failed' || sessionStatus === 'failed' || destination.status === 'failed' || destination.loadMoreFailed
     ? 'failed' : read.status === 'loading' || sessionStatus === 'loading' || destination.status === 'loading' ? 'loading' : 'ready';
   // A read that failed while the Machine was away is read again when it returns, without a Retry tap.
   const { machineReachable } = useSessionMachineReachability(sessionId, props.serverId);

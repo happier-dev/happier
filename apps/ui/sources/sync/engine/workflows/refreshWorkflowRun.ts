@@ -19,7 +19,7 @@ export function publishOpenedWorkflowRunDetail(detail: WorkflowRunGetResultV1, s
 // Only pending reads are shared; the Account's existing Run/fact maps own all resolved content.
 const pendingSummaries = new WeakMap<ActiveServerAccountScopeLifetime, Map<string, Promise<void>>>();
 
-function publishInvocationProvenance(runs: WorkflowRunListResultV1['runs'], facts: WorkflowRunListResultV1['invocationProvenance'], scope?: ServerAccountScope): void {
+function publishInvocationProvenance(runs: Readonly<WorkflowRunListResultV1['runs']>, facts: WorkflowRunListResultV1['invocationProvenance'], scope?: ServerAccountScope): void {
     if (!facts?.length) return;
     const byRunId = new Map<string, WorkflowRunInvocationObservation[]>();
     for (const fact of facts) {

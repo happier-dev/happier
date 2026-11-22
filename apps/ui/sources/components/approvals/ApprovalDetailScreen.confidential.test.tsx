@@ -6,6 +6,7 @@ import {
     AccountSettingsV2GetResponseSchema} from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { ApprovalRequestV2Schema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { settleApprovalRequestReplayInputs } from '@happier-dev/protocol/approvals/approvalRequestTransition';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { CurrentCursorResponseSchema} from '@happier-dev/protocol/changes';
 import {
@@ -644,7 +645,8 @@ describe('confidential approval human continuation', () => {
         if (typeof artifact?.body !== 'string') throw new Error('missing_test_approval');
         const original = ApprovalRequestV2Schema.parse(JSON.parse(artifact.body));
         const origin = original.executionOriginV1;
-        const envelope = { v: 1 as const, requestId: origin.requestId, target: { kind: 'session' as const, sessionId: 'session-1' }, input: original.actionArgs };
+        const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+            target: { kind: 'session', sessionId: 'session-1' }, input: original.actionArgs });
         const open = ApprovalRequestV2Schema.parse({ ...original, executionOriginV1: { ...origin, accountId: 'account-a', originalActionEnvelope: envelope,
             externalActionExecutionAuthorization: { v: 1, token: 'signed-invocation', binding: { accountId: 'account-a',
                 authentication: { kind: 'terminal', tokenEpoch: 1 }, custodianAccountId: 'account-a', serverIdentityId: 'srv_confidential-home',

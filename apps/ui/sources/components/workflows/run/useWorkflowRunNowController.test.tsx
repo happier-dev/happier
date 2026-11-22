@@ -137,7 +137,7 @@ describe('useWorkflowRunNowController', () => {
     } };
     // The actual READY229 HTTP refusal: the receiving Machine carries the
     // review back before admission. Keep Workflow dispatch and the UI presenter real.
-    executeMock.mockImplementationOnce(({ input }) => ({ ok: false,
+    executeMock.mockImplementationOnce(async ({ input }) => ({ ok: false,
       errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required',
       details: { reviewDigest: 'MSCiAiJh1KrPkLmLYAEwdx9rcQxLEgmAQPyiZmgnvfU', review: {
         actionArgs: input, preview: { actionId: 'workflow.run.start', actionArgs: input,

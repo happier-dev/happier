@@ -137,7 +137,9 @@ export function AutomationRunLifecycleCauseItems(props: Readonly<{
         <>
             <Item
                 title={t('automations.pluralEditor.lifecycleEventsTitle')}
-                subtitle={t(`automations.pluralEditor.lifecycleEvent.${cause.evidence.event}`)}
+                subtitle={cause.evidence.event === 'parentTurnStarted'
+                    ? t('workflows.triggers.kind.turnStarts')
+                    : t(`automations.pluralEditor.lifecycleEvent.${cause.evidence.event}`)}
                 showChevron={false}
                 mode="info"
             />

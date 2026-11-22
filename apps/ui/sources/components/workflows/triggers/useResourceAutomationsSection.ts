@@ -61,7 +61,8 @@ export type ResourceAutomationsSectionInput = Readonly<{
     /** Recipient intent admitted by the accepted Source's grant owner. */
     sourceAudience?: readonly PrincipalRefV1[];
 }>;
-type LegacyResourceAutomationsSectionInput = Omit<ResourceAutomationsSectionInput, 'subject'> & Readonly<{ subject: TriggerSubject }>;
+type ResourceSectionInput = Omit<ResourceAutomationsSectionInput, 'subject'> & Readonly<{ subject: AutomationSubjectV1 | TriggerSubject }>;
+type LegacyResourceAutomationsSectionInput = ResourceSectionInput & Readonly<{ subject: TriggerSubject }>;
 
 export type SelectedAutomationsSectionRead = Readonly<{
     accountLifetime: ServerAccountScopeLifetime | null | undefined;
@@ -174,8 +175,8 @@ export function useActionAutomationsSection(props: Readonly<{ actionId: Extract<
 /** Resource section data and mutations, consuming the incumbent read and presentation lifetimes. */
 export function useResourceAutomationsSection(props: LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead & { project: WorkflowProjectTargetV1 };
 export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
-export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead;
-export function useResourceAutomationsSection(props: ResourceAutomationsSectionInput | LegacyResourceAutomationsSectionInput): ResourceAutomationsSectionRead {
+export function useResourceAutomationsSection(props: ResourceSectionInput): ResourceAutomationsSectionRead;
+export function useResourceAutomationsSection(props: ResourceSectionInput): ResourceAutomationsSectionRead {
     const activeScope = useActiveServerAccountScope();
     const legacySubject = 'serverId' in props.subject ? null : props.subject;
     const serverId = 'serverId' in props.subject ? props.subject.serverId

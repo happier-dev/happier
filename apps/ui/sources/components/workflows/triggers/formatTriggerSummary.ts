@@ -1,6 +1,6 @@
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, type AutomationSessionLifecycleEvent } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 import type { AutomationRunLifecycleTrigger } from '@happier-dev/protocol/automations/automationRunLifecycle';
-import type { AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import type { AutomationActionConsentTrigger, AutomationActionTrigger } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { AutomationPluginEventTrigger } from '@happier-dev/protocol/automations/automationTriggerProjectionV1';
 import type { AutomationPluginEventDefinitionTrigger } from '@happier-dev/protocol/automations/automationTriggerDefinition';
@@ -93,6 +93,7 @@ export function formatNextScheduledRunAccessibilityLabel(nextRunAt: number | nul
  */
 export type TriggerSummarySource =
     | Pick<AutomationActionTrigger, 'kind' | 'phase' | 'actionIds' | 'mode' | 'onFailure'>
+    | AutomationActionConsentTrigger
     | Readonly<{
         kind: 'schedule';
         schedule: Readonly<{ kind: 'once'; scheduledAt: number }>
@@ -197,17 +198,13 @@ export function readActionTriggerSummaryFacts(
  * What a wait-mode "before an Action" trigger makes this workflow's Result decide (05 S4 Result line), or `null`
  * when no such trigger is set: its run passing lets the Action go ahead, its failing refuses it with the reply.
  */
-export function formatTriggerResultDecides(triggers: readonly Readonly<{ kind: string }>[], context?: TriggerSummaryContext): string | null {
+export function formatTriggerResultDecides(triggers: readonly TriggerSummarySource[], context?: TriggerSummaryContext): string | null {
     const titles = new Set<string>();
     for (const trigger of triggers) {
-        if (!isActionTriggerSource(trigger) || trigger.phase !== 'before' || trigger.mode === 'notify') continue;
+        if (trigger.kind !== 'action' || !('phase' in trigger) || trigger.phase !== 'before' || trigger.mode === 'notify') continue;
         for (const fact of readActionTriggerSummaryFacts(trigger, context).actions) titles.add(fact.title);
     }
     return titles.size === 0 ? null : t('workflows.triggers.card.decides', { action: joinList([...titles]) });
-}
-
-function isActionTriggerSource(trigger: Readonly<{ kind: string }>): trigger is Extract<TriggerSummarySource, { kind: 'action' }> {
-    return trigger.kind === 'action';
 }
 
 function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: 'pluginEvent' }>, context?: TriggerSummaryContext): string | null {
@@ -233,6 +230,7 @@ function readDeclaredEventTitle(trigger: Extract<TriggerSummarySource, { kind: '
 export function formatTriggerSummary(trigger: TriggerSummarySource, context?: TriggerSummaryContext): string {
     switch (trigger.kind) {
         case 'action': {
+            if (!('phase' in trigger)) return t('workflows.triggers.card.action');
             // The trigger block's sentence (lab `actrig:v:before`): before waits or starts beside, after follows.
             const facts = readActionTriggerSummaryFacts(trigger, context);
             if (facts.actions.length === 0) return t(facts.phase === 'before' ? 'workflows.triggers.card.actionBefore' : 'workflows.triggers.card.actionAfter');

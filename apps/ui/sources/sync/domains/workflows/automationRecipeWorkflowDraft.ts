@@ -2,6 +2,7 @@ import { LEGACY_AUTOMATION_WORKFLOW_STEP_ID } from '@happier-dev/protocol/automa
 import { buildWorkflowSelectionFromServerStartSpawnDraftV1 } from '@happier-dev/protocol/workflows/workflowSessionAuthoringV1';
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/executionTargetV1';
+import { createPersonalSessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { SessionPermissionModeInputSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
 import type { AutomationRunExecutionTargetV1, AutomationRunTemplateV1 } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import type { WorkflowStepExecutionSelection } from '@happier-dev/protocol/workflows/workflowV1';
@@ -56,7 +57,7 @@ function oneShotExecutionSelection(
     return {
         agentTarget: AgentExecutionTargetV1Schema.parse(parseBackendTargetKeyV2(buildBackendTargetKeyV2(request.backendTarget))),
         permissionMode: SessionPermissionModeInputSchema.parse(request.permissionMode),
-        ...(request.modelSelection ? { modelSelection: { v: 1, ref: request.modelSelection, updatedAt: 0 } }
+        ...(request.modelSelection ? { modelSelection: createPersonalSessionModelSelection(request.modelSelection, 0) }
             : request.modelId ? { modelSelection: { v: 1, ref: {
             agentTargetKey: buildBackendTargetKeyV2(request.backendTarget), providerConnectionId: null, modelId: request.modelId,
         }, updatedAt: 0 } } : {}),

@@ -53,6 +53,7 @@ describe('acknowledged Action result facts', () => {
     it('offers no inverse for unknown, failed, malformed or tool-supplied instructions', () => {
         for (const result of [
             { ok: false, errorCode: 'outcome_unknown' },
+            { entityKind: 'workflow', entityId: 'workflow-a', sectionId: 'launch', previousSectionId: null },
             { status: 'unknown', sessionId: 'session-a', sectionId: 'launch', previousSectionId: null },
             { sessionId: 'session-a', sectionId: 'launch' },
             { sessionId: 'session-a', sectionId: 'launch', previousSectionId: null, inverse: { command: 'arbitrary' } },

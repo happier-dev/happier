@@ -890,7 +890,7 @@ describe('editor workflow composer', () => {
         const { WidgetFrameBodyMetaContext } = await import('@/components/widgets/frame/widgetFrameBodyCaption');
         const { WorkflowEditorBody } = await import('./WorkflowEditorBody');
         const { router } = await import('expo-router');
-        const checkout = { v: 2, kind: 'managed', id: 'coder-checkout', serverId: appliedHome.serverId,
+        const checkout = { v: 2, kind: 'managed', id: 'coder-checkout', serverId: appliedHome.serverId, machineId: 'machine-1',
             managedId: 'qa-rws-workspace', controller: { machineId: 'machine-1', installationId: 'controller-install' },
             rootPath: '/home/coder/qa-rws-repo', createdAtMs: 1 } as const;
         function ProjectAutomations() {
@@ -1316,6 +1316,7 @@ describe('editor workflow composer', () => {
         </AppPaneProvider>);
         try {
             const exportDocument = screen.root.findByType(WorkflowEditorBody).props.onExportJson;
+            if (!exportDocument) throw new Error('Expected the workflow JSON export');
             const waitForExportOutcome = async () => {
                 await act(async () => exportDocument());
                 await waitForHomeGovernance(() => expect(confirm.mock.calls.length + alert.mock.calls.length).toBe(1));

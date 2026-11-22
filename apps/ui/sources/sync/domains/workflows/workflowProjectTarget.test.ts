@@ -169,6 +169,15 @@ describe('a workflow placed on a cloud preset (J6)', () => {
         });
     });
 
+    it('keeps an admitted managed source when the local folder changes', () => {
+        const sessionPlacement = WorkflowProjectTargetV1Schema.parse({ ...current, sessionPlacement: { ...preset,
+            projectFilesSource: { kind: 'managed', workspace: { v: 2, kind: 'managed', serverId: 'source-home',
+                workspaceId: 'workspace-1', managedId: 'managed-1', controller: { machineId: 'machine-1', installationId: 'install-1' },
+                rootPath: '/managed' } } } }).sessionPlacement;
+        expect(setWorkflowProjectDirectory({ ...context, current: { ...current, sessionPlacement }, directory: '/new-folder' }))
+            .toMatchObject({ directory: '/new-folder', sessionPlacement });
+    });
+
     it('goes back to the Machine when one is chosen again, even the same one', () => {
         const placed = setWorkflowProjectSessionPlacement(current, preset);
         expect(setWorkflowProjectSessionPlacement(placed, undefined)).toEqual(current);

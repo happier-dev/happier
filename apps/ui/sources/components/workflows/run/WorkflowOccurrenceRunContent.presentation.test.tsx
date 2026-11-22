@@ -66,7 +66,7 @@ function newSessionTarget(directory: Readonly<{ kind: 'path'; path: string }> | 
     return materialized.target;
 }
 
-function lifecycleCause(event: 'parentTurnCompleted' | 'sessionStarted' | 'sessionArchived') {
+function lifecycleCause(event: 'parentTurnStarted' | 'parentTurnCompleted' | 'sessionStarted' | 'sessionArchived') {
     const cause = AutomationRunCauseSchema.parse({
         kind: 'trigger',
         triggerId: 'trigger-1',
@@ -77,7 +77,7 @@ function lifecycleCause(event: 'parentTurnCompleted' | 'sessionStarted' | 'sessi
         evidence: {
             event,
             sourceSessionId: 'session-1',
-            ...(event === 'parentTurnCompleted' ? { sourceTurnId: 'turn-1' } : {}),
+            ...(event === 'parentTurnCompleted' || event === 'parentTurnStarted' ? { sourceTurnId: 'turn-1' } : {}),
             policy: { kind: 'everyMatch' },
         },
     });
@@ -114,6 +114,11 @@ describe('frozen Run detail presentation', () => {
                 machineId: 'machine-1',
                 directory: t('session.folderless.privateToSession'),
             }));
+    });
+
+    it('gives a turn-start occurrence its own event label', async () => {
+        const screen = await renderScreen(<presentation.AutomationRunLifecycleCauseItems cause={lifecycleCause('parentTurnStarted')} />);
+        expect(screen.getTextContent()).toContain(t('workflows.triggers.kind.turnStarts'));
     });
 
     it.each(['parentTurnCompleted', 'sessionStarted', 'sessionArchived'] as const)(
