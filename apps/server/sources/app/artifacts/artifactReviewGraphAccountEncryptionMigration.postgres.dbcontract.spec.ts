@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { AccountEncryptionMigrateArtifactsDirectiveSchema, ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { db, initDbPostgres } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createReviewCommentOperations } from '@/app/reviews/comments/operations';
@@ -86,12 +86,17 @@ it('keeps attached content out of Account conversion and commits the complete re
             sensitive: { t: 'encrypted' as const, c: 'opaque-resource-event' } } })) })),
         verdicts: graph.verdicts.map(item => ({ ...item, content: { t: 'encrypted' as const, c: 'opaque-resource-verdict' } })) };
     const replacementKey = Buffer.from([3, 4, 5]);
-    const directive = { action: 'migrate' as const, items: [{ artifactId: reviewId,
+    // HTTP drops absent optional members from the storage owner's native objects.
+    const directive = AccountEncryptionMigrateArtifactsDirectiveSchema.parse(JSON.parse(JSON.stringify({ action: 'migrate', items: [{ artifactId: reviewId,
         expectedHeaderVersion: row.headerVersion, expectedBodyVersion: row.bodyVersion,
         expectedDataEncryptionKey: Buffer.from(row.dataEncryptionKey).toString('base64'),
         header: Buffer.from([2, 1]).toString('base64'), body: Buffer.from([2, 2]).toString('base64'),
         dataEncryptionKey: replacementKey.toString('base64'), recipientKeyEnvelopes: [], blobs: [], revisions: [],
-        reviewGraph: { expected: graph, target } }] };
+        reviewGraph: { expected: graph, target } }] })));
+    const stale = structuredClone(directive);
+    stale.items[0]!.reviewGraph!.expected.comments[0]!.stored.structural.bodyVersion += 1;
+    expect(await inTx(tx => migrateArtifactAccountEncryptionInTx({ tx, accountId: ownerId,
+        fromMode: 'plain', toMode: 'e2ee', directive: stale }))).toEqual({ status: 'migration_incomplete' });
     const convert = async (tx: Parameters<typeof migrateArtifactAccountEncryptionInTx>[0]['tx']) => {
         expect(await migrateArtifactAccountEncryptionInTx({ tx, accountId: ownerId, fromMode: 'plain', toMode: 'e2ee', directive }))
             .toEqual({ status: 'applied' });

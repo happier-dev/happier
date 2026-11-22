@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from 'node:util';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { Prisma as PrismaTypes } from '@prisma/client';
 import { ArtifactReviewGraphAccountEncryptionMigrationV1Schema, type ArtifactReviewGraphAccountEncryptionMigrationV1 } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { BoundReviewCommentEventSensitiveEnvelopeV1Schema, openReviewCommentSensitiveEnvelopeV1, openReviewCommentEventSensitiveEnvelopeV1 } from '@happier-dev/protocol/reviews/comments/content';
@@ -58,13 +58,14 @@ function identities(graph: Graph) {
 }
 
 export function artifactReviewGraphMatches(actual: Graph | undefined, expected: Graph | undefined): boolean {
-    return isDeepStrictEqual(actual ?? { comments: [], verdicts: [] }, expected ?? { comments: [], verdicts: [] });
+    return sameStrictJsonValue(actual ?? { comments: [], verdicts: [] }, expected ?? { comments: [], verdicts: [] },
+        { omitUndefinedObjectMembers: true });
 }
 
 /** Validate target envelopes at the migration boundary; client E2EE stays opaque. */
 export async function artifactReviewGraphReplacementValid(reviewId: string, source: Graph | undefined, target: Graph | undefined, mode: 'plain' | 'e2ee'): Promise<boolean> {
     if (!source || !target) return source === target;
-    if (!isDeepStrictEqual(identities(source), identities(target))) return false;
+    if (!sameStrictJsonValue(identities(source), identities(target), { omitUndefinedObjectMembers: true })) return false;
     const matchesMode = (value: StoredJsonContentEnvelope) => value.t === (mode === 'plain' ? 'plain' : 'encrypted');
     for (const item of target.comments) {
         const { structural, sensitiveEnvelope } = item.stored;
