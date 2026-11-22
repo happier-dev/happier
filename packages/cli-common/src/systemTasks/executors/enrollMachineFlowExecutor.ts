@@ -1,5 +1,5 @@
 import { SystemTaskExecutionError } from '../runSystemTask.js';
-import type { HappierJsonExecutor } from './happierJsonExecutor.js';
+import type { HappierJsonExecutor, RunHappierOptions } from './happierJsonExecutor.js';
 import {
   scopeHappierJsonExecutor,
   type HappierServerScope,
@@ -17,7 +17,7 @@ const DEFAULT_DAEMON_READY_POLL_MS = 500;
 
 /** One readiness observation for setup and service actions; cancellation owns standalone lifetime. */
 export async function waitForMachineOnline<T extends EnrollMachineDaemonStatus>(opts: Readonly<{
-  readStatus: () => Promise<T>;
+  readStatus: (options: Pick<RunHappierOptions, 'signal' | 'timeoutMs'>) => Promise<T>;
   signal?: AbortSignal;
   timeoutMs?: number | null;
   requireMachineControlReady?: boolean;
@@ -33,7 +33,8 @@ export async function waitForMachineOnline<T extends EnrollMachineDaemonStatus>(
   let sawRunning = false;
   while (true) {
     opts.signal?.throwIfAborted();
-    const latest = await opts.readStatus();
+    const latest = await opts.readStatus({ signal: opts.signal,
+      timeoutMs: deadline === null ? opts.timeoutMs : Math.max(1, deadline - Date.now()) });
     opts.signal?.throwIfAborted();
     if ((opts.requireServiceInstalled === false || latest.serviceInstalled) && latest.daemonRunning && !latest.needsAuth
       && (!opts.requireMachineControlReady || latest.daemonHealthy === true)) {
@@ -151,8 +152,8 @@ export function createEnrollMachineFlowExecutorFromHappierJsonExecutor(params: R
     (takeover ?? takeOverManualRelayRuntime) ? ['--takeover'] : []
   );
 
-  const readDaemonStatus = async (): Promise<EnrollMachineDaemonStatus> => {
-    const parsed = await executor.runHappierJson(['daemon', 'status', '--json']);
+  const readDaemonStatus = async (options: Pick<RunHappierOptions, 'signal' | 'timeoutMs'>): Promise<EnrollMachineDaemonStatus> => {
+    const parsed = await executor.runHappierJson(['daemon', 'status', '--json'], options);
     if (!parsed || typeof parsed !== 'object') {
       throw new SystemTaskExecutionError('invalid_cli_response', 'Received an invalid daemon status response.');
     }

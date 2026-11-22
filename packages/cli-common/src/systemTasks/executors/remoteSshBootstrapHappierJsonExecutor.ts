@@ -32,7 +32,7 @@ export function createRemoteSshBootstrapHappierJsonExecutor(params: Readonly<{
   signal?: AbortSignal;
 }>): RemoteSshBootstrapHappierJsonExecutor {
   return {
-    runHappierJson: async ({ args }) => {
+    runHappierJson: async ({ args, timeoutMs }) => {
       const label = resolveRemoteLabelFromArgs(args);
       const data: Record<string, unknown> = {
         ...(params.localServerUrl ? { localServerUrl: params.localServerUrl } : {}),
@@ -45,6 +45,7 @@ export function createRemoteSshBootstrapHappierJsonExecutor(params: Readonly<{
         auth: params.auth,
         knownHostsMode: params.knownHostsMode,
         signal: params.signal,
+        timeoutMs,
         ...(Object.keys(data).length ? { data } : {}),
       });
     },

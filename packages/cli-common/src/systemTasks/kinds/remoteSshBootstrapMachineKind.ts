@@ -16,6 +16,7 @@ import {
 } from '../../homeTarget/homeTarget.js';
 import type { HappierJsonExecutor } from '../executors/happierJsonExecutor.js';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../executors/enrollMachineFlowExecutor.js';
+import { readLocalServerProfileIdentity } from '../executors/serverProfileScope.js';
 import { resolveDaemonServiceInstallConflictPlan } from '../../happierRuntime/daemonInstallConflict.js';
 import type { HappierService, HappierServicePlatform } from '../../happierRuntime/types.js';
 import { resolveDaemonServiceBackend } from '../setupServiceGuidance/buildBackgroundServiceSetupGuidance.js';
@@ -30,6 +31,7 @@ import {
   resolveEnrollMachineReadiness,
   runEnrollMachineFlow,
   type EnrollMachineFlowExecutor,
+  type EnrollMachineFlowResult,
   type EnrollMachineAuthStatus,
 } from '../flows/enrollMachineFlow.js';
 import { runRemoteHomeEnrollmentFlow } from '../flows/remoteHomeEnrollmentFlow.js';
@@ -65,7 +67,7 @@ export type RemoteSshAuth =
   | Readonly<{ mode: 'password'; password: string }>;
 
 export type RemoteSshBootstrapHappierJsonExecutor = Readonly<{
-  runHappierJson: (params: Readonly<{ args: readonly string[] }>) => Promise<RemoteCommandResult>;
+  runHappierJson: (params: Readonly<{ args: readonly string[]; timeoutMs?: number | null }>) => Promise<RemoteCommandResult>;
 }>;
 
 function isLoopbackRelayUrl(url: string): boolean {
@@ -322,6 +324,8 @@ export type RemoteSshBootstrapMachineDeps = Readonly<{
     cleanup: () => Promise<void>;
   }>>;
   onEnrollmentDeadline?: (deadlineMs: number) => void;
+  /** A managed Retry can resume service setup after Home registered this Machine. */
+  resumeMachineId?: string;
   /** Recheck once before pairing approval can register the guest. */
   assertManagedEnrollmentCurrent?: (correlation: MachineEnrollmentCorrelationV1) => Promise<void>;
   /** Current requesting client's approval replaces local sealing; context stays only in this closure. */
@@ -381,6 +385,7 @@ export type RemoteSshBootstrapMachineDeps = Readonly<{
     knownHostsMode: 'app' | 'system';
     data?: Record<string, unknown>;
     signal?: AbortSignal;
+    timeoutMs?: number | null;
   }>) => Promise<RemoteCommandResult>;
 }>;
 
@@ -464,12 +469,14 @@ export function createRemoteSshBootstrapMachineTaskKind(
       });
       await settleRemoteSshHostTrust(ctx, trustResolution, parsedRemote);
 
-        ctx.emit({
-          type: 'progress',
-          stepId: 'ssh.installCli',
-          message: 'Ensuring Happier is installed on the remote machine',
-        });
-        await installRemoteCli({ parsed: parsedRemote, auth, knownHostsMode });
+        if (!deps.resumeMachineId) {
+          ctx.emit({
+            type: 'progress',
+            stepId: 'ssh.installCli',
+            message: 'Ensuring Happier is installed on the remote machine',
+          });
+          await installRemoteCli({ parsed: parsedRemote, auth, knownHostsMode });
+        }
 
         let relayRuntime: Readonly<{ relayUrl: string; mode: 'user' | 'system' }> | undefined;
         let relayRuntimeLocalServerUrl: string | undefined;
@@ -568,6 +575,7 @@ export function createRemoteSshBootstrapMachineTaskKind(
       return await runRemoteMachineBootstrapRecipe({
         ctx, parsedRemote, parsedLocalForApproval, relayRuntime, relayRuntimeLocalServerUrl,
         onEnrollmentDeadline: deps.onEnrollmentDeadline,
+        resumeMachineId: deps.resumeMachineId,
         remoteHappierExecutor, serviceFlowExecutor,
         createRemoteEnrollmentExecutor: () => deps.createRemoteEnrollmentExecutor?.({
           parsed: parsedRemote, auth, knownHostsMode, signal: ctx.signal,
@@ -876,6 +884,7 @@ type RemoteMachineBootstrapRecipeParams = Readonly<{
   /** Host-private admission port; never part of serialized task configuration. */
   approveAdmittedEnrollmentRequest?: RemoteMachineBootstrapRecipeParams['approveLocalAuthRequest'];
   initialAuthStatus?: EnrollMachineAuthStatus;
+  resumeMachineId?: string;
   deliverAuthApproval?: RemoteSshBootstrapMachineDeps['deliverAuthApproval'];
   reviewedChild?: HostReviewedChildPortV1;
   assertCurrent?: () => Promise<void>;
@@ -887,7 +896,7 @@ type RemoteMachineBootstrapRecipeParams = Readonly<{
 
 async function runRemoteMachineBootstrapRecipe({
   ctx, parsedRemote, parsedLocalForApproval, relayRuntime, relayRuntimeLocalServerUrl,
-  remoteHappierExecutor, serviceFlowExecutor, createRemoteEnrollmentExecutor, approveLocalAuthRequest, approveAdmittedEnrollmentRequest, initialAuthStatus, deliverAuthApproval, reviewedChild, assertCurrent, enrollmentProcessIO, onEnrollmentDeadline, startDaemonProcess,
+  remoteHappierExecutor, serviceFlowExecutor, createRemoteEnrollmentExecutor, approveLocalAuthRequest, approveAdmittedEnrollmentRequest, initialAuthStatus, resumeMachineId, deliverAuthApproval, reviewedChild, assertCurrent, enrollmentProcessIO, onEnrollmentDeadline, startDaemonProcess,
 }: RemoteMachineBootstrapRecipeParams) {
   // The host-issued Create or Retry admission covers its managed pairing.
   // A correlation, a projected parent or a public task option cannot grant it.
@@ -937,7 +946,8 @@ async function runRemoteMachineBootstrapRecipe({
           // A live local PID cannot receive the creation-policy child until
           // Home admits its socket and acknowledges machine-control RPCs.
           return await serviceFlowExecutor.waitForReadyDaemon!({ ...options,
-            timeoutMs: remainingEnrollmentMs(), requireMachineControlReady: parsedRemote.managedEnrollment !== undefined });
+            timeoutMs: remainingEnrollmentMs() ?? (resumeMachineId && ctx.signal ? null : undefined),
+            requireMachineControlReady: parsedRemote.managedEnrollment !== undefined });
         } } : {}),
         configureRelay: async (profile) => {
           ctx.signal?.throwIfAborted();
@@ -989,6 +999,26 @@ async function runRemoteMachineBootstrapRecipe({
           : (parsedRemote.serviceMode ?? 'user') === 'none' ? 'none' : 'service';
       let processManaged = lifecycle === 'process';
       const shouldManageService = lifecycle === 'service';
+      if (resumeMachineId) {
+        const executor = createRemoteEnrollmentExecutor();
+        const home = parsedRemote.homeTarget;
+        if (!executor || !home || !parsedRemote.managedEnrollment) {
+          throw new SystemTaskExecutionError('managed_enrollment_unavailable', 'Resuming setup requires the retained managed Home.');
+        }
+        const profile = await readLocalServerProfileIdentity(executor, { serverUrl: home.canonicalAuthUrl,
+          serverIdentityId: parsedRemote.managedEnrollment.homeId, requireRecordedHomeIdentity: true });
+        if (!profile.serverId || profile.serverId !== profile.activeServerId) {
+          throw new SystemTaskExecutionError('home_identity_mismatch', 'The retained Machine is not using the selected Home.');
+        }
+        const status = resolveEnrollMachineReadiness(await flowExecutor.readAuthStatus());
+        if (status.credentialState !== 'valid' || status.machineRegistrationState !== 'server-confirmed') {
+          throw new SystemTaskExecutionError('machine_registration_unconfirmed', 'The selected Home did not confirm the remote machine registration.');
+        }
+        if (status.machineId !== resumeMachineId) {
+          throw new SystemTaskExecutionError('machine_identity_mismatch', 'The selected Home confirmed a different remote machine identity.');
+        }
+        enrolledRemoteProfileId = profile.serverId;
+      }
       if (shouldManageService && await preflightRemoteBackgroundServiceReplacement({
         ctx,
         listServices: async () => requireOk(
@@ -1013,7 +1043,7 @@ async function runRemoteMachineBootstrapRecipe({
       }
 
       ctx.signal?.throwIfAborted();
-      const flowResult = await runEnrollMachineFlow({
+      const flowResult: EnrollMachineFlowResult = resumeMachineId ? { machineId: resumeMachineId, publicKey: null } : await runEnrollMachineFlow({
         relayProfile,
         executor: flowExecutor,
         ...(initialAuthStatus ? { initialAuthStatus } : parsedRemote.homeTarget?.descriptor

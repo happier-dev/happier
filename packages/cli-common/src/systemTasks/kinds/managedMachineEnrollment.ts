@@ -120,6 +120,7 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
     reviewedChild?: HostReviewedChildPortV1;
     carrier: Extract<import('@happier-dev/protocol/machines/managed/providerFactsV1').ManagedBootstrapCarrierV1, { kind: 'ssh' }>;
     trustedHostKey?: string;
+    resumeMachineId?: string;
     prepareDedicatedBootstrap: PrepareManagedDedicatedBootstrap;
     deliverAuthApproval?: NativeTaskOptions['deliverAuthApproval'];
     onEnrollmentDeadline(deadlineMs: number): void;
@@ -213,6 +214,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     // identity. Native images (including Lume) retain their own SSH host keys.
     const trustedHostKey = readManagedSshTrustedHostKey(carrier, input.guestHostPublicKey);
     return await deps.runSshTask({ configuration, reviewedChild: input.reviewedChild, carrier, assertCurrent, deliverAuthApproval, onEnrollmentDeadline,
+      ...(row.enrolledMachineId && !input.replacePayload ? { resumeMachineId: row.enrolledMachineId } : {}),
       ...(trustedHostKey === undefined ? {} : { trustedHostKey }),
       prepareDedicatedBootstrap: async ({ exec, binaryPath, context, channel }) => {
         await prepareDedicatedDaemonBootstrap({ row, correlation, binaryPath, channel, exec,

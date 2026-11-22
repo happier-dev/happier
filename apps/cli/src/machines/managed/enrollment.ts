@@ -128,13 +128,13 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
       return createManagedEnrollmentPairingDelivery(responseOwner);
     },
     approveLocalAuthRequest,
-    ...(deps.materializeBootstrapCredential ? { runSshTask: async ({ configuration, reviewedChild, carrier, trustedHostKey, assertCurrent, prepareDedicatedBootstrap, deliverAuthApproval, onEnrollmentDeadline }: Parameters<NonNullable<PortableEnrollmentDependencies['runSshTask']>>[0]) => {
+    ...(deps.materializeBootstrapCredential ? { runSshTask: async ({ configuration, reviewedChild, carrier, trustedHostKey, resumeMachineId, assertCurrent, prepareDedicatedBootstrap, deliverAuthApproval, onEnrollmentDeadline }: Parameters<NonNullable<PortableEnrollmentDependencies['runSshTask']>>[0]) => {
       const credential = await deps.materializeBootstrapCredential!(carrier.credentialRef);
       try {
         input.signal?.throwIfAborted();
         const trust = await resolveManagedEnrollmentSshTrust({ correlation, carrier, trustedHostKey });
         const { createLiveRemoteSshBootstrapTaskKind } = await import('@/capabilities/systemTasks/ssh/liveRemoteSshBootstrap');
-        const task = createLiveRemoteSshBootstrapTaskKind({ reviewedChild, prepareDedicatedBootstrap, onEnrollmentDeadline, deliverAuthApproval, approveLocalAuthRequest,
+        const task = createLiveRemoteSshBootstrapTaskKind({ reviewedChild, prepareDedicatedBootstrap, resumeMachineId, onEnrollmentDeadline, deliverAuthApproval, approveLocalAuthRequest,
           assertManagedEnrollmentCurrent: assertCurrent });
         return await runPreparedTask({ run: async ctx => task.run({ ...ctx, params: { ...configuration, ssh: {
           target: `${carrier.user}@${carrier.address}`, auth: 'keyfile', identityFile: credential.path,

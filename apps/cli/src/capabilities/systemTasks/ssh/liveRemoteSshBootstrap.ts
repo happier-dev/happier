@@ -338,7 +338,7 @@ async function runSshJson<T extends JsonRecord>(params: Readonly<{
   phase?: SshCommandFailurePhase;
   authStatus?: boolean;
   signal?: AbortSignal;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }>): Promise<T> {
   const result = await runSshCommandResult(params);
   const stdout = result.stdout;
@@ -362,7 +362,7 @@ async function runSshPosixJson<T extends JsonRecord>(params: Readonly<{
   phase?: SshCommandFailurePhase;
   authStatus?: boolean;
   signal?: AbortSignal;
-  timeoutMs?: number;
+  timeoutMs?: number | null;
 }>): Promise<T> {
   return await runSshJson<T>({
     ssh: params.ssh,
@@ -895,7 +895,7 @@ export function createLiveRemoteSshManageHostTaskKind() {
   });
 }
 
-export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.RemoteSshBootstrapMachineDeps, 'reviewedChild' | 'assertManagedEnrollmentCurrent' | 'onEnrollmentDeadline' | 'deliverAuthApproval'> & Readonly<{
+export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.RemoteSshBootstrapMachineDeps, 'reviewedChild' | 'assertManagedEnrollmentCurrent' | 'onEnrollmentDeadline' | 'deliverAuthApproval' | 'resumeMachineId'> & Readonly<{
   approveLocalAuthRequest?: systemTasks.RemoteSshBootstrapMachineDeps['approveLocalAuthRequest'];
   prepareDedicatedBootstrap?: (input: Readonly<{ binaryPath: string; exec: ManagedNativeBootstrapIO['exec'];
     context: Pick<systemTasks.InteractiveSystemTaskContext, 'emit' | 'prompt'>; channel: 'stable' | 'preview' | 'dev' }>) => Promise<void>;
@@ -1003,7 +1003,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
         ...await resolveLegacyApprovalSelection(parsed.relay),
       });
     }),
-    runRemoteCommand: async ({ label, parsed, auth, knownHostsMode, data, signal }) => {
+    runRemoteCommand: async ({ label, parsed, auth, knownHostsMode, data, signal, timeoutMs }) => {
       const knownHostsPath = resolveKnownHostsPath(parsed.ssh, knownHostsMode);
 
       if (label === 'relay.runtime.install') {
@@ -1050,6 +1050,7 @@ export function createLiveRemoteSshBootstrapTaskKind(options: Pick<systemTasks.R
           });
         })(),
         signal,
+        timeoutMs,
       });
       return systemTasks.normalizeRemoteBootstrapCliJsonResult(result, label === 'auth.status');
     },

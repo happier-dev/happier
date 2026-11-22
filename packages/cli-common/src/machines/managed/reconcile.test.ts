@@ -741,6 +741,36 @@ describe('portable managed reconciliation', () => {
         expect(run.roles).toEqual(['bootstrap', 'inspect']);
         expect(run.events).not.toContain('submit');
     });
+    it('resumes SSH setup on a registered guest whose acquisition failed during bootstrap', async () => {
+        const credentialRef = { kind: 'shared_resource' as const, resourceId: '00000000-0000-4000-8000-000000000001' };
+        const registered = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource,
+            enrolledMachineId: 'guest', bootstrapCredentialRef: credentialRef,
+            observation: { observedAt: 1, availability: 'unavailable', reason: 'bootstrap.ssh_command_failed' } });
+        const run = boundary(registered);
+        const native = run.input.createNative(run.read, () => undefined);
+        const sshProvisioner = { ...provisioner, bootstrapTransport: undefined, bootstrapCredential: { kind: 'ssh' as const } };
+        const inspected = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.inspect', provisioner: sshProvisioner });
+        expect(inspected.observation).toMatchObject({ power: 'running', reason: 'bootstrap.ssh_command_failed' });
+        const result = await reconcileManagedMachine({ ...run.input, machine: inspected, action: 'machines.managed.bootstrap.retry',
+            provisioner: sshProvisioner,
+            createNative: () => ({ ...native, bootstrapCredentialKind: 'ssh', invoke: async (role, body, io) => {
+                if (role === 'bootstrap') {
+                    run.roles.push(role);
+                    return { kind: 'ssh', address: 'guest.example.test', user: 'root', credentialRef };
+                }
+                return await native.invoke(role, body, io);
+            } }),
+            bootstrap: { ...run.input.bootstrap, enroll: async enrollment => {
+                expect(enrollment.resumeSetup).toBe(true);
+                expect(enrollment.machine.enrolledMachineId).toBe('guest');
+                return await run.input.bootstrap.enroll(enrollment);
+            }, complete: async (_row, resumeSetup) => { expect(resumeSetup).toBe(true); run.events.push('complete'); } },
+        });
+        expect(result).toMatchObject({ resource, enrolledMachineId: 'guest', observation: { availability: 'present', power: 'running' } });
+        expect(result.observation?.reason).toBeUndefined();
+        expect(run.roles).toEqual(['inspect', 'bootstrap', 'inspect']);
+        expect(run.events).toEqual(['report', 'report', 'enroll', 'complete', 'report']);
+    });
     it('refuses an enrolled guest update without a native bootstrap transport before any provider or Home effect', async () => {
         const enrolled = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource, enrolledMachineId: 'guest' });
         const run = boundary(enrolled);

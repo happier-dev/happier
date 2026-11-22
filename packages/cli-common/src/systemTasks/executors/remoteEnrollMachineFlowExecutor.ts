@@ -65,8 +65,8 @@ export function createEnrollMachineFlowExecutorFromRemoteCommandRunner(params: R
 }>): EnrollMachineFlowExecutor {
   const remoteExecutor = createRemoteEnrollMachineFlowHappierExecutor(params);
   const remoteJsonAdapter: HappierJsonExecutor = {
-    runHappierJson: async (args) => requireOk(
-      await remoteExecutor.runHappierJson({ args }),
+    runHappierJson: async (args, options) => requireOk(
+      await remoteExecutor.runHappierJson({ args, timeoutMs: options?.timeoutMs }),
       args.join('.'),
     ),
     runHappierText: async () => {

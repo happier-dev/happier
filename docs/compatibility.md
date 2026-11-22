@@ -14327,8 +14327,10 @@ allocation column are unreleased 0.3 changes.
 Managed guest CLI updates use the connected Home's guest payload through the
 existing bootstrap retry operation. Updating an enrolled guest requires a
 provider with a native bootstrap transport. Other providers return
-`guest_update_not_supported` before any native work. Initial enrollment and
-inspection still use their existing paths. A missing payload returns the typed
+`guest_update_not_supported` before any native work. A managed SSH guest whose
+setup failed after registration can Retry with the same resource, retained
+credential and installed payload. The SSH bootstrap verifies the retained Home
+and Machine before completing guest service setup. A missing payload returns the typed
 `guest_payload_missing` refusal. Inspect recognizes the released 0.2 doctor-only
 JSON shape when the guest lacks the diagnostic collector and returns
 `guest_cli_incompatible` at `guest_capability`; malformed collector output still

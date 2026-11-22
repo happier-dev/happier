@@ -24,6 +24,7 @@ export function createUiManagedAccountSshTask(input: Readonly<{
             interruptionStore: null, trustedHostKeyStore: null, completedRecordRetentionMs: 0,
             runBootstrapTask: params => runNativeRemoteSshBootstrapTask({ ...params,
                 reviewedChild: task.reviewedChild, prepareDedicatedBootstrap: task.prepareDedicatedBootstrap,
+                resumeMachineId: task.resumeMachineId,
                 assertManagedEnrollmentCurrent: task.assertCurrent, onEnrollmentDeadline: task.onEnrollmentDeadline,
                 onInstalled: input.onInstalled,
                 approvalCredentials: input.credentials,

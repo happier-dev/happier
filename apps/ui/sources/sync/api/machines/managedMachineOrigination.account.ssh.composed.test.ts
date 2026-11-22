@@ -88,7 +88,8 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
-it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH %s preserves credential custody through shared enrollment', async scenario => {
+it.each(['pinned', 'substituted', 'browser', 'retained', 'registered'] as const)('Account SSH %s preserves credential custody through shared enrollment', async scenario => {
+    const retainedGuest = scenario === 'retained' || scenario === 'registered';
     native.trustPrompts = 0;
     native.hostKeyListeners.clear();
     native.stdoutListeners.clear();
@@ -261,7 +262,7 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             readNavigationBinding: () => null,
         })));
         let running = false;
-        let serviceInstalled = false;
+        let serviceInstalled = scenario === 'registered';
         native.fetch.mockImplementation(async (url, init) => {
             expect(new URL(String(url)).pathname).toBe('/create');
             allocations++;
@@ -279,7 +280,7 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
         native.exec.mockImplementation(async (request: import('@happier-dev/ssh-native').NativeSshExecRequest) => {
             const { computeSshHostKeyFingerprint } = await import('@happier-dev/protocol/ssh/hostTrust');
             verifications.push(request.hostKeyVerification);
-            if (scenario === 'retained') {
+            if (retainedGuest) {
                 expect(request.hostKeyVerification).toEqual({ decision: 'prompt' });
                 expect(request.auth.privateKeyPem === retainedLoginKey).toBe(true);
                 expect(native.hostKeyListeners.size).toBeGreaterThan(0);
@@ -304,6 +305,7 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
                 expect(request.auth.privateKeyPem).toContain('PRIVATE KEY');
             }
             const command = request.command;
+            const cliCommand = command.replaceAll("'", '');
             let stdout = '';
             // Integrity assets arrive through guest SSH downloads; preserve the
             // captured signed bytes at that native-process boundary.
@@ -312,7 +314,12 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             else if (command.includes('uname -s') && command.includes('uname -m') && !command.includes('platform')) stdout = 'Linux\nx86_64\n/home/guest\n';
             else if (command.includes('uname -s')) stdout = JSON.stringify({ platform: 'linux', arch: 'x86_64' });
             else if (command.includes('current_target=') && command.includes('version_path')) stdout = 'current=\nprevious=\n';
+            else if (cliCommand.includes('server list --json')) {
+                stdout = JSON.stringify({ ok: true, data: { activeServerId: 'guest-home',
+                    profiles: [{ id: 'guest-home', serverUrl, homeServerIdentityId: homeId }] } });
+            }
             else if (command.includes('enroll-remote')) {
+                expect(scenario).not.toBe('registered');
                 stdout = `${JSON.stringify({ kind: 'remote_home_enrollment_pairing_request',
                     protocolVersion: 1, publicKey: encodeBase64(new Uint8Array(32).fill(1)), homeServerIdentityId: homeId,
                     pairing: { secretB64Url: encodeBase64(new Uint8Array(32).fill(23), 'base64url'), createdAtMs: Date.now(), expiresAtMs: Date.now() + 60000 },
@@ -324,7 +331,6 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             else {
                 // Native recipe labels use ordinary shell argv; the shared CLI
                 // executor quotes each literal argument of the same OS command.
-                const cliCommand = command.replaceAll("'", '');
                 if (cliCommand.includes('service install')) serviceInstalled = true;
                 if (cliCommand.includes('service start') || cliCommand.includes('daemon start')) running = true;
                 const status = { authenticated: true, credentialState: 'valid', machineRegistrationState: 'server-confirmed', machineId: 'joined',
@@ -358,7 +364,7 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'native-managed-create',
             actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) };
         let result;
-        if (scenario === 'retained') {
+        if (retainedGuest) {
             const { generateKeyPairSync } = await import('node:crypto');
             retainedLoginKey = generateKeyPairSync('rsa', { modulusLength: 2048,
                 publicKeyEncoding: { type: 'spki', format: 'pem' }, privateKeyEncoding: { type: 'pkcs1', format: 'pem' } }).privateKey;
@@ -377,6 +383,8 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
                 desired: 'start', desiredWhen: 'now', intentRevision: 0, wakeOnAcceptedMessage: false,
                 resource: { contributionRef: { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id }, schemaVersion: 1, value: { id: 'guest-1' } },
                 bootstrapCredentialRef: { kind: 'shared_resource', resourceId },
+                ...(scenario === 'registered' ? { enrolledMachineId: 'joined', observation: { observedAt: 1,
+                    availability: 'unavailable', reason: 'bootstrap.ssh_command_failed' } } : {}),
             });
             const retry = { homeId, managedId: managed.id, expectedIntentRevision: 0 };
             result = await executor.execute('machines.managed.bootstrap.retry', retry,
@@ -397,14 +405,15 @@ it.each(['pinned', 'substituted', 'browser', 'retained'] as const)('Account SSH 
             expect(managed?.enrolledMachineId).toBeUndefined();
         } else {
             expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { managedId: 'managed-1' } });
-            const fresh = scenario === 'retained' ? 0 : 1;
+            const fresh = retainedGuest ? 0 : 1;
             expect({ admissions, allocations, credentialCreations, approvals, machineRpcs, running }).toEqual({
-                admissions: fresh, allocations: fresh, credentialCreations: fresh, approvals: 1, machineRpcs: 0, running: true });
+                admissions: fresh, allocations: fresh, credentialCreations: fresh, approvals: scenario === 'registered' ? 0 : 1,
+                machineRpcs: 0, running: true });
             expect(managed?.enrolledMachineId).toBe('joined');
             expect(verifications.length).toBeGreaterThan(0);
-            if (scenario === 'retained') expect(native.trustPrompts).toBeGreaterThan(0);
+            if (retainedGuest) expect(native.trustPrompts).toBeGreaterThan(0);
             else expect(native.trustPrompts).toBe(0);
-            if (scenario === 'retained') {
+            if (retainedGuest) {
                 expect(hostPublicKey).toBe('');
                 expect(bootstrapKey).toBe('');
                 const retained = [...secretMaterials.values()];

@@ -747,10 +747,9 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
                 });
             },
             enroll: enrollment => runManagedEnrollment(params, enrollment, native),
-            complete: async row => {
-                // Only creation or the first enrollment initializes administrator
-                // and isolation policies. Enrolled guest recovery preserves stored policy.
-                if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId) {
+            complete: async (row, resumeSetup) => {
+                // Creation and setup retries initialize policy. Updates preserve it.
+                if (params.action === 'machines.managed.acquire' || !params.machine.enrolledMachineId || resumeSetup) {
                     await initializeManagedMachineEnrollmentPolicies(params.input, row, params.options);
                 }
             },
@@ -809,8 +808,8 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     try {
         const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
             supportsAgentNativeSandbox: readMachineProvisionerAgentNativeSandboxSupportV1(contribution.definition, machine.launch.choices),
-            replacePayload: params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
-            ...(params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 ? { guestCli: params.guestCli } : {}),
+            ...(params.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && !enrollmentInput.resumeSetup
+                ? { replacePayload: true, guestCli: params.guestCli } : {}),
             onInstalled: enrollmentInput.onInstalled,
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,

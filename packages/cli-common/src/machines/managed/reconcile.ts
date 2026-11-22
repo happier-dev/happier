@@ -100,6 +100,7 @@ export type ManagedReconciliationEnrollment = Readonly<{
     invoke: ManagedNativeInvocation;
     credentialRevision?: number;
     guestHostPublicKey?: string;
+    resumeSetup?: boolean;
     onInstalled(): Promise<void>;
 }>;
 export type ManagedMachineReconciliation = Readonly<{
@@ -133,7 +134,7 @@ export type ManagedMachineReconciliation = Readonly<{
         prepareTransport?(input: Pick<ManagedReconciliationEnrollment, 'machine' | 'carrier' | 'correlation' | 'guestHostPublicKey'>): Promise<void>;
         enroll(input: ManagedReconciliationEnrollment): Promise<ManagedMachineFullV1>;
         /** Finish host-owned guest policies before publishing successful enrollment. */
-        complete?(machine: ManagedMachineFullV1): Promise<void>;
+        complete?(machine: ManagedMachineFullV1, resumeSetup?: boolean): Promise<void>;
     }>;
     waitForObservation(): Promise<unknown>;
     onResource?(machine: ManagedMachineFullV1): void;
@@ -230,7 +231,7 @@ export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMac
             return await input.home.row('report', { ...input.home.correlation(machine),
                 result: absent ? { kind: 'rejected', code: 'managed_not_found' } : result,
                 observation: absent ? { ...observation, reason: observation.reason ?? 'managed_not_found' }
-                    : withManagedBootstrapObservation(machine, observation) }, null);
+                    : withManagedBootstrapObservation(machine, observation, input.provisioner) }, null);
         }
         return reportBound ? await reportBound(result)
             : await input.home.row('report', { ...input.home.correlation(machine), result }, null);
@@ -258,9 +259,17 @@ function managedNativeReadFailure(error: unknown): ProviderObservationV1 & { rea
         ...(nativeCause ? { nativeCause } : {}) };
 }
 
-/** Native Running does not confirm Happier enrollment. Keep its durable cause until enrollment settles. */
-function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observation: ProviderObservationV1): ProviderObservationV1 {
-    if (machine.enrolledMachineId || observation.availability === 'absent' || observation.reason) return observation;
+function hasUnverifiedSshService(machine: ManagedMachineFullV1, provisioner?: MachineProvisionerContributionV1): boolean {
+    const reason = machine.observation?.reason;
+    return Boolean(machine.enrolledMachineId && provisioner && !provisioner.bootstrapTransport
+        && (reason === 'bootstrap.ssh_command_failed' || reason === 'bootstrap.daemon_service_not_ready'));
+}
+
+/** Native Running does not confirm Happier enrollment or SSH user-service readiness. */
+function withManagedBootstrapObservation(machine: ManagedMachineFullV1, observation: ProviderObservationV1,
+    provisioner?: MachineProvisionerContributionV1): ProviderObservationV1 {
+    if (observation.availability === 'absent'
+        || ((machine.enrolledMachineId || observation.reason) && !hasUnverifiedSshService(machine, provisioner))) return observation;
     const retained = machine.observation?.reason?.startsWith('bootstrap.') ? machine.observation : undefined;
     if (!retained && (observation.availability !== 'present' || observation.power !== 'running')) return observation;
     return { ...observation, reason: retained?.reason ?? 'bootstrap.incomplete',
@@ -316,9 +325,9 @@ export async function inspectManagedMachine(input: Pick<ManagedMachineReconcilia
         outstanding: machine.submittedNativeEffect });
     const observation = ProviderObservationV1Schema.parse(await input.invoke('inspect', { resource: machine.resource.value }));
     if (machine.enrolledMachineId && machine.observation?.reason?.startsWith('bootstrap.')
-        && observation.availability === 'present') await input.complete?.(machine);
+        && observation.availability === 'present' && !hasUnverifiedSshService(machine, provisioner)) await input.complete?.(machine);
     return await input.home.row('report', { ...input.home.correlation(machine), result: { kind: 'bound', resource: machine.resource },
-        observation: withManagedBootstrapObservation(machine, observation) });
+        observation: withManagedBootstrapObservation(machine, observation, provisioner) });
 }
 
 /** Finite managed work is admitted by Home; the invoking host owns local cancellation. */
@@ -333,7 +342,11 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     let startPending = false;
     const provisioner = input.provisioner;
     if (machine.creationState !== 'active' || machine.allocation === 'confirmed-absent') return machine;
-    if (machine.enrolledMachineId && input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && !provisioner?.bootstrapTransport) {
+    // Home can register the Machine before the guest service and creation policies finish.
+    const retry = input.action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1;
+    const resumeSetup = retry && hasUnverifiedSshService(machine, provisioner);
+    const unverifiedServiceReason = resumeSetup ? machine.observation?.reason : undefined;
+    if (machine.enrolledMachineId && retry && !resumeSetup && !provisioner?.bootstrapTransport) {
         throw new ManagedMachineControllerError(provisioner ? 'guest_update_not_supported' : 'provider_unavailable');
     }
     if (machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) {
@@ -361,9 +374,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     if (machine.enrolledMachineId && input.action === 'machines.managed.acquire') {
         if (!machine.resource) return machine;
         const observation = ProviderObservationV1Schema.parse(await invoke('inspect', { resource: machine.resource.value }));
-        if (observation.availability === 'present') await input.bootstrap.complete?.(machine);
+        if (observation.availability === 'present' && !hasUnverifiedSshService(machine, provisioner)) await input.bootstrap.complete?.(machine);
         return await input.home.row('report', { ...input.home.correlation(machine), result: { kind: 'bound', resource: machine.resource },
-            observation: withManagedBootstrapObservation(machine, observation) });
+            observation: withManagedBootstrapObservation(machine, observation, provisioner) });
     }
     if (machine.allocation === 'unsubmitted') {
         if (input.acquisitionMode !== 'resource-bound') await input.bootstrap.preflight();
@@ -478,11 +491,11 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                         ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
                     return machine;
                 }
-                if (!machine.enrolledMachineId || carrier.kind === 'native') {
+                if (!machine.enrolledMachineId || carrier.kind === 'native' || resumeSetup) {
                     const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
                     const homeCorrelation = input.home.projectEnrollmentCorrelation(machine, correlation);
                     if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', homeCorrelation);
-                    machine = await input.bootstrap.enroll({ machine, carrier, correlation, homeCorrelation, invoke, credentialRevision,
+                    machine = await input.bootstrap.enroll({ machine, carrier, correlation, homeCorrelation, invoke, credentialRevision, resumeSetup,
                         onInstalled: async () => {
                             if (machine.bootstrapInstalled) return;
                             machine = await input.home.row('report', { ...input.home.correlation(machine),
@@ -490,7 +503,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                         },
                         ...(credential?.guestHostPublicKey === undefined ? {} : { guestHostPublicKey: credential.guestHostPublicKey }) });
                 }
-                await input.bootstrap.complete?.(machine);
+                await input.bootstrap.complete?.(machine, resumeSetup);
                 // Enrollment establishes the guest identity; the provider owns
                 // power and storage. Publish those facts before Create settles.
                 let observation: ProviderObservationV1;
@@ -535,7 +548,7 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             && error.details?.kind === 'managedGuestHome' ? error.details.carrierFailure : undefined;
         const retained = await input.home.row('report', { ...input.home.correlation(machine),
             result: { kind: 'bound', resource: machine.resource },
-            observation: { observedAt: Date.now(), availability: 'unavailable', reason: `bootstrap.${code}`,
+            observation: { observedAt: Date.now(), availability: 'unavailable', reason: unverifiedServiceReason ?? `bootstrap.${code}`,
                 ...(nativeCause ? { nativeCause } : {}), ...(carrierFailure ? { carrierFailure } : {}) } }, null);
         if (input.settleBootstrapFailure && retained.creationState === 'active' && retained.allocation === 'bound'
             && !input.signal?.aborted) return input.settleBootstrapFailure(retained);

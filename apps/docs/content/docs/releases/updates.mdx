@@ -58,6 +58,8 @@ select the newest signed public CLI on their
 release line, such as `0.3.x`, and channel, then install that exact version. Stable
 Homes use stable releases; preview and dev Homes use only their own channel.
 Updates refuse to cross release lines or replace an installed CLI with an older version.
+If initial setup failed after an SSH guest registered, Retry resumes service setup
+on the same guest using its installed CLI and existing enrollment.
 If a development Home's guest payload is unavailable, choose a connected
 controller with that payload, then retry. An older Home that does not advertise
 its guest CLI source must be updated before managed installation can continue.

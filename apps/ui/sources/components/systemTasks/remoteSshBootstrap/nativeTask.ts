@@ -71,6 +71,7 @@ export type RunNativeRemoteSshBootstrapTaskParams = Readonly<{
     prepareDedicatedBootstrap?: NonNullable<Parameters<typeof installRemoteCli>[0]['bootstrap']>['prepareManagedBootstrap'];
     assertManagedEnrollmentCurrent?: RemoteSshBootstrapMachineOptions['assertManagedEnrollmentCurrent'];
     onEnrollmentDeadline?: RemoteSshBootstrapMachineOptions['onEnrollmentDeadline'];
+    resumeMachineId?: RemoteSshBootstrapMachineOptions['resumeMachineId'];
     onInstalled?: () => Promise<void>;
     resolveInstallPlan?: (params: Readonly<{
         channel: 'stable' | 'preview' | 'publicdev';
@@ -453,6 +454,7 @@ export async function runNativeRemoteSshBootstrapTask(
         reviewedChild: params.reviewedChild,
         assertManagedEnrollmentCurrent: params.assertManagedEnrollmentCurrent,
         onEnrollmentDeadline: params.onEnrollmentDeadline,
+        resumeMachineId: params.resumeMachineId,
         resolveHostTrust: async ({ ssh }) => {
             const fingerprintSha256 = resolveSshBootstrapHostKeyPin(ssh);
             hostKeyDecision = fingerprintSha256 ? { decision: 'accept-once', fingerprintSha256 } : undefined;
@@ -517,7 +519,7 @@ export async function runNativeRemoteSshBootstrapTask(
                 credentials: params.approvalCredentials,
             });
         },
-        runRemoteCommand: async ({ label, data }) => {
+        runRemoteCommand: async ({ label, data, timeoutMs }) => {
             const localServerUrl = typeof data?.localServerUrl === 'string' ? data.localServerUrl.trim() : '';
             const output = await commandRunner.runJsonCommand({
                 nativeModule: params.nativeModule!,
@@ -540,7 +542,8 @@ export async function runNativeRemoteSshBootstrapTask(
                 }),
                 signal: params.signal,
                 requestIdPrefix: params.taskId,
-                ...(label === 'relay.runtime.install' ? { execTimeoutMs: 600_000 } : {}),
+                ...(label === 'relay.runtime.install' ? { execTimeoutMs: 600_000 }
+                    : timeoutMs != null ? { execTimeoutMs: timeoutMs } : {}),
             });
             return normalizeNativeRemoteCommandResult(output, label);
         },

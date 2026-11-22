@@ -456,6 +456,12 @@ same-line, same-channel signed release without a running guest daemon. The
 standalone `self update` command retains its installed-channel contract; it is
 not an automatic Home-aware managed-guest upgrader.
 
+On a managed SSH guest, service verification runs `happier daemon status --json`
+under the admitted guest account. The SSH call uses the setup operation's
+remaining readiness budget. If setup failed after Home registered the Machine,
+Retry confirms the saved Home and Machine identity, then completes and verifies
+the existing guest service with the installed payload.
+
 HTTP 200 from `/health` or `/v1/features` proves that the route responds, not
 that the CLI can decode the Home protocol. The Home identity readiness owner
 preserves `HOME_FEATURES_UNREADABLE` and `HOME_FEATURES_ENDPOINT_MISSING` through

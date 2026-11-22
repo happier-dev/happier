@@ -439,8 +439,8 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                 },
                 prepareCredential: credential.prepare,
                 readCredential: credential.read,
-                complete: async row => {
-                    if ('selection' in params.input || !machine.enrolledMachineId) {
+                complete: async (row, resumeSetup) => {
+                    if ('selection' in params.input || !machine.enrolledMachineId || resumeSetup) {
                         await completeUiManagedAccountGuest({ ...params,
                             input: 'selection' in params.input ? params.input : {}, machine: row,
                             ...(normalizer ? { normalizer } : {}) });
@@ -452,7 +452,7 @@ normalizer?: UiManagedAccountMachineNormalizer) {
                     }
                     const target = await params.account.resolveHomeTarget();
                     await runUiManagedMachineEnrollment({
-                        replacePayload: action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1,
+                        replacePayload: action === MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 && !enrollment.resumeSetup,
                         ...(params.retryGuestCli ? { guestCli: params.retryGuestCli } : {}),
                         correlation: enrollment.correlation, homeCorrelation: enrollment.homeCorrelation,
                         carrier: enrollment.carrier, target,
