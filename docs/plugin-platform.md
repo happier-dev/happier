@@ -13052,6 +13052,12 @@ In 0.3 development, daemon preparation evaluates a code-defined plugin once and
 passes that canonical manifest to the managed UI compiler through a temporary
 manifest input. The author root needs no emitted `plugin.json`; artifact paths
 still resolve against that root. Cold-manifest builds keep their existing input.
+
+For an external development Agent, the daemon catalog and the Session runner
+both use the accepted declaration from the committed installation revision. The
+runner checks the registered source, plugin version, and Agent identity before
+loading the admitted factory from the development root.
+
 Selecting a development source enters that preparation directly. The ordinary
 installation review owns approval of the evaluated candidate and its declared
 access; there is no separate permission to evaluate trusted plugin code.

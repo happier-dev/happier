@@ -14,6 +14,7 @@ import { resolvePublishedPinnedRunnerSnapshotById } from '@happier-dev/cli-commo
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '../projection/registry/sources/generatedBundledPluginManifests';
 import { readPluginManifest, readAdmittedGenerationNpmPackageName } from '../manifest/read';
 import { ingestCanonicalPluginManifest } from '../manifest/ingest';
+import { resolveInstalledPluginSource } from '../discovery/sources/resolve';
 import { readBundledPluginManifestInput } from '../projection/registry/builtIn/manifestFile';
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 import type { CanonicalPluginManifest } from '../manifest/types';
@@ -21,8 +22,10 @@ import type { PluginStorePaths } from '../store/paths';
 import type { AgentSessionRunnerBindingV1 } from './runner/agentSessionRunnerFactoryBinding';
 import { createAgentSessionRunnerFactoryBinding } from './runner/agentSessionRunnerFactoryBinding';
 import { readRetainedBundledAgentFactory } from './retainedBundledAgentFactory';
+import { readPluginRegistryCommitRecord } from '../store/registry/commitRecord';
 import {
     assertContainedRegularGenerationFile,
+    readPluginRegistryCommitInstallationAuthority,
     readPreparedImmutablePluginGeneration,
 } from '../store/registry/generationStore';
 
@@ -30,6 +33,28 @@ export type RetainedBundledPluginRoot = Readonly<{
     rootPath: string;
     cacheIdentity: string;
 }>;
+
+/** Reads the same accepted declaration that installed discovery gives the daemon. */
+export async function readRetainedExternalDevelopmentSource(params: Readonly<{
+    paths: PluginStorePaths;
+    pluginId: string;
+    registeredRootId: string;
+}>) {
+    const commit = await readPluginRegistryCommitRecord(params.paths);
+    const revision = commit && await readPluginRegistryCommitInstallationAuthority(params.paths, commit);
+    const record = revision?.runtimeCatalog?.plugins[params.pluginId];
+    if (record?.source.kind !== 'path'
+        || record.source.devWatch !== true
+        || record.source.trustPolicy !== 'local_trusted'
+        || record.source.locator !== params.registeredRootId) {
+        return null;
+    }
+    const source = await resolveInstalledPluginSource({
+        record,
+        approvedAuthorityManifest: revision?.plugins[params.pluginId]?.approvedAuthorityManifest,
+    });
+    return source.ok ? source : null;
+}
 
 /** Source-mode first-party declarations belong to the runner's tracked CLI assets. */
 export function readRetainedFirstPartyDevelopmentManifest(params: Readonly<{ pluginId: string; runtimeRoot?: string }>): CanonicalPluginManifest {

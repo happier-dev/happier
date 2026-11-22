@@ -19,6 +19,7 @@ import { createAcpSessionRuntimeContextFixture } from '@/agent/acp/testkit/runti
 import { createPublicAcpRuntimeProtocols } from '@/agent/acp/runtime/publicSession/createPublicAcpRuntimeProtocols';
 import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/services/unavailable';
 import { resolvePluginStorePaths } from '../../store/paths';
+import { approveSourceInPlacePluginFixture } from '../../store/registry/currentState.testkit';
 import {
   createPluginManifestV2Fixture,
 } from '../../testkit/manifestV2Fixture';
@@ -287,40 +288,38 @@ async function prepareDevelopmentFactory(input: Readonly<{
   const pluginId = input.pluginId ?? 'acme.development-runner';
   const localAgentId = 'fixture';
   const paths = resolvePluginStorePaths({ happyHomeDir: input.happyHomeDir });
-  await mkdir(join(input.sourceRootPath, '.happier-plugin'), {
-    recursive: true,
-  });
+  const pluginRoot = await realpath(input.sourceRootPath);
   await mkdir(join(input.sourceRootPath, 'agent', 'runtime'), {
     recursive: true,
   });
-  await writeFile(
-    join(input.sourceRootPath, '.happier-plugin', 'plugin.json'),
-    JSON.stringify(createPluginManifestV2Fixture({
-      id: pluginId,
-      contributes: {
-        agents: [{
-          id: localAgentId,
-          title: 'Development fixture',
-          runtime: { kind: 'custom' },
-          primary: 'sessions',
-          capabilities: {
-            sessions: {
-              open: ['create'],
-              delivery: ['newTurn'],
-              cancel: true,
-            },
+  const manifestPath = join(pluginRoot, 'index.mjs');
+  const manifest = createPluginManifestV2Fixture({
+    id: pluginId,
+    entrypoints: { daemon: './dist/index.js', development: './index.mjs' },
+    contributes: {
+      agents: [{
+        id: localAgentId,
+        title: 'Development fixture',
+        runtime: { kind: 'custom' },
+        primary: 'sessions',
+        capabilities: {
+          sessions: {
+            open: ['create'],
+            delivery: ['newTurn'],
+            cancel: true,
           },
-        }],
-      },
-    })),
-    'utf8',
-  );
+        },
+      }],
+    },
+  });
+  await writeFile(manifestPath, `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
   await writeFile(
     join(input.sourceRootPath, 'agent', 'runtime', 'factory.mjs'),
     input.moduleBytes
       ?? 'export function createFixtureAgentRuntime() { return { sessions: { open() {} } }; }',
     'utf8',
   );
+  await approveSourceInPlacePluginFixture({ happyHomeDir: input.happyHomeDir, pluginRoot, manifestPath, manifest });
   return {
     paths,
     binding: createAgentSessionRunnerFactoryBinding({
@@ -331,7 +330,7 @@ async function prepareDevelopmentFactory(input: Readonly<{
       localAgentId,
       sourceCustody: {
         kind: 'development',
-        registeredRootId: await realpath(input.sourceRootPath),
+        registeredRootId: pluginRoot,
       },
       locator: {
         module: './agent/runtime/factory',
@@ -846,7 +845,7 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
     }
   });
 
-  it('opens a daemon-attested current development Agent factory without a copied generation', async () => {
+  it('opens a daemon-attested code-first development Agent without a generated manifest', async () => {
     const happyHomeDir = await mkdtemp(
       join(tmpdir(), 'happier-runner-development-home-'),
     );
@@ -864,6 +863,11 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         binding: fixture.binding,
         developmentOccurrenceId: 'occurrence:development-runner:1',
       })).resolves.toEqual({ factory: expect.any(Function), catalogEntry: expect.any(Object), dispose: expect.any(Function) });
+      await expect(loadRetainedAgentRuntimeLeaf({
+        paths: fixture.paths,
+        binding: createAgentSessionRunnerFactoryBinding({ ...fixture.binding, pluginVersion: '2.0.0' }),
+        developmentOccurrenceId: 'occurrence:development-runner:1',
+      })).rejects.toThrow('immutable declaration source mismatch');
     } finally {
       await rm(happyHomeDir, { recursive: true, force: true });
       await rm(sourceRootPath, { recursive: true, force: true });
@@ -1677,6 +1681,7 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
       join(tmpdir(), 'happier-external-runner-source-'),
     );
     try {
+      const packageName = '@acme/happier-agent-fixture';
       const moduleBytes =
         'export function createFixtureAgentRuntime() { return { sessions: { open() { throw new Error(\"unused\"); } } }; }';
       const fixture = await prepareRetainedFactory({
@@ -1694,8 +1699,9 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         distribution: {
           kind: 'npm',
           registryOrigin: 'https://registry.example.test',
-          packageName: '@acme/happier-agent-fixture',
+          packageName,
         },
+        additionalFiles: { 'package.json': JSON.stringify({ name: packageName, version: '1.0.0' }) },
         // No declared engine range, so the reserved namespace is the only
         // registry-lifecycle rule that can reject this manifest.
         manifestEngines: {},

@@ -22,6 +22,7 @@ import type {
 import type {
     RunnerManagedProviderCustodyClaimV1,
 } from '@/agent/runtime/session/process/runnerManagedServicesCustody';
+import { approveSourceInPlacePluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import {
     createManagedServiceEndpointProjectionV1,
     type ManagedServiceEndpointProjectionInputV1,
@@ -299,15 +300,10 @@ async function prepareDevelopmentRetainedAgentFixture() {
             }],
         },
     });
-    await mkdir(join(sourceRootPath, '.happier-plugin'), {
-        recursive: true,
-    });
     await mkdir(join(sourceRootPath, 'agent'), { recursive: true });
-    await writeFile(
-        join(sourceRootPath, '.happier-plugin', 'plugin.json'),
-        JSON.stringify(manifest),
-        'utf8',
-    );
+    const manifestPath = join(sourceRootPath, 'index.mjs');
+    await writeFile(manifestPath, `export const manifest = ${JSON.stringify(manifest)};\nexport function activate() {}\n`);
+    await approveSourceInPlacePluginFixture({ happyHomeDir, pluginRoot: sourceRootPath, manifestPath, manifest });
     await writeFile(
         join(sourceRootPath, 'agent', 'runtime.mjs'),
         'export function createRuntime() { throw new Error("unused"); }',

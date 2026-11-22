@@ -15,8 +15,10 @@ import type { DaemonState } from '@/api/types';
 import { createDaemonPluginRegistryProjectionInvalidation } from '@/daemon/pluginRegistryProjectionInvalidation';
 
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { loadRetainedAgentRuntimeLeaf } from '@/plugins/runtime/runner/loadRetainedAgentRuntimeLeaf';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createPluginReloadController } from '@/plugins/runtime/reload/controller';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createPluginRegistryStateStore } from '@/plugins/store/registry/currentState';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { createDaemonPluginRegistryRuntimeLifecycle } from '@/plugins/runtime/reload/registryRuntimeLifecycle';
@@ -146,6 +148,56 @@ it('publishes a daemon projection revision for a process-local development repla
     await expect(invoke()).resolves.toMatchObject({ status: 'executed', value: { revision: 2 } });
     expect(projection.readRevision()).toBe(revisionBeforeReload + 1);
     expect(publications).toHaveLength(publicationsBeforeReload + 1);
+  } finally {
+    await runtime.dispose();
+    await rm(root, { recursive: true, force: true });
+  }
+}, 120_000);
+
+it('opens a runner factory for a code-first Agent admitted by the daemon', async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-agent-')));
+  const entryPath = join(root, 'plugin.ts');
+  const pluginId = 'acme.development-agent';
+  const localAgentId = 'native';
+  const agentId = `${pluginId}/${localAgentId}`;
+  const runtime = createRuntime(root, pluginId);
+  const manifest = createPluginManifestV2Fixture({ id: pluginId, entrypoints: undefined,
+    contributes: { agents: [{ id: localAgentId, title: 'Native fixture', runtime: { kind: 'custom' }, primary: 'sessions',
+      capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } }] },
+  });
+  try {
+    await writeFile(join(root, 'factory.ts'), 'export function createRuntime() { return { sessions: { open() {} } }; }');
+    await writeFile(entryPath, [
+      "import { createRuntime } from './factory';",
+      `export const manifest = ${JSON.stringify(manifest)};`,
+      'export function activate(api) {',
+      `  api.agents.register(${JSON.stringify(localAgentId)}, createRuntime, {`,
+      "    sessionRunnerFactory: { module: './factory', export: 'createRuntime', runtimeApiVersion: 1 },",
+      '  });',
+      '}',
+    ].join('\n'));
+    const initial = await runtime.reloadController.acquireRuntimeRegistry();
+    await initial.release();
+    await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: entryPath });
+    const pending = (await runtime.owner.changeService.listPendingPluginChanges()).changes[0]!;
+    await expect(runtime.owner.changeService.decidePluginChange({
+      pendingChangeId: pending.pendingChangeId, decision: 'installAndTrust',
+    })).resolves.toMatchObject({ kind: 'committed', pluginId });
+    const registry = runtime.reloadController.getState().activeRegistry!;
+    await registry.activateContributionsOnDemand([{ pluginId, family: 'agents', localId: localAgentId }]);
+    const binding = registry.agentRuntimesByAgentId.get(agentId)?.sessionRunnerFactoryBinding;
+    const developmentOccurrenceId = registry.readPluginOccurrenceId?.(pluginId);
+    if (!binding || !developmentOccurrenceId) throw new Error('The daemon did not admit the development Agent');
+    expect(binding.sourceCustody).toEqual({ kind: 'development', registeredRootId: entryPath });
+    const leaf = await loadRetainedAgentRuntimeLeaf({ paths: resolvePluginStorePaths({ happyHomeDir: root }),
+      binding, developmentOccurrenceId });
+    try {
+      const agent = await leaf.factory({ plugin: { id: pluginId, version: binding.pluginVersion },
+        agent: { id: localAgentId }, signal: new AbortController().signal });
+      expect(agent.sessions?.open).toBeTypeOf('function');
+    } finally {
+      await leaf.dispose();
+    }
   } finally {
     await runtime.dispose();
     await rm(root, { recursive: true, force: true });

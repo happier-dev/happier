@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
+import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+
 import {
   createLocalPathPluginDistributionIdentity,
   createPluginTrustRecord,
@@ -49,6 +51,46 @@ export const PREDECESSOR_PLUGIN_REGISTRY_COMMIT_RECORD_BYTES = `{
     "instanceId": "plugin-registry-5151-0f34860e-cc17-4912-b415-e4d3abbfae88"
   }
 }`;
+
+export async function approveSourceInPlacePluginFixture(input: Readonly<{
+  happyHomeDir: string;
+  pluginRoot: string;
+  manifestPath: string;
+  manifest: unknown;
+}>): Promise<void> {
+  const manifest = PluginManifestV2Schema.parse(input.manifest);
+  const distribution = await createLocalPathPluginDistributionIdentity(input.pluginRoot);
+  const trust = createPluginTrustRecord({ pluginId: manifest.id, distribution, approvedAtMs: 1 });
+  const store = createPluginRegistryStateStore({
+    happyHomeDir: input.happyHomeDir,
+    // The fixture commits the real admission without an attached daemon.
+    runtimeLifecycle: { prepare: async () => ({ abort: async () => {}, adopt: async () => ({}) }) },
+  });
+  await store.initialize();
+  const result = await store.approveDevelopmentAuthorityWithResult({
+    pluginId: manifest.id,
+    expectedRevision: (await store.readSnapshot()).revision,
+    approvedAuthorityManifest: manifest,
+    trust,
+    updatePolicy: 'allowed',
+    optionalAccess: [],
+    catalogRecord: PluginStateRecordSchema.parse({
+      source: {
+        kind: 'path',
+        locator: input.pluginRoot,
+        resolvedPath: input.pluginRoot,
+        manifestPath: input.manifestPath,
+        trustPolicy: 'local_trusted',
+        installPolicy: 'link',
+        devWatch: true,
+      },
+      compatibility: { status: 'compatible', diagnostics: [] },
+      install: { mode: 'link', manifestVersion: manifest.version, installedPath: null },
+      state: { enabled: true },
+    }),
+  });
+  if (result?.transaction.status !== 'committed') throw new Error('Development fixture admission was not committed');
+}
 
 /**
  * Seeds the current durable registry for process-boundary tests that start the

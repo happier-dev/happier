@@ -13,7 +13,7 @@ import {
 } from '@/agent/acp/runtime/definition/plugin';
 
 import type { PluginStorePaths } from '../../store/paths';
-import { readPluginManifest } from '../../manifest/read';
+import type { CanonicalPluginManifest } from '../../manifest/types';
 import {
     resolveAgentContributionQualifiedId,
     resolveContributedAgentRoutingId,
@@ -42,6 +42,7 @@ import {
 } from './createHostDeclarativeAcpAgentRuntimeFactory';
 import {
     attestRetainedPluginSource,
+    readRetainedExternalDevelopmentSource,
     readRetainedFirstPartyDevelopmentManifest,
     resolveRetainedFirstPartyDevelopmentRoot,
     resolveRetainedBundledPluginRoot,
@@ -352,17 +353,9 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
     rootPath: string;
     cacheIdentity: string;
     assertStillAvailable(): Promise<void>;
-    manifest: Extract<
-        Awaited<ReturnType<typeof readPluginManifest>>,
-        Readonly<{ ok: true }>
-    >['manifest'];
+    manifest: CanonicalPluginManifest;
     manifestAuthority: 'external' | 'bundled_first_party';
-    declaredAgent: NonNullable<
-        Extract<
-            Awaited<ReturnType<typeof readPluginManifest>>,
-            Readonly<{ ok: true }>
-        >['manifest']['contributes']['agents'][number]
-    >;
+    declaredAgent: CanonicalPluginManifest['contributes']['agents'][number];
 } & (
     | Readonly<{
         bindingKind: 'plugin_factory_v1';
@@ -404,18 +397,17 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
     const developmentCustody = binding.sourceCustody.kind === 'development'
         ? binding.sourceCustody
         : null;
-    const developmentRoot = developmentCustody
+    const developmentLocator = developmentCustody
         ? await realpath(developmentCustody.registeredRootId)
         : null;
     if (
-        developmentRoot
-        && developmentRoot !== developmentCustody?.registeredRootId
+        developmentLocator
+        && developmentLocator !== developmentCustody?.registeredRootId
     ) {
         throw new Error(
             'Runner development source custody no longer names its canonical registered root',
         );
     }
-    const rootPath = retainedSource?.rootPath ?? developmentRoot!;
     const validated = generation
         ? await readOptionalValidatedRunnerFactories({
             paths: params.paths,
@@ -425,8 +417,8 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
     const hostDeclarativeAcpBinding = 'kind' in binding;
     const manifestAuthority = retainedSource?.manifestAuthority
         ?? validated?.manifestAuthority
-        ?? (developmentRoot
-            ? await readDevelopmentManifestAuthority(binding.pluginId, developmentRoot)
+        ?? (developmentLocator
+            ? await readDevelopmentManifestAuthority(binding.pluginId, developmentLocator)
             : 'external' as const);
     if (!manifestAuthority) {
         throw new Error(
@@ -448,26 +440,23 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             'Host declarative ACP runner binding conflicts with a plugin factory',
         );
     }
-    const manifest = retainedSource
-        ? Object.freeze({ ok: true as const, manifest: retainedSource.manifest })
-        : developmentRoot && manifestAuthority === 'bundled_first_party'
-            ? { ok: true as const, manifest: readRetainedFirstPartyDevelopmentManifest({ pluginId: binding.pluginId }) }
-        : await readPluginManifest({
-            purpose: 'installedRead',
-            manifestPath: join(rootPath, '.happier-plugin', 'plugin.json'),
-            manifestAuthority,
-            sourceProvenance: 'localSource',
-        });
-    const declaredAgent = manifest.ok
-        ? manifest.manifest.contributes.agents.find(
-            (candidate) => candidate.id
-                === binding.localAgentId,
-        )
-        : undefined;
+    const externalDevelopmentSource = !retainedSource && developmentLocator && manifestAuthority === 'external'
+        ? await readRetainedExternalDevelopmentSource({
+            paths: params.paths,
+            pluginId: binding.pluginId,
+            registeredRootId: developmentLocator,
+        })
+        : null;
+    const rootPath = retainedSource?.rootPath ?? externalDevelopmentSource?.pluginRootPath ?? developmentLocator!;
+    const manifest = retainedSource?.manifest ?? externalDevelopmentSource?.manifest
+        ?? (developmentLocator && manifestAuthority === 'bundled_first_party'
+            ? readRetainedFirstPartyDevelopmentManifest({ pluginId: binding.pluginId })
+            : null);
+    const declaredAgent = manifest?.contributes.agents.find((candidate) => candidate.id === binding.localAgentId);
     if (
-        !manifest.ok
-        || manifest.manifest.id !== binding.pluginId
-        || manifest.manifest.version !== binding.pluginVersion
+        !manifest
+        || manifest.id !== binding.pluginId
+        || manifest.version !== binding.pluginVersion
         || !declaredAgent
     ) {
         throw new Error(
@@ -494,14 +483,14 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             // construction. `pluginId` + `localAgentId` carry the durable
             // identity in structured form alongside both spellings.
             agentId: resolveContributedAgentRoutingId({
-                pluginId: manifest.manifest.id,
+                pluginId: manifest.id,
                 localId: declaredAgent.id,
                 provenance: manifestAuthority === 'bundled_first_party'
                     ? 'first_party'
                     : 'external',
             }),
             qualifiedAgentId: resolveAgentContributionQualifiedId({
-                pluginId: manifest.manifest.id,
+                pluginId: manifest.id,
                 localId: declaredAgent.id,
             }),
             localAgentId: declaredAgent.id,
@@ -509,8 +498,8 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
         const expectedBinding = createHostDeclarativeAcpRunnerBinding({
             kind: 'host_declarative_acp_v1',
             v: 1,
-            pluginId: manifest.manifest.id,
-            pluginVersion: manifest.manifest.version,
+            pluginId: manifest.id,
+            pluginVersion: manifest.version,
             ...expectedAgentIdentity,
             sourceCustody: binding.sourceCustody,
         });
@@ -533,19 +522,19 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
                 }
                 if (
                     binding.sourceCustody.kind !== 'development'
-                    || await realpath(binding.sourceCustody.registeredRootId) !== rootPath
+                    || await realpath(binding.sourceCustody.registeredRootId) !== developmentLocator
                 ) {
                     throw new Error('Runner development source custody changed during attestation');
                 }
             },
-            manifest: manifest.manifest,
+            manifest,
             manifestAuthority,
             declaredAgent,
             runtime,
         });
     }
     const fact = binding.sourceCustody.kind === 'bundled_first_party'
-        ? readRetainedBundledAgentFactory(manifest.manifest, binding.localAgentId)
+        ? readRetainedBundledAgentFactory(manifest, binding.localAgentId)
         : validated?.factories.find(
         (candidate) => candidate.localAgentId === binding.localAgentId,
     ) ?? (binding.sourceCustody.kind === 'development'
@@ -591,13 +580,13 @@ export async function verifyRunnerAgentBindingAgainstGeneration(
             }
             if (
                 binding.sourceCustody.kind !== 'development'
-                || await realpath(binding.sourceCustody.registeredRootId) !== rootPath
+                || await realpath(binding.sourceCustody.registeredRootId) !== developmentLocator
             ) {
                 throw new Error('Runner development source custody changed during attestation');
             }
         },
         fact,
-        manifest: manifest.manifest,
+        manifest,
         manifestAuthority,
         declaredAgent,
     });
