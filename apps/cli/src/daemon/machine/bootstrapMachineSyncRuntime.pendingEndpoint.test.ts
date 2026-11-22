@@ -103,6 +103,11 @@ describe('Pending recovery after Machine endpoint publication', () => {
         // No unrelated HTTP read, transfer ACK or dead-runner settlement may
         // precede the broker's first endpoint publication on a connected Machine.
         expect(endpointWrites).toBe(1);
+        if (heldBoundary === 'automation-read') {
+          // Transfer clients need the Machine capability advertisement even
+          // while the separate Automation worker is waiting for its assignments.
+          await vi.waitFor(() => expect(publishedTransferOnSocket).toBe(connectedSocket));
+        }
         if (entry === 'reconnect') {
           connectedSocket = 2;
           reconnecting = Promise.resolve(onConnect());

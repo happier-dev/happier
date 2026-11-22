@@ -5939,8 +5939,9 @@ controller wake retains its power-activation purpose; it does not deliver work
 to an ordinary Machine's claim loop.
 
 Machine startup, reconnect and publication resume request authoritative work
-catch-up through that same worker claim loop before unrelated peer/metadata
-publications. Changes-feed recovery delivers one work invalidation per consumed
+catch-up through that same worker claim loop. Machine endpoint, metadata and
+transfer capability publication and orphan settlement can proceed while the
+worker catches up. Changes-feed recovery delivers one work invalidation per consumed
 Automation or Workflow Run batch, including cursor resync and an accepted prefix
 before a later-page failure, before acknowledging its cursor. Broad settings,
 provider and webhook invalidations do not request claims. A later real work batch

@@ -2404,10 +2404,8 @@ export async function bootstrapMachineSyncRuntime(
       await Promise.all([
         endpointPublication,
         refreshMachineMetadataPublication(),
-        (async () => {
-          await catchUpAutomationWorkAfterConnect();
-          await refreshMachineConnectionPublications();
-        })(),
+        catchUpAutomationWorkAfterConnect(),
+        refreshMachineConnectionPublications(),
       ]);
       if (params.isShuttingDown()) return;
       await Promise.all([
@@ -2437,10 +2435,8 @@ export async function bootstrapMachineSyncRuntime(
         refreshMachineMetadataPublication(),
         // Local Pending admission owns target and runner readiness. Unrelated
         // Automation and Machine publications must not hold requester recovery.
-        (async () => {
-          await catchUpAutomationWorkAfterConnect();
-          await refreshMachineConnectionPublications();
-        })(),
+        catchUpAutomationWorkAfterConnect(),
+        refreshMachineConnectionPublications(),
         pendingRecovery,
         params.dispatchSessionFollowOccurrence?.({ accountFollowSourcesChanged: {} }).catch(error => {
           logger.warn('[DAEMON RUN] Personal Run Follow reconnect read remains pending', serializeAxiosErrorForLog(error));
