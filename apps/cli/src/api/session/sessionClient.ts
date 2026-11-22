@@ -1133,7 +1133,7 @@ export class ApiSessionClient extends EventEmitter {
         // Runtime-activity authority must exist before producer/RPC composition registers its
         // immutable expected owners. Registering producers first silently returned null and left
         // an authorized v2 session with no execution-run owner.
-        this.userSocket = createUserScopedSocket({ token: this.token });
+        this.userSocket = createUserScopedSocket({ token: this.token, sessionUpdateInterest: this.sessionId });
         this.sessionMutationOutbox = createSessionMutationOutbox({
             token: this.token,
             sessionId: this.sessionId,

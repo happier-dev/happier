@@ -1619,6 +1619,7 @@ export {
 export { applyInstallablePolicyOverride, resolveInstallablePolicy, type InstallablePolicyOverride } from './installablesPolicy.js';
 export { SOCKET_RPC_EVENTS, type SocketRpcEvent } from './socketRpc.js';
 export type { SocketRpcTargetFailureV1 } from './socketRpc.js';
+export { SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD } from './socketSessionUpdateInterest.js';
 export * from './tools/structuredQuestionAnswersV1.js';
 export {
   ChangeEntrySchema,

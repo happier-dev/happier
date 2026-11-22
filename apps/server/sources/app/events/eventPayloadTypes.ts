@@ -25,6 +25,7 @@ export interface UserScopedConnection {
     connectionType: 'user-scoped';
     socket: Socket;
     userId: string;
+    sessionUpdateInterest?: string;
 }
 
 export interface MachineScopedConnection {
