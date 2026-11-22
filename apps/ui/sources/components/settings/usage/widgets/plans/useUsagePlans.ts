@@ -22,6 +22,7 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import type { QualifiedConnectedAccountGroupV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { selectConnectedMetadataLabels, useConnectedMetadataCatalog } from '@/hooks/server/connectedServices/useConnectedMetadataCatalog';
 import { t } from '@/text';
+import { isUsageQuotaOwnershipUnproven } from '../usageBodyKit';
 import {
   projectUsagePlans,
   type UsagePlanAccount,
@@ -218,8 +219,10 @@ export type UsagePoolSelectionState =
  */
 export function useUsagePoolSelections(
   slice: UsageQueryResultSlice,
-): ReadonlyMap<string, UsagePoolSelectionState> {
-  return React.useMemo(() => new Map<string, UsagePoolSelectionState>((slice.pools ?? []).map(pool => {
+  accounts: readonly UsagePlanAccount[],
+): ReadonlyMap<string, UsagePoolSelectionState> | null {
+  const orderHeldBack = accounts.length > 0 && accounts.every(account => isUsageQuotaOwnershipUnproven(account.state));
+  return React.useMemo(() => orderHeldBack ? null : new Map<string, UsagePoolSelectionState>((slice.pools ?? []).map(pool => {
     const key = `${pool.group.service.pluginId}/${pool.group.service.localId}:${pool.group.groupId}`;
     const selection = pool.selection;
     const state = (selection.value && 'selection' in selection.value
@@ -237,5 +240,5 @@ export function useUsagePoolSelections(
         ? 'all_excluded' : decisionTrace.candidates.length === 0 && excluded.length === 0 ? 'none_known' : 'known'
       : 'known';
     return [key, { ...state, memberStatus }] as const;
-  })), [slice.pools]);
+  })), [orderHeldBack, slice.pools]);
 }

@@ -1411,6 +1411,21 @@ it("lists a pool in the selector's own order and builds the why detail from its 
   expect.soft(screen.findHostByTestId('cap.usedFirst.pool.personal')).toBeTruthy();
   expect.soft(screen.getTextContent()).toContain(t('usage.board.plans.usedFirstReadFailed'));
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.hintLoading'));
+  const refused = new Set(quota.map(read => `quota:${createCanonicalJsonSigningInput(read.source)}`));
+  const ownershipRefused = {
+    ...props.slice,
+    quota: undefined,
+    sources: [...props.slice.sources.filter(source => !refused.has(source.source)),
+      ...Array.from(refused, source => ({ source, status: 'error' as const, errorCode: 'ownership_unproven' }))],
+  };
+  await screen.update(<InjectedAuthProvider credentials={credentials}><UsageCapacityWidget {...props}
+    slice={ownershipRefused} serverId={home.id} id="usage_capacity" testID="cap" /></InjectedAuthProvider>);
+  expect(screen.findByTestId('cap.state.heldBack')).toBeTruthy();
+  expect(screen.findByTestId('cap.usedFirst')).toBeNull();
+  expect(screen.findByTestId('cap.usedFirst.pool.why.detail')).toBeNull();
+  await screen.update(<InjectedAuthProvider credentials={credentials}><UsageCapacityWidget {...props}
+    serverId={home.id} id="usage_capacity" testID="cap" /></InjectedAuthProvider>);
+  expect(screen.findByTestId('cap.usedFirst.pool.work')).toBeTruthy();
 });
 
 it('gives a pool the selector lists no member for one quiet line, not a strategy block', async () => {

@@ -110,7 +110,7 @@ function joinRunsOutsidePools(runs: readonly Run[]): Run[] {
 function buildRuns(
   accounts: readonly UsagePlanAccount[],
   pools: readonly UsagePlanPool[],
-  selections: ReadonlyMap<string, UsagePoolSelectionState>,
+  selections: ReadonlyMap<string, UsagePoolSelectionState> | null,
   nowMs: number,
 ): Run[] {
   const byKey = new Map(accounts.map((account) => [account.key, account]));
@@ -127,7 +127,7 @@ function buildRuns(
     }
     for (const pool of memberships) {
       if (emitted.has(pool.key)) continue;
-      const selection = selections.get(pool.key);
+      const selection = selections?.get(pool.key);
       // A member that is not drawn (never read) is said once in the collapsed line, not as a segment.
       const members = pool.accountKeys.flatMap((key) => byKey.get(key) ?? []);
       if (members.length === 0) continue;
@@ -207,7 +207,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   const text = usePlanText();
   const plans = useUsagePlans(props.slice, props.model.refresh);
   const { projection, selectionPools, nameOf, nowMs } = plans;
-  const selections = useUsagePoolSelections(props.slice);
+  const selections = useUsagePoolSelections(props.slice, projection.accounts);
   const router = useRouter();
   const pooled = POOLED_SIZES.has(presentation?.size ?? '');
   // Beside other widgets the next move is Plans: the full view is one press from the figure (lab d2views-OV).
@@ -249,11 +249,11 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       ),
     [projection.accounts, nameOf],
   );
-  const next = readNextLimitsAccount(selectionPools, selections, projection.accounts);
+  const next = selections && readNextLimitsAccount(selectionPools, selections, projection.accounts);
   // Until the selector answers, which account leads is not known: the headline's room is held and no caption is said,
   // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
-  const deciding = next === null && [...selections.values()].some(state => state === 'loading');
-  const spentRetry = next === null && !deciding
+  const deciding = selections !== null && next === null && [...selections.values()].some(state => state === 'loading');
+  const spentRetry = selections !== null && next === null && !deciding
     ? readNextLimitsQuotaRetry(selectionPools, selections, projection.accounts, nowMs)
     : null;
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
@@ -478,7 +478,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
       {/* Beside other widgets the meters are said once; the switching order lives with the full view (Plans). */}
       {/* A narrow full view (a phone, lab p2sheet-P) says the order as Now → Next → Then, as a tile does: the account rows
           above already list every member, so a second full list would repeat them. */}
-      {pooled && (!tile || next !== null) ? null : tile || listed ? (
+      {selections === null || (pooled && (!tile || next !== null)) ? null : tile || listed ? (
         <UsagePoolSteps
           serverId={props.serverId}
           query={props.query}
