@@ -91,11 +91,14 @@ function readPluginFailureNextTokenStartsField(value: string, index: number): bo
   return false;
 }
 
-function readPluginFailureAbsolutePathEnd(value: string, index: number): number {
+function readPluginFailureAbsolutePathEnd(value: string, index: number, opening: string | undefined): number {
+  const quoted = opening === '"' || opening === "'" || opening === String.fromCharCode(96);
   let cursor = index;
   while (cursor < value.length) {
     const character = value[cursor];
     if (isPluginFailurePathTerminator(character)) return cursor;
+    // Command diagnostics commonly print a path followed by `: <cause>`.
+    if (!quoted && character === ':' && value[cursor + 1] === ' ') return cursor;
     if ((character ?? '').trim().length > 0) {
       cursor += 1;
       continue;
@@ -127,7 +130,7 @@ function redactPluginFailureAbsolutePaths(value: string): string {
       index += 1;
       continue;
     }
-    const end = readPluginFailureAbsolutePathEnd(value, rootEnd);
+    const end = readPluginFailureAbsolutePathEnd(value, rootEnd, value[index - 1]);
     if (end <= rootEnd) {
       index += 1;
       continue;

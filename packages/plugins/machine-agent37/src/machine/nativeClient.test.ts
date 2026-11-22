@@ -114,13 +114,14 @@ describe('Agent37 native HTTP lifecycle', () => {
     expect(serialized).not.toContain('discarded-head-marker');
     expect(serialized.length).toBeLessThan(MACHINE_PROVISIONER_NATIVE_STDERR_MAX_LENGTH_V1 + 2000);
   });
-  it('retains completed power and delete bodies after late cancellation', async () => {
+  it('retains confirmed power but requires delete readback after late cancellation', async () => {
     for (const effect of ['stop', 'delete'] as const) {
       const abort = new AbortController();
       const request: typeof fetch = async () => { abort.abort(); return Response.json(effect === 'stop'
         ? { id: resource.instanceId, status: 'stopped' } : { id: resource.instanceId, deleted: true }); };
       const client = createAgent37NativeClient(request, abort.signal, 1000);
-      expect(await (effect === 'stop' ? client.power(resource, effect) : client.destroy({ resource }))).toEqual({ kind: 'confirmed' });
+      expect(await (effect === 'stop' ? client.power(resource, effect) : client.destroy({ resource }))).toEqual(effect === 'stop'
+        ? { kind: 'confirmed' } : { kind: 'unknown', code: 'agent37_delete_unconfirmed' });
     }
   });
   it('cancels before dispatch and rejects incomplete mutation bodies', async () => {

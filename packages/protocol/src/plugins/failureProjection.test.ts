@@ -28,4 +28,11 @@ describe('projectPluginFailureMessage', () => {
     expect(projectPluginFailureText({ message: 'not-an-error' }))
       .toBe('Plugin operation failed');
   });
+
+  it('preserves the command error after a path containing spaces', () => {
+    expect(projectPluginFailureMessage('mktemp: /root/private dir: No space left on device'))
+      .toBe('mktemp: [REDACTED_PATH]: No space left on device');
+    expect(projectPluginFailureMessage('mktemp: "/root/private: dir": No space left on device'))
+      .toBe('mktemp: "[REDACTED_PATH]": No space left on device');
+  });
 });
