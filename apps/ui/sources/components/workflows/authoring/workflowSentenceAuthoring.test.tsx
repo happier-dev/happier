@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
+import { t } from '@/text';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
@@ -165,7 +166,7 @@ it.each(['session', 'project', 'machine', 'any', 'chooseAny', 'chooseSession'] a
     else expect(savedSeed).toHaveProperty('lifetimeSession', { sessionId: subject.sessionId });
 });
 
-it('carries exact-turn intake through the same sentence create Action', async () => {
+it.each([false, true])('saves the exact Session turn or shows the owner refusal when stale=%s', async (stale) => {
     const home = await sourceHome();
     const subject = { kind: 'session', serverId: resolvePortableServerIdentityForRoutingId(home.lifetime.scope.serverId)!, sessionId: 'lifetime-session' } as const;
     const source = { name: 'This turn', session: { subject } };
@@ -176,10 +177,28 @@ it('carries exact-turn intake through the same sentence create Action', async ()
     expect(createSessionWorkflowSentenceIntent(source, { subject: undefined, exactTurnPrefill })).toBeNull();
     const intent = createSessionWorkflowSentenceIntent(source, { exactTurnPrefill });
     if (intent === null) throw new Error('Expected exact-turn intake');
-    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, step: message }, home.lifetime));
-    expect(hook.getCurrent().triggers.draft.adds).toMatchObject([{ trigger: { subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-a' } } }]);
-    await act(async () => { expect(await hook.getCurrent().save(), JSON.stringify(home.requests)).toEqual({ status: 'applied' }); });
-    expect(home.automations.creates[0]).toMatchObject({ scopeSessionId: subject.sessionId });
+    const definition = { version: 1 as const, defaults: {}, blocks: [{ kind: 'wait' as const, id: 'wait',
+        document: { text: 'Acknowledge the QA trigger run.', references: [], attachments: [] } }] };
+    const hook = await renderHook(() => authoring.useWorkflowSentenceDraft({ ...intent, definition }, home.lifetime));
+    // The editor's portable Workflow defaults to the Machine's Home folder. The watched Session is in /repo.
+    await act(async () => hook.getCurrent().changeProject({ machineId: 'machine-a', directory: '~' }));
+    const exactTrigger = { trigger: { subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-a' } } };
+    expect(hook.getCurrent().triggers.draft.adds).toMatchObject([exactTrigger]);
+    if (stale) home.automations.respondWith(method => method === 'POST'
+        ? Response.json({ error: 'sourceTurnNotInProgress' }, { status: 400 })
+        : undefined);
+    await act(async () => {
+        expect(await hook.getCurrent().save()).toMatchObject({ status: stale ? 'refused' : 'applied' });
+    });
+    expect(home.automations.creates).toHaveLength(1);
+    expect(home.automations.creates[0]).toMatchObject({ scopeSessionId: subject.sessionId,
+        executionRecipe: { workflow: { t: 'plain', v: { workspace: { directory: '/repo' } } } } });
+    if (stale) {
+        expect(home.automations.rows.size).toBe(0);
+        expect(hook.getCurrent().triggers.draft.adds).toMatchObject([exactTrigger]);
+        expect(hook.getCurrent().failed).toContain(t('automations.exactTurn.staleBody'));
+        return;
+    }
     await vi.waitFor(() => expect(hook.getCurrent().triggers.set?.triggers[0]).toMatchObject({
         subject, policy: { kind: 'currentTurn', sourceTurnId: 'turn-a' },
     }));

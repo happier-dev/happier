@@ -149,17 +149,21 @@ describe('workflow trigger draft', () => {
         expect(calls).toEqual([['add', { workflow: 'wf-1', project: PROJECT, trigger: { ...schedule('0 7 * * *'), enabled: true } }]]);
     });
 
-    it('creates a Session habit through the generic writer using its lifetime instead of an execution project', async () => {
+    it.each([
+        { explicitPlacement: false, context: {} },
+        { explicitPlacement: true, context: { project: PROJECT } },
+    ])('lets the Session owner decide Habit placement (explicit placement: $explicitPlacement)', async ({ explicitPlacement, context }) => {
         const workflow = '8b1e3b6f-4c02-4a75-9f82-c0be58bc5338';
         const trigger = { kind: 'prComment', enabled: true,
             pullRequest: { repository: 'acme/widgets', number: 7 } } as const;
-        const draft = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT,
+        const added = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT,
             { kind: 'add', clientId: 'session-pr', trigger });
+        const draft = explicitPlacement ? editWorkflowTriggerDraft(added, { kind: 'setContext', context }) : added;
         const { writer, calls } = recordingWriter();
-        const result = await saveWorkflowTriggerDraft({ workflow, project: null, set: null, draft, writer,
-            lifetimeSession: { sessionId: 'lifetime-session' } });
+        const lifetimeSession = { sessionId: 'lifetime-session' };
+        const result = await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: null, draft, writer, lifetimeSession });
         expect(result.kind).toBe('saved');
-        expect(calls).toEqual([['add', { workflow, lifetimeSession: { sessionId: 'lifetime-session' }, trigger }]]);
+        expect(calls).toEqual([['add', { workflow, ...context, lifetimeSession, trigger }]]);
         WorkflowTriggerAddRequestV1Schema.parse(calls[0]![1]);
     });
 

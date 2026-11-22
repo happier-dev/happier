@@ -12,6 +12,7 @@ import { t } from '@/text';
 import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { DiscussionErrorCodeV1Schema } from '@happier-dev/protocol/discussions/api';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
+import { formatExactTurnAutomationError } from '@/components/automations/automationErrorFormatting';
 import { ExternalActionHttpErrorSchema } from '@happier-dev/protocol/actions/externalActionHttpError';
 
 /**
@@ -280,6 +281,8 @@ function resolveWorkflowProblemCopy(
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict,
             messageKey: 'workflows.problem.eventDeclarationNotCurrent', repair: 'none' });
     }
+    const exactTurn = formatExactTurnAutomationError(error);
+    if (exactTurn) return { ...present(code, WORKFLOW_PROBLEM_SHAPES.ineligible_state), message: exactTurn.message };
     if (scope === 'run' && code === 'currentness_conflict') {
         return present(code, { ...WORKFLOW_PROBLEM_SHAPES.currentness_conflict, messageKey: 'workflows.problem.runMovedOn' });
     }

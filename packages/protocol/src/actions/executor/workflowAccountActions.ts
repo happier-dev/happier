@@ -6,6 +6,8 @@ import type { WorkflowActionIdV1, WorkflowIngressContextV1 } from '../../workflo
 import type { WorkflowTriggerActions } from './workflowTriggerActions.js';
 import { WorkflowActionFailureV1Schema, type WorkflowActionFailureV1 } from '../../workflows/workflowProgressV1.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID, WORKFLOW_TRIGGER_UPDATE_ACTION_ID } from '../workflowTriggerActionIds.js';
+import { AutomationSessionLifecycleRegistrationErrorCodeSchema } from '../../automations/automationTriggerDefinition.js';
 import { WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from '../actionIds.js';
 import { projectConfirmedActionHttpRefusal, readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { resolveWorkflowActionContext } from './callerContext.js';
@@ -64,7 +66,14 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   // The template codec's reasons also drive locked-row listing inside the
   // trigger owner. At the Action boundary they describe unreadable content,
   // not a failure to reach storage.
-  const code = rawCode === 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' ? 'target_unavailable'
+  // The Session registration owner already decided whether the selected turn can still be used.
+  const registrationRefusal = phase === WORKFLOW_TRIGGER_ADD_ACTION_ID || phase === WORKFLOW_TRIGGER_UPDATE_ACTION_ID
+    ? AutomationSessionLifecycleRegistrationErrorCodeSchema.safeParse(rawCode) : undefined;
+  const sourceTurnReason = registrationRefusal?.success
+    && (registrationRefusal.data === 'sourceSessionUnavailable' || registrationRefusal.data.startsWith('sourceTurn'))
+    ? registrationRefusal.data : undefined;
+  const code = sourceTurnReason !== undefined ? 'ineligible_state'
+    : rawCode === 'PLUGIN_DAEMON_RUNTIME_UNAVAILABLE' ? 'target_unavailable'
     : rawCode === 'invalid_parameters' ? 'invalid_input'
     : rawCode === 'automation_disabled' ? 'ineligible_state'
     : rawCode === 'automation_not_found' || rawCode === 'artifact_not_found' || rawCode === 'not_found'
@@ -96,7 +105,13 @@ export function normalizeWorkflowActionThrownError(error: unknown, diagnostic?: 
   // Codeless failures still identify their class and failing boundary. In
   // particular, an internal schema failure must not lose that cause merely
   // because it has no native code or HTTP response.
-  const causeFields = { failureCause: projectedCause };
+  const causeFields = { failureCause: sourceTurnReason === undefined ? projectedCause : {
+    phase: projectedCause.phase,
+    errorClass: projectedCause.errorClass,
+    errorCode: projectedCause.errorCode,
+    httpStatus: projectedCause.httpStatus,
+    nativeErrorReason: sourceTurnReason,
+  } };
   const failure = WorkflowActionFailureV1Schema.safeParse({
     ok: false,
     errorCode: code,

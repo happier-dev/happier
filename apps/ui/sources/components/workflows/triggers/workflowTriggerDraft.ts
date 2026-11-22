@@ -301,8 +301,8 @@ export type WorkflowTriggerSaveResult =
 
 /**
  * Writes the delta, one Action at a time: removals, then changes, then additions. Each write
- * carries the set revision the previous one returned. The first addition to a workflow without a
- * set creates it on the editor's Where (`project`, 04 §5.4 Runs on); later ones join that set.
+ * carries the set revision the previous one returned. The first Account trigger defaults to the
+ * editor's Where (`project`, 04 §5.4 Runs on). Session placement defaults at the Session Action.
  */
 export async function saveWorkflowTriggerDraft(params: Readonly<{
     workflow: string;
@@ -362,8 +362,9 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
         }
         for (const add of params.draft.adds) {
             if (params.isCurrent?.() === false) return { kind: 'stale', set };
-            // The first trigger creates the set on its Runs on (the editor's Where unless changed).
-            const project = set?.project ?? context?.project ?? params.project;
+            const project = params.lifetimeSession === undefined
+                ? set?.project ?? context?.project ?? params.project
+                : context?.project;
             if ((project === null || project === undefined) && params.lifetimeSession === undefined) {
                 throw Object.assign(new Error('trigger_project_required'), { code: 'trigger_project_required' });
             }
