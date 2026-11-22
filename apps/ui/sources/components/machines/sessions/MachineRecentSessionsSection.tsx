@@ -9,6 +9,8 @@ import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRec
 import { useMachineRecentSessions } from '@/sync/store/sessionListMachineRecent';
 import { t } from '@/text';
 import { getSessionName, getSessionSubtitleOnItsMachine } from '@/utils/sessions/sessionUtils';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
+import { formatShortRelativeTimeAt } from '@/utils/time/formatShortRelativeTime';
 
 /** The five most recent sessions on this machine (Project work); absent when it has none. */
 export const MachineRecentSessionsSection = React.memo(function MachineRecentSessionsSection(props: Readonly<{
@@ -21,6 +23,8 @@ export const MachineRecentSessionsSection = React.memo(function MachineRecentSes
     const recent = useMachineRecentSessions(props.serverId, props.machineId, isSessionVisible, presented);
 
     if (recent.length === 0) return null;
+    // Ages read against one moment per render, in the trailing meta column as the Sessions list shows them.
+    const nowMs = Date.now();
     return (
         // Sessions are records to browse: flat on the page, never a card (DESIGN "browse flat").
         <ItemGroup surface="none" title={t('machineDetailPage.recentSessionsTitle')} description={t('machineDetailPage.recentSessionsDescription')}>
@@ -31,6 +35,7 @@ export const MachineRecentSessionsSection = React.memo(function MachineRecentSes
                     icon={<Icon name="chat-circle-dots" />}
                     // This page names the Machine; a row says only what tells it apart (its folder).
                     subtitle={getSessionSubtitleOnItsMachine(session, props.serverId) ?? undefined}
+                    detail={formatShortRelativeTimeAt(resolveSessionListRenderableMeaningfulActivityAt(session), nowMs)}
                     onPress={() => navigateToSession(session.id, { serverId: props.serverId })}
                     showChevron
                 />

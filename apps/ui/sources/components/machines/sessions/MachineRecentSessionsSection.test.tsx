@@ -70,3 +70,23 @@ it('follows exact-Home compact membership and visibility while retained full met
     stop();
     await screen.unmount();
 });
+
+it('tells same-named Sessions apart by their age in the trailing meta column', async () => {
+    const home = await homes.addHome({ name: 'Age Machine Home', serverUrl: 'https://age-machine.test', accountId: 'owner' });
+    const now = Date.now();
+    const rows = [5, 120].map((minutes, index) => createSessionListRenderableSessionFixture({
+        id: `same-${index}`, updatedAt: now - minutes * 60_000, createdAt: now - minutes * 60_000, meaningfulActivityAt: now - minutes * 60_000,
+        metadata: { name: 'Polish the checkout page', path: '/repo', host: 'host', machineId: 'machine' },
+    }));
+    // A record touch on the older Session must not lift it above the newer work.
+    rows[1] = { ...rows[1]!, updatedAt: now };
+    storage.setState({ sessionListRowsByServerId: { [home]: Object.fromEntries(rows.map(row => [row.id, row])) } });
+    const screen = await renderScreen(<AuthProvider initialCredentials={null}><ItemList><MachineRecentSessionsSection serverId={home} machineId="machine" /></ItemList></AuthProvider>);
+    const items = screen.root.findAll(node => node.type === Reflect.get(Item, 'type'));
+    const details = items.map(node => node.props.detail);
+    expect(details).toHaveLength(2);
+    expect(new Set(details).size).toBe(2);
+    expect(details.every(detail => typeof detail === 'string' && detail.length > 0)).toBe(true);
+    const { formatShortRelativeTimeAt } = await import('@/utils/time/formatShortRelativeTime');
+    expect(details[0]).toBe(formatShortRelativeTimeAt(now - 5 * 60_000, Date.now()));
+});

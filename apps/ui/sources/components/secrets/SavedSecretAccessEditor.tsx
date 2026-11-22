@@ -194,7 +194,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                 <Text accessibilityRole="alert" style={[styles.notice, { color: theme.colors.state.danger.textForeground }]}>
                     {operationFailed}
                 </Text>
-                <View style={styles.actions}>
+                <View style={styles.formActions}>
                     <RoundButton size="small" display="secondary" title={t('common.cancel')} onPress={props.onClose} />
                 </View>
             </View>
@@ -450,7 +450,7 @@ export const SavedSecretAccessEditor = React.memo(function SavedSecretAccessEdit
                     {failureText}
                 </Text>
             ) : null}
-            <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.actions}>
+            <RoundButtonSizeScope size="normal" presentation="uniform"><View style={styles.formActions}>
                 {/* Cancel leads and the primary closes the row, as every other form in the app. */}
                 <RoundButton
                     testID="saved-secret-access-cancel"
@@ -493,6 +493,8 @@ const styles = StyleSheet.create(() => ({
     row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
     grow: { flexShrink: 1 },
     actions: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: 8 },
+    // The form's closing row ends at the trailing edge, as the add form's does (SavedSecretCreateEditor).
+    formActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', alignItems: 'center', gap: 8 },
     readiness: { gap: 4 },
     readinessTitle: { fontSize: 14, lineHeight: 20 },
     notice: { fontSize: 13, lineHeight: 18 },

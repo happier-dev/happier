@@ -457,7 +457,8 @@ export function SessionPublicLinkCard(props: Readonly<{
             submitControl={<ToolbarButton
                 testID="session-public-link-options-create"
                 label={on ? t('session.sharing.regeneratePublicLink') : t('session.sharing.createPublicLink')}
-                tone={props.presentation === 'inline' ? 'default' : 'primary'}
+                // The step's one action that commits the link is its primary, inline in a sheet or not.
+                tone="primary"
                 disabled={creationDisabled}
                 busy={creating}
                 onPress={() => { void create(); }}

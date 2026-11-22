@@ -8,6 +8,7 @@ import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacing
 import type { SessionRecordingVisibility } from '@/sync/domains/session/listing/recordingPrivacy';
 import { projectSessionArchiveRow, readSessionArchivePending } from '@/sync/domains/session/listing/sessionArchiveState';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
+import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import { readSessionListRowsForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { areSessionMachineTargetInputsEqual, resolveDisplayMachineIdForSessionFromState } from '@/sync/domains/session/resolveMachineTargetForSessionFromState';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -82,7 +83,9 @@ function createMachineRecentListing(serverId: string, machineId: string) {
         if (membershipChanged || visibility !== isVisible || archiveChanged) {
             recent = retainShallow(recent, [...members.values()]
                 .filter(row => isVisible({ serverId, sessionId: row.id }))
-                .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0))
+                // Most recent work first, as the Sessions list orders it and as the rows' ages read; a record touch breaks ties.
+                .sort((left, right) => resolveSessionListRenderableMeaningfulActivityAt(right) - resolveSessionListRenderableMeaningfulActivityAt(left)
+                    || (right.updatedAt || 0) - (left.updatedAt || 0))
                 .slice(0, 5)
                 .map(row => projectSessionArchiveRow(row, readSessionArchivePending(state, { serverId, sessionId: row.id }, resolveScopeId))!));
         }
