@@ -1121,7 +1121,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                 const current = await input.readPolicyCurrent(request.managedId, signal);
                 if (current?.id !== request.managedId) throw new ManagedMachineControllerError('managed_target_access_unavailable');
                 const machine = await openPolicyMachine(current, options, action, hydrator);
-                if (!machine.resource || !machine.enrollmentIdentity) throw new ManagedMachineControllerError('provider_unavailable');
+                if (!machine.resource) throw new ManagedMachineControllerError('provider_unavailable');
                 const { invoke } = createManagedNativeInvocation({ input, options, machine, action,
                     execTarget: { lifetime: signal } }, () => machine);
                 const environment = Object.entries(request.env ?? {}).map(([key, value]) => safeBashSingleQuote(`${key}=${value}`));
@@ -1131,7 +1131,8 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     environment.length ? `exec env -- ${environment.join(' ')} ` : 'exec ',
                     argv,
                 ].join('');
-                const script = machine.enrollmentIdentity.kind === 'dedicatedDaemonUser'
+                // Enrollment without an explicit identity uses the provider's guest user.
+                const script = machine.enrollmentIdentity?.kind === 'dedicatedDaemonUser'
                     ? buildDedicatedDaemonInvocationCommand(command) : command;
                 const result = MachineProvisionerNativeExecResultV1Schema.parse(await invoke('exec', {
                     resource: machine.resource.value, argv: ['sh', '-s'], allowWake: false,

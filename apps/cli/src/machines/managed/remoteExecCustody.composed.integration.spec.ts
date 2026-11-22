@@ -7,6 +7,7 @@ import nacl from 'tweetnacl';
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { ManagedAcquireInputV1Schema, ManagedExecOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -26,6 +27,8 @@ import { createSignedAccountContentBinding } from '../../../../server/sources/te
 import { setEligibleMachineAccessGrantInTx } from '../../../../server/sources/testkit/machineAccessGrant.testkit';
 import { registerAutomationActionIndexRoutes } from '../../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { commitMachineRecipientKeyEnvelopesInTx, readMachineRecipientCensusInTx } from '../../../../server/sources/app/machines/machineAccess';
+import { createMachinePreset, readMachinePresetRecipientCensus } from '../../../../server/sources/app/machines/managed/machinePresetService';
+import { storeOpaquePresetLaunch } from '../../../../server/sources/app/machines/managed/managedMachineProjection';
 import { resolveManagedMachineRolesInTx } from '../../../../server/sources/app/machines/managed/managedRows';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { db } from '../../../../server/sources/storage/db';
@@ -60,7 +63,7 @@ function unmounted<T>(name: string): T {
     return new Proxy(unexpected, { get: unexpected }) as T;
 }
 
-async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running', installedReceiver = false) {
+async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running', installedReceiver = false, fromPreset = false) {
     const directory = await createTempDir('composed-managed-exec-');
     onTestFinished(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration(); await removeTempDir(directory); });
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
@@ -304,7 +307,39 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
     const adoptedGuest = await db.machine.create({ data: { id: randomUUID(), accountId: home.accountId, active: false,
         metadata: guest.metadata, dataEncryptionKey: guest.dataEncryptionKey,
         installationId: randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey } });
-    const managed = await retainGuest(guest.id, identity);
+    async function retainGuestFromPreset() {
+        if (!home.encryption) throw new Error('Expected preset custodian encryption');
+        const presetId = randomUUID();
+        const owner = { kind: 'account' as const, accountId: home.accountId };
+        const authentication = { authenticationAuthority: 'present_user' as const };
+        const census = await readMachinePresetRecipientCensus({ accountId: home.accountId, authentication,
+            input: { homeId: home.serverId, owner, controller } });
+        if (census.kind !== 'ready') throw new Error(`Preset census refused: ${census.code}`);
+        const sealed = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+            content: { v: 1, name: launch.name, launch }, recipientCensus: census.recipients, randomBytes: nacl.randomBytes });
+        expect(await createMachinePreset({ accountId: home.accountId, authentication, input: {
+            id: presetId, homeId: home.serverId, owner, controller, contentEncryptionMode: 'e2ee',
+            ...sealed, retention, wakeOnAcceptedMessage: false,
+        } })).toMatchObject({ kind: 'saved' });
+        // Seed the retained row at the native acquisition report boundary. The provider
+        // resource is in the controller's sealed snapshot, just as it is after preset acquisition.
+        const resource = { contributionRef, schemaVersion: 1, origin: 'created' as const, value: { guest: guest.id } };
+        const content = replaceManagedMachinePresetLaunchNameV1({
+            presetId, mode: 'e2ee', ...sealed, accountId: home.accountId, accountKey: home.encryption.machineKey,
+            launchName: launch.name, nativeResult: { kind: 'bound', resource }, randomBytes: nacl.randomBytes,
+        });
+        if (!content) throw new Error('Expected sealed preset acquisition report');
+        return db.managedMachine.create({ data: { homeId: home.serverId, custodianAccountId: home.accountId,
+            controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
+            admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: home.accountId, bootstrapInstalled: true },
+            presetId, presetRevision: 0, presetConfigurationRevision: 0, presetSetupRevision: 0,
+            launch: storeOpaquePresetLaunch({ ...sealed, content, contentEncryptionMode: 'e2ee' }),
+            allocation: 'bound', enrolledMachineId: guest.id, desired: 'start',
+            observation: { observedAt: Date.now(), availability: 'present', storage: 'retained', power: 'running' },
+            retention, wakeOnAcceptedMessage: false,
+        } });
+    }
+    const managed = fromPreset ? await retainGuestFromPreset() : await retainGuest(guest.id, identity);
     const adopted = await retainGuest(adoptedGuest.id, { kind: 'existingUser', role: 'adopted' });
     const member = async (level: 'admin' | 'view') => {
         const keys = nacl.box.keyPair();
@@ -379,6 +414,15 @@ it.runIf(process.platform === 'linux')('runs an approved custodian CLI command t
     expect.soft(askOwners).toEqual([{ accountId: home.accountId }]);
     expect.soft(nativeCalls).toHaveLength(1);
     expect(providerReads).toEqual([providerAccount.accountId]);
+}, 120_000);
+
+it.runIf(process.platform === 'linux')('executes from an enrolled preset with the provider guest identity', async () => {
+    const { credentials, input, cliFor, context, guest, nativeCalls } = await createManagedExecFixture('running', true, true);
+    vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
+    const cli = cliFor(credentials, (_artifactId, _signal, decide) => decide('approve'));
+    const execution = await cli.execute(MANAGED_EXEC_ACTION_ID_V1, { ...input, argv: ['id', '-un'] }, context());
+    expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { exitCode: 0, stdout: 'external\n' } });
+    expect(nativeCalls).toMatchObject([{ resource: { guest: guest.id } }]);
 }, 120_000);
 
 it.runIf(process.platform === 'linux')('wakes the stopped guest after requester CLI Ask and lets that requester find and re-read its operation', async () => {
