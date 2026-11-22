@@ -114,7 +114,7 @@ describe('browser sidecar launch owner', () => {
             const result = await factory({ machineId: 'machine_end' });
             if (!result.ok) throw new Error('Pipe fixture unavailable');
             let disposed = false;
-            const disposal = result.dispose?.().then(() => { disposed = true; });
+            const disposal = Promise.resolve(result.dispose?.()).then(() => { disposed = true; });
             await sent;
             await new Promise<void>(resolve => setImmediate(resolve));
             if (mode !== 'reject') {
@@ -161,10 +161,10 @@ describe('browser sidecar launch owner', () => {
             const transport = result.contextCapture.transport;
             const dispatchBrowserCommand = transport.dispatchBrowserCommand;
             if (!dispatchBrowserCommand) throw new Error('Engine command transport unavailable');
-            return { result, transport, dispatchBrowserCommand };
+            return { dispose: result.dispose, transport, dispatchBrowserCommand };
         };
         try {
-            const { result, transport, dispatchBrowserCommand } = await launch();
+            const { dispose, transport, dispatchBrowserCommand } = await launch();
             await dispatchBrowserCommand({ method: 'Storage.setCookies', params: { cookies: [{
                 name: 'owner_end', value: 'synthetic-state', domain: 'end.example.test', path: '/',
                 expires: Math.floor(Date.now() / 1000) + 3600,
@@ -178,7 +178,7 @@ describe('browser sidecar launch owner', () => {
                 children[0].stdio[4]?.destroy();
                 await transport.closed;
             }
-            await result.dispose();
+            await dispose();
             expect(children[0].exitCode !== null || children[0].signalCode !== null).toBe(true);
             if (mode === 'ephemeral') {
                 await expect(access(directory)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -190,7 +190,7 @@ describe('browser sidecar launch owner', () => {
                     const stored = await reopened.dispatchBrowserCommand({ method: 'Storage.getCookies' }) as { cookies: { name: string; value: string }[] };
                     expect(stored.cookies.some(cookie => cookie.name === 'owner_end' && cookie.value === 'synthetic-state')).toBe(true);
                 } finally {
-                    await reopened.result.dispose();
+                    await reopened.dispose();
                 }
             } else {
                 await expect(access(directory)).resolves.toBeUndefined();
