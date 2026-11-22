@@ -44,10 +44,11 @@ const stylesheet = StyleSheet.create((theme) => ({
     state: {
         paddingVertical: theme.space.s24,
     },
-    // The dialog keeps the height of its largest single-card answer (the driver recovery card) from "Looking for
-    // windows" on, so the answer arrives without the dialog growing under the person's eyes.
+    // From "Looking for windows" on, the dialog keeps the height of its shortest list answer (one window and one
+    // screen with the access row and Share, measured live at 1440), so neither a recovery card nor the list
+    // arriving after it grows the dialog under the person's eyes.
     stateReserve: {
-        minHeight: 391,
+        minHeight: 481,
         justifyContent: 'center',
     },
     notice: {
@@ -655,7 +656,9 @@ export function ComputerTargetPicker(props: Readonly<{
                 <RoundButton
                     size={props.compact ? 'normal' : 'small'}
                     title={chosen?.target.kind === 'display' ? t('computerUse.picker.shareScreen')
-                        : chosen?.appName ? t('computerUse.picker.shareApp', { app: chosen.appName }) : t('computerUse.picker.share')}
+                        // The app named as its tile spells it: a window titled after its app keeps the title's case.
+                        : chosen?.appName ? t('computerUse.picker.shareApp', { app: chosen.title && sameName(chosen.appName, chosen.title) ? chosen.title.trim() : chosen.appName })
+                        : t('computerUse.picker.share')}
                     disabled={!chosen || props.sharing}
                     loading={props.sharing}
                     // A whole display is confirmed on its own step; a window is shared at once.

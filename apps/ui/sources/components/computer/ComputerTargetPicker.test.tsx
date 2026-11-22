@@ -61,6 +61,13 @@ describe('Computer picker stability', () => {
         expect(loading).toBeGreaterThan(0);
         expect(await reservedHeight({ kind: 'failed', code: 'driver_unavailable' }, 'p-failed')).toBe(loading);
     });
+    it('names the chosen window in its own spelling on the primary, as its tile shows it', async () => {
+        const xmessage = { target: { kind: 'window', displayId: ':0', pid: 11, windowId: 2 }, title: 'xmessage', appName: 'Xmessage' } as const;
+        const state: ComputerTargetPickerState = { kind: 'ready', targets: [xmessage, screenTarget], grants: { capture: 'granted', input: 'granted' } };
+        const screen = await renderPicker({ state, selectedKey: computerTargetKey(xmessage.target) }).screen;
+        expect(screen.getTextContent()).toContain('computerUse.picker.shareApp:{"app":"xmessage"}');
+        expect(screen.getTextContent()).not.toContain('"app":"Xmessage"');
+    });
     it('lets the anchored switcher size to its own rows', async () => {
         expect(await reservedHeight({ kind: 'loading' }, 'p-loading', 'switcher')).toBeUndefined();
     });
