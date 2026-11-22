@@ -2633,11 +2633,14 @@ export function createWorkspaceSyncTargetAuthority(
         await inspectWorkspaceSyncCommittedCopy(resolved.copy);
       }
       // Finish cleanup while the admitted requester and the target's retained custody still exist.
-      const preparation = dependencies.resolveProjectRuntime ? await (async () => {
+      const resolveProjectRuntime = dependencies.resolveProjectRuntime;
+      const preparation = resolveProjectRuntime ? await (async () => {
         if (!context) throw authorityError('project_setup_operation_unavailable', 'The original retirement operation is unavailable');
         const actionContext = buildActionExecutorContextForRpc(context);
-        const operation = requireProjectCheckoutRemovalOperation(actionContext);
-        const runtime = await dependencies.resolveProjectRuntime(context);
+        const operation = requireProjectCheckoutRemovalOperation({
+          ...actionContext, actionRequestId: actionContext.actionRequestId ?? undefined,
+        });
+        const runtime = await resolveProjectRuntime(context);
         if (!runtime) throw authorityError('project_setup_operation_unavailable', 'Requester Project cleanup is unavailable');
         const admitted = native && context.retainedCheckoutTeardown;
         const association = admitted ? { workspace: admitted.data
