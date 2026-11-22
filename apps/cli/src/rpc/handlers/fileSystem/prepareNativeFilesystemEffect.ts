@@ -13,6 +13,7 @@ import type { FilesystemEffectConfiguration } from './filesystemEffectOperation'
 import { recordDirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
 import { readMemberAgentSharedManagedToolsRoot } from '@/capabilities/installJobs/memberResolveEffect';
+import { prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 
 const cleanupUnconfirmed = (cause?: unknown) => new PluginError({
   code: 'indeterminate', message: 'Native filesystem cleanup is unconfirmed',
@@ -103,8 +104,10 @@ export async function prepareNativeFilesystemEffect(input: Readonly<{
     });
     releaseLaunch = launch.release;
     assertOpen();
+    const linuxProcessLaunchScope = globalThis.process.platform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
     process = spawnAuthorizedHostExecLaunchForHost({ ...launch, maxStdoutBytes: 0, maxStderrBytes: 0,
       waitForGracefulRootExitBeforeTreeStop: true }, { signal: input.signal,
+      linuxProcessLaunchScope,
       retainLaunch: release => { releaseLaunch = release; } });
     const channel = createFilesystemEffectChannel({ input: process.child.stdin, output: process.child.stdout,
       onDirectoryPreflightRefused: diagnostic => recordDirectoryPreflightRefusal(diagnostic, {

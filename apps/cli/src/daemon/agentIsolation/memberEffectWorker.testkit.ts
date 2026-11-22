@@ -15,10 +15,17 @@ import { resolveCliTsxTsconfigPath } from '@/utils/spawnHappyCLI';
 const worker = String.raw`
 void (async () => {
     const { readAgentLaunchFrame } = await import(process.env.HAPPIER_TEST_FRAME_ENTRY);
-    const frame = await readAgentLaunchFrame(process.stdin);
-    if (!frame.nativeIdentity || !['agent-install-effect', 'filesystem-effect'].includes(frame.args[0])) throw new Error('Unexpected native effect');
+    const frame = await readAgentLaunchFrame(process.stdin, undefined, true);
+    if (!frame.nativeIdentity) throw new Error('Missing native identity');
     const backing = process.env.HAPPIER_TEST_MEMBER_BACKING;
     const map = value => typeof value === 'string' ? value.split(frame.nativeIdentity.home).join(backing) : value;
+    if (frame.action === 'retire_operation') {
+      const { retireAgentLaunchOperationRuntime } = await import(process.env.HAPPIER_TEST_RUNTIME_ENTRY);
+      await retireAgentLaunchOperationRuntime(backing, map(frame.runtimeHome));
+      process.stdin.destroy();
+      return;
+    }
+    if (!['agent-install-effect', 'filesystem-effect'].includes(frame.args[0])) throw new Error('Unexpected native effect');
     for (const key of Object.keys(process.env)) if (!key.startsWith('HAPPIER_TEST_') && key !== 'TSX_TSCONFIG_PATH') delete process.env[key];
     Object.assign(process.env, Object.fromEntries(Object.entries(frame.environment).map(([key, value]) => [key, map(value)])));
     const fs = await import('node:fs/promises');
@@ -78,6 +85,9 @@ export function spawnMemberEffectWorker(
         ),
         HAPPIER_TEST_FILESYSTEM_ENTRY: entry(
           'src/rpc/handlers/fileSystem/filesystemEffectInternal.ts',
+        ),
+        HAPPIER_TEST_RUNTIME_ENTRY: entry(
+          'src/daemon/agentIsolation/agentLaunchRuntime.ts',
         ),
       },
     },

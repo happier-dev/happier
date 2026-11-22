@@ -16,7 +16,7 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
     if (request[0] === 'getent' && request[1]?.at(-1) === 'happier-agent') { native.lookups++; return {
       stdout: `happier-agent:x:99998:99998::${native.home}:/usr/sbin/nologin\n`, stderr: '',
     }; }
-    if (request[0] === 'sudo') return { stdout: '', stderr: '' };
+    if (request[0] === 'sudo' || request[2]?.inputBytes && request[1]?.at(-1) === 'agent-launch') return { stdout: '', stderr: '' };
     return actual.execFileWithDeadline(...request);
   } };
 });

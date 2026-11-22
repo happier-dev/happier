@@ -1,4 +1,5 @@
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
+import { buildCgroupProcessLaunchSpec, prepareCgroupProcessLaunchScope } from '@/daemon/platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
 import { encodeAgentLaunchFrame } from './agentLaunchFrame';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester, type AgentIsolationDaemonObservation } from './provisioning';
@@ -153,8 +154,11 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
         // The caller's native process custody has settled before this lease releases.
         // Its cancellation may already be aborted; cleanup is still awaited.
         try {
-          await execFileWithDeadline('sudo', ['-n', '-u', memberIdentity?.username ?? 'happier-agent', '--',
-            launch.managedHappierBinaryPath, 'agent-launch'], { env: {}, inputBytes: encodeAgentLaunchFrame({
+          const scope = process.platform === 'linux' ? await prepareCgroupProcessLaunchScope() : null;
+          const launchSpec = { filePath: 'sudo', args: ['-n', '-u', memberIdentity?.username ?? 'happier-agent', '--',
+            launch.managedHappierBinaryPath, 'agent-launch'], env: {} };
+          const scoped = scope ? buildCgroupProcessLaunchSpec({ launchSpec, scope }) : launchSpec;
+          await execFileWithDeadline(scoped.filePath, scoped.args, { env: scoped.env, inputBytes: encodeAgentLaunchFrame({
               v: 1, action: 'retire_operation', runtimeHome,
               ...(memberIdentity ? { nativeIdentity: { username: memberIdentity.username, agentUid: memberIdentity.agentUid,
                 agentGid: memberIdentity.agentGid, home: memberIdentity.home } } : {}),
