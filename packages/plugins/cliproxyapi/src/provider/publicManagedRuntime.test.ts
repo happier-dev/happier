@@ -342,7 +342,7 @@ async function spawnManagedWrapper(input: Readonly<{
       NO_PROXY: '127.0.0.1,localhost',
       no_proxy: '127.0.0.1,localhost',
     },
-    stdio: ['ignore', 'ignore', 'pipe'],
+    stdio: ['pipe', 'ignore', 'pipe'],
     windowsHide: true,
   });
   let stderr = '';

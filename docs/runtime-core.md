@@ -2481,6 +2481,11 @@ owns declaration defaults, caller cancellation and process-service availability.
 
 ## Managed service custody (0.3 development)
 
+The managed CLIProxyAPI companion uses the managed process supervisor's stdin
+pipe as its starter lifeline. When the starter exits, the pipe closes and the
+companion uses its signal shutdown path to close the HTTP listener and exit
+cleanly.
+
 The daemon's existing heartbeat recovery also discovers Linux service scopes
 from the native process census when their endpoint projections are gone. Scope
 names must identify the current Happier home, and every surviving member must

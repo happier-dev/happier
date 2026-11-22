@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -24,8 +25,16 @@ func main() {
 }
 
 func run(args []string, lookupEnvironment func(string) (string, bool)) error {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	starterContext, starterLost := context.WithCancel(context.Background())
+	defer starterLost()
+	ctx, stop := signal.NotifyContext(starterContext, os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	// The managed-service launcher holds stdin open for the life of the starter.
+	// Reuse the signal shutdown path when the inherited pipe closes.
+	go func() {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		starterLost()
+	}()
 	return runWithContext(ctx, args, lookupEnvironment)
 }
 
