@@ -60,6 +60,10 @@ import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLin
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
 import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './deploymentPresentation';
 import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
+import type { DeploymentNewDefinitionKind } from './deploymentNavigation';
+import { openDeploymentFolderWorkspace } from './prepareDeploymentSourceCheckout';
+import { openMachinePathBrowserModal } from '@/components/ui/pathBrowser/openMachinePathBrowserModal';
+import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
 import { DeploymentManagedDataProvisionEditor, type ManagedDataProvisionDraft } from './DeploymentManagedData';
 
@@ -144,7 +148,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       actions: Pick<Actions, 'prepareCreate' | 'inspectPlatformTarget' | 'link'> | null;
       copyFrom?: DeploymentEnvironmentDetailV1 | null;
       /** A door that names what it starts from (Store → Apps): a stored definition, in any Project. */
-      definitionKind?: 'compose' | 'image' | null;
+      definitionKind?: DeploymentNewDefinitionKind | null;
       /** The exact registry App pin and its declared addresses. */
       catalogApp?: Readonly<{ templateRef: DeploymentTemplateRefV1; title: string; domains: Readonly<DeploymentTemplateV1['domains']> }> | null;
       /** Where a door already chose (a suggested platform); the recommendation owner still decides what is offered. */
@@ -208,6 +212,9 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [composeDocument, setComposeDocument] = React.useState('');
     const [imageName, setImageName] = React.useState('');
     const [imagePort, setImagePort] = React.useState('');
+    // A folder source: the chosen Machine's folder (absolute, as its browser returns it) and whether its .env files go too.
+    const [folderPath, setFolderPath] = React.useState<string | null>(null);
+    const [folderEnvFiles, setFolderEnvFiles] = React.useState(false);
     const [ref, setRef] = React.useState<string | null>(null);
     // A copy is a new Environment beside its source, never a second production one by default (PAGE-ACCEPT-176 R10-D12).
     const [production, setProduction] = React.useState(props.copyFrom ? false : stepped);
@@ -322,6 +329,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       chosen !== null && platformDefinitionAccepted && (!onPlatform || platformProvider !== null) &&
       (props.copyFrom !== undefined && props.copyFrom !== null || props.catalogApp != null || (definitionKind === 'image'
         ? imageName.trim().length > 0 && imagePortValid
+        : definitionKind === 'folder'
+        ? folderPath !== null && composePath.trim().length > 0
         : storedDefinition
         ? composeDocument.trim().length > 0
         : branch !== null && (onPlatform || composePath.trim().length > 0)));
@@ -329,12 +338,23 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A retention choice belongs to the Machine it was made for.
     React.useEffect(() => {
       setRetention('alwaysOn');
+      setFolderPath(null);
     }, [chosen?.id]);
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
       setPrepared(null);
       answerStepConfirmation(false);
-    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, storedDefinition, domainChoices, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
+    }, [answerStepConfirmation, projectSelection, name, chosen?.id, branch, composePath, composeDocument, imageName, imagePort, folderPath, folderEnvFiles, storedDefinition, domainChoices, production, deployerMode, deployerPrincipals, retention, onPlatform, copyChoices, platformProvider, provisionDrafts]);
+    // A folder reads home-relative on its own Machine, as Open and the path browser show it.
+    const folderLabel = (path: string) => formatPathRelativeToHome(path, chosen?.metadata?.homeDir ?? null);
+    const pickFolder = async () => {
+      if (!chosen || !props.lifetime) return;
+      const machine = chosen.id;
+      const path = await openMachinePathBrowserModal({ machineId: machine, serverId: props.lifetime.scope.serverId,
+        title: t('newApp.deploy.folderChoose'), initialPath: folderPath ?? chosen.metadata?.homeDir ?? null,
+        selectionMode: 'directory' });
+      if (path && chosen?.id === machine) setFolderPath(path);
+    };
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
       return machine ? getMachineDisplayName(machine, allMachines ?? []) : t('approvals.machineNotKnown');
@@ -357,6 +377,9 @@ export const DeploymentEnvironmentDraft = React.memo(
       let createdEnvironment: Readonly<{ environmentId: string; revision: number }> | null = null;
       try {
         if (!prepared) {
+          // A folder is opened on its Machine (Open's attach) only now, on the person's Save; the definition names it.
+          const folderWorkspaceId = definitionKind === 'folder' && folderPath !== null
+            ? await openDeploymentFolderWorkspace(props.lifetime, { machineId: chosen.id, path: folderPath }) : null;
           const next = await actions.prepareCreate({
             ...(projectSelection && 'newProject' in projectSelection ? { newProject: projectSelection.newProject }
               : projectSelection ? { projectSourceId: projectSelection.projectSourceId } : {}),
@@ -368,6 +391,9 @@ export const DeploymentEnvironmentDraft = React.memo(
             } } : { definition: props.catalogApp ? { from: 'catalogApp', templateRef: props.catalogApp.templateRef }
               : definitionKind === 'image' ? {
               from: 'image', image: imageName.trim(), port: imagePortNumber,
+            } : folderWorkspaceId !== null ? {
+              from: 'folder', workspaceId: folderWorkspaceId, compose: { path: composePath.trim(), profiles: [], services: [] },
+              ...(folderEnvFiles ? { includeEnvFiles: true as const } : {}),
             } : storedDefinition ? {
               from: 'compose', document: composeDocument, profiles: [], services: [],
             } : onPlatform ? { from: 'repository', ref: branch! } : {
@@ -479,7 +505,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     // Stepped (journey-deploy where): the targets read as cards. The recommended one carries its reason and badge,
     // and More platforms always closes the grid, also where a stored definition runs on a Machine only.
     const recommendedId = suggestion.evidence.length > 0 ? suggestion.target?.id ?? null : null;
-    const recommendationReason = recommendedId ? deploymentRecommendationReason(suggestion) : null;
+    // A folder is no stored definition: the Machine card's own line says how it runs, with no second reason.
+    const recommendationReason = recommendedId && definitionKind !== 'folder' ? deploymentRecommendationReason(suggestion) : null;
     // The recommended target (else the first one) leads the grid across its row (journey-deploy where, whereM); the
     // others keep two columns beneath. Choosing another target only moves the selection, never the grid.
     const choiceTiles = targetTiles.filter(tile => tile.id !== PLUGINS_TILE);
@@ -497,8 +524,8 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A platform the definition can't use leaves the grid for one muted list with the one shared reason (whereM).
     const repositoryOnlyPlatforms = platformTargets.filter(target =>
       recommendation.corrections.some(correction => correction.targetId === target.key && correction.kind === 'prepare_repository'));
-    const repositoryOnlyReason = repositoryOnlyPlatforms.length > 0
-      ? deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION) : undefined;
+    const repositoryOnlyReason = repositoryOnlyPlatforms.length === 0 ? undefined : definitionKind === 'folder'
+      ? t('newApp.deploy.cantRunStored') : deploymentActionRefusalRemedy(DEPLOYMENT_TARGET_REQUIRES_REPOSITORY_DEFINITION);
     const chooseTarget = (next: string | null) => {
       if (next === null || next === LOADING_TILE) return;
       if (next === RETRY_TILE) { platforms.retry(); return; }
@@ -677,6 +704,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       environment: { name: name.trim(), production, deployers: deployerMode },
       runs: props.copyFrom ? null : props.catalogApp ? { kind: 'app', name: props.catalogApp.title }
         : definitionKind === 'image' ? { kind: 'image', image: imageName.trim() }
+        : definitionKind === 'folder' && folderPath !== null ? { kind: 'folder', folder: folderLabel(folderPath), includeEnvFiles: folderEnvFiles }
         : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
       runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
         machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create',
@@ -952,6 +980,28 @@ export const DeploymentEnvironmentDraft = React.memo(
                   accessibilityLabel={t('projects.deployments.domainFieldPort')} value={imagePort}
                   onChangeText={setImagePort} monospace autoCapitalize="none" autoComplete="off" />}
               />
+            </> : definitionKind === 'folder' ? <>
+              {/* The folder is a destination on the chosen Machine: its value and a chevron, its browser one press away. */}
+              <Item testID="project-deployments.draft.folder" title={t('newApp.deploy.folder')}
+                detail={folderPath !== null ? folderLabel(folderPath) : t('newApp.deploy.folderChoose')}
+                disabled={chosen === null} onPress={() => { void pickFolder(); }} />
+              <FieldValueItem
+                testID="project-deployments.draft.compose"
+                title={t('projects.deployments.composeFile')}
+                value={composePath}
+                placeholder={DEFAULT_COMPOSE_PATH}
+                monospace
+                autoCapitalize="none"
+                autoComplete="off"
+                onCommit={(text) => {
+                  setComposePath(text.trim());
+                  return text.trim();
+                }}
+              />
+              <Item title={t('newApp.deploy.folderEnvFiles')}
+                subtitle={t(folderEnvFiles ? 'newApp.deploy.folderEnvFilesOn' : 'newApp.deploy.folderEnvFilesOff')}
+                rightElement={<Switch testID="project-deployments.draft.folderEnvFiles" value={folderEnvFiles} onValueChange={setFolderEnvFiles} />}
+                onPress={() => setFolderEnvFiles(current => !current)} showChevron={false} />
             </> : storedDefinition ? (
               <Item title={t('projects.deployments.composeFile')} accessoryLayout="stacked" showChevron={false}
                 rightElement={<FieldTextInput testID="project-deployments.draft.composeDocument"

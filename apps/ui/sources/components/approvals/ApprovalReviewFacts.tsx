@@ -182,7 +182,8 @@ function readDeploymentTemplateApprovalReview(preview: unknown): DeploymentTempl
 export type DeploymentCreationReviewPlan = Readonly<{
   newProjectName: string | null;
   environment: Readonly<{ name: string; production: boolean; deployers: Parameters<typeof deployersLabel>[0] }>;
-  runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }> | null;
+  runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }
+    | { kind: 'folder'; folder: string; includeEnvFiles: boolean }> | null;
   /** `machineId` is the Machine the runs row names, so the defaults rows don't name it again. */
   runsOn: Readonly<{ kind: 'machine'; machine: string; machineId: string }
     | { kind: 'platform'; platform: string; pluginId: string; machine: string; machineId: string; resource: 'create' | 'existing'; resourceName: string | null }>;
@@ -255,13 +256,18 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
     {plan?.answered ? null : <>
       {plan && runsOn ? <ItemGroup testID={`${testID}.defaults`} title={t('newApp.deploy.plan.howTitle')}>
         {plan.runs ? <Item testID={`${testID}.runs`} mode="info"
-          icon={<Icon name={plan.runs.kind === 'repository' ? 'git-branch' : 'cube'} />}
+          icon={<Icon name={plan.runs.kind === 'repository' ? 'git-branch' : plan.runs.kind === 'folder' ? 'folder-open' : 'cube'} />}
           title={plan.runs.kind === 'repository' ? t('newApp.deploy.plan.buildsRef', { ref: plan.runs.ref })
             : plan.runs.kind === 'image' ? t('newApp.deploy.plan.runsImage', { image: plan.runs.image })
             : plan.runs.kind === 'app' ? t('newApp.deploy.plan.runsApp', { name: plan.runs.name })
+            : plan.runs.kind === 'folder' ? t('newApp.deploy.plan.runsFolder', { folder: plan.runs.folder })
             : t('newApp.deploy.plan.runsCompose')}
           subtitle={runsOn.kind === 'platform' ? t('newApp.deploy.plan.onPlatform', { platform: runsOn.platform, machine: runsOn.machine })
             : t('newApp.deploy.plan.onMachine', { machine: runsOn.machine })} /> : null}
+        {/* What a folder sends is counted at each deploy, whose review lists the files, their size and what stays behind. */}
+        {plan.runs?.kind === 'folder' ? <Item testID={`${testID}.runs.folder`} mode="info"
+          title={t(plan.runs.includeEnvFiles ? 'newApp.deploy.plan.folderLeavesOutWithEnv' : 'newApp.deploy.plan.folderLeavesOut')}
+          subtitle={t('newApp.deploy.plan.folderReviewedAtDeploy')} /> : null}
         {defaultsRows}
       </ItemGroup> : <ItemGroup testID={`${testID}.defaults`} title={t('projects.deployments.creationReview.title')}
         description={t('projects.deployments.creationReview.description')}>

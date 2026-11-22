@@ -261,6 +261,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       title: t('newApp.builtImage'), subtitle: t('newApp.builtImageSubtitle') },
     { id: 'built:compose', testID: 'newApp.built.compose', icon: 'file-text',
       title: t('newApp.builtCompose'), subtitle: t('newApp.builtComposeSubtitle') },
+    // Code that lives only on a Machine (no repository): sent from that folder at each deploy (5b9abfcb2b6).
+    { id: 'built:folder', testID: 'newApp.built.folder', icon: 'folder-open',
+      title: t('newApp.builtFolder'), subtitle: t('newApp.builtFolderSubtitle') },
   ], []);
   const catalogTiles = React.useMemo((): Array<SelectionTile<Door>> => catalogApps.map((item) => ({
     id: catalogDoor(item),
@@ -358,8 +361,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       setStep('auto');
       return;
     }
-    if (chosen === 'built:image' || chosen === 'built:compose') {
-      startDeploy({ kind: 'definition', definitionKind: chosen === 'built:image' ? 'image' : 'compose' });
+    if (chosen === 'built:image' || chosen === 'built:compose' || chosen === 'built:folder') {
+      startDeploy({ kind: 'definition', definitionKind: chosen === 'built:image' ? 'image' : chosen === 'built:folder' ? 'folder' : 'compose' });
       return;
     }
     const item = catalogApps.find((candidate) => catalogDoor(candidate) === chosen);
@@ -899,7 +902,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {header(title, description)}
         <NewAppDeploySummary phone={phone} frame={deployFrame} onChangeSource={leaveDeploy}
           source={deploySource.kind === 'definition'
-            ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource' : 'newApp.deploy.builtComposeSource'), note: null }
+            ? { title: t(deploySource.definitionKind === 'image' ? 'newApp.deploy.builtImageSource'
+              : deploySource.definitionKind === 'folder' ? 'newApp.deploy.builtFolderSource' : 'newApp.deploy.builtComposeSource'), note: null }
             // The catalog tile's name stands while its listing is read (or failed to read), never a bare ellipsis.
             : { title: named ?? deployCatalogItem?.title ?? pastedRepository?.selector.repository.nameWithOwner ?? '…',
               note: deployFrame?.source?.note ?? (deployCatalogItem ? t('newApp.deploy.catalogSourceNote') : null),

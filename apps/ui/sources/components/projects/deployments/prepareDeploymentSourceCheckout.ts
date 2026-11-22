@@ -1,6 +1,6 @@
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
-import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1, type OpenProjectInputV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
@@ -46,18 +46,36 @@ export async function prepareDeploymentSourceCheckout(
     };
     const input = buildProjectOpenInput(buildProjectOpenDraft({ ...choice, destination: suggestProjectOpenDestination(choice) }), checkouts);
     if (!input) throw new HappyError('invalid_parameters', false, { code: 'invalid_parameters' });
-    const executed = await createFrontDoorActionExecute()('projects.open', input, {
-      surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
-    });
-    const refused = OpenProjectRefusalV1Schema.safeParse(executed.ok ? executed.result : executed.details);
-    if (refused.success) {
-      const failure = projectOpenProjectRefusalV1(refused.data);
-      const code = refused.data.remediation?.kind === 'unsupported_provider' ? 'deployment_source_clone_failed' : failure.errorCode;
-      throw new HappyError(code, false, { code, details: failure.details, failureCause: failure.failureCause,
-        effectAttempted: failure.effectAttempted, ...(!executed.ok && executed.requestId ? { requestId: executed.requestId } : {}) });
-    }
-    requireActionSuccess(executed, 'projects.open');
-    const result = OpenProjectResultV1Schema.parse(executed.result);
-    if (result.kind !== 'opened') throw new HappyError('outcome_unknown', false, { code: 'outcome_unknown', details: result });
+    await openThroughProjectOpen(lifetime, input);
   } finally { account.dispose(); }
+}
+
+/**
+ * Deploy an app's folder source: the chosen Machine's folder becomes a WorkspaceRef through Open's ordinary attach, the
+ * reference a folder definition names. Open owns admission and refusals; this returns the opened workspace's id.
+ */
+export async function openDeploymentFolderWorkspace(
+  lifetime: ServerAccountScopeLifetime,
+  input: Readonly<{ machineId: string; path: string }>,
+): Promise<string> {
+  const opened = await openThroughProjectOpen(lifetime, { serverId: lifetime.scope.serverId, machineId: input.machineId,
+    source: { kind: 'folder', path: input.path }, materialization: { kind: 'attach' } });
+  return opened.workspace.workspaceId;
+}
+
+async function openThroughProjectOpen(lifetime: ServerAccountScopeLifetime, input: OpenProjectInputV1) {
+  const executed = await createFrontDoorActionExecute()('projects.open', input, {
+    surface: 'ui', authority: 'present_user', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+  });
+  const refused = OpenProjectRefusalV1Schema.safeParse(executed.ok ? executed.result : executed.details);
+  if (refused.success) {
+    const failure = projectOpenProjectRefusalV1(refused.data);
+    const code = refused.data.remediation?.kind === 'unsupported_provider' ? 'deployment_source_clone_failed' : failure.errorCode;
+    throw new HappyError(code, false, { code, details: failure.details, failureCause: failure.failureCause,
+      effectAttempted: failure.effectAttempted, ...(!executed.ok && executed.requestId ? { requestId: executed.requestId } : {}) });
+  }
+  requireActionSuccess(executed, 'projects.open');
+  const result = OpenProjectResultV1Schema.parse(executed.result);
+  if (result.kind !== 'opened') throw new HappyError('outcome_unknown', false, { code: 'outcome_unknown', details: result });
+  return result;
 }

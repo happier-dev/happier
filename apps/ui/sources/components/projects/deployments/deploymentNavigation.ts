@@ -58,7 +58,8 @@ export function deploymentEnvironmentRoute(input: DeploymentEnvironmentAddress) 
     };
 }
 
-export type DeploymentNewDefinitionKind = 'compose' | 'image';
+/** `folder`: a folder on the Machine that runs it, sent as it is at each deploy (Deploy an app only; no route opens it). */
+export type DeploymentNewDefinitionKind = 'compose' | 'image' | 'folder';
 
 /** A Project's new-Environment draft, opened on a stored definition (Store → Apps' Paste a Compose file, Run an image). */
 export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: string; projectSourceId?: string; kind: DeploymentNewDefinitionKind;

@@ -17,6 +17,9 @@ const routerMock = await vi.hoisted(async () => {
   return createExpoRouterMock();
 });
 vi.mock('expo-router', () => routerMock.module);
+// The folder chooser is a modal presentation boundary; the Open and Create Actions that follow its answer run for real.
+const folderChooser = vi.hoisted(() => ({ open: vi.fn(async (_input: unknown): Promise<string | null> => null) }));
+vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({ openMachinePathBrowserModal: folderChooser.open }));
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -38,6 +41,7 @@ const { DeploymentPlatformInspectState } = await import('./DeploymentPlatformIns
 const { createDeploymentTargetsTestPlugin, DEPLOYMENT_TARGETS_TEST_EXECUTION, answerDeploymentTargetInspectForHome } = await import('./deploymentPlatformTargetPlugin.testFixture');
 const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
 const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
 const { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreatePreviewV1Schema, DeploymentEnvironmentCreateIntentInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
 const { ProjectSourceRepositorySelectorV1Schema } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
 const repository = ProjectSourceRepositorySelectorV1Schema.parse({
@@ -932,6 +936,58 @@ describe('Environment draft Machine Home', () => {
       await act(async () => header().props.primaryAction.onPress());
       await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
       expect(authored).toMatchObject({ name: 'Web', definition: { from: 'image', image: 'ghcr.io/acme/web:1', port: 8080 } });
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
+  // The owner asked for it ("the user might want to deploy a local folder"); 5b9abfcb2b6 admitted the source behind
+  // Actions only (PAGE-ACCEPT-176 R12: Deploy an app offered no folder).
+  it('deploys a folder on the chosen Machine: opens it through Open, then creates the Environment from that workspace', async () => {
+    const serverId = await homes.addHome({ name: 'Folder', serverUrl: 'https://folder-definition.test', accountId: 'alice',
+      serverIdentityId: `srv_${'e'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      let opened: unknown;
+      let authored: ReturnType<typeof DeploymentEnvironmentCreateIntentInputV1Schema.parse> | undefined;
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      homes.answer(serverId, 'POST /v1/account/project-rows/list', { body: createPlainProjectAccountRowListFixture() });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'projects.open', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+          opened = input;
+          return { kind: 'opened', directory: '/Users/tester/src/web', setup: 'notRequired',
+            workspace: { serverId, workspaceId: 'workspace-web', machineId: 'runtime', rootPath: '/Users/tester/src/web' } };
+        } });
+      await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
+        actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
+          authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
+          return { ok: false, error: 'deployment_unavailable' };
+        } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime',
+        installationId: 'runtime-installation', activeAt: Date.now() })]);
+      folderChooser.open.mockResolvedValueOnce('/Users/tester/src/web');
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app" definitionKind="folder"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')}
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const header = () => screen.findAllByType(PageHeader)[0]!;
+      await act(async () => header().props.titleEditor.onChangeText('Web'));
+      const folder = await waitForTestEvent(screen.subscribe, () => screen.findByTestId('project-deployments.draft.folder'), node => node !== null);
+      expect(screen.findByTestId('project-deployments.draft.ref'), 'a folder needs no repository, even in a repository Project').toBeNull();
+      expect(header().props.primaryAction.disabled, 'nothing to deploy until a folder is chosen').toBe(true);
+      await act(async () => folder!.props.onPress());
+      expect(folderChooser.open).toHaveBeenCalledWith(expect.objectContaining({ machineId: 'runtime',
+        serverId: account.accountLifetime.scope.serverId }));
+      await waitForTestEvent(screen.subscribe, () => header().props.primaryAction.disabled, disabled => disabled === false);
+      await act(async () => screen.findByTestId('project-deployments.draft.folderEnvFiles')!.props.onValueChange(true));
+      await act(async () => header().props.primaryAction.onPress());
+      await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
+      expect(opened).toMatchObject({ machineId: 'runtime', source: { kind: 'folder', path: '/Users/tester/src/web' },
+        materialization: { kind: 'attach' } });
+      expect(authored).toMatchObject({ name: 'Web', definition: { from: 'folder', workspaceId: 'workspace-web', includeEnvFiles: true,
+        compose: { path: 'compose.yaml' } } });
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
