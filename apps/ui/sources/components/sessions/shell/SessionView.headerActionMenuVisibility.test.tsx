@@ -85,6 +85,7 @@ const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android' }));
 const responsiveState = vi.hoisted(() => ({ deviceType: 'phone' as 'phone' | 'tablet', isLandscape: false }));
 const windowDimensionsState = vi.hoisted(() => ({ width: 800, height: 600 }));
 const executionRunsFeatureState = vi.hoisted(() => ({ enabled: false }));
+const browserFeatureState = vi.hoisted(() => ({ enabled: false }));
 const backendCatalogEntriesState = vi.hoisted(() => ({
   entries: [] as ResolvedBackendCatalogEntry[],
 }));
@@ -602,7 +603,9 @@ beforeEach(async () => {
     if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'header-account' }));
     if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
     if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-    if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+    if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+      features: { browser: { enabled: browserFeatureState.enabled, viewTargets: { enabled: browserFeatureState.enabled } } },
+    }));
     if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
     if (path.endsWith('/pending')) return Response.json({ pending: [] });
     if (path.endsWith('/messages')) return Response.json({ messages: [], hasMore: false, nextBeforeSeq: null });
@@ -725,6 +728,32 @@ function projectionWith(...placements: readonly PluginUiSurfacePlacementProjecti
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 
 describe('SessionView header action menu visibility', () => {
+  it.each(['phone', 'tablet'] as const)('offers Browser in the header and presents its right pane (%s)', async deviceType => {
+    realHeaderMenuState.enabled = true;
+    responsiveState.deviceType = deviceType;
+    browserFeatureState.enabled = true;
+    const { SESSION_HEADER_MENU_OPEN_BROWSER_ID } = await import('./view/resolveSessionViewHeaderActionItems');
+    const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
+    const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    expect(await getServerFeaturesSnapshot({ serverId: account.home.id, force: true })).toMatchObject({
+      status: 'ready',
+      features: { features: { browser: { enabled: true, viewTargets: { enabled: true } } } },
+    });
+    const screen = await renderScreen(<SessionView id="s1" routeServerId={account.home.id} />, { wrapper: AppPaneProviderWrapper });
+    const trigger = screen.root.findAll(node => typeof node.type === 'string'
+      && (node.props.testID === 'session-header-action-menu-trigger' || node.props['data-testid'] === 'session-header-action-menu-trigger'))[0];
+    expect(trigger).toBeDefined();
+    const { withPopoverWebGlobals } = await import('@/dev/testkit');
+    await withPopoverWebGlobals(async () => {
+      await act(async () => { (trigger!.props.onPress ?? trigger!.props.onClick)({ stopPropagation() {} }); });
+      const findBrowserMenu = () => screen.root.findAllByType(DropdownMenu).find(menu =>
+        menu.props.items.some((item: Readonly<{ id: string }>) => item.id === SESSION_HEADER_MENU_OPEN_BROWSER_ID));
+      await vi.waitFor(() => expect(findBrowserMenu()).toBeDefined());
+      await act(async () => findBrowserMenu()!.props.onSelect(SESSION_HEADER_MENU_OPEN_BROWSER_ID));
+      expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'browser' });
+    });
+  });
+
   it('exposes the Computer session action in the phone header on a non-chat cockpit surface', async () => {
     realHeaderMenuState.enabled = true;
     responsiveState.deviceType = 'phone';
@@ -780,7 +809,7 @@ describe('SessionView header action menu visibility', () => {
     const { prepareSessionDraftPersistenceStorage } = await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage');
     await prepareSessionDraftPersistenceStorage();
   });
-  afterEach(() => {
+  afterEach(async () => {
     realHeaderMenuState.enabled = false;
     vi.useRealTimers();
     standardCleanup();
@@ -798,6 +827,11 @@ describe('SessionView header action menu visibility', () => {
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
     executionRunsFeatureState.enabled = false;
+    if (browserFeatureState.enabled) {
+      browserFeatureState.enabled = false;
+      const { deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+      deleteServerFeaturesSnapshot({ serverId: account.home.id });
+    }
     backendCatalogEntriesState.entries = [];
     teamCredentialCatalogState.resources = [];
     teamCredentialCatalogState.displayNames = {};

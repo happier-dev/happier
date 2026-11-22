@@ -1251,7 +1251,7 @@ const SessionViewFocusedSurfaceContentBody = React.memo((props: SessionViewFocus
     const headerTerminalAction = useSessionTerminalAction({ sessionId, scopeId: paneScopeId, serverId: props.routeServerId ?? null });
     const headerBrowserDecision = useFeatureDecision('browser', { scopeKind: 'runtime' });
     const headerBrowserTargetsDecision = useFeatureDecision('browser.viewTargets', { scopeKind: 'runtime' });
-    const browserMenuEntryAvailable = deviceType !== 'phone' && headerBrowserDecision?.state === 'enabled'
+    const browserMenuEntryAvailable = headerBrowserDecision?.state === 'enabled'
         && headerBrowserTargetsDecision?.state === 'enabled';
     // The cockpit chrome names the shown Session: this view follows only whether its own has a Terminal tab.
     const cockpitTerminalTabAvailable = useSessionCockpitTerminalTabAvailable(sessionId);
