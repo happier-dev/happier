@@ -120,7 +120,7 @@ describe('bootstrapAccountSettingsContext', () => {
       NODE_ENV: 'test', HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACCOUNT_SETTINGS_TTL_MS: String(ttlMs),
     }, workingDirectory: `/session/ttl-${ttlMs}`, end() {} }, async () => {
       await Promise.resolve();
-      return bootstrapAccountSettingsContext({ credentials, publication: 'invocation', nowMs: 2_000,
+      return bootstrapAccountSettingsContext({ credentials, publication: 'invocation', expectedAccountEncryptionMode: 'e2ee', nowMs: 2_000,
         deps: { resolveCachePath: () => '/tmp/hosted-settings-ttl.cache',
           readCache: async () => ({ version: 2 as const, cachedAt: 1_000, settingsContent, settingsVersion: 1 }),
           writeCache: async () => {}, fetchFromServer: async () => ({ settingsContent, settingsVersion: 1 }) } });
@@ -521,6 +521,7 @@ describe('bootstrapAccountSettingsContext', () => {
       // only Home HTTP and the stored bearer are substituted.
       vi.spyOn(axios, 'get').mockImplementation(async url => {
         const path = new URL(String(url)).pathname;
+        if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'e2ee', updatedAt: 1 } };
         if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
           mode: 'e2ee', version: 1, signingKeyFingerprint: null,
           contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(crypto.contentPublicKeyFingerprint), updatedAt: 1,
@@ -592,6 +593,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res1 = await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -614,6 +616,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res2 = await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs: nowMs + 1_000,
       ttlMs: 60_000,
@@ -642,6 +645,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res1 = await bootstrapAccountSettingsContext({
       credentials: { ...createCredentialsStub(), token: 'token-a' },
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -664,6 +668,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res2 = await bootstrapAccountSettingsContext({
       credentials: { ...createCredentialsStub(), token: 'token-b' },
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs: nowMs + 1_000,
       ttlMs: 60_000,
@@ -691,6 +696,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res = await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -722,6 +728,7 @@ describe('bootstrapAccountSettingsContext', () => {
     await bootstrapAccountSettingsContext({
       credentials: createCredentialsStubWithToken(tokenA),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -743,6 +750,7 @@ describe('bootstrapAccountSettingsContext', () => {
     await bootstrapAccountSettingsContext({
       credentials: createCredentialsStubWithToken(tokenB),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -772,6 +780,7 @@ describe('bootstrapAccountSettingsContext', () => {
     await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -801,6 +810,7 @@ describe('bootstrapAccountSettingsContext', () => {
     await expect(bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -831,6 +841,7 @@ describe('bootstrapAccountSettingsContext', () => {
     await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -857,6 +868,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const result = await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'blocking',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs: nowMs + 10,
       ttlMs: 60_000,
@@ -1146,6 +1158,7 @@ describe('bootstrapAccountSettingsContext', () => {
     const res = await bootstrapAccountSettingsContext({
       credentials: createCredentialsStub(),
       mode: 'fast',
+      expectedAccountEncryptionMode: 'e2ee',
       refresh: 'auto',
       nowMs,
       ttlMs: 60_000,
@@ -1231,6 +1244,97 @@ describe('bootstrapAccountSettingsContext', () => {
     expect(result.settings.sessionPendingQueueDeliveryTiming).toBe('after_runtime_idle');
     expect(decryptCiphertext).not.toHaveBeenCalled();
     expect(writeCache).not.toHaveBeenCalled();
+  });
+
+  it.each(['plain', 'e2ee'] as const)('checks Home mode before using a fresh encrypted cache for a %s Account', async mode => {
+    const dir = await mkdtemp(join(tmpdir(), 'account-settings-mode-cache-'));
+    const path = join(dir, 'account.settings.cache.json');
+    const credentials = createTokenOnlyCredentialsStub();
+    const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      switch (new URL(url).pathname) {
+        case '/v1/account/encryption':
+          return { status: 200, data: { mode, updatedAt: 1 } };
+        case '/v2/account/settings':
+          return { status: 200, data: { version: 14, content: { t: 'plain', v: { themePreference: 'dark' } } } };
+        default:
+          throw new Error('Unexpected Home request');
+      }
+    });
+    try {
+      await writeAccountSettingsCacheAtomic(path, {
+        version: 2, cachedAt: 1_000_000, settingsContent: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) },
+        settingsVersion: 13,
+      });
+      const result = bootstrapAccountSettingsContext({
+        credentials, mode: 'fast', nowMs: 1_000_000, ttlMs: 60_000,
+        deps: { resolveCachePath: () => path },
+      });
+      if (mode === 'plain') {
+        await expect(result).resolves.toMatchObject({
+          source: 'network', settingsVersion: 14, settings: { themePreference: 'dark' }, whenRefreshed: null,
+        });
+      } else {
+        await expect(result).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_ENCRYPTION_MATERIAL_UNAVAILABLE' });
+        expect(get.mock.calls.map(([url]) => new URL(url).pathname)).toEqual(['/v1/account/encryption']);
+      }
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['token-only', 'historical'] as const)(
+    'starts a later hosted Session on Plain Home Settings after E2EE conversion with %s credentials',
+    async custody => {
+      const dir = await mkdtemp(join(tmpdir(), 'account-settings-host-conversion-'));
+      const path = join(dir, 'account.settings.cache.json');
+      const token = `test.${Buffer.from(JSON.stringify({ sub: 'converted-account' })).toString('base64url')}.test`;
+      const encryptedCredentials = createCredentialsStubWithToken(token);
+      let mode: 'e2ee' | 'plain' = 'e2ee';
+      vi.spyOn(axios, 'get').mockImplementation(async url => {
+        switch (new URL(url).pathname) {
+          case '/v1/account/encryption':
+            return { status: 200, data: { mode, updatedAt: 1 } };
+          case '/v2/account/settings':
+            return { status: 200, data: mode === 'e2ee'
+              ? { version: 13, content: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) } }
+              : { version: 14, content: { t: 'plain', v: { themePreference: 'dark' } } } };
+          default:
+            throw new Error('Unexpected Home request');
+        }
+      });
+      const start = (credentials: StoredCredentials, mode: 'blocking' | 'fast') => runAddedHostedSession({
+        environment: { HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto' }, workingDirectory: dir, end() {},
+      }, () => bootstrapAccountSettingsContext({
+        credentials, mode, nowMs: 1_000_000, ttlMs: 60_000, deps: { resolveCachePath: () => path },
+      }));
+      try {
+        await expect(start(encryptedCredentials, 'blocking')).resolves.toMatchObject({
+          source: 'network', settingsVersion: 13, settings: { themePreference: 'light' },
+        });
+        mode = 'plain';
+        const recoveredCredentials = custody === 'historical'
+          ? { ...encryptedCredentials, accountE2eeCustody: 'historical' as const }
+          : createTokenOnlyCredentialsStub(token);
+        await expect(start(recoveredCredentials, 'fast')).resolves.toMatchObject({
+          source: 'network', settingsVersion: 14, settings: { themePreference: 'dark' }, whenRefreshed: null,
+        });
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  it.each([
+    { mode: 'plain', content: { t: 'encrypted', c: sealSettings({ themePreference: 'light' }) } },
+    { mode: 'e2ee', content: { t: 'plain', v: { themePreference: 'light' } } },
+  ] as const)('refuses a mismatched Home envelope for an admitted $mode Account', async ({ mode, content }) => {
+    const credentials = mode === 'plain' ? createTokenOnlyCredentialsStub() : createCredentialsStub();
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { version: 14, content } });
+    await expect(bootstrapAccountSettingsContext({
+      credentials, expectedAccountEncryptionMode: mode, mode: 'blocking', refresh: 'force',
+      deps: { readCache: async () => null },
+    })).rejects.toMatchObject({ code: 'ACCOUNT_SETTINGS_CONTENT_INVALID' });
+    expect(getActiveAccountSettingsSnapshot()).toBeNull();
   });
 
   it('reports retained encrypted settings as unavailable for token-only credentials', async () => {
@@ -1437,6 +1541,7 @@ describe('bootstrapAccountSettingsContext', () => {
         return bootstrapAccountSettingsContext({
           credentials: createCredentialsStub(),
           mode: 'blocking',
+          expectedAccountEncryptionMode: 'e2ee',
           refresh,
           nowMs,
           ttlMs,

@@ -852,6 +852,39 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       ? null
       : readCache;
 
+  const cacheContent: AccountSettingsContentEnvelope | null = cache?.version === 2
+    ? cache.settingsContent
+    : cache?.settingsCiphertext ? { t: 'encrypted', c: cache.settingsCiphertext } : null;
+  let expectedAccountEncryptionMode = params.expectedAccountEncryptionMode;
+  const isCacheModeStale = async (): Promise<boolean> => {
+    if (cacheContent?.t !== 'encrypted') return false;
+    if (expectedAccountEncryptionMode === undefined) {
+      const path = '/v1/account/encryption';
+      const authorizationHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path })
+        ?? (params.resolveAuthorizationHeaders ? null : { Authorization: `Bearer ${params.credentials.token}` });
+      if (!authorizationHeaders) throw createExternalActionHeaderRefusalError();
+      const { readAccountEncryptionModeOnce } = await import('@/api/client/accountEncryptionMode');
+      const result = await readAccountEncryptionModeOnce({
+        credentials: params.credentials,
+        request: () => axios.get(`${resolveAccountSettingsHttpBaseUrl()}${path}`, {
+          headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorizationHeaders },
+          signal: params.signal,
+          timeout: ACCOUNT_SETTINGS_REQUEST_TIMEOUT_MS,
+          validateStatus: () => true,
+        }),
+      });
+      params.signal?.throwIfAborted();
+      if (result.kind === 'http_error') {
+        throw new HttpStatusError(result.status, `Failed to fetch ${path} (${result.status})`);
+      }
+      if (result.kind === 'invalid_response') {
+        throw new AccountSettingsContentInvalidError(new Error('account_encryption_mode_invalid'));
+      }
+      expectedAccountEncryptionMode = result.mode;
+    }
+    return expectedAccountEncryptionMode === 'plain';
+  };
+
   const parseFromContent = async (content: AccountSettingsContentEnvelope | null): Promise<Readonly<{
     rawSettings: Readonly<Record<string, unknown>>;
     settings: AccountSettings;
@@ -866,8 +899,8 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
         ? active.settings
         : parseBootstrapAccountSettings(raw);
     };
-    if (content && params.expectedAccountEncryptionMode
-      && (params.expectedAccountEncryptionMode === 'plain' ? content.t !== 'plain' : content.t !== 'encrypted')) {
+    if (content && expectedAccountEncryptionMode
+      && (expectedAccountEncryptionMode === 'plain' ? content.t !== 'plain' : content.t !== 'encrypted')) {
       throw new AccountSettingsContentInvalidError(new Error('account_settings_mode_mismatch'));
     }
     if (!content) {
@@ -899,13 +932,6 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
       settings: parseSettings(decrypted),
     };
   };
-
-  const cacheContent: AccountSettingsContentEnvelope | null =
-    cache && (cache as any).version === 2
-      ? ((cache as any).settingsContent ?? null)
-      : (cache && (cache as any).settingsCiphertext
-        ? { t: 'encrypted', c: (cache as any).settingsCiphertext as string }
-        : null);
 
   const useCache = async (): Promise<PublishedAccountSettingsContext> => {
     const parsed = await parseFromContent(cacheContent);
@@ -952,7 +978,7 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
     const readKey = createHash('sha256').update(JSON.stringify([
       scopeKey, resolveAccountSettingsHttpBaseUrl(), params.credentials.token,
       settingsSecretsReadKeys.map(key => Buffer.from(key).toString('base64')),
-      params.expectedAccountEncryptionMode ?? null,
+      expectedAccountEncryptionMode ?? null,
     ])).digest('hex');
     let flight = requesterSettingsReads.get(readKey);
     if (!flight) {
@@ -1049,7 +1075,14 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   };
   const effectiveMode = minSettingsVersion !== null || incumbentUsesDifferentKeys ? 'blocking' : mode;
 
-  if (effectiveMode === 'fast') {
+  // Durable Settings are a Home projection. Before opening cached ciphertext,
+  // verify it belongs to the currently admitted mode. A stale cache needs a
+  // blocking Home read even when normal startup can use the cache immediately.
+  const cacheBeforeFetch = effectiveMode === 'fast'
+    || (!incumbentUsesDifferentKeys && ((!shouldForceFetch && cacheFresh) || refreshBackedOff));
+  const staleCache = cacheBeforeFetch && await isCacheModeStale();
+
+  if (effectiveMode === 'fast' && !staleCache) {
     const basePublication = await useCache();
     const base = basePublication.context;
     const needsRefresh = shouldForceFetch || !cacheFresh;
@@ -1071,16 +1104,15 @@ export async function bootstrapAccountSettingsContext(params: Readonly<{
   }
 
   // blocking mode
-  if (!incumbentUsesDifferentKeys && ((!shouldForceFetch && cacheFresh) || refreshBackedOff)) {
-    return (await useCache()).context;
-  }
+  if (cacheBeforeFetch && !staleCache) return (await useCache()).context;
 
   try {
     return await fetchAndPersist();
   } catch (err) {
     params.signal?.throwIfAborted();
     if (isClientE2eeRequiredError(err)) throw err;
-    if (incumbentUsesDifferentKeys || params.allowCacheFallback === false || minSettingsVersion !== null || isAccountSettingsContentUnavailableError(err)) {
+    if (incumbentUsesDifferentKeys || params.allowCacheFallback === false || minSettingsVersion !== null
+      || isAccountSettingsContentUnavailableError(err) || staleCache || await isCacheModeStale()) {
       throw err;
     }
     logRefreshFailure('[accountSettings] fetch failed; falling back to cache', err);
