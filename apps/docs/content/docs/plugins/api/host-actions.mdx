@@ -10985,6 +10985,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home ID
 - `clientId` (text): Client Id
 
+## `machines.local.service.pathExposure.set`
+
+**Set Happier CLI PATH exposure** — Add the Happier CLI to PATH on the answering desktop or remove the entry the desktop created. Pass clientId to address a specific desktop client.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home ID
+- `enabled` (boolean, required): Add Happier CLI to PATH
+- `clientId` (text): Client Id
+
 ## `machines.local.service.restart`
 
 **Restart local background service** — Restart the native user service for this Home; this can interrupt its sessions.

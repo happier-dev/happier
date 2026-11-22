@@ -3084,6 +3084,12 @@ attributing a cached machine ID from another Home. Disconnect preserves user-own
 the saved Home. Existing Action approval and native consent policies remain
 in force; these controls do not create another service registry or preference.
 
+The 0.3 Action `machines.local.service.pathExposure.set` uses the same native
+SystemTasks as the Add to PATH and Remove from PATH buttons. It selects a
+desktop in the named Home and changes the desktop user’s PATH entry. By default
+it routes to the Tauri desktop. Pass `clientId` to address a specific desktop
+including Electron. Agent invocations retain the usual approval policy.
+
 In 0.3 development source, coordinator setup prepares Important project-first and Home
 rule suggestions through the shared Session list filter: Sessions started by
 you, in the selected Home, across all accessible work. Creation defaults select
@@ -4878,7 +4884,7 @@ and optional reviewed memory demand. Its eligibility and load are separate facts
 eligible unknown load remains unknown. Reading status never starts work or pumps
 the accepted queue, and target acceptance rechecks current authority and policy.
 In 0.3 development, the CLI uses signed requester admission to read status for
-a shared Worker. Home accepts a direct or Team Manage grant, and the receiving
+a shared Worker. A direct or Team Use grant is sufficient. The receiving
 daemon uses the requester's Account to read the Project rows.
 
 A too-small refusal can carry `observedMemory` with the total and available bytes
