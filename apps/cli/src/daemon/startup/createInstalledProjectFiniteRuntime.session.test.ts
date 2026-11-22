@@ -17,7 +17,7 @@ import { createInstalledProjectFiniteRuntime } from './createInstalledProjectFin
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 it('uses admitted foreign Session custody for installed Project setup without exposing custodian worker ports', async () => {
-  const f = await createProjectSessionRuntimeFixture();
+  const f = await createProjectSessionRuntimeFixture({ homeServerIdentityId: 'srv_session_home' });
   let installedCurrent = true;
   const nativeIo = createProjectNativeIo();
   const operationRuntime = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'custodian' });
@@ -39,6 +39,8 @@ it('uses admitted foreign Session custody for installed Project setup without ex
   expect(runtime).not.toBeNull();
   expect(runtime?.credentials).toBe(f.bootstrap.credentials);
   expect(runtime?.accountId).toBe('requester');
+  expect(runtime?.requesterIdentity).toEqual({ kind: 'isolated', separationRequired: true,
+    requester: f.bootstrap.attribution });
   expect(runtime?.nativeIo).toBe(nativeIo.commandIo);
   expect(runtime?.environmentIo).toBe(nativeIo.environmentIo);
   expect(runtime?.terminalSessions).toBe(terminalSessions);

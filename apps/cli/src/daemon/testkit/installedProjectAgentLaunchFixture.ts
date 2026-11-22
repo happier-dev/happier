@@ -157,6 +157,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     throw new Error(`Unexpected Home write: ${new URL(String(url)).pathname}`);
   });
   let nativeEffects = 0;
+  const nativeRequesterIdentities: Array<Parameters<ProjectNativeToolchainIoForHost['createInvocation']>[0]['requesterIdentity']> = [];
   // Installed-tool discovery and evaluation are OS boundaries; this fixture
   // does not characterize a real Mise distribution. Account and launch owners stay real.
   const resolveTool = async () => ({ executablePath: '/tools/mise', version: '2026.10.4' });
@@ -172,7 +173,10 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
         : { PATH: '/native/bin', NATIVE: 'active' };
       return { exitCode: 0, stdout: Object.entries({ ...environment, ...options.nativeEnvironment }).map(([key, value]) => `${key}=${value}\0`).join('') };
     },
-    createInvocation: () => environmentIo,
+    createInvocation: input => {
+      nativeRequesterIdentities.push(input.requesterIdentity);
+      return environmentIo;
+    },
   };
   const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
     readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'default', metadataVersion: 1 }) });
@@ -214,6 +218,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   return { f, cwd, machine, rpc: machine.getMachineRoleRpcHandlerManager(), finite, signal, admission,
     installedCredentials: accountActionCredentials, actionsSettingsProvider,
     nativeEffects: () => nativeEffects, accountReads: () => [...accountReads],
+    nativeRequesterIdentities: () => [...nativeRequesterIdentities],
     trustWrites: () => trustWrites,
     async requireSetup(command = 'printf setup') {
       trust = null;

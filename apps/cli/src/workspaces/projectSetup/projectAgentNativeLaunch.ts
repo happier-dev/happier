@@ -227,7 +227,7 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
             })();
             const projectLaunch = { ...createProjectNativeLaunchAdmission({
                 preparation: preparation(), environmentIo: runtime.environmentIo, hostEnvironment: originalEnvironment,
-                platform: runtime.platform, operation: { signal },
+                platform: runtime.platform, requesterIdentity: runtime.requesterIdentity, operation: { signal },
             }, plan), verifyCurrent } satisfies HostProjectNativeLaunchAdmission;
             return { projectLaunch, ...(projectLaunch.nativeAdapter
                 ? { nativeExecutableOwner: projectLaunch.nativeAdapter.lease.exec } : {}) };

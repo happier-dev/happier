@@ -16,7 +16,7 @@ import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionE
 import type { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import type { WorkspaceSyncHandoffAdapterDeps } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
-import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
@@ -143,6 +143,10 @@ export function createInstalledProjectFiniteRuntime(params: Readonly<{
       const observationOrigin = session.attribution.accountId === externalActionAccountId
         ? await resolveCurrentMachineExecutionOriginContext(ingress.signal) : null;
       return { ...ports, ...nativeRuntime(runtimeCurrent, session.attribution.accountId, observationOrigin?.serverIdentityId ?? null), credentials: session.credentials,
+        requesterIdentity: selectHostRequesterExecutionIdentity({ sessionRequester: session.attribution,
+          sessionRequesterHomeServerIdentityId: session.homeServerIdentityId,
+          hostHomeServerIdentityId: await resolveServerProfileHomeIdentityId(finiteServerId),
+          sessionCustodianAccountId: externalActionAccountId }),
         serverId: finiteServerId, machineId: registeredMachineId, accountId: session.attribution.accountId,
         serverHttpBaseUrl: session.serverHttpBaseUrl,
         sessionCustody: { serverId: session.attribution.serverId, accountId: session.attribution.accountId,

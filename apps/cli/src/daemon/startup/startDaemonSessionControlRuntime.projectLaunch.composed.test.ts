@@ -594,6 +594,9 @@ it.each(['fresh', 'public stamped owner', 'retained', 'continuation'] as const)(
     // A child succeeding alone cannot prove the native preparation was wired.
     // Its accepted Project toolchain must have been evaluated by the real owner.
     expect(h.nativeEffects()).toBe(beforeProject + 1);
+    if (shape !== 'retained') expect(h.nativeRequesterIdentities().at(-1)).toEqual({
+      kind: 'isolated', separationRequired: false, requester: { ...h.f.bootstrap.attribution, serverId: home },
+    });
     await h.dispatch({ kind: 'plugin_services.close_v1', ...h.operationBase(invocationId) });
     lifetime.abort();
   };

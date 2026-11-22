@@ -1590,8 +1590,8 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                     if (!runtime) return refuse('finite_runtime_unavailable');
                     if (runtime.accountId !== identity.requester.accountId) return refuse('account_mismatch');
                     if (runtime.machineId !== identity.requester.machineId) return refuse('machine_mismatch');
-                    installedAccountRuntime = runtime;
-                    return runtime;
+                    installedAccountRuntime = { ...runtime, requesterIdentity: identity };
+                    return installedAccountRuntime;
                   } } : {}),
                   resolveRuntime: async ingress => {
                     const machine = params.getApiMachineForSessions();
