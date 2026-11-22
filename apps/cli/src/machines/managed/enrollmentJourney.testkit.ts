@@ -272,7 +272,8 @@ lines.close(); process.stdin.destroy();\n`);
             const stdin = typeof body.inputBase64 === 'string' ? Buffer.from(body.inputBase64, 'base64').toString() : '';
             if (command.includes('sudo -n -u root -- true') && !grantPresent()) throw new Error('Bootstrap did not install its reviewed grant');
             let stdout = '';
-            if (command.includes('uname -s')) stdout = command.includes('uname -m') ? `Linux\nx86_64\n${guestHome}\n` : 'Linux\n';
+            if (command.includes('command -v loginctl')) stdout = 'linger_not_applicable\n';
+            else if (command.includes('uname -s')) stdout = command.includes('uname -m') ? `Linux\nx86_64\n${guestHome}\n` : 'Linux\n';
             else if (command.includes('/etc/os-release')) stdout = 'ubuntu\nnoble\namd64\n';
             else if (command === 'id -u happier') stdout = '1001\n';
             else if (ports.native?.publicAuthor && (command.includes('managed_guest_cli_absent') || command.includes('mkdir -p')
