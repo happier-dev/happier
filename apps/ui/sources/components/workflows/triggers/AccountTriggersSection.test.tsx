@@ -952,7 +952,7 @@ describe('Account Workflow Library and settings', () => {
         expect(listRequests()).toHaveLength(reads + 1);
         await hook.unmount();
     });
-    it.each(['project', 'healthCheck'] as const)('links a saved Workflow to an Account-private %s without waiting for share grants', async kind => {
+    it.each(['project', 'healthCheck', 'worktree database', 'plugin ticket'] as const)('settles saved Workflow Link review for an Account-private %s without waiting for share grants', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
@@ -963,26 +963,39 @@ describe('Account Workflow Library and settings', () => {
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
             automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
         }) });
-        const sourceInstanceId = kind === 'project' ? project.machineId : 'saved-checks';
-        const subject = kind === 'project' ? { kind, serverId, projectKey: 'private-project' }
-            : { kind, serverId, sourceInstanceId, checkId: 'check-http' };
-        const hook = await renderHook(() => useResourceAutomationsSection({ subject, executionContext: project }), {
+        const sourceInstanceId = kind === 'project' ? project.machineId : kind === 'healthCheck' ? 'saved-checks' : 'database-source';
+        const subject = {
+            project: { kind: 'project', serverId, projectKey: 'private-project' },
+            healthCheck: { kind: 'healthCheck', serverId, sourceInstanceId, checkId: 'check-http' },
+            'worktree database': { kind: 'database', serverId, target: { kind: 'worktree', accountId: 'account-a',
+                workspace: { serverId, workspaceId: 'worktree', machineId: project.machineId, rootPath: project.directory },
+                installationId: 'database-installation', projectKey: 'private-project',
+                source: { kind: 'env_file', path: '.env', variable: 'DATABASE_URL' } } },
+            'plugin ticket': { kind: 'plugin', serverId, pluginId: 'fixture.qa-c-r15-tickets',
+                subjectKindId: 'ticket', identity: { ticketId: 'ticket-1' } },
+        } as const;
+        const eventRef = kind === 'worktree database' ? { pluginId: 'happier.database', localId: 'finding-observed' }
+            : { pluginId: 'happier.machine.services', localId: kind === 'project' ? 'project-setup-finished' : 'health-check-failed' };
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject: subject[kind],
+            ...(kind === 'plugin ticket' || kind === 'worktree database' ? { machineId: project.machineId } : { executionContext: project }) }), {
             wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>,
         });
         try {
             await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
             await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId,
-                trigger: { kind: 'pluginEvent', enabled: true,
-                    eventRef: { pluginId: 'happier.machine.services',
-                        localId: kind === 'project' ? 'project-setup-finished' : 'health-check-failed' },
+                trigger: kind === 'plugin ticket'
+                    ? { kind: 'action', phase: 'before', enabled: true, actionIds: ['fixture.qa-c-r15-tickets/actions/review-ticket'] }
+                    : { kind: 'pluginEvent', enabled: true, eventRef,
                     sourceInstanceId, sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Private resource',
                     observationTransport: { kind: 'checkpointedPull',
-                        watcherMaterializationRef: { machineId: project.machineId, pluginId: 'happier.machine.services',
-                            materializationId: 'machine-services' } },
+                        watcherMaterializationRef: { machineId: project.machineId, pluginId: eventRef.pluginId,
+                            materializationId: kind === 'worktree database' ? 'finding-observed' : 'machine-services' } },
                     filter: null, maximumObservationAgeMs: null } }));
             expect(hook.getCurrent().link).toMatchObject({ loading: false, missingAudience: [] });
             const grantPath = `/v1/artifacts/${definitionId}/access/grants`;
             expect(home.requests.some(request => request.path === grantPath)).toBe(false);
+            // Workbench and Ticket hand off to independent placement and plugin admission owners after review.
+            if (kind === 'worktree database' || kind === 'plugin ticket') return;
             await act(async () => {
                 const linked = await hook.getCurrent().link.submit('accept');
                 if (!linked.ok && linked.phase === 'link') throw linked.error;

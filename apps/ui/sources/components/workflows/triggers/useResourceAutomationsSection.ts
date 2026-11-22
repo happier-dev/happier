@@ -275,8 +275,10 @@ function useWorkflowLinkController(input: Readonly<{
             isCurrent: () => isCurrent() && binding.isCurrent() }).list();
         return projectSessionAccessAudience(snapshot, scope.accountId);
     });
-    // Project and saved Health attachments are Account-private, with no grant roster.
-    const privateSubject = subject?.kind === 'project' || subject?.kind === 'healthCheck';
+    // These subject identities have no shared grant roster. Environment-bound
+    // databases still use their containing Source's audience.
+    const privateSubject = subject?.kind === 'project' || subject?.kind === 'healthCheck' || subject?.kind === 'plugin'
+        || (subject?.kind === 'database' && (subject.target.kind === 'worktree' || subject.target.kind === 'manual'));
     const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience
         : sourceAudience ?? (privateSubject ? NO_SHARED_AUDIENCE : sessionAudience.value ?? undefined);
     const needsAudience = workflow?.kind === 'artifact' && subject !== null;
