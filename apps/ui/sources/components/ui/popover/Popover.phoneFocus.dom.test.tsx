@@ -29,6 +29,7 @@ installPopoverCommonModuleMocks({
 const { Popover } = await import('./Popover');
 const { TextInput } = await import('@/components/ui/text/Text');
 const { View, Pressable, Text } = await import('react-native');
+const { FollowEditorPanel } = await import('@/components/sessions/follow/FollowEditorPanel');
 const { VoiceIslandAnatomy, VoiceOrbAnatomy } = await import('@/components/voice/presence/voicePresenceAnatomy');
 const { useCompanionPointerDragSession } = await import('@/components/companion/interaction/useCompanionPointerDragSession');
 
@@ -260,6 +261,59 @@ describe('Popover phone-sheet focus return', () => {
             container.remove();
         }
     });
+});
+
+it('dismisses Session Follow and suppresses the touch click on its separate More focus-return button (J-B21)', async () => {
+    viewport.width = 900;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    const more = vi.fn();
+    function Harness() {
+        const [open, setOpen] = React.useState(false);
+        const chipAnchor = React.useRef<React.ComponentRef<typeof View>>(null);
+        const moreButton = React.useRef<HTMLButtonElement>(null);
+        return <>
+            <View ref={chipAnchor} collapsable={false}>
+                <button type="button" aria-expanded={open} onClick={() => setOpen(true)}>Follow</button>
+            </View>
+            <button type="button" ref={moreButton} onClick={more}>More</button>
+            {open ? <FollowEditorPanel anchorRef={chipAnchor} focusReturnRef={moreButton}
+                title="Follow" subtitle="Session updates" onRequestClose={() => setOpen(false)} footer={null}>
+                <button type="button" data-testid="follow-option">Everything</button>
+            </FollowEditorPanel> : null}
+        </>;
+    }
+    try {
+        await act(async () => root.render(<Harness />));
+        const [chip, moreButton] = container.querySelectorAll<HTMLButtonElement>('button');
+        await act(async () => { chip.focus(); chip.click(); });
+        const option = document.querySelector<HTMLButtonElement>('[data-testid="follow-option"]')!;
+        expect(option).not.toBeNull();
+
+        await act(async () => { option.focus(); moreButton.focus(); });
+        expect(document.activeElement).toBe(moreButton);
+        expect(chip.getAttribute('aria-expanded')).toBe('true');
+
+        const completeTap = () => {
+            moreButton.dispatchEvent(Object.assign(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }),
+                { pointerType: 'touch' }));
+            return moreButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        };
+        let clickDelivered = true;
+        await act(async () => { clickDelivered = completeTap(); });
+        expect({
+            open: chip.getAttribute('aria-expanded'),
+            clickDelivered,
+            moreActivations: more.mock.calls.length,
+        }).toEqual({ open: 'false', clickDelivered: false, moreActivations: 0 });
+        await act(async () => { completeTap(); });
+        expect(more).toHaveBeenCalledOnce();
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        viewport.width = 390;
+    }
 });
 
 it('dismisses a desktop anchored popover only on focus departure, including from a portaled submenu', async () => {

@@ -316,74 +316,87 @@ describe('Popover web portal interaction readiness', () => {
         }
     });
 
-    it('keeps an open popover open while the person presses inside a popover opened from it (a row menu in a roster)', async () => {
-        const { Popover } = await import('./Popover');
-        const portalTarget = document.createElement('div');
-        const outerAnchor = document.createElement('button');
-        const container = document.createElement('div');
-        document.body.append(portalTarget, outerAnchor, container);
-        const root = createRoot(container);
-        const outerClose = vi.fn();
-        const innerClose = vi.fn();
-        const latestInnerClose = vi.fn();
+    it.each(['geometric anchor', 'focus return only'] as const)(
+        'uses the %s when a portaled submenu shares a reference with its outer popover',
+        async sharedReference => {
+            const { Popover } = await import('./Popover');
+            const portalTarget = document.createElement('div');
+            const outerAnchor = document.createElement('button');
+            const container = document.createElement('div');
+            const detachedInnerAnchor = { current: document.createElement('button') };
+            document.body.append(portalTarget, outerAnchor, detachedInnerAnchor.current, container);
+            const root = createRoot(container);
+            const outerClose = vi.fn();
+            const innerClose = vi.fn();
+            const latestInnerClose = vi.fn();
 
-        function Nested({ onInnerClose }: { onInnerClose: () => void }) {
-            const outerAnchorRef = React.useRef(outerAnchor);
-            const innerAnchor = React.useRef<HTMLButtonElement>(null);
-            const [innerOpen, setInnerOpen] = React.useState(true);
-            return (
-                <ModalPortalTargetProvider target={portalTarget}>
-                    <Popover open anchorRef={outerAnchorRef} placement="right" backdrop={false}
-                        portal={{ web: true, native: true }} onRequestClose={outerClose}>
-                        {() => (
-                            <div>
-                                <button type="button" ref={innerAnchor} data-testid="row-more">More</button>
-                                <Popover open={innerOpen} anchorRef={innerAnchor} placement="bottom" backdrop={false}
-                                    portal={{ web: true, native: true }} onRequestClose={() => {
-                                        onInnerClose();
-                                        setInnerOpen(false);
-                                    }}>
-                                    {() => <button type="button" data-testid="menu-item">Pin to rail</button>}
-                                </Popover>
-                            </div>
-                        )}
-                    </Popover>
-                </ModalPortalTargetProvider>
-            );
-        }
+            function Nested({ onInnerClose }: { onInnerClose: () => void }) {
+                const outerAnchorRef = React.useRef(outerAnchor);
+                const innerAnchor = React.useRef<HTMLButtonElement>(null);
+                const [innerOpen, setInnerOpen] = React.useState(true);
+                return (
+                    <ModalPortalTargetProvider target={portalTarget}>
+                        <Popover open anchorRef={outerAnchorRef} placement="right" backdrop={false}
+                            portal={{ web: true, native: true }} onRequestClose={outerClose}>
+                            {() => (
+                                <div>
+                                    <button type="button" ref={innerAnchor} data-testid="row-more">More</button>
+                                    <Popover open={innerOpen} placement="bottom" backdrop={false}
+                                        anchorRef={sharedReference === 'geometric anchor' ? innerAnchor : detachedInnerAnchor}
+                                        focusReturnRef={innerAnchor}
+                                        portal={{ web: true, native: true }} onRequestClose={() => {
+                                            onInnerClose();
+                                            setInnerOpen(false);
+                                        }}>
+                                        {() => <button type="button" data-testid="menu-item">Pin to rail</button>}
+                                    </Popover>
+                                </div>
+                            )}
+                        </Popover>
+                    </ModalPortalTargetProvider>
+                );
+            }
 
-        try {
-            await act(async () => { root.render(<Nested onInnerClose={innerClose} />); });
-            await act(async () => { root.render(<Nested onInnerClose={latestInnerClose} />); });
-            const item = portalTarget.querySelector<HTMLElement>('[data-testid="menu-item"]');
-            expect(item).not.toBeNull();
-            await act(async () => {
-                item!.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-            });
-            expect(outerClose).not.toHaveBeenCalled();
-            expect(innerClose).not.toHaveBeenCalled();
-            expect(latestInnerClose).not.toHaveBeenCalled();
+            try {
+                await act(async () => { root.render(<Nested onInnerClose={innerClose} />); });
+                await act(async () => { root.render(<Nested onInnerClose={latestInnerClose} />); });
+                const item = portalTarget.querySelector<HTMLElement>('[data-testid="menu-item"]');
+                expect(item).not.toBeNull();
+                const pointerTarget = sharedReference === 'focus return only' ? detachedInnerAnchor.current : item!;
+                await act(async () => {
+                    pointerTarget.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+                });
+                expect(innerClose).not.toHaveBeenCalled();
+                expect(latestInnerClose).not.toHaveBeenCalled();
+                if (sharedReference === 'focus return only') {
+                    // This portal belongs to focus in the parent. Its geometric anchor is outside the parent.
+                    expect(outerClose).toHaveBeenCalledOnce();
+                    return;
+                }
+                expect(outerClose).not.toHaveBeenCalled();
 
-            // Outside input dismisses the active menu and is consumed before the underlying layer.
-            await act(async () => {
-                document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-            });
-            expect(innerClose).not.toHaveBeenCalled();
-            expect({ inner: latestInnerClose.mock.calls.length, outer: outerClose.mock.calls.length })
-                .toEqual({ inner: 1, outer: 0 });
+                // Outside input dismisses the active menu and is consumed before the underlying layer.
+                await act(async () => {
+                    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+                });
+                expect(innerClose).not.toHaveBeenCalled();
+                expect({ inner: latestInnerClose.mock.calls.length, outer: outerClose.mock.calls.length })
+                    .toEqual({ inner: 1, outer: 0 });
 
-            // Closing the controlled child retires its outside listener, leaving the outer layer active.
-            await act(async () => {
-                document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
-            });
-            expect(outerClose).toHaveBeenCalled();
-        } finally {
-            await act(async () => root.unmount());
-            portalTarget.remove();
-            outerAnchor.remove();
-            container.remove();
-        }
-    });
+                // Closing the controlled child retires its outside listener, leaving the outer layer active.
+                await act(async () => {
+                    document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
+                });
+                expect(outerClose).toHaveBeenCalled();
+            } finally {
+                await act(async () => root.unmount());
+                portalTarget.remove();
+                outerAnchor.remove();
+                detachedInnerAnchor.current.remove();
+                container.remove();
+            }
+        },
+    );
 
     it('uses current anchor and outside-input policies without keeping a closed listener active', async () => {
         const { Popover } = await import('./Popover');

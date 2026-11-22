@@ -35,17 +35,18 @@ const { SelectionListFilterChip } = await import('@/components/ui/selectionList/
 const { BoardSettingsButton } = await import('@/components/boards/header/BoardSettingsPopover');
 const { createWorkBoardV1 } = await import('@happier-dev/protocol/boards/workBoardV1');
 
-it('keeps Board Settings open and returns to Delete when its confirmation is canceled (J-B19)', async () => {
+it.each(['cancel', 'confirm'] as const)('settles Board deletion from its real confirmation (%s, J-B19)', async decision => {
     const container = document.createElement('div');
     document.body.append(container);
     const root = createRoot(container);
     const board = createWorkBoardV1({ id: 'confirm-board', name: 'Example Board' });
-    const dispatch = vi.fn();
+    const dispatch = vi.fn(async () => ({ status: 'applied' as const, boards: { v: 1 as const, boards: [] } }));
+    const onDeleted = vi.fn();
     function Harness() {
         const [open, setOpen] = React.useState(false);
         return <ModalProvider>
             <BoardSettingsButton board={board} homes={{ activeServerId: null, mountedServerIds: [], isHomeMounted: () => false }}
-                pickedCards={[]} canvasAvailable dispatch={dispatch} onRemoveItem={() => {}} onDeleted={() => {}}
+                pickedCards={[]} canvasAvailable dispatch={dispatch} onRemoveItem={() => {}} onDeleted={onDeleted}
                 open={open} onOpenChange={setOpen} onAddByHand={() => {}} />
             <output data-testid="board-settings-open">{String(open)}</output>
         </ModalProvider>;
@@ -66,12 +67,21 @@ it('keeps Board Settings open and returns to Delete when its confirmation is can
             const modalLayer = get('web-modal-cancel')?.closest('[data-happy-modal-layer]');
             expect(modalLayer?.contains(document.activeElement)).toBe(true);
         });
-        await act(async () => get('web-modal-cancel').click());
-        await vi.waitFor(() => expect(get('web-modal-cancel')).toBeNull());
-        expect(dispatch).not.toHaveBeenCalled();
         expect(get('board-settings-open').textContent).toBe('true');
-        expect(get('board-settings.delete')).toBe(deleteButton);
-        await vi.waitFor(() => expect(document.activeElement).toBe(deleteButton));
+        expect(dispatch).not.toHaveBeenCalled();
+        await act(async () => get(`web-modal-${decision}`).click());
+        await vi.waitFor(() => expect(get('web-modal-cancel')).toBeNull());
+        if (decision === 'cancel') {
+            expect(dispatch).not.toHaveBeenCalled();
+            expect(onDeleted).not.toHaveBeenCalled();
+            expect(get('board-settings-open').textContent).toBe('true');
+            expect(get('board-settings.delete')).toBe(deleteButton);
+            await vi.waitFor(() => expect(document.activeElement).toBe(deleteButton));
+        } else {
+            expect(get('board-settings-open').textContent).toBe('false');
+            expect(dispatch).toHaveBeenCalledExactlyOnceWith({ kind: 'delete', boardId: board.id }, { confirmed: true });
+            expect(onDeleted).toHaveBeenCalledOnce();
+        }
     } finally {
         await act(async () => root.unmount());
         container.remove();
