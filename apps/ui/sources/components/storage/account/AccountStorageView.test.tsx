@@ -463,6 +463,30 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
     }
   });
 
+  it('at 90% of the limit says it is nearly full, as the Artifacts header meter does (one storage quota owner)', async () => {
+    // 200 MB of Artifacts against a limit of 200 MB / 0.9: exactly the near share.
+    const disconnect = await serve(Math.floor(200_000_000 / 0.9));
+    try {
+      const screen = await renderScreen(
+        <AppPaneProvider>
+          <StorageSettingsRoute />
+        </AppPaneProvider>,
+      );
+      try {
+        await vi.waitFor(() =>
+          expect(textOf(screen.findHostByTestId('storage:say'))).toContain(
+            'artifacts.browser.storageView.say.nearlyFull',
+          ),
+        );
+        expect(screen.findHostByTestId('storage:quota')).toBeNull();
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
   it('opens from the Artifacts header total and from the full-quota notice, filtered to Artifacts', async () => {
     routerMock.state = { pathname: '/artifacts', params: {} };
     const disconnect = await serve(null);

@@ -15,6 +15,7 @@ import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TactilePressable } from '@/components/ui/interactions/TactilePressable';
 import { accountStorageViewRoute } from '@/components/storage/account/storageViewRoute';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
+import { resolveStorageQuotaState, type StorageQuotaState } from '@/components/storage/storageQuotaState';
 import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
@@ -458,7 +459,8 @@ function BrowserHeader(props: Readonly<{
 }>) {
     const limit = props.usage?.artifactLimitBytes ?? null;
     const phone = useDeviceType() === 'phone';
-    const overQuota = props.usage !== null && limit !== null && props.usage.byKind.artifacts >= limit;
+    const quotaState = props.usage !== null && limit !== null ? resolveStorageQuotaState(props.usage.byKind.artifacts, limit) : 'neutral';
+    const overQuota = quotaState === 'full';
     // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
     // Nothing listed in the chosen kinds: the page's line says what belongs here, so no count sits above it.
     // With no limit the count says what the Artifacts hold (owner 11-19); a set limit's meter already says it.
@@ -475,7 +477,7 @@ function BrowserHeader(props: Readonly<{
     // library lists something or the Account stores anything. While the read is out the line keeps its place.
     const meter = props.usage === null
         ? (props.showPresent || props.reservePresent ? <StorageLinePending /> : null)
-        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} /> : null)
+        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} state={quotaState} /> : null)
             : props.showPresent || props.usage.totalBytes > 0 ? <StorageTotal inventory={props.usage} /> : null;
     return (
         // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
@@ -563,28 +565,39 @@ function formatStoredSize(row: ArtifactBrowserRow): string | null {
     return bytes === undefined ? null : formatHappierDataBytes(bytes, { kind: 'storage' });
 }
 
-/** The storage meter: shown only when the server reports an Account budget (unset is the default). */
-function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number }>) {
+/**
+ * The storage meter: shown only when the server reports an Account budget (unset is the default). Its state is the
+ * storage quota owner's: amber from the near share, with one quiet line to what is using space; at the cap the band's
+ * notice says it instead.
+ */
+function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number; state: StorageQuotaState }>) {
     const styles = stylesheet;
     const ratio = props.limitBytes > 0 ? Math.min(1, props.usedBytes / props.limitBytes) : 1;
-    const full = props.usedBytes >= props.limitBytes;
+    const amber = props.state !== 'neutral';
     const used = formatHappierDataBytes(props.usedBytes, { kind: 'storage' });
     const limit = formatHappierDataBytes(props.limitBytes, { kind: 'storage' });
     return (
-        <StorageOpen label={t('artifacts.browser.storage.a11y', { used, limit })}>
-            <View
-                style={styles.meter}
-                testID="artifacts:storageMeter"
-                accessibilityRole="progressbar"
-                accessibilityLabel={t('artifacts.browser.storage.a11y', { used, limit })}
-                accessibilityValue={{ min: 0, max: 100, now: Math.round(ratio * 100) }}
-            >
-                <View style={styles.meterTrack}>
-                    <View style={[styles.meterFill, full ? styles.meterFillFull : null, { width: `${Math.round(ratio * 100)}%` }]} />
+        <View style={styles.meterLine}>
+            <StorageOpen label={t('artifacts.browser.storage.a11y', { used, limit })}>
+                <View
+                    style={styles.meter}
+                    testID="artifacts:storageMeter"
+                    accessibilityRole="progressbar"
+                    accessibilityLabel={t('artifacts.browser.storage.a11y', { used, limit })}
+                    accessibilityValue={{ min: 0, max: 100, now: Math.round(ratio * 100) }}
+                >
+                    <View style={styles.meterTrack}>
+                        <View testID={`artifacts:storageMeter:${props.state}`}
+                            style={[styles.meterFill, amber ? styles.meterFillFull : null, { width: `${Math.round(ratio * 100)}%` }]} />
+                    </View>
+                    <Text style={[styles.presentText, amber ? styles.meterTextFull : null]}>{t('artifacts.browser.storage.meter', { used, limit })}</Text>
                 </View>
-                <Text style={[styles.presentText, full ? styles.meterTextFull : null]}>{t('artifacts.browser.storage.meter', { used, limit })}</Text>
-            </View>
-        </StorageOpen>
+            </StorageOpen>
+            {props.state === 'near' ? (
+                <ArtifactQuotaNotice testID="artifacts:storageNear" standing="near"
+                    quota={{ budget: 'account', usedBytes: props.usedBytes, limitBytes: props.limitBytes }} />
+            ) : null}
+        </View>
     );
 }
 
@@ -762,6 +775,14 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s6,
+    },
+    // Near the limit the quiet line follows the meter on a wide header and wraps beneath it on a phone.
+    meterLine: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        flexWrap: 'wrap',
+        columnGap: theme.space.s12,
+        rowGap: theme.space.s2,
     },
     meterTrack: {
         width: 72,

@@ -214,7 +214,7 @@ export function AccountStorageBody(
         description={t('artifacts.browser.storageView.description')}
       />
       {/* Over the limit: the shipped notice says the cause once; its action lists the biggest Artifacts here. */}
-      {limit?.state === 'over' ? (
+      {limit?.state === 'full' ? (
         <ArtifactQuotaNotice
           testID="storage:quota"
           placement="page-section"
@@ -442,7 +442,7 @@ function AccountCapacityRow(
 function ArtifactLimitRow(props: Readonly<{ limit: ArtifactLimitStanding }>) {
   const { theme } = useUnistyles();
   const { limit } = props;
-  const speaks = limit.state !== 'room';
+  const speaks = limit.state !== 'neutral';
   const fill = speaks
     ? theme.colors.state.warning.foreground
     : usageSignatureAccent(theme);
@@ -493,7 +493,7 @@ function ArtifactLimitRow(props: Readonly<{ limit: ArtifactLimitStanding }>) {
       testID="storage:limit"
       title={t('artifacts.browser.storageView.limit.title')}
       figure={
-        limit.state === 'over'
+        limit.state === 'full'
           ? {
               strong: used,
               rest: t('artifacts.browser.storageView.limit.fullOf', {

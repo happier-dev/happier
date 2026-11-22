@@ -2,6 +2,7 @@ import { StorageInventoryKindV1Schema, type StorageInventoryItemV1, type Storage
 import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 
 import { projectArtifactBrowserRows, type ArtifactBrowserRow } from '@/components/artifacts/artifactBrowserModel';
+import { resolveStorageQuotaState, type StorageQuotaState } from '@/components/storage/storageQuotaState';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
 /**
@@ -17,9 +18,6 @@ const KIND_ORDER: readonly StorageInventoryKindV1[] = [
     'artifacts', 'artifactOldVersions', 'discussionAttachments', 'accountPets', 'pluginCollections', 'pluginArtifacts',
 ];
 const IMAGE_KINDS: readonly StorageInventoryKindV1[] = ['profilePictures', 'avatars', 'teamLogos'];
-
-/** The near-the-limit share from the approved storage-view lab (scene 2 "Near the limit", ≥ 90%). */
-const ARTIFACT_LIMIT_NEAR_SHARE = 0.9;
 
 export type AccountStorageKind = Readonly<{ id: StorageInventoryKindV1; bytes: number | null }>;
 
@@ -60,7 +58,7 @@ export type ArtifactLimitStanding = Readonly<{
     usedBytes: number;
     limitBytes: number;
     leftBytes: number;
-    state: 'room' | 'near' | 'over';
+    state: StorageQuotaState;
 }>;
 
 /** The Artifact limit as the server reports it; `null` when no limit is set (the server default). */
@@ -68,9 +66,7 @@ export function projectArtifactLimit(inventory: StorageInventoryV1 | null): Arti
     if (!inventory || inventory.artifactLimitBytes === null) return null;
     const usedBytes = inventory.byKind.artifacts;
     const limitBytes = inventory.artifactLimitBytes;
-    const state = usedBytes >= limitBytes ? 'over'
-        : limitBytes > 0 && usedBytes / limitBytes >= ARTIFACT_LIMIT_NEAR_SHARE ? 'near' : 'room';
-    return { usedBytes, limitBytes, leftBytes: Math.max(0, limitBytes - usedBytes), state };
+    return { usedBytes, limitBytes, leftBytes: Math.max(0, limitBytes - usedBytes), state: resolveStorageQuotaState(usedBytes, limitBytes) };
 }
 
 /** Nothing stored in any kind the server measures, and no kind it could not measure. */
@@ -91,7 +87,7 @@ const MEASURED_ORDER: readonly AccountStorageMeasuredKind[] = ['artifacts', 'dis
 
 export function describeAccountStorage(inventory: StorageInventoryV1): AccountStorageSay {
     const limit = projectArtifactLimit(inventory);
-    if (limit?.state === 'over' || isAccountStorageEmpty(inventory)) return { kind: 'none' };
+    if (limit?.state === 'full' || isAccountStorageEmpty(inventory)) return { kind: 'none' };
     if (limit?.state === 'near') return { kind: 'near', limit };
     const largest = MEASURED_ORDER.reduce<AccountStorageMeasuredKind | null>((best, id) =>
         inventory.byKind[id] > 0 && (best === null || inventory.byKind[id] > inventory.byKind[best]) ? id : best, null);

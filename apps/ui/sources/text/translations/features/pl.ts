@@ -3539,6 +3539,7 @@ const artifactsBrowserTranslations = { pl: {
             totalAtLeast: ({ size }) => `${size} lub więcej zapisane`,
             totalA11y: ({ size }) => `Twoje konto przechowuje ${size}`,
             totalAtLeastA11y: ({ size }) => `Twoje konto przechowuje co najmniej ${size}. Zdjęcia profilowe, awatary i loga zespołów nie są liczone.`,
+            nearlyFull: 'Prawie pełne',
             artifactsPart: ({ size }) => `${size} ze starszymi wersjami`,
             column: 'Rozmiar',
             sizeUnknown: 'Rozmiar jeszcze nieznany',

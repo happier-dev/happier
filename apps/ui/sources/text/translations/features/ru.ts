@@ -3531,6 +3531,7 @@ const artifactsBrowserTranslations = { ru: {
             totalAtLeast: ({ size }) => `Хранится ${size} или больше`,
             totalA11y: ({ size }) => `В вашем аккаунте хранится ${size}`,
             totalAtLeastA11y: ({ size }) => `В вашем аккаунте хранится не меньше ${size}. Фото профиля, аватары и логотипы команд не учитываются.`,
+            nearlyFull: 'Почти заполнено',
             artifactsPart: ({ size }) => `${size} со старыми версиями`,
             column: 'Размер',
             sizeUnknown: 'Размер пока неизвестен',

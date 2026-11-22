@@ -195,3 +195,73 @@ describe('Artifacts browser storage numbers (owner 11-19, audit 42a/42b)', () =>
     }
   });
 });
+
+describe('Artifacts header meter near the Artifact limit (UI refinements ruling 11-22)', () => {
+  const LIMIT = 1_000_000;
+  // One decision for every storage meter: neutral below 90 %, near from 90 % (amber, one quiet line), full at the cap.
+  it.each([
+    { share: '89.9%', used: 899_000, state: 'neutral' },
+    { share: '90%', used: 900_000, state: 'near' },
+    { share: '99.65%', used: 996_500, state: 'near' },
+    { share: '100%', used: 1_000_000, state: 'full' },
+  ])('at $share of the limit the meter is $state', async ({ used, state }) => {
+    const accountId = 'owner';
+    const inventory: StorageInventoryV1 = {
+      totalBytes: used,
+      artifactLimitBytes: LIMIT,
+      unmeasuredKinds: [],
+      byKind: { artifacts: used, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 },
+    };
+    const rows = [{
+      id: SMALL,
+      ownerAccountId: accountId,
+      access: 'owner' as const,
+      kind: 'other' as const,
+      kindHint: 'markdown',
+      encryptionMode: 'plain' as const,
+      publicAudience: 'none' as const,
+      dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+      header: encodePlainArtifactStoredContent({ kind: 'markdown', title: 'Q4 launch plan' }),
+      headerVersion: 1,
+      bodyVersion: 1,
+      seq: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      storedSizeBytes: used,
+    }];
+    const served = await serveActionHomes({
+      homes: [{ key: 'owner', serverUrl: 'https://artifact-storage-near.test', accountId }],
+      route: (request) => {
+        if (request.path === '/v1/artifacts/storage/usage') return Response.json(inventory);
+        if (request.path === '/v1/artifacts' && request.method === 'GET')
+          return createArtifactListHttpResponse(request.url, rows);
+        return undefined;
+      },
+    });
+    disposeHome = served.dispose;
+    const disconnect = await served.restoreActiveConnection();
+    try {
+      const screen = await renderScreen(
+        <AppPaneProvider>
+          <ArtifactsBrowserScreen />
+        </AppPaneProvider>,
+      );
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('artifacts:storageMeter')).not.toBeNull());
+        expect(screen.findHostByTestId(`artifacts:storageMeter:${state}`)).not.toBeNull();
+        // Near says it once, quietly, with the way to what is using space; full keeps the cap notice instead.
+        expect(screen.findHostByTestId('artifacts:storageNear') !== null).toBe(state === 'near');
+        if (state === 'near') {
+          expect(textOf(screen.findHostByTestId('artifacts:storageNear'))).toContain(
+            'artifacts.browser.storageView.seeUsage',
+          );
+        }
+        expect(screen.findHostByTestId('artifacts:quota') !== null).toBe(state === 'full');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+});

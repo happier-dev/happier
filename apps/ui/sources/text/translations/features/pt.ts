@@ -3521,6 +3521,7 @@ const artifactsBrowserTranslations = { pt: {
             totalAtLeast: ({ size }) => `${size} armazenados ou mais`,
             totalA11y: ({ size }) => `Sua conta armazena ${size}`,
             totalAtLeastA11y: ({ size }) => `Sua conta armazena pelo menos ${size}. Fotos de perfil, avatares e logotipos de equipe não são contados.`,
+            nearlyFull: 'Quase cheio',
             artifactsPart: ({ size }) => `${size} com versões antigas`,
             column: 'Tamanho',
             sizeUnknown: 'Tamanho ainda desconhecido',

@@ -3527,6 +3527,7 @@ const artifactsBrowserTranslations = { ca: {
             totalAtLeast: ({ size }) => `${size} emmagatzemats o més`,
             totalA11y: ({ size }) => `El teu compte emmagatzema ${size}`,
             totalAtLeastA11y: ({ size }) => `El teu compte emmagatzema almenys ${size}. No es compten les fotos de perfil, els avatars ni els logotips d’equip.`,
+            nearlyFull: 'Gairebé ple',
             artifactsPart: ({ size }) => `${size} amb versions antigues`,
             column: 'Mida',
             sizeUnknown: 'Mida encara desconeguda',

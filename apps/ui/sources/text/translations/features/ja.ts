@@ -3485,6 +3485,7 @@ const artifactsBrowserTranslations = { ja: {
             totalAtLeast: ({ size }) => `${size} 以上保存済み`,
             totalA11y: ({ size }) => `アカウントの保存容量は ${size} です`,
             totalAtLeastA11y: ({ size }) => `アカウントの保存容量は ${size} 以上です。プロフィール画像、アバター、チームロゴは含まれません。`,
+            nearlyFull: 'もうすぐ上限です',
             artifactsPart: ({ size }) => `古いバージョンを含めて ${size}`,
             column: 'サイズ',
             sizeUnknown: 'サイズはまだ不明です',

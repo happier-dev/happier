@@ -3431,6 +3431,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             totalAtLeast: ({ size }) => `已儲存 ${size} 或更多`,
             totalA11y: ({ size }) => `你的帳戶儲存了 ${size}`,
             totalAtLeastA11y: ({ size }) => `你的帳戶至少儲存了 ${size}。個人檔案圖片、頭像和團隊標誌未計入。`,
+            nearlyFull: '快滿了',
             artifactsPart: ({ size }) => `含舊版本共 ${size}`,
             column: '大小',
             sizeUnknown: '大小尚未得知',

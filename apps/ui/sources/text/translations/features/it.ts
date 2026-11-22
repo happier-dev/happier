@@ -3534,6 +3534,7 @@ const artifactsBrowserTranslations = { it: {
             totalAtLeast: ({ size }) => `${size} archiviati o più`,
             totalA11y: ({ size }) => `Il tuo account archivia ${size}`,
             totalAtLeastA11y: ({ size }) => `Il tuo account archivia almeno ${size}. Foto profilo, avatar e loghi dei team non sono contati.`,
+            nearlyFull: 'Quasi pieno',
             artifactsPart: ({ size }) => `${size} con le versioni precedenti`,
             column: 'Dimensione',
             sizeUnknown: 'Dimensione non ancora nota',

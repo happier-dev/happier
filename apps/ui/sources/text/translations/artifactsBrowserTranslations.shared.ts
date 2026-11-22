@@ -147,6 +147,8 @@ export type ArtifactsBrowserTranslations = Readonly<{
         totalAtLeast: (params: Readonly<{ size: string }>) => string;
         totalA11y: (params: Readonly<{ size: string }>) => string;
         totalAtLeastA11y: (params: Readonly<{ size: string }>) => string;
+        /** The meter's quiet line from the near share of the limit: "Nearly full · See what’s using space". */
+        nearlyFull: string;
         artifactsPart: (params: Readonly<{ size: string }>) => string;
         column: string;
         sizeUnknown: string;
@@ -526,6 +528,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             totalAtLeast: ({ size }) => `${size} stored or more`,
             totalA11y: ({ size }) => `Your Account stores ${size}`,
             totalAtLeastA11y: ({ size }) => `Your Account stores at least ${size}. Profile pictures, avatars and Team logos aren’t counted.`,
+            nearlyFull: 'Nearly full',
             artifactsPart: ({ size }) => `${size} with old versions`,
             column: 'Size',
             sizeUnknown: 'Size not known yet',

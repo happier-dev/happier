@@ -8,12 +8,12 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
  * Dev-only specimen of the Artifacts browser (lab `app-surfaces/artifacts`, frames A1–A8) drawn
  * through the real `ArtifactsBrowser` with the lab's fixtures, so lab and app compare side by side.
  * `state`: `grid` (A1, the root-cause document open beside the grid), `empty` (A3), `loading` (A4),
- * `quota` (A8, an operator budget that is full), `failed` (first load failed), `elsewhere` (only kinds that live in
+ * `near` (the budget at 96%: amber meter and its quiet line), `quota` (A8, an operator budget that is full), `failed` (first load failed), `elsewhere` (only kinds that live in
  * their own place: the default list says what it keeps and offers every kind), `storage` (no limit set: the Account
  * total and each Artifact's size, one not measured yet; storage-view lab scene 4 "List"), `storagePending` (the
  * library listed, the Account's numbers still being read).
  */
-export const ARTIFACTS_SPECIMEN_STATES = ['grid', 'empty', 'loading', 'quota', 'failed', 'elsewhere', 'storage', 'storagePending'] as const;
+export const ARTIFACTS_SPECIMEN_STATES = ['grid', 'empty', 'loading', 'near', 'quota', 'failed', 'elsewhere', 'storage', 'storagePending'] as const;
 export type ArtifactsSpecimenState = typeof ARTIFACTS_SPECIMEN_STATES[number];
 
 const MINUTE = 60_000;
@@ -71,6 +71,7 @@ function specimenArtifacts(now: number): readonly DecryptedArtifact[] {
 
 const BUDGET: StorageInventoryV1 = { totalBytes: 18_400_000, artifactLimitBytes: 50_000_000, unmeasuredKinds: [],
     byKind: { artifacts: 18_400_000, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } };
+const NEAR: StorageInventoryV1 = { ...BUDGET, totalBytes: 48_200_000, byKind: { ...BUDGET.byKind, artifacts: 48_200_000 } };
 const FULL: StorageInventoryV1 = { ...BUDGET, totalBytes: 50_000_000, byKind: { ...BUDGET.byKind, artifacts: 50_000_000 } };
 /** No limit set: the Account total across kinds; avatars, profile pictures and Team logos are not measured yet. */
 const UNLIMITED: StorageInventoryV1 = { totalBytes: 1_840_000_000, artifactLimitBytes: null,
@@ -85,6 +86,7 @@ export function ArtifactsSpecimen(props: Readonly<{ state: ArtifactsSpecimenStat
         case 'empty': return <ArtifactsBrowser artifacts={[]} loaded loadFailed={false} onRetry={NOOP} usage={null} />;
         case 'loading': return <ArtifactsBrowser artifacts={[]} loaded={false} loadFailed={false} onRetry={NOOP} usage={null} />;
         case 'failed': return <ArtifactsBrowser artifacts={[]} loaded={false} loadFailed onRetry={NOOP} usage={null} />;
+        case 'near': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={NEAR} />;
         case 'quota': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={FULL} />;
         case 'elsewhere': return <ArtifactsBrowser artifacts={artifacts.filter((artifact) => ['a5', 'a6', 'a7'].includes(artifact.id))} loaded loadFailed={false} onRetry={NOOP} usage={BUDGET} />;
         case 'storage': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={UNLIMITED} />;

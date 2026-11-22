@@ -3430,6 +3430,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             totalAtLeast: ({ size }) => `已存储 ${size} 或更多`,
             totalA11y: ({ size }) => `你的账户存储了 ${size}`,
             totalAtLeastA11y: ({ size }) => `你的账户至少存储了 ${size}。个人资料图片、头像和团队标志未计入。`,
+            nearlyFull: '快满了',
             artifactsPart: ({ size }) => `含旧版本共 ${size}`,
             column: '大小',
             sizeUnknown: '大小暂未知',
