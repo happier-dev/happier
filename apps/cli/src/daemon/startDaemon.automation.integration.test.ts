@@ -599,7 +599,8 @@ vi.mock('@/persistence', async (importOriginal) => {
   };
 });
 
-vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', () => ({
+vi.mock('@/settings/accountSettings/bootstrapAccountSettingsContext', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/settings/accountSettings/bootstrapAccountSettingsContext')>(),
   bootstrapAccountSettingsContext: harness.bootstrapAccountSettingsContext,
 }));
 

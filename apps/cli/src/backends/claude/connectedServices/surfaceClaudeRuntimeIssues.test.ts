@@ -144,12 +144,12 @@ function restoreClaudeSelectionEnv(previous: string | undefined): void {
 
 describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
   it.each([
-    { utilization: 100, planType: null, providerLimitId: 'seven_day', invalid: false },
-    { utilization: 101, planType: null, providerLimitId: 'seven_day', invalid: true },
-    { utilization: Number.NaN, planType: null, providerLimitId: 'seven_day', invalid: true },
-    { utilization: 100, planType: '', providerLimitId: 'seven_day', invalid: true },
-    { utilization: 100, planType: null, providerLimitId: '', invalid: true },
-  ])('queues a terminal failure despite invalid optional provider values ($utilization, $planType, $providerLimitId)', async ({ utilization, planType, providerLimitId, invalid }) => {
+    { utilization: 100, planType: null, providerLimitId: 'seven_day', invalidField: null },
+    { utilization: 101, planType: null, providerLimitId: 'seven_day', invalidField: 'utilization' },
+    { utilization: Number.NaN, planType: null, providerLimitId: 'seven_day', invalidField: 'utilization' },
+    { utilization: 100, planType: '', providerLimitId: 'seven_day', invalidField: 'planType' },
+    { utilization: 100, planType: null, providerLimitId: '', invalidField: 'providerLimitId' },
+  ])('queues a terminal failure despite invalid optional provider values ($utilization, $planType, $providerLimitId)', async ({ utilization, planType, providerLimitId, invalidField }) => {
     const previous = installClaudeSelectionEnv();
     const warn = vi.spyOn(logger, 'warnFile').mockImplementation(() => {});
     const admitted: ReturnType<typeof parseQueuedSessionMutation>[] = [];
@@ -176,23 +176,35 @@ describe('surfaceClaudeRuntimeIssues runtime-auth projection', () => {
       }, '[test]');
       const failed = admitted.at(-1);
       expect(failed).toMatchObject({ ok: true, mutation: { kind: 'session_turn', payload: { action: 'fail' } } });
-      if (invalid) {
+      if (invalidField) {
         expect(failed).toMatchObject({ ok: true, mutation: { payload: { issue: { code: 'usage_limit' } } } });
         expect(warn).toHaveBeenCalledWith(
           '[API] Invalid failure issue reduced to preserve terminal session turn',
           expect.objectContaining({ issues: expect.arrayContaining([expect.objectContaining({ path: expect.stringMatching(/^issue\.usageLimit/) })]) }),
         );
       } else {
-        expect(failed).toMatchObject({ ok: true, mutation: { payload: { issue: { usageLimit: { providerLimitId: 'seven_day',
-          connectedService: { serviceId: 'claude-subscription', groupId: 'team-pool' } } } } } });
+        expect(warn).not.toHaveBeenCalled();
       }
       if (!failed?.ok || failed.mutation.kind !== 'session_turn' || failed.mutation.payload.action !== 'fail') {
         throw new Error('Expected admitted terminal failure');
       }
-      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('providerObservedAtMs');
-      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('sourceProviderAccountId');
-      expect(failed.mutation.payload.issue?.usageLimit ?? {}).not.toHaveProperty('usageLimitNoteKind');
-      if (invalid) expect(failed.mutation.payload.issue).not.toHaveProperty('usageLimit');
+      const issue = failed.mutation.payload.issue;
+      if (invalidField === 'providerLimitId') {
+        // The blank ID also makes the synthesized meter window invalid.
+        expect(issue).not.toHaveProperty('usageLimit');
+      } else {
+        expect(issue?.usageLimit).toMatchObject({
+          providerLimitId: 'seven_day',
+          resetAtMs: expect.any(Number),
+          retryAfterMs: 604_800_000,
+          connectedService: { serviceId: 'claude-subscription', groupId: 'team-pool' },
+        });
+        if (invalidField) expect(issue?.usageLimit).not.toHaveProperty(invalidField);
+        expect(issue?.usageLimit).not.toHaveProperty('providerObservedAtMs');
+        expect(issue?.usageLimit).not.toHaveProperty('sourceProviderAccountId');
+        expect(issue?.usageLimit).not.toHaveProperty('sourceProviderOrganizationId');
+        expect(issue?.usageLimit).not.toHaveProperty('usageLimitNoteKind');
+      }
       expect(mockNotifyDaemonConnectedServiceRuntimeAuthFailure).toHaveBeenCalled();
       expect(lifecycle.hasActiveTurn()).toBe(false);
     } finally { restoreClaudeSelectionEnv(previous); warn.mockRestore(); }
