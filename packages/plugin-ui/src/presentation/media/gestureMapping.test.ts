@@ -144,6 +144,14 @@ describe('shared live stream gesture mapping', () => {
             expect(fillViewTransform(stage, tiny, { width: 212, height: tiny.height }, 3)).toEqual({ scale: 1, x: 0, y: 0 });
         });
 
+        it('keeps a page laid out for the stage\'s width whole: filling by height would crop it (DESIGN-ACCEPT-142 6)', () => {
+            // After a phone controlled the page, the page is 390 x 436 points, drawn whole across a 390 x 588 stage.
+            // Filling by height (1.35x) cut its right 29 % ("1 la…"); its own width already fits, so it rests whole.
+            const stage = { width: 390, height: 588 };
+            const phonePage = { x: 0, y: 76, width: 390, height: 436 };
+            expect(fillViewTransform(stage, phonePage, { width: 390, height: 436 }, 3)).toEqual({ scale: 1, x: 0, y: 0 });
+        });
+
         it('maps taps to the same remote point at fill, panned, and with the whole page shown', () => {
             const scale = 700 / 234;
             const mapper = createLiveStreamGestureMapper();
