@@ -296,12 +296,15 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     machines.find((candidate) => candidate.id === effectiveMachineId) ?? null;
   const homeDir = readMachineHomeDir(machine);
 
+  // The setup chosen from the suggestions applies only while this draft is still that setup: a starter picked by hand
+  // afterwards is not it. The create step's words, its Back and Create's plan brief all read this one answer.
+  const suggestion = suggestionForDraft(appliedSuggestion, starterId);
   // Code lives on (journey-deploy F5): the forge owner offers forges and says where the repository would go on each.
   const forge = useNewAppForges({ serverId: scope?.serverId ?? null, machineId: effectiveMachineId, homeDir,
-    active: step === 'describe', suggestion: appliedSuggestion });
+    active: step === 'describe', suggestion });
   const owner = forge.owner;
   // A suggested scratch setup creates an empty repository; a starter picked by hand clears it.
-  const scratch = starterId === null && appliedSuggestion?.recommendation.source.kind === 'scratch';
+  const scratch = suggestion?.recommendation.source.kind === 'scratch';
 
   const repositoryName = deriveRepositoryName(name);
   const starterDraft = { starterId, scratch, description, name, machineId: effectiveMachineId };
@@ -467,9 +470,6 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     submittedInput.current = actionInput;
     setStep('create');
     setCreate({ kind: 'running' });
-    const suggestion = appliedSuggestion && (actionInput.source?.kind === 'scratch'
-      ? appliedSuggestion.recommendation.source.kind === 'scratch'
-      : suggestedStarterItemId(appliedSuggestion) === actionInput.starterId) ? appliedSuggestion : null;
     const lifetime = suggestion ? captureActiveServerAccountScopeLifetime() : null;
     if (suggestion && lifetime) {
       // Use this setup: the suggestion owner creates through the same Action with the plan brief, then opens the Session.
@@ -522,7 +522,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       return;
     }
     if (outcome.kind === 'created') settleCreated(outcome, await startSession(outcome));
-  }, [appliedSuggestion, create, description, forge.markNeedsAccount, input, name, scope, settleCreated, startSession]);
+  }, [create, description, forge.markNeedsAccount, input, name, scope, settleCreated, startSession, suggestion]);
 
   // Use this setup (journey-deploy F4): the suggestion owner routes it. A starter continues in this flow's review, which
   // creates through the owner with the plan brief; a catalog app continues in this dialog's Where it runs.
@@ -559,7 +559,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       else leaveDeploy();
     }
     // A setup chosen from the suggestions goes back to those cards, kept; a starter picked by hand, to the source step.
-    else if (step === 'describe') setStep(appliedSuggestion ? 'auto' : 'start');
+    else if (step === 'describe') setStep(suggestion ? 'auto' : 'start');
     else if (step === 'auto') {
       auto.stop();
       setStep('start');
@@ -570,7 +570,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     )
       setStep('describe');
     else close();
-  }, [addingMachine, appliedSuggestion, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step]);
+  }, [addingMachine, auto.stop, close, create?.kind, deployFrame, leaveDeploy, step, suggestion]);
   const pageBack = usePageBackControl('newApp.back', back);
 
   const deployStep = step === 'deploy' ? deployFrame?.step ?? 'where' : null;
@@ -948,8 +948,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {/* A chosen starter names this step; Describe your app is the other way in, not this one (PAGE-ACCEPT-176 R8-D8). */}
         {/* After a suggested setup the words are given: the step creates that setup, named by its starter when it has
             one (DESIGN-ACCEPT-2 batch 5). */}
-        {header(starter?.title ?? t(appliedSuggestion ? 'newApp.createTitle' : 'newApp.describeTitle'),
-          t(appliedSuggestion ? 'newApp.createDescription' : 'newApp.describeDescription'))}
+        {header(starter?.title ?? t(suggestion ? 'newApp.createTitle' : 'newApp.describeTitle'),
+          t(suggestion ? 'newApp.createDescription' : 'newApp.describeDescription'))}
         <ItemGroup surface="none" header="none">
           <FieldTextInput
             testID="newApp.description"
@@ -1256,6 +1256,15 @@ function NewAppCatalogReadFailure(props: Readonly<{
 /** The line under a forge in Code lives on's menu: where the repository would go, or nothing while it is checked. */
 function forgeOptionLine(owner: ForgeOwnerFact | undefined, repositoryName: string): { subtitle?: string } {
   return owner?.kind === 'ready' ? { subtitle: `${owner.owner}/${repositoryName || '…'}` } : {};
+}
+
+/** The chosen suggestion while the draft is still its setup: its starter, or no starter for a scratch setup. */
+function suggestionForDraft(chosen: NewAppAutoChosen | null, starterId: string | null): NewAppAutoChosen | null {
+  if (!chosen) return null;
+  const applies = chosen.recommendation.source.kind === 'scratch'
+    ? starterId === null
+    : starterId !== null && suggestedStarterItemId(chosen) === starterId;
+  return applies ? chosen : null;
 }
 
 /** The registry item a suggested starter names: the catalog snapshot carries the item id the review selects by. */

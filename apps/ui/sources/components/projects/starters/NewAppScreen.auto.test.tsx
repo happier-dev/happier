@@ -275,6 +275,48 @@ it('Describe your app replaces the Ask-an-agent door: one run on a ready Machine
   }
 });
 
+it('a starter picked by hand after Use this setup is not the suggestion: the step says describe, and Back returns to the source step (REVIEW-DELTA7 F1)', async () => {
+  suggestionBoundary({
+    executionRunWait: async () => ({
+      ok: true,
+      status: 'succeeded',
+      result: terminal({ recommendations: [{ ...recommendation, source: { kind: 'scratch' } }] }),
+    }),
+  });
+  const { fixture, screen } = await openDescribe('auto-hand-pick');
+  try {
+    const { t } = await import('@/text');
+    await screen.pressByTestIdAsync('newApp.describeApp');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await act(async () => screen.changeTextByTestId('newApp.auto.description', 'A small landing page for my bakery'));
+    await screen.pressByTestIdAsync('newApp.auto.suggest');
+    await waitForHomeGovernance(() =>
+      expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy(),
+    );
+    await screen.pressByTestIdAsync('newApp.auto.useSetup');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
+    expect(screen.getTextContent()).toContain(t('newApp.createDescription'));
+    // Back to the cards, Back to the source step, then a starter chosen by hand.
+    await screen.pressByTestIdAsync('newApp.back');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.auto.recommendations')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.back');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:website')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.starter:website');
+    await screen.pressByTestIdAsync('newApp.continue');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.nameField')).toBeTruthy());
+    // Create would send no plan brief for this starter, so the step promises none.
+    expect(screen.getTextContent()).toContain(t('newApp.describeDescription'));
+    expect(screen.getTextContent()).not.toContain(t('newApp.createDescription'));
+    await screen.pressByTestIdAsync('newApp.back');
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.starter:website')).toBeTruthy());
+    expect(screen.findByTestId('newApp.auto.recommendations'), 'the old cards stay closed').toBeNull();
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});
+
 it('Stop ends the accepted run once and returns to the description, kept (journey-deploy F1 Stop)', async () => {
   let release: (() => void) | null = null;
   let stops = 0;
