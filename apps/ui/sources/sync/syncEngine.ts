@@ -277,6 +277,7 @@ import {
     captureActiveServerAccountScopeLifetime,
     getActiveServerAccountScope,
     retireActiveServerAccountScopeLifetime,
+    selectActiveServerAccountScopeForServer,
 } from './domains/scope/activeServerAccountScope';
 import {
     areServerAccountScopesEqual,
@@ -1649,6 +1650,12 @@ class Sync {
         });
         installSyncPerformanceTelemetryGlobal(syncPerformanceTelemetry);
         installSyncReliabilityTelemetryGlobal(syncReliabilityTelemetry);
+        if (!isEmbedWindowContext()) subscribeHomeAccountChange(event => {
+            if (event.workflowTriggersAffect !== true || !selectActiveServerAccountScopeForServer(getActiveServerAccountScope(), event.serverId)) return;
+            // An open catalog already publishes Automation revision changes with its summary projection.
+            if (this.automationCatalogRequested() && event.changeKinds?.every(kind => kind === 'automation')) return;
+            storage.getState().invalidateFocusedAccountTriggerRead();
+        }, { includeCatchUpPending: 'recovery' });
         if (!isEmbedWindowContext()) subscribeHomeAccountChange(event => {
             if (event.sessionSystemRecords !== undefined) {
                 for (const repository of this.sessionSystemRecordRepositories.values()) {

@@ -109,8 +109,40 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(home.requests.filter(request => request.path === '/v3/automations/query')).toHaveLength(2);
     });
 
-    it('a remounted reader keeps the held sets ready while its re-read runs (sidebar Scheduled, WAVE-ACCEPT-1118D)', async () => {
-        const rows = ['kept-a', 'kept-b'].map((id, index) => {
+    it('reuses a covered empty Account trigger query across warm remounts', async () => {
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+        const reads = () => home.requests.filter(request => request.path === '/v3/automations/query').length;
+        const read = () => useWorkflowTriggerSets({ scope: 'account_all' });
+        const first = await renderHook(read);
+        await waitForHomeGovernance(() => expect(first.getCurrent()).toMatchObject({ status: 'ready', sets: [] }));
+        expect(reads()).toBe(1);
+        await first.unmount();
+
+        for (let open = 0; open < 3; open++) {
+            const before = reads();
+            const remounted = await renderHook(read);
+            expect(remounted.getCurrent()).toMatchObject({ status: 'ready', sets: [] });
+            expect(reads()).toBe(before);
+            await remounted.unmount();
+        }
+        expect(reads() - 1).toBe(0);
+
+        const retried = await renderHook(read);
+        home.answer(serverId, 'POST /v3/automations/query', { status: 503, body: { error: 'storage_unavailable' } });
+        await act(async () => retried.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(retried.getCurrent().status).toBe('failed'));
+        expect(reads()).toBe(2);
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+        await act(async () => retried.getCurrent().retry());
+        await waitForHomeGovernance(() => expect(retried.getCurrent().status).toBe('ready'));
+        expect(reads()).toBe(3);
+        await retried.unmount();
+        await renderHook(read);
+        expect(reads()).toBe(3);
+    });
+
+    it('re-reads once after a push while closed and keeps the held sets ready during refresh', async () => {
+        let rows = ['kept-a', 'kept-b'].map((id, index) => {
             const row = automation(id);
             return { ...row, triggers: createWorkflowAutomationDetailFixture({ id, revision: 1,
                 triggerId: `00000000-0000-4000-8000-00000000010${index}` }).triggers };
@@ -125,6 +157,13 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(first.getCurrent().sets).toHaveLength(2);
         await first.unmount();
 
+        await act(async () => publishHomeAccountChange(serverId, ['unrelated-session'], { source: 'socket', changeKinds: ['session'] }));
+        const unchanged = await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }));
+        expect(reads()).toBe(1);
+        await unchanged.unmount();
+
+        rows = rows.map((row, index) => index === 0 ? { ...automation(row.id, 2, false), triggers: row.triggers } : row);
+        await act(async () => publishHomeAccountChange(serverId, ['kept-a'], { feedPageConsumed: true, changeKinds: ['automation'] }));
         const reread = createDeferred<void>(); held = reread.promise;
         const seen: Array<Readonly<{ status: string; count: number }>> = [];
         const second = await renderHook(() => {
@@ -136,8 +175,35 @@ describe('Account trigger reads through real Action and Automation owners', () =
         expect(seen[0]).toEqual({ status: 'ready', count: 2 });
         expect(seen.every(entry => entry.status === 'ready' && entry.count === 2)).toBe(true);
         await act(async () => reread.resolve());
-        await waitForHomeGovernance(() => expect(second.getCurrent()).toMatchObject({ status: 'ready' }));
-        expect(second.getCurrent().sets).toHaveLength(2);
+        await waitForHomeGovernance(() => expect(second.getCurrent().sets[0]).toMatchObject({ revision: 2, enabled: false }));
+        expect(reads()).toBe(2);
+        expect(home.requests.filter(request => request.path === '/v3/automations')).toHaveLength(0);
+        await second.unmount();
+        await renderHook(() => useWorkflowTriggerSets({ scope: 'account_all' }));
+        expect(reads()).toBe(2);
+    });
+
+    it('does not settle a cancelled Account query or reuse coverage after the Account lifetime retires', async () => {
+        const delayed = createDeferred<void>();
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null }, respondAfter: delayed.promise });
+        const reads = () => home.requests.filter(request => request.path === '/v3/automations/query').length;
+        const read = () => useWorkflowTriggerSets({ scope: 'account_all' });
+        const first = await renderHook(read);
+        try {
+            await waitForHomeGovernance(() => expect(reads()).toBe(1));
+            await first.unmount();
+        } finally {
+            await act(async () => delayed.resolve());
+        }
+        home.answer(serverId, 'POST /v3/automations/query', { body: { automations: [], nextCursor: null } });
+        const second = await renderHook(read);
+        await waitForHomeGovernance(() => expect(second.getCurrent().status).toBe('ready'));
+        expect(reads()).toBe(2);
+        await second.unmount();
+
+        retireActiveServerAccountScopeLifetime();
+        await renderHook(read);
+        await waitForHomeGovernance(() => expect(reads()).toBe(3));
     });
 
     it.each([false, true])('selects one managed target without opening a thousand known unrelated definitions (legacy relationship: %s)', async legacyRelationship => {

@@ -11,6 +11,7 @@ import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/doma
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { workflowTriggerQueryKey } from './workflowTriggerQuery';
+import type { AutomationsDomain } from '@/sync/store/domains/automations';
 import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
 
 /**
@@ -33,6 +34,7 @@ type CallOptions = Readonly<{
     context?: Omit<ActionExecutorContext, 'signal'>;
     /** The captured list observation still owns publication after awaiting its transport. */
     isTriggerListCurrent?: () => boolean;
+    focusedAccountRead?: ReturnType<AutomationsDomain['beginFocusedAccountTriggerRead']>;
 }>;
 
 type TriggerListPublication = { current: boolean };
@@ -125,7 +127,7 @@ async function callTriggerAction<TResult>(
         const page = WorkflowTriggerListResultV1Schema.shape.sets.parse(
             typeof result === 'object' && result !== null && 'sets' in result ? result.sets : undefined,
         );
-        getStorage().getState().applyWorkflowTriggerSetPage({ queryKey, sets: page });
+        getStorage().getState().applyWorkflowTriggerSetPage({ queryKey, sets: page, focusedAccountRead: options.focusedAccountRead });
     } else if (removed && 'deleted' in removed) {
         getStorage().getState().removeAutomation(removed.automationId, removed.removedRevision);
     } else {
@@ -154,7 +156,7 @@ export async function listWorkflowTriggerSets(
 /** Retain the selected owner's attachment page as well as opened trigger sets. */
 export async function listWorkflowTriggerPage(
     request: z.input<typeof WorkflowTriggerListRequestV1Schema>,
-    options: CallOptions = {},
+    options: CallOptions & Readonly<{ retainFocusedSettlement?: boolean }> = {},
 ): Promise<z.output<typeof WorkflowTriggerListResultV1Schema>> {
     const parsed = WorkflowTriggerListRequestV1Schema.parse(request);
     const lifetime = options.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : options.accountLifetime;
@@ -162,6 +164,8 @@ export async function listWorkflowTriggerPage(
     // fence while every caller enters its own Action admission and cancellation.
     throwIfAborted(options.signal);
     const key = workflowTriggerQueryKey(parsed);
+    const focusedAccountRead = options.retainFocusedSettlement && lifetime && key === 'account_all'
+        ? getStorage().getState().beginFocusedAccountTriggerRead(lifetime) : undefined;
     const publication: TriggerListPublication = { current: true };
     let publications = lifetime ? triggerListPublications.get(lifetime) : undefined;
     if (lifetime && !publications) { publications = new Map(); triggerListPublications.set(lifetime, publications); }
@@ -171,6 +175,7 @@ export async function listWorkflowTriggerPage(
     try {
         const result = await callTriggerAction('workflow.trigger.list', parsed,
             value => WorkflowTriggerListResultV1Schema.parse(value), { ...options,
+                focusedAccountRead,
                 isTriggerListCurrent: () => publication.current && !options.signal?.aborted
                     && options.isTriggerListCurrent?.() !== false });
         throwIfAborted(options.signal);

@@ -3,7 +3,7 @@ import type { SessionTriggerPullRequestLinksV1, WorkflowAttachedTriggerPageV1, W
 
 import { getStorage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { serverAccountScopeKeySuffix, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { applyWorkflowTriggerSnapshotReceipt, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL } from '@/sync/store/domains/automations';
+import { applyWorkflowTriggerSnapshotReceipt, createWorkflowTriggerChangeSelector, createWorkflowTriggerSetSelector, EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL, type AutomationsDomain } from '@/sync/store/domains/automations';
 import { listWorkflowTriggerPage } from '@/sync/domains/workflows/workflowTriggerActions';
 import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { workflowTriggerQueryKey, workflowTriggerRequestForQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
@@ -41,6 +41,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const requestedScope = request && 'scope' in request ? request.scope : 'account_inline';
     const queryKey = request === null ? '' : workflowTriggerQueryKey(request);
     const selected = request !== null && ('subject' in request || 'actionId' in request);
+    const retainFocusedSettlement = !addressed && context === undefined && queryKey === 'account_all';
     // Addressed reads for the focused Account share its canonical Automation
     // projection, including local Action receipts before a socket wake arrives.
     const focused = !addressed || Boolean(scope && activeLifetime?.isCurrent()
@@ -54,13 +55,14 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
     const selector = React.useMemo(() => focused ? createWorkflowTriggerSetSelector(queryKey, workflow !== null)
         : () => EMPTY_SETS, [focused, queryKey, workflow]);
     const sets = getStorage()(selector);
-    const changeSelector = React.useMemo(() => selected || !focused || queryKey === '' ? () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL
-        : createWorkflowTriggerChangeSelector(sessionId, workflow, requestedScope,
-            readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined),
-        [selected, focused, queryKey, sessionId, workflow, requestedScope, readRequest]);
+    const changeSelector = React.useMemo<(state: AutomationsDomain) => object | number>(() => {
+        if (retainFocusedSettlement) return getStorage().getState().selectFocusedAccountTriggerRevision;
+        if (selected || !focused || queryKey === '') return () => EMPTY_WORKFLOW_TRIGGER_CHANGE_SIGNAL;
+        return createWorkflowTriggerChangeSelector(sessionId, workflow, requestedScope,
+            readRequest && 'managedTarget' in readRequest ? readRequest.managedTarget : undefined);
+    }, [retainFocusedSettlement, selected, focused, queryKey, sessionId, workflow, requestedScope, readRequest]);
     const changeSignal = getStorage()(changeSelector);
-    // A remounted reader whose query the focused store already answered starts from that answer;
-    // its read below still refreshes it without reverting to loading.
+    // Start from the held rows while any refresh required by the query owner runs.
     const [state, setState] = React.useState<{ identity: object; status: 'loading' | 'ready' | 'failed' }>(
         () => ({ identity, status: request === null
             || (focused && getStorage().getState().workflowTriggerSetIdsByQuery[queryKey] !== undefined) ? 'ready' : 'loading' }),
@@ -113,6 +115,11 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             setState(current => current.identity === identity ? current : { identity, status: 'loading' });
             return;
         }
+        if (retainFocusedSettlement && attempt.revision === 0 && getStorage().getState().hasSettledFocusedAccountTriggerRead(lifetime)) {
+            settledRead.current = inputs;
+            setState(current => current.identity === identity && current.status === 'ready' ? current : { identity, status: 'ready' });
+            return;
+        }
         const controller = new AbortController();
         const pending = { identity, controller };
         pendingRead.current = pending;
@@ -132,7 +139,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
                 return current?.identity === identity && pullRequestLinks === previous ? current : { identity, pullRequestLinks };
             });
         };
-        listWorkflowTriggerPage(pageRequest, { signal: controller.signal, context, accountLifetime: lifetime }).then(result => {
+        listWorkflowTriggerPage(pageRequest, { signal: controller.signal, context, accountLifetime: lifetime, retainFocusedSettlement }).then(result => {
             if (!controller.signal.aborted && lifetime.isCurrent()) {
                 let snapshotChanged = false;
                 if (addressed) {
@@ -171,7 +178,7 @@ export function useWorkflowTriggerSets(request: WorkflowTriggerListRequestV1 | n
             controller.abort(); retirement.dispose();
             if (pendingRead.current === pending) pendingRead.current = null;
         };
-    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, context]);
+    }, [attempt, changeSignal, demanded, identity, readRequest, addressed, accountLifetime, lifetime, selected, context, retainFocusedSettlement]);
     // A settled failure stays actionable even while realtime reconnects. Home recovery
     // still retries the read automatically without turning its failed answer into loading.
     const homeSettling = useActiveHomeSettling() && !addressed;

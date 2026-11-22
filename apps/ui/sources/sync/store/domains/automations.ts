@@ -15,7 +15,7 @@ import { projectSessionWorkflowTriggerSets } from '@/sync/domains/workflows/work
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
 import type { StoreGet, StoreSet } from './_shared';
-import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { createRowInventoryReceiptOrdering } from '@/sync/store/settings/rowInventoryReceiptOrdering';
 import {
     mergeWorkflowRunBodies,
@@ -97,6 +97,9 @@ function reconcileTriggerTargetMemberships(
 }
 
 const EMPTY_TRIGGER_SETS: readonly WorkflowTriggerSetV1[] = [];
+type FocusedAccountTriggerRead = Readonly<{ lifetime: ServerAccountScopeLifetime; revision: object }>;
+type FocusedAccountTriggerCensus = Readonly<{ wake?: object; settled?: FocusedAccountTriggerRead }>;
+
 /** One reader instance per mounted query; unrelated queries keep the same selected value. */
 export function createWorkflowTriggerSetSelector(queryKey: string, includeEmpty = false) {
     const sessionId = queryKey.startsWith('session:') ? queryKey.slice('session:'.length) : null;
@@ -212,8 +215,15 @@ export type AutomationsDomain = {
     /** Opened trigger content lives once; surfaces retain only query membership and drafts. */
     workflowTriggerSetsById: Readonly<Record<string, WorkflowTriggerSetV1>>;
     workflowTriggerSetIdsByQuery: Readonly<Record<string, readonly string[]>>;
+    focusedAccountTriggerCensus: FocusedAccountTriggerCensus | null;
+    selectFocusedAccountTriggerRevision: (state: AutomationsDomain) => object;
+    hasSettledFocusedAccountTriggerRead: (lifetime: ServerAccountScopeLifetime) => boolean;
     resetWorkflowTriggerSets: () => void;
-    applyWorkflowTriggerSetPage: (input: Readonly<{ queryKey: string; sets: readonly WorkflowTriggerSetV1[] }>) => void;
+    applyWorkflowTriggerSetPage: (input: Readonly<{
+        queryKey: string; sets: readonly WorkflowTriggerSetV1[]; focusedAccountRead?: FocusedAccountTriggerRead;
+    }>) => void;
+    beginFocusedAccountTriggerRead: (lifetime: ServerAccountScopeLifetime) => FocusedAccountTriggerRead;
+    invalidateFocusedAccountTriggerRead: () => void;
     upsertWorkflowTriggerSet: (input: Readonly<{ queryKey?: string; set: WorkflowTriggerSetV1 }>) => void;
     automations: Record<string, AutomationDefinition>;
     automationDefinitionNextCursor: string | null;
@@ -462,7 +472,7 @@ function seedAutomationRunWindow<S extends AutomationsDomain & AutomationRunsSli
 }
 
 export function createAutomationsDomain<S extends AutomationsDomain & AutomationRunsSlice & { profileScope?: ServerAccountScope | null }>({
-    set,
+    set, get,
 }: {
     set: StoreSet<S>;
     get: StoreGet<S>;
@@ -471,17 +481,47 @@ export function createAutomationsDomain<S extends AutomationsDomain & Automation
     let definitionTraversalToken: number | null = null;
     const runTraversalTokensByAutomationId = new Map<string, number>();
     const triggerReceiptOrdering = createRowInventoryReceiptOrdering();
+    // Keep the existing summary selector alive for this query even when its surfaces close.
+    const selectAccountTriggerChange = createWorkflowTriggerChangeSelector(null, null, 'account_all');
+    let triggerRevision: Readonly<{ summary: ReturnType<typeof selectAccountTriggerChange>; wake?: object }> | undefined;
+    const selectFocusedAccountTriggerRevision = (state: AutomationsDomain) => {
+        const summary = selectAccountTriggerChange(state);
+        const wake = state.focusedAccountTriggerCensus?.wake;
+        if (!triggerRevision || triggerRevision.summary !== summary || triggerRevision.wake !== wake) {
+            triggerRevision = { summary, wake };
+        }
+        return triggerRevision;
+    };
 
     return {
         workflowTriggerSetsById: {},
         workflowTriggerSetIdsByQuery: {},
+        focusedAccountTriggerCensus: null,
+        selectFocusedAccountTriggerRevision,
+        hasSettledFocusedAccountTriggerRead: lifetime => {
+            const state = get();
+            const settled = state.focusedAccountTriggerCensus?.settled;
+            return settled?.lifetime === lifetime && lifetime.isCurrent()
+                && settled.revision === selectFocusedAccountTriggerRevision(state);
+        },
         resetWorkflowTriggerSets: () => {
             triggerReceiptOrdering.reset();
             set((state) => Object.keys(state.workflowTriggerSetsById).length === 0
+                && state.focusedAccountTriggerCensus === null
                 && Object.keys(state.workflowTriggerSetIdsByQuery).length === 0 ? state
-                : { ...state, workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {} });
+                : { ...state, workflowTriggerSetsById: {}, workflowTriggerSetIdsByQuery: {}, focusedAccountTriggerCensus: null });
         },
-        applyWorkflowTriggerSetPage: ({ queryKey, sets }) => {
+        beginFocusedAccountTriggerRead: lifetime => {
+            set(state => {
+                const census = state.focusedAccountTriggerCensus;
+                if (census && !census.settled) return state;
+                return { ...state, focusedAccountTriggerCensus: { wake: census?.wake } };
+            });
+            return { lifetime, revision: selectFocusedAccountTriggerRevision(get()) };
+        },
+        invalidateFocusedAccountTriggerRead: () => set(state => state.focusedAccountTriggerCensus === null ? state
+            : { ...state, focusedAccountTriggerCensus: { wake: {} } }),
+        applyWorkflowTriggerSetPage: ({ queryKey, sets, focusedAccountRead }) => {
             set((state) => {
                 if (!state.profileScope) return state;
                 const facts = mergeTriggerSets(state.workflowTriggerSetsById, sets, state.profileScope, triggerReceiptOrdering);
@@ -491,11 +531,17 @@ export function createAutomationsDomain<S extends AutomationsDomain & Automation
                 const unchanged = previous !== undefined && ids.length === previous.length && ids.every((id, index) => previous[index] === id);
                 const windows = reconcileTriggerTargetMemberships(unchanged ? state.workflowTriggerSetIdsByQuery
                     : { ...state.workflowTriggerSetIdsByQuery, [queryKey]: ids }, facts, new Set(observedIds));
-                if (facts === state.workflowTriggerSetsById && windows === state.workflowTriggerSetIdsByQuery) return state;
+                const projectionChanged = facts !== state.workflowTriggerSetsById || windows !== state.workflowTriggerSetIdsByQuery;
+                const census = state.focusedAccountTriggerCensus;
+                const settled = queryKey !== 'account_all' ? census?.settled
+                    : focusedAccountRead && focusedAccountRead.revision === selectFocusedAccountTriggerRevision(state) ? focusedAccountRead
+                    : projectionChanged ? undefined : census?.settled;
+                if (!projectionChanged && settled === census?.settled) return state;
                 return {
                     ...state,
                     workflowTriggerSetsById: facts,
                     workflowTriggerSetIdsByQuery: windows,
+                    focusedAccountTriggerCensus: census && settled !== census.settled ? { ...census, settled } : census,
                 };
             });
         },
