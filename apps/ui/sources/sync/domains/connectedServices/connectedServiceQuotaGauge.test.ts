@@ -491,9 +491,10 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(selectConnectedServiceSessionProviderUsageSnapshot({
             ...params, connectedServiceSnapshot: newerSnapshot,
         })).toBe(newerSnapshot);
+        const differentProfile = { ...newerSnapshot, profileId: 'different' };
         expect(selectConnectedServiceSessionProviderUsageSnapshot({
-            ...params, connectedServiceSnapshot: { ...newerSnapshot, profileId: 'different' },
-        })?.source).toBe('runtime_event');
+            ...params, connectedServiceSnapshot: differentProfile,
+        })).toBe(differentProfile);
         expect(computeConnectedServiceQuotaGaugeViewModel({
             snapshot: selectedSnapshot,
             windowMode: 'most_constrained',
@@ -555,12 +556,12 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(selectedSnapshot?.recoveryCredits).toBeUndefined();
     });
 
-    it('prefers a fresher connected-service snapshot over stale runtime issue evidence', () => {
+    it.each(['work', 'previous-login'])('keeps the current profile snapshot when an older issue names %s', (issueProfileId) => {
         const connectedSnapshot = {
             ...snapshot([
                 meter({ meterId: 'weekly', label: 'Weekly', used: 20, limit: 100, remainingPct: 80 }),
             ]),
-            fetchedAt: 120_000,
+            fetchedAt: 2_000,
         };
 
         const selectedSnapshot = selectConnectedServiceSessionProviderUsageSnapshot({
@@ -582,7 +583,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
                     limitCategory: 'usage_limit',
                     quotaSnapshotRef: {
                         serviceId: 'openai-codex',
-                        profileId: 'work',
+                        profileId: issueProfileId,
                         fetchedAtMs: 1_000,
                     },
                     effectiveMeterId: 'weekly',

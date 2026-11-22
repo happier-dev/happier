@@ -394,14 +394,6 @@ vi.mock('@expo/vector-icons', () => ({
   Ionicons: 'Ionicons',
   Octicons: 'Octicons',
 }));
-vi.mock('react-native-safe-area-context', () => ({
-  initialWindowMetrics: {
-    frame: { x: 0, y: 0, width: 0, height: 0 },
-    insets: { top: 0, bottom: 0, left: 0, right: 0 },
-  },
-  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
-}));
-
 const themeColors = vi.hoisted(() => ({
   text: '#000',
   textSecondary: '#666',
@@ -3839,36 +3831,45 @@ describe('SessionView (direct sessions)', () => {
     }));
   });
 
-  it('falls back to native provider account usage metadata for the provider usage badge without a connected binding', async () => {
+  it.each([false, true])('uses only the linked session’s proven native record before takeover (published ref: %s)', async (hasOwnRecord) => {
     featureEnabledState['connectedServices.quotas'] = true;
     const snapshot = buildProviderAccountUsageSnapshot({
       used: 62,
       accountLabel: 'Native Codex account',
     });
+    const otherLogin = buildProviderAccountUsageSnapshot({ accountSubjectId: 'other-login', used: 99 });
     providerAccountUsageSnapshotsState.current = {
+      [otherLogin.recordId]: otherLogin,
       [snapshot.recordId]: snapshot,
     };
-    storageState.sessions.s1 = {
-      ...storageState.sessions.s1,
+    const linkedSession = storageState.sessions.s1;
+    (storageState.sessions as Record<string, typeof linkedSession>).s2 = {
+      ...linkedSession,
+      id: 's2',
       metadata: {
-        ...storageState.sessions.s1.metadata,
-        providerAccountUsageRefsV1: {
-          v: 1,
-          recordIds: [snapshot.recordId],
-          updatedAtMs: 1_000,
-        },
+        ...linkedSession.metadata,
+        providerAccountUsageRefsV1: { v: 1, recordIds: [otherLogin.recordId], updatedAtMs: 2_000 },
       },
     };
+    if (hasOwnRecord) {
+      storageState.sessions.s1 = {
+        ...linkedSession,
+        metadata: {
+          ...linkedSession.metadata,
+          providerAccountUsageRefsV1: { v: 1, recordIds: [snapshot.recordId], updatedAtMs: 1_000 },
+        },
+      };
+    }
 
     const screen = await renderSessionViewAndSettle();
 
-    expect(providerAccountUsageSnapshotsState.requestedRecordIds).toEqual([snapshot.recordId]);
+    expect(providerAccountUsageSnapshotsState.requestedRecordIds).toEqual(hasOwnRecord ? [snapshot.recordId] : []);
     expect(quotaSnapshotsState.requestedProfiles).toEqual([]);
-    expect(findProviderUsageGauge(screen)).toEqual(expect.objectContaining({
+    expect(findProviderUsageGauge(screen)).toEqual(hasOwnRecord ? expect.objectContaining({
       serviceId: 'codex',
       activeAccountDisplayLabel: 'Native Codex account',
       ringValueLabel: '38',
-    }));
+    }) : undefined);
   });
 
   it('prefers the connected-service quota view ahead of connected account-usage metadata for connected bindings', async () => {

@@ -608,19 +608,6 @@ function quotaSnapshotFetchedAtMs(snapshot: ConnectedServiceQuotaSnapshotV1): nu
     return snapshot.fetchedAtMs ?? snapshot.fetchedAt;
 }
 
-function shouldPreferRuntimeIssueQuotaSnapshot(params: Readonly<{
-    runtimeSnapshot: ConnectedServiceQuotaSnapshotV1;
-    connectedSnapshot: ConnectedServiceQuotaSnapshotV1 | null;
-}>): boolean {
-    if (!params.connectedSnapshot) return true;
-    const runtimeFetchedAtMs = quotaSnapshotFetchedAtMs(params.runtimeSnapshot);
-    const connectedFetchedAtMs = quotaSnapshotFetchedAtMs(params.connectedSnapshot);
-    if (snapshotsIdentifySameQuotaProfile(params.runtimeSnapshot, params.connectedSnapshot)) {
-        return runtimeFetchedAtMs >= connectedFetchedAtMs;
-    }
-    return runtimeFetchedAtMs + params.runtimeSnapshot.staleAfterMs >= connectedFetchedAtMs;
-}
-
 export function selectConnectedServiceSessionProviderUsageSnapshot(params: Readonly<{
     connectedServiceSnapshot: ConnectedServiceQuotaSnapshotV1 | null;
     recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1 | null;
@@ -628,15 +615,18 @@ export function selectConnectedServiceSessionProviderUsageSnapshot(params: Reado
 }>): ConnectedServiceQuotaSnapshotV1 | null {
     const runtimeIssueQuotaSnapshot = deriveConnectedServiceQuotaSnapshotFromRuntimeIssue(params.runtimeIssue);
     if (!runtimeIssueQuotaSnapshot) return params.connectedServiceSnapshot;
-    if (!shouldPreferRuntimeIssueQuotaSnapshot({
-        runtimeSnapshot: runtimeIssueQuotaSnapshot,
-        connectedSnapshot: params.connectedServiceSnapshot,
-    })) {
-        return params.connectedServiceSnapshot;
+    const connectedSnapshot = params.connectedServiceSnapshot;
+    const runtimeProfileId = (params.runtimeIssue?.usageLimit?.quotaSnapshotRef
+        ?? params.runtimeIssue?.usageLimit?.connectedService)?.profileId?.trim();
+    // Runtime issues can outlive a credential change. Compare timestamps only within the same login.
+    if (connectedSnapshot && (
+        !runtimeProfileId
+        || runtimeIssueQuotaSnapshot.profileId !== runtimeProfileId
+        || !snapshotsIdentifySameQuotaProfile(runtimeIssueQuotaSnapshot, connectedSnapshot)
+        || quotaSnapshotFetchedAtMs(runtimeIssueQuotaSnapshot) < quotaSnapshotFetchedAtMs(connectedSnapshot)
+    )) {
+        return connectedSnapshot;
     }
-    const recoveryCredits = params.connectedServiceSnapshot
-        && snapshotsIdentifySameQuotaProfile(runtimeIssueQuotaSnapshot, params.connectedServiceSnapshot)
-        ? params.connectedServiceSnapshot.recoveryCredits ?? null
-        : params.recoveryCredits ?? null;
+    const recoveryCredits = connectedSnapshot ? connectedSnapshot.recoveryCredits : params.recoveryCredits;
     return withRecoveryCredits(runtimeIssueQuotaSnapshot, recoveryCredits);
 }
