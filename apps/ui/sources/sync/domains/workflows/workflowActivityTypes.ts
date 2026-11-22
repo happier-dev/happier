@@ -25,8 +25,10 @@ export type WorkflowActivityLiveFact = Readonly<{
 }> & (
     | Readonly<{ kind: 'session'; sessionId: string; event: 'started' | 'archived'; sourceRevision: number }>
     | Readonly<{ kind: 'session'; sessionId: string; event: TurnLifecycleEvent; turnId: string; sourceRevision: number }>
-    | Readonly<{ kind: 'session'; sessionId: string; event: 'userActionRequired'; turnId: string; sourceRevision: number;
-        requestId: string; requestKind: SessionUserActionRequiredRequestKindV1 }>
+    | (Readonly<{ kind: 'session'; sessionId: string; event: 'userActionRequired'; sourceRevision: number }> & (
+        | Readonly<{ turnId: string; requestId: string; requestKind: SessionUserActionRequiredRequestKindV1 }>
+        | Readonly<{ turnId?: never; requestId?: never; requestKind?: never }>
+    ))
     | Readonly<{ kind: 'machine'; machineId: string; event: 'online' | 'offline'; sourceRevision: number }>
     | Readonly<{ kind: 'run'; runId: string; event: 'terminal' | 'needs_attention'; sourceRevision: number; state: WorkflowRunStateV1 }>
 );

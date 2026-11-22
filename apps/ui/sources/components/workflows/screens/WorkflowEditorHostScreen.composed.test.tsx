@@ -1220,6 +1220,31 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
     });
 
+    it('records a Machine event awaiting setup in the mounted draft, with one Undo and Redo', async () => {
+        const boundary = await serveMountedDraftActionHome();
+        await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        const fact = { kind: 'machine', key: 'machine-online', machineId: 'machine-a', event: 'online',
+            sourceRevision: 1, occurredAt: 10, coverage: 'retained' } as const;
+        const { readWorkflowEventDraftIntent } = await import('../events/workflowEventFacts');
+        const seed = readWorkflowEventDraftIntent(fact);
+        if (!seed?.nativeEvent) throw new Error('Expected a Machine event setup seed');
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        let clientId = '';
+        await act(async () => { clientId = readBodyProps()!.onAddTriggerWhen!({ kind: 'pluginEvent', value: null }, { nativeEvent: seed.nativeEvent }); });
+        expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+        expect(readBodyProps()!.history!.undoLabel).not.toBeNull();
+        await act(async () => { readBodyProps()!.history!.undo(); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(false);
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
+        expect(readBodyProps()!.history!.undoLabel).toBeNull();
+        await act(async () => { readBodyProps()!.history!.redo(); });
+        expect(readBodyProps()!.hasTriggerRow!(clientId)).toBe(true);
+        expect(readBodyProps()!.saveStatus).toEqual({ kind: 'unsaved' });
+        expect(boundary.creates).toHaveLength(0);
+        expect(boundary.automationCreates).toHaveLength(0);
+    });
+
     it('adds an event and Only-when through the mounted Action without losing edits or splitting undo', async () => {
         const event = { pluginId: 'com.acme.events', localId: 'health' };
         const payloadSchema: PluginJsonSchemaV2 = { type: 'object', properties: { outcome: { type: 'string' } } };

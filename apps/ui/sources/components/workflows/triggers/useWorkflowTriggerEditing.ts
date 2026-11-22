@@ -266,7 +266,8 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         const triggerId = rowIdentities.clients.get(clientId)?.triggerId;
         return triggerId !== undefined && !draft.removes.includes(triggerId) && (set?.triggers.some((row) => row.id === triggerId) ?? false);
     }, [draft, incomplete, set, rowIdentities]);
-    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry, dirty: isWorkflowTriggerDraftDirty(draft), incomplete,
-        complete: incomplete.pending.length === 0 && Object.keys(incomplete.edits).length === 0,
+    const complete = incomplete.pending.length === 0 && Object.keys(incomplete.edits).length === 0;
+    return { set, lifetimeSession, draft, triggerEvents: eventProjection?.triggerEvents, intendedTriggers: eventProjection?.intendedTriggers, setDraft, captureSnapshot, restoreSnapshot, status, retry,
+        dirty: !complete || isWorkflowTriggerDraftDirty(draft), incomplete, complete,
         updateIncomplete, summary, hasTriggerRow, save };
 }

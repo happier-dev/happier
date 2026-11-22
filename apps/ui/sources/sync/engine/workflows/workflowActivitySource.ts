@@ -129,12 +129,17 @@ function createSource(lifetime: ServerAccountScopeLifetime): WorkflowActivitySou
                 }
                 const request = listed?.currentRequestRef;
                 const occurredAt = listed?.pendingRequestObservedAt;
-                if (request?.turnId && request !== oldListed?.currentRequestRef && occurredAt != null && occurredAt >= listeningSince) {
-                    const requestKind = request.kind === 'permission' ? 'permission' : 'user_action';
-                    batch.push({ kind: 'session', sessionId: id, event: 'userActionRequired', turnId: request.turnId, requestId: request.requestId,
-                        requestKind, sourceRevision: row.seq, occurredAt, coverage: 'live',
-                        key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, 'userActionRequired',
-                            request.turnId, requestKind, request.requestId) });
+                if (occurredAt != null && occurredAt >= listeningSince && occurredAt !== oldListed?.pendingRequestObservedAt
+                    && (listed?.hasPendingPermissionRequests || listed?.hasPendingUserActionRequests)) {
+                    // The compact list update proves pending attention, while exact attribution
+                    // requires a newly visible request with its own Turn identity.
+                    const exact = request?.turnId && request !== oldListed?.currentRequestRef ? {
+                        turnId: request.turnId, requestId: request.requestId,
+                        requestKind: request.kind === 'permission' ? 'permission' as const : 'user_action' as const,
+                    } : {};
+                    batch.push({ kind: 'session', sessionId: id, event: 'userActionRequired', ...exact,
+                        sourceRevision: row.seq, occurredAt, coverage: 'live',
+                        key: serverAccountScopedResourceKey(lifetime.scope, 'session', id, 'userActionRequired', String(occurredAt)) });
                 }
             }
             publish(batch);

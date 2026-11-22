@@ -52,7 +52,8 @@ import {
     buildWorkflowEditorDraftFromDefinition,
     validateWorkflowEditorDraft,
 } from '@/sync/domains/workflows/workflowAuthoring';
-import { createWorkflowTriggerIncompleteSeed, type WorkflowTriggerDraftSeedIntent } from '../triggers/workflowTriggerStarts';
+import { createWorkflowTriggerIncompleteSeed, EMPTY_WORKFLOW_TRIGGER_INCOMPLETE,
+    type WorkflowTriggerDraftSeedIntent, type WorkflowTriggerIncomplete } from '../triggers/workflowTriggerStarts';
 import { readWorkflowDefinitionDraftSeed, storeWorkflowDefinitionDraftSeed } from '@/sync/domains/workflows/workflowDefinitionDraftSeed';
 import { useWorkflowEditorDraftSeed } from '@/sync/domains/workflows/workflowEditorDraftSeed';
 import {
@@ -150,6 +151,7 @@ type WorkflowEditorSnapshot = Readonly<{
     projectTarget: WorkflowProjectTargetV1 | null;
     executionTarget: WorkflowRunAsTargetKind;
     triggers: WorkflowTriggerSnapshot;
+    incompleteTriggers: WorkflowTriggerIncomplete;
 }>;
 
 /**
@@ -799,7 +801,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         catalogExample?.trigger, privateSeedWithdrawn, saved?.definitionId, triggers.setDraft, triggers.restoreSnapshot]);
     {
         const current = draftStore.get();
-        snapshotRef.current = current === null ? null : { draft: current, description, projectTarget, executionTarget, triggers: triggers.captureSnapshot() };
+        snapshotRef.current = current === null ? null : { draft: current, description, projectTarget, executionTarget,
+            triggers: triggers.captureSnapshot(), incompleteTriggers: triggers.incomplete };
     }
     // Import opens a fresh review document with a new draft id; it is an
     // initialization boundary, not a change to the prior document's history.
@@ -807,6 +810,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // Restore the semantic trigger intent before changing any other field:
         // inaccessible private trigger configuration cannot be fabricated.
         triggers.restoreSnapshot(snapshot.triggers);
+        triggers.updateIncomplete(() => snapshot.incompleteTriggers);
         snapshotRef.current = snapshot;
         setDraft(snapshot.draft);
         setDescription(snapshot.description);
@@ -1591,7 +1595,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         else router.replace('/workflows' as never);
     }, [router]);
     const { reset: resetHistory } = history;
-    const { captureSnapshot: captureTriggerSnapshot, setDraft: setTriggerDraft } = triggers;
+    const { captureSnapshot: captureTriggerSnapshot, setDraft: setTriggerDraft, updateIncomplete: updateIncompleteTriggers } = triggers;
     const discardDepartingDraft = React.useCallback(() => {
         const baseline = savedDraftRef.current ?? initialDraftBaselineRef.current;
         const before = snapshotRef.current;
@@ -1600,18 +1604,19 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // the host's edits and recovery history, not only the guard's dirty ref.
         snapshotRef.current = { ...before, draft: baseline, description: savedDescriptionRef.current,
             projectTarget: savedProjectTargetRef.current,
-            triggers: captureTriggerSnapshot(EMPTY_WORKFLOW_TRIGGER_DRAFT) };
+            triggers: captureTriggerSnapshot(EMPTY_WORKFLOW_TRIGGER_DRAFT), incompleteTriggers: EMPTY_WORKFLOW_TRIGGER_INCOMPLETE };
         setDraft(baseline);
         setDescription(savedDescriptionRef.current);
         setProjectTarget(savedProjectTargetRef.current);
         setTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        updateIncompleteTriggers(() => EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
         resetHistory();
         setSelection(EMPTY_WORKFLOW_EDITOR_VIEW_STATE);
         setHighlightedBlockIds(NO_HIGHLIGHTED_BLOCKS);
         setSaveConflict(null);
         setSaveFailure(undefined);
         setRetargetFailed(false);
-    }, [captureTriggerSnapshot, resetHistory, setTriggerDraft]);
+    }, [captureTriggerSnapshot, resetHistory, setTriggerDraft, updateIncompleteTriggers]);
     const captureDraftDecisionCurrentness = React.useCallback(() => {
         const lifetime = accountLifetime;
         const sourceIsCurrent = captureSourceGeneration();
@@ -1695,17 +1700,19 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             description: savedDescriptionRef.current,
             projectTarget: savedProjectTargetRef.current,
             triggers: captureTriggerSnapshot(EMPTY_WORKFLOW_TRIGGER_DRAFT),
+            incompleteTriggers: EMPTY_WORKFLOW_TRIGGER_INCOMPLETE,
         };
         recordHistory(before, after, t('common.discardChanges'));
         snapshotRef.current = after;
         setTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        updateIncompleteTriggers(() => EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
         setDraft(savedDraft);
         setDescription(savedDescriptionRef.current);
         setProjectTarget(savedProjectTargetRef.current);
         setHighlightedBlockIds(NO_HIGHLIGHTED_BLOCKS);
         setSaveFailure(undefined);
         return { status: 'applied', draftRevision: history.getRevision() };
-    }, [accountLifetime, canEditDefinition, captureTriggerSnapshot, recordHistory, saved, setTriggerDraft]);
+    }, [accountLifetime, canEditDefinition, captureTriggerSnapshot, recordHistory, saved, setTriggerDraft, updateIncompleteTriggers]);
 
     // Both native settings controls and admitted Actions author one revisioned snapshot.
     const editMountedDraft = (edit: Readonly<{
@@ -1740,6 +1747,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
             return { status: 'unchanged', draftRevision: revision };
         }
         setDraft(result.draft);
+        const incompleteTriggers = settings?.incompleteTriggers;
+        if (incompleteTriggers !== undefined) updateIncompleteTriggers(() => incompleteTriggers);
         if (settings?.description !== undefined) setDescription(settings.description);
         if (settings?.projectTarget !== undefined) setProjectTarget(settings.projectTarget);
         if (settings?.executionTarget !== undefined) setExecutionTarget(settings.executionTarget);
@@ -2103,7 +2112,12 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                     } satisfies React.ComponentProps<typeof WorkflowTriggerSection>;
                     return { onSave: saveFromUi, triggersSummary: triggers.summary,
                         onAddTriggerWhen: (when: TriggerWhenValue, seed?: WorkflowTriggerDraftSeedIntent) => addWorkflowTriggerWhen({ draft: triggers.draft, when, seed,
-                            onChangeDraft: section.onChangeDraft, updateIncomplete: triggers.updateIncomplete }),
+                            onChangeDraft: section.onChangeDraft, updateIncomplete: (update) => {
+                                const current = snapshotRef.current;
+                                if (current === null) return;
+                                editMountedDraft({ expectedDraftRevision: history.getRevision(),
+                                    settings: { incompleteTriggers: update(current.incompleteTriggers) } }, t('workflows.editor.history.triggers'));
+                            } }),
                         hasTriggerRow: triggers.hasTriggerRow,
                         resultDecides: formatTriggerResultDecides(projectWorkflowTriggerRows(triggers.set, triggers.draft).map((row) => row.trigger)),
                         triggersSection: <WorkflowEditorTriggerSection draftStore={bodyDraftStore} {...section} />,

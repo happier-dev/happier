@@ -196,7 +196,31 @@ it('shares acquisition across hosts, publishes only changed facts and releases t
     storage.getState().applyServerScopedSessionListRows(scope.serverId, [{ ...requestRow, seq: requestRow.seq + 1 }], {
         source: 'rowOnly', mode: 'append',
     });
-    const sessionFacts = column.filter(row => row.kind === 'session');
+    // Background Session-list updates carry the committed request summary without opening Agent-state.
+    const background = createSessionFixture({ id: 'background', active: true, createdAt: 1, updatedAt: Date.now(),
+        latestTurnId: 'background-turn', latestTurnStatus: 'in_progress' });
+    const backgroundRow = buildSessionListRenderableFromSession(background, undefined, []);
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [backgroundRow], { source: 'rowOnly', mode: 'append' });
+    const observedAt = Date.now();
+    const { buildUpdatedSessionListRenderablePatchFromSocketUpdate } = await import('../sessions/syncSessions');
+    const patch = await buildUpdatedSessionListRenderablePatchFromSocketUpdate({
+        renderable: backgroundRow, updateSeq: backgroundRow.seq + 1, updateCreatedAt: observedAt,
+        updateBody: { t: 'update-session', id: background.id, pendingPermissionRequestCount: 1,
+            pendingUserActionRequestCount: 0, pendingRequestObservedAt: observedAt },
+        sessionEncryption: null, hydrateState: { agentState: false, metadata: false },
+    });
+    const pendingRow = { ...backgroundRow, ...patch };
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [pendingRow], { source: 'rowOnly', mode: 'append' });
+    storage.getState().applyServerScopedSessionListRows(scope.serverId, [{ ...pendingRow, seq: pendingRow.seq + 1 }], {
+        source: 'rowOnly', mode: 'append',
+    });
+    expect(column.filter(row => row.kind === 'session' && row.sessionId === background.id)).toEqual([
+        expect.objectContaining({ event: 'userActionRequired', occurredAt: observedAt }),
+    ]);
+    expect(companion.filter(row => row.kind === 'session' && row.sessionId === background.id)).toEqual(
+        column.filter(row => row.kind === 'session' && row.sessionId === background.id),
+    );
+    const sessionFacts = column.filter(row => row.kind === 'session' && row.sessionId === session.id);
     expect(sessionFacts.map(row => row.event)).toEqual([
         'started', 'parentTurnStarted', 'parentTurnCompleted', 'parentTurnFailed', 'parentTurnCancelled', 'userActionRequired',
     ]);

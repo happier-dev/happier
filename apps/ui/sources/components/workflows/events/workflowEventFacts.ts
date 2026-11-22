@@ -189,8 +189,9 @@ function readWorkflowEventOccurrence(fact: WorkflowActivityFact): AutomationTrig
   switch (fact.event) {
     case 'started': return { ...base, kind: 'sessionLifecycle', event: 'sessionStarted', sourceSessionId: fact.sessionId };
     case 'archived': return { ...base, kind: 'sessionLifecycle', event: 'sessionArchived', sourceSessionId: fact.sessionId };
-    case 'userActionRequired': return { ...base, kind: 'sessionLifecycle', event: fact.event,
-      sourceSessionId: fact.sessionId, sourceTurnId: fact.turnId, requestId: fact.requestId, requestKind: fact.requestKind };
+    case 'userActionRequired': return fact.requestId === undefined ? null : {
+      ...base, kind: 'sessionLifecycle', event: fact.event, sourceSessionId: fact.sessionId,
+      sourceTurnId: fact.turnId, requestId: fact.requestId, requestKind: fact.requestKind };
     default: return { ...base, kind: 'sessionLifecycle', event: fact.event,
       sourceSessionId: fact.sessionId, sourceTurnId: fact.turnId };
   }
