@@ -113,6 +113,8 @@ import {
 } from './workflowInvocationStructure';
 import { workflowRunStyles as styles } from './workflowRunStyles';
 import { WorkflowRunNeedsYouDock } from './WorkflowRunNeedsYouDock';
+import { WorkflowRunReview } from './WorkflowRunReview';
+import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import {
     formatWorkflowRunOriginLabel,
     formatWorkflowRunOutcomeLabel,
@@ -587,6 +589,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const phone = useDeviceType() === 'phone';
     const navigationScope = useActiveServerAccountScope(props.serverId ?? null);
+    // Only a run whose steps start a Review reads for the Review it produced.
+    const producesReview = React.useMemo(() => props.materializedLeaves?.some(leaf => leaf.kind === 'action'
+        && leaf.actionId === REVIEW_START_ACTION_ID_V1) === true, [props.materializedLeaves]);
     const selectPage = React.useCallback((id: string) => {
         if (id === 'flow' || id === 'steps' || id === 'activity') props.onChangeView(id);
     }, [props.onChangeView]);
@@ -1582,6 +1587,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     )}
                 </View>
             )}
+
+            {/* A run that starts a Review (a Hunt) shows that Review itself: its findings so far (lab `hunts-running`). */}
+            {producesReview ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
+                testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge]} /> : null}
 
             {/* The view switch: Map · Steps · Activity (07 §2.1, §3 control table). `flow` stays the
                 route's view id; the person reads the one map as Map. */}

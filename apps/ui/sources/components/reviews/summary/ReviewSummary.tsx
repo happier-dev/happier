@@ -29,6 +29,8 @@ export type ReviewSummaryRow = Readonly<{
   location?: string | null;
   /** Its decision, drawn as the row's status glyph like the Review page's rows. */
   decision?: ReviewFindingDecision | 'undecided' | null;
+  /** Its standing beyond this Review ("Also in 2 earlier runs"), from the history owner. */
+  meta?: string | null;
   /** The transcript Find owner supplies stable block identities when this row is embedded there. */
   findBlockPrefix?: string;
 }>;
@@ -82,9 +84,9 @@ export function ReviewSummary(props: ReviewSummaryProps): React.ReactElement {
       severityLabel: <StructuredFindText blockId={`${find}:severity`} text={severityLabel} numberOfLines={1} style={styles.rowReviewer} />,
       title: <StructuredFindText blockId={`${find}:title`} text={row.title} numberOfLines={1} style={styles.rowTitle} />,
       reviewer: <StructuredFindText blockId={`${find}:reviewer`} text={row.reviewer} numberOfLines={1} style={styles.rowReviewer} />,
-      glyph, ...place,
+      glyph, ...place, ...(row.meta ? { meta: row.meta } : {}),
     } : { rowId: row.rowId, severity: row.severity, severityLabel, title: row.title, reviewer: row.reviewer,
-      accessibilityLabel: `${severityLabel}: ${row.title}`, glyph, ...place };
+      accessibilityLabel: `${severityLabel}: ${row.title}`, glyph, ...place, ...(row.meta ? { meta: row.meta } : {}) };
   }), [props.rows, theme.colors.text.secondary]);
   return (
     <HappierReviewSummary

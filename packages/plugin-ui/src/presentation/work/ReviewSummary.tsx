@@ -61,6 +61,8 @@ export type HappierReviewSummaryRow = Readonly<{
   location?: ReactNode;
   /** The row's decision glyph (the host's ink icon), in the leading column like the Review page's rows. */
   glyph?: ReactNode;
+  /** The row's standing beyond this Review ("Also in 2 earlier runs"), in the row's right-aligned meta column. */
+  meta?: ReactNode;
   /** The row's name for assistive technology when `title` is a node. */
   accessibilityLabel?: string;
 }>;
@@ -102,6 +104,7 @@ const styles = StyleSheet.create({
   glyph: { paddingTop: 2, flexShrink: 0 },
   rowBody: { flex: 1, minWidth: 0, gap: 2 },
   rowFacts: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: 8, rowGap: 2, minWidth: 0 },
+  rowMeta: { flexShrink: 0, maxWidth: '40%', paddingTop: 2 },
   // Who reviewed keeps its names; when the actions don't fit beside them (a phone), they wrap under it, still at the end.
   foot: {
     flexDirection: 'row',
@@ -239,6 +242,7 @@ export const HappierReviewSummary = memo(function HappierReviewSummary(
                     {fact(row.reviewer)}
                   </View>
                 </View>
+                {row.meta ? <View style={styles.rowMeta}>{fact(row.meta)}</View> : null}
               </>
             );
             return props.onOpenRow ? (
