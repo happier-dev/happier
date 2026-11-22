@@ -15,10 +15,14 @@ export class TailscaleCommandError extends Error {
   readonly stderrClass: 'operator_authorization_refused' | 'unclassified' | 'empty';
 
   constructor(message: string, result: TailscaleCommandResult) {
-    // Linux Tailscale 1.104.2, tailscale/tailscale#21204. Do not infer the specific
-    // operator refusal from generic 401s, nor carry native paths/output into copy.
-    const refused = result.exitCode !== 0 && result.stderr.replace(/\s+/g, ' ').toLowerCase()
-      .includes("must be root, or be an operator and able to run 'sudo tailscale' to serve a path or unix socket");
+    // Linux Tailscale 1.104.2, tailscale/tailscale#21204 (serve path), and 1.104.6 LocalAPI
+    // denials such as `switch --list` ("Access denied: profiles access denied", then
+    // Tailscale's own operator remedy). Do not infer the specific operator refusal from
+    // generic 401s, nor carry native paths/output into copy.
+    const stderr = result.stderr.replace(/\s+/g, ' ').toLowerCase();
+    const refused = result.exitCode !== 0 && (
+      stderr.includes("must be root, or be an operator and able to run 'sudo tailscale' to serve a path or unix socket")
+      || stderr.includes('access denied:') && stderr.includes("to not require root, use 'sudo tailscale set --operator="));
     super(refused ? `Tailscale refused operator authorization. ${OPERATOR_REMEDIATION}` : message);
     this.name = 'TailscaleCommandError';
     this.result = result;

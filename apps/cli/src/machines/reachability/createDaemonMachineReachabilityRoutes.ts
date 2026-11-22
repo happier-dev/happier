@@ -26,6 +26,7 @@ import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachin
 import { inspectMachineReachability, executeMachineReachabilityTransition } from './machineReachabilityHost';
 import { projectMachineReachabilityObservation, readMachineReachabilityMetadata } from './readMachineReachability';
 import { prepareReachabilityReviewedChildrenForHost } from './reachabilityProviderHost';
+import { logger } from '@/ui/logger';
 import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo';
 import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/projectSetupExecution';
 import { observeOwnDaemonReachability } from './observeOwnDaemonReachability';
@@ -179,7 +180,11 @@ export async function executeDaemonMachineReachabilityAction(options: MetadataRo
         ? await inspectMachineReachability(MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1['machines.reachability.inspect'].parse(raw), deps)
         : await executeMachineReachabilityTransition(MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1['machines.reachability.configure'].parse(raw), deps);
         const failure = ActionExecuteFailureSchema.safeParse(result);
-        if (failure.success) return failure.data;
+        if (failure.success) {
+          // A provider or setup refusal settles the Action; keep its typed code in the daemon log too.
+          logger.warn('[Machine reachability] Action refused', { actionId, errorCode: failure.data.errorCode });
+          return failure.data;
+        }
         return MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1[actionId].parse(result);
       } finally {
         try { await custody.release(); }
