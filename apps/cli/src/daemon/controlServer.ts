@@ -208,6 +208,7 @@ import {
   ForegroundAgentRuntimeSessionOptionsResponseV1Schema,
 } from './agentRuntime/foregroundAdmissionContract';
 import type { SimulatorPreviewRoutes } from './devices/simulator/previewRoutes.types';
+import type { RequesterSessionAccountContextCustody } from './sessionEncryption/requesterSessionAccountContextCustody';
 import {
   ConnectedServiceRuntimeAuthFailureKindSchema,
   type ConnectedServiceRuntimeFailureClassification,
@@ -796,6 +797,7 @@ export function createDaemonControlApp({
   runtimeActionExecute,
   readPluginCatalogProjection,
   isMachineRoleActive,
+  withSessionAccountContext,
 }: {
   skillStore?: SkillStore;
   skillUsageRecorder?: SkillUsageRecorder;
@@ -946,6 +948,8 @@ export function createDaemonControlApp({
   externalActionApi?: DaemonExternalActionApi;
   /** Canonical daemon runtime owner; session processes have already admitted their Action. */
   runtimeActionExecute?: RuntimeActionExecute;
+  /** Machine core's requester custody: the Session-local ingress resolves an attributed Session through it. */
+  withSessionAccountContext?: RequesterSessionAccountContextCustody['withSessionAccountContext'];
   /** The Machine's role set (one owner, P03-ROLES-POLICY); missing = every role, as today. */
   isMachineRoleActive?: (roleId: string) => boolean;
 }): FastifyInstance {
@@ -1487,12 +1491,12 @@ export function createDaemonControlApp({
     preHandler: requireAuth,
   }, async (request, reply) => {
     if (isDaemonQuiescing()) return reply.code(503).send(daemonAdmissionRefusedResponse());
-    const requester = getChildren().find(child => child.happySessionId === request.body.sessionId)?.requesterSessionRuntimeContext;
-    if (!canExecuteSessionRuntimeAction(request.body, () => requester)) {
-      return { result: { ok: false, errorCode: 'access_denied', error: 'access_denied' } };
-    }
+    const tracked = getChildren().find(child => child.happySessionId === request.body.sessionId);
     const lifetime = createDaemonControlRequestLifetime(request, reply);
-    try {
+    const execute = async (requester: TrackedSession['requesterSessionRuntimeContext'] | null) => {
+      if (!canExecuteSessionRuntimeAction(request.body, () => requester ?? undefined)) {
+        return { result: { ok: false, errorCode: 'access_denied', error: 'access_denied' } };
+      }
       const result = await (runtimeActionExecute ?? createUnavailableRuntimeActionExecutor())({
         actionId: request.body.actionId,
         input: request.body.input,
@@ -1505,6 +1509,24 @@ export function createDaemonControlApp({
       return response.success ? response.data : {
         result: { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' },
       };
+    };
+    try {
+      const attribution = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
+      if (tracked?.requesterSessionRuntimeContext || !attribution) return await execute(tracked?.requesterSessionRuntimeContext);
+      // "No requester context yet" never means the Machine owner: an attributed Session
+      // (after a restart, or a withdrawn guest) resolves its own custody before admission.
+      const notCurrent = { result: { ok: false, errorCode: 'requester_session_not_current', error: 'requester_session_not_current' } };
+      if (!withSessionAccountContext) return notCurrent;
+      let admitted = false;
+      try {
+        return await withSessionAccountContext(request.body.sessionId, requester => {
+          admitted = true;
+          return execute(requester);
+        }, attribution, lifetime.signal);
+      } catch (error) {
+        if (admitted) throw error;
+        return notCurrent;
+      }
     } finally {
       lifetime.dispose();
     }
@@ -4661,6 +4683,7 @@ export function startDaemonControlServer({
   runtimeActionExecute,
   readPluginCatalogProjection,
   isMachineRoleActive,
+  withSessionAccountContext,
 }: {
   skillStore?: SkillStore;
   skillUsageRecorder?: SkillUsageRecorder;
@@ -4795,6 +4818,7 @@ export function startDaemonControlServer({
   externalActionApi?: DaemonExternalActionApi;
   runtimeActionExecute?: RuntimeActionExecute;
   isMachineRoleActive?: (roleId: string) => boolean;
+  withSessionAccountContext?: RequesterSessionAccountContextCustody['withSessionAccountContext'];
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
@@ -4865,6 +4889,7 @@ export function startDaemonControlServer({
       runtimeActionExecute,
       readPluginCatalogProjection,
       ...(isMachineRoleActive ? { isMachineRoleActive } : {}),
+      ...(withSessionAccountContext ? { withSessionAccountContext } : {}),
     });
 
     app.listen({ port: resolveDaemonControlListenPort(process.env), host: '127.0.0.1' }, (err, address) => {

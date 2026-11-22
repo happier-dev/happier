@@ -12710,6 +12710,7 @@ export async function startDaemonSessionControlRuntime(
             }),
         }),
       runtimeActionExecute: params.runtimeActionExecute,
+      withSessionAccountContext,
       trackedSessionsByKey: params.trackedSessionsByKey,
       getChildren: () => Array.from(params.trackedSessionsByKey.values()),
       get machineId() { return params.machineId; },
