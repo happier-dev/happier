@@ -8,10 +8,16 @@ export type MountedDiscussionChangeWatch = Readonly<{
     dispose(): void;
 }>;
 
+export type DiscussionMessageChanges = Readonly<{
+    seqs: ReadonlySet<number>;
+    exactOnly: boolean;
+}>;
+
 type ActiveWatch = Readonly<{
     scope: ServerAccountScope;
     address: Readonly<{ serverId: string }>;
-    onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>, readStateOnlyIds?: ReadonlySet<string>, docArtifactIds?: ReadonlySet<string>): void;
+    onInvalidated(discussionIds: readonly string[], revisions: ReadonlyMap<string, number>, readStateOnlyIds?: ReadonlySet<string>,
+        docArtifactIds?: ReadonlySet<string>, messageChanges?: ReadonlyMap<string, DiscussionMessageChanges>): void;
     includeDocSourceChanges?: () => boolean;
     onSnapshotInvalidated?: () => void;
     readNotCurrent?: () => boolean;
@@ -71,23 +77,34 @@ export function watchMountedDiscussions(input: Readonly<{
 }
 
 /**
- * Called by the one changes-page application path before checkpointing. Only
- * a validated, union-coalesced readState-only hint can narrow the reread work.
+ * Called by the one changes-page application path before checkpointing. A
+ * narrow read is safe when the page follows any coalesced resource change.
  */
 export function publishMountedDiscussionChanges(input: Readonly<{
     serverId: string;
     accountId: string;
     changes: readonly ApiChangeEntry[];
+    afterCursor?: number;
 }>): void {
     if (activeWatches.size === 0) return;
     const revisions = new Map<string, number>();
     const readStateOnly = new Map<string, boolean>();
+    const messageChanges = new Map<string, DiscussionMessageChanges>();
+    const after = input.afterCursor ?? 0;
     for (const change of input.changes) {
         if (change.kind !== 'discussion') continue;
         revisions.set(change.entityId, Math.max(revisions.get(change.entityId) ?? 0, change.cursor));
         const hint = readDiscussionChangeHintV1(change.hint);
         readStateOnly.set(change.entityId, readStateOnly.get(change.entityId) !== false
             && hint?.changes.readState === true && hint.changes.resource !== true);
+        const messages = hint?.messageChanges;
+        if (!messages) continue;
+        const seqs = new Set(messages.previous.filter(row => row.cursor > after).map(row => row.seq));
+        if (messages.latestSeq !== undefined) seqs.add(messages.latestSeq);
+        if (seqs.size > 0) messageChanges.set(change.entityId, {
+            seqs,
+            exactOnly: messages.latestSeq !== undefined && messages.previousResourceCursor <= after,
+        });
     }
     const readStateOnlyIds = new Set([...readStateOnly].filter(([, only]) => only).map(([id]) => id));
     const discussionIds = [...revisions.keys()];
@@ -105,7 +122,8 @@ export function publishMountedDiscussionChanges(input: Readonly<{
         }
         if (!discussionChanged && !(docChanged && watch.includeDocSourceChanges?.())) continue;
         try {
-            if (docChanged) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds, docArtifactIds);
+            if (messageChanges.size > 0) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds, docArtifactIds, messageChanges);
+            else if (docChanged) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds, docArtifactIds);
             else if (readStateOnlyIds.size > 0) watch.onInvalidated(discussionIds, revisions, readStateOnlyIds);
             else watch.onInvalidated(discussionIds, revisions);
         } catch {

@@ -1,4 +1,4 @@
-import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1 } from '@happier-dev/protocol/discussions';
+import { DISCUSSION_CHANGE_HINT_V1, DISCUSSION_READ_STATE_CHANGE_HINT_V1, type DiscussionChangeHintV1 } from '@happier-dev/protocol/discussions';
 import { assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication, markAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { scheduleAccountActivityBadgeRefresh } from '@/app/activity/refreshAccountActivityBadgePushes';
 import { afterTx, type Tx } from '@/storage/inTx';
@@ -7,16 +7,21 @@ import { notifyDiscussionHumanPresenceAccessChanged } from '@/app/session/humanP
 
 /** First-class invalidation reaches the current resource audience after commit. */
 export async function markDiscussionReadersChangedInTx(input: Readonly<{
-    tx: Tx; discussionId: string; additionalAccountIds?: readonly string[]; accessChanged?: boolean;
+    tx: Tx; discussionId: string; additionalAccountIds?: readonly string[]; accessChanged?: boolean; messageSeq?: number;
 }>): Promise<AccountChangePublication[]> {
     const audience = await resolveDiscussionAudienceInTx(input.tx, input.discussionId);
+    const hint: DiscussionChangeHintV1 = input.messageSeq === undefined ? DISCUSSION_CHANGE_HINT_V1 : {
+        ...DISCUSSION_CHANGE_HINT_V1,
+        messageChanges: { latestSeq: input.messageSeq, previousResourceCursor: 0, previous: [] },
+    };
     return markDiscussionAudiencesChangedInTx(input.tx,
-        new Map([[input.discussionId, [...audience, ...input.additionalAccountIds ?? []]]]), input.accessChanged);
+        new Map([[input.discussionId, [...audience, ...input.additionalAccountIds ?? []]]]), input.accessChanged, hint);
 }
 
 /** Revalidate the current audiences together at the terminal Account publication boundary. */
 export async function markDiscussionAudiencesChangedInTx(
     tx: Tx, audiences: ReadonlyMap<string, readonly string[]>, accessChanged?: boolean,
+    hint: DiscussionChangeHintV1 = DISCUSSION_CHANGE_HINT_V1,
 ): Promise<AccountChangePublication[]> {
     if (audiences.size === 0) return [];
     const discussionIds = [...audiences.keys()];
@@ -27,7 +32,7 @@ export async function markDiscussionAudiencesChangedInTx(
     const cursors: AccountChangePublication[] = [];
     for (const [discussionId, accountIds] of audiences) {
         for (const publication of await markAccountsChanged(tx, {
-            accountIds, kind: 'discussion', entityId: discussionId, hint: DISCUSSION_CHANGE_HINT_V1,
+            accountIds, kind: 'discussion', entityId: discussionId, hint,
         })) cursors.push(publication);
         if (accessChanged) afterTx(tx, () => { notifyDiscussionHumanPresenceAccessChanged({ discussionId }); });
     }

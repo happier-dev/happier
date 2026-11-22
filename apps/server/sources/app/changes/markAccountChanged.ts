@@ -175,11 +175,24 @@ async function coalesceDiscussionChangeHintInTx(
 ): Promise<DiscussionChangeHintV1> {
     const current = await tx.accountChange.findUnique({
         where: { accountId_kind_entityId: { accountId, kind: 'discussion', entityId } },
-        select: { hint: true },
+        select: { hint: true, cursor: true },
     });
     const next = readDiscussionChangeHintV1(hint) ?? DISCUSSION_CHANGE_HINT_V1;
     if (!current) return next;
     const existing = readDiscussionChangeHintV1(current.hint);
+    const previousMessages = existing?.messageChanges;
+    const latestSeq = next.messageChanges?.latestSeq;
+    let messageChanges: DiscussionChangeHintV1['messageChanges'];
+    if (previousMessages || next.messageChanges) {
+        const previous = new Map(previousMessages?.previous.map(row => [row.seq, row.cursor]));
+        if (previousMessages?.latestSeq !== undefined) previous.set(previousMessages.latestSeq, current.cursor);
+        if (latestSeq !== undefined) previous.delete(latestSeq);
+        messageChanges = {
+            ...(latestSeq === undefined ? {} : { latestSeq }),
+            previousResourceCursor: previousMessages?.latestSeq === undefined ? current.cursor : previousMessages.previousResourceCursor,
+            previous: Array.from(previous, ([seq, cursor]) => ({ seq, cursor })),
+        };
+    }
     return {
         v: 1,
         discussions: true,
@@ -188,6 +201,7 @@ async function coalesceDiscussionChangeHintInTx(
             // Unknown retained hints cannot prove that only a cursor changed.
             ...(!existing || existing.changes.resource || next.changes.resource ? { resource: true } : {}),
         },
+        ...(messageChanges ? { messageChanges } : {}),
     };
 }
 

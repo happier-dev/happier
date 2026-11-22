@@ -1,4 +1,5 @@
 import { DISCUSSION_HTTP_PATHS_V1, DISCUSSION_NOT_TRACKED_CODE_V1, DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListQueryV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesQueryV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostRequestV1Schema, DiscussionPostResponseV1Schema, DiscussionReadRequestV1Schema, DiscussionReadResponseV1Schema, DiscussionRenameRequestV1Schema, DiscussionRouteDiscussionParamsV1Schema, isDiscussionRequestWithinTransportBudgetV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1 } from '@happier-dev/protocol/discussions/api';
 
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -311,6 +312,7 @@ export function registerDiscussionRoutes(app: Fastify) {
         const result = await readDiscussionMessages({
             actorAccountId: request.userId,
             discussionId: request.params.discussionId,
+            includeKeyContext: request.headers.accept === DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1,
             ...(request.query.messageId === undefined ? {} : { messageId: request.query.messageId }),
             ...(request.query.localId === undefined ? {} : { localId: request.query.localId }),
             ...(request.query.beforeSeq === undefined ? {} : { beforeSeq: request.query.beforeSeq }),

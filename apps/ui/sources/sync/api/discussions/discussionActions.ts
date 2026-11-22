@@ -34,7 +34,7 @@ import { DiscussionSecondOpinionStartInputV1Schema } from '@happier-dev/protocol
 import { DiscussionInitialParticipantsV1Schema, DiscussionParticipantsListResponseV1Schema, type DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import { projectDiscussionSecondOpinionPreviewInputV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
 import { DiscussionCandidatesListInputV1Schema, DiscussionCandidatesListResultV1Schema, projectDiscussionInviteCandidatesV1 } from '@happier-dev/protocol/discussions/actions';
-import { DiscussionAttentionResponseV1Schema, type DiscussionAttentionQueryV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DiscussionAttentionResponseV1Schema, type DiscussionAttentionQueryV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAttentionResultV1Schema, type DiscussionAttentionResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionSettingsResponseV1Schema, type DiscussionSettingsV1 } from '@happier-dev/protocol/discussions/settings';
@@ -71,16 +71,21 @@ type AdapterOptions = Readonly<{
 function failure(errorCode: string) { return { ok: false as const, errorCode, error: errorCode }; }
 function refusal(code: string): Error & { code: string } { return Object.assign(new Error(code), { code }); }
 
-async function readJson(options: AdapterOptions, actionId: DiscussionActionIdV1, input: unknown, signal?: AbortSignal, bodyOverride?: unknown): Promise<unknown> {
+async function readJson(options: AdapterOptions, actionId: DiscussionActionIdV1, input: unknown, signal?: AbortSignal, bodyOverride?: unknown,
+    accept?: string): Promise<unknown> {
     const bound = bindDiscussionActionHttpRequestV1(actionId, input);
     const body = bodyOverride ?? bound.body;
-    return readTransportJson(options, bound.path, bound.method, body, signal);
+    return readTransportJson(options, bound.path, bound.method, body, signal, false, accept);
 }
 async function readTransportJson(options: AdapterOptions, path: string, method: string, body: unknown, signal?: AbortSignal,
-    recipientKeyPublication = false): Promise<unknown> {
+    recipientKeyPublication = false, accept?: string): Promise<unknown> {
     signal?.throwIfAborted();
     const init = { method,
-        ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }), signal };
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+        ...(accept || body !== undefined ? { headers: {
+            ...(accept ? { Accept: accept } : {}),
+            ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        } } : {}), signal };
     const response = recipientKeyPublication
         ? await publishRecipientKeyEnvelopes(() => requestDiscussionHttp(options, path, init), signal)
         : await requestDiscussionHttp(options, path, init);
@@ -93,7 +98,8 @@ async function readTransportJson(options: AdapterOptions, path: string, method: 
     }
     return payload;
 }
-async function resourceKey(options: AdapterOptions, row: DiscussionSummaryV1, workClass: CryptoWorkerWorkClass = 'interactive'): Promise<ResourceDataKey | null> {
+async function resourceKey(options: AdapterOptions, row: Pick<DiscussionSummaryV1, 'encryptionMode' | 'keyReadiness' | 'dataEncryptionKey'>,
+    workClass: CryptoWorkerWorkClass = 'interactive'): Promise<ResourceDataKey | null> {
     if (!row.keyReadiness) return null;
     try {
         const encryption = row.encryptionMode === 'e2ee' ? await options.resolveEncryption?.() ?? options.encryption : null;
@@ -320,8 +326,10 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 dispatched = true;
                 return options.request(path, init);
             } };
+            const messageRead = actionId === 'discussion.read' ? DiscussionReadInputV1Schema.parse(input) : undefined;
             const payload = byteUpload ? await requestDiscussionAttachmentUpload(dispatchOptions, byteUpload.metadata, byteUpload.segments, signal)
-                : await readJson(dispatchOptions, actionId, input, signal, body);
+                : await readJson(dispatchOptions, actionId, input, signal, body,
+                    messageRead?.messageId === undefined ? undefined : DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1);
             assertCurrent();
             const envelope = { v: 1 as const, serverId: options.scope.serverId };
             if (actionId === 'discussion.settings.get' || actionId === 'discussion.settings.set') {
@@ -350,13 +358,13 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 return DiscussionDetailsResultV1Schema.parse({ ...envelope, discussion,
                     ...('ownedSessions' in value ? { ownedSessions: value.ownedSessions } : {}) });
             }
-            if (actionId === 'discussion.read') {
-                const args = DiscussionReadInputV1Schema.parse(input);
+            if (messageRead) {
                 const value = DiscussionMessagesResponseV1Schema.parse(payload);
-                if (value.messages.some(row => row.discussionId !== args.discussionId)) throw refusal('outcome_unknown');
-                const key = await resourceKey(options, await getRawDiscussion(options, args.discussionId, signal));
+                if (value.messages.some(row => row.discussionId !== messageRead.discussionId)) throw refusal('outcome_unknown');
+                const key = value.messages.length === 0 ? null : await resourceKey(options,
+                    value.keyContext ?? await getRawDiscussion(options, messageRead.discussionId, signal));
                 const messages = await Promise.all(value.messages.map(row => openMessage(options, key, row)));
-                return DiscussionReadResultV1Schema.parse({ ...envelope, discussionId: args.discussionId, messages,
+                return DiscussionReadResultV1Schema.parse({ ...envelope, discussionId: messageRead.discussionId, messages,
                     hasMoreOlder: value.hasMoreOlder, messageSeq: value.messageSeq, incomplete: messages.some(row => row.content === null) });
             }
             if (actionId === 'discussion.create') {

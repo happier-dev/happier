@@ -134,10 +134,11 @@ export function useDiscussionParticipantManagement(input: Readonly<{
         if (discussionId === null || !input.enabled || !accountLifetime?.isCurrent()) return;
         const abort = new AbortController();
         const retirement = accountLifetime.onRetire(() => abort.abort());
-        // AccountChange coalesces by resource, not mutation subtype. The exact
-        // Discussion invalidation must re-admit its roster, including policy/access.
+        // Resource changes still re-admit the roster, including policy/access.
         const watch = watchMountedDiscussions({ scope: accountLifetime.scope, address: { serverId: accountLifetime.scope.serverId },
-            onInvalidated: discussionIds => { if (discussionIds.includes(discussionId)) void refresh(abort.signal); } });
+            onInvalidated: (discussionIds, _revisions, _readStateOnlyIds, _docArtifactIds, messageChanges) => {
+                if (discussionIds.includes(discussionId) && !messageChanges?.get(discussionId)?.exactOnly) void refresh(abort.signal);
+            } });
         void refresh(abort.signal);
         return () => { watch.dispose(); retirement.dispose(); abort.abort(); };
     }, [accountLifetime, discussionId, input.enabled, refresh]);

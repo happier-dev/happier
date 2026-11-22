@@ -16,7 +16,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import type { SessionDraftCurrentness } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import type { createDiscussionClient, DiscussionClientOutcome, DiscussionPostOutcome } from '@/sync/api/discussions/discussionActions';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { watchMountedDiscussions, type MountedDiscussionChangeWatch } from '@/sync/domains/discussions/discussionChangeWatch';
+import { watchMountedDiscussions, type DiscussionMessageChanges, type MountedDiscussionChangeWatch } from '@/sync/domains/discussions/discussionChangeWatch';
 import type { DiscussionAnchorV1, DiscussionReplyTargetV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionCreateInputV1 } from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
@@ -870,7 +870,8 @@ export function createDiscussionRepository(options: Readonly<{
         } else if (current.nextCursor) await loadMoreList(state, signal, anchorSessionId, { complete: true });
     };
 
-    const refreshMessages = async (discussionId: string, signal?: AbortSignal, refreshedRootId?: string): Promise<void> => {
+    const refreshMessages = async (discussionId: string, signal?: AbortSignal, refreshedRootId?: string,
+        changedMessageSeqs?: ReadonlySet<number>): Promise<void> => {
         const operationEpoch = captureOperation(discussionId);
         const retained = snapshot.threads[discussionId] ?? emptyThread();
         if (retained.oldestHistorySeq === undefined && retained.newestHistorySeq === undefined) {
@@ -950,12 +951,13 @@ export function createDiscussionRepository(options: Readonly<{
             errorCode: null,
             incomplete,
         });
-        // Delivery is projected onto its addressed original without appending a
-        // message. Reopen only retained originals the tail did not already read;
+        // Delivery and changed attachments are projected onto their originals
+        // without appending a message. Reopen only originals the tail did not read;
         // a scoped root may have been admitted by the invalidation owner above.
         const receivedIds = new Set(received.map(row => row.id));
         for (const row of messages) {
-            if (!row.addressingV1?.participantSessionIds.length || receivedIds.has(row.id) || row.id === refreshedRootId) continue;
+            if ((!row.addressingV1?.participantSessionIds.length && !changedMessageSeqs?.has(row.seq))
+                || receivedIds.has(row.id) || row.id === refreshedRootId) continue;
             await readExactMessage(discussionId, row.id, signal);
             if (!isCurrentOperation(operationEpoch) || signal?.aborted) return;
         }
@@ -1329,12 +1331,15 @@ export function createDiscussionRepository(options: Readonly<{
         readStateOnlyIds?: ReadonlySet<string>;
         docArtifactIds?: ReadonlySet<string>;
         attentionAlreadyRefreshed?: boolean;
+        messageChanges?: ReadonlyMap<string, DiscussionMessageChanges>;
     }>): Promise<void> => {
-        const { readStateOnlyIds, docArtifactIds } = refresh ?? {};
-        const work: Promise<void>[] = [];
+        const { readStateOnlyIds, docArtifactIds, messageChanges } = refresh ?? {};
+        const work: Promise<unknown>[] = [];
         const anchors = [...(homeMountReferences > 0 ? [undefined] : []), ...[...mountedAnchors.values()].map(entry => entry.anchor)];
         if (attentionMountReferences > 0 && !refresh?.attentionAlreadyRefreshed && !docArtifactIds?.size) {
-            for (const id of discussionIds) if (!readStateOnlyIds?.has(id)) work.push(refreshAttentionDiscussion(id));
+            for (const id of discussionIds) {
+                if (!readStateOnlyIds?.has(id) && !messageChanges?.get(id)?.exactOnly) work.push(refreshAttentionDiscussion(id));
+            }
         }
         // Doc discovery is qualified by its source; attention membership still
         // belongs to its own query when an Artifact changes.
@@ -1348,6 +1353,18 @@ export function createDiscussionRepository(options: Readonly<{
             })());
         }
         for (const discussionId of discussionIds) {
+            const changed = messageChanges?.get(discussionId);
+            const summary = snapshot.threads[discussionId]?.summary;
+            const docSourceChanged = summary?.anchor?.kind === 'doc' && docArtifactIds?.has(summary.anchor.doc.ref.artifactId);
+            if (changed?.exactOnly && !docSourceChanged) {
+                if (mountedThreads.has(discussionId)) {
+                    const retained = snapshot.threads[discussionId]?.messages ?? [];
+                    for (const row of retained) {
+                        if (changed.seqs.has(row.seq)) work.push(readExactMessage(discussionId, row.id));
+                    }
+                }
+                continue;
+            }
             if (anchors.length === 0 && attentionMountReferences === 0 && !mountedThreads.has(discussionId)
                 && !mountedSummaries.has(discussionId) && !snapshot.threads[discussionId]) continue;
             work.push((async () => {
@@ -1379,7 +1396,7 @@ export function createDiscussionRepository(options: Readonly<{
                 if (root) await readExactMessage(discussionId, root.id);
                 if (epoch !== accessLossEpoch || snapshot.threads[discussionId]?.summary === null) return;
                 const reads: Promise<void>[] = [];
-                if (mountedThreads.has(discussionId)) reads.push(refreshMessages(discussionId, undefined, root?.id));
+                if (mountedThreads.has(discussionId)) reads.push(refreshMessages(discussionId, undefined, root?.id, changed?.seqs));
                 for (const { anchor, collection } of retained) {
                     const known = [...collection.lists.active.items, ...collection.lists.archived.items].find(item => item.id === discussionId);
                     const admitted = anchor === undefined || (typeof anchor === 'string'
@@ -1729,8 +1746,8 @@ export function createDiscussionRepository(options: Readonly<{
                             || failed(getListSnapshot(anchor).lists.archived.status))) return true;
                         return [...mountedThreads.keys(), ...mountedSummaries.keys()].some(id => failed(snapshot.threads[id]?.status));
                     },
-                    onInvalidated: (discussionIds, revisions, readStateOnlyIds, docArtifactIds) => {
-                        void refreshLoaded(discussionIds, revisions, { readStateOnlyIds, docArtifactIds });
+                    onInvalidated: (discussionIds, revisions, readStateOnlyIds, docArtifactIds, messageChanges) => {
+                        void refreshLoaded(discussionIds, revisions, { readStateOnlyIds, docArtifactIds, messageChanges });
                     } });
             }
             let released = false;

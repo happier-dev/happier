@@ -124,10 +124,17 @@ export const DiscussionAttentionResponseV1Schema = lazyZodSchema(() => z.strictO
 export type DiscussionAttentionQueryV1 = z.infer<typeof DiscussionAttentionQueryV1Schema>;
 export type DiscussionAttentionResponseV1 = z.infer<typeof DiscussionAttentionResponseV1Schema>;
 
+export const DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1 = 'application/json;happier-discussion-projection=exact-message-key-context';
+
 export const DiscussionMessagesResponseV1Schema = lazyZodSchema(() => z.strictObject({
   messages: z.array(DiscussionMessageV1Schema),
   hasMoreOlder: z.boolean(),
   messageSeq: z.number().check(z.int(), z.minimum(0)),
+  keyContext: z.optional(z.strictObject({
+    encryptionMode: DiscussionSummaryV1Schema.shape.encryptionMode,
+    keyReadiness: DiscussionSummaryV1Schema.shape.keyReadiness,
+    dataEncryptionKey: DiscussionSummaryV1Schema.shape.dataEncryptionKey,
+  })),
 }));
 export type DiscussionMessagesResponseV1 = z.infer<typeof DiscussionMessagesResponseV1Schema>;
 

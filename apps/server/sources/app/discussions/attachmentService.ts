@@ -155,7 +155,7 @@ export async function removeDiscussionAttachment(input: DiscussionAttachmentRead
         }
         const row = await tx.discussionAttachment.findFirst({ where: { blobId, messageId, message: { discussionId } },
             select: { storageKey: true, removedByAccountId: true,
-                message: { select: { authorAccountId: true, discussion: { select: { ownerAccountId: true } } } },
+                message: { select: { seq: true, authorAccountId: true, discussion: { select: { ownerAccountId: true } } } },
             },
         });
         if (!row || !viewerMayRemoveDiscussionAttachment(actorAccountId, row.message.authorAccountId, row.message.discussion.ownerAccountId)) {
@@ -168,7 +168,7 @@ export async function removeDiscussionAttachment(input: DiscussionAttachmentRead
             custody = await tx.uploadedFile.create({ data: { accountId, path: row.storageKey, reuseKey } });
             await tx.discussionAttachment.update({ where: { blobId },
                 data: { removedByAccountId: actorAccountId, storedSizeBytes: 0 } });
-            await markDiscussionReadersChangedInTx({ tx, discussionId });
+            await markDiscussionReadersChangedInTx({ tx, discussionId, messageSeq: row.message.seq });
         } else {
             custody = await tx.uploadedFile.findFirst({ where: { path: row.storageKey, reuseKey } });
         }

@@ -4674,6 +4674,13 @@ derived at read time from canonical rows; they are not copied into a materialize
 inbox or counter. Discussion mutations publish content-free AccountChange wakes to
 the Discussion's current resource audience. Follow and notification policy consumes
 those facts elsewhere and is not decided by the discussion domain.
+An attachment removal carries the affected message sequence in that same change.
+A mounted reader uses the sequence to reopen the retained row through the existing
+exact-message read, which still checks access. Coalescing preserves the affected
+sequences for clients that missed earlier removals. The change carries no file
+name, content, or key. On request, the exact read includes the viewer's
+admitted key context from the same read snapshot. Clients can open that row in one
+request and use the existing Discussion detail read with older Homes.
 
 The `sessions.conversations` server feature is fail-closed and depends on
 `sessions` and `sharing.session`. These are current development contracts, not a statement

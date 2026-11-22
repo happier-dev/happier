@@ -289,6 +289,32 @@ describe("AccountChange coalescing database contract", () => {
         expect(await db.accountChange.count({ where: { accountId: account.id, kind: 'discussion', entityId } })).toBe(1);
     });
 
+    it(`retains earlier Discussion message changes across a later whole-resource change on ${provider}`, async () => {
+        const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
+        const entityId = 'discussion-with-changed-messages';
+        const readChange = () => db.accountChange.findUniqueOrThrow({
+            where: { accountId_kind_entityId: { accountId: account.id, kind: 'discussion', entityId } },
+            select: { cursor: true, hint: true },
+        });
+        const publish = async (seq?: number) => {
+            await inTx(tx => markAccountsChanged(tx, {
+                accountIds: [account.id], kind: 'discussion', entityId,
+                hint: { v: 1, discussions: true, changes: { resource: true },
+                    ...(seq === undefined ? {} : { messageChanges: { latestSeq: seq, previousResourceCursor: 0, previous: [] } }) },
+            }));
+            return readChange();
+        };
+        const resource = await publish();
+        const first = await publish(2);
+        const second = await publish(3);
+        const laterResource = await publish();
+        expect(second.hint).toMatchObject({ messageChanges: { latestSeq: 3, previousResourceCursor: resource.cursor,
+            previous: [{ seq: 2, cursor: first.cursor }] } });
+        expect(laterResource.hint).toMatchObject({ messageChanges: { previousResourceCursor: resource.cursor,
+            previous: [{ seq: 2, cursor: first.cursor }, { seq: 3, cursor: second.cursor }] } });
+        expect(laterResource.cursor).toBeGreaterThan(second.cursor);
+    });
+
     it(`keeps connected service entities cursor-relative and independent of self changes on ${provider}`, async () => {
         const account = await db.account.create({ data: { publicKey: `${publicKeyPrefix}${randomUUID()}` } });
         const first = { pluginId: 'test.connected', localId: 'first' };

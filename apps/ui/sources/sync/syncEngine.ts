@@ -13753,6 +13753,7 @@ class Sync {
                                     serverId: plannedServerId,
                                     accountId: sessionRecordChangeScope.accountId,
                                     changes,
+                                    afterCursor: planned.afterCursor,
                                 });
                             }
                             if (sessionRecordChangeScope) {

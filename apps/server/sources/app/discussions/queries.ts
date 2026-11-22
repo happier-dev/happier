@@ -387,7 +387,7 @@ export async function getDiscussion(input: Reader & Readonly<{ discussionId: str
 /** Exact and ordered cursor-neutral reads apply the sequence ceiling before disclosure. */
 export async function readDiscussionMessages(input: Reader & Readonly<{
     discussionId: string; beforeSeq?: number; afterSeq?: number; throughSeq?: number; limit?: number;
-    messageId?: string; localId?: string;
+    messageId?: string; localId?: string; includeKeyContext?: boolean;
 }>): Promise<DiscussionResult<DiscussionMessagesResponseV1>> {
     if (!isDiscussionMessagesSelectionValidV1(input)) return discussionFailure('discussion_invalid_content');
     return inReadSnapshot(async tx => {
@@ -404,7 +404,11 @@ export async function readDiscussionMessages(input: Reader & Readonly<{
                 ...(input.throughSeq === undefined ? {} : { throughSeq: input.throughSeq }) });
             if (!selected.ok) return selected;
             return discussionSuccess({ messages: selected.value ? [selected.value] : [], hasMoreOlder: false,
-                messageSeq: input.throughSeq === undefined ? discussion.messageSeq : Math.min(discussion.messageSeq, input.throughSeq) });
+                messageSeq: input.throughSeq === undefined ? discussion.messageSeq : Math.min(discussion.messageSeq, input.throughSeq),
+                ...(input.includeKeyContext && input.messageId !== undefined && selected.value ? { keyContext: {
+                    encryptionMode: context.storageMode, keyReadiness: context.keyReadiness, dataEncryptionKey: context.dataEncryptionKey,
+                } } : {}),
+            });
         }
         const ascending = input.afterSeq !== undefined;
         const take = pageSize(input.limit);

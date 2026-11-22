@@ -12,7 +12,7 @@ import { sealAesGcmPayloadWebCrypto, openAesGcmPayloadWebCrypto, openSessionData
 import { frameSessionDataKeyBundleV0, readSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
+import { buildDiscussionMutationRequestBodyV1, DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
@@ -565,8 +565,13 @@ export function discussionAttachmentContracts(): void {
             const [item] = inventory.json().page.items;
             expect(item.location).toEqual({ kind: 'discussion', discussionId: result.discussion.id,
                 messageId: result.firstMessage.id, attachmentId: blobId });
-            const selected = await app.inject({ url: `/v1/discussions/${item.location.discussionId}/messages?messageId=${item.location.messageId}` });
+            const exactMessageUrl = `/v1/discussions/${item.location.discussionId}/messages?messageId=${item.location.messageId}`;
+            const keyContextHeaders = { accept: DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1 };
+            expect((await app.inject({ url: exactMessageUrl })).json()).not.toHaveProperty('keyContext');
+            const selected = await app.inject({ url: exactMessageUrl, headers: keyContextHeaders });
             expect(selected.statusCode, selected.body).toBe(200);
+            expect(selected.json().keyContext).toEqual({ encryptionMode: 'e2ee', keyReadiness: true,
+                dataEncryptionKey: result.discussion.dataEncryptionKey });
             const [message] = selected.json().messages;
             expect(message).toMatchObject({ id: item.location.messageId, content: { t: 'encrypted' } });
             expect(selected.body).not.toContain('private.txt');
@@ -591,6 +596,9 @@ export function discussionAttachmentContracts(): void {
             if (bundle.status !== 'ready') throw new Error('Expected the canonical AES-GCM frame');
             expect(await openAesGcmPayloadWebCrypto(bundle.payload, dataKey)).toEqual(plaintext);
             actorAccountId = reader.id;
+            const locked = await app.inject({ url: exactMessageUrl, headers: keyContextHeaders });
+            expect(locked.statusCode, locked.body).toBe(200);
+            expect(locked.json().keyContext).toEqual({ encryptionMode: 'e2ee', keyReadiness: false, dataEncryptionKey: null });
             expect((await app.inject({ method: 'GET', url })).json()).toEqual({ error: 'discussion_content_unavailable' });
         } finally {
             await app.close();
