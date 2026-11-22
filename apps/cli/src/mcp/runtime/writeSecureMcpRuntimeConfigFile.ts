@@ -12,6 +12,18 @@ import {
   type ProtectedLocalStateOptions,
 } from '@/utils/fs/protectedLocalState';
 
+const ownedConfigs = new Set<string>();
+
+function cleanupOwnedConfigsOnExit(): void {
+  for (const path of ownedConfigs) {
+    try {
+      removeWrittenMcpRuntimeConfigFile(path, true);
+    } catch {
+      process.stderr.write('[happier-mcp] Could not remove a temporary runtime config\n');
+    }
+  }
+}
+
 function isErrnoException(err: unknown): err is NodeJS.ErrnoException {
   return typeof err === 'object' && err !== null && 'code' in err;
 }
@@ -25,6 +37,8 @@ export function removeWrittenMcpRuntimeConfigFile(configPath: string, ownsBaseDi
     try { rmdirSync(dirname(configPath)); } catch (error) {
       if (!isErrnoException(error) || (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY')) throw error;
     }
+    ownedConfigs.delete(configPath);
+    if (ownedConfigs.size === 0) process.off('exit', cleanupOwnedConfigsOnExit);
   }
 }
 
@@ -62,6 +76,10 @@ export async function writeSecureMcpRuntimeConfigFile(params: Readonly<{
         await createProtectedLocalStateFileExclusive(tempPath, json, protectedLocalStateOptions);
         await rename(tempPath, finalPath);
         await readProtectedLocalStateFile(finalPath, protectedLocalStateOptions);
+        if (ownsBaseDir) {
+          if (ownedConfigs.size === 0) process.once('exit', cleanupOwnedConfigsOnExit);
+          ownedConfigs.add(finalPath);
+        }
         return finalPath;
       } catch (err) {
         await rm(tempPath, { force: true }).catch(() => {});

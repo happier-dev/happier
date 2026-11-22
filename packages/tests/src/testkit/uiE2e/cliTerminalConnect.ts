@@ -160,7 +160,6 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
 
   const cliLaunchSpec = await resolveCliTestLaunchSpec(
     { testDir: params.testDir, env: sanitizedEnv },
-    { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
   );
 
   await ensureActiveServerSelection({

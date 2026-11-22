@@ -17,6 +17,7 @@ type CliLaunchOptions = Parameters<typeof ensureCliDistSnapshotEntrypoint>[1] & 
   preferSourceEntrypoint?: boolean;
   preparedDistSnapshotOnly?: boolean;
 };
+type CliLaunchRequestOptions = Omit<CliLaunchOptions, 'snapshotDir'> & { snapshotDir?: string };
 
 function resolveCliSourceEntrypoint(rootDir: string): string {
   return resolve(rootDir, 'apps', 'cli', 'src', 'index.ts');
@@ -190,29 +191,33 @@ export function shouldSkipCliSharedDepsBuild(env: NodeJS.ProcessEnv): boolean {
 
 export async function resolveCliTestLaunchSpec(
   params: Readonly<{ testDir: string; env: NodeJS.ProcessEnv }>,
-  options: CliLaunchOptions,
+  options: CliLaunchRequestOptions = {},
 ): Promise<CliTestLaunchSpec> {
   const rootDir = options.repoRoot ?? repoRootDir();
+  const snapshotOptions = (kind: 'dist' | 'source'): CliLaunchOptions => ({
+    ...options,
+    snapshotDir: options.snapshotDir ?? resolve(rootDir, '.project', 'tmp', `cli-${kind}-snapshot`),
+  });
 
   if (options.preparedDistSnapshotOnly) {
     return {
       command: process.execPath,
-      args: ['--preserve-symlinks', resolvePreparedDistSnapshotEntrypoint(options.snapshotDir)],
+      args: ['--preserve-symlinks', resolvePreparedDistSnapshotEntrypoint(snapshotOptions('dist').snapshotDir)],
     };
   }
 
   if (options.preferSourceEntrypoint || shouldUseCliSourceEntrypoint(params.env)) {
-    return await resolveCliSourceLaunchSpec(params, rootDir, options);
+    return await resolveCliSourceLaunchSpec(params, rootDir, snapshotOptions('source'));
   }
 
   let snapshotEntrypoint: string;
   try {
-    snapshotEntrypoint = await ensureCliDistSnapshotEntrypoint(params, options);
+    snapshotEntrypoint = await ensureCliDistSnapshotEntrypoint(params, snapshotOptions('dist'));
   } catch (error) {
     if (!existsSync(resolveCliSourceEntrypoint(rootDir))) {
       throw error;
     }
-    return resolveCliSourceLaunchSpec(params, rootDir, options);
+    return resolveCliSourceLaunchSpec(params, rootDir, snapshotOptions('source'));
   }
 
   return {

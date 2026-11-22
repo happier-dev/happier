@@ -1,4 +1,6 @@
-import { dirname, resolve } from 'node:path';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { resolveYarnCommandInvocation } from '../../../scripts/workspaces/execYarnCommand.mjs';
@@ -21,6 +23,8 @@ if (!config) {
 
 const childArgs = ['-s', 'playwright', 'test', '-c', config, ...passThrough];
 const invocation = resolveYarnCommandInvocation(childArgs);
+const scratch = mkdtempSync(join(tmpdir(), 'happier-playwright-'));
+process.once('exit', () => rmSync(scratch, { recursive: true, force: true }));
 
 await runHeartbeatWrappedCommand({
   toolName: 'playwright',
@@ -30,7 +34,7 @@ await runHeartbeatWrappedCommand({
   command: invocation.command,
   args: invocation.args,
   spawnOptions: {
-    ...createPlaywrightSpawnOptions(process.env),
+    ...createPlaywrightSpawnOptions({ ...process.env, TMPDIR: scratch, TMP: scratch, TEMP: scratch }),
     ...(invocation.windowsVerbatimArguments
       ? { windowsVerbatimArguments: invocation.windowsVerbatimArguments }
       : {}),

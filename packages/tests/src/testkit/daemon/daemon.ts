@@ -819,7 +819,7 @@ export async function replaceTestDaemonWithoutStoppingSessions(params: {
       env: params.env,
     },
     {
-      snapshotDir: params.snapshotDir ?? resolve(params.testDir, 'cli-dist'),
+      snapshotDir: params.snapshotDir ?? resolveDaemonCliSnapshotDir({ testDir: params.testDir, env: params.env }),
     },
   );
 

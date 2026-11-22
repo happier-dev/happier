@@ -1,9 +1,10 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
@@ -45,6 +46,25 @@ function resolveLauncherInvocation(options: Readonly<{ forceSource?: boolean }> 
 }
 
 describe('stdioMcpServerLauncher', () => {
+  it('cleans up an owned config directory when its writer exits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-writer-exit-test-'));
+    try {
+      const invocation = resolveLauncherInvocation({ forceSource: true });
+      const writer = pathToFileURL(join(projectPath(), 'src', 'mcp', 'runtime', 'writeSecureMcpRuntimeConfigFile.ts'));
+      const { stdout } = await promisify(execFile)(invocation.command, [
+        ...invocation.args.slice(0, -1), '--input-type=module', '--eval',
+        `const writer = await import(${JSON.stringify(writer.href)});
+         const writeConfig = writer.writeSecureMcpRuntimeConfigFile ?? writer.default.writeSecureMcpRuntimeConfigFile;
+         process.stdout.write(await writeConfig({ prefix: 'happier-mcp-stdio-launcher', tmpDir: null, payload: {} }));`,
+      ], { env: { ...process.env, ...invocation.env, TMPDIR: root, TMP: root, TEMP: root } });
+      const configPath = stdout.trim();
+      expect(configPath).toContain('happier-mcp-stdio-launcher');
+      expect(existsSync(dirname(configPath))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('preserves the writer-owned config for relaunch until its owner cleans up', async () => {
     const prefix = 'happier-mcp-stdio-launcher';
     const configPath = await writeSecureMcpRuntimeConfigFile({
