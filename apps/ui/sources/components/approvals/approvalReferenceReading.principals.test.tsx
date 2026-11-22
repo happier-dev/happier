@@ -77,6 +77,30 @@ describe('approval principal names', () => {
         } finally { await screen.unmount(); }
     });
 
+    it.each([
+        { operation: 'Group override', change: { managedGroupDefaults: { teamGroupId: groupId, defaults: { approvalProfileId: null } } }, choice: true },
+        { operation: 'Team default', change: { managedDefaults: { team: { approvalProfileId: null }, groups: {} } }, choice: true },
+        { operation: 'Group override without a profile field', change: { managedGroupDefaults: { teamGroupId: groupId, defaults: {} } }, choice: false },
+        { operation: 'Team defaults clear', change: { managedDefaults: null }, choice: false },
+    ])('reads an explicit no-profile choice in a $operation approval', async ({ change, choice }) => {
+        const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://builtin-policy-review.test', accountId: 'viewer' });
+        harness.answer(home, 'POST /v1/session-access/principals/resolve', {
+            select: input => ({ body: { v: 1, principals: (input as { subjects: { kind: string }[] }).subjects
+                .map(subject => subject.kind === 'group' ? group : team) } }),
+        });
+        const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_POLICY_SET_ACTION_ID_V1}
+            actionArgs={{ v: 1, teamId, ...change }} preview={null} status="open" serverId={home} testID="team-policy-choice" />);
+        try {
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(team.name));
+            const label = t('teams.settings.memberDefaults.approvalProfile');
+            const none = t('teams.settings.memberDefaults.approvalProfileNone');
+            const text = screen.getTextContent();
+            if (choice) expect(text).toContain(`${label} ${none}`);
+            else expect(text).not.toContain(label);
+            expect(harness.requestsFor('/v1/artifacts/read')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it('uses Unavailable for Group and profile names the approver cannot read', async () => {
         const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://private-policy-review.test', accountId: 'viewer' });
         harness.answer(home, 'POST /v1/session-access/principals/resolve', {

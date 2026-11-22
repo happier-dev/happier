@@ -7,6 +7,7 @@ import {
   approvalProfileChoiceTitle,
   type ApprovalProfileDefaultChoices,
 } from '@/components/approvals/ApprovalProfileSelect';
+import { approvalProfileDefaultNoneTitle } from '@/components/approvals/approvalProfileDefaultChoiceCopy';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -147,7 +148,7 @@ export const ApprovalProfileDefaultRow = React.memo(
               detail: t('teams.settings.memberDefaults.approvalProfileNotSet'),
             },
         none: {
-          title: t('teams.settings.memberDefaults.approvalProfileNone'),
+          title: approvalProfileDefaultNoneTitle(),
           subtitle: t(
             'teams.settings.memberDefaults.approvalProfileNoneDescription',
           ),

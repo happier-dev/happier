@@ -204,7 +204,8 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
-  | Readonly<{ kind: 'approvalProfile'; id: string }>
+  /** An explicit null is the default picker’s None choice. An omitted field has no reference. */
+  | Readonly<{ kind: 'approvalProfile'; id: string | null }>
   | Readonly<{ kind: 'setting'; id: string }>
   | Readonly<{ kind: 'providerConnection'; id: string; displayName?: string; catalogSourceKey?: string; agentTargetKey?: string }>
   | Readonly<{ kind: 'providerModel'; id: string; connectionId: string; agentTargetKey: string; catalogSourceKey?: string }>

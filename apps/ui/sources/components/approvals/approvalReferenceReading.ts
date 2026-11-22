@@ -23,6 +23,7 @@ import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprova
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { readApprovalProfileDescriptor } from '@/sync/engine/settings/approvalProfileCatalog';
+import { approvalProfileDefaultNoneTitle } from './approvalProfileDefaultChoiceCopy';
 import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
 import { projectMcpServerCatalogSnapshot } from '@/sync/store/settings/mcpServerCatalogSnapshot';
@@ -56,12 +57,12 @@ export type ApprovalReferenceReading = Readonly<{ text: string; named: boolean; 
     session?: Readonly<{ id: string; serverId: string | null }> }>;
 
 /** Both cached UI rows and authorized exact reads use the same content-readable name rule. */
-function readApprovalArtifactReference(reference: ApprovalReference, artifact: DecryptedArtifact | null | undefined): ApprovalReferenceReading {
-    const readable = artifact?.isDecrypted === true && (reference.kind === 'artifact'
-        || reference.kind === 'skill' && artifact.header?.kind === 'prompt_bundle.v2'
+function readApprovalArtifactReference(kind: 'artifact' | 'skill', id: string, artifact: DecryptedArtifact | null | undefined): ApprovalReferenceReading {
+    const readable = artifact?.isDecrypted === true && (kind === 'artifact'
+        || kind === 'skill' && artifact.header?.kind === 'prompt_bundle.v2'
             && artifact.header.bundleSchemaId === 'skills.skill_md_v1');
     const title = readable ? artifact.title?.trim() || artifact.header?.title?.trim() : null;
-    return { text: title || reference.id, named: Boolean(title) };
+    return { text: title || id, named: Boolean(title) };
 }
 
 function readApprovalProject(reference: ApprovalReference | undefined, rows: ProjectAccountRowsSnapshot | null,
@@ -99,7 +100,7 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     };
     sources.principalName = await readApprovalPrincipalName(reference, scope, signal, () => { account.assertCurrent(); return true; });
     if (sources.principalName !== null) account.assertCurrent();
-    if (reference.kind === 'approvalProfile') {
+    if (reference.kind === 'approvalProfile' && reference.id !== null) {
         try {
             sources.approvalProfileName = (await readApprovalProfileDescriptor(account, reference.id, signal))?.name;
         } catch {
@@ -138,7 +139,7 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
         sources.managedEnrolledMachine = sources.managedMachine?.enrolledMachineId
             ? resolveServerScopedMachine(storage.getState(), account.serverId, sources.managedMachine.enrolledMachineId) : null;
     }
-    return resolveApprovalReferenceReading(reference, reference.id, account.serverId, sources);
+    return resolveApprovalReferenceReading(reference, reference.id ?? '', account.serverId, sources);
 }
 
 /** The confirmation's workspace, read from the invoking Account's census the way the approval page reads it. */
@@ -314,7 +315,7 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         return { text: title || t('contextBar.machine'), named: Boolean(title), subject: 'managedMachine',
             ...(sources.managedMachineLoading && !title ? { resolving: true } : {}) };
     }
-    if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference, ownHome ? artifact : null);
+    if (reference?.kind === 'skill' || reference?.kind === 'artifact') return readApprovalArtifactReference(reference.kind, reference.id, ownHome ? artifact : null);
     if (reference?.kind === 'machine') {
         // A machine whose details were never read has no name yet: the reference's own id stands in, unnamed.
         const name = getSettledMachineDisplayName(machine, sources.machineInventory ?? undefined);
@@ -433,6 +434,7 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (reference?.kind === 'approvalProfile') {
         const label = t('teams.settings.memberDefaults.approvalProfile');
+        if (reference.id === null) return { text: approvalProfileDefaultNoneTitle(), named: true, label };
         if (sources.approvalProfileName) return { text: sources.approvalProfileName, named: true, label };
         if (sources.approvalProfileResolving) return { text: t('common.loading'), named: false, resolving: true, label };
         return { text: t('common.unavailable'), named: false, label };
