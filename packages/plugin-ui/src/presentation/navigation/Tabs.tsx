@@ -1,5 +1,6 @@
 import {
   Children,
+  Component,
   createContext,
   isValidElement,
   useContext,
@@ -29,6 +30,7 @@ import {
   HappierRetainedScrollAnchorContextInternal,
   HappierRetainedScrollContextInternal,
   type HappierRetainedScrollAnchorReaderInternal,
+  type HappierRetainedScrollAnchorsInternal,
   type HappierRetainedScrollInternal,
 } from '../../presentationHost/scrollActivity.js';
 import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
@@ -126,6 +128,53 @@ const fillStyle: ViewStyle = { flex: 1, minHeight: 0 };
  */
 export type HappierTabsLayout = 'content' | 'fill';
 
+type RetainedTabScrollProps = Readonly<{
+  active: boolean;
+  anchors: HappierRetainedScrollAnchorsInternal | null;
+  children: ReactNode;
+}>;
+
+type SavedTabScroll = Readonly<{ offset: number; anchor?: () => number | undefined }>;
+
+class RetainedTabScroll extends Component<RetainedTabScrollProps, object, SavedTabScroll | null> {
+  private saved: SavedTabScroll | null = null;
+  private release: (() => void) | undefined;
+
+  override getSnapshotBeforeUpdate(previous: RetainedTabScrollProps): SavedTabScroll | null {
+    const { active, anchors } = previous;
+    if (!active || anchors === null || (this.props.active && this.props.anchors === anchors)) return null;
+
+    // Capture the outgoing viewport before hiding it can clamp the shared scroll area.
+    const offset = anchors.scroll.readOffset(true);
+    for (const read of anchors.readers) {
+      const anchor = read(offset);
+      if (anchor !== undefined) return { offset, anchor };
+    }
+    return { offset };
+  }
+
+  override componentDidUpdate(previous: RetainedTabScrollProps, _state: object, snapshot: SavedTabScroll | null): void {
+    if (snapshot !== null) {
+      this.saved = snapshot;
+      this.release?.();
+      this.release = undefined;
+    }
+
+    const { active, anchors } = this.props;
+    if (!active || anchors === null || this.saved === null || (previous.active && previous.anchors === anchors)) return;
+    const offset = this.saved.anchor?.();
+    this.release = anchors.scroll.restoreOffset(offset ?? this.saved.offset, offset !== undefined);
+  }
+
+  override componentWillUnmount(): void {
+    this.release?.();
+  }
+
+  override render(): ReactNode {
+    return this.props.children;
+  }
+}
+
 /**
  * One panel's mounted subtree and the single owner of its active interval.
  *
@@ -161,26 +210,6 @@ function HappierTabPanel(props: Readonly<{
     scroll: retainedScroll,
     readers: new Set<HappierRetainedScrollAnchorReaderInternal>(),
   } : null, [retainedScroll]);
-  const savedScroll = useRef<Readonly<{ offset: number; anchor?: () => number | undefined }> | undefined>(undefined);
-  useLayoutEffect(() => {
-    if (!active || anchors === null) return;
-    const { scroll, readers } = anchors;
-    const saved = savedScroll.current;
-    const anchoredOffset = saved?.anchor?.();
-    const release = saved === undefined ? undefined : scroll.restoreOffset(anchoredOffset ?? saved.offset, anchoredOffset !== undefined);
-    return () => {
-      // The browser can clamp the shared scroller after this commit. Its last
-      // delivered offset still belongs to the panel that is leaving.
-      const offset = scroll.readOffset();
-      let anchor: ReturnType<HappierRetainedScrollAnchorReaderInternal> = undefined;
-      for (const read of readers) {
-        anchor = read(offset);
-        if (anchor !== undefined) break;
-      }
-      savedScroll.current = anchor === undefined ? { offset } : { offset, anchor };
-      release?.();
-    };
-  }, [active, anchors]);
   const panelRef = useRef<View>(null);
   useLayoutEffect(() => {
     const panel: unknown = panelRef.current;
@@ -233,6 +262,7 @@ function HappierTabPanel(props: Readonly<{
   return (
     <HappierTabPanelActivityContext.Provider value={activity}>
       <HappierRetainedScrollAnchorContextInternal.Provider value={anchors ?? enclosingAnchors}>
+      <RetainedTabScroll active={active} anchors={anchors}>
       <HappierUiAnimationActivityProviderInternal active={props.active}>
       <View
         ref={panelRef}
@@ -252,6 +282,7 @@ function HappierTabPanel(props: Readonly<{
         {props.children}
       </View>
       </HappierUiAnimationActivityProviderInternal>
+      </RetainedTabScroll>
       </HappierRetainedScrollAnchorContextInternal.Provider>
     </HappierTabPanelActivityContext.Provider>
   );

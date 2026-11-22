@@ -278,9 +278,14 @@ export function HappierScrollArea({
     };
     return {
       tracker,
-      readOffset: () => {
+      readOffset: (beforeLayoutChange = false) => {
         const request = retainedRestore.current;
-        return request?.waitingForContent ? request.offset : Math.max(0, offsetRef.current);
+        if (request?.waitingForContent) return request.offset;
+        if (beforeLayoutChange && Platform.OS === 'web') {
+          const node: unknown = scrollSourceRef.current?.getScrollableNode();
+          if (typeof HTMLElement !== 'undefined' && node instanceof HTMLElement) return Math.max(0, node.scrollTop);
+        }
+        return Math.max(0, offsetRef.current);
       },
       scrollToOffset,
       restoreOffset: (offset, waitForLayout = false) => {

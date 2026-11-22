@@ -21,7 +21,8 @@ export type PluginUiScrollActivityTracker = Readonly<{
 /** The enclosing physical scroller owns offset reads and restoration. A retained panel owns the saved value. */
 export type HappierRetainedScrollInternal = Readonly<{
   tracker?: PluginUiScrollActivityTracker | null;
-  readOffset(): number;
+  /** Before a layout commit, read the still-presented viewport even if its scroll event is pending. */
+  readOffset(beforeLayoutChange?: boolean): number;
   scrollToOffset?(offset: number): void;
   restoreOffset(offset: number, waitForLayout?: boolean): () => void;
 }>;
@@ -29,7 +30,7 @@ export type HappierRetainedScrollInternal = Readonly<{
 /** A positioned block resolves its own key against the layout on the panel's next presentation. */
 export type HappierRetainedScrollAnchorReaderInternal = (offset: number) => (() => number | undefined) | undefined;
 
-type HappierRetainedScrollAnchorsInternal = Readonly<{
+export type HappierRetainedScrollAnchorsInternal = Readonly<{
   scroll: HappierRetainedScrollInternal;
   readers: Set<HappierRetainedScrollAnchorReaderInternal>;
 }>;

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
-import { View } from 'react-native';
+import { Platform, View, type ViewStyle } from 'react-native';
 
 import type { CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collectionVirtualizer.js';
 import {
@@ -30,6 +30,8 @@ type Cell<Item> = Readonly<{
   key: string; offset: number; height: number; index: number; count: number; columns: number; sectionIndex: number | null;
   header: boolean; part: boolean; unit: string | null; inSheet: boolean; items: readonly Item[]; keys: readonly string[]; gap?: number;
 }>;
+// The key owns anchoring for these rows. Letting the browser also anchor them applies the same shift twice.
+const webKeyedAnchorStyle: ViewStyle & { overflowAnchor: 'none' } = { overflowAnchor: 'none' };
 const NO_MEASUREMENTS: ReadonlyMap<string, number> = new Map();
 const subscribeWhileHidden = () => () => {};
 function sameMeasuredGeometry(left: PageCollectionGeometry, right: PageCollectionGeometry) {
@@ -301,7 +303,7 @@ function PageCollectionWindow<Item>({ request, geometry, tracker, tabStopKey, re
       role={request.role}
       aria-rowcount={request.rowCount} aria-multiselectable={request.multiSelectable}
       accessibilityCollection={request.nativeCollection} accessibilityLabel={request.accessibilityLabel}
-      testID={request.testID} style={[request.style, request.contentContainerStyle]}>
+      testID={request.testID} style={[request.style, request.contentContainerStyle, Platform.OS === 'web' ? webKeyedAnchorStyle : undefined]}>
       {content}
       {totalHeight <= renderedEnd ? null : <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={{ height: totalHeight - renderedEnd }} />}
       {request.endContent}

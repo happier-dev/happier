@@ -114,3 +114,178 @@ test('paging a grouped List starts after the loaded rows and holds the reading a
     await browser.close();
   }
 });
+
+
+test('the page List retains a keyed Files anchor at 390 px', async t => {
+  const { outputFiles } = await build({
+    stdin: {
+      resolveDir: resolve(repositoryRoot, 'packages/plugin-ui'),
+      sourcefile: 'collectionPageAnchoring.browser.fixture.tsx',
+      loader: 'tsx',
+      contents: `
+        import { useState } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { Button, ScrollArea } from './src/index.ts';
+        import { PluginUiProviderInternal } from './src/components/PluginUiProvider.tsx';
+        import { PluginUiPresentationHostProviderInternal } from './src/presentationHost/context.ts';
+        import { createSurfaceContextFixture } from '../plugin-sdk/src/ui/surfaceContext.fixture.ts';
+        import { TriageChangedFilesList } from '../triage-sources/src/ui/changedFilesList.tsx';
+        import { TriageDetailPageScrollProvider, TriageDetailPanel } from '../triage-sources/src/ui/detailPanel.tsx';
+        import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
+
+        const files = Array.from({ length: 200 }, (_, index) => ({
+          path: 'fixture/alpha/row-' + String(index + 1).padStart(3, '0') + '.txt', diffAvailable: true,
+        }));
+        const fixture = createSurfaceContextFixture();
+        const context = { ...fixture, theme: { ...fixture.theme, typography: {
+          ...fixture.theme.typography, reading: { ...fixture.theme.typography.reading, lineHeight: 41 },
+        } } };
+        const hostApi = {
+          watchContext: async () => ({ dispose() {} }),
+          readResource: async () => { throw new Error('This fixture needs no Resources'); },
+        };
+        const host = {
+          renderIcon: () => null,
+          createScrollActivityTracker: (ref, horizontal) =>
+            createScrollViewNearViewportTracker(ref, horizontal, { initialViewportHeight: 715 }),
+        };
+
+        function Fixture() {
+          const [panel, setPanel] = useState('files');
+          const [rows, setRows] = useState(() => files.slice(0, 100));
+          const [focusPath, setFocusPath] = useState(null);
+          return <>
+            <button onClick={() => { setFocusPath(null); setPanel('checks'); }}>Checks tab</button>
+            <button onClick={() => setPanel('files')}>Files tab</button>
+            <TriageDetailPageScrollProvider pageScroll>
+              <ScrollArea testID="page-scroll" style={{ height: 715 }} scrollEventThrottle={16}>
+                <TriageDetailPanel panel={panel} scrollOwner="list" ariaLabel="Pull request" retention={{ files: 'retain' }}
+                  panels={{
+                    files: <TriageChangedFilesList accessibilityLabel="Files" accessibilityLabelKey="fixture.files"
+                      active={panel === 'files'} sections={[{ key: 'source', title: '', data: rows }]} focusPath={focusPath}
+                      onFocusPath={setFocusPath} viewed={null} header={<div style={{ height: 100 }}>Files</div>}
+                      renderBody={() => <div data-testid="expanded-diff" style={{ height: 200 }}>Diff</div>}
+                      endContent={<Button title="Show more files" onPress={() => {
+                        window.deliverNextPage = () => {
+                          const next = [...files];
+                          if (window.sortNewRows) next.push({ path: 'fixture/alpha/row-005z.txt', diffAvailable: true });
+                          setRows(next.sort((left, right) => left.path.localeCompare(right.path)));
+                        };
+                      }} />} />,
+                    checks: <span>No checks</span>,
+                  }} />
+              </ScrollArea>
+            </TriageDetailPageScrollProvider>
+          </>;
+        }
+
+        createRoot(document.getElementById('root')).render(
+          <PluginUiProviderInternal hostApi={hostApi} context={context}>
+            <PluginUiPresentationHostProviderInternal host={host}><Fixture /></PluginUiPresentationHostProviderInternal>
+          </PluginUiProviderInternal>,
+        );
+      `,
+    },
+    bundle: true, write: false, jsx: 'automatic', conditions: ['happier-source', 'browser'],
+    define: { 'process.env.NODE_ENV': '"production"' },
+    alias: { '@': resolve(repositoryRoot, 'apps/ui/sources'), react: uiPackage('react'), 'react-dom': uiPackage('react-dom'),
+      'react-native': uiPackage('react-native-web'),
+      'react-native-svg': requireUi.resolve('react-native-svg/lib/module/elements.web.js') },
+  });
+
+  const browser = await chromium.launch({ headless: true });
+  t.after(() => browser.close());
+
+  function readPageAnchor() {
+    const scroller = document.querySelector('[data-testid="page-scroll"]');
+    const bounds = scroller.getBoundingClientRect();
+    const hit = document.elementFromPoint(bounds.left + 30, bounds.top + 24)?.closest('[role="listitem"]');
+    const row = hit ?? [...scroller.querySelectorAll('[role="listitem"]')].find(item => {
+      const rect = item.getBoundingClientRect();
+      return rect.height > 0 && rect.bottom > bounds.top + 24 && rect.top < bounds.bottom;
+    });
+    return row === undefined ? null : {
+      path: row.textContent.match(/fixture\/alpha\/row-\d+z?\.txt/)?.[0],
+      top: row.getBoundingClientRect().top - bounds.top,
+    };
+  }
+
+  async function readSettledAnchor(page) {
+    return page.evaluate(async () => {
+      let last;
+      let stableFrames = 0;
+      for (let frame = 0; frame < 180; frame++) {
+        await new Promise(requestAnimationFrame);
+        const anchor = window.readPageAnchor();
+        const scroller = document.querySelector('[data-testid="page-scroll"]');
+        const snapshot = JSON.stringify([anchor, scroller.scrollTop, scroller.scrollHeight]);
+        stableFrames = snapshot === last ? stableFrames + 1 : 0;
+        if (stableFrames === 10) return anchor;
+        last = snapshot;
+      }
+      throw new Error('The page anchor never settled');
+    });
+  }
+
+  async function mountPage(t, { openDiff = false } = {}) {
+    const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+    t.after(() => page.close());
+    await page.setContent('<div id="root" style="height:780px;display:flex;flex-direction:column"></div>');
+    await page.addScriptTag({ content: outputFiles[0].text });
+    await page.evaluate(source => {
+      window.readPageAnchor = new Function('return (' + source + ')')();
+      document.addEventListener('pointerdown', event => {
+        if (event.target.closest('button,[role="button"]')?.textContent === 'Show more files') {
+          window.anchorAtPress = window.readPageAnchor();
+        }
+      }, true);
+    }, readPageAnchor.toString());
+    if (openDiff) {
+      await page.getByRole('button', { name: /row-001\.txt/ }).click();
+      await page.getByTestId('expanded-diff').waitFor();
+    }
+    const more = await page.getByRole('button', { name: 'Show more files' }).elementHandle();
+    await more.evaluate(node => node.scrollIntoView({ block: 'nearest' }));
+    // Start from a stable reading position with the button already visible.
+    await readSettledAnchor(page);
+    await page.waitForFunction(node => {
+      const scroller = document.querySelector('[data-testid="page-scroll"]');
+      if (node.getBoundingClientRect().bottom <= scroller.getBoundingClientRect().bottom) return true;
+      node.scrollIntoView({ block: 'nearest' });
+      return false;
+    }, more);
+    const before = await readSettledAnchor(page);
+    const point = await more.boundingBox();
+    await page.mouse.click(point.x + point.width / 2, point.y + point.height / 2);
+    await page.waitForFunction(() => Boolean(window.deliverNextPage));
+    assert.match(before?.path ?? '', /^fixture\/alpha\/row-\d+\.txt$/);
+    assert.deepEqual(await page.evaluate(() => window.anchorAtPress), before);
+    return { page, before };
+  }
+
+  await t.test('sorted paging keeps the pressed row and inset beside an open diff', async t => {
+    const { page, before } = await mountPage(t, { openDiff: true });
+    await page.evaluate(() => { window.sortNewRows = true; window.deliverNextPage(); });
+    await page.getByRole('button', { name: /row-101\.txt/ }).waitFor({ state: 'attached' });
+    assert.deepEqual(await readSettledAnchor(page), before);
+    assert.equal(await page.getByRole('button', { name: /row-001\.txt/ }).getAttribute('aria-expanded'), 'true');
+  });
+
+  await t.test('tab return keeps the last physical offset before a pending scroll notification', async t => {
+    const { page, before } = await mountPage(t);
+    await page.evaluate(() => window.deliverNextPage());
+    await page.getByRole('button', { name: /row-101\.txt/ }).waitFor({ state: 'attached' });
+    assert.deepEqual(await readSettledAnchor(page), before);
+    const leaving = await page.getByRole('button', { name: 'Checks tab' }).evaluate(button => {
+      // The browser can move during a flick without delivering RNW's scroll event before the tab click.
+      document.querySelector('[data-testid="page-scroll"]').scrollTop -= 67;
+      const anchor = window.readPageAnchor();
+      button.click();
+      return anchor;
+    });
+    assert.notDeepEqual(leaving, before);
+    await page.getByText('No checks').waitFor();
+    await page.getByRole('button', { name: 'Files tab' }).click();
+    assert.deepEqual(await readSettledAnchor(page), leaving);
+  });
+});
