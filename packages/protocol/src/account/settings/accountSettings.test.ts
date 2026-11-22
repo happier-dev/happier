@@ -2,6 +2,7 @@ import { RecentMachinePathsSchema } from '../authoringMemory.js';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '../../json/storedReadSchema.js';
+import { buildSettingArtifacts } from '../../settings/registry/buildSettingArtifacts.js';
 
 import {
   ACCOUNT_SETTING_DEFINITIONS,
@@ -736,6 +737,8 @@ describe('accountSettings', () => {
       },
     );
 
+    const artifacts = buildSettingArtifacts({ example: definition });
+    expect(artifacts.defaults.example).toBe(2);
     expect(definition.default).toBe(2);
     expect(definition.schema.parse(undefined)).toBe(2);
     expect(definition.schema.parse('invalid')).toBe(2);

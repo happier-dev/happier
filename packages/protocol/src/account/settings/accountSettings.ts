@@ -49,7 +49,7 @@ import { ReviewQualityAggregationV1Schema } from '../../reviews/reviewQualityAgg
 import { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, SessionAgentStartAllowListsV1StrictSchema } from './sessionAgentStartAllowListsV1.js';
 export { DEFAULT_SESSION_AGENT_START_ALLOW_LISTS_V1, SessionAgentStartAllowListsV1Schema, type SessionAgentStartAllowListsV1 } from './sessionAgentStartAllowListsV1.js';
 import { SessionReminderPresetsV1Schema } from './sessionReminderPresetsV1.js';
-import { buildSettingArtifacts, type SettingArtifacts } from '../../settings/registry/buildSettingArtifacts.js';
+import type { SettingArtifacts } from '../../settings/registry/buildSettingArtifacts.js';
 import {
   BackendTargetKeyV2Schema,
   BackendTargetKeyV2InputSchema,
@@ -148,7 +148,7 @@ import {
   type AccountSettingStructuralBoundsOwner,
 } from './catalog/accountSettingBounds.js';
 import {
-  defineAccountSettingDefinitions,
+  buildAccountSettingArtifacts,
   type AccountSettingClassification,
 } from './catalog/accountSettingDefinition.js';
 import { BoundedLegacyJsonValueSchema } from './catalog/legacyJson.js';
@@ -688,6 +688,7 @@ export function accountCatalogDefinition<TSchema extends z.core.$ZodType>(schema
         parseMutationValue: (value: unknown) => parseValue(value),
         parseStoredValue: (value: unknown) => parseValue(value, true),
         get default() { return prepared.default; },
+        resolveParsedDefault: () => prepared.default,
         description: `Account ${options.semanticDomain} setting`,
         storageScope: 'account' as const,
         semanticDomain: options.semanticDomain,
@@ -1525,8 +1526,8 @@ const ACCOUNT_SETTING_CANDIDATES = {
     workspaceFileViewerPreferencesV1: accountCatalogDefinition(z._default(z.catch(WorkspaceFileViewerPreferencesV1Schema, DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1, { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES }),
 } as const;
 
-export const ACCOUNT_SETTING_DEFINITIONS = lazyDefinition(() => defineAccountSettingDefinitions(ACCOUNT_SETTING_CANDIDATES));
-export const ACCOUNT_SETTING_ARTIFACTS: SettingArtifacts<typeof ACCOUNT_SETTING_DEFINITIONS> = lazyDefinition(() => buildSettingArtifacts(ACCOUNT_SETTING_DEFINITIONS));
+export const ACCOUNT_SETTING_ARTIFACTS: SettingArtifacts<typeof ACCOUNT_SETTING_CANDIDATES> = lazyDefinition(() => buildAccountSettingArtifacts(ACCOUNT_SETTING_CANDIDATES));
+export const ACCOUNT_SETTING_DEFINITIONS = lazyDefinition(() => ACCOUNT_SETTING_ARTIFACTS.definitions);
 export const ACCOUNT_SETTING_KEYS = Object.freeze(Object.keys(ACCOUNT_SETTING_CANDIDATES));
 export type AccountSettingKey = keyof typeof ACCOUNT_SETTING_DEFINITIONS;
 export type AccountSettingsDefaults = typeof ACCOUNT_SETTING_ARTIFACTS.defaults;

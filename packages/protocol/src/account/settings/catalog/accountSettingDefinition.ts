@@ -51,17 +51,13 @@ function assertAccountSettingDefinition(key: string, definition: AccountSettingD
  * accepts only Account-scoped definitions and makes a legacy root's provenance/removal condition
  * explicit, so callers cannot accidentally grow a UI-only parallel schema.
  */
-export function defineAccountSettingDefinitions<
+export function buildAccountSettingArtifacts<
   const TDefinitions extends Readonly<Record<string, AccountSettingDefinition>>,
 >(
   definitions: TDefinitions,
-): TDefinitions {
+) {
   for (const [key, definition] of Object.entries(definitions)) {
     assertAccountSettingDefinition(key, definition);
   }
-  // `buildSettingArtifacts` validates schemas/defaults and analytics contracts at catalog
-  // construction. Its result is intentionally discarded here; callers own one generated
-  // artifact instance for the full catalog.
-  buildSettingArtifacts(definitions);
-  return definitions;
+  return buildSettingArtifacts(definitions);
 }

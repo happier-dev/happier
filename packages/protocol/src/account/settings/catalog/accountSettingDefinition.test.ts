@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 
 import {
   ACCOUNT_SETTING_CLASSIFICATIONS,
-  defineAccountSettingDefinitions,
+  buildAccountSettingArtifacts,
   type AccountSettingDefinition,
 } from './accountSettingDefinition.js';
 
@@ -31,7 +31,7 @@ function definition(
 
 describe('Account setting catalog admission', () => {
   it('admits a fully classified and bounded definition', () => {
-    const definitions = defineAccountSettingDefinitions({
+    const { definitions } = buildAccountSettingArtifacts({
       censusPreference: definition(),
       censusLegacy: definition({
         classification: 'legacy',
@@ -93,11 +93,11 @@ describe('Account setting catalog admission', () => {
       /has incomplete compatibility metadata/,
     ],
   ])('refuses %s', (_label, candidate, message) => {
-    expect(() => defineAccountSettingDefinitions({ censusKey: candidate })).toThrow(message);
+    expect(() => buildAccountSettingArtifacts({ censusKey: candidate })).toThrow(message);
   });
 
   it('still refuses a schema whose declared default the schema itself rejects', () => {
-    expect(() => defineAccountSettingDefinitions({
+    expect(() => buildAccountSettingArtifacts({
       censusKey: definition({ schema: z.number(), default: 'not-a-number' }),
     })).toThrow(/censusKey/);
   });

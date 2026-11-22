@@ -32,6 +32,8 @@ export type SettingAnalyticsMetadata<TValue = unknown> = Readonly<{
 export type SettingDefinition<TSchema extends ZodTypeAny = ZodTypeAny> = Readonly<{
   schema: TSchema;
   default: ZodInput<TSchema>;
+  /** A schema producer can return the output it already validated when constructing its schema. */
+  resolveParsedDefault?: () => ZodOutput<TSchema>;
   description: string;
   storageScope: SettingStorageScope;
   analytics?: SettingAnalyticsMetadata<ZodOutput<TSchema>>;
