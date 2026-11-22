@@ -38,6 +38,7 @@ import { createProjectNativeIo } from '@/workspaces/projectSetup/projectNativeIo
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { waitForProcessExit } from '@/testkit/process/spawn';
 import { resolvePluginPathWithinRoots } from './filesystem';
+import { encodeAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { parseProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/ownerTag';
 import { configuration } from '@/configuration';
 import { createEndOwnerRemainder } from '@/daemon/processes/endOwnerRemainder';
@@ -1467,6 +1468,59 @@ describe('createStablePluginExecService', () => {
         expect(transformAgentChildLaunchEnvironment)
             .toHaveBeenCalledTimes(2);
         await child.dispose();
+    });
+
+    it('substitutes the runner credential inside an isolated RunAs launch frame', async () => {
+        // A RunAs launch carries the Agent environment in its stdin frame, not in launch.env.
+        const placeholder = 'happier_consumer_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+        const credential = 'runner-owned-secret';
+        const service = createStableRunnerPluginExecService({
+            signal: new AbortController().signal,
+            isOccurrenceCurrent: () => true,
+            agentCli: {
+                async checkReadiness(request) {
+                    return { launchable: request.candidates.map((agentId) => ({ agentId })) };
+                },
+            },
+            resolveExecutable: async () => { throw new Error('No host executable resolution expected'); },
+            async resolveSystemTool(request) {
+                return {
+                    resolutionId: 'resolution-isolated-child',
+                    launch: { command: process.execPath, args: [], env: {} },
+                    result: { executable: { kind: 'systemTool', id: request.toolId }, executablePath: process.execPath },
+                };
+            },
+            transformAgentChildLaunchEnvironment: (environment) => Object.freeze({
+                ...environment,
+                ...(environment.PROVIDER_KEY === placeholder ? { PROVIDER_KEY: credential } : {}),
+            }),
+            async authorizeLaunch() {
+                return Object.freeze({
+                    command: process.execPath,
+                    args: Object.freeze(['-e', [
+                        // The remainder of stdin stays open for the Agent; read only the frame.
+                        'let frame = Buffer.alloc(0);',
+                        'process.stdin.on("data", (chunk) => {',
+                        ' frame = Buffer.concat([frame, chunk]);',
+                        ' if (frame.length < 12 || frame.length < 12 + frame.readUInt32BE(8)) return;',
+                        ' const payload = JSON.parse(frame.subarray(12, 12 + frame.readUInt32BE(8)).toString("utf8"));',
+                        ' process.exit(payload.environment.PROVIDER_KEY === "runner-owned-secret" ? 0 : 17);',
+                        '});',
+                    ].join('')]),
+                    env: Object.freeze({}),
+                    stdinPreamble: new Uint8Array(encodeAgentLaunchFrame({
+                        v: 1, executable: '/usr/bin/agent', args: [], cwd: '/tmp', runtimeHome: '/tmp/member-home',
+                        environment: { PROVIDER_KEY: placeholder }, selectedMaterials: [],
+                    })),
+                    release() {},
+                });
+            },
+        });
+
+        const child = await service.spawn({ executable });
+        await expect(child.wait()).resolves.toMatchObject({
+            termination: { observed: { kind: 'exit', exitCode: 0 } },
+        });
     });
 
     it('releases exact runner authorization when child environment substitution fails', async () => {

@@ -100,6 +100,23 @@ export function encodeAgentLaunchFrame(payload: AgentLaunchFramePayload): Buffer
   return Buffer.concat([header, body]);
 }
 
+/** A RunAs launch carries the Agent environment in this frame rather than in the
+ * wrapper's process environment. Rewrites that environment; returns null when the
+ * preamble is not a launch payload frame. */
+export function transformAgentLaunchFrameEnvironment(
+  preamble: Uint8Array,
+  transform: (environment: Readonly<Record<string, string>>) => Readonly<Record<string, string>>,
+): Buffer | null {
+  const bytes = Buffer.from(preamble.buffer, preamble.byteOffset, preamble.byteLength);
+  if (bytes.length < magic.length + 4 || !bytes.subarray(0, magic.length).equals(magic)) return null;
+  if (bytes.length !== magic.length + 4 + bytes.readUInt32BE(magic.length)) throw new AgentLaunchFrameError();
+  let decoded: unknown;
+  try { decoded = JSON.parse(bytes.subarray(magic.length + 4).toString('utf8')); } catch { throw new AgentLaunchFrameError(); }
+  const payload = parseAgentLaunchControlFrame(decoded);
+  if (!('environment' in payload)) return null;
+  return encodeAgentLaunchFrame({ ...payload, environment: transform(payload.environment) });
+}
+
 async function readExactly(input: Readable, length: number): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let remaining = length;

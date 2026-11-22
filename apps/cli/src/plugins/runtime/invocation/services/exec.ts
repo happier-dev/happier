@@ -5,7 +5,7 @@ import { realpath } from 'node:fs/promises';
 import { createConnection } from 'node:net';
 import { isAbsolute, join } from 'node:path';
 import { createSessionNativeDirectory } from '@/utils/fs/unixPathAccess';
-import type { AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { transformAgentLaunchFrameEnvironment, type AgentLaunchNativeSocketDirectory } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { configuration } from '@/configuration';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { ManagedExecutableRef } from '@happier-dev/plugin-sdk/managed-services';
@@ -2013,7 +2013,8 @@ export function createStablePluginExecService(params: Readonly<{
             ...(options?.signal ? [options.signal] : []),
             ...(!lifetime && params.retirementSignal ? [params.retirementSignal] : [])]);
         const preparation = (async () => {
-            const launch = await authorizeLaunch(request, options, undefined, undefined, undefined, undefined, lifetime);
+            const authorized = await authorizeLaunch(request, options, undefined, undefined, undefined, undefined, lifetime);
+            let launch = authorized;
             const authorizedAt = performance.now();
             try { guard(options?.signal, lifetime); }
             catch (error) { await launch.release(); throw withExecLaunchNotStarted(error); }
@@ -2021,10 +2022,13 @@ export function createStablePluginExecService(params: Readonly<{
             let linuxProcessLaunchScope: LinuxProcessLaunchScope | null;
             try {
                 try {
-                    environment = openAccess
-                        && params.transformAgentChildLaunchEnvironment
-                        ? params.transformAgentChildLaunchEnvironment(launch.env)
-                        : launch.env;
+                    const transform = openAccess ? params.transformAgentChildLaunchEnvironment : undefined;
+                    // A RunAs launch carries the Agent environment in its frame; the
+                    // wrapper's own environment never holds an Agent credential slot.
+                    const framed = transform && authorized.stdinPreamble
+                        ? transformAgentLaunchFrameEnvironment(authorized.stdinPreamble, transform) : null;
+                    if (framed) launch = Object.freeze({ ...authorized, stdinPreamble: new Uint8Array(framed) });
+                    environment = transform && !framed ? transform(authorized.env) : authorized.env;
                 } catch (error) {
                     fail('plugin_exec_spawn_failed', 'Process could not be started', error);
                 }
