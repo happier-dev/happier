@@ -20,11 +20,12 @@ function presentFailedReads(
     refresh: UsagePopoverRefresh,
     names: ReadonlyMap<string, ConnectedAccountNamePresentation>,
     presentIdentity: ConnectedAccountIdentityPresenter,
+    identitiesHidden: boolean,
 ): string | null {
     const failedKeys = Object.keys(refresh.errorsByKey).filter(key => refresh.errorsByKey[key] != null);
     const count = failedKeys.length;
     if (count === 0) return null;
-    if (count > 2) return t('sidebarFooter.usageRefreshFailedAccounts', { count });
+    if (identitiesHidden || count > 2) return t('sidebarFooter.usageRefreshFailedAccounts', { count });
 
     // A usage record may fail even when its account has no limits row to supply a name.
     const catalogNames = failedKeys.some(key => !names.has(key))
@@ -50,6 +51,7 @@ export function summarizeUsagePopoverRefresh(input: Readonly<{
     accountKey?: string | null;
     names: ReadonlyMap<string, ConnectedAccountNamePresentation>;
     presentIdentity: ConnectedAccountIdentityPresenter;
+    identitiesHidden: boolean;
 }>): Readonly<{ keys: readonly string[]; refreshing: boolean; error: string | null }> {
     const { refresh, accountKey } = input;
     if (!refresh) return { keys: [], refreshing: false, error: null };
@@ -58,7 +60,7 @@ export function summarizeUsagePopoverRefresh(input: Readonly<{
         keys,
         refreshing: keys.some(key => refresh.refreshingByKey[key] === true || refresh.loadingByKey?.[key] === true),
         error: accountKey === undefined
-            ? presentFailedReads(refresh, input.names, input.presentIdentity)
+            ? presentFailedReads(refresh, input.names, input.presentIdentity, input.identitiesHidden)
             : accountKey === null ? null : refresh.errorsByKey[accountKey] ?? null,
     };
 }

@@ -390,6 +390,7 @@ describe('SidebarUsagePopoverContent', () => {
     describe('the one popover (rail and session)', () => {
         async function renderView(options: Readonly<{
             hidden?: boolean;
+            providerLabel?: string;
             setHidden?: (hidden: boolean) => void;
             session?: import('./SidebarUsagePopoverContent').UsagePopoverSession;
             accountState?: 'loading' | 'unavailable';
@@ -402,7 +403,7 @@ describe('SidebarUsagePopoverContent', () => {
             const usage = buildUsageSummary({
                 live: buildUsageSummaryCache([
                     summary('claude:work', 'Work', 42, 'leeroy@company.com'),
-                    summary('claude:personal', null, 6, 'kevin@gmail.com'),
+                    summary('claude:personal', options.providerLabel ?? null, 6, options.providerLabel ? null : 'kevin@gmail.com'),
                     summary('claude:acct_9f2c8e71', null, 71),
                 ]),
                 saved: null,
@@ -466,9 +467,9 @@ describe('SidebarUsagePopoverContent', () => {
             expect(screen.getTextContent()).toContain('sidebarFooter.usageRefreshFailedAccounts(count=1,accounts=kevin@gmail.com)');
         });
 
-        it('names the accounts whose reads failed and keeps the successful reading visible', async () => {
+        it('names the accounts whose reads failed when identities are visible and keeps the successful reading', async () => {
             const screen = await renderView({
-                hidden: true,
+                providerLabel: 'Synthetic Provider Name',
                 refresh: {
                     keys: ['claude:work', 'claude:personal', 'claude:pending'],
                     refreshingByKey: {},
@@ -479,12 +480,41 @@ describe('SidebarUsagePopoverContent', () => {
             });
             const warning = screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join('');
             expect(warning).toContain('sidebarFooter.usageRefreshFailedAccounts(count=2,accounts=');
-            expect(warning).toContain('ke•••@g•••.com');
+            expect(warning).toContain('Synthetic Provider Name');
             expect(warning).toContain('Pending');
             expect(warning).not.toContain('Work');
             expect(screen.findByTestId('sidebar-usage-as-of')).toBeTruthy();
             expect(screen.findByTestId('sidebar-usage-account-claude:work')).toBeTruthy();
             expect(screen.getTextContent()).toContain('connectedServices.quota.remaining(percent=42%)');
+        });
+
+        it.each(['rail', 'widened Session'] as const)('reports only the failed account count with identities hidden in the %s', async surface => {
+            const screen = await renderView({
+                hidden: true,
+                providerLabel: 'Synthetic Provider Name',
+                ...(surface === 'widened Session' ? {
+                    session: { accountKey: 'claude:work', ownSignIn: null, scopeLine: null, nextMove: null },
+                } : {}),
+                refresh: {
+                    keys: ['claude:work', 'claude:personal', 'claude:pending'],
+                    refreshingByKey: {},
+                    errorsByKey: { 'claude:personal': 'provider_refused', 'claude:pending': 'provider_unreachable' },
+                    // The provider supplied both names. The failed account in the catalog has no quota row or user nickname.
+                    accountIdentities: [summary('claude:pending', 'Second Synthetic Name', 0)],
+                    run: async () => {},
+                },
+            });
+            try {
+                if (surface === 'widened Session') {
+                    expect(screen.findByTestId('sidebar-usage-refresh-error-text')).toBeFalsy();
+                    await screen.pressByTestIdAsync('usage-popover-all-accounts');
+                }
+                expect(screen.findByTestId('sidebar-usage-refresh-error-text')?.children.join(''))
+                    .toBe('sidebarFooter.usageRefreshFailedAccounts(count=2)');
+                expect(screen.findByTestId('sidebar-usage-account-claude:work')).toBeTruthy();
+            } finally {
+                await screen.unmount();
+            }
         });
 
         it('reports a count for a longer set of failed reads', async () => {

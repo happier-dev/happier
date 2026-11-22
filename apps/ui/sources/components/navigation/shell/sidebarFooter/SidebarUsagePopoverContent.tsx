@@ -316,8 +316,8 @@ export function SidebarUsagePopoverView(props: Readonly<{
     ]), [sourceAccounts, facts.accountsNeedingSignIn, privacy.present]);
     const refreshAccountKey = scoped ? session?.accountKey ?? null : undefined;
     const { keys: refreshKeys, refreshing, error: refreshError } = React.useMemo(() => summarizeUsagePopoverRefresh({
-        refresh, accountKey: refreshAccountKey, names, presentIdentity: privacy.present,
-    }), [refresh, refreshAccountKey, names, privacy.present]);
+        refresh, accountKey: refreshAccountKey, names, presentIdentity: privacy.present, identitiesHidden: privacy.hidden,
+    }), [refresh, refreshAccountKey, names, privacy.present, privacy.hidden]);
 
     const renderAccount = (entry: (typeof accounts)[number]) => (
         <UsageAccountGroup
