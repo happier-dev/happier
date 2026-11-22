@@ -98,6 +98,25 @@ describe('HappierApprovalPromptChrome', () => {
     } finally { view.unmount(); }
   });
 
+  it('gives the fade the card\'s own fill, tone wash included, and no fill for an inline prompt', () => {
+    const fillFor = (props: Partial<HappierApprovalPromptChromeProps>) => {
+      let fill: string | null | undefined;
+      const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} {...props} testID="card" maxHeight={240}
+        renderFactsEdgeFade={(_edges, value) => { fill = value; return null; }} footer={<View testID="decision" />}>
+        <View testID="facts" />
+      </HappierApprovalPromptChrome>);
+      view.unmount();
+      return fill;
+    };
+    expect(fillFor({})).toBe(base.colors.surface);
+    // An attention card is washed: its fade melts into that wash, not into the bare surface beneath it.
+    const attention = fillFor({ tone: 'attention' });
+    expect(attention).toEqual(expect.any(String));
+    expect(attention).not.toBe(base.colors.surface);
+    const inline = fillFor({ chrome: 'inline' });
+    expect(inline).toBeNull();
+  });
+
   it('never clips the facts of a card that has no decision to pin', () => {
     // A failed or settled card closes from its head: nothing needs pinning, so a shared room scrolls whole
     // cards between each other instead of cutting this card's last line in half.

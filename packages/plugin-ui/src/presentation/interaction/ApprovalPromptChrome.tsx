@@ -70,10 +70,12 @@ export type HappierApprovalPromptChromeProps = Readonly<{
   typography?: HappierUiTypography | null;
   renderText?: HappierApprovalPromptTextRender;
   /**
-   * Bounded facts that do not fit fade at the edge that hides more (the host's own scroll-edge fade), instead of
-   * the hard cut a hairline over the decision marks. Omitted, the hairline stays.
+   * Bounded facts that do not fit fade at the edge that hides more (the host's own scroll-edge fade), drawn over
+   * the facts, instead of the hard cut a hairline over the decision marks. Omitted, the hairline stays. `fill` is
+   * the card's own fill (its tone wash included) so the fade melts into the card in every theme; `null` for an
+   * inline or compact prompt, whose fill is its host's.
    */
-  renderFactsEdgeFade?: (edges: HappierApprovalFactsEdges) => ReactNode;
+  renderFactsEdgeFade?: (edges: HappierApprovalFactsEdges, fill: string | null) => ReactNode;
 }>;
 
 export type HappierApprovalFactsEdges = Readonly<{ top: boolean; bottom: boolean }>;
@@ -186,7 +188,8 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
             {props.children}
           </ScrollView>
           {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
-            content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES) : null}
+            content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES,
+            inline || compact ? null : toneSurface?.backgroundColor ?? props.colors.surface) : null}
         </View>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
       {/* The decisions span the card from its edge (lab mb B): a phone's stacked choices are full width. */}
