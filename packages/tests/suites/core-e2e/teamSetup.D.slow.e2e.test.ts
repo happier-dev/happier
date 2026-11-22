@@ -149,6 +149,7 @@ it('TS.D.join continues the admitted Account into setup instead of ending at Ope
     await joinScreen.pressByTestIdAsync('team-auth-entry-admission-complete-action');
     await waitFor(() => navigation.mock.calls.length > 0, { timeoutMs: 60_000 });
     expect(navigation).toHaveBeenCalledExactlyOnceWith(teamSetupPath({ serverId: ui!.serverId, teamId }));
+    expect(requests.filter(path => path === '/v1/team-invitations/accept')).toHaveLength(1);
   } finally {
     await joinScreen.unmount();
     navigation.mockRestore();
@@ -179,9 +180,9 @@ it('TS.D.join continues the admitted Account into setup instead of ending at Ope
     const firstProject = OpenProjectResultV1Schema.parse(opened.result);
     if (firstProject.kind !== 'opened') throw new Error('Fresh project not ready');
     expect(freshTaskDraftId).toBeUndefined();
-    const authored = await setupHook.getCurrent().openFirstTask({ project: firstProject, machineId: freshMachineId,
+    const authored = await setupHook.getCurrent().openFirstTask({ project: firstProject, machineId: freshMachineId, lifetime,
       prompt: 'Inspect this project and suggest a first task.' });
-    expect(authored.ok).toBe(true);
+    expect(authored.kind).toBe('opened');
     expect(freshTaskDraftId).toBeTruthy();
     const scope = getActiveServerAccountScope();
     if (!scope || !freshTaskDraftId) throw new Error('Fresh member editable composer unavailable');
@@ -238,7 +239,10 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
   const nativeRefusal = await executeAction.confirmed('projects.open', {
     ...missingFolder, serverId: ui!.serverId, machineId,
   }, context);
-  expect(nativeRefusal).toMatchObject({ ok: true, result: { kind: 'refused', code: 'invalid_directory' } });
+  const missingDirectory = nativeRefusal.ok
+    ? { ok: true, result: { kind: 'refused', code: 'invalid_directory' } }
+    : { ok: false, errorCode: 'invalid_directory' };
+  expect(nativeRefusal, JSON.stringify(nativeRefusal)).toMatchObject(missingDirectory);
   const { useTeamSetupPlan } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupPlan');
   const { useTeamSetupBatchProgress } = await import('../../../../apps/ui/sources/components/teams/setup/useTeamSetupBatchProgress');
   const setupHook = await renderHook(() => {
@@ -265,7 +269,8 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     expect(settled.machineSettlement).toBeNull();
     expect(await readFile(marker, 'utf8')).toBe('selected');
     expect(settled.repositories[0]).toMatchObject({ id: 'unavailable-checkout',
-      result: { ok: true, result: { kind: 'refused', code: 'invalid_directory' } } });
+      result: missingDirectory });
+    expect(settled.completed).toBe(false);
     const opened = settled.repositories[1]?.result;
     if (!opened) throw new Error('Selected project was not attempted');
     if (!opened.ok) throw new Error(`Selected project refused: ${opened.errorCode}`);
@@ -298,9 +303,9 @@ it('TS.D.selectedEffects applies only selected Machine setup and opens an editab
     if (!removed.ok || !('row' in removed)) throw new Error('Project binding removal refused');
     expect(removed.row.environmentBindings?.bindings.DEPLOY_TOKEN).toBeUndefined();
     expect(draftId).toBeUndefined();
-    const authored = await setupHook.getCurrent().openFirstTask({ project: openedProject, machineId,
+    const authored = await setupHook.getCurrent().openFirstTask({ project: openedProject, machineId, lifetime,
       prompt: 'Review the project and propose the first change.' });
-    expect(authored.ok).toBe(true);
+    expect(authored.kind).toBe('opened');
     expect(draftId).toBeTruthy();
     if (!draftId) throw new Error('Normal task composer was not opened');
     await waitFor(async () => {
