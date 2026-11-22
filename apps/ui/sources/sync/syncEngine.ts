@@ -1623,8 +1623,8 @@ class Sync {
       private lastSocketOfflineDurationMs: number | null = null;
       private socketOfflineCatchUpConsumedSessionIds = new Set<string>();
       private socketStatus: ApiSocketStatus = 'disconnected';
-      /** A native pause began with this socket connected and it has not been lost since. */
-      private nativeSocketKeptWhileAway = false;
+      /** A routine pause began with this socket connected and it has not been lost since. */
+      private socketKeptWhileAway = false;
       /** A changes wake arrived while not in the foreground and has not been caught up yet. */
       private changesCatchUpOwedWhileAway = false;
       private postSubscriptionChangesCatchUpPending = false;
@@ -1927,8 +1927,11 @@ class Sync {
                 sessionRuntimeObservations,
             );
 
-          // Listen for app state changes to pause sync + run a single centralized resume pipeline.
-          if (!isEmbedWindowContext()) AppState.addEventListener('change', (nextAppState) => {
+          const webDocument = Platform.OS === 'web' && !this.usesPersistentDesktopSync
+              && typeof globalThis.document?.addEventListener === 'function' ? globalThis.document : undefined;
+          // React Native Web mirrors visibilitychange in AppState. Let the document
+          // own browser transitions, including hard boundaries AppState cannot express.
+          if (!isEmbedWindowContext() && !webDocument) AppState.addEventListener('change', (nextAppState) => {
               if (this.usesPersistentDesktopSync && nextAppState !== 'active') {
                   this.clearNativeInactiveCheckpointTimer();
                   this.isForeground = true;
@@ -1937,39 +1940,12 @@ class Sync {
                   return;
               }
               if (nextAppState === 'active') {
-                  this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
                   this.clearNativeInactiveCheckpointTimer();
-                  const socketStayedConnected = this.nativeSocketKeptWhileAway && this.socketStatus === 'connected';
-                  this.nativeSocketKeptWhileAway = false;
-                  this.isForeground = true;
-                  this.resumeNativeCryptoWorkerDispatchAfterForeground('Sync.nativeCryptoWorkerQueue.active.appState');
-                  setServerReachabilityNetworkAllowed(true);
                   log.log('📱 App became active');
-                  this.pauseController.resume();
-                  if (socketStayedConnected) {
-                      // Nothing was missed on a socket that stayed up; only a wake this pause held back is owed.
-                      if (this.changesCatchUpOwedWhileAway) {
-                          this.changesCatchUpOwedWhileAway = false;
-                          this.requestChangesCatchUp();
-                      }
-                      return;
-                  }
-                  fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: 'Sync.invalidateAllServerReachabilitySupervisors' });
                   this.resumeAfterForegroundTransition('Sync.resumeSync.app-foreground');
               } else {
-                  const leavingForeground = this.isForeground;
-                  this.isForeground = false;
                   log.log(`📱 App state changed to: ${nextAppState}`);
-                  this.pauseController.pause();
-                  // A native pause (deep link, notification tap, system dialog, or the start of a real
-                  // background period) keeps a connected socket: its own liveness decides when it is
-                  // gone, and only then is routine connectivity torn down (see the socket status handler).
-                  if (Platform.OS !== 'web' && leavingForeground && this.socketStatus === 'connected') {
-                      this.nativeSocketKeptWhileAway = true;
-                  }
-                  if (!this.nativeSocketKeptWhileAway) {
-                      this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity());
-                  }
+                  this.pauseForRoutineTransition();
                   if (nextAppState === 'inactive') {
                       this.scheduleNativeInactiveCheckpoint();
                   } else {
@@ -1979,103 +1955,77 @@ class Sync {
               }
           });
 
-          // Web: AppState events are not always reliable when tabs are backgrounded. Mirror the
-          // pause/resume behavior using document visibility.
-          if (!isEmbedWindowContext() && Platform.OS === 'web' && !this.usesPersistentDesktopSync) {
-              const doc = (globalThis as unknown as { document?: any }).document;
-              if (doc && typeof doc.addEventListener === 'function' && typeof doc.removeEventListener === 'function') {
-                  const pauseForWebBackground = (tag: string) => {
-                      this.isForeground = false;
-                      this.pauseController.pause();
-                      this.flushBackgroundSyncCheckpointsNow();
-                      this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity(tag));
-                  };
-                  const pauseForWebHardBoundary = (tag: string) => {
-                      this.isForeground = false;
-                      this.markNativeCryptoWorkerBackgroundQuiescent();
-                      this.pauseController.pause();
-                      this.flushBackgroundSyncCheckpointsNow();
-                      this.userRequestLeaseOwner.crossHardBoundary(() => {
-                          setServerReachabilityNetworkAllowed(false);
-                          try {
-                              this.disconnectSocketIntentionally();
-                          } catch {
-                              // ignore
-                          }
-                          fireAndForget(stopServerReachabilitySupervisors(), { tag });
-                      });
-                  };
-                  const resumeForWebForeground = (tag: string) => {
-                      this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
-                      this.isForeground = true;
-                      this.resumeNativeCryptoWorkerDispatchAfterForeground(`${tag}.nativeCryptoWorkerQueue`);
-                      setServerReachabilityNetworkAllowed(true);
-                      this.pauseController.resume();
-                      fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: `${tag}.reachability` });
+          if (!isEmbedWindowContext() && webDocument) {
+              const doc = webDocument;
+              const pauseForWebHardBoundary = (tag: string) => {
+                  this.isForeground = false;
+                  this.markNativeCryptoWorkerBackgroundQuiescent();
+                  this.pauseController.pause();
+                  this.flushBackgroundSyncCheckpointsNow();
+                  this.userRequestLeaseOwner.crossHardBoundary(() => {
+                      setServerReachabilityNetworkAllowed(false);
+                      try {
+                          this.disconnectSocketIntentionally();
+                      } catch {
+                          // ignore
+                      }
+                      fireAndForget(stopServerReachabilitySupervisors(), { tag });
+                  });
+              };
+              const resumeForWebForeground = (tag: string) => {
+                  if (!this.isForeground && doc.visibilityState === 'visible') {
                       this.resumeAfterForegroundTransition(tag);
-                  };
-                  const onVisibilityChange = () => {
-                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
-                      if (state === 'hidden' || state === 'visible') {
-                          const nextIsForeground = state === 'visible';
-                          if (this.isForeground === nextIsForeground) {
-                              return;
-                          }
-                      }
-                      if (state === 'hidden') {
-                          pauseForWebBackground('Sync.stopServerReachabilitySupervisors.visibility');
-                          return;
-                      }
-                      if (state === 'visible') {
-                          resumeForWebForeground('Sync.resumeSync.visibility');
-                      }
-                  };
-                  const onPageHide = () => {
-                      pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.pagehide');
-                  };
-                  const onPageShow = (event?: { persisted?: boolean }) => {
-                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
-                      if (event?.persisted === true || state === 'visible') {
-                          resumeForWebForeground('Sync.resumeSync.pageshow');
-                      }
-                  };
-                  const onFreeze = () => {
-                      pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.freeze');
-                  };
-                  const onResume = () => {
-                      resumeForWebForeground('Sync.resumeSync.page-lifecycle-resume');
-                  };
-                  try {
-                      doc.addEventListener('visibilitychange', onVisibilityChange);
-                  } catch {
-                      // ignore
                   }
-                  const eventTarget = globalThis as unknown as {
-                      addEventListener?: (event: string, listener: (event?: { persisted?: boolean }) => void) => void;
-                  };
-                  try {
-                      eventTarget.addEventListener?.('pagehide', onPageHide);
-                      eventTarget.addEventListener?.('pageshow', onPageShow);
-                      eventTarget.addEventListener?.('freeze', onFreeze);
-                      eventTarget.addEventListener?.('resume', onResume);
-                  } catch {
-                      // ignore
+              };
+              const onVisibilityChange = () => {
+                  if (doc.visibilityState !== 'hidden') {
+                      resumeForWebForeground('Sync.resumeSync.visibility');
+                  } else if (this.isForeground) {
+                      this.pauseForRoutineTransition('Sync.stopServerReachabilitySupervisors.visibility');
+                      this.flushBackgroundSyncCheckpointsNow();
                   }
-                  if (doc.wasDiscarded === true) {
-                      syncReliabilityTelemetry.recordCritical('sync.webPage.wasDiscarded', {
-                          visibilityState: String(doc.visibilityState ?? ''),
-                      });
-                      const state = String(doc.visibilityState ?? '').trim().toLowerCase();
-                      if (state !== 'hidden') {
-                          resumeForWebForeground('Sync.resumeSync.document-was-discarded');
-                      }
+              };
+              const onPageHide = () => {
+                  pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.pagehide');
+              };
+              const onPageShow = () => {
+                  resumeForWebForeground('Sync.resumeSync.pageshow');
+              };
+              const onFreeze = () => {
+                  pauseForWebHardBoundary('Sync.stopServerReachabilitySupervisors.freeze');
+              };
+              const onResume = () => {
+                  resumeForWebForeground('Sync.resumeSync.page-lifecycle-resume');
+              };
+              try {
+                  doc.addEventListener('visibilitychange', onVisibilityChange);
+              } catch {
+                  // ignore
+              }
+              const eventTarget = globalThis as unknown as {
+                  addEventListener?: (event: string, listener: () => void) => void;
+              };
+              try {
+                  eventTarget.addEventListener?.('pagehide', onPageHide);
+                  eventTarget.addEventListener?.('pageshow', onPageShow);
+                  eventTarget.addEventListener?.('freeze', onFreeze);
+                  eventTarget.addEventListener?.('resume', onResume);
+              } catch {
+                  // ignore
+              }
+              if ('wasDiscarded' in doc && doc.wasDiscarded === true) {
+                  syncReliabilityTelemetry.recordCritical('sync.webPage.wasDiscarded', {
+                      visibilityState: String(doc.visibilityState ?? ''),
+                  });
+                  if (doc.visibilityState === 'visible') {
+                      this.resumeAfterForegroundTransition('Sync.resumeSync.document-was-discarded');
                   }
-                  // Seed initial visibility state so a tab that starts hidden is treated as backgrounded immediately.
-                  try {
-                      onVisibilityChange();
-                  } catch {
-                      // ignore
-                  }
+              }
+              // Seed initial visibility state so a tab that starts hidden is treated as backgrounded immediately.
+              try {
+                  onVisibilityChange();
+              } catch {
+                  // ignore
               }
           }
       }
@@ -2160,6 +2110,17 @@ class Sync {
           apiSocket.connect();
       }
 
+      private pauseForRoutineTransition(tag?: string): void {
+          if (this.isForeground && this.socketStatus === 'connected') this.socketKeptWhileAway = true;
+          this.isForeground = false;
+          this.pauseController.pause();
+          // Keep push live through a routine pause. A transport loss while away
+          // performs the same teardown as a pause that starts without a connection.
+          if (!this.socketKeptWhileAway) {
+              this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity(tag));
+          }
+      }
+
       /** Routine (visibility) teardown: the socket and reachability stop; Machine presence and Account mode are kept. */
       private readonly teardownRoutineConnectivity = (tag = 'Sync.stopServerReachabilitySupervisors'): void => {
           this.markNativeCryptoWorkerBackgroundQuiescent();
@@ -2174,20 +2135,35 @@ class Sync {
 
       private disconnectSocketIntentionally(options?: Readonly<{ preserveHttpRequests?: boolean; visibilityPause?: boolean }>): void {
           this.postSubscriptionChangesCatchUpPending = false;
+          this.socketKeptWhileAway = false;
           this.socketStatus = 'disconnected';
           apiSocket.disconnect(options);
       }
 
       private resumeAfterForegroundTransition(tag: string): void {
-          // The full resume reads the changes feed itself.
+          this.userRequestLeaseOwner.cancelDeferredRoutineTeardown();
+          const socketStayedConnected = this.socketKeptWhileAway && this.socketStatus === 'connected';
+          this.socketKeptWhileAway = false;
+          this.isForeground = true;
+          this.resumeNativeCryptoWorkerDispatchAfterForeground(`${tag}.nativeCryptoWorkerQueue`);
+          setServerReachabilityNetworkAllowed(true);
+          this.pauseController.resume();
+          const changesOwed = this.changesCatchUpOwedWhileAway;
           this.changesCatchUpOwedWhileAway = false;
-          const resume = this.resumeSync('app-foreground');
-          fireAndForget(resume, { tag });
+          if (socketStayedConnected) {
+              if (changesOwed) this.requestChangesCatchUp();
+              return;
+          }
+
+          fireAndForget(invalidateAllServerReachabilitySupervisors(), { tag: `${tag}.reachability` });
+          const resumeAlreadyRunning = this.resumeInFlight !== null;
+          fireAndForget(this.resumeSync('app-foreground'), { tag });
           try {
-              this.connectSocketWithPostSubscriptionCatchUp();
+              if (resumeAlreadyRunning) this.connectSocketWithPostSubscriptionCatchUp();
+              else apiSocket.connect();
           } catch {
-              // The foreground resume still repairs the HTTP snapshot. A later successful connect
-              // consumes the armed post-subscription catch-up demand.
+              // HTTP recovery can still run. The changes reader will arm a
+              // post-subscription pass if it starts before the socket is back.
           }
       }
 
@@ -8650,6 +8626,12 @@ class Sync {
                   // snapshot path for gaps), and a failed census stays pending. Only an explicit refresh
                   // re-asks without a new authority signal; a foreground or reconnect alone changed nothing.
                   if (reason === 'manual') this.metadataUpgradeDiscovery.requestRefresh();
+                  // A read that starts on a subscribed socket already closes the gap.
+                  // When HTTP recovers first, subscribe and read once more to cover
+                  // writes committed between the HTTP read and subscription.
+                  if (reason === 'app-foreground' && this.socketStatus !== 'connected') {
+                      this.postSubscriptionChangesCatchUpPending = true;
+                  }
                   const { status, refreshedByCatchUp } = await this.resumeViaChanges({
                       accountId,
                       shouldContinue,
@@ -13156,10 +13138,10 @@ class Sync {
 		                  return;
 		              }
 		              if (status === 'disconnected' || status === 'error' || status === 'paused') {
-                          if (this.nativeSocketKeptWhileAway && status !== 'paused') {
-                              // The socket kept through a native pause is gone: tear down now, so nothing
+                          if (this.socketKeptWhileAway && status !== 'paused') {
+                              // The socket kept through a routine pause is gone: tear down now, so nothing
                               // reconnects in the background; the return to the foreground resumes fully.
-                              this.nativeSocketKeptWhileAway = false;
+                              this.socketKeptWhileAway = false;
                               this.userRequestLeaseOwner.deferRoutineTeardown(() => this.teardownRoutineConnectivity());
                           }
                           markAccountSettingsHeadUnverified();

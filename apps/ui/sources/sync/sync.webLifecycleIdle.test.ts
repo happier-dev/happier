@@ -1,4 +1,6 @@
 import { expect, it, vi } from 'vitest';
+import type { Socket } from 'socket.io-client';
+import type { InvalidateSync } from '@/utils/sessions/sync';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { installTimerCensus } from '@/dev/testkit/performance/timerCensus';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -8,7 +10,11 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({ Platform: { OS: 'web' } }));
-installDisconnectedServerSocketBoundary(configureConnectedServerSocketBoundary);
+let homeSocket: Socket | undefined;
+installDisconnectedServerSocketBoundary((socket, url) => {
+    configureConnectedServerSocketBoundary(socket);
+    if (url?.startsWith('https://web-idle.example.test')) homeSocket = socket;
+});
 
 const document = Object.assign(new EventTarget(), { visibilityState: 'visible', wasDiscarded: false,
     documentElement: { style: {} }, getElementById: () => null });
@@ -34,31 +40,64 @@ const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSi
 await loadSyncSingletonForTests();
 const { sync } = await import('./syncEngine');
 
-it('keeps web lifecycle and tab presence idle without timer fires or presence writes, and resumes on browser events', async () => {
+it('keeps settled browser tabs idle and reconciles a missed profile change after a socket gap', async () => {
     const locks = installWebLockManagerMock();
     const local = installLocalStorageMock();
     vi.stubGlobal('sessionStorage', localStorage);
     installBrowserEvents();
     let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
     const requests: string[] = [];
+    let profileName = 'Before gap';
+    let changesCursor = 0;
+    const { storage } = await import('./domains/state/storage');
+    const owner = sync as unknown as {
+        bootstrapSync(): Promise<void>;
+        resumeInFlight: Promise<void> | null;
+        ownedSyncUnits(): InvalidateSync[];
+    };
+    const bootstrap = vi.spyOn(owner, 'bootstrapSync');
+    const settle = async () => {
+        // Wait for the owner and its queued follow-up, if any. The event loop
+        // also delivers the external transport's immediate connection event.
+        await new Promise<void>(resolve => setImmediate(resolve));
+        while (owner.resumeInFlight) await owner.resumeInFlight;
+        await Promise.all(owner.ownedSyncUnits().map(unit => unit.awaitQueue()));
+    };
+    const setVisible = (visible: boolean) => {
+        document.visibilityState = visible ? 'visible' : 'hidden';
+        document.dispatchEvent(new Event('visibilitychange'));
+    };
     try {
         await loadSyncSingletonForTests();
         account = await restoreServerAccountForTest({ serverUrl: 'https://web-idle.example.test', accountId: 'web-idle',
+            requestOwnsReachabilityProbes: true,
             request: async (input, init) => {
                 const path = new URL(String(input)).pathname;
                 requests.push(path);
+                if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
                 if (path === '/v1/features') return Response.json(createRootLayoutFeaturesResponse());
                 if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
                 if (path === '/v1/account/encryption/currentness') return Response.json({ mode: 'plain', version: 1,
                     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
                     recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
                 if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
-                if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'web-idle' });
+                if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'web-idle', firstName: profileName });
                 if (path === '/v2/cursor') return Response.json({ cursor: 0, changesFloor: 0 });
-                if (path === '/v2/changes') return Response.json({ changes: [], nextCursor: '0', hasMore: false });
+                if (path === '/v2/changes') {
+                    const after = Number(new URL(String(input)).searchParams.get('after'));
+                    return Response.json({
+                        changes: after < changesCursor
+                            ? [{ cursor: changesCursor, kind: 'account', entityId: 'self', changedAt: 2, hint: { profileVersion: changesCursor } }]
+                            : [],
+                        nextCursor: changesCursor,
+                    });
+                }
                 return createEmptyAccountBootstrapHttpResponse(path, init);
             } });
-        await sync.awaitBootstrapForegroundAcquisition();
+        await bootstrap.mock.results[0]?.value;
+        await vi.waitFor(() => expect(homeSocket?.connected).toBe(true));
+        await settle();
+        expect(storage.getState().profile.firstName).toBe('Before gap');
         local.setItemMock.mockClear();
         const before = timers.readFires().interval;
         for (const timer of [...intervals.values()]) {
@@ -69,18 +108,42 @@ it('keeps web lifecycle and tab presence idle without timer fires or presence wr
         }).toEqual({ fires: 0, writes: 0 });
         expect(timers.read().filter(timer => timer.kind === 'interval' && timer.consumer === 'syncEngine')).toEqual([]);
         expect(intervals.size).toBe(0);
-        for (const event of ['pageshow', 'resume']) {
-            const beforeWake = requests.length;
-            browser.dispatchEvent(new Event(event));
-            await vi.waitFor(() => expect(requests.length).toBeGreaterThan(beforeWake));
+        requests.length = 0;
+        const liveSocket = homeSocket;
+        if (!liveSocket?.connected) throw new Error('The existing Account socket must be connected');
+        let publications = 0;
+        const unsubscribe = storage.subscribe(() => { publications++; });
+        setVisible(false);
+        setVisible(true);
+        browser.dispatchEvent(new Event('pageshow'));
+        browser.dispatchEvent(new Event('resume'));
+        browser.dispatchEvent(new Event('focus'));
+        try {
+            await settle();
+        } finally {
+            unsubscribe();
         }
-        document.visibilityState = 'hidden';
-        document.dispatchEvent(new Event('visibilitychange'));
-        document.visibilityState = 'visible';
-        const beforeVisible = requests.length;
-        document.dispatchEvent(new Event('visibilitychange'));
-        await vi.waitFor(() => expect(requests.length).toBeGreaterThan(beforeVisible));
+        expect(requests, 'HTTP after settled tab return').toEqual([]);
+        expect(publications).toBe(0);
+        expect(homeSocket).toBe(liveSocket);
+        expect(homeSocket?.connected).toBe(true);
+
+        setVisible(false);
+        liveSocket.disconnect();
+        expect(liveSocket.connected).toBe(false);
+        profileName = 'After gap';
+        changesCursor = 1;
+        requests.length = 0;
+        setVisible(true);
+        await vi.waitFor(() => expect(storage.getState().profile.firstName).toBe('After gap'));
+        await settle();
+        const gapChangesReads = requests.filter(path => path === '/v2/changes').length;
+        console.info('TAB_RETURN_HTTP', { settled: 0, publications, gapChangesReads, gapRequests: requests });
+        expect(gapChangesReads).toBe(1);
+        expect(requests.filter(path => path === '/v1/account/profile')).toHaveLength(1);
+        expect(requests).not.toContain('/v2/session-organization');
     } finally {
+        bootstrap.mockRestore();
         await account?.dispose();
         timers.stop();
         intervals.clear();

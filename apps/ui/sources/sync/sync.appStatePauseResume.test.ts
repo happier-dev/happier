@@ -159,7 +159,7 @@ describe('sync AppState pause/resume', () => {
         expect(isServerReachabilityNetworkAllowed()).toBe(false);
     });
 
-    it('runs one changes-only catch-up after an intentional foreground connection reports subscribed', async () => {
+    it('lets the foreground run cover a connection restored before the changes read', async () => {
         platformOs.value = 'ios';
         await loadSyncSingletonForTests();
         const { sync } = await import('./sync');
@@ -179,10 +179,7 @@ describe('sync AppState pause/resume', () => {
         for (const handler of socketStatusHandlers) handler('connected');
         for (const handler of socketStatusHandlers) handler('connected');
 
-        expect(resumeSync.mock.calls.map(([reason]) => reason)).toEqual([
-            'app-foreground',
-            'changes-catch-up',
-        ]);
+        expect(resumeSync.mock.calls.map(([reason]) => reason)).toEqual(['app-foreground']);
     });
 
     afterEach(() => {
@@ -628,7 +625,7 @@ describe('sync AppState pause/resume', () => {
         }
     });
 
-    it('keeps the Home\'s list observation through a hidden-tab pause, and publishes a real socket loss', async () => {
+    it('keeps the Home\'s list observation through a connected tab hide, and publishes a real socket loss', async () => {
         // P03-REOPEN/JOURNEYS-2: the visibility pause's own disconnect published the Home "offline", so
         // every mounted Session list cell redrew on hide (1.2–1.5k renders) and again on show.
         const browser = await installBrowserRuntimeForTests({ url: 'http://localhost/' });
@@ -648,12 +645,12 @@ describe('sync AppState pause/resume', () => {
 
             visibility.mockReturnValue('hidden');
             browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
-            expect(apiSocketDisconnect).toHaveBeenCalledTimes(1);
+            expect(apiSocketDisconnect).not.toHaveBeenCalled();
             expect(phase()).toBe(null);
 
             visibility.mockReturnValue('visible');
             browser.document.dispatchEvent(new browser.window.Event('visibilitychange'));
-            expect(apiSocketConnect).toHaveBeenCalledTimes(1);
+            expect(apiSocketConnect).not.toHaveBeenCalled();
             for (const handler of socketStatusHandlers) handler('error');
             expect(phase()).toBe('offline');
         } finally {
