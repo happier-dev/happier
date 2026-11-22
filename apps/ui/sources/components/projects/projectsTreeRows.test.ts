@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { teamSetupPath } from '@/components/settings/teams/teamsRoutes';
 
 import { t } from '@/text';
 
@@ -70,12 +71,14 @@ describe('buildProjectsTreeRows (lab p-projects RULES)', () => {
         ]) {
             expect(rows[0]).toMatchObject({ attention: 'needs-you', newFromSession: true });
             expect(rows[0]).toHaveProperty('source', projects[0]!.source);
+            expect(rows[0]).toHaveProperty('teamSetupHref', teamSetupPath({ serverId: 'home-a', teamId: 'team-a' }));
         }
         expect(projects[0]?.checkouts.map(row => row.workspaceAddress?.rootPath)).toEqual(['/work/first', '/work/second']);
         const common = { groups: [{ projectKey: { projectKey: 'anchor' }, items: refs }],
             projectName: () => 'first', machine: () => ({ name: 'devbox', homeDir: null, online: null }) };
         const retained = buildProjectsTreeProjects({ ...common, sources: [projects[0]!.source!.source] });
         expect(buildProjectsTreeProjects({ ...common, sources: [projects[0]!.source!.source], previousProjects: retained })).toBe(retained);
+        expect(buildProjectsTreeRows({ projects: retained, openRefId: null, expandedKeys: new Set() })[0]?.teamSetupHref).toBeUndefined();
         expect(buildProjectsTreeProjects({ ...common, sources: [], previousProjects: retained })[0]?.source).toBeUndefined();
     });
 

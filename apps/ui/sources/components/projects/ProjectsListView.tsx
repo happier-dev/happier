@@ -30,6 +30,7 @@ import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useC
 import { ProjectsTree, openProjectsTreeRow } from './ProjectsTree';
 import { DeploymentEnvironmentStateMark } from './deployments/rows/DeploymentEnvironmentRow';
 import { ProjectsTreeRowAttention } from './ProjectsTreeRowAttention';
+import { ProjectTeamSetupLink } from './sources/SourceTeamSetupRow';
 import { ProjectHideUndoNotice } from './ProjectHideUndoNotice';
 import { ProjectsAddMenu } from './ProjectsAddMenu';
 import { useOpenNewApp } from './starters/newAppPresentation';
@@ -306,6 +307,7 @@ function ProjectsListRow(props: Readonly<{
         <View style={styles.trailing}>
             {row.count != null ? <Text style={styles.count}>{String(row.count)}</Text> : null}
             {row.kind === 'environment' ? null : <ProjectsTreeRowAttention row={row} />}
+            {row.teamSetupHref ? <ProjectTeamSetupLink href={row.teamSetupHref} testID={`projects-list-setup-${row.key}`} /> : null}
             {row.expandable ? (
                 <HappierTreeDisclosure
                     testID={`projects-list-project-${row.key}:disclosure`}
@@ -347,6 +349,7 @@ function ProjectsListRow(props: Readonly<{
             icon={<Icon name={projectsTreeGlyphIcon(row.glyph)} size={20} color={theme.colors.text.secondary} />}
             accessibilityExpanded={row.expandable ? row.expanded : undefined}
             rightElement={trailing}
+            rightElementOutsidePressable={!!row.teamSetupHref}
             style={row.level > 0 ? { paddingLeft: LEAF_INDENT_PX * row.level } : undefined}
             dimmed={row.offline}
             {...props.rowProps}

@@ -3,6 +3,7 @@ import { t } from '@/text';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { readSourceTeamId } from './sources/projectSourceGroups';
+import { teamSetupPath } from '@/components/settings/teams/teamsRoutes';
 import { shallow } from 'zustand/vanilla/shallow';
 import type { ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { readProjectSourceLink } from '@/sync/domains/workspaces/projectSourceLink';
@@ -61,6 +62,7 @@ export type ProjectsTreeProject = Readonly<{
     source?: ProjectSurfaceTargetV1['source'];
     /** The Team a Team project is shared with ("Acme"), drawn quietly after the name. */
     teamLabel?: string | null;
+    teamSetupHref?: string;
     /** Accepted Session checkout not yet viewed through the existing device presentation owner. */
     newFromSession?: boolean;
     checkouts: readonly ProjectsTreeCheckout[];
@@ -117,6 +119,7 @@ export type ProjectsTreeEnvironmentChild = Readonly<{
 export type ProjectsTreeRow = Readonly<{
     key: string;
     source?: ProjectSurfaceTargetV1['source'];
+    teamSetupHref?: string;
     level: number;
     kind: 'project' | 'machine' | 'checkout' | 'environment' | 'service' | 'database';
     title: string;
@@ -422,6 +425,7 @@ export function buildProjectsTreeRows(input: Readonly<{
                 level: 0,
                 kind: 'project',
                 source: project.source,
+                teamSetupHref: project.teamSetupHref,
                 title: project.name,
                 titleQualifier: project.teamLabel ?? null,
                 subtitle: joinFacts(only.machineName, selected ? only.path : checkoutWhere(only)),
@@ -449,6 +453,7 @@ export function buildProjectsTreeRows(input: Readonly<{
             level: 0,
             kind: 'project',
             source: project.source,
+            teamSetupHref: project.teamSetupHref,
             title: project.name,
             // One machine: it folds into the Project row ("happier-plugins devbox").
             titleQualifier: singleMachine
@@ -638,6 +643,11 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
             ? input.sources?.find(candidate => sourceIds.has(candidate.id)) ?? null
             : null;
         const teamId = source ? readSourceTeamId(source) : null;
+        const teamLabel = teamId ? input.teamName?.(teamId) ?? null : null;
+        const sourceTarget = source && first.serverId && readProjectSourceLink({
+            serverId: first.serverId, sourceId: first.source?.sourceId ?? null,
+            source: { serverId: first.serverId, source },
+        }) ? { serverId: first.serverId, source } : undefined;
         const factsByRef = group.items.map(ref => input.checkoutFacts?.(ref) ?? null);
         const checkouts = group.items.map((ref): ProjectsTreeCheckout => {
             const machine = input.machine(ref.machineId);
@@ -657,10 +667,10 @@ export function buildProjectsTreeProjects<TRef extends Readonly<{
         });
         const project: ProjectsTreeProject = {
             key: group.projectKey.projectKey,
-            source: source && first.serverId && readProjectSourceLink({ serverId: first.serverId, sourceId: first.source?.sourceId ?? null,
-                source: { serverId: first.serverId, source } }) ? { serverId: first.serverId, source } : undefined,
+            source: sourceTarget,
             name: first.label?.trim() ? input.projectName(first) : source?.name ?? input.projectName(first),
-            teamLabel: teamId ? input.teamName?.(teamId) ?? null : null,
+            teamLabel,
+            ...(sourceTarget && teamId && teamLabel ? { teamSetupHref: teamSetupPath({ serverId: sourceTarget.serverId, teamId }) } : {}),
             newFromSession: false,
             checkouts,
             lead: mostRecentlyOpenedIndex(group.items),
@@ -723,6 +733,7 @@ export function buildProjectsPhoneTreeRows(input: Readonly<{
             titleQualifier: project.teamLabel ?? null,
             subtitle,
             source: project.source,
+            teamSetupHref: project.teamSetupHref,
             machineId: single?.machineId ?? null,
             glyph: 'project',
             expandable,

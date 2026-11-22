@@ -10,6 +10,7 @@ import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import { DeploymentTreeRow } from './deployments/rows/DeploymentEnvironmentRow';
 import { ProjectsTreeRowAttention } from './ProjectsTreeRowAttention';
+import { ProjectTeamSetupLink } from './sources/SourceTeamSetupRow';
 import { CollectionListGroupLabel, CollectionNavigationRow, CollectionRowOrder } from '@/components/ui/lists/collection/CollectionList';
 import { useCollectionTreeKeyboard } from '@/components/ui/lists/collection/useCollectionTreeKeyboard';
 import {
@@ -388,6 +389,8 @@ function ProjectsTreeRowList(props: ProjectsTreeRowListProps & Readonly<{ rows: 
                         indentPx={row.level * resolveHappierCollectionTreeChildIndentPx()}
                         treeItem={props.getRowProps(row, props.activeKey)}
                         accessibilityLabel={row.titleQualifier ? `${row.title}, ${row.titleQualifier}` : row.title}
+                        rightElement={row.teamSetupHref ? <ProjectTeamSetupLink href={row.teamSetupHref} testID={`${props.testID}-setup-${row.key}`} /> : undefined}
+                        rightElementOutsidePressable={!!row.teamSetupHref}
                         rowMenu={props.renderRowMenu?.(row) ?? null}
                         onPress={() => openProjectsTreeRow(row, props.onOpenRef, props.onToggle, props.onOpenHref)}
                     />

@@ -9,6 +9,12 @@ import { t } from '@/text';
 
 import { useSourceTeamSetupHint } from './useSourceTeamSetupHint';
 
+export function ProjectTeamSetupLink(props: Readonly<{ href: string; testID: string }>) {
+  const router = useRouter();
+  return <RoundButton testID={props.testID} size="small" display="secondary"
+    title={t('homeSetup.teamSetupAction')} onPress={() => router.push(props.href as never)} />;
+}
+
 /**
  * The way back into a Team's setup from a Source it shares (lab team-setup L4 project hint): one row
  * under "Who can see it" naming the Team, with Set up. Hiding the Home block never removes it; it is
@@ -22,11 +28,11 @@ export const SourceTeamSetupRow = React.memo(function SourceTeamSetupRow(
 ) {
   const hint = useSourceTeamSetupHint(props.serverId, props.source);
   const router = useRouter();
-  const address = hint?.address ?? null;
+  const href = hint ? teamSetupPath(hint.address) : null;
   const open = React.useCallback(() => {
-    if (address) router.push(teamSetupPath(address) as never);
-  }, [address, router]);
-  if (!hint) return null;
+    if (href) router.push(href as never);
+  }, [href, router]);
+  if (!hint || !href) return null;
   return (
     <Item
       testID="projects.sources.detail.teamSetup"
@@ -34,15 +40,7 @@ export const SourceTeamSetupRow = React.memo(function SourceTeamSetupRow(
       showChevron={false}
       onPress={open}
       rightElementOutsidePressable
-      rightElement={
-        <RoundButton
-          testID="projects.sources.detail.teamSetup.action"
-          size="small"
-          display="secondary"
-          title={t('homeSetup.teamSetupAction')}
-          onPress={open}
-        />
-      }
+      rightElement={<ProjectTeamSetupLink href={href} testID="projects.sources.detail.teamSetup.action" />}
     />
   );
 });
