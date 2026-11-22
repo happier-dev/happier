@@ -2377,6 +2377,7 @@ export const ja: TranslationStructure = {
     unsafeDetailsBody: "送信されたとおりに表示できなかったため、このリクエストは承認できません。拒否するか、再送を依頼してください。",
     approveUnavailableHint: "この内容を安全に表示できない間は承認できません。",
     cannotRun: "このリクエストは送信された内容のままでは実行できなくなったため、承認できません。拒否するか、もう一度依頼してください。",
+    cannotRunLegacy: "このリクエストは以前のバージョンの Happier で保存されたため、承認できません。拒否するか、もう一度依頼してください。",
     cannotRunTitle: "承認できません",
     cannotRunNoMachine: "このリクエストには実行するマシンが記録されていないため、承認できません。拒否するか、必要としているセッションからもう一度依頼してください。",
     irreversibleNote: "この操作は取り消せません。",

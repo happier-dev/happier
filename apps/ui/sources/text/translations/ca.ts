@@ -2230,6 +2230,7 @@ export const ca: TranslationStructure = {
         unsafeDetailsBody: 'Happier no ha pogut mostrar aquesta sol·licitud exactament tal com es va enviar, així que no es pot aprovar. Rebutja-la o demana que la tornin a enviar.',
         approveUnavailableHint: 'L\'aprovació no està disponible mentre aquests detalls no es puguin mostrar amb seguretat.',
         cannotRun: "Aquesta sol·licitud ja no es pot executar tal com es va enviar, així que no es pot aprovar. Denega-la o torna-la a demanar.",
+        cannotRunLegacy: "Aquesta sol·licitud es va desar amb una versió anterior de Happier, així que no es pot aprovar. Denega-la o torna-la a demanar.",
         cannotRunTitle: "No es pot aprovar",
         cannotRunNoMachine: "Aquesta sol·licitud no té cap màquina registrada per executar-la, així que no es pot aprovar. Denega-la o torna-la a demanar des de la sessió que la necessita.",
         irreversibleNote: 'Això no es pot desfer.',

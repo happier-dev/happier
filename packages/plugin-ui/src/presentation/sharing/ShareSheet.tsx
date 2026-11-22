@@ -20,7 +20,10 @@ export type HappierShareSheetProps = Readonly<{
   presentation: 'full' | 'compact' | 'inline';
   phone?: boolean;
   handoffs?: readonly (HappierShareAction & Readonly<{ leading?: ReactNode }>)[];
+  /** Closes the sheet. Closing is never the primary act, so it is drawn quiet beside the handoffs. */
   done?: HappierShareAction;
+  /** The sheet's one commit (a reviewed Share), drawn filled in place of `done`. */
+  primary?: HappierShareAction;
   /** The footer's one consequence line beside Done ("Their agents use it through your machine"). */
   note?: string;
   Button?: ComponentType<HappierShareSheetButtonProps>;
@@ -48,7 +51,7 @@ export function HappierShareSheet(props: HappierShareSheetProps) {
   const { Text } = host;
   return <View testID={props.testID} style={props.presentation === 'full' ? styles.full : styles.compact}>
     {props.children}
-    {props.presentation === 'full' && (props.handoffs?.length || props.done || props.note) ? <View style={[
+    {props.presentation === 'full' && (props.handoffs?.length || props.done || props.primary || props.note) ? <View style={[
       styles.footer, { borderTopColor: host.borderColor }, props.phone ? styles.phoneFooter : null,
     ]}>
       <View style={[styles.handoffs, props.phone ? styles.phoneHandoffs : null]}>
@@ -56,7 +59,8 @@ export function HappierShareSheet(props: HappierShareSheetProps) {
         {props.handoffs?.map((action, index) => <Button key={action.testID ?? index} {...action} emphasis="secondary"
           style={props.phone ? styles.phoneAction : styles.action} />)}
       </View>
-      {props.done ? <Button {...props.done} emphasis="primary" style={props.phone ? styles.phoneDone : styles.action} /> : null}
+      {props.primary ? <Button {...props.primary} emphasis="primary" style={props.phone ? styles.phoneDone : styles.action} />
+        : props.done ? <Button {...props.done} emphasis="secondary" style={props.phone ? styles.phoneDone : styles.action} /> : null}
     </View> : null}
   </View>;
 }

@@ -2223,6 +2223,7 @@ export const fr: TranslationStructure = {
     unsafeDetailsBody: "Happier n’a pas pu afficher cette demande exactement telle qu’elle a été envoyée ; elle ne peut donc pas être approuvée. Refuse-la ou demande qu’elle soit renvoyée.",
     approveUnavailableHint: "L’approbation est indisponible tant que ces détails ne peuvent pas être affichés en toute sécurité.",
     cannotRun: "Cette demande ne peut plus s’exécuter telle qu’elle a été envoyée, elle ne peut donc pas être approuvée. Refusez-la ou demandez-la à nouveau.",
+    cannotRunLegacy: "Cette demande a été enregistrée par une version antérieure de Happier, elle ne peut donc pas être approuvée. Refuse-la ou redemande-la.",
     cannotRunTitle: "Impossible d’approuver",
     cannotRunNoMachine: "Aucune machine n’est enregistrée pour exécuter cette demande, elle ne peut donc pas être approuvée. Refusez-la ou demandez-la à nouveau depuis la session qui en a besoin.",
     irreversibleNote: "Cette action est irréversible.",

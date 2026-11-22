@@ -2431,6 +2431,7 @@ export const pt: TranslationStructure = {
     unsafeDetailsBody: "O Happier não conseguiu mostrar este pedido exatamente como foi enviado, por isso não pode ser aprovado. Recuse-o ou peça que seja enviado novamente.",
     approveUnavailableHint: "A aprovação fica indisponível enquanto estes detalhes não puderem ser mostrados com segurança.",
     cannotRun: "Este pedido já não pode ser executado tal como foi enviado, por isso não pode ser aprovado. Recuse-o ou peça-o novamente.",
+    cannotRunLegacy: "Este pedido foi guardado por uma versão anterior do Happier, por isso não pode ser aprovado. Recuse-o ou peça-o de novo.",
     cannotRunTitle: "Não pode ser aprovado",
     cannotRunNoMachine: "Este pedido não tem nenhuma máquina registada para o executar, por isso não pode ser aprovado. Recuse-o ou peça-o novamente a partir da sessão que precisa dele.",
     irreversibleNote: "Isto não pode ser desfeito.",

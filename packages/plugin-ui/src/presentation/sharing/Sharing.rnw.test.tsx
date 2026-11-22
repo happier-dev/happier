@@ -88,3 +88,25 @@ it('keeps supplied sheet content mounted across layouts and hands off only suppl
     expect(done).toHaveBeenCalledOnce();
   } finally { mounted.unmount(); }
 });
+
+it('never draws closing as the primary act: Done is quiet and only the commit is filled', () => {
+  const emphases: Record<string, string> = {};
+  const Button = (props: { testID?: string; label: string; emphasis: string; onPress: () => void }) => {
+    emphases[props.testID ?? props.label] = props.emphasis;
+    return <button data-testid={props.testID} onClick={props.onPress}>{props.label}</button>;
+  };
+  const sheet = (primary?: { label: string; testID: string; onPress: () => void }) => <publicUi.HappierShareSheet presentation="full"
+    Button={Button} handoffs={[{ label: 'Copy link', testID: 'copy', onPress: vi.fn() }]}
+    done={{ label: 'Done', testID: 'done', onPress: vi.fn() }} {...(primary ? { primary } : {})}>
+    <input aria-label="People" />
+  </publicUi.HappierShareSheet>;
+  const closing = mountThroughReactNativeWeb(surface(sheet()));
+  try {
+    expect(emphases).toEqual({ copy: 'secondary', done: 'secondary' });
+  } finally { closing.unmount(); }
+  for (const key of Object.keys(emphases)) delete emphases[key];
+  const reviewed = mountThroughReactNativeWeb(surface(sheet({ label: 'Share', testID: 'share', onPress: vi.fn() })));
+  try {
+    expect(emphases).toEqual({ copy: 'secondary', share: 'primary' });
+  } finally { reviewed.unmount(); }
+});

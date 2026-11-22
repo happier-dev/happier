@@ -2223,6 +2223,7 @@ export const pl: TranslationStructure = {
     unsafeDetailsBody: "Happier nie mógł wyświetlić tego żądania dokładnie tak, jak zostało wysłane, więc nie można go zatwierdzić. Odrzuć je lub poproś o ponowne wysłanie.",
     approveUnavailableHint: "Zatwierdzenie jest niedostępne, dopóki tych szczegółów nie można bezpiecznie wyświetlić.",
     cannotRun: "Tej prośby nie można już wykonać w wysłanej postaci, więc nie można jej zatwierdzić. Odrzuć ją lub poproś o nią ponownie.",
+    cannotRunLegacy: "Ta prośba została zapisana przez wcześniejszą wersję Happier, więc nie można jej zatwierdzić. Odrzuć ją lub poproś o nią ponownie.",
     cannotRunTitle: "Nie można zatwierdzić",
     cannotRunNoMachine: "Ta prośba nie ma zapisanej maszyny, na której mogłaby działać, więc nie można jej zatwierdzić. Odrzuć ją lub poproś o nią ponownie z sesji, która jej potrzebuje.",
     irreversibleNote: "Tego nie można cofnąć.",

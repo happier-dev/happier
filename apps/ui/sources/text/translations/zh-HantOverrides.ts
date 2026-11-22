@@ -1721,6 +1721,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     unsafeDetailsBody: 'Happier 無法完全依照傳送的內容顯示此請求，因此無法核准。請拒絕該請求，或請對方重新傳送。',
     approveUnavailableHint: '在這些詳細資料無法安全顯示期間，無法核准。',
     cannotRun: "此請求已無法按傳送時的內容執行，因此無法核准。請拒絕它，或重新提出請求。",
+    cannotRunLegacy: "此請求由較早版本的 Happier 儲存，因此無法核准。請拒絕它，或重新請求。",
     cannotRunTitle: "無法核准",
     cannotRunNoMachine: "此請求沒有記錄可執行它的機器，因此無法核准。請拒絕它，或從需要它的工作階段重新提出請求。",
     irreversibleNote: '此操作無法復原。',

@@ -891,10 +891,13 @@ describe('ApprovalPromptCard', () => {
         expect(screen.getTextContent()).toContain('prompt_doc_unavailable');
     });
 
-    it('withholds approve for a released V1 request while preserving rejection', async () => {
+    it('withholds approve for a released V1 request, says why on the card, and keeps rejection', async () => {
         const screen = await renderCard(approvalRequest());
+        // A grey Approve with no visible reason reads as broken: the card names the earlier format in place.
+        expect(screen.findByTestId('approval-prompt-cannot-run')).toBeTruthy();
+        expect(screen.getTextContent()).toContain('approvals.cannotRunLegacy');
         expect(screen.findByTestId('approval-prompt-approve')?.props).toMatchObject({
-            disabled: true, accessibilityHint: 'approvals.approveUnavailableHint',
+            disabled: true, accessibilityHint: 'approvals.cannotRunLegacy',
         });
         expect(screen.findByTestId('approval-prompt-reject')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('approval-prompt-approve');

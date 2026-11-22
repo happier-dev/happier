@@ -11,6 +11,7 @@ import { createReadOnlySessionTranscriptSource } from '@/components/sessions/tra
 import type { SessionTranscriptSource } from '@/components/sessions/transcript/source/types';
 import type { OpenApprovalAttentionArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 
 const SESSION_ID = 'dev-approval-card';
@@ -24,9 +25,21 @@ export type ApprovalCardScene = (typeof APPROVAL_CARD_SCENES)[number];
 const PAGE = 'https://en.wikipedia.org/wiki/Price_point';
 
 /** The waiting and failed Browser open an Agent asks for, and a request with a longer list of facts. */
-function sceneApproval(scene: ApprovalCardScene): ApprovalRequest {
-  const base = {
+function sceneApproval(scene: ApprovalCardScene, scope: ServerAccountScope): ApprovalRequest {
+  // A current request, as an Agent's ask is stored today: it carries the origin it replays from.
+  const origin = (actionId: string) => ({
     v: 1 as const,
+    authority: 'account_automation' as const,
+    surface: 'agent' as const,
+    caller: { kind: 'session' as const, sessionId: SESSION_ID, starterDepth: 0, turnDepth: 0 },
+    accountId: scope.accountId,
+    serverId: scope.serverId,
+    sessionId: SESSION_ID,
+    actionId,
+    requestId: `dev-approval-card-${scene}`,
+  });
+  const base = {
+    v: 2 as const,
     createdAtMs: 1,
     updatedAtMs: 1,
     requestedSurface: 'agent' as const,
@@ -34,6 +47,7 @@ function sceneApproval(scene: ApprovalCardScene): ApprovalRequest {
   };
   const open = {
     ...base,
+    executionOriginV1: origin('browser.workspace.open'),
     actionId: 'browser.workspace.open',
     summary: 'Open en.wikipedia.org in the Browser',
     actionArgs: {
@@ -58,6 +72,7 @@ function sceneApproval(scene: ApprovalCardScene): ApprovalRequest {
   return {
     ...base,
     status: 'open',
+    executionOriginV1: origin('artifact.public_link.create'),
     actionId: 'artifact.public_link.create',
     summary: 'Share Pricing page copy notes by public link',
     actionArgs: {
@@ -118,7 +133,7 @@ export function ApprovalCardSpecimen(
                 id: `dev-approval-card-${props.scene}`,
                 header: { title: null, serverId: scope.serverId },
               },
-              approval: sceneApproval(props.scene),
+              approval: sceneApproval(props.scene, scope),
             },
           ]
         : [],

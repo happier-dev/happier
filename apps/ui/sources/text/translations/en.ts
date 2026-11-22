@@ -1801,6 +1801,7 @@ const enApprovals = {
   approveUnavailableHint:
     'Approval is unavailable while these details cannot be shown safely.',
   cannotRun: "This request can no longer run as it was sent, so it can't be approved. Deny it, or ask for it again.",
+  cannotRunLegacy: "This request was saved by an earlier version of Happier, so it can’t be approved. Deny it, or ask for it again.",
   cannotRunTitle: "Can't be approved",
   cannotRunNoMachine: "This request has no machine recorded to run it on, so it can't be approved. Deny it, or ask for it again from the session that needs it.",
   irreversibleNote: "This can't be undone.",

@@ -2209,6 +2209,7 @@ export const it: TranslationStructure = {
     unsafeDetailsBody: "Happier non è riuscito a mostrare questa richiesta esattamente come è stata inviata, quindi non può essere approvata. Rifiutala oppure chiedi di inviarla di nuovo.",
     approveUnavailableHint: "L'approvazione non è disponibile finché questi dettagli non possono essere mostrati in sicurezza.",
     cannotRun: "Questa richiesta non può più essere eseguita così come è stata inviata, quindi non può essere approvata. Rifiutala o richiedila di nuovo.",
+    cannotRunLegacy: "Questa richiesta è stata salvata da una versione precedente di Happier, quindi non può essere approvata. Rifiutala o richiedila di nuovo.",
     cannotRunTitle: "Non può essere approvata",
     cannotRunNoMachine: "Per questa richiesta non è registrata nessuna macchina su cui eseguirla, quindi non può essere approvata. Rifiutala o richiedila di nuovo dalla sessione che ne ha bisogno.",
     irreversibleNote: "Questa azione non può essere annullata.",

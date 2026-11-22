@@ -29,6 +29,11 @@ type ApprovalExecutorUnavailableReason = Extract<ApprovalExecutor, { kind: 'unav
 
 /** The reason every review surface shows while the request cannot run. */
 export function readApprovalCannotRunReason(admission: ActionApprovalReviewAdmission | null | undefined): string | null {
+    // A request kept in the earlier format can't be approved; the card says so instead of a silent grey Approve.
+    // Details that cannot be shown safely already say why on their own.
+    if (admission?.status === 'unavailable' && admission.reason === 'legacy_request' && !admission.presentation.unrepresentable) {
+        return t('approvals.cannotRunLegacy');
+    }
     if (admission?.status !== 'unavailable' || admission.reason !== 'cannot_run') return null;
     return admission.cause === 'missing_machine' ? t('approvals.cannotRunNoMachine') : t('approvals.cannotRun');
 }

@@ -2208,6 +2208,7 @@ export const zhHans: TranslationStructure = {
     unsafeDetailsBody: "Happier 无法完全按照发送的内容显示此请求，因此无法批准。请拒绝该请求，或请求方重新发送。",
     approveUnavailableHint: "在这些详情无法安全显示期间，无法批准。",
     cannotRun: "此请求已无法按发送时的内容运行，因此无法批准。请拒绝它，或重新发起请求。",
+    cannotRunLegacy: "此请求由较早版本的 Happier 保存，因此无法批准。请拒绝它，或重新请求。",
     cannotRunTitle: "无法批准",
     cannotRunNoMachine: "此请求没有记录可运行它的机器，因此无法批准。请拒绝它，或从需要它的会话中重新发起请求。",
     irreversibleNote: "此操作无法撤销。",

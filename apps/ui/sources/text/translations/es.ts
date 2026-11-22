@@ -2396,6 +2396,7 @@ export const es: TranslationStructure = {
     unsafeDetailsBody: "Happier no pudo mostrar esta solicitud exactamente como se envió, por lo que no se puede aprobar. Recházala o pide que se envíe de nuevo.",
     approveUnavailableHint: "La aprobación no está disponible mientras estos detalles no se puedan mostrar de forma segura.",
     cannotRun: "Esta solicitud ya no puede ejecutarse tal como se envió, así que no se puede aprobar. Recházala o pídela de nuevo.",
+    cannotRunLegacy: "Esta solicitud se guardó con una versión anterior de Happier, así que no se puede aprobar. Recházala o vuelve a pedirla.",
     cannotRunTitle: "No se puede aprobar",
     cannotRunNoMachine: "Esta solicitud no tiene ninguna máquina registrada para ejecutarla, así que no se puede aprobar. Recházala o pídela de nuevo desde la sesión que la necesita.",
     irreversibleNote: "Esto no se puede deshacer.",

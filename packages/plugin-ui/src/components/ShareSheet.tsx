@@ -92,7 +92,8 @@ export function ShareSheet<TRow extends ShareGrantRowModel>(props: ShareSheetPro
                 leading: <host.Icon name="copy" />, onPress: adapter.sendCopy }] : []),
         ]}
         note={presentation === 'full' ? adapter.footnote : undefined}
-        done={props.primaryAction ?? (onRequestClose ? { testID: `${idPrefix}${adapter.namespace}-done`, label: host.text('common.done'), onPress: onRequestClose } : undefined)}>
+        primary={props.primaryAction}
+        done={onRequestClose ? { testID: `${idPrefix}${adapter.namespace}-done`, label: host.text('common.done'), onPress: onRequestClose } : undefined}>
         {adapter.description ? <host.Description>{adapter.description}</host.Description> : null}
         <host.List rootStep={rootStep} syncActiveStep={activeStep ?? undefined}
             onActiveStepChange={(step) => {
