@@ -16,8 +16,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { isProjectWorkerCopyInspectActionIdV1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
-import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
+import { isDeploymentActionIdV1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
 import { isMachineAgentInventoryReadActionIdV1, RuntimeActionIdV1Schema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { isBrowserRuntimeActionId } from '@happier-dev/protocol/actions/executor/browser';
@@ -661,14 +660,14 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
         // raw RPC binding. Its role owner above and the receiver's profile owner
         // govern guest access; absence of a raw binding is not a custody refusal.
         // Agent inventory roots also use signed Action ingress, with no private RPC binding.
+        const deploymentRoot = isDeploymentActionIdV1(input.actionId);
         if (!method && !access.owned && !requesterActionIngress && !browserAction && !isRequesterProjectExecutionActionV1(input.actionId)
-            && !isMachineAgentInventoryReadActionIdV1(input.actionId)
-            && !isStoredDeploymentExecutionActionIdV1(input.actionId)
-            // Template instantiation carries the effective grant role; the host's
-            // definition admission consumes it once and requires Manage.
-            && deploymentPreparationOperationForActionV1(input.actionId) !== 'template') {
+            && !isMachineAgentInventoryReadActionIdV1(input.actionId) && !deploymentRoot) {
             return { kind: 'denied', code: 'unsupported_operation' };
         }
+        // A grantee runs deployment roots with Manage. Use keeps only a stored,
+        // Manage-approved definition, whose exact contents the receiving host admits.
+        if (deploymentRoot && !method && !access.owned && !isStoredDeploymentExecutionActionIdV1(input.actionId)) requiredRole = 'manage';
     }
     if (method) {
         const rpcRole = resolveMachineRpcRequiredRole({ method, owned: access.owned, requiredRole, actionId: operationActionId });

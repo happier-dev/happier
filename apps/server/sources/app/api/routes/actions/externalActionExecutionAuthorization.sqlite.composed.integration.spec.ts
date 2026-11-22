@@ -1079,7 +1079,7 @@ describe("external Action execution authorization", () => {
         }
     });
 
-    it.each(['authored', 'prepared'] as const)('delivers foreign Team Create to definition admission with the exact effective role (%s)', async intent => {
+    it.each(['authored', 'prepared'] as const)('admits foreign Team Create only for a Manage grantee, refusing Use before dispatch (%s)', async intent => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
@@ -1101,14 +1101,16 @@ describe("external Action execution authorization", () => {
             const send = () => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
                     envelope: { ...fixture.envelope, input } } });
-            for (const role of ['use', 'manage'] as const) {
-                if (role === 'manage') await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
-                const response = await send();
-                expect(response.statusCode, response.body).toBe(200);
-                expect(ExternalActionExecutionAuthorizationV1Schema.parse(response.json()).binding).toMatchObject({
-                    accountId: requester.id, custodianAccountId: fixture.account.id, machineId: fixture.machine.id,
-                    installationId: fixture.machine.installationId, admittedMachineRole: role });
-            }
+            const refusedUse = await send();
+            expect(refusedUse.statusCode, refusedUse.body).toBe(403);
+            expect(refusedUse.json()).toMatchObject({ error: 'credential_scope_denied' });
+            expect(dispatchedPrincipals).toEqual([]);
+            await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
+            const response = await send();
+            expect(response.statusCode, response.body).toBe(200);
+            expect(ExternalActionExecutionAuthorizationV1Schema.parse(response.json()).binding).toMatchObject({
+                accountId: requester.id, custodianAccountId: fixture.account.id, machineId: fixture.machine.id,
+                installationId: fixture.machine.installationId, admittedMachineRole: 'manage' });
             await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } } });
             const refused = await send();
             expect(refused.statusCode).toBe(409);
@@ -1207,10 +1209,10 @@ describe("external Action execution authorization", () => {
             const mint = (bearer: string) => app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${bearer}` }, payload: { v: 1, machineId: fixture.machine.id,
                     envelope: { ...fixture.envelope, input: { ...input, requestKey: crypto.randomUUID() } } } });
-            // The next admission sees the downgrade: no sealed Manage role is re-issued.
+            // The next admission sees the downgrade: Create needs Manage, so Use is refused.
             const remint = await mint(token);
-            expect(remint.statusCode, remint.body).toBe(200);
-            expect(ExternalActionExecutionAuthorizationV1Schema.parse(remint.json()).binding.admittedMachineRole).not.toBe('manage');
+            expect(remint.statusCode, remint.body).toBe(403);
+            expect(remint.json()).toMatchObject({ error: 'credential_scope_denied' });
             const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
             const outsiderMint = await mint(await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' }));
             expect(outsiderMint.statusCode, outsiderMint.body).not.toBe(200);

@@ -35,6 +35,7 @@ import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/e
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
+import { DEPLOYMENT_ACTION_IDS_V1, isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -169,25 +170,49 @@ describe('Machine current access (real SQLite)', () => {
             .toMatchObject({ kind: 'denied', code: 'custodian_only' });
     });
 
-    it('carries signed template instantiation with the effective grant role and keeps foreign refusals', async () => {
-        const f = await fixture();
-        const other = await fixture();
-        const manager = await account();
-        const user = await account();
-        const outsider = await account();
-        await grant(f.owner.id, f.machine.id, manager.id, 'admin');
-        await grant(f.owner.id, f.machine.id, user.id, 'view');
-        const admit = (actorAccountId: string, machineId = f.machine.id, actionId = 'deployments.templates.instantiate') =>
-            inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, { actorAccountId, machineId, actionId }));
-        // The host's definition admission consumes this signed role once; Use
-        // is carried and refused there before any effect.
-        expect(await admit(manager.id)).toMatchObject({ kind: 'admitted', actorAccountId: manager.id,
-            custodianAccountId: f.owner.id, machineId: f.machine.id, role: 'manage' });
-        expect(await admit(user.id)).toMatchObject({ kind: 'admitted', actorAccountId: user.id, role: 'use' });
-        expect(await admit(outsider.id)).toEqual({ kind: 'denied', code: 'access_denied' });
-        expect(await admit(manager.id, other.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
-        expect(await admit(manager.id, f.machine.id, 'unknown.qualified.action'))
-            .toEqual({ kind: 'denied', code: 'unsupported_operation' });
+    describe('deployment roots on a granted Machine', () => {
+        async function grantees() {
+            const f = await fixture();
+            const other = await fixture();
+            const manager = await account();
+            const user = await account();
+            const outsider = await account();
+            await grant(f.owner.id, f.machine.id, manager.id, 'admin');
+            await grant(f.owner.id, f.machine.id, user.id, 'view');
+            return { f, other, manager, user, outsider };
+        }
+
+        it.each(DEPLOYMENT_ACTION_IDS_V1)('%s: Manage admits, Use only for a stored definition, no grant refused', async actionId => {
+            const { f, other, manager, user, outsider } = await grantees();
+            const admit = (actorAccountId: string, machineId = f.machine.id) =>
+                access.resolveMachineAdmission({ actorAccountId, machineId, actionId });
+            expect(await admit(manager.id)).toMatchObject({ kind: 'admitted', actorAccountId: manager.id,
+                custodianAccountId: f.owner.id, machineId: f.machine.id, role: 'manage' });
+            expect(await admit(user.id)).toMatchObject(isStoredDeploymentExecutionActionIdV1(actionId)
+                ? { kind: 'admitted', actorAccountId: user.id, role: 'use' }
+                : { kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+            expect(await admit(outsider.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+            expect(await admit(manager.id, other.machine.id)).toEqual({ kind: 'denied', code: 'access_denied' });
+        });
+
+        it('refuses an unknown Action for a Manage grantee', async () => {
+            const { f, manager } = await grantees();
+            expect(await access.resolveMachineAdmission({ actorAccountId: manager.id, machineId: f.machine.id,
+                actionId: 'unknown.qualified.action' })).toEqual({ kind: 'denied', code: 'unsupported_operation' });
+        });
+
+        it('admits the signed Environment update and Create of a Manage grantee and refuses a Use grantee', async () => {
+            const { f, manager, user } = await grantees();
+            const admit = (actorAccountId: string, actionId: string) =>
+                inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, { actorAccountId, machineId: f.machine.id, actionId }));
+            for (const actionId of ['deployments.environments.update', 'deployments.environments.create', 'deployments.templates.instantiate']) {
+                expect(await admit(manager.id, actionId), actionId).toMatchObject({ kind: 'admitted', actorAccountId: manager.id,
+                    custodianAccountId: f.owner.id, role: 'manage' });
+                expect(await admit(user.id, actionId), actionId).toMatchObject({ kind: 'denied', code: 'access_denied', requiredRole: 'manage' });
+            }
+            // An Account-only root keeps the Use carrier; its Account route decides the effect.
+            expect(await admit(user.id, 'deployments.environments.get')).toMatchObject({ kind: 'admitted', actorAccountId: user.id, role: 'use' });
+        });
     });
 
     it('acquires encrypted recipient material once for a batch while refusing missing envelopes', async () => {

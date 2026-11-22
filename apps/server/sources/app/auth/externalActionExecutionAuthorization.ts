@@ -529,15 +529,11 @@ async function resolveExternalActionExecutionMachineAccessInTx(
     const spec = action.success ? getActionSpec(action.data) : null;
     const placements = spec?.executionPlacements ?? [];
     const accountPlaced = spec?.executionPlacement === 'account' && input.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
-        && (input.actionId === 'deployments.environments.create'
-            || !placements.includes('machine') && !placements.includes('client'));
+        && !placements.includes('machine') && !placements.includes('client');
     const clientCarrier = spec?.executionPlacement === 'client' && !spec.bindings?.rpcMethod && !placements.includes('machine');
     // This Machine carries an Account Action; it does not execute its domain
     // effect. Use admits the carrier, while the Account route owns the actual
     // Session/resource permission (including managed wake's separate Manage).
-    // Create's native variant opens and normalizes private definition input;
-    // its existing definition owner requires Manage before preparation/effects.
-    // It has no raw RPC binding, so Use admits only this Account Action carrier.
     // A pure client Action without a raw RPC likewise only uses this carrier;
     // reverse dispatch selects the invoking Account's App, not the custodian's.
     // Declared RPCs and input-dependent Machine variants retain their own policy.
