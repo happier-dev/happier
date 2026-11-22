@@ -347,8 +347,8 @@ describe('createActionExecutor (session control)', () => {
       expected: { ok: false, errorCode: 'permission_request_not_found', error: 'native refused', failureCause: {
         phase: 'dispatch', errorClass: 'RpcError', errorCode: 'permission_request_not_found', httpStatus: null } } },
     { kind: 'untyped domain carrier', failure: { rpcErrorCode: 'permission_request_not_found', message: 'native refused', details: { private: 'do-not-publish' } },
-      expected: { ok: false, errorCode: 'permission_request_not_found', error: 'native refused', failureCause: {
-        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'permission_request_not_found', httpStatus: null } } },
+      expected: { ok: false, errorCode: 'action_failed', error: 'native refused', failureCause: {
+        phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: null, httpStatus: null } } },
     { kind: 'transport carrier', failure: { rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, message: 'native refused' },
       expected: { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'native refused', failureCause: {
         phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: RPC_ERROR_CODES.FORBIDDEN, httpStatus: null } } },
@@ -2879,7 +2879,7 @@ describe('createActionExecutor (session control)', () => {
     expect(res).toMatchObject({
       ok: false,
       error: 'session_spawn_resolve_unsupported',
-      failureCause: { errorClass: 'Error', errorCode: 'session_spawn_resolve_unsupported', phase: 'dispatch' },
+      failureCause: { errorClass: 'Error', errorCode: null, phase: 'dispatch' },
       details: { spawnNonce: 'stable-attempt-1', accepted: true },
     });
   });

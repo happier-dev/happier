@@ -569,8 +569,8 @@ describe('useSessionConnectedServicesAuthSwitch', () => {
             }));
             try {
                 const renderContent = hook.getCurrent().connectedServicesAuthChip?.collapsedContentPopover?.renderContent;
-                expect(renderContent).toBeTypeOf('function');
-                const content = renderContent?.({ requestClose: vi.fn(), maxHeight: 320 });
+                if (typeof renderContent !== 'function') throw new Error('Expected a route picker render function');
+                const content = renderContent({ requestClose: vi.fn(), maxHeight: 320 });
                 if (!React.isValidElement(content)) throw new Error('Expected a route picker');
                 const picker = await renderScreen(<AuthProvider initialCredentials={connection.credentials}>{content}</AuthProvider>);
                 try {
