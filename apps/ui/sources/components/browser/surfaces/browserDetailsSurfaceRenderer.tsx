@@ -369,6 +369,7 @@ export function BrowserDetailsSurface(props: Readonly<{
             subscribeBrowserEvents={productModels?.browserContext?.daemonControl?.subscribeBrowserEvents}
             onViewTargetChange={props.onViewTargetChange}
             onViewStateChange={props.onViewStateChange}
+            reportsShownView={props.resource.mode === 'launchpad'}
             nowMs={props.nowMs}
             testID={props.testID ?? 'browser-details-surface'}
         />

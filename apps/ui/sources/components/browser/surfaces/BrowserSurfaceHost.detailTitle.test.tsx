@@ -133,4 +133,25 @@ describe('a Details tab is named by the page its Browser shows (DESIGN-ACCEPT-14
     // Leaving withdraws the presented name, so the tab falls back to its own title.
     expect(setDetailTitle).toHaveBeenLastCalledWith(null);
   });
+
+  it('a launchpad reports the page it already holds on mount, so the page gets its tab (pin, close)', async () => {
+    const onViewStateChange = vi.fn();
+    const render = async (reportsShownView: boolean) => renderScreen(
+      <BrowserSurfaceHost browserSessionId="launchpad" platform="web" initialBrowserState={await keptPage()}
+        policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false, contextEnabled: false }}
+        onViewStateChange={onViewStateChange} reportsShownView={reportsShownView} testID="shown-host" />,
+    );
+    const page = await render(true);
+    try {
+      await flushHookEffects();
+      expect(onViewStateChange).toHaveBeenCalledWith(expect.objectContaining({ viewId: 'view_1', title: 'Price point' }));
+    } finally { await page.unmount(); }
+    // A page tab only hydrates: its stored resource already names it.
+    onViewStateChange.mockClear();
+    const tab = await render(false);
+    try {
+      await flushHookEffects();
+      expect(onViewStateChange).not.toHaveBeenCalled();
+    } finally { await tab.unmount(); }
+  });
 });

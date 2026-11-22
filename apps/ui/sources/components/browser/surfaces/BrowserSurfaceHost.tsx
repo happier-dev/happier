@@ -279,6 +279,12 @@ type BrowserSurfaceHostProps = Readonly<{
     onViewTargetChange?: (input: BrowserSurfaceViewTargetChange) => void;
     onViewStateChange?: (input: BrowserSurfaceViewStateChange) => void;
     /**
+     * A launchpad also reports the page it already holds when it mounts (one kept from an earlier open, or opened
+     * from another device), so its tab exists and is named by that page: a page is never shown without a tab, and
+     * so never without its pin and close.
+     */
+    reportsShownView?: boolean;
+    /**
      * UX-6 opt-in. When `true` (and a `BrowserPresentationRetentionProvider` is mounted above the
      * router) the surface is hosted by the route-stable webview portal keyed by `presentationSlotId`,
      * so a sidebar toggle / route change repositions the webview instead of remounting (reloading) it.
@@ -432,8 +438,12 @@ function BrowserSurfaceRuntime(props: BrowserSurfaceHostProps): React.ReactEleme
             title: focusedView.title, currentUrl: focusedView.currentUrl };
         const previous = reportedViewRef.current;
         reportedViewRef.current = { resetKey, view };
-        // Mount/reset only hydrates. Persist actual engine changes, not the seed or callback churn.
-        if (!previous || previous.resetKey !== resetKey) return;
+        // Mount/reset only hydrates. Persist actual engine changes, not the seed or callback churn; a launchpad
+        // reports the page it holds once, so a kept page gets its tab.
+        if (!previous || previous.resetKey !== resetKey) {
+            if (props.reportsShownView === true) props.onViewStateChange?.(view);
+            return;
+        }
         if (previous.view.browserSessionId === view.browserSessionId && previous.view.viewId === view.viewId
             && previous.view.title === view.title && previous.view.currentUrl === view.currentUrl) return;
         props.onViewStateChange?.(view);
