@@ -23,7 +23,9 @@ export function PageHeaderMarkSlot(props: Readonly<{ children: ReactNode; testID
         style={{
           width: HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx,
           height: HAPPIER_PAGE_METRICS.pageHeaderMarkSlotPx,
-          alignItems: 'center',
+          // The glyph stands on the page's leading edge, where the section titles under the header start; the
+          // slot's spare width falls between the mark and the title (TRIAGE-DESIGN-ACCEPT-250 F11).
+          alignItems: 'flex-start',
           justifyContent: 'center',
         }}
       >

@@ -15,12 +15,10 @@ import {
   Text,
   usePluginTheme,
   usePluginTranslation,
-  useSurfaceContext,
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
 import type { TriageConfigureSourceOfferV1 } from './configureSources.js';
-import { createTriageNameListFormatter } from './nameList.js';
 
 /**
  * The first run of PRs & Issues (PLAN.md: "First run is the lab's Desk first run"): what the page is for, the
@@ -158,8 +156,6 @@ function TriageConnectTiles(props: Readonly<{
   onConnect: (offer: TriageConfigureSourceOfferV1) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
-  const { locale } = useSurfaceContext();
-  const formatKinds = React.useMemo(() => createTriageNameListFormatter(locale), [locale]);
   return (
     <ItemGroup title={props.title} description={props.description}>
       {props.offers.map((offer) => (
@@ -167,7 +163,9 @@ function TriageConnectTiles(props: Readonly<{
           key={`${offer.destination.pluginId}/${offer.destination.localId}`}
           icon={<BrandMark pluginId={offer.destination.pluginId} size="small" externallyLabelled />}
           title={offer.displayName}
-          {...(offer.kindNames.length === 0 ? {} : { subtitle: formatKinds(offer.kindNames) })}
+          // The kinds are the source's own names, each a label in its own case: a facts line, never a sentence that
+          // would capitalize mid-way ("Pull requests · Issues · Dependabot alerts").
+          {...(offer.kindNames.length === 0 ? {} : { subtitle: offer.kindNames.join(' · ') })}
           accessoryOutsidePressable
           accessory={(
             <Button
