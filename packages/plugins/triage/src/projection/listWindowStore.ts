@@ -1352,6 +1352,8 @@ export function createTriageListWindowStore(deps: Readonly<{
                 activeCycleReplacesGeneration = true;
             }
             error = null;
+            // A routed entry can use this admitted roster while list rows are still pending.
+            publish();
         } catch (cause) {
             if (!isCurrentRoster()) return;
             error = errorFrom(cause);

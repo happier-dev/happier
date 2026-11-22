@@ -523,6 +523,7 @@ function createHarness(options: Readonly<{
     secondInstanceObservesEntry?: boolean;
     firstInstanceObservesEntry?: boolean;
     secondInitialScan?: Promise<void>;
+    firstInitialScan?: Promise<void>;
     /** The second connection's reads fail (a transient provider error), so it is the one Manage sources flags. */
     firstInstanceFails?: boolean;
     secondInstanceFails?: boolean;
@@ -591,6 +592,9 @@ function createHarness(options: Readonly<{
 
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
         if (input.page.kind === 'initial') initialScanInstanceIds.push(input.instance.instance.sourceInstanceId);
+        if (input.instance.instance.sourceInstanceId === INSTANCE && input.page.kind === 'initial') {
+            await options.firstInitialScan;
+        }
         if (input.instance.instance.sourceInstanceId === SECOND_INSTANCE && input.page.kind === 'initial'
             && options.secondInitialScan !== undefined) {
             await options.secondInitialScan;
@@ -939,6 +943,7 @@ async function mountShell(
         secondInstanceObservesEntry?: boolean;
         firstInstanceObservesEntry?: boolean;
         secondInitialScan?: Promise<void>;
+        firstInitialScan?: Promise<void>;
         firstInstanceFails?: boolean;
         secondInstanceFails?: boolean;
         /** Read configured sources from the harness's Account Collections, as a live Account-backed mount does. */
@@ -998,6 +1003,7 @@ async function mountShell(
         ...(options.firstInstanceObservesEntry === undefined
             ? {}
             : { firstInstanceObservesEntry: options.firstInstanceObservesEntry }),
+        ...(options.firstInitialScan === undefined ? {} : { firstInitialScan: options.firstInitialScan }),
         ...(options.secondInitialScan === undefined ? {} : { secondInitialScan: options.secondInitialScan }),
         ...(options.otherSourceEntry === undefined ? {} : { otherSourceEntry: options.otherSourceEntry }),
         ...(options.deferLinkedEntry === undefined ? {} : { deferLinkedEntry: options.deferLinkedEntry }),
@@ -3873,6 +3879,23 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual([entryId]);
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
+    });
+
+    it('reads a cold route through its admitted connection before list scans settle', async () => {
+        const entryRef = { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' };
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        const scan = Promise.withResolvers<void>();
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true,
+            firstInitialScan: scan.promise, noScannedEntries: true });
+        try {
+            await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+            expect(currentHarness?.initialScanInstanceIds).toEqual([INSTANCE]);
+            expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
+        } finally {
+            await act(async () => { scan.resolve(); });
+        }
+        expect(currentHarness?.getEntryIds).toEqual(['17']);
+        expect(currentHarness?.continuedScanPages).toEqual([]);
     });
 
     it('keeps an explicit exact open independent of the remaining list continuation', async () => {
