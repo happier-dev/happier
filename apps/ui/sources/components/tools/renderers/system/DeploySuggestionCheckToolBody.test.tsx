@@ -135,7 +135,9 @@ describe('a Session agent’s checked deploy suggestion (deploy auto-mode U10, F
       expect(screen.findByTestId('deploy-suggestion-check'), screen.getTextContent()).not.toBeNull();
       const card = (index: number) => screen.findByTestId(`deploy-suggestion-check.card:suggestion-${index}`);
       expect([0, 1, 2].map((index) => card(index)?.props.accessibilityLabel ?? null))
-        .toEqual(['A bakery landing page, Recommended, Runs on Cloudflare Pages', 'Self-hosted analytics, Runs on Own server', null]);
+        // Each card names its short title, then its why line (lab autoRecs), then where it runs.
+        .toEqual(['A bakery landing page, Recommended, It fits what you described., Runs on Cloudflare Pages',
+          'Self-hosted analytics, It fits what you described., Runs on Own server', null]);
       expect([0, 1].map((index) => card(index)?.props.accessibilityState?.checked)).toEqual([true, false]);
       const text = screen.getTextContent();
       expect(text).toContain('Static website');
