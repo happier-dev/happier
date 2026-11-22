@@ -66,6 +66,7 @@ vi.mock('@/components/sessions/keyboardAvoidance', async () => {
             props.children,
             props.composer,
         ),
+        ComposerKeyboardScrollInset: () => null,
         useComposerKeyboardLayoutContext: () => createMockComposerKeyboardLayout(),
         useComposerAvailablePanelHeight: () => undefined,
     };
