@@ -2561,6 +2561,8 @@ Sessions can be started by:
 
 Daemon session spawning uses `registerCommonHandlers` to expose a controlled RPC surface (shell commands, file operations, search/diff helpers).
 
+In development builds, the regular daemon runner inherits the daemon's D-Bus session address and the tmux runner carries it in its essential window environment. Claude's Agent SDK and unified-terminal launches both use `buildClaudeSubprocessEnv`, which preserves that address. Additional session variables use the existing explicit spawn environment.
+
 In development builds, Claude's metadata producer supplies its explicit non-secret native account-directory override to `createSessionMetadata`, which publishes it in `nativeAgentEnvironmentV1`. `resolveSessionRuntimeSnapshot` restores it before spawn environment validation, with explicit incoming overrides taking precedence. `sessionNativeEnvironment` owns the allowlist also consumed by durable respawn descriptors; arbitrary shell variables and credentials are not copied into metadata. The shared factory does not infer native directories from another Agent's ambient environment. Older session metadata without this optional field retains its existing behavior.
 
 Before resuming a provider conversation under another Happier session id, daemon spawn admission checks matching tracked provider targets and resume ids through the existing process-presence classifier. A live or unverified sibling runner blocks the new launch; a positively absent runner does not. This prevents an old entry from starting another runner after a terminal restart creates a replacement entry.

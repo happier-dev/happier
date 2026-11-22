@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { getPriority } from 'node:os';
 
+import { DBUS_SESSION_BUS_ADDRESS_ENV_KEY } from '@/utils/env/linuxUserSessionEnv';
+
 export const HAPPIER_JOBS_SLICE_NAME = 'happier-jobs.slice';
 export const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
 export const HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES = 4 * 1024 * 1024 * 1024;
@@ -47,7 +49,7 @@ const defaultExecFile: SystemdUserResourceGovernorExecFile = (command, args, opt
 });
 
 function hasSystemdUserBus(environment: NodeJS.ProcessEnv): boolean {
-  return String(environment.DBUS_SESSION_BUS_ADDRESS ?? '').trim().length > 0;
+  return String(environment[DBUS_SESSION_BUS_ADDRESS_ENV_KEY] ?? '').trim().length > 0;
 }
 
 function parseSystemdProperties(raw: string): ReadonlyMap<string, string> {
