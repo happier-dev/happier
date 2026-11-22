@@ -58,10 +58,19 @@ const { t } = await import('@/text');
 
 // Use the canonical testkit's real AppShell modal host; Ask on UI is answered in place.
 const renderScreen = (children: React.ReactNode) => renderMountedCurrentUiContext(children, { withModalProvider: true });
+function confirmationControl(screen: Awaited<ReturnType<typeof renderScreen>>, decision: 'approve' | 'reject') {
+    const reviewed = `actions.confirmation-review.decision-${decision}`;
+    const alert = decision === 'approve' ? 'web-modal-confirm' : 'web-modal-cancel';
+    return screen.findByTestId(reviewed) ?? screen.findByTestId(alert);
+}
 async function confirm(screen: Awaited<ReturnType<typeof renderScreen>>, decision: 'approve' | 'reject' = 'approve') {
-    await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+    const control = await waitForHomeGovernance(() => {
+        const button = confirmationControl(screen, decision);
+        expect(button).toBeTruthy();
+        return button!;
+    });
     expect(harness.artifacts(serverId).list()).toEqual([]);
-    await screen.pressByTestIdAsync(decision === 'approve' ? 'web-modal-confirm' : 'web-modal-cancel');
+    await screen.pressByTestIdAsync(control.props.testID);
 }
 
 const settingsInput = z.object({ content: z.object({ t: z.literal('plain'), v: z.record(z.string(), z.unknown()) }), expectedVersion: z.number() });
@@ -176,7 +185,7 @@ describe('Usage settings UI Action admission', () => {
             expect(screen.getTextContent()).toContain(t('usage.board.coach.actionFailed'));
             expect(screen.findByTestId('usage-coach-approval-pending')).toBeNull();
         } else {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+            await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
             expect(screen.findByTestId(`${findingId}.error`)).toBeNull();
             expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'alert')).toHaveLength(0);
             await confirm(screen, 'reject');
@@ -311,7 +320,7 @@ describe('Usage settings UI Action admission', () => {
         // Ask is a native confirmation; cancellation must leave the persisted price unchanged.
         await act(async () => { screen.pressByTestId(`subscription.${operation}`); });
         if (requireApproval) {
-            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+            await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
             expect(record).toEqual(original);
             await confirm(screen, 'reject');
             await waitForHomeGovernance(() => expect(screen.findByTestId(`subscription.${operation}`)?.props.disabled).toBe(false));
@@ -363,7 +372,7 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<UsageModelPricesEditor slice={slice} serverId={serverId} testID="prices" />);
         const refreshId = 'prices.provenance.refresh';
         await act(async () => { screen.pressByTestId(refreshId); });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(refreshes).toBe(0);
         expect(screen.findByTestId(refreshId)?.props.disabled).toBe(true);
         await confirm(screen, 'reject');
@@ -413,7 +422,7 @@ describe('Usage settings UI Action admission', () => {
         await act(async () => { screen.pressByTestId('prices.model.qa-private-model.save'); });
         if (requireApproval) {
             expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({});
-            await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+            await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
             await confirm(screen, 'approve');
         } else expect(approvalFor('usage.modelPrices')).toBeUndefined();
         await act(async () => { await waitForHomeGovernance(() => expect(storage.getState().settings.usageModelPriceOverridesV1).toEqual({
@@ -455,13 +464,13 @@ describe('Usage settings UI Action admission', () => {
         await screen.pressByTestIdAsync('coach.configure-header');
         await screen.pressByTestIdAsync('coach.preferences.check.mcp_overhead');
         expect(storage.getState().settings.usageCoachPreferencesV1.disabledChecks).toEqual([]);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.disabledChecks).toEqual(['mcp_overhead']));
         const dropdown = screen.findAllByType(DropdownMenu).find(row => row.props.testID === 'coach.preferences.model')!;
         await act(async () => { dropdown.props.onOpenChange(true); });
         await act(async () => { dropdown.props.onSelect('complete_only'); });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('suggest_with_estimates');
         await confirm(screen);
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('complete_only'));
@@ -487,14 +496,14 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<UsageCapacityAlertsSettingsGroup />);
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-usage-alerts-pace')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-usage-alerts-pace');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(false);
         expect(raw.usageQuotaNotificationsV1).toMatchObject({ pace: false });
         await confirm(screen);
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageQuotaNotificationsV1.pace).toBe(true));
         expect(storage.getState().settings.usageQuotaNotificationsV1.depletion).toBe(false);
         await screen.pressByTestIdAsync('settings-usage-pace-target:75');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(storage.getState().settings.usagePacingTargetsV1).toEqual([]);
         await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usagePacingTargetsV1).toEqual([expect.objectContaining({ scope: { kind: 'personal' }, utilizationFraction: 0.75 })]));
@@ -513,7 +522,7 @@ describe('Usage settings UI Action admission', () => {
         expect(checked(`settings-usage-alerts-creditExpiry:${3 * 24 * 60 * 60 * 1000}`)).toBe(true);
         expect(checked('settings-usage-alerts-ending:off')).toBe(false);
         await screen.pressByTestIdAsync('settings-usage-alerts-almostOut:off');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageQuotaNotificationsV1.almostOutRemainingFraction).toBeNull());
         await screen.unmount();
@@ -524,7 +533,7 @@ describe('Usage settings UI Action admission', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('settings-session-providerUsageGauge-routingHints')).toBeTruthy());
         await screen.pressByTestIdAsync('settings-session-providerUsageGauge-routingHints');
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         await confirm(screen, 'reject');
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
         await screen.unmount();
@@ -570,7 +579,7 @@ describe('Usage settings UI Action admission', () => {
         const screen = await renderScreen(<InjectedAuthProvider credentials={credentials}><SessionModelRoutingHint entry={entry} machineId={null} /></InjectedAuthProvider>);
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy());
         await screen.pressByTestIdAsync('session-model-routing-hint.hide');
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(storage.getState().settings.usageRoutingHintsEnabled).toBe(true);
         await confirm(screen, 'reject');
         await waitForHomeGovernance(() => expect(screen.findByTestId('session-model-routing-hint.hide')).toBeTruthy());
@@ -649,7 +658,7 @@ describe('Usage settings UI Action admission', () => {
         expect(raw.usageNightHoursV1).toBeNull();
         await act(async () => { screen.findAllByType(DropdownMenu)[1]!.props.onSelect('7'); });
         expect(storage.getState().settings.usageNightHoursV1).toBeNull();
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         await confirm(screen, 'approve');
         await waitForHomeGovernance(() => expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 }));
         const retiredPress = screen.findAllByType(DropdownMenu)[0]!.props.onSelect;
@@ -666,7 +675,7 @@ describe('Usage settings UI Action admission', () => {
         storage.getState().applySettings(settingsParse(raw), ++version);
         const screen = await renderNight();
         await act(async () => { screen.findAllByType(DropdownMenu)[0]!.props.onSelect('clear'); });
-        await waitForHomeGovernance(() => expect(screen.findByTestId('web-modal-confirm')).toBeTruthy());
+        await waitForHomeGovernance(() => expect(confirmationControl(screen, 'approve')).toBeTruthy());
         expect(storage.getState().settings.usageNightHoursV1).toEqual({ startHour: 23, endHour: 7 });
         await confirm(screen, 'reject');
         await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu).map(control => control.props.selectedId)).toEqual(['23', '7']));
