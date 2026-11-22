@@ -11,14 +11,20 @@ import { createCliActionExecutorFromCredentials } from './createCliActionExecuto
 
 afterEach(() => vi.restoreAllMocks());
 
-it('lets the authenticated RPC Account reject its plugin approval while refusing a different Account', async () => {
-  await withConfiguredDaemonTestHome({ prefix: 'workflow-rpc-approval-' }, async () => {
+type ApprovalHome = Readonly<{ home: string; serverId: string; serverIdentityId: string;
+  alice: ReturnType<typeof credentialsFor>; bob: ReturnType<typeof credentialsFor>; artifactId: string;
+  features: ReturnType<typeof FeaturesResponseSchema.parse>; writePaths: string[];
+  store: ReturnType<typeof createCliApprovalsArtifactStore> }>;
+const credentialsFor = (accountId: string) => ({ token: `header.${Buffer.from(JSON.stringify({ sub: accountId,
+  tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
+  encryption: null, credentialProvenance: 'stored_session' as const });
+
+/** Alice's open plugin approval on a Home whose HTTP persistence is the only substituted boundary. */
+async function withApprovalHome(prefix: string, run: (approvalHome: ApprovalHome) => Promise<void>) {
+  await withConfiguredDaemonTestHome({ prefix }, async () => {
     const home = 'http://rpc-approval.test';
     const serverIdentityId = 'srv_rpc-approval';
     const serverId = configuration.activeServerId;
-    const credentialsFor = (accountId: string) => ({ token: `header.${Buffer.from(JSON.stringify({ sub: accountId,
-      tokenEpoch: 0, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
-      encryption: null, credentialProvenance: 'stored_session' as const });
     const alice = credentialsFor('alice');
     const bob = credentialsFor('bob');
     const rows = new Map<string, { id: string } & Record<string, unknown>>();
@@ -84,18 +90,40 @@ it('lets the authenticated RPC Account reject its plugin approval while refusing
           caller: { kind: 'session', sessionId: 'requester-session', starterDepth: 0, turnDepth: 0 },
           accountId: 'alice', serverId, serverIdentityId, actionId: 'action.invoke', requestId: 'proposal' },
       }) });
-      const executor = (credentials: typeof alice) => createCliActionExecutorFromCredentials({ credentials, serverId,
-        serverApiUrl: home, serverIdentityId, readCredentials: async () => credentials,
-        admittedAccountEncryptionMode: 'plain',
-        resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }) });
-      const context = { surface: 'rpc' as const, authority: 'present_user' as const,
-        actionCaller: { kind: 'host' as const } };
-      const denied = await executor(bob).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
-      expect.soft(denied).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
-      expect(await store.targetActionApprovalsGet({ artifactId: created.artifactId })).toMatchObject({ status: 'open' });
-      const decided = await executor(alice).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
-      expect(decided, JSON.stringify({ decided, writePaths })).toMatchObject({ ok: true, result: { status: 'rejected' } });
-      expect(await store.targetActionApprovalsGet({ artifactId: created.artifactId })).toMatchObject({ status: 'rejected' });
+      await run({ home, serverId, serverIdentityId, alice, bob, artifactId: created.artifactId, features, writePaths, store });
     });
+  });
+}
+
+it('lets the authenticated RPC Account reject its plugin approval while refusing a different Account', async () => {
+  await withApprovalHome('workflow-rpc-approval-', async ({ home, serverId, serverIdentityId, alice, bob, artifactId, features, writePaths, store }) => {
+    const created = { artifactId };
+    const executor = (credentials: typeof alice) => createCliActionExecutorFromCredentials({ credentials, serverId,
+      serverApiUrl: home, serverIdentityId, readCredentials: async () => credentials,
+      admittedAccountEncryptionMode: 'plain',
+      resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }) });
+    const context = { surface: 'rpc' as const, authority: 'present_user' as const,
+      actionCaller: { kind: 'host' as const } };
+    const denied = await executor(bob).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
+    expect.soft(denied).toMatchObject({ ok: false, errorCode: 'approval_not_found' });
+    expect(await store.targetActionApprovalsGet({ artifactId: created.artifactId })).toMatchObject({ status: 'open' });
+    const decided = await executor(alice).execute('approval.request.decide', { artifactId: created.artifactId, decision: 'reject' }, context);
+    expect(decided, JSON.stringify({ decided, writePaths })).toMatchObject({ ok: true, result: { status: 'rejected' } });
+    expect(await store.targetActionApprovalsGet({ artifactId: created.artifactId })).toMatchObject({ status: 'rejected' });
+  });
+});
+
+it('reads an Account approval through an external CLI client without a daemon, as decide does', async () => {
+  await withApprovalHome('cli-approval-read-no-daemon-', async ({ home, serverId, serverIdentityId, alice, bob, artifactId, features }) => {
+    const executor = (credentials: typeof alice) => createCliActionExecutorFromCredentials({ credentials, serverId,
+      serverApiUrl: home, serverIdentityId, readCredentials: async () => credentials, externalActionClient: true,
+      admittedAccountEncryptionMode: 'plain',
+      resolveServerFeaturesSnapshot: async () => ({ status: 'ready', provenance: 'authenticated', features }) });
+    const context = { surface: 'cli' as const, authority: 'present_user' as const, actionRequestId: 'read-approval' };
+    // This configured Home has no daemon for either Account.
+    expect(await executor(alice).execute('approval.request.get', { artifactId }, context))
+      .toMatchObject({ ok: true, result: { artifactId, request: { status: 'open' } } });
+    expect(await executor(bob).execute('approval.request.get', { artifactId }, context))
+      .toMatchObject({ ok: false, errorCode: 'approval_not_found' });
   });
 });
