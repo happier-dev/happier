@@ -22,6 +22,7 @@ import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerpr
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
 import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import * as storedAppInput from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
     databaseActionLocalIdV1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
@@ -1148,11 +1149,17 @@ describe('deployment scoped read transport', () => {
         homes.answer(serverId, root, { body: { ok: true,
             items: [environmentHeader, unconfigured.environment, notNeeded.environment], runtimeTargetLinks: candidateRuntimeLinks, nextCursor: null } });
         const beforeMembership = homes.requests.length;
-        expect(await transport.listEnvironments(scope, {}, options)).toMatchObject({ ok: true, value: { items: [
-            { environment: environmentHeader, backupConfigured: true, previewTemplateConfigured: false },
-            { environment: unconfigured.environment, backupConfigured: false, previewTemplateConfigured: true, databaseMoveCandidate: true },
-            { environment: notNeeded.environment, backupConfigured: false, previewTemplateConfigured: false, databaseMoveCandidate: false },
-        ] } });
+        const parseCompose = vi.spyOn(storedAppInput, 'parseDeploymentComposeSourceV1');
+        try {
+            const page = await transport.listEnvironments(scope, {}, options);
+            expect(page).toMatchObject({ ok: true, value: { items: [
+                { environment: environmentHeader, backupConfigured: true, previewTemplateConfigured: false },
+                { environment: unconfigured.environment, backupConfigured: false, previewTemplateConfigured: true },
+                { environment: notNeeded.environment, backupConfigured: false, previewTemplateConfigured: false },
+            ] } });
+            expect(parseCompose).not.toHaveBeenCalled();
+            for (const item of pageItems(page)) expect(item).not.toHaveProperty('databaseMoveCandidate');
+        } finally { parseCompose.mockRestore(); }
         const membershipRequests = homes.requests.slice(beforeMembership);
         expect(membershipRequests.filter(request => request.path.split('?')[0] === root)).toHaveLength(1);
         expect(membershipRequests.filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
@@ -1160,6 +1167,21 @@ describe('deployment scoped read transport', () => {
                 unconfigured.environment.contentArtifactId, notNeeded.environment.contentArtifactId] }]);
         expect(membershipRequests.filter(request => request.path.includes('/backups')
             || request.path.startsWith(`${root}/`))).toEqual([]);
+        const beforeMove = homes.requests.length;
+        const parseMoveCompose = vi.spyOn(storedAppInput, 'parseDeploymentComposeSourceV1');
+        try {
+            const movePage = await transport.listEnvironments(scope, { includeDatabaseMoveCandidates: true }, options);
+            expect(pageItems(movePage).slice(1)).toMatchObject([
+                { environment: unconfigured.environment, databaseMoveCandidate: true },
+                { environment: notNeeded.environment, databaseMoveCandidate: false },
+            ]);
+            expect(parseMoveCompose).toHaveBeenCalledTimes(2);
+        } finally { parseMoveCompose.mockRestore(); }
+        const movePaths = homes.requests.slice(beforeMove)
+            .map(request => new URL(request.path, 'https://deployments-ui.test'))
+            .filter(path => path.pathname.startsWith('/v1/deployments/') || path.pathname.startsWith('/v1/artifacts/'));
+        expect(movePaths.map(path => path.pathname)).toEqual([root, '/v1/artifacts/read']);
+        expect(movePaths[0]?.searchParams.has('includeDatabaseMoveCandidates')).toBe(false);
         for (const candidate of [unconfigured, notNeeded]) {
             homes.answer(serverId, `${root}/${candidate.environment.id}`, { body: { ok: true,
                 environment: candidate.environment, targetLinks: [candidateRuntimeLinks.find(link => link.environmentId === candidate.environment.id)!] } });

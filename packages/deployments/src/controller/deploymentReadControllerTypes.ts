@@ -73,6 +73,8 @@ export type DeploymentCollectionQueryV1 = Readonly<Omit<DeploymentEnvironmentLis
     'serverId' | 'projectSourceId' | 'projection' | 'environmentIds' | 'previewPullRequestIds'> & {
     /** A Resource observes all matching children, independently of page navigation. */
     allPages?: true;
+    /** Only the open database Move chooser needs candidate facts. */
+    includeDatabaseMoveCandidates?: true;
     /** Exact visible owner-header demand. Internally [] means no demand. */
     environmentIds?: readonly string[];
     previewPullRequestIds?: readonly string[];

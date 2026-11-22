@@ -320,6 +320,7 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   title: string;
   /** Which Environments can be the destination: the caller's capability rule (and never the source itself). */
   eligible: (item: EnvironmentItem) => boolean;
+  includeDatabaseMoveCandidates?: true;
   selectedId: string | null;
   onSelect: (item: EnvironmentItem) => void;
   disabled: boolean;
@@ -328,7 +329,8 @@ export function DeploymentEnvironmentChooser(props: Readonly<{
   emptyBody: string;
 }>) {
   const { theme } = useUnistyles();
-  const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true });
+  const collection = useDeploymentCollection(props.controller, { mounted: true, visible: true, focused: true },
+    { includeDatabaseMoveCandidates: props.includeDatabaseMoveCandidates });
   const items = (collection.snapshot.value?.items ?? []).filter(props.eligible);
   const rows = useDeploymentEnvironmentRowSelection(items, row => row.environment.id, props.onSelect);
   const failure = collection.snapshot.failure;

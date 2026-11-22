@@ -147,7 +147,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         return { ok: true as const, value: detail };
     };
     const readEnvironmentPageMetadata = async (scope: DeploymentReadScopeV1,
-        query: Parameters<DeploymentReadTransportV1['listEnvironments']>[1], options: DeploymentReadOptionsV1) => {
+        query: Omit<Parameters<DeploymentReadTransportV1['listEnvironments']>[1], 'includeDatabaseMoveCandidates'>,
+        options: DeploymentReadOptionsV1) => {
         const parsed = DeploymentEnvironmentListResultV1Schema.safeParse(await execute('deployments.environments.list',
             { ...home, projectSourceId: scope.projectSourceId, ...query }, { signal: options.signal }));
         if (!parsed.success) return failure('invalid_response');
@@ -393,7 +394,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         listEnvironments: (scope, query, options): Promise<DeploymentReadResultV1<DeploymentEnvironmentCollectionV1>> => query.environmentIds?.length === 0 || query.previewPullRequestIds?.length === 0
             ? Promise.resolve({ ok: true, value: { items: [], nextCursor: null } })
             : scoped(scope, options, async account => {
-            const metadata = await readEnvironmentPageMetadata(scope, query, options);
+            const { includeDatabaseMoveCandidates, ...metadataQuery } = query;
+            const metadata = await readEnvironmentPageMetadata(scope, metadataQuery, options);
             if (!metadata.ok) return metadata;
             const page = metadata.value;
             const environmentsById = new Map(page.items.map(row => [row.id, row]));
@@ -480,7 +482,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 items.push({ environment, title: label.title, projectSourceName,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
-                        databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink),
+                        ...(includeDatabaseMoveCandidates
+                            ? { databaseMoveCandidate: await isDeploymentDatabaseMoveCandidateV1(opened.content, runtimeTargetLink) } : {}),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined,
                         ...(opened.content.template ? { catalogTemplate: { sourceId: opened.content.template.templateRef.sourceId,
                             itemId: opened.content.template.templateRef.itemId, version: opened.content.template.templateRef.version } } : {}) } : {}),

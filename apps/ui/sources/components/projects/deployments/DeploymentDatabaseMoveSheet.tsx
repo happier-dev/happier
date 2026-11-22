@@ -133,7 +133,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   return <ListPresentationProvider value="page" pageInsets="contained">
     <View testID="project-deployments.move" style={deploymentSheetStyles.body}>
       <Text style={deploymentSheetStyles.lead}>{t('projects.deployments.databaseMoveLead')}</Text>
-      <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination"
+      <DeploymentEnvironmentChooser controller={controller} testID="project-deployments.move.destination" includeDatabaseMoveCandidates
         title={t('projects.deployments.databaseMoveDestination')} selectedId={selectedId} onSelect={select} disabled={busy}
         eligible={row => row.environment.id !== props.source.environment.id && row.environment.capabilities.manage
           && row.databaseMoveCandidate === true}

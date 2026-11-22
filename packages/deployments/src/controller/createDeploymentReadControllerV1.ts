@@ -445,7 +445,7 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const key = (cursor: string | undefined, option?: 'includeTotal') => JSON.stringify(['collection', cursor ?? null,
                 filters.machineId ?? null, environmentIds ?? null, filters.previewRepositoryId ?? null, previewPullRequestIds ?? null,
                 filters.previewTemplateEnvironmentId ?? null, filters.previewRepository ?? null, filters.allPages ?? false, filters.limit ?? null,
-                filters.includeDeleted ?? false, filters.includeTotal ?? option ?? false]);
+                filters.includeDeleted ?? false, filters.includeTotal ?? option ?? false, filters.includeDatabaseMoveCandidates ?? false]);
             return createDeploymentReadPageLease<DeploymentEnvironmentReadCollectionV1, 'includeTotal'>({
                 initialCursor, demand,
                 nextCursor: (cursor, option) => entries.get(key(cursor, option))?.nextCursor ?? null,
