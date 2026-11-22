@@ -9,9 +9,11 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { storage } from '@/sync/domains/state/storageStore';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
+import { setActiveServer } from '@/sync/domains/server/serverRuntime';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createDeferred, createMachineFixture, flushHookEffects, PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
@@ -53,12 +55,14 @@ const projection = PluginProjectionV2Schema.parse({ ...PLUGIN_PROVIDER_DAEMON_PR
 beforeEach(async () => {
     await homes.reset();
     serverId = resolveServerProfileScopeIdForIdentifier(await homes.addHome({ serverUrl: 'https://usage-outside.test',
-        serverIdentityId: 'srv_usage_outside', name: 'Usage Home', accountId: 'usage-account' }));
+        serverIdentityId: 'srv_usage_outside', name: 'Usage Home', accountId: 'usage-account', currentAccount: true }));
     vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockImplementation(async url => {
         const token = homes.findByServerUrl(url)?.token;
         return token ? { token } : null;
     });
+    await setActiveServer({ serverId });
     const machine = createMachineFixture({ id: 'machine-1', activeAt: Date.now() });
+    publishMachineActivityForTest([machine]);
     const scope = { serverId, accountId: 'usage-account' };
     storage.setState(state => ({ isDataReady: true, settingsVersion: 1, profile: { ...state.profile, id: scope.accountId },
         profileScope: scope, settingsScope: scope, machines: { [machine.id]: machine },
@@ -222,10 +226,12 @@ describe('Usage shared outside-session candidates', () => {
         const screen = await renderScreen(<UsageOutsideSessions serverId={serverId} query={query} testID="work.outside" />);
         const found = 'work.outside.machine-1.found';
         const stopped = 'work.outside.machine-1.stopped';
-        await flushHookEffects({ cycles: 20 });
-        expect(rpc.mock.calls.map(([call]) => ({ method: call.method, machineId: call.machineId })))
-            .toContainEqual({ method: RPC_METHODS.USAGE_SOURCES_DISCOVER, machineId: 'machine-1' });
-        await waitForHomeGovernance(async () => { await flushHookEffects(); expect(screen.findByTestId('work.outside.browse')).toBeTruthy(); });
+        await waitForHomeGovernance(async () => {
+            await flushHookEffects();
+            expect(rpc.mock.calls.map(([call]) => ({ method: call.method, machineId: call.machineId })))
+                .toContainEqual({ method: RPC_METHODS.USAGE_SOURCES_DISCOVER, machineId: 'machine-1' });
+            expect(screen.findByTestId('work.outside.browse')).toBeTruthy();
+        });
         // One affordance for the page, never one identical button per Source.
         expect(screen.findByTestId(`${found}.browse`)).toBeNull();
         expect(screen.findByTestId(`${stopped}.browse`)).toBeNull();
