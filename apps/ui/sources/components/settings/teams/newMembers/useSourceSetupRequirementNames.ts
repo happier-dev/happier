@@ -20,7 +20,7 @@ const FAILED: SourceSetupRequirementRead = Object.freeze({ status: 'failed' });
 /**
  * The env requirement names each listed Source's published setup declares, read through the Source owner's
  * `projects.sources.setupRequirements` Action: one read per Source shown, again only when that Source's revision
- * changes or after a failed read. Names only; no manifest is parsed here and no value is ever returned.
+ * changes or when the person retries a failed read. Names only; no manifest is parsed here.
  */
 export function useSourceSetupRequirementNames(
   scope: ServerAccountScope,
@@ -50,11 +50,7 @@ export function useSourceSetupRequirementNames(
     if (!enabled || !request) return;
     const due = sources.filter((source) => {
       const entry = known.current.get(source.id);
-      return (
-        !entry ||
-        entry.revision !== source.revision ||
-        entry.read.status === 'failed'
-      );
+      return !entry || entry.revision !== source.revision;
     });
     if (due.length === 0) return;
     const settle = (
@@ -104,6 +100,13 @@ export function useSourceSetupRequirementNames(
     setEntries(new Map(known.current));
   }, [enabled, execute, serverId, accountId, sources, attempt]);
 
-  const retry = React.useCallback(() => setAttempt((value) => value + 1), []);
+  const retry = React.useCallback(() => {
+    for (const source of sources) {
+      if (known.current.get(source.id)?.read.status === 'failed') {
+        known.current.delete(source.id);
+      }
+    }
+    setAttempt((value) => value + 1);
+  }, [sources]);
   return { entries, retry };
 }

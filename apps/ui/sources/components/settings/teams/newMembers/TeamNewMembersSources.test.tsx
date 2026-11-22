@@ -386,3 +386,39 @@ it('names the keys each listed repository\'s published setup needs, reading each
   expect(screen.findByTestId('team-new-members-keys-empty')).toBeNull();
   expect([...sourceReads].sort()).toEqual(['source-docs', 'source-infra', 'source-web']);
 });
+
+it('refreshes a changed Source without retrying an unchanged failed Source until asked', async () => {
+  const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
+  const { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
+  let currentInfra = infra;
+  let webAvailable = false;
+  const sourceReads: string[] = [];
+  const { screen, serverId } = await renderNewMembers([web, infra], true, undefined, (id) => {
+    account.home.answer(id, 'GET /v1/projects/sources/source-web', { select: () => {
+      sourceReads.push(web.id);
+      return webAvailable ? { body: { ok: true, source: web, canManage: true } } : { status: 503, body: {} };
+    } });
+    account.home.answer(id, 'GET /v1/projects/sources/source-infra', { select: () => {
+      sourceReads.push(infra.id);
+      return { body: { ok: true, source: currentInfra, canManage: true } };
+    } });
+  });
+  const retry = 'team-new-members-keys-requirements-failed-retry';
+  await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).not.toBeNull());
+  expect([...sourceReads].sort()).toEqual([infra.id, web.id]);
+
+  currentInfra = { ...infra, revision: infra.revision + 1, name: 'Infrastructure' };
+  webAvailable = true;
+  account.home.answer(serverId, '/v1/projects/sources', {
+    body: { ok: true, sources: [web, currentInfra], coverage: { complete: true, nextCursor: null } },
+  });
+  await act(async () => publishHomeAccountChange(serverId, [PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1]));
+  await waitForHomeGovernance(() => expect(sourceReads.filter(id => id === infra.id)).toHaveLength(2));
+  expect(sourceReads.filter(id => id === web.id)).toHaveLength(1);
+  expect(screen.findByTestId(retry)).not.toBeNull();
+
+  await screen.pressByTestIdAsync(retry);
+  await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).toBeNull());
+  expect(sourceReads.filter(id => id === web.id)).toHaveLength(2);
+  expect(sourceReads.filter(id => id === infra.id)).toHaveLength(2);
+});
