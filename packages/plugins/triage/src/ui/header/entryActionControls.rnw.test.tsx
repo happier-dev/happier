@@ -171,6 +171,66 @@ describe('the mounted configured entry action controls', () => {
     expect(requests[1]).toMatchObject({ action: requests[0]!.action, destinationChoice: 'existingSession' });
   });
 
+  it('names the settled agent on a row-opened pull request from first paint, while its workspace still reads (F10)', async () => {
+    // Opening a row: the next pull request's review preparation is still pending at first paint. The primary already
+    // names the agent the last entry settled on, so "Review with Claude Code" never draws as "Review" and grows,
+    // and Ask and ⋯ beside it never move when the preparation and the default agent land.
+    let entryId = 'pr-a';
+    let preparation: 'ready' | 'pending' = 'ready';
+    let holdReads = false;
+    const held: Array<() => void> = [];
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId, kindId: 'pull-request' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        workflowSubject="pullRequest"
+        viewerIsAuthor={false}
+        reviewPreparation={preparation}
+        onAction={() => null}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-row-width', mountNonce: 'fixture-mount-row-width' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture(),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { executeAction: async ({ action }) => {
+        const id = typeof action === 'string' ? action : action.localId;
+        if (holdReads) await new Promise<void>((resolve) => { held.push(resolve); });
+        if (id === 'agents.backends.list') return { defaultTargetKey: 'backend:claude', items: [{
+          targetKey: 'backend:claude', label: 'Claude Code', enabled: true,
+          identity: { pluginId: 'happier.claude', localId: 'claude' },
+        }] } as never;
+        if (id === 'projects.list') return { items: [], truncated: false } as never;
+        throw new Error(`Unexpected Action ${id}`);
+      } },
+    });
+    mounted.push(fixture);
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    await expect(fixture.getByRole('button', { name: 'Review with Claude Code' })).resolves.toBeDefined();
+    const row = () => Array.from(document.querySelectorAll('button, [role="button"]'))
+      .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '').filter((name) => name !== '');
+    const settledRow = row();
+
+    // The row opens the next pull request: its workspace and its own default agent both still read.
+    holdReads = true;
+    entryId = 'pr-b';
+    preparation = 'pending';
+    await act(async () => { await fixture.updateSurface(createSurfaceContextFixture()); });
+    expect(row()).toEqual(settledRow);
+
+    preparation = 'ready';
+    holdReads = false;
+    await act(async () => {
+      for (const release of held.splice(0)) release();
+      await fixture.updateSurface(createSurfaceContextFixture());
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(row()).toEqual(settledRow);
+  });
+
   it('dispatches the exact formal review action that was pressed', async () => {
     const requests: TriageEntryActionRequestV1[] = [];
     const actions = [

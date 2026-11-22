@@ -340,8 +340,11 @@ export function TriageEntryActionControls(
     || isTriageActionBlockedV1(agentPrimary, reviewPreparation) ? null
     : { action: agentPrimary, entryRef: target.entryRef, sourceInstanceId: target.sourceInstanceId };
   // Who the split's press starts with, and the recent Sessions its caret lists while open (the choices' read owner).
+  // Read from the primary agent action itself, not from whether it can be pressed yet: who it starts with depends on
+  // the action alone, so a row-opened pull request whose workspace still reads names its agent from first paint
+  // instead of drawing "Review" and growing once the workspace is ready (F10).
   const startChoices = useTriageEntrySessionStartChoices({
-    action: agentRequest?.action ?? null,
+    action: agentPrimary?.target.kind === 'agent' ? agentPrimary : null,
     ...(props.repository === undefined ? {} : { repository: props.repository }),
     menuOpen: startOpen,
   });
