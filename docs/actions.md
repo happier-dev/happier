@@ -5772,13 +5772,18 @@ attachments and has no Artifact limit. An Account's inventory charges
 Discussion attachments to the current Discussion owner.
 
 The summary includes the measured total, per-kind sizes, and the nullable
-Artifact limit. A null size means a kind has at least one unmeasured item.
+Artifact limit. Paged inventory also reports `kinds[kind].itemCount` for
+the full scope, including items with an unmeasured size. A null size means
+a kind has at least one unmeasured item. Earlier paged responses may omit
+`itemCount`.
 Profile picture, avatar and Team logo uploads record the normalized bytes
 written. Older images remain unknown where their size was never retained.
 Empty kinds count as zero. The optional `kinds` filter selects page items and
 leaves the scope summary intact. Items are sorted largest first, with unknown
 sizes last. Request the next page with the returned cursor. Rows carry an ID,
 kind, size, storage location and date when available. Clients supply names.
+Discussion attachment locations include the exact Discussion, message and
+attachment IDs for the client to resolve names in one batched message read.
 The existing HTTP usage projection remains available without `inventory=true`.
 
 `artifact.list` accepts `sort: 'size_desc'`. Its `storedSizeBytes` covers the

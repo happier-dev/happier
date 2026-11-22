@@ -4,6 +4,7 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
+import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { registerDiscussionRoutes } from './registerDiscussionRoutes';
 import * as privateFiles from '@/storage/blob/files';
 import tweetnacl from 'tweetnacl';
@@ -578,6 +579,35 @@ export function discussionAttachmentContracts(): void {
             expect(await openSessionDataKeyBundleV0(decodeBase64(message.content.c), dataKey))
                 .toMatchObject({ status: 'authenticated', value: { parts: [{ t: 'attachment',
                     attachment: { id: item.location.attachmentId, name: 'private.txt' } }] } });
+            const selection = { discussionId: item.location.discussionId, messageId: item.location.messageId };
+            const other = await db.discussion.create({ data: {
+                ownerAccountId: owner.id, encryptionMode: 'e2ee',
+                dataEncryptionKey: decodeBase64(input.dataEncryptionKey!),
+                titleContent: input.titleContent, creationLocalId: randomUUID(), creationEqualityEvidenceV1: {},
+                lastMessageAt: new Date(), messageSeq: 1,
+            } });
+            const otherMessage = await db.discussionMessage.create({ data: {
+                discussionId: other.id, authorAccountId: owner.id, seq: 1, localId: randomUUID(),
+                content: input.firstMessage.content, requestEqualityEvidenceV1: {},
+            } });
+            const batch = () => app.inject({ method: 'POST', url: DISCUSSION_HTTP_PATHS_V1.exactMessages, payload: { messages: [
+                selection, selection, { discussionId: other.id, messageId: otherMessage.id },
+                { discussionId: other.id, messageId: selection.messageId },
+            ] } });
+            let messageReads = 0;
+            const stop = observePrismaRequests(db, { before: ({ model, action }) => {
+                if (model === 'DiscussionMessage' && (action === 'findMany' || action === 'findFirst')) messageReads++;
+            } });
+            const batched = await batch().finally(stop);
+            expect.soft(batched.statusCode, batched.body).toBe(200);
+            expect.soft(messageReads).toBe(1);
+            expect.soft(batched.json().discussions).toEqual(expect.arrayContaining([
+                { discussionId: selection.discussionId, titleContent: input.titleContent,
+                    keyContext: selected.json().keyContext, messages: [message] },
+                expect.objectContaining({ discussionId: other.id, messages: [expect.objectContaining({ id: otherMessage.id })] }),
+            ]));
+            expect.soft(batched.json().discussions).toHaveLength(2);
+            expect.soft(batched.body).not.toMatch(/private\.txt|Private files/);
             const changedBindings = structuredClone(metadata);
             const otherBlobId = randomUUID();
             changedBindings.input.firstMessage.attachments![0]!.blobId = otherBlobId;
@@ -599,6 +629,9 @@ export function discussionAttachmentContracts(): void {
             const locked = await app.inject({ url: exactMessageUrl, headers: keyContextHeaders });
             expect(locked.statusCode, locked.body).toBe(200);
             expect(locked.json().keyContext).toEqual({ encryptionMode: 'e2ee', keyReadiness: false, dataEncryptionKey: null });
+            const unauthorizedBatch = await batch();
+            expect.soft(unauthorizedBatch.statusCode, unauthorizedBatch.body).toBe(200);
+            expect.soft(unauthorizedBatch.json().discussions).toEqual([]);
             expect((await app.inject({ method: 'GET', url })).json()).toEqual({ error: 'discussion_content_unavailable' });
         } finally {
             await app.close();

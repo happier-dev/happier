@@ -38,7 +38,7 @@ export function validateDiscussionStoredContent(
     return admitted.ok ? null : admitted.error;
 }
 
-function admitDiscussionStoredContent(
+export function admitDiscussionStoredContent(
     value: unknown,
     storageMode: 'plain' | 'e2ee',
     semanticKind: 'title' | 'message',

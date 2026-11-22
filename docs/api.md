@@ -1733,6 +1733,15 @@ composed flow; missing or disabled support fails closed as `discussions_unavaila
 This is an in-progress 0.3 development contract, not a public release or a claim of completed
 package, database-reconciliation or loaded-runtime validation.
 
+`POST /v1/discussions/messages/read` accepts `{ messages: [{ discussionId, messageId }] }`
+from a signed-in Account. It returns requested messages grouped by Discussion with
+the title envelope and the viewer's exact-message `keyContext`. Each group contains
+only the requested messages the viewer can open. Missing, unreadable and locked
+matches are omitted. For encrypted Discussions the client opens the returned
+title and message envelopes locally. A storage page uses its location IDs to send
+at most one batch. Single-Discussion history and individual exact reads use
+`GET /v1/discussions/:discussionId/messages`.
+
 Discussion AccountChange hints use the closed shape
 `{v:1, discussions:true, changes:{readState?:true, resource?:true}}`, with at least
 one flag. Private cursor writes emit `readState`; messages, access, proposal decisions

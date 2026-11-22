@@ -156,9 +156,16 @@ describe('Account storage and admitted Artifact page', () => {
                 })) });
                 const first = await app.inject({ url: pagedPath, headers });
                 expect(first.statusCode, first.body).toBe(200);
+                expect.soft(first.json().kinds).toMatchObject({
+                    accountPets: { itemCount: 26 },
+                    discussionAttachments: { itemCount: 1 },
+                    profilePictures: { itemCount: 1, storedSizeBytes: null },
+                    teamLogos: { itemCount: 0, storedSizeBytes: 0 },
+                });
                 expect(first.json().page.items.map((item: { storedSizeBytes: number }) => item.storedSizeBytes))
                     .toEqual(Array.from({ length: 10 }, (_, index) => 124 - index));
                 const second = await app.inject({ url: `${pagedPath}&cursor=${first.json().page.nextCursor}`, headers });
+                expect.soft(second.json().kinds).toEqual(first.json().kinds);
                 expect(second.json().page.items.map((item: { storedSizeBytes: number }) => item.storedSizeBytes))
                     .toEqual(Array.from({ length: 10 }, (_, index) => 114 - index));
                 expect(databasePages).toEqual([1, 11, 11]);
@@ -168,6 +175,7 @@ describe('Account storage and admitted Artifact page', () => {
             expect((await app.inject({ url: scopePath + discussionIds[1], headers })).statusCode).toBe(404);
             const scoped = await app.inject({ url: scopePath + discussionIds[0], headers });
             expect(scoped.statusCode, scoped.body).toBe(200);
+            expect.soft(scoped.json().kinds).toEqual({ discussionAttachments: { itemCount: 1, storedSizeBytes: 41 } });
             expect(scoped.json()).toMatchObject({ totalBytes: 41, artifactLimitBytes: null,
                 page: { items: [{ kind: 'discussionAttachments', storedSizeBytes: 41,
                     location: { kind: 'discussion', discussionId: discussionIds[0] } }] } });

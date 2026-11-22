@@ -197,7 +197,10 @@ export const StorageInventoryV1Schema = lazyZodSchema(() => {
     }),
     artifactLimitBytes: z.nullable(bytes),
     unmeasuredKinds: z.array(z.enum(['profilePictures', 'avatars', 'teamLogos'])),
-    kinds: z.optional(z.partialRecord(StorageInventoryKindV1Schema, z.strictObject({ storedSizeBytes: z.nullable(bytes) }))),
+    kinds: z.optional(z.partialRecord(StorageInventoryKindV1Schema, z.strictObject({
+      storedSizeBytes: z.nullable(bytes),
+      itemCount: z.optional(bytes),
+    }))),
     page: z.optional(z.strictObject({
       items: z.array(StorageInventoryItemV1Schema),
       nextCursor: z.optional(z.string().check(z.minLength(1))),

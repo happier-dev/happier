@@ -198,10 +198,16 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
             AND tm.${name("role")} = 'owner' AND t.${name("logo")} IS NOT NULL
         )`;
     const inventory = discussionId ? sql.sql`WITH inventory AS (${discussionRows})` : accountRows;
-    const rows = await tx.$queryRaw<Array<{ kind: StorageInventoryKindV1; measuredBytes: ByteCount; unknown: ByteCount }>>(sql.sql`
+    const rows = await tx.$queryRaw<Array<{
+        kind: StorageInventoryKindV1;
+        measuredBytes: ByteCount;
+        unknown: ByteCount;
+        itemCount: ByteCount;
+    }>>(sql.sql`
         ${inventory}
         SELECT kind, COALESCE(SUM(${name("storedSizeBytes")}), 0) AS ${name("measuredBytes")},
-            COUNT(*) - COUNT(${name("storedSizeBytes")}) AS unknown
+            COUNT(*) - COUNT(${name("storedSizeBytes")}) AS unknown,
+            COUNT(*) AS ${name("itemCount")}
         FROM inventory GROUP BY kind`);
     const kinds: NonNullable<StorageInventoryV1['kinds']> = {};
     const byKind: StorageInventoryV1['byKind'] = {
@@ -215,7 +221,7 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
         const row = byRowKind.get(kind);
         const bytes = storageSize(row?.measuredBytes ?? 0);
         const unknown = storageSize(row?.unknown ?? 0) > 0;
-        kinds[kind] = { storedSizeBytes: unknown ? null : bytes };
+        kinds[kind] = { storedSizeBytes: unknown ? null : bytes, itemCount: storageSize(row?.itemCount ?? 0) };
         totalBytes += bytes;
         if (kind === 'artifactOldVersions') byKind.artifacts += bytes;
         else if (kind === 'profilePictures' || kind === 'avatars' || kind === 'teamLogos') {

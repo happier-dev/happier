@@ -1,5 +1,5 @@
 import { DISCUSSION_HTTP_PATHS_V1, DISCUSSION_NOT_TRACKED_CODE_V1, DiscussionCreateRequestV1Schema, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListQueryV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesQueryV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostRequestV1Schema, DiscussionPostResponseV1Schema, DiscussionReadRequestV1Schema, DiscussionReadResponseV1Schema, DiscussionRenameRequestV1Schema, DiscussionRouteDiscussionParamsV1Schema, isDiscussionRequestWithinTransportBudgetV1 } from '@happier-dev/protocol/discussions/api';
-import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DiscussionExactMessagesRequestV1Schema, DiscussionExactMessagesResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
@@ -18,6 +18,7 @@ import {
     getDiscussion,
     listDiscussions,
     readDiscussionMessages,
+    readExactDiscussionMessages,
 } from "@/app/discussions/queries";
 import { setDiscussionReadCursor } from "@/app/discussions/readState";
 import type { DiscussionFailureCode } from "@/app/discussions/serviceTypes";
@@ -319,6 +320,21 @@ export function registerDiscussionRoutes(app: Fastify) {
             ...(request.query.afterSeq === undefined ? {} : { afterSeq: request.query.afterSeq }),
             ...(request.query.throughSeq === undefined ? {} : { throughSeq: request.query.throughSeq }),
             ...(request.query.limit === undefined ? {} : { limit: request.query.limit }),
+            authentication: readSessionAccessAuthenticationFromRequest(request),
+        });
+        if (!result.ok) return reply.code(statusForDiscussionFailure(result.error)).send({ error: result.error });
+        return reply.send(result.value);
+    });
+
+    discussionsApp.post(DISCUSSION_HTTP_PATHS_V1.exactMessages, {
+        preHandler: app.authenticate,
+        config: { rateLimit },
+        errorHandler: discussionRouteErrorHandler,
+        schema: { body: DiscussionExactMessagesRequestV1Schema,
+            response: { 200: DiscussionExactMessagesResponseV1Schema, ...DiscussionErrorResponses } },
+    }, async (request, reply) => {
+        const result = await readExactDiscussionMessages({
+            actorAccountId: request.userId, messages: request.body.messages,
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
         if (!result.ok) return reply.code(statusForDiscussionFailure(result.error)).send({ error: result.error });

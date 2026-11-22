@@ -1,4 +1,4 @@
-import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, DiscussionListQueryV1Schema, isDiscussionMessagesSelectionValidV1, type DiscussionDetailsResponseV1, type DiscussionListResponseV1, type DiscussionMessagesResponseV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, DiscussionListQueryV1Schema, isDiscussionMessagesSelectionValidV1, type DiscussionDetailsResponseV1, type DiscussionExactMessagesRequestV1, type DiscussionExactMessagesResponseV1, type DiscussionListResponseV1, type DiscussionMessagesResponseV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionSummaryV1, DiscussionMessageV1 } from '@happier-dev/protocol/discussions/models';
 import { validateDiscussionDocContentSource, type DiscussionDocSource } from './docPassages';
@@ -8,7 +8,7 @@ import type { SessionAccessAuthentication } from '@/app/session/access/sessionAc
 import { resolveDiscussionContextInTx, resolveDiscussionContextsInTx, discussionCandidateWhere, discussionCandidateSql,
     isDiscussionRecipientKeyPreparationRequiredInTx, isDiscussionCredentialCurrentInTx, readDiscussionTeamScopedIdsInTx, type DiscussionContext } from './access';
 import { buildDiscussionListCursorPredicate, decodeDiscussionListCursorV1, encodeDiscussionListCursorV1 } from './pagination';
-import { DISCUSSION_MESSAGE_SELECT, DISCUSSION_SELECT, loadDiscussionViewerFactsInTx, projectDiscussionAccountActorsInTx, projectDiscussionCapabilitiesV1, projectDiscussionMessageV1, projectDiscussionSummaryV1, validateDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionRow, type DiscussionMessageRow } from './projection';
+import { DISCUSSION_MESSAGE_SELECT, DISCUSSION_SELECT, loadDiscussionViewerFactsInTx, projectDiscussionAccountActorsInTx, projectDiscussionCapabilitiesV1, projectDiscussionMessageV1, projectDiscussionSummaryV1, validateDiscussionStoredContent, admitDiscussionStoredContent, admitDiscussionStoredMessage, type AdmittedDiscussionMessageRow, type DiscussionRow, type DiscussionMessageRow } from './projection';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
 import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { prismaRuntime as sql } from '@/storage/prisma';
@@ -217,15 +217,35 @@ export async function projectReadableMessageGroupsInTx(tx: Tx, input: Reader & R
 
 type ExactDiscussionMessageSelection = Readonly<{ messageId: string; localId?: never } | { localId: string; messageId?: never }>;
 
+type ExactMessageReference = DiscussionExactMessagesRequestV1['messages'][number];
+
+async function readExactDiscussionMessageRowsInTx(
+    tx: Tx, references: readonly ExactMessageReference[], throughSeq?: number,
+): Promise<DiscussionMessageRow[]> {
+    const rows: DiscussionMessageRow[] = [];
+    for (const chunk of portableQueryChunks({ values: references, bindingsPerValue: 2, fixedBindings: throughSeq === undefined ? 0 : 1 })) {
+        rows.push(...await tx.discussionMessage.findMany({ where: {
+            OR: chunk.map(({ discussionId, messageId }) => ({ discussionId, id: messageId })),
+            ...(throughSeq === undefined ? {} : { seq: { lte: throughSeq } }),
+        }, select: DISCUSSION_MESSAGE_SELECT }));
+    }
+    return rows;
+}
+
+function discussionMessageKeyContext(context: DiscussionContext): NonNullable<DiscussionMessagesResponseV1['keyContext']> {
+    return { encryptionMode: context.storageMode, keyReadiness: context.keyReadiness, dataEncryptionKey: context.dataEncryptionKey };
+}
+
 /** The same exact-row query and disclosure admission serve internal and public reads. */
 async function readSelectedDiscussionMessageInTx(tx: Tx, input: Reader & ExactDiscussionMessageSelection & Readonly<{
     discussionId: string; throughSeq?: number; context: DiscussionContext;
 }>): Promise<DiscussionResult<DiscussionMessageV1 | null>> {
-    const row = await tx.discussionMessage.findFirst({ where: {
-        discussionId: input.discussionId,
-        ...(input.messageId !== undefined ? { id: input.messageId } : { localId: input.localId, authorAccountId: input.actorAccountId }),
-        ...(input.throughSeq === undefined ? {} : { seq: { lte: input.throughSeq } }),
-    }, select: DISCUSSION_MESSAGE_SELECT });
+    const row = input.messageId !== undefined
+        ? (await readExactDiscussionMessageRowsInTx(tx, [{ discussionId: input.discussionId, messageId: input.messageId }], input.throughSeq))[0]
+        : await tx.discussionMessage.findFirst({ where: {
+            discussionId: input.discussionId, localId: input.localId, authorAccountId: input.actorAccountId,
+            ...(input.throughSeq === undefined ? {} : { seq: { lte: input.throughSeq } }),
+        }, select: DISCUSSION_MESSAGE_SELECT });
     if (!row) return discussionSuccess(null);
     const projected = await projectReadableMessagesInTx(tx, { ...input, rows: [row] });
     return projected.ok ? discussionSuccess(projected.value.messages[0]!) : projected;
@@ -249,6 +269,54 @@ export async function readDiscussionMessageInTx(tx: Tx, input: Reader & Readonly
 }>): Promise<DiscussionResult<DiscussionMessageV1>> {
     const read = await readDiscussionMessageWithContextInTx(tx, input);
     return read.ok ? discussionSuccess(read.value.message) : read;
+}
+
+/** Read exact messages and their title envelopes without refreshing Discussion history. */
+export async function readExactDiscussionMessages(input: Reader & Readonly<DiscussionExactMessagesRequestV1>):
+    Promise<DiscussionResult<DiscussionExactMessagesResponseV1>> {
+    return inReadSnapshot(async tx => {
+        const contexts = await resolveDiscussionContextsInTx(tx, {
+            discussionIds: [...new Set(input.messages.map(reference => reference.discussionId))],
+            accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true,
+        });
+        const readableReferences = new Map<string, ExactMessageReference>();
+        for (const reference of input.messages) {
+            if (contexts.get(reference.discussionId)?.keyReadiness) {
+                readableReferences.set(JSON.stringify([reference.discussionId, reference.messageId]), reference);
+            }
+        }
+        const rows = await readExactDiscussionMessageRowsInTx(tx, [...readableReferences.values()]);
+        if (rows.length === 0) return discussionSuccess({ discussions: [] });
+
+        const byDiscussion = new Map<string, DiscussionMessageRow[]>();
+        for (const row of rows) {
+            const group = byDiscussion.get(row.discussionId);
+            if (group) group.push(row);
+            else byDiscussion.set(row.discussionId, [row]);
+        }
+        const discussions: Array<Pick<DiscussionRow, 'id' | 'titleContent' | 'anchorV1'>> = [];
+        for (const ids of portableQueryChunks({ values: [...byDiscussion.keys()], bindingsPerValue: 1 })) {
+            discussions.push(...await tx.discussion.findMany({
+                where: { id: { in: [...ids] } }, select: { id: true, titleContent: true, anchorV1: true },
+            }));
+        }
+        const projected = await projectReadableMessageGroupsInTx(tx, { ...input, unavailableDocSources: 'omit',
+            groups: discussions.map(discussion => ({
+                discussionId: discussion.id, context: contexts.get(discussion.id)!, discussion, rows: byDiscussion.get(discussion.id)!,
+            })),
+        });
+        if (!projected.ok) return projected;
+        const readable: DiscussionExactMessagesResponseV1['discussions'] = [];
+        for (const discussion of discussions) {
+            const { messages } = projected.value.get(discussion.id)!;
+            if (messages.length === 0) continue;
+            const context = contexts.get(discussion.id)!;
+            const title = admitDiscussionStoredContent(discussion.titleContent, context.storageMode, 'title');
+            if (!title.ok) return title;
+            readable.push({ discussionId: discussion.id, titleContent: title.value, keyContext: discussionMessageKeyContext(context), messages });
+        }
+        return discussionSuccess({ discussions: readable });
+    });
 }
 
 /** Summary counts active admitted identities without title, message or key reads. */
@@ -405,9 +473,8 @@ export async function readDiscussionMessages(input: Reader & Readonly<{
             if (!selected.ok) return selected;
             return discussionSuccess({ messages: selected.value ? [selected.value] : [], hasMoreOlder: false,
                 messageSeq: input.throughSeq === undefined ? discussion.messageSeq : Math.min(discussion.messageSeq, input.throughSeq),
-                ...(input.includeKeyContext && input.messageId !== undefined && selected.value ? { keyContext: {
-                    encryptionMode: context.storageMode, keyReadiness: context.keyReadiness, dataEncryptionKey: context.dataEncryptionKey,
-                } } : {}),
+                ...(input.includeKeyContext && input.messageId !== undefined && selected.value
+                    ? { keyContext: discussionMessageKeyContext(context) } : {}),
             });
         }
         const ascending = input.afterSeq !== undefined;

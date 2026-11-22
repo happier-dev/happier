@@ -555,6 +555,7 @@ describe('session discussion API schemas', () => {
       restore: '/v1/discussions/:discussionId/restore',
       settings: '/v1/discussions/:discussionId/settings',
       messages: '/v1/discussions/:discussionId/messages',
+      exactMessages: '/v1/discussions/messages/read',
       upload: '/v1/discussions/upload',
       attachment: '/v1/discussions/:discussionId/messages/:messageId/attachments/:blobId',
       attachmentUpload: '/v1/discussions/attachments/uploads/:uploadId',

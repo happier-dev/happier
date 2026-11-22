@@ -31,6 +31,7 @@ import {
   DiscussionIdSchema,
   DiscussionLocalIdSchema,
   DiscussionMessageContentV1Schema,
+  DiscussionMessageIdSchema,
   DiscussionWorkflowProducerV1Schema,
   isDiscussionDocEditProposalContentV1,
   type DiscussionMessageContentV1,
@@ -82,6 +83,7 @@ export const DISCUSSION_HTTP_PATHS_V1 = Object.freeze({
   archive: '/v1/discussions/:discussionId/archive',
   restore: '/v1/discussions/:discussionId/restore',
   messages: '/v1/discussions/:discussionId/messages',
+  exactMessages: '/v1/discussions/messages/read',
   upload: '/v1/discussions/upload',
   attachment: '/v1/discussions/:discussionId/messages/:messageId/attachments/:blobId',
   attachmentUpload: '/v1/discussions/attachments/uploads/:uploadId',
@@ -126,17 +128,35 @@ export type DiscussionAttentionResponseV1 = z.infer<typeof DiscussionAttentionRe
 
 export const DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1 = 'application/json;happier-discussion-projection=exact-message-key-context';
 
+const DiscussionMessageKeyContextV1Schema = lazyZodSchema(() => z.strictObject({
+  encryptionMode: DiscussionSummaryV1Schema.shape.encryptionMode,
+  keyReadiness: DiscussionSummaryV1Schema.shape.keyReadiness,
+  dataEncryptionKey: DiscussionSummaryV1Schema.shape.dataEncryptionKey,
+}));
+
 export const DiscussionMessagesResponseV1Schema = lazyZodSchema(() => z.strictObject({
   messages: z.array(DiscussionMessageV1Schema),
   hasMoreOlder: z.boolean(),
   messageSeq: z.number().check(z.int(), z.minimum(0)),
-  keyContext: z.optional(z.strictObject({
-    encryptionMode: DiscussionSummaryV1Schema.shape.encryptionMode,
-    keyReadiness: DiscussionSummaryV1Schema.shape.keyReadiness,
-    dataEncryptionKey: DiscussionSummaryV1Schema.shape.dataEncryptionKey,
-  })),
+  keyContext: z.optional(DiscussionMessageKeyContextV1Schema),
 }));
 export type DiscussionMessagesResponseV1 = z.infer<typeof DiscussionMessagesResponseV1Schema>;
+
+export const DiscussionExactMessagesRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  messages: z.array(z.strictObject({ discussionId: DiscussionIdSchema, messageId: DiscussionMessageIdSchema })),
+}));
+export type DiscussionExactMessagesRequestV1 = z.infer<typeof DiscussionExactMessagesRequestV1Schema>;
+
+/** Exact, readable messages and the envelopes needed to open them without loading history. */
+export const DiscussionExactMessagesResponseV1Schema = lazyZodSchema(() => z.strictObject({
+  discussions: z.array(z.strictObject({
+    discussionId: DiscussionIdSchema,
+    titleContent: DiscussionSummaryV1Schema.shape.titleContent,
+    keyContext: DiscussionMessageKeyContextV1Schema,
+    messages: z.array(DiscussionMessageV1Schema),
+  })),
+}));
+export type DiscussionExactMessagesResponseV1 = z.infer<typeof DiscussionExactMessagesResponseV1Schema>;
 
 const MentionedAccountIdsSchema = lazyZodSchema(() => z.array(DiscussionAccountIdSchema).check(z.refine((value) => new Set(value).size === value.length, 'Mentioned Account ids must be deduplicated')));
 const MentionedSessionIdsSchema = lazyZodSchema(() => z.array(DiscussionSessionParticipantRefV1Schema.shape.sessionId).check(z.refine((value) => new Set(value).size === value.length, 'Mentioned Session ids must be deduplicated')));
