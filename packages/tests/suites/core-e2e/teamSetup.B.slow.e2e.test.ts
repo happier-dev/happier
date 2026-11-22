@@ -639,6 +639,11 @@ async function retainNativeProject(root: string) {
     nativeProjects.set(root, { project: facts.project, port: facts.port });
 }
 
+function nativeOccurrence(root: string) {
+    return execFileSync('docker', ['ps', '--quiet', '--filter',
+        `label=com.docker.compose.project.working_dir=${root}`], { encoding: 'utf8' }).trim();
+}
+
 it('TS.B.composeRetire: failed setup leaves no autostarted native occurrence', async () => {
     await admittedControl('compose-failed-setup');
     const failedSetup = await createWorktrees('compose-failed-setup', { autostart: true }, true);
@@ -696,9 +701,9 @@ describe('TS.B.composeRetire native setup', () => {
             error: 'local_service_preview_lifecycle_refused:service_not_listening' });
     });
 
-    it('retains a Worktree on teardown failure and releases only the approved root on retry', async () => {
+    it('retains failed teardown, releases only the approved root, then reconnects with scoped access', async () => {
         const { roots, workspaces } = worktrees;
-        const selected = await start(workspaces[1]!);
+        const [siblingService, selected] = await Promise.all(workspaces.map(workspace => start(workspace)));
         if (!selected.result.currentTarget) throw new Error('Native Start lost its control target');
         await stop(selected.result.currentTarget);
         expect(await action('actions.policy.set', { actionId: 'projects.prepare', audience: 'ui', mode: 'ask_first' }))
@@ -715,6 +720,9 @@ describe('TS.B.composeRetire native setup', () => {
         if (!sibling) throw new Error('Successful setup did not record the sibling Project');
         const siblingUrl = `http://127.0.0.1:${sibling.port}`;
         const siblingMarker = await (await fetch(siblingUrl)).text();
+        const previewRequest = { machineId, launchTargetId: siblingService.target.id };
+        const siblingPreview = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(
+            await action('localServices.preview.openOrCreate', previewRequest));
         const physicalRoots = await Promise.all(roots.map(root => realpath(root)));
         const before = await assignments();
         await writeFile(resolve(roots[1]!, 'fail-teardown'), 'fail');
@@ -748,6 +756,31 @@ describe('TS.B.composeRetire native setup', () => {
         expect(after.assignments).not.toHaveProperty(physicalRoots[1]!);
         expect(after.assignments[physicalRoots[0]!]).toEqual(before.assignments[physicalRoots[0]!]);
         expect(await (await fetch(siblingUrl)).text()).toBe(siblingMarker);
+        const retainedContainer = nativeOccurrence(roots[0]!);
+        expect(retainedContainer).not.toBe('');
+
+        await restartDaemon();
+        // Re-adopt the surviving native resource through its ordinary Start.
+        const reconnectedService = await start(workspaces[0]!);
+        expect(nativeOccurrence(roots[0]!)).toBe(retainedContainer);
+        expect(reconnectedService.target.id).toBe(siblingService.target.id);
+        expect(reconnectedService.url).toBe(siblingUrl);
+        takePreviewRegistrations();
+        await withOtherMachineManager('retirement', async otherUi => {
+            expect(await invokeAs(otherUi, 'localServices.preview.openOrCreate', previewRequest)).toMatchObject({
+                ok: false, errorCode: 'unknown_managed_service',
+            });
+        });
+        expect(takePreviewRegistrations()).toBe(0);
+        const reconnected = DaemonLocalServicePreviewOpenOrCreateResponseV1Schema.parse(
+            await action('localServices.preview.openOrCreate', previewRequest));
+        expect(reconnected.preview.resource).toMatchObject({
+            browserTarget: siblingPreview.preview.resource.browserTarget,
+            serviceTarget: { managedServiceId: reconnectedService.result.currentTarget?.managedServiceId },
+        });
+        const tunnel = await previewTunnel(reconnected.preview.resource.previewId);
+        try { expect(await (await fetch(tunnel.url)).text()).toBe(siblingMarker); }
+        finally { await tunnel.close(); }
     });
 });
 
