@@ -213,8 +213,14 @@ Bearer token extract it from the returned header map at their own codec boundary
 `action.options.resolve` remains the options discovery owner. Its partial
 `draftInput`, `fieldPath`, search `query` and `cursor` are the single typed query
 passed to a dynamic Resource callback as `options.query`. A Resource can return
-an options array or `{ options, nextCursor? }`; the same Action returns the
-continuation. The input-type owner validates option values before disclosure.
+an options array or `{ options, nextCursor?, emptyAction? }`. The Action returns
+the continuation and any empty action from a complete, empty first page.
+`emptyAction` pairs a `label` (literal or localized plugin text) with a qualified
+`destination` containing `pluginId` and `localId`. The shared field offers it
+alongside the empty-inventory message. Pressing it opens the destination through
+the enclosing surface’s navigation binding, subject to normal destination
+admission. It leaves the form draft intact. The input-type owner validates
+option values before disclosure.
 
 Query operands never select Resource authority. Headless reads use the admitted
 global or Session scope and the existing read-only `readAction` custody binding.

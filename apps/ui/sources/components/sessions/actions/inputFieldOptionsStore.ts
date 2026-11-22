@@ -2,13 +2,14 @@ import { getActionSpec, type PublicActionResultById } from '@happier-dev/protoco
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { callWorkflowAction } from '@/sync/domains/workflows/callWorkflowAction';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import type { ActionFieldOption } from './ActionInputFields';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { buildSessionActionFieldOptionsResolver } from './sessionActionFieldOptions';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { actionInputOptionValueKey } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 
-export type InputFieldOptionsState = Readonly<Pick<PublicActionResultById['action.options.resolve'], 'nextCursor'> & {
+export type InputFieldOptionsState = Readonly<Pick<PublicActionResultById['action.options.resolve'], 'nextCursor' | 'emptyAction'> & {
     options: readonly ActionFieldOption[];
     status: 'loading' | 'ready' | 'failed';
     errorCode?: string;
@@ -93,9 +94,12 @@ function load(read: InputOptionsRead, entry: ReadEntry, callerContext?: ActionEx
         const options = reuseReadItems(entry.state.options, projected, option => actionInputOptionValueKey(option.value));
         const machineRecipeDetails = result.machineRecipeDetails === undefined ? undefined
             : reuseReadItems(entry.state.machineRecipeDetails, result.machineRecipeDetails, recipe => recipe.id);
+        const emptyAction = retainDeep(entry.state.emptyAction, result.emptyAction);
         const next = entry.state.status === 'ready' && entry.state.errorCode === undefined && options === entry.state.options
-            && machineRecipeDetails === entry.state.machineRecipeDetails && result.nextCursor === entry.state.nextCursor ? entry.state
+            && machineRecipeDetails === entry.state.machineRecipeDetails && result.nextCursor === entry.state.nextCursor
+            && emptyAction === entry.state.emptyAction ? entry.state
             : { status: 'ready' as const, options, ...(machineRecipeDetails === undefined ? {} : { machineRecipeDetails }),
+                ...(emptyAction === undefined ? {} : { emptyAction }),
                 ...(result.nextCursor === undefined ? {} : { nextCursor: result.nextCursor }) };
         const changed = next !== entry.state;
         entry.state = next;

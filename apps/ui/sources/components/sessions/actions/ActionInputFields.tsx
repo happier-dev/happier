@@ -22,6 +22,11 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Modal } from '@/modal';
+import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
+import type { InputFieldOptionsState } from './inputFieldOptionsStore';
 import { SurfaceStateCard } from '@/components/ui/surfaces';
 import { t } from '@/text';
 import type { ResolveSessionActionFieldOptions } from './sessionActionFieldOptions';
@@ -84,6 +89,21 @@ export function formatActionInputFieldChoice(
     return resolveOptions.state?.(field).status === 'loading' ? t('common.loading') : t('common.unavailable');
 }
 
+function OptionsEmptyAction(props: Readonly<{
+    action: NonNullable<InputFieldOptionsState['emptyAction']>;
+    pluginId: string;
+    pickerContext: ResolveSessionActionFieldOptions['pickerContext'];
+}>) {
+    const navigation = usePluginSurfaceDestinationNavigationBinding();
+    const localize = usePluginLocalizedTextResolver({ projection: props.pickerContext?.pluginUiProjection ?? navigation?.projection });
+    if (!navigation) return null;
+    const label = localize(props.pluginId, props.action.label);
+    return <RoundButton size="small" display="secondary" title={label} accessibilityLabel={label} action={async () => {
+        const result = await navigation.openSurface({ destination: props.action.destination }, props.pickerContext?.accountLifetime?.scope);
+        if (!result.ok) Modal.alert(t('common.unavailable'));
+    }} />;
+}
+
 export function ActionInputFields(props: Readonly<{
     /**
      * Forms resolve visibility, requiredness, and disabled state at the Protocol
@@ -123,6 +143,7 @@ export function ActionInputFields(props: Readonly<{
                 const selection = readActionInputSelectionForPresentation(field, value);
                 const choices = widget === 'select' || widget === 'multiselect';
                 const optionState = choices ? props.resolveFieldOptions.state?.(field) : undefined;
+                const inputTypePluginId = field.inputType && 'pluginId' in field.inputType ? field.inputType.pluginId : undefined;
                 // Choices that read another field's answer wait for it: the field stays closed and says what to choose
                 // first, rather than reporting the owner's dependency refusal as a failed read.
                 const waitsOn = optionState?.status === 'failed' && optionState.errorCode === 'missing_option_dependency'
@@ -161,6 +182,9 @@ export function ActionInputFields(props: Readonly<{
                         optionsNotice={optionState?.status === 'failed' && waitingReading === undefined ? <SurfaceStateCard kind="error" size="line" title={t('workflows.start.choicesFailed')}
                             diagnosticCode={optionState.errorCode}
                             action={props.resolveFieldOptions.retry ? { label: t('common.retry'), onPress: props.resolveFieldOptions.retry } : undefined} /> : null}
+                        optionsEmptyAction={optionState?.emptyAction && inputTypePluginId && !props.busy
+                            ? <OptionsEmptyAction action={optionState.emptyAction} pluginId={inputTypePluginId}
+                                pickerContext={props.resolveFieldOptions.pickerContext} /> : undefined}
                         disabled={!props.editable || waitingReading !== undefined}
                         isEqual={isSameActionInputOptionValue}
                         keyForOption={(option) => actionInputOptionValueKey(option.value)}

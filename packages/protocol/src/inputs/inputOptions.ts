@@ -24,7 +24,7 @@ import { readRecord, readRecordListProperty, readNonEmptyString, isRecord, hasOw
 import { projectInputOptionsDependencies } from './inputOptionsDependencies.js';
 import { inputTypeOptionsSourceId, parseInputTypeOptionsSourceId } from './inputTypes.js';
 import { resolveInputTypeOptions, narrowInputFieldOptions, type InputTypeOptionsQueryV1 } from './inputTypeRuntime.js';
-import type { InputOption, InputFieldHint } from './inputFields.js';
+import type { InputOption, InputFieldHint, InputOptionsEmptyAction } from './inputFields.js';
 import type { InputOptionsConsumerV1 } from './inputOptionsConsumer.js';
 import { VoiceTrackedSessionAddressV1Schema } from '../sessions/follow/voiceTrackedSessionAddressV1.js';
 import { parseSessionAwarenessListResultV1 } from '../sessions/awareness/action.js';
@@ -294,6 +294,7 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
     return { ok: false, errorCode: 'input_type_unavailable', error: 'input_type_unavailable' };
   let typeOptions: readonly InputOption[] | undefined;
   let nextCursor: string | undefined;
+  let emptyAction: InputOptionsEmptyAction | undefined;
   if (type.definition.options) {
     const sessionId = params.resolveSessionId(params.input, ctx);
     const resolved = await resolveInputTypeOptions({ deps, ctx, identity, query: params.query, readFailure: params.readFailure,
@@ -301,6 +302,7 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
     if (!resolved.ok) return resolved;
     typeOptions = resolved.result;
     nextCursor = resolved.nextCursor;
+    emptyAction = resolved.emptyAction;
   }
   let options = field.options ?? typeOptions ?? [];
   if (field.options === undefined && field.optionsSourceId) {
@@ -311,7 +313,9 @@ export async function resolveTypedInputFieldOptions(params: Omit<Parameters<type
   const current = await deps.resolveInputType?.(identity, ctx);
   if (ctx.signal?.aborted || current?.occurrenceId !== type.occurrenceId)
     return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
-  return { ok: true, ...(nextCursor === undefined ? {} : { nextCursor }), result: narrowInputFieldOptions({ field, type, options: typeOptions ?? options, candidates: options }),
+  return { ok: true, ...(nextCursor === undefined ? {} : { nextCursor }),
+    ...(emptyAction === undefined ? {} : { emptyAction }),
+    result: narrowInputFieldOptions({ field, type, options: typeOptions ?? options, candidates: options }),
     ...(field.options !== undefined || !field.optionsSourceId && !type.definition.options ? { optionsSourceId: null } : {}) };
 }
 
@@ -337,6 +341,7 @@ export async function resolveInputOptions(params: Readonly<{
   result: readonly InputOption[];
   optionsSourceId?: null;
   nextCursor?: string;
+  emptyAction?: InputOptionsEmptyAction;
   modelCatalog?: NonNullable<PublicActionResultById['action.options.resolve']['modelCatalog']>;
   machineRecipeDetails?: NonNullable<PublicActionResultById['action.options.resolve']['machineRecipeDetails']>;
 }>> {

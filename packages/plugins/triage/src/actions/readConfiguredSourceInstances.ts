@@ -4,6 +4,8 @@ import type { PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import { fitActionResultSequenceV1 } from '@happier-dev/triage-sources/projection/actionResultSequence';
 import {
+    createTriageConfigureSourceOfferV1,
+    type TriageConfigureSourceOfferV1,
     type TriageConfiguredSourceInstanceRecordV1,
     type TriageReadConfiguredSourceInstancesInputV1,
     type TriageReadConfiguredSourceInstancesResultV1,
@@ -24,7 +26,7 @@ import {
 } from '../corpus/configuration/administerConfiguredSourceInstance.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import { resolveTriageCallerSources } from './callerSource.js';
-import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
+import { renderSourceQualifiedId, sameTriageSourceIdentity } from '../corpus/identity/components.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
 
 /**
@@ -56,11 +58,14 @@ function recordFrom(row: CorpusSourceInstanceRowV1): TriageConfiguredSourceInsta
 /** Fits whole configured-instance records through the canonical Action owner. */
 export function fitTriageConfiguredSourceInstancesResult(
     instances: readonly TriageConfiguredSourceInstanceRecordV1[],
+    setupOffer?: TriageConfigureSourceOfferV1,
 ): TriageReadConfiguredSourceInstancesResultV1 {
+    const configureSource = setupOffer && !instances.some(instance => instance.lifecycle === 'active') ? setupOffer : undefined;
     return fitActionResultSequenceV1(instances, (included, omittedCount) => Object.freeze({
         kind: 'read' as const,
         instances: Object.freeze([...included]),
         status: omittedCount === 0 ? 'complete' as const : 'truncated' as const,
+        ...(omittedCount === 0 && configureSource !== undefined ? { configureSource } : {}),
     })).result;
 }
 
@@ -69,6 +74,7 @@ export type TriageReadConfiguredSourceInstancesDepsV1 = Readonly<{
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query'>;
     signal?: AbortSignal;
     accountDataSources?: AccountDataSourceReadOptionsV1['accountDataSources'];
+    configureSource?: TriageConfigureSourceOfferV1;
 }>;
 
 /**
@@ -110,7 +116,7 @@ export async function readTriageConfiguredSourceInstances(
     const automatic = projectAccountDataSourceCatalogV1(deps.accountDataSources ?? [], [INTERNAL_TASK_SOURCE_RECORD_V1]);
     return fitTriageConfiguredSourceInstancesResult(projectAccountDataSourceCatalogV1(records, automatic)
         .filter(record => sources.some(candidate => configuredSourceInstanceIsOwnedBy(record.value, candidate)))
-        .map(record => recordFrom(record.value)));
+        .map(record => recordFrom(record.value)), deps.configureSource);
 }
 
 export function createTriageReadConfiguredSourceInstancesActionHandler(): TriageDataActionHandler<
@@ -125,7 +131,8 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
         if (resolution.kind === 'invalidCaller') return INVALID_CALLER;
 
         const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
-        const accountDataSources = readAccountDataSourceRecordsV1(indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution)));
+        const admitted = indexTriageAdmittedSourcesV1(resolution.callers.map(caller => caller.contribution));
+        const accountDataSources = readAccountDataSourceRecordsV1(admitted);
         if (input.exact !== undefined) {
             const exact = input.exact;
             // Resolve caller authority BEFORE deriving or reading another source's private row.
@@ -139,9 +146,12 @@ export function createTriageReadConfiguredSourceInstancesActionHandler(): Triage
                 && resolution.callers.some(caller => configuredSourceInstanceIsOwnedBy(row, caller.source))
                 ? [recordFrom(row)] : []);
         }
+        const selected = input.source && admitted.get(renderSourceQualifiedId(input.source));
+        const configureSource = selected && createTriageConfigureSourceOfferV1(selected.contributor.pluginId, selected.descriptor);
         return await readTriageConfiguredSourceInstances(resolution.callers.map((caller) => caller.source), {
             sourceInstances,
             accountDataSources,
+            ...(configureSource === undefined ? {} : { configureSource }),
             ...(context.signal ? { signal: context.signal } : {}),
         });
     };

@@ -6283,7 +6283,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             return resolved.ok ? { ok: true, result: { actionId: ownerId, fieldPath,
               optionsSourceId: resolved.optionsSourceId === null ? null : readInputFieldOptionsSourceId(field) ?? null,
               options: filterResolvedActionOptions(resolved.result, data),
-              ...(resolved.nextCursor === undefined ? {} : { nextCursor: resolved.nextCursor }) } } : resolved;
+              ...(resolved.nextCursor === undefined ? {} : { nextCursor: resolved.nextCursor }),
+              ...(resolved.emptyAction === undefined || optionValues !== undefined ? {} : { emptyAction: resolved.emptyAction }) } } : resolved;
           };
 
           const discoveryGrant = ctx.externalActionCredential?.grant;
@@ -6501,6 +6502,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               optionsSourceId: dynamic.optionsSourceId === null ? null : optionsSourceId,
               options,
               ...(dynamic.nextCursor === undefined ? {} : { nextCursor: dynamic.nextCursor }),
+              ...(dynamic.emptyAction === undefined || optionValues !== undefined ? {} : { emptyAction: dynamic.emptyAction }),
               ...(dynamic.modelCatalog ? { modelCatalog: dynamic.modelCatalog } : {}),
               ...(dynamic.machineRecipeDetails === undefined ? {} : { machineRecipeDetails: dynamic.machineRecipeDetails }),
             },

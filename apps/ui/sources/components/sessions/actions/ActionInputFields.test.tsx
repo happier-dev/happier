@@ -74,6 +74,29 @@ describe('ActionInputFields', () => {
         expect(findTestInstanceByTypeContainingText(screen.tree, 'Text', 'workflows.start.choicesFailed')).toBeFalsy();
     });
 
+    it('opens an empty options destination through the enclosing surface without writing the draft', async () => {
+        const { PluginSurfaceDestinationNavigationBindingProvider } = await import('@/components/plugins/surfaces/pluginSurfaceDestinationNavigation');
+        const field = effectiveField({ path: 'source', title: 'Source', widget: 'select',
+            inputType: { pluginId: 'example.inputs', localId: 'sources' } });
+        const destination = { pluginId: 'example.provider', localId: 'settings/sources' };
+        const emptyAction = { label: { key: 'connect', fallback: 'Connect {name}', params: { name: 'Provider' } }, destination };
+        const openSurface = vi.fn(async () => ({ ok: true as const }));
+        const onPatch = vi.fn();
+        const resolveFieldOptions = Object.assign(() => [], {
+            state: () => ({ status: 'ready' as const, options: [], emptyAction }),
+        });
+        const screen = await renderScreen(<PluginSurfaceDestinationNavigationBindingProvider binding={{
+            targetKind: 'app', openSurface, registerOwner: () => () => {},
+        }}>
+            <ActionInputFields fields={[field]} input={{}} editable resolveFieldOptions={resolveFieldOptions} onPatch={onPatch} />
+        </PluginSurfaceDestinationNavigationBindingProvider>);
+        const connect = screen.findAllByType('Pressable').find(node => node.props.accessibilityLabel === 'Connect Provider');
+        expect(connect).toBeDefined();
+        await pressTestInstanceAsync(connect);
+        expect(openSurface.mock.calls).toEqual([[{ destination }, undefined]]);
+        expect(onPatch).not.toHaveBeenCalled();
+    });
+
     it('writes a new Browser profile name from the shared suggested-choice control', async () => {
         const field = effectiveField({ path: 'profileId', title: 'Profile', widget: 'select',
             optionsSourceId: 'browser.profiles.available', allowCustomValue: true });

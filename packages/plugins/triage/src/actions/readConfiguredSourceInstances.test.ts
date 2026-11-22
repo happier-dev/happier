@@ -96,7 +96,10 @@ function instanceRow(input: Readonly<{
     };
 }
 
-function admittedSource(source: Readonly<{ pluginId: string; localId: string }>): TriageAdmittedSourceV1 {
+function admittedSource(
+    source: Readonly<{ pluginId: string; localId: string }>,
+    settingsPageId?: string,
+): TriageAdmittedSourceV1 {
     return {
         contributor: {
             pluginId: source.pluginId,
@@ -111,6 +114,7 @@ function admittedSource(source: Readonly<{ pluginId: string; localId: string }>)
             v: 1,
             purpose: PURPOSE,
             displayName: source.localId,
+            ...(settingsPageId === undefined ? {} : { settingsPageId }),
             kinds: [{ id: 'pull-request', workflowSubject: 'pullRequest', displayName: 'Pull request' }],
         },
         operations: { listInstances: {}, scan: { role: 'scan' }, get: {} },
@@ -187,12 +191,15 @@ describe('the caller-scoped configured-instance read', () => {
         const resources: NonNullable<DefinePluginInput['resources']> = TRIAGE_ISSUE_OPTIONS_RESOURCES;
         const options = resources[optionsId];
         if (options?.source !== 'dynamic') throw new Error('Expected the declared source options Resource');
-        const read = (collections: CorpusCollectionsV1, failed = false) =>
+        const read = (collections: CorpusCollectionsV1, failed = false, settingsPageId?: string) =>
             options.runtime.read(createTestResourceInvocationContext({
                 readAction: async (_ref, input) => failed
                     ? { ok: false, errorCode: 'read_failed', error: 'read failed' }
                     : { ok: true, result: await handler(TriageReadConfiguredSourceInstancesInputV1Schema.parse(input),
-                        createContext({ collections, admitted: [admittedSource(source), admittedSource(other)] })) },
+                        createContext({
+                            collections,
+                            admitted: [admittedSource(source, settingsPageId), admittedSource(other, 'other/settings')],
+                        })) },
             }));
         expect(JSON.parse(String(await read(current.collections)))).toEqual({
             options: [{ value: instanceId(1), label: `${source.localId} scope 1` }],
@@ -200,7 +207,23 @@ describe('the caller-scoped configured-instance read', () => {
         expect(JSON.parse(String(await read(foreign.collections)))).toEqual({
             options: [{ value: instanceId(3), label: `${source.localId} scope 3` }],
         });
-        expect(JSON.parse(String(await read(createTestkitCorpusCollections().collections)))).toEqual({ options: [] });
+        const empty = createTestkitCorpusCollections();
+        empty.control.sourceInstances.seed(toCorpusStoredValue(instanceRow({ source, seed: 4, lifecycle: 'retired' })));
+        expect(JSON.parse(String(await read(empty.collections)))).toEqual({ options: [] });
+        expect(JSON.parse(String(await read(empty.collections, false, 'triage/settings')))).toEqual({
+            options: [],
+            emptyAction: {
+                label: {
+                    key: 'plugins.triage.surface.firstRun.connectNamed',
+                    fallback: 'Connect {name}',
+                    params: { name: source.localId },
+                },
+                destination: { pluginId: source.pluginId, localId: 'triage/settings' },
+            },
+        });
+        expect(JSON.parse(String(await read(current.collections, false, 'triage/settings')))).toEqual({
+            options: [{ value: instanceId(1), label: `${source.localId} scope 1` }],
+        });
         await expect(read(current.collections, true)).rejects.toMatchObject({ code: 'read_failed' });
     });
 

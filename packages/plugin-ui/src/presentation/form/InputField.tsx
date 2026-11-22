@@ -47,6 +47,8 @@ export type HappierInputFieldProps<Value> = Readonly<{
   optionsStatus?: 'loading' | 'ready' | 'failed';
   /** The host's own state line for a failed options read, with its retry. */
   optionsNotice?: ReactNode;
+  /** Host-bound navigation offered alongside a settled empty options inventory. */
+  optionsEmptyAction?: ReactNode;
   /** Host-owned binding affordance; typed value controls and picker behavior remain field-owned. */
   leading?: ReactNode;
   /** Receives the next value for `field.path`: parsed text, a boolean, a selection or a picked value. */
@@ -110,7 +112,8 @@ export function HappierInputField<Value>(props: HappierInputFieldProps<Value>): 
           tone="neutral" indicator={false} theme={theme} />
     : noChoices
       ? <HappierStatus label={localization?.translate('happier.plugin-ui.select.empty', 'No options available') ?? 'No options available'}
-          tone="neutral" indicator={false} theme={theme} />
+          tone="neutral" indicator={false} theme={theme}
+          action={!disabled && props.optionsStatus === 'ready' ? props.optionsEmptyAction : undefined} />
       : null;
   // A field's notice (its choices failed to load) stands on the field's own edge, under its box: it adds no
   // list row's inset or glyph column, so even a narrow field (a binding inside a step card) reads it by words.

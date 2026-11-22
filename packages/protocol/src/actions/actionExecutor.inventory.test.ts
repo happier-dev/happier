@@ -630,12 +630,16 @@ describe('createActionExecutor (inventory/discovery)', () => {
       inputSchema: { type: 'object', properties: { repository: { type: 'string' } }, additionalProperties: false },
     };
     const reads: unknown[] = [];
+    const emptyAction = { label: 'Connect a repository', destination: { pluginId: 'com.acme.inputs', localId: 'settings/repositories' } };
     const deps = { ...createDeps(), listContributedActionDefinitions: () => [definition],
       resolveInputType: async () => ({ identity: inputType, occurrenceId: 'serving-1',
         definition: { id: 'repository', title: 'Repository', semantic: 'com.acme.repository',
           valueSchema: { type: 'string', minLength: 1 }, options: { resource: 'repositories' } } }),
       readInputTypeResource: async (request: unknown) => {
         reads.push(request);
+        const query = request as { query?: { query?: string } };
+        if (query.query?.query === 'empty') return { options: [], emptyAction };
+        if (query.query?.query === 'malformed') return { options: [], emptyAction: { ...emptyAction, destination: '/repositories' } };
         return { options: [{ value: 'repo-one', label: 'One' }], nextCursor: 'provider-next' };
       },
     };
@@ -682,6 +686,13 @@ describe('createActionExecutor (inventory/discovery)', () => {
         .resolves.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     }
     expect(reads).toHaveLength(4);
+    const emptyRequest = { actionId: definition.id, fieldPath: 'repository', query: 'empty' };
+    const result = await executor.execute('action.options.resolve', emptyRequest, grantedContext);
+    expect(result).toMatchObject({ ok: true, result: { options: [], emptyAction } });
+    if (!result.ok) throw new Error(result.errorCode);
+    expect(getActionSpec('action.options.resolve').outputSchema!.parse(result.result)).toMatchObject({ options: [], emptyAction });
+    await expect(executor.execute('action.options.resolve', { ...emptyRequest, query: 'malformed' }, grantedContext))
+      .resolves.toMatchObject({ ok: false, errorCode: 'input_type_options_invalid' });
   });
   it('discovers type-only Workflow Period choices through the same owner as an explicit Action source, including a saved range', async () => {
     const workflow = 'plugin:com.acme.inputs/period';

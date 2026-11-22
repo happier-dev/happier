@@ -674,6 +674,17 @@ export type DiscoveryActionResultById = {
             version?: string | undefined;
         }[];
         nextCursor?: string | undefined;
+        emptyAction?: undefined | {
+            label: string | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+            destination: {
+                pluginId: string;
+                localId: string;
+            };
+        };
         machineRecipeDetails?: readonly {
             id: string;
             pluginId: string;

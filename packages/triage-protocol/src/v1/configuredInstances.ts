@@ -8,6 +8,7 @@ import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/mani
 
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
+import { TriageConfigureSourceOfferV1Schema } from './sourceAdministration.js';
 
 /** The person's configured name, with the recognizable key for older rows. */
 export function readTriageConfiguredSourceDisplayLabelV1(
@@ -100,6 +101,8 @@ export const TriageReadConfiguredSourceInstancesResultV1Schema = defineProtocolU
     defineProtocolObject({
         kind: defineProtocolLiteral('read'),
         instances: defineProtocolArray(TriageConfiguredSourceInstanceRecordV1Schema),
+        /** The admitted setup page for a selected source with no active instance. */
+        configureSource: TriageConfigureSourceOfferV1Schema.optional(),
         status: defineProtocolUnion([
             defineProtocolLiteral('complete'),
             defineProtocolLiteral('truncated'),

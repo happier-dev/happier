@@ -2,6 +2,9 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { InputTypeReferenceV1Schema, type InputTypeReferenceV1 } from './inputTypes.js';
 import { StrictJsonValueSchema, type JsonValue } from '../json/strictJsonValue.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
+import { PluginLocalizedStringV2Schema } from '../plugins/contributions/publicTypes.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { PluginUiIconTokenV1Schema, type PluginUiIconTokenV1 } from '../plugins/contributions/ui/tokens.js';
@@ -501,6 +504,14 @@ const CanonicalInputHintsSchemas = createInputHintsSchemas(
 
 export const InputOptionSchema = CanonicalInputHintsSchemas.optionSchema;
 export type InputOption = z.infer<typeof InputOptionSchema>;
+
+/** A navigation affordance supplied by the owner of an empty options Resource. */
+export const InputOptionsEmptyActionSchema = lazyZodSchema(() => z.strictObject({
+  label: PluginLocalizedStringV2Schema,
+  destination: asProtocolZod(PluginContributionIdentityV1Schema),
+}));
+export type InputOptionsEmptyAction = z.infer<typeof InputOptionsEmptyActionSchema>;
+
 export const InputFieldHintSchema = CanonicalInputHintsSchemas.fieldSchema;
 export type InputFieldHint = z.infer<typeof InputFieldHintSchema>;
 export const InputHintsSchema = CanonicalInputHintsSchemas.hintsSchema;

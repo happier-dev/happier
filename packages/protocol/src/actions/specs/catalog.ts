@@ -1,6 +1,7 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { InputOptionsConsumerV1Schema } from '../../inputs/inputOptionsConsumer.js';
+import { InputOptionsEmptyActionSchema } from '../../inputs/inputFields.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { DaemonProviderModelProjectionResponseV1Schema } from '../../rpc/providers.js';
 import { PluginProjectedMachineRecipeEntryV1Schema } from '../../daemon/machineSetupProjection.js';
@@ -73,6 +74,7 @@ export const ActionOptionsResolveResultSchema = lazyZodSchema(() => z.strictObje
   optionsSourceId: z.nullable(z.string().check(z.minLength(1))),
   options: z.readonly(z.array(ActionInputOptionSchema)),
   nextCursor: z.optional(z.string()),
+  emptyAction: z.optional(InputOptionsEmptyActionSchema),
   machineRecipeDetails: z.optional(z.readonly(z.array(PluginProjectedMachineRecipeEntryV1Schema))),
   modelCatalog: z.optional(z.strictObject({
     nativeModels: z.readonly(z.array(z.strictObject({

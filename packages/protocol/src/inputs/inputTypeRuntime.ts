@@ -5,7 +5,7 @@ import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues
 import { normalizeStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { qualifyPluginContributionReferenceV1, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import type { PluginInputTypeContributionV1 } from '../plugins/contributions/inputTypes.js';
-import { InputOptionSchema, type InputOption, type InputFieldHint } from './inputFields.js';
+import { InputOptionSchema, InputOptionsEmptyActionSchema, type InputOption, type InputFieldHint, type InputOptionsEmptyAction } from './inputFields.js';
 import type { ActionExecutorDeps, ActionExecutorContext } from '../actions/executor/types.js';
 import type { ActionExecuteResult } from '../actions/actionExecutionResult.js';
 import { UsageQuerySchema, normalizeUsageQuery } from './usageQuery.js';
@@ -180,6 +180,12 @@ export function inputTypeResourceReference(type: ResolvedInputTypeV1): PluginCon
     ? qualifyPluginContributionReferenceV1(type.definition.options.resource, type.identity.pluginId) : null;
 }
 
+const InputTypeOptionsPageSchema = z.strictObject({
+  options: z.array(InputOptionSchema),
+  nextCursor: z.optional(z.string()),
+  emptyAction: z.optional(InputOptionsEmptyActionSchema),
+});
+
 /** Shared Resource admission; source selection remains in the single options resolver. */
 export async function resolveInputTypeOptions(params: Readonly<{
   deps: Pick<ActionExecutorDeps, 'resolveInputType' | 'readInputTypeResource'>;
@@ -188,7 +194,13 @@ export async function resolveInputTypeOptions(params: Readonly<{
   sessionId?: string;
   query?: InputTypeOptionsQueryV1;
   readFailure: (result: unknown) => Extract<ActionExecuteResult, { ok: false }> | null;
-}>): Promise<Extract<ActionExecuteResult, { ok: false }> | Readonly<{ ok: true; result: readonly InputOption[]; optionsSourceId?: null; nextCursor?: string }>> {
+}>): Promise<Extract<ActionExecuteResult, { ok: false }> | Readonly<{
+  ok: true;
+  result: readonly InputOption[];
+  optionsSourceId?: null;
+  nextCursor?: string;
+  emptyAction?: InputOptionsEmptyAction;
+}>> {
   const { deps, ctx, identity } = params;
   if ('hostType' in identity) return ctx.signal?.aborted
     ? { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' }
@@ -213,9 +225,15 @@ export async function resolveInputTypeOptions(params: Readonly<{
     return { ok: false, errorCode: 'input_type_retired', error: 'input_type_retired' };
   }
   const page = Array.isArray(result) ? { options: result } : result;
-  const parsedPage = z.strictObject({ options: z.array(InputOptionSchema), nextCursor: z.optional(z.string()) }).safeParse(page);
+  const parsedPage = InputTypeOptionsPageSchema.safeParse(page);
   const options = parsedPage.success ? readInputTypeOptions(type, parsedPage.data.options) : null;
-  return options ? { ok: true, result: options,
-    ...(parsedPage.success && parsedPage.data.nextCursor !== undefined ? { nextCursor: parsedPage.data.nextCursor } : {}) }
-    : { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' };
+  if (!parsedPage.success || options === null) {
+    return { ok: false, errorCode: 'input_type_options_invalid', error: 'input_type_options_invalid' };
+  }
+  const { nextCursor, emptyAction } = parsedPage.data;
+  return { ok: true, result: options,
+    ...(nextCursor === undefined ? {} : { nextCursor }),
+    ...(emptyAction !== undefined && parsedPage.data.options.length === 0
+      && nextCursor === undefined && params.query?.cursor === undefined ? { emptyAction } : {}),
+  };
 }

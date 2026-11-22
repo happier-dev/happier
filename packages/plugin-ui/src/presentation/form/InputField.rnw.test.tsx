@@ -54,6 +54,29 @@ describe('one typed field decides how a fixed choice is drawn, for every form', 
       expect(trigger().textContent).toContain('new-profile');
     } finally { view.unmount(); }
   });
+  it('offers an empty inventory action only when there is nothing to choose', async () => {
+    const connect = vi.fn();
+    const props = { field: metric, value: undefined, options: [], onChange: vi.fn(),
+      optionsEmptyAction: <button onClick={connect}>Connect a source</button>,
+      frame: 'none' as const, theme };
+    const view = mountThroughReactNativeWeb(<HappierInputField {...props} optionsStatus="ready" />);
+    const button = () => [...view.container.querySelectorAll<HTMLElement>('[role="button"],button')]
+      .find(item => item.textContent === 'Connect a source');
+    try {
+      expect(button()).toBeDefined();
+      await act(async () => button()!.click());
+      expect(connect).toHaveBeenCalledOnce();
+      expect(props.onChange).not.toHaveBeenCalled();
+      await view.render(<HappierInputField {...props} optionsStatus="ready" disabled />);
+      expect(button()).toBeUndefined();
+      await view.render(<HappierInputField {...props} optionsStatus="loading" />);
+      expect(button()).toBeUndefined();
+      await view.render(<HappierInputField {...props} optionsStatus="failed" />);
+      expect(button()).toBeUndefined();
+      await view.render(<HappierInputField {...props} optionsStatus="ready" options={two} />);
+      expect(button()).toBeUndefined();
+    } finally { view.unmount(); }
+  });
   it('explains pending and empty choices and withdraws the notice when choices arrive', async () => {
     const props = { field: { path: 'session', title: 'Session', widget: 'select' as const }, value: undefined,
       options: [], onChange: () => {}, frame: 'none' as const, theme, testID: 'session' };
