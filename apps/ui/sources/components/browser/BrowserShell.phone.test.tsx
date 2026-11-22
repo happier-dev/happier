@@ -8,6 +8,10 @@ import { renderScreen } from '@/dev/testkit';
 import { buildBrowserAdapterCapabilities } from '@/sync/domains/browser/adapters/capabilities';
 import type { BrowserControlState } from '@/sync/domains/browser/control';
 
+// Collect the shell's module graph before timed interactions; a cold in-test import can outlive
+// the test and leave its renderer work overlapping the next case.
+import { BrowserShell } from './BrowserShell';
+
 const windowSize = vi.hoisted(() => ({ width: 390, height: 844 }));
 
 // The phone composition is decided by the window (a compact device) as well as the container, so
@@ -89,7 +93,6 @@ describe('BrowserShell on a phone', () => {
 
     it.each([390, 1440])('takes control on a real address edit, preserving the draft through owner updates at width %i', async (width) => {
         windowSize.width = width;
-        const { BrowserShell } = await import('./BrowserShell');
         const reducer = await import('@/sync/domains/browser/control/reducer');
         const initial = await createPageState();
         const view = initial.viewsById.view_1;
@@ -141,7 +144,6 @@ describe('BrowserShell on a phone', () => {
     });
 
     it('recomposes the chrome: the host capsule on top, the page controls in a bottom bar', async () => {
-        const { BrowserShell } = await import('./BrowserShell');
         const screen = await renderScreen(
             <BrowserShell
                 browserSessionId="browser_session_1"
@@ -166,7 +168,6 @@ describe('BrowserShell on a phone', () => {
     });
 
     it('keeps the page tools out of the bar while the agent drives its own browser (lab A)', async () => {
-        const { BrowserShell } = await import('./BrowserShell');
         const reducer = await import('@/sync/domains/browser/control/reducer');
         const { createBrowserContextState } = await import('@/sync/domains/browser/context');
         const opened: readonly BrowserEventV1[] = [{
@@ -220,7 +221,6 @@ describe('BrowserShell on a phone', () => {
 
     it.each([390, 1440])('keeps idle Diagnostics in ⋯ with no bar under the page (lab Q), width %i', async (width) => {
         windowSize.width = width;
-        const { BrowserShell } = await import('./BrowserShell');
         const { createBrowserDiagnosticsUiStore } = await import('@/sync/domains/browser/diagnostics');
         const { resetBrowserDiagnosticsDrawerStateForTests } = await import('./diagnostics/BrowserDiagnosticsDrawer');
         resetBrowserDiagnosticsDrawerStateForTests();
@@ -260,7 +260,6 @@ describe('BrowserShell on a phone', () => {
         ['a path on the preview', '/dashboard', 'localhost:5173/dashboard'],
     ])('names a preview with no absolute address by its last known location: %s', async (_case, currentUrl, expected) => {
         windowSize.width = 1440;
-        const { BrowserShell } = await import('./BrowserShell');
         const reducer = await import('@/sync/domains/browser/control/reducer');
         const events: readonly BrowserEventV1[] = [{
             kind: 'sessionCreated', eventId: 'e1', browserSessionId: 'browser_session_1', profileId: 'profile_1', occurredAt: 1,
@@ -282,7 +281,6 @@ describe('BrowserShell on a phone', () => {
     });
 
     it('shows the launchpad on its own, with no browser chrome around it (lab W)', async () => {
-        const { BrowserShell } = await import('./BrowserShell');
         const reducer = await import('@/sync/domains/browser/control/reducer');
         const screen = await renderScreen(
             <BrowserShell
