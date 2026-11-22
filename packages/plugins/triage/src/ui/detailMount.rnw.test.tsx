@@ -3542,6 +3542,31 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText('Reading this entry')).resolves.toBeUndefined();
     });
 
+    it('keeps the wide routed detail region mounted through the first list pass', async () => {
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const subPath = buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+        });
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true,
+            secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
+        await measureFillRegion(1440);
+        const findRegion = () => document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
+        let initialRegion: Element | null = null;
+        try {
+            initialRegion = findRegion();
+            expect(initialRegion).not.toBeNull();
+            expect(initialRegion?.textContent).toContain('Reading this entry');
+        } finally {
+            await act(async () => { release(); });
+        }
+        await vi.waitFor(async () => {
+            await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
+        });
+        expect(findRegion()).toBe(initialRegion);
+    });
+
     it('opens an unloaded restored link exactly and leaves further pages to visible Load more', async () => {
         const subPath = buildTriageRouteSubPathV1({
             ...TRIAGE_ROUTE_DEFAULT_LENS_V1,

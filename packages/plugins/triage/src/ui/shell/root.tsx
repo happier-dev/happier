@@ -879,7 +879,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
   // environment every row reads a new value each time, re-rendering every row for nothing.
   const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1,
-    configuredSources = openAdmission.current.configuredSources) => {
+    configuredSources = openAdmission.current.configuredSources, beforeFirstPass = false) => {
     const key = triageEntryRowKey(entryRef);
     const hit = rowsByKeyRef.current.get(key);
     const current = openAdmission.current;
@@ -892,6 +892,9 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
       const candidates = configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
+      // A sole connection needs no row to disambiguate it. With several,
+      // preserve the observed connection instead of guessing on a cold link.
+      if (beforeFirstPass && candidates.length > 1) return null;
       const active = candidates.filter(source => source.available).map(source => source.sourceInstanceId);
       const selected = selectObservationInstance([], active, null, {
         allowUnobserved: true,
@@ -929,11 +932,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   }, [applyLensEdit, readRowActivation]);
 
   const configuredSourcesReady = window.snapshot.configuredSourcesReady;
-  const readRoutedEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
+  const readRoutedEntryActivation = React.useCallback((entryRef: TriageEntryRefV1, windowSettled: boolean) => {
     if (configuredSourcesReady !== true) return null;
     // The lens effect can invalidate the rendered roster earlier in this commit.
     const current = window.readOwner?.getSnapshot();
-    return current?.configuredSourcesReady === true ? readEntryActivation(entryRef, current.configuredSources) : null;
+    return current?.configuredSourcesReady === true
+      ? readEntryActivation(entryRef, current.configuredSources, !windowSettled) : null;
   }, [configuredSourcesReady, window.readOwner, readEntryActivation]);
 
   /**
@@ -1179,6 +1183,11 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   );
 
   const selectedKey = surface.selection === null ? null : triageEntryRowKey(surface.selection.entryRef);
+  // The location owns which detail is visible before the read owns its connection.
+  const detailSubPath = route.observed === props.subPath ? route.intent.subPath : props.subPath;
+  const routedEntry = React.useMemo(() => parseTriageRouteSubPathV1(detailSubPath).selection, [detailSubPath]);
+  const openEntry = surface.selection?.entryRef ?? routedEntry;
+  const openEntryKey = openEntry === null ? null : triageEntryRowKey(openEntry);
 
   /**
    * The window row behind the selection.
@@ -1527,10 +1536,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     ...(viewportScopeKey === undefined ? {} : { retainedViewport: { scope: sharedScope, key: viewportScopeKey } }),
     groups: collectionGroups,
     window: collectionWindow,
-    // Open is the reducer's selection, whether or not the window still lists it: an entry that left the window
-    // keeps its detail (with the last known header) until the reader closes it.
-    openKey: creatingTask ? TRIAGE_TASK_DRAFT_KEY_V1
-      : surface.selection === null ? null : triageEntryRowKey(surface.selection.entryRef),
+    // The route and its qualified selection share the same detail slot.
+    openKey: creatingTask ? TRIAGE_TASK_DRAFT_KEY_V1 : openEntryKey,
     onOpenChange: onCollectionOpenChange,
     expandable: true,
   });
@@ -2022,10 +2029,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     applyLensEdit,
   });
 
-  // A direct link can name an entry before the initial window qualifies its connection.
-  const waitingForRoutedEntry = window.snapshot.pending === 'initial'
-    && surface.selection === null
-    && parseTriageRouteSubPathV1(props.subPath).selection !== null;
   /**
    * A settled window that does not hold the location's entry says so without
    * requiring an inventory walk (`ui/shell/absentRoute.ts`).
@@ -2440,7 +2443,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * tells it when the host already supplies the identity band and Close.
    */
   const detailRow = selectedRow ?? lastKnown?.row ?? null;
-  const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => surface.selection === null ? null : (
+  const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => openEntry === null ? null : (
     detailRow !== null ? (
       <TriagePublishedDetail
         exactRead={exactRead}
@@ -2539,7 +2542,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         ? text('plugins.triage.surface.detail.accountError.title', 'These details could not be read')
         : text('plugins.triage.surface.detail.reading', 'Reading this entry') };
     }
-    if (selectedHeader === null) return { title: text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded') };
+    if (selectedHeader === null) return { title: openEntry?.entryId ?? text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded') };
     const pinRow = selectedRow === null ? lastKnownPinRow : projectTriageWindowRow(selectedRow, pinsByEntry, { text });
     return renderTriageDetailHeaderV1({ header: selectedHeader, text, locale: surfaceContext.locale, nowMs: Date.now(),
       ...(pinRow === null ? {} : { pin: { row: pinRow, handlers: pinHandlers } }) });
@@ -2631,9 +2634,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
               )}
         />
       )}
-      {waitingForRoutedEntry && entryOpenFailure === null && routeWriteFailure === null ? (
-        <Status tone="neutral" labelKey="plugins.triage.surface.detail.reading" label="Reading this entry" />
-      ) : null}
       {absentRoute === null ? null : (
         <Status
           tone="warning"

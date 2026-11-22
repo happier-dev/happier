@@ -122,7 +122,7 @@ export function useTriageSettledLocation(input: Readonly<{
   /** Admission can arrive after a settled window without changing its rows. */
   configuredSources: TriageListWindowSnapshotV1['configuredSources'];
   targetedContributions: RenderContext['surface']['targetedContributions'];
-  readEntryActivation: (entryRef: TriageEntryRefV1) => Extract<TriageSurfaceActionV1, { kind: 'rowActivated' }>
+  readEntryActivation: (entryRef: TriageEntryRefV1, windowSettled: boolean) => Extract<TriageSurfaceActionV1, { kind: 'rowActivated' }>
     | Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> | null;
   surface: TriageSurfaceStateV1;
   rowsByKey: ReadonlyMap<string, Readonly<{ sectionId: string; row: TriageListDisplayRowV1 }>>;
@@ -225,12 +225,11 @@ export function useTriageSettledLocation(input: Readonly<{
     // answer whether that entry is present, withdrawn or unreadable. The list's
     // visible Load more remains the only owner of continuation demand.
     if (pendingLaunch === null) {
-      if (!windowSettled) return;
       if (launchInstanceId !== null) {
         applyLensEdit({ kind: 'rowActivated', sectionId: null, entryRef: located, sourceInstanceId: launchInstanceId }, 'selection');
         return;
       }
-      const action = readEntryActivation(located);
+      const action = readEntryActivation(located, windowSettled);
       if (action?.kind === 'none') {
         // A refusal answers the delivered open as fully as a selection does, so
         // it is retired here too. Left pending, it would keep this route
