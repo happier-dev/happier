@@ -356,7 +356,7 @@ it.each(['verify', 'prepare', 'approval-prepare', 'approval-verify', 'account-ap
             admittedPermissionCeiling: 'default' }, workspace: { machineId, directory: root, checkoutRootPath: root }, workDepth: 0,
             origin: { kind: 'direct', authenticatedStarterV1: { requestRef: 'native-workflow-start',
               requester: { serverId: 'srv_review_home', accountId } } } }),
-            runtimeAccountId: accountId, serverId, serverIdentityId: 'srv_review_home' };
+            serverId, serverIdentityId: 'srv_review_home' };
           const invoke = execute;
           execute = async context => {
             const result = await transport.runActionOperation!({ actionId: 'action.invoke', input: {}, context,

@@ -146,6 +146,8 @@ export function createWorkflowActionContextResolver(
     const context = buildWorkflowActionContext(execution, requesterWorkAttributionV1);
     const requester = await resolveRequesterContext?.();
     return { ...context, ...requester,
+      ...(requester?.machineAdmission && !context.runtimeAccountId
+        ? { runtimeAccountId: requester.machineAdmission.actorAccountId } : {}),
       ...(requester?.machineAdmission && execution.authorization.principal.kind === 'host'
         ? { admittedHostWorkflowRequester: true as const } : {}),
       defaultSessionId: execution.originSessionId ?? null,
