@@ -35,6 +35,7 @@ import { useVisibleSessionListPaneState, type VisibleSessionListPaneState } from
 import { useSessionListLayoutChoice } from '@/hooks/session/sessionListLayoutIntent';
 import { buildSessionListCollapseContextKey } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { sync } from '@/sync/sync';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runRefreshDiagnosticAction } from '@/utils/system/userInteractionDiagnostics';
 import { SyncPerformanceReactProfiler } from '@/components/ui/performance/SyncPerformanceReactProfiler';
@@ -358,6 +359,11 @@ function VisibleSessionsListViewContent(
     const safeArea = useChromeSafeAreaInsets();
     const sourceScopeKey = props.filterController.retentionScopeKey;
     const surfaceOwnership = props.surfaceOwnership;
+    const draftLifetime = useActiveServerAccountScopeLifetime(surfaceOwnership.dataActive && !runsPresentation);
+    React.useEffect(() => {
+        if (!draftLifetime?.isCurrent()) return;
+        return sync.observeSessionDraftCollection(draftLifetime.scope);
+    }, [draftLifetime]);
     const showSessionSections = props.corpusStorage === 'active'
         && props.filterController.displayFilters.show !== 'runs'
         && !props.filterController.filterControlsRequired;

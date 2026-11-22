@@ -1451,6 +1451,7 @@ class Sync {
       private authoringMemoryRuntime: Promise<ReturnType<typeof createAuthoringMemorySync>> | null = null;
       private projectAccountRowsRuntime: Promise<ReturnType<typeof createProjectAccountRowsSync>> | null = null;
       private readonly sessionDraftRuntimeHydrationGate = new SessionDraftRuntimeHydrationGate();
+      private readonly sessionDraftCollectionObservers = new Set<object>();
       private readonly sessionDraftRuntimePreparationGate = new SessionDraftRuntimeHydrationGate();
       private readonly sessionSystemRecordRepositories = new Map<string, SessionSystemRecordRepository>();
     private sessionsSync: InvalidateSync;
@@ -3479,17 +3480,19 @@ class Sync {
 
     private async ensureSessionDraftRepositoryRuntimeReady(params: Readonly<{
         forceSnapshotHydration?: boolean;
+        isCurrent?: () => boolean;
     }> = {}): Promise<void> {
         const scope = getActiveServerAccountScope();
         const generation = this.serverScopeGeneration;
         if (!scope) return;
         const isCurrent = () => generation === this.serverScopeGeneration
-            && areServerAccountScopesEqual(getActiveServerAccountScope(), scope);
+            && areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
+            && (params.isCurrent?.() ?? true);
         const hydrate = (gapOnly: boolean) => async () => {
             await this.prepareSessionDraftRepositoryRuntime(params);
             if (!isCurrent()) return false;
             this.sessionDraftSnapshotIncomplete = true;
-            const complete = await ensureSessionDraftRepositoryHydrated(scope, { gapOnly });
+            const complete = await ensureSessionDraftRepositoryHydrated(scope, { gapOnly, isCurrent });
             if (!isCurrent()) return false;
             this.sessionDraftSnapshotIncomplete = !complete;
             this.sessionDraftSnapshotPasses += 1;
@@ -3509,7 +3512,24 @@ class Sync {
         await this.sessionDraftRuntimeHydrationGate.run({ scope, force: true, hydrate: hydrate(true) });
     }
 
-    /** Foreground admission shares preparation/migration, while full hydration still owns outbox recovery. */
+    /** The active Sessions list owns collection demand, including draft previews on existing rows. */
+    public observeSessionDraftCollection(scope: ServerAccountScope): () => void {
+        if (!areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) return () => {};
+        const firstObserver = this.sessionDraftCollectionObservers.size === 0;
+        const observer = {};
+        this.sessionDraftCollectionObservers.add(observer);
+        if (firstObserver) {
+            const generation = this.serverScopeGeneration;
+            const routeReady = this.bootstrapForegroundReady ?? Promise.resolve();
+            fireAndForget(routeReady.then(() => {
+                if (generation !== this.serverScopeGeneration) return;
+                return this.refreshSessionDraftRepositoryForSync({ observedOnly: true });
+            }), { tag: 'Sync.observeSessionDraftCollection' });
+        }
+        return () => { this.sessionDraftCollectionObservers.delete(observer); };
+    }
+
+    /** Foreground editors prepare the repository and materialize their exact addresses. */
     public async prepareSessionDraftSurface(lifetime: ServerAccountScopeLifetime, addresses: readonly Extract<SessionDraftAddressV2, { kind: 'session' | 'newSession' }>[]): Promise<boolean> {
         const scope = lifetime.scope;
         if (!lifetime.isCurrent()) return false;
@@ -3558,19 +3578,31 @@ class Sync {
 
     private async refreshSessionDraftRepositoryForSync(params: Readonly<{
         forceSnapshotHydration?: boolean;
+        observedOnly?: boolean;
     }> = {}): Promise<void> {
         const scope = getActiveServerAccountScope();
         const generation = this.serverScopeGeneration;
+        const isCurrent = () => generation === this.serverScopeGeneration
+            && areServerAccountScopesEqual(getActiveServerAccountScope(), scope)
+            && (!params.observedOnly || this.sessionDraftCollectionObservers.size > 0);
+        if (!scope || !isCurrent()) return;
         try {
-            await this.ensureSessionDraftRepositoryRuntimeReady(params);
+            await this.ensureSessionDraftRepositoryRuntimeReady({ ...params, isCurrent });
         } catch {
             // Drafts are locally durable and the hydration gate retries after a failed run.
             // A draft-only outage must not suppress already-loaded account projections.
             log.log('[session-drafts] Snapshot hydration unavailable; retaining local drafts and retrying on the next sync');
         }
-        if (scope && generation === this.serverScopeGeneration
-            && areServerAccountScopesEqual(getActiveServerAccountScope(), scope)) {
-            this.markSessionDraftsReady();
+        if (isCurrent()) this.markSessionDraftsReady();
+    }
+
+    private async rearmSessionDraftWrites(): Promise<void> {
+        const generation = this.serverScopeGeneration;
+        try {
+            await this.prepareSessionDraftRepositoryRuntime();
+            if (generation === this.serverScopeGeneration) this.sessionDraftFlushSync?.invalidateCoalesced();
+        } catch {
+            log.log('[session-drafts] Pending draft write recovery unavailable; retaining local drafts');
         }
     }
 
@@ -3596,6 +3628,7 @@ class Sync {
         this.sessionDraftRepositoryConfiguredScope = null;
         this.sessionDraftRepositoryConfiguration = null;
         this.sessionDraftRuntimeHydrationGate.reset();
+        this.sessionDraftCollectionObservers.clear();
         this.sessionDraftRuntimePreparationGate.reset();
         configureSessionDraftRepository({ syncEnabled: false });
         // The UI-sync generation fence is the sole shared Account retirement
@@ -8592,11 +8625,12 @@ class Sync {
                   }
 
                   if (reason !== 'changes-catch-up') {
+                      fireAndForget(this.rearmSessionDraftWrites(), { tag: 'Sync.rearmSessionDraftWrites' });
+                      // Durable changes repair missed pushes by address. Only a visible list
+                      // or explicit refresh consumes a collection snapshot during normal resume.
                       await this.refreshSessionDraftRepositoryForSync({
-                          // Durable changes repair missed draft pushes by address. A
-                          // full census is only needed for explicit refresh; an earlier
-                          // snapshot that could not open every Session retries that gap.
                           forceSnapshotHydration: reason === 'manual',
+                          observedOnly: reason !== 'manual',
                       });
                       if (!shouldContinue()) return;
                   }
@@ -8901,10 +8935,9 @@ class Sync {
           ]) syncUnit.invalidateCoalesced();
           this.teamLabelEnvelopeSync.invalidateCoalesced();
 
-          await this.refreshSessionDraftRepositoryForSync();
-          if (this.serverScopeGeneration !== generation || this.credentials !== credentials) return;
-          // Recovery retains its draft-before-outbox ordering without delaying
-          // unrelated workspace presentation.
+          // Draft writes retry through their local outbox. Pending messages have their
+          // own durable address index. Neither needs an Account draft collection read.
+          fireAndForget(this.rearmSessionDraftWrites(), { tag: 'Sync.rearmSessionDraftWrites' });
           await this.rearmPendingOutboxForActiveScope();
           if (this.serverScopeGeneration !== generation || this.credentials !== credentials) return;
 

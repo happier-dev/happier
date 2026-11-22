@@ -2301,7 +2301,9 @@ export class SessionDraftRepository {
     async retryPendingSessionDrafts(scope: SessionDraftRepositoryScope): Promise<void> {
         const runtime = this.syncRuntime(scope);
         if (!runtime) return;
+        if (this.storage.prepare) await this.storage.prepare();
         const isCurrent = () => this.isCurrentRuntime(runtime);
+        if (!isCurrent()) return;
         const addresses = [...this.getScopeStateWithAllReplicas(scope).replicas.values()].map(replica => replica.address);
         let firstFailure: { error: unknown } | undefined;
         for (const address of addresses) {
@@ -2377,8 +2379,13 @@ export class SessionDraftRepository {
             let content: SessionDraftStoredContentEnvelopeV2 | null;
             try {
                 content = shouldTombstone ? null : await runtime.cipher.seal(params.address, submittedDocument!);
-            } catch {
+            } catch (error) {
                 if (!isCurrent()) return { status: 'pending' };
+                if (isSessionDraftContextUnavailableError(error)) {
+                    log.log('[session-drafts] Pending write deferred: Session encryption context unavailable');
+                    this.writeLatestReplicaStatus(params.scope, params.address, { status: 'offline' });
+                    return { status: 'offline' };
+                }
                 this.writeLatestReplicaStatus(params.scope, params.address, { status: 'error', errorReason: 'crypto' });
                 return { status: 'error' };
             }
@@ -2879,6 +2886,7 @@ export class SessionDraftRepository {
     async ensureSessionDraftRepositoryHydrated(scope: SessionDraftRepositoryScope, options: Readonly<{
         /** Re-read only the known unopened addresses; an unknown gap still takes the full census. */
         gapOnly?: boolean;
+        isCurrent?: () => boolean;
     }> = {}): Promise<boolean> {
         // Hydration is also the async-storage preparation boundary for local-only callers.
         if (this.storage.prepare) await this.storage.prepare();
@@ -2887,7 +2895,7 @@ export class SessionDraftRepository {
         return this.ensureSessionDraftRepositoryHydratedWithScopedRuntime({
             scope,
             runtime,
-            isCurrent: () => this.isCurrentRuntime(runtime),
+            isCurrent: () => this.isCurrentRuntime(runtime) && (options.isCurrent?.() ?? true),
             gapOnly: options.gapOnly,
         });
     }

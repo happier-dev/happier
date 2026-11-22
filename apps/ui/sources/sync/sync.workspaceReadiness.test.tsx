@@ -22,7 +22,7 @@ await initialNetwork.dispose();
 
 describe('Sync workspace readiness', () => {
     beforeEach(() => vi.resetModules());
-    it('recovers an offscreen Session draft without materializing the owning Session', async () => {
+    it('opens only the demanded Session draft after cold restore without enumerating the Account', async () => {
         const network = await installSessionOpsNetworkBoundary();
         const home = await network.addHome('https://draft-context.example.test', 'draft-context-account');
         const scope = { serverId: home.id, accountId: home.accountId };
@@ -41,6 +41,8 @@ describe('Sync workspace readiness', () => {
         const record = { address, revision: 1, createdAt: 1, updatedAt: 1, content: await cipher.seal(address, document) };
         const { profileDefaults } = await import('./domains/profiles/profile');
         let exactReads = 0;
+        let listReads = 0;
+        const draftReads: unknown[] = [];
         network.setHttpResponder(async (input, init) => {
             const path = new URL(String(input)).pathname;
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ features: { sessions: { enabled: true, drafts: { enabled: true } } } }));
@@ -50,8 +52,14 @@ describe('Sync workspace readiness', () => {
             if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
             if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
             if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
-            if (path === '/v2/account/session-drafts/list') return Response.json({ items: [record] });
-            if (path === '/v2/account/session-drafts/read') return Response.json({ status: 'present', record });
+            if (path === '/v2/account/session-drafts/list') {
+                listReads += 1;
+                return Response.json({ items: [record] });
+            }
+            if (path === '/v2/account/session-drafts/read') {
+                draftReads.push(JSON.parse(String(init?.body)).address);
+                return Response.json({ status: 'present', record });
+            }
             const sessionRoute = /^\/v2\/sessions\/([^/]+)$/.exec(path);
             if (sessionRoute && sessionRoute[1] !== 'active') return Response.json({
                 session: createPlainSessionCurrentProjectionRecordFixture({ id: decodeURIComponent(sessionRoute[1]!) }) });
@@ -79,19 +87,27 @@ describe('Sync workspace readiness', () => {
         const { upsertAndActivateServer } = await import('./domains/server/serverRuntime');
         const { restoreConnectionToActiveServer, disconnectActiveServerConnection } = await import('./runtime/orchestration/connectionManager');
         const { storage } = await import('./domains/state/storage');
-        const { syncSwitchServer } = await import('./sync');
+        const { sync, syncSwitchServer } = await import('./sync');
+        const { captureActiveServerAccountScopeLifetime } = await import('./domains/scope/activeServerAccountScope');
         const { getSessionDraftSnapshot, materializeExactSessionDraft } = await import('./ops/sessionDrafts/sessionDraftRepository');
         await syncSwitchServer(null);
         try {
             await upsertAndActivateServer({ serverUrl: home.serverUrl });
             await restoreConnectionToActiveServer({ token: home.token });
-            await vi.waitFor(() => expect(storage.getState().isSessionDraftsReady).toBe(true), { timeout: 30_000 });
-            expect(requireComposerDraftDocument(getSessionDraftSnapshot(scope, address)?.document)?.composer.text.value).toBe('Recovered draft');
-            expect(exactReads).toBe(1);
-            expect(storage.getState().sessions[address.sessionId]).toBeUndefined();
+            await (sync as unknown as { bootstrapSync(): Promise<void> }).bootstrapSync();
+            expect(listReads).toBe(0);
+            expect(draftReads).toEqual([]);
+            expect(exactReads).toBe(0);
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            expect(lifetime?.isCurrent()).toBe(true);
             storage.getState().applyServerScopedSessionListRows(home.id, [createSessionListRenderableSessionFixture({
                 id: address.sessionId, encryptionMode: 'plain',
             })], { source: 'ordinary', mode: 'append' });
+            await sync.materializeExistingSessionDraft(address.sessionId, lifetime!);
+            expect(listReads).toBe(0);
+            expect(draftReads).toEqual([address]);
+            expect(requireComposerDraftDocument(getSessionDraftSnapshot(scope, address)?.document)?.composer.text.value).toBe('Recovered draft');
+            expect(storage.getState().sessions[address.sessionId]).toBeUndefined();
             storage.setState(state => ({ settings: { ...state.settings, clientEncryptionRequirementV1: 'require_e2ee' } }));
             await expect(materializeExactSessionDraft(scope, address)).rejects.toMatchObject({ code: 'CLIENT_E2EE_REQUIRED' });
         } finally {
@@ -280,20 +296,20 @@ describe('Sync workspace readiness', () => {
             vi.restoreAllMocks();
         }
     }, 120_000);
-    it.each(['recover', 'retire'] as const)('restores retained workspace content before draft hydration, then %s the captured outbox scope', async (completion) => {
+    it.each(['recover', 'retire'] as const)('restores the workspace and rearms the outbox independently of observed draft collection hydration, then %s its scope', async (completion) => {
         const network = await installSessionOpsNetworkBoundary();
         const home = await network.addHome('https://ready-home.example.test', 'ready-account');
         const inactiveHome = await network.addHome('https://inactive-ready-home.example.test', 'inactive-ready-account');
         const drafts = createDeferred<void>();
         const draftRead = createDeferred<void>();
         const pendingRead = createDeferred<void>();
+        const pendingResponse = createDeferred<void>();
         const exactRead = createDeferred<void>();
         const exactDraft = createDeferred<void>();
         const inactiveRead = createDeferred<void>();
         const inactiveDraft = createDeferred<void>();
         const observedPaths = new Set<string>();
         let pendingReads = 0;
-        let draftsSettled = false;
         const { profileDefaults } = await import('./domains/profiles/profile');
         network.setHttpResponder(async input => {
             const path = new URL(String(input)).pathname;
@@ -305,7 +321,7 @@ describe('Sync workspace readiness', () => {
             if (path === '/v1/account/project-rows/list') return Response.json(createPlainProjectAccountRowListFixture());
             if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: home.accountId });
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({ features: { sessions: { drafts: { enabled: true } } } }));
-            if (path === '/v2/account/session-drafts/list') { draftRead.resolve(); await drafts.promise; draftsSettled = true; return Response.json({ items: [] }); }
+            if (path === '/v2/account/session-drafts/list') { draftRead.resolve(); await drafts.promise; return Response.json({ items: [] }); }
             if (path === '/v2/account/session-drafts/read') {
                 if (new URL(String(input)).origin === inactiveHome.serverUrl) {
                     inactiveRead.resolve();
@@ -317,9 +333,9 @@ describe('Sync workspace readiness', () => {
                 return Response.json({ status: 'absent' });
             }
             if (path === '/v2/sessions/retained-outbox/pending') {
-                expect(draftsSettled).toBe(true);
                 pendingReads += 1;
                 pendingRead.resolve();
+                await pendingResponse.promise;
                 return Response.json({ pending: [] });
             }
             if (path === '/v2/cursor') return Response.json({ cursor: 0 });
@@ -352,6 +368,7 @@ describe('Sync workspace readiness', () => {
                 body: JSON.stringify({ localId: 'retained-input', content: { t: 'plain', v: { role: 'user' } }, messageRole: 'user' }) } }, scope);
         let hook: Awaited<ReturnType<typeof renderHook<ReturnType<typeof useWorkspaceState>>>> | undefined;
         let editor: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        let releaseCollection: (() => void) | undefined;
         let inactiveEditor: Awaited<ReturnType<typeof renderScreen>> | undefined;
         let bindings: Awaited<ReturnType<typeof renderHook<ReturnType<typeof import('./domains/scope/useServerCredentialAccountScopes')['useServerCredentialAccountScopeBindings']>>>> | undefined;
         try {
@@ -361,11 +378,13 @@ describe('Sync workspace readiness', () => {
                 expect({ coreReady: storage.getState().isDataReady, paths: [...observedPaths] }).toMatchObject({ coreReady: true });
             }, { timeout: 30_000 });
             expect({ draftReady: storage.getState().isSessionDraftsReady, paths: [...observedPaths] }).toMatchObject({ draftReady: false });
+            await pendingRead.promise;
+            expect(observedPaths.has('/v2/account/session-drafts/list')).toBe(false);
+            releaseCollection = sync.observeSessionDraftCollection(scope);
             await draftRead.promise;
-            await vi.waitFor(() => expect(observedPaths.has('/v1/feed')).toBe(true));
             expect(storage.getState().isDataReady).toBe(true);
             expect(storage.getState().isSessionDraftsReady).toBe(false);
-            expect(pendingReads).toBe(0);
+            expect(pendingReads).toBe(1);
             hook = await renderHook(() => useWorkspaceState({ initialTab: { ...tab, id: 'fallback' }, windowId: 'ready-window' }));
             expect(hook.getCurrent().isReady).toBe(true);
             expect(hook.getCurrent().state.tabs.retained).toEqual(tab);
@@ -392,10 +411,11 @@ describe('Sync workspace readiness', () => {
                 await act(async () => { await disconnectActiveServerConnection(); });
                 exactDraft.resolve();
                 drafts.resolve();
+                pendingResponse.resolve();
                 await hydration;
                 expect(storage.getState().isDataReady).toBe(false);
                 expect(storage.getState().isSessionDraftsReady).toBe(false);
-                expect(pendingReads).toBe(0);
+                expect(storage.getState().sessionPending['retained-outbox']).toBeUndefined();
                 expect(editor.root.findAllByType('EditableDraftProbe')).toHaveLength(0);
             } else {
                 const { captureActiveServerAccountScopeLifetime } = await import('./domains/scope/activeServerAccountScope');
@@ -413,7 +433,7 @@ describe('Sync workspace readiness', () => {
                 await vi.waitFor(() => expect(visibleSessionReady).toBe(true));
                 await visibleSessionDraft;
                 expect(storage.getState().isSessionDraftsReady).toBe(false);
-                expect(pendingReads).toBe(0);
+                expect(pendingReads).toBe(1);
                 const { useServerCredentialAccountScopeBindings } = await import('./domains/scope/useServerCredentialAccountScopes');
                 bindings = await renderHook(() => useServerCredentialAccountScopeBindings([inactiveHome.id]));
                 await vi.waitFor(() => expect(bindings!.getCurrent().get(inactiveHome.id)?.isCurrent()).toBe(true));
@@ -425,9 +445,11 @@ describe('Sync workspace readiness', () => {
                 }));
                 await vi.waitFor(() => expect(network.httpRequests.some(row => row.url === `${inactiveHome.serverUrl}/v2/account/session-drafts/read`)).toBe(true));
                 await inactiveRead.promise;
+                pendingResponse.resolve();
+                await vi.waitFor(() => expect(storage.getState().sessionPending['retained-outbox']?.messages.map(row => row.localId)).toContain('retained-input'));
+                expect(storage.getState().isSessionDraftsReady).toBe(false);
                 drafts.resolve();
-                await pendingRead.promise;
-                expect(storage.getState().isSessionDraftsReady).toBe(true);
+                await vi.waitFor(() => expect(storage.getState().isSessionDraftsReady).toBe(true));
                 expect(inactiveEditor.root.findAllByType('InactiveEditableDraftProbe')).toHaveLength(0);
                 await act(async () => {
                     inactiveDraft.resolve();
@@ -450,9 +472,11 @@ describe('Sync workspace readiness', () => {
             }
             expect((await loadPendingOutboxForSession('retained-outbox', scope)).map(row => row.localId)).toContain('retained-input');
         } finally {
+            releaseCollection?.();
             exactDraft.resolve();
             inactiveDraft.resolve();
             drafts.resolve();
+            pendingResponse.resolve();
             await act(async () => { await disconnectActiveServerConnection(); });
             await hook?.unmount();
             await editor?.unmount();

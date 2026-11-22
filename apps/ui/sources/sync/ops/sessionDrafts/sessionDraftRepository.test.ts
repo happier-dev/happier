@@ -2425,6 +2425,30 @@ describe('sessionDraftRepository', () => {
         expect(remote.readCurrent()?.content).toMatchObject({ t: 'plain', v: { document: { composer: { text: { value: 'recover this independent draft' } } } } });
     });
 
+    it('retains a pending Session draft for the next recovery when its encryption context is temporarily unavailable', async () => {
+        const remote = createRemote();
+        const cipher = plainCipher();
+        let available = false;
+        const repository = createSessionDraftRepository({ storage: createMemoryStorage(), scope,
+            transport: remote.transport, syncEnabled: true, cipher: {
+                ...cipher,
+                seal: async (address, document) => {
+                    if (!available) throw new SessionDraftContextUnavailableError();
+                    return cipher.seal(address, document);
+                },
+            } });
+        repository.writeExistingSessionDraft({ scope, sessionId: sessionAddress.sessionId, patch: { text: 'retained edit' } });
+        await repository.retryPendingSessionDrafts(scope);
+        expect(remote.readCurrent()).toBeNull();
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('offline');
+        available = true;
+        await repository.retryPendingSessionDrafts(scope);
+        expect(remote.readCurrent()?.content).toMatchObject({
+            t: 'plain', v: { document: { composer: { text: { value: 'retained edit' } } } },
+        });
+        expect(repository.getSessionDraftSnapshot(scope, sessionAddress)?.status).toBe('clean');
+    });
+
     it('retains a permanently rejected draft as error rather than offline recovery work', async () => {
         const remote = createRemote();
         const repository = createSessionDraftRepository({ storage: createMemoryStorage(), scope,

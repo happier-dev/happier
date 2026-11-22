@@ -261,16 +261,22 @@ describe('Session draft collection context batching', () => {
         records = await Promise.all(['open', 'denied'].map(suffix => seal(`draft-gap-${suffix}`, `first ${suffix}`, 1)));
         const text = (suffix: string) => drafts.getExistingSessionDraftProjection(scope, `draft-gap-${suffix}`)?.text;
 
-        // An explicit refresh is the full census; the denied Session leaves one known address gap.
+        // The mounted collection takes a snapshot; the denied Session leaves one known address gap.
         counts.list = 0;
-        await sync.resumeSync('manual');
+        const releaseCollection = sync.observeSessionDraftCollection(scope);
+        await sync.resumeSync('app-foreground');
         expect(text('open')).toBe('first open');
         expect(text('denied')).toBeUndefined();
         expect(counts.list).toBe(1);
 
-        // Later sync passes retry that one address, never the Account list.
         counts.list = 0;
         counts.read = 0;
+        releaseCollection();
+        await sync.resumeSync('app-foreground');
+        expect(counts).toEqual({ list: 0, read: 0 });
+
+        // While observed, later sync passes retry just the known address.
+        sync.observeSessionDraftCollection(scope);
         for (let pass = 0; pass < 3; pass += 1) await sync.resumeSync('app-foreground');
         expect(counts).toEqual({ list: 0, read: 3 });
 
@@ -350,6 +356,7 @@ describe('Session draft collection context batching', () => {
         const { sync } = await import('./syncEngine');
         const ids = ['a', 'b', 'c'].map(suffix => `draft-del-${suffix}`);
         records = await Promise.all(ids.map(id => seal(id, `first ${id}`, 1)));
+        sync.observeSessionDraftCollection(scope);
         await sync.resumeSync('manual');
         const text = (id: string) => drafts.getExistingSessionDraftProjection(scope, id)?.text;
         expect(ids.map(text)).toEqual(ids.map(id => `first ${id}`));

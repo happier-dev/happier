@@ -6488,8 +6488,11 @@ Session entity. Its strict Session batch demand explicitly sets `includeTurns:fa
 ordinary full snapshots still require their turns projection. The shared typed read
 owner distinguishes these parts in its demand key, shares only pending parsed
 transport observations, and leaves access, mode/key admission and publication with
-each caller. Draft collection recovery and its readiness/outbox ordering remain
-unchanged. Unavailable context fails closed without publishing a locked Session shell.
+each caller. The active Sessions list requests the draft collection for its previews and
+Drafts group. Cold Account restore rearms pending messages by their durable Session addresses
+and retries locally retained draft writes independently. An exact editor prepares its own draft
+without waiting for the collection. Unavailable context fails closed without publishing a locked
+Session shell.
 
 Session recipient-envelope preparation uses that same context-only exact reader
 and its admitted opened Session key; it does not fetch unused turns or open the
