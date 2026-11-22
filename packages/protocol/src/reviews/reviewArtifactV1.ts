@@ -4,10 +4,12 @@ import {
   projectReviewReviewerOutcomeV1,
   projectReviewRoundOutcomeV1,
   ReviewQualityV1Schema,
+  ReviewReviewerOutcomeV1Schema,
   type ReviewQualityAggregationV1,
   type ReviewReviewerOutcomeV1,
 } from './reviewPublicationEvidence.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { SessionRuntimeIssueSourceV1Schema } from '../sessions/control/runtimeIssueV1.js';
 import { ExternalActionTargetV1Schema } from '../actions/externalActionApi.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import type { ReviewRoundBindingV1 } from './reviewRoundBindingV1.js';
@@ -80,6 +82,14 @@ export const ReviewRoundReviewerOutcomeV1Schema = lazyZodSchema(() => z.strictOb
   runId: z.optional(z.string().check(z.minLength(1))),
   startedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
   finishedAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+  /** Why a reviewer did not complete, projected from its own receipt's existing run failure facts. */
+  reason: z.optional(z.strictObject({
+    run: ReviewReviewerOutcomeV1Schema.shape.outcome,
+    errorCode: ReviewReviewerOutcomeV1Schema.shape.errorCode,
+    runtimeIssue: z.optional(z.strictObject({ source: SessionRuntimeIssueSourceV1Schema, code: z.string().check(z.minLength(1)) })),
+    reviewOutcome: ReviewReviewerOutcomeV1Schema.shape.reviewOutcome,
+    materialization: z.optional(z.enum(['partial', 'failed'])),
+  })),
 }));
 export type ReviewRoundReviewerOutcomeV1 = z.infer<typeof ReviewRoundReviewerOutcomeV1Schema>;
 export const ReviewArtifactBodyV1Schema = z.strictObject({ v: z.literal(1), rounds: z.array(z.strictObject({
@@ -168,11 +178,20 @@ function settleReviewerOutcome(reviewerId: string, displayName: string | undefin
   const own = (input.reviewerOutcomes ?? []).filter(item => item.key === reviewerId);
   const cancelled = own.length === 0 ? input.outcome === 'cancelled' : own.every(item => item.outcome === 'cancelled');
   const runId = own.find(item => item.runId)?.runId;
+  const outcome = cancelled ? 'cancelled' : projectReviewReviewerOutcomeV1(own);
+  const receipt = outcome === 'completed' ? undefined : own.find(item => item.outcome !== 'completed'
+    || item.reviewOutcome !== 'complete' || item.materialization?.kind !== 'complete') ?? own[0];
   const starts = own.flatMap(item => item.startedAt === undefined ? [] : [item.startedAt]);
   const finishes = own.flatMap(item => item.finishedAt === undefined ? [] : [item.finishedAt]);
   return { reviewerId, ...(displayName ? { displayName } : {}),
-    outcome: cancelled ? 'cancelled' : projectReviewReviewerOutcomeV1(own),
+    outcome,
     ...(runId ? { runId } : {}),
+    ...(receipt ? { reason: { run: receipt.outcome,
+      ...(receipt.errorCode ? { errorCode: receipt.errorCode } : {}),
+      ...(receipt.runtimeIssueV1 ? { runtimeIssue: { source: receipt.runtimeIssueV1.source, code: receipt.runtimeIssueV1.code } } : {}),
+      ...(receipt.reviewOutcome && receipt.reviewOutcome !== 'complete' ? { reviewOutcome: receipt.reviewOutcome } : {}),
+      ...(receipt.materialization && receipt.materialization.kind !== 'complete' ? { materialization: receipt.materialization.kind } : {}),
+    } } : {}),
     ...(starts.length ? { startedAt: Math.min(...starts) } : {}),
     ...(finishes.length ? { finishedAt: Math.max(...finishes) } : {}) };
 }

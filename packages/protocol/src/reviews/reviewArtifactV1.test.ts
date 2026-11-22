@@ -151,8 +151,9 @@ describe('durable Review rounds', () => {
     expect(round?.state).toBe('partial');
     expect(round?.reviewerOutcomes).toEqual([
       { reviewerId: 'fast', displayName: 'Codex', outcome: 'completed', runId: 'run-fast', startedAt: 11, finishedAt: 40 },
-      { reviewerId: 'slow', displayName: 'Claude', outcome: 'failed', runId: 'run-slow', startedAt: 12, finishedAt: 90 },
-      { reviewerId: 'thin', outcome: 'partial' },
+      { reviewerId: 'slow', displayName: 'Claude', outcome: 'failed', runId: 'run-slow', startedAt: 12, finishedAt: 90,
+        reason: { run: 'failed', errorCode: 'execution_run_failed' } },
+      { reviewerId: 'thin', outcome: 'partial', reason: { run: 'completed', reviewOutcome: 'partial' } },
       { reviewerId: 'absent', outcome: 'failed' },
     ]);
     const cancelled = await f.records.start({ ...start, startedAt: 200, newRound: true });
@@ -161,6 +162,30 @@ describe('durable Review rounds', () => {
       .toEqual(['cancelled', 'cancelled', 'cancelled', 'cancelled']);
     const legacy = { v: 1, rounds: [{ ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 2, reviewerIds: ['a', 'b'], runs: [] }] };
     expect(ReviewArtifactBodyV1Schema.parse(legacy).rounds[0]?.reviewerOutcomes).toBeUndefined();
+  });
+
+  it('keeps a typed reason for each reviewer that did not finish, from its settled receipt', async () => {
+    const f = fixture();
+    const binding = await f.records.start({ reviewId: 'reason-review', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['limited', 'stopped', 'unlaunched', 'thin', 'done', 'silent'], startedAt: 1 });
+    const outcomes = [
+      { key: 'limited', outcome: 'failed', errorCode: 'execution_run_failed', runtimeIssueV1: { v: 1, scope: 'primary_session',
+        status: 'failed', code: 'usage_limit_reached', source: 'usage_limit', occurredAt: 5, sanitizedPreview: 'Limit reached' } },
+      { key: 'stopped', outcome: 'cancelled' },
+      { key: 'unlaunched', outcome: 'launch_failed', errorCode: 'review_engine_unavailable' },
+      { key: 'thin', outcome: 'completed', reviewOutcome: 'partial', materialization: { kind: 'complete' } },
+      { key: 'done', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } },
+    ].map(outcome => ReviewReviewerOutcomeV1Schema.parse(outcome));
+    await f.records.settle({ ...binding, outcome: 'completed', finishedAt: 9, runs: [], reviewerOutcomes: outcomes });
+    const rows = (await f.records.read(binding.reviewId))?.rounds[0]?.reviewerOutcomes;
+    expect(rows?.map(row => [row.reviewerId, row.outcome, row.reason])).toEqual([
+      ['limited', 'failed', { run: 'failed', errorCode: 'execution_run_failed', runtimeIssue: { source: 'usage_limit', code: 'usage_limit_reached' } }],
+      ['stopped', 'cancelled', { run: 'cancelled' }],
+      ['unlaunched', 'failed', { run: 'launch_failed', errorCode: 'review_engine_unavailable' }],
+      ['thin', 'partial', { run: 'completed', reviewOutcome: 'partial' }],
+      ['done', 'completed', undefined],
+      ['silent', 'failed', undefined],
+    ]);
   });
 
   it('retains an addressable completed Review with zero findings and does not republish a terminal retry', async () => {
