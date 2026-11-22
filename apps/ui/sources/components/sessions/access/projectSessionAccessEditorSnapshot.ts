@@ -18,6 +18,17 @@ import { presentSessionAccessReason } from './presentSessionAccessFailure';
 
 export const sessionAccessSubjectKey = sharePrincipalKey;
 
+/** Only a complete roster can establish a private Session or name everyone with access. */
+export function projectSessionAccessAudience(
+    snapshot: SessionAccessGrantsListResponseV1 | null | undefined,
+    excludeAccountId: string,
+): readonly PrincipalRefV1[] | undefined {
+    if (snapshot?.visibility !== 'complete') return undefined;
+    const owner: PrincipalRefV1 = { kind: 'account', accountId: snapshot.owner.accountId };
+    return [owner, ...snapshot.grants.map(row => row.grant.subject)]
+        .filter(subject => subject.kind !== 'account' || subject.accountId !== excludeAccountId);
+}
+
 export function projectSessionAccessPrincipal(principal: SessionAccessPrincipalSummaryV1, viewer?: Readonly<{
     accountId?: string | null; profile?: AccountDisplayProfileV1 | null;
 }>, openedGroupDisplayName?: string | null): SessionAccessPrincipalPresentation {

@@ -924,6 +924,71 @@ describe('Account Workflow Library and settings', () => {
         expect(listRequests()).toHaveLength(reads + 1);
         await hook.unmount();
     });
+    it('links a private Session after its owner roster establishes an empty audience', async () => {
+        const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
+        const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+        const { SessionAccessGrantsListResponseV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessOperationsV1');
+        const { createWorkflowDefinition } = await import('@/sync/domains/workflows/workflowDefinitionActions');
+        const definitionId = '00000000-0000-4000-8000-000000000206';
+        await createWorkflowDefinition({ definitionId, definition: { version: 1, inputs: [], defaults: {},
+            blocks: [{ id: 'read', name: 'Read own Machines', kind: 'action', actionId: 'machines.list', input: {} }] },
+            metadata: { title: 'Private Session check' } });
+        const sessionId = 'owned-private-session';
+        const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/rootLayoutTestkit');
+        const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+        const features = createRootLayoutFeaturesResponse();
+        expect(tryWriteServerEnabledBitInPlace(features, 'sharing.session', true)).toBe(true);
+        home.answer(serverId, '/v1/features', { body: features });
+        home.answer(serverId, '/v1/features/authenticated', { body: features });
+        const roster = createDeferred<void>();
+        const rosterPath = '/v2/sessions/access-grants/list';
+        const grantPath = `/v1/artifacts/${definitionId}/access/grants`;
+        const { createPlainSessionByIdResponseFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const session = createSessionFixture({ id: sessionId, serverId, active: false, encryptionMode: 'plain',
+            metadataLayoutVersion: 1, metadata: { name: 'Private Session' } as ReturnType<typeof createSessionFixture>['metadata'],
+            ownerMetadataView: { path: '/repo', host: 'test', homeDir: '/home/test', machineId: project.machineId, flavor: 'claude' } });
+        storage.getState().applySessions([session]);
+        home.answer(serverId, `GET /v2/sessions/${sessionId}`, { body: createPlainSessionByIdResponseFixture(session) });
+        home.answer(serverId, `POST ${rosterPath}`, { select: async () => {
+            await roster.promise;
+            return { body: SessionAccessGrantsListResponseV1Schema.parse({
+                visibility: 'complete', owner: { kind: 'account', accountId: 'account-a', firstName: null, lastName: null,
+                    username: 'owner', avatarUrl: null }, primaryTeamId: null, grants: [],
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }], capabilities: {
+                    readTranscript: true, submitAgentInput: true, editSessionRecords: true, approveRuntimePermissions: true,
+                    manageAccess: true, managePermissionDelegation: true, managePublicLink: true, archiveSession: true,
+                    renameSession: true, assignResponsibility: true, stopSession: true, deleteSession: true,
+                } },
+            }) };
+        } });
+        home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
+            automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0,
+        }) });
+        const hook = await renderHook(() => useResourceAutomationsSection({ subject: { kind: 'session', serverId, sessionId } }),
+            { wrapper: ({ children }) => <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider> });
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().read.status).toBe('ready'));
+            expect(home.requests.filter(request => request.path === rosterPath)).toEqual([]);
+            await act(async () => hook.getCurrent().link.setDraft({ workflow: definitionId, lifetimeSession: { sessionId },
+                trigger: { kind: 'action', enabled: true, phase: 'after', actionIds: ['session.roles.add'] } }));
+            expect(hook.getCurrent().link.loading).toBe(true);
+            expect(hook.getCurrent().link.missingAudience).toBeUndefined();
+            await act(async () => expect(await hook.getCurrent().link.submit('accept')).toMatchObject({ ok: false, phase: 'sharing' }));
+            expect(rows).toHaveLength(0);
+            await act(async () => roster.resolve());
+            await waitForHomeGovernance(() => expect(hook.getCurrent().link.missingAudience).toEqual([]));
+            expect(home.requests.some(request => request.path === grantPath)).toBe(false);
+            await act(async () => {
+                const result = await hook.getCurrent().link.submit('accept');
+                if (!result.ok && result.phase === 'link') throw result.error;
+                expect(result).toMatchObject({ ok: true, shared: [] });
+            });
+            expect(rows).toHaveLength(1);
+            expect(home.requests.filter(request => request.path === rosterPath)).toHaveLength(1);
+            expect(home.requests.some(request => request.path === grantPath && request.method !== 'GET')).toBe(false);
+        } finally { roster.resolve(); await hook.unmount(); }
+    });
+
     it.each(['environment', 'machine'] as const)('keeps Resource Link declined read-only and awaits reviewed sharing before its one Workflow trigger write (%s)', async kind => {
         const { useResourceAutomationsSection } = await import('./useResourceAutomationsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');

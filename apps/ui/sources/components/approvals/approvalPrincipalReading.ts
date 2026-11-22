@@ -3,7 +3,7 @@ import type { ApprovalActionReference } from '@happier-dev/protocol/actions/acti
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
-import { readSharePrincipalNames, SharePrincipalNamesContext, useScopedPrincipalNameRead } from '@/components/sharing/sharePrincipalNames';
+import { readSharePrincipalNames, SharePrincipalNamesContext, useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { getTeamMember } from '@/sync/ops/teams/teamMemberOperations';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 
@@ -42,7 +42,7 @@ export function useApprovalPrincipalName(reference: ApprovalActionReference | un
     const name = serverId !== null && acknowledged?.serverId === serverId && key !== null
         ? acknowledged.names.get(key) ?? null : null;
     // Keyed by the principal, not the reference object, so an equal reference does not re-read.
-    const reading = useScopedPrincipalNameRead(name === null ? key : null, serverId,
+    const reading = useScopedSharingRead(name === null ? key : null, serverId,
         (scope, signal, isCurrent) => readApprovalPrincipalName(reference, scope, signal, isCurrent));
     return { name: name ?? reading.value, resolving: name === null && reading.resolving };
 }

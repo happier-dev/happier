@@ -68,6 +68,7 @@ function linkFor(missingAudience: readonly PrincipalRefV1[]) {
   return {
     whenOptions: [option],
     whenStatus: 'ready' as const,
+    audienceNames: new Map<string, string>(),
     draft: null,
     setDraft: vi.fn(),
     missingAudience,
@@ -172,12 +173,13 @@ describe('Link a workflow to a resource', () => {
     const link = linkFor([
       { kind: 'team', teamId: 'team-studio' } as PrincipalRefV1,
     ]);
+    link.audienceNames.set('team:team-studio', 'Studio');
     const anchor = React.createRef<never>();
     const screen = await renderScreen(
       <ResourceLinkWorkflowSheet
         anchorRef={anchor}
         resourceName="Production"
-        link={link as never}
+        link={link}
         serverId={null}
         machineId={null}
         accountLifetime={null}
@@ -213,6 +215,24 @@ describe('Link a workflow to a resource', () => {
     });
     expect(link.submit).toHaveBeenLastCalledWith('decline');
     await screen.unmount();
+  });
+
+  it('withholds sharing when its exact recipient has no name', async () => {
+    const link = { ...linkFor([{ kind: 'account', accountId: 'unresolved' }]),
+      draft: { workflow: 'builtin:review-and-converge', trigger: { ...before, mode: 'wait' as const, enabled: true } } };
+    const screen = await renderScreen(<ResourceLinkWorkflowSheet anchorRef={React.createRef<never>()}
+      resourceName="Production" link={link} serverId={null} machineId={null} accountLifetime={null}
+      onRequestClose={() => undefined} onLinked={() => undefined} />);
+    try {
+      await pickWorkflow(screen, 'builtin:review-and-converge');
+      expect(screen.findByTestId('resource-link-share')).toBeNull();
+      expect(screen.findByTestId('resource-link-review')).not.toBeNull();
+      const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
+      const submit = screen.findAllByType(RoundButton).find(button => button.props.testID === 'resource-link-submit');
+      expect(submit?.props.disabled).toBe(true);
+      await act(async () => submit?.props.onPress());
+      expect(link.submit).not.toHaveBeenCalled();
+    } finally { await screen.unmount(); }
   });
 
   // QA-B E10: the section hands a new setter on a later render; the chosen Workflow and When must stay drafted.

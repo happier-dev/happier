@@ -183,17 +183,15 @@ export function ResourceLinkWorkflowSheet(
   const names = useSharePrincipalNames(
     missing.length > 0 ? missing : null,
     props.serverId,
+    link.audienceNames,
   );
-  const audience = names.names
-    ? missing
-        .map((principal) => names.names?.get(sharePrincipalKey(principal)))
-        .filter(Boolean)
-        .join(', ')
-    : '';
+  const recipientNames = missing.map(principal => names.names?.get(sharePrincipalKey(principal)));
+  const recipientsIdentified = recipientNames.every(name => name !== undefined);
+  const audience = recipientsIdentified ? recipientNames.join(', ') : '';
   const workflowTitle =
     workflowOptions.find((option) => option.ref === workflow)?.title ?? '';
   const sharing = missing.length > 0;
-  const ready = link.draft !== null && !link.loading && link.issue == null;
+  const ready = link.draft !== null && !link.loading && link.issue == null && recipientsIdentified;
 
   const submit = async () => {
     if (!ready || submitting) return;
@@ -359,7 +357,7 @@ export function ResourceLinkWorkflowSheet(
                 }}
               />
             ) : null}
-            {sharing ? (
+            {sharing && recipientsIdentified ? (
               <AttentionBanner
                 testID="resource-link-share"
                 tone="neutral"
@@ -382,6 +380,14 @@ export function ResourceLinkWorkflowSheet(
                 kind="error"
                 title={t('workflows.triggers.link.reviewFailed')}
                 action={{ label: t('common.retry'), onPress: link.retryReview }}
+              />
+            ) : null}
+            {!link.issue && (link.loading || (sharing && !recipientsIdentified)) ? (
+              <SurfaceStateCard
+                testID="resource-link-review"
+                size="line"
+                kind={link.loading || names.resolving ? 'loading' : 'unavailable'}
+                title={link.loading || names.resolving ? t('common.loading') : t('workflows.triggers.link.reviewFailed')}
               />
             ) : null}
             {failure ? (

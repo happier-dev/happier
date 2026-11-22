@@ -127,9 +127,9 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
             : []),
     ] : [], [response]);
     const groupDisplayNames = useTeamGroupNameProjectionDisplayNames({ scope, groups: groupLabelInputs });
-    const grantDisplayName = (row: MachineAccessGrantRowV1) => row.principal.kind === 'group' && row.display.groupName !== undefined
+    const grantDisplayName = React.useCallback((row: MachineAccessGrantRowV1) => row.principal.kind === 'group' && row.display.groupName !== undefined
         ? groupDisplayNames.get(row.principal.groupId) ?? null
-        : row.display.name;
+        : row.display.name, [groupDisplayNames]);
     const sourceDisplayName = (source: MachineAccessGrantsListResponseV1['ownAccessSources'][number]) => source.principal.kind === 'group' && source.groupName !== undefined
         ? groupDisplayNames.get(source.principal.groupId) ?? null
         : source.displayName;
@@ -430,8 +430,17 @@ export function useMachineShareController(input: Readonly<{ machineId: string; m
     const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(() => canWrite && response
         ? [{ kind: 'account', accountId: response.custodian.accountId }, ...response.grants.map(row => row.principal)]
         : undefined, [canWrite, response]);
+    const audienceNames = React.useMemo(() => {
+        if (!canWrite || !response) return undefined;
+        const names = new Map<string, string>();
+        for (const row of response.grants) {
+            const name = grantDisplayName(row)?.trim();
+            if (name) names.set(sessionAccessSubjectKey(row.principal), name);
+        }
+        return names;
+    }, [canWrite, response, grantDisplayName]);
     return { model, actions, response, guestExecution, viewerRow, inherited, canLeave, loading: scope !== null && (state.phase === 'initial' || readSettling), issue: scope === null || readSettling ? undefined : state.issue,
-        audience,
+        audience, audienceNames,
         notice: unknownOperation?.kind === 'error' ? unknownOperation.error : notice, retryContent: load, approvalId: approval.approvalId,
         prepareKeys: (ref: PrincipalRefV1) => { if (canWrite && response?.grants.some(row =>
             sessionAccessSubjectKey(row.principal) === sessionAccessSubjectKey(ref) && row.audience.some(member => member.canPrepareKeys)))

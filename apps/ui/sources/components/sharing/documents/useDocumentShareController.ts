@@ -68,7 +68,7 @@ function readFailureCode(result: unknown): string {
 }
 
 /** One message per Artifact grant failure; codes stay the host's, words stay here. */
-function presentDocumentShareFailure(code: string, failure?: unknown): ShareUiError {
+export function presentDocumentShareFailure(code: string, failure?: unknown): ShareUiError {
     switch (code) {
         case 'unsupported_action':
         case 'artifact_access_unavailable':

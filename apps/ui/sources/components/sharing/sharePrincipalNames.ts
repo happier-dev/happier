@@ -6,6 +6,7 @@ import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/use
 import { sharePrincipalKey } from './sharePrincipalPresentation';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
 import { openTeamGroupNameProjection } from '@/sync/ops/teams/teamGroupLabels';
+import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { projectSessionAccessPrincipal } from '@/components/sessions/access/projectSessionAccessEditorSnapshot';
 
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
@@ -42,7 +43,10 @@ export async function readSharePrincipalNames(
         ? await openTeamGroupNameProjection({ client: createPrivateLabelClient(scope),
             groupId: principal.groupId, name: principal.name, signal })
         : undefined;
-      if (principal.kind === 'group' && openedGroupDisplayName === null) continue;
+      const identified = principal.kind === 'group' ? openedGroupDisplayName?.trim()
+        : principal.kind === 'team' ? principal.name?.trim()
+          : formatAccountDisplayName(principal);
+      if (!identified) continue;
       const presentation = projectSessionAccessPrincipal(principal, { accountId: scope.accountId }, openedGroupDisplayName);
       names.set(
         presentation.key,
@@ -61,19 +65,24 @@ export async function readSharePrincipalNames(
 export function useSharePrincipalNames(
   subjects: readonly PrincipalRefV1[] | null,
   serverId: string | null,
+  acknowledged: ReadonlyMap<string, string> = NO_NAMES,
 ): Readonly<{
   names: ReadonlyMap<string, string> | null;
   resolving: boolean;
 }> {
-  const wanted = subjects !== null && subjects.length > 0;
-  const key = wanted ? JSON.stringify(subjects.map(sharePrincipalKey)) : null;
-  const reading = useScopedPrincipalNameRead(key, serverId,
-    (scope, signal, isCurrent) => readSharePrincipalNames(subjects ?? [], scope, signal, isCurrent));
-  return { names: reading.value, resolving: reading.resolving };
+  const remaining = subjects?.filter(subject => !acknowledged.has(sharePrincipalKey(subject))) ?? [];
+  const key = remaining.length > 0 ? JSON.stringify(remaining.map(sharePrincipalKey)) : null;
+  const reading = useScopedSharingRead(key, serverId,
+    (scope, signal, isCurrent) => readSharePrincipalNames(remaining, scope, signal, isCurrent));
+  const names = React.useMemo(() => {
+    if (acknowledged.size === 0) return reading.value;
+    return reading.value === null ? acknowledged : new Map([...reading.value, ...acknowledged]);
+  }, [acknowledged, reading.value]);
+  return { names, resolving: reading.resolving };
 }
 
-/** Exact name projections share one credential-bound read and retirement lifecycle. */
-export function useScopedPrincipalNameRead<T>(
+/** Exact sharing projections share one credential-bound read and retirement lifecycle. */
+export function useScopedSharingRead<T>(
   key: string | null,
   serverId: string | null,
   read: (scope: ServerAccountScope, signal: AbortSignal, isCurrent: () => boolean) => Promise<T>,
@@ -82,9 +91,9 @@ export function useScopedPrincipalNameRead<T>(
   // A reader captures the current operands, but only their stable key starts a new read.
   const currentRead = React.useRef(read);
   currentRead.current = read;
+  const request = React.useMemo(() => ({ binding, key }), [binding, key]);
   const [reading, setReading] = React.useState<Readonly<{
-    binding: typeof binding;
-    key: string;
+    request: typeof request;
     value: T | null;
   }> | null>(null);
   React.useEffect(() => {
@@ -97,22 +106,19 @@ export function useScopedPrincipalNameRead<T>(
       binding.isCurrent,
     ).then((value) => {
       if (!abort.signal.aborted && binding.isCurrent())
-        setReading({ binding, key, value });
+        setReading({ request, value });
     }, () => {
       // Optional name reads settle unavailable; retiring a row only withdraws
       // its interest and must not leave a rejected promise or publish old data.
       if (!abort.signal.aborted && binding.isCurrent())
-        setReading({ binding, key, value: null });
+        setReading({ request, value: null });
     });
     return () => {
       abort.abort();
       retirement.dispose();
     };
-  }, [binding, key]);
-  const current =
-    reading?.binding === binding && reading.key === key && binding?.isCurrent()
-      ? reading
-      : null;
+  }, [binding, key, request]);
+  const current = reading?.request === request && binding?.isCurrent() ? reading : null;
   return {
     value: current?.value ?? null,
     resolving:
