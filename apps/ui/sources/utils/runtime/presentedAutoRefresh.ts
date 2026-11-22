@@ -65,12 +65,14 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
         return state?.status === 'unavailable' ? state.reason : null;
     }
 
-    /** The status owner has published the first snapshot (and possibly discovered its repository root). */
-    reconcile(key: string): void {
+    /** The status owner has published a snapshot that can admit observation. */
+    reconcile(key: string, options?: Readonly<{ reattachUnavailable?: boolean }>): void {
         const poll = this.polls.get(key);
         if (!poll) return;
         const target = this.resolvePoll(poll);
-        if (target) this.reconcileWatch(poll, target);
+        if (!target) return;
+        if (options?.reattachUnavailable && poll.watchState.status === 'unavailable') this.releaseWatch(poll);
+        this.reconcileWatch(poll, target);
     }
 
     retain(demand: Demand): () => void {
@@ -83,11 +85,11 @@ export class PresentedAutoRefresh<Demand extends PresentedAutoRefreshDemand, Sna
             poll = { key: target.key, consumers: new Set(), timer: null, running: false,
                 delayMs: demand.intervalMs, snapshot: null, watchState: { status: 'idle' }, stopWatch: null, stopRecovery: null };
             this.polls.set(target.key, poll);
-            this.subscribeRecovery(poll, target);
         }
         const previousInterval = this.policy(poll)?.intervalMs;
         const consumer = { demand, poll };
         poll.consumers.add(consumer);
+        if (previousInterval === undefined) this.subscribeRecovery(poll, target);
         if (!this.stopListening) {
             let active = this.isActive();
             this.stopListening = subscribeToRuntimeActiveChange(() => {
