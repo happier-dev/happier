@@ -4,7 +4,7 @@ import axios, { AxiosHeaders } from 'axios';
 import { API_TOKEN_FULL_GRANT_V1, freezeActionCompletionContractV1, getActionSpec,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
   sealWorkflowProgressStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1,
-  parseWorkflowStoredContentEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
+  parseWorkflowStoredContentEnvelopeV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, openWorkflowProgressStoredEnvelopeV1,
   type AccountApiTokensListActionOutputV1, type WorkflowDefinitionV1 } from '@happier-dev/protocol';
 import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ManagedListInputV1Schema, ManagedListOutputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -1822,6 +1822,83 @@ describe('production daemon Workflow policy-only context preparation', () => {
           .toMatchObject({ ok: false, error: { code: RPC_ERROR_CODES.FORBIDDEN } });
       } else if (scenario !== 'owner') expect(incomingCodes.length).toBeGreaterThan(0);
     } finally { vi.unstubAllEnvs(); }
+  });
+
+  it.each([
+    ['cmws3jhdt02fnwvm2fnq0zbtn', '6f8526de-3eae-469c-b61f-bfcf09721e8b', 'Rgk3nXme_ZCd7HHHxZ1YYDYXhPwm-B9HynFD2jOBhGw', 1795368715308],
+    ['cmws3jrst02ftwvm25g0036ba', 'f0cb944b-257c-46c3-a55d-7160443f986f', 'U-KBRDkJPbdLDHKpIwCYiDnZYmDTDnF0V-N9dU3dmRE', 1795368701431],
+  ])('reads the captured Any Archive origin before leaf placement for owned Session %s', async (sourceSessionId, sourceMachineId, occurrenceKey, occurredAt) => {
+    const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+    onTestFinished(() => runtime.dispose());
+    const accountId = 'archive-owner';
+    const machineId = '6f8526de-3eae-469c-b61f-bfcf09721e8b';
+    const runId = '7be4d65c-d3b7-4868-a416-b18d9ee29c1c';
+    const directory = tmpdir();
+    const home = 'http://127.0.0.1:43187';
+    releaseHome = publishServerHttpRuntimeOrigin(home, 'https');
+    const credentials = { token: `fixture.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 0,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null };
+    const currentness = { mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null,
+      contentKeyFingerprint: null, updatedAt: 1 } as const;
+    const settings = AccountSettingsSchema.parse({});
+    const automationId = '05e54b9e-265e-471e-bed7-0c2ccf083d41';
+    const cause = AutomationRunCauseSchema.parse({
+      kind: 'trigger', triggerKind: 'sessionLifecycle', triggerId: '18b60f22-30d8-4065-a91d-04ee37eacc28',
+      triggerRevision: 0, occurredAt, occurrenceKey,
+      evidence: { event: 'sessionArchived', sourceSessionId, policy: { kind: 'everyMatch' } },
+    });
+    const storage = createWorkflowRunStorageTestkit({ accountId, runId, machineId,
+      origin: { kind: 'automation', automationId, cause } });
+    mocks.fetchAccountEncryptionCurrentness.mockResolvedValue(currentness);
+    mocks.fetchSessionById.mockResolvedValue({ ...createSessionRecordFixture({ id: sourceSessionId, encryptionMode: 'plain',
+      active: false, archivedAt: occurredAt, metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }) }),
+      ownerMetadata: { t: 'plain', v: { v: 1, workspace: { machineId: sourceMachineId, path: join(directory, 'archive-source') } } } });
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/profile') return { status: 200, data: { id: accountId } };
+      if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (path === '/v1/account/encryption/currentness') return { status: 200, data: currentness };
+      if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: settings }, version: 1 } };
+      if (path === '/v1/artifacts') return { status: 200, data: [] };
+      if (path === PROMPT_LIBRARY_ROWS_ROUTE_V1) return { status: 200, data: { status: 'listed', rows: [] } };
+      throw new Error(`Unexpected Archive admission GET ${path}`);
+    });
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v3/automations/runs/workflow-storage') {
+        return { status: 200, data: await storage.execute(body as WorkflowRunStorageTestkitOperation) };
+      }
+      throw new Error(`Unexpected Archive admission POST ${path}`);
+    });
+    const unavailable = async (): Promise<never> => { throw new Error('The Archive review does not launch a Session'); };
+    const coordinate = createProductionDaemonWorkflowRuntime({ credentials, accountId }).createCoordinatorForMachine({
+      machineId, machineAdmissionTransport: unavailable, machineActionDirectTargetTransport: { machineId, invoke: unavailable },
+    });
+    const diagnostics = vi.spyOn(logger, 'debug');
+    const outcome = await coordinate({
+      runId, automationId, automationCause: cause, causeWorkDepth: 0, attempt: 0, expectedRevision: 0,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+      definitionEnvelope: JSON.stringify({ t: 'plain', v: {
+        workspace: { directory }, executionTarget: { kind: 'session' },
+        inlineDefinition: { version: 1, inputs: [], blocks: [{ kind: 'wait', id: 'review',
+          document: { text: 'Review the archived Session', references: [], attachments: [] } }] },
+      } }),
+    });
+    const refusal = diagnostics.mock.calls.find(([message]) => message.includes('Trigger admission refused'))?.[1];
+    if (sourceMachineId !== machineId && outcome.state === 'failed') {
+      // Leaf placement owns whether the unbound Workflow can target the remote origin.
+      expect(outcome, JSON.stringify(refusal)).toMatchObject({
+        reason: 'target_unavailable', targetUnavailableReason: 'session_unavailable', blockId: 'review',
+      });
+      return;
+    }
+    expect(outcome, JSON.stringify({ outcome, refusal })).toMatchObject({ state: 'waiting_for_review' });
+    expect(openWorkflowAcceptedSnapshotStoredEnvelopeV1({
+      mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(storage.acceptedEnvelope()!),
+    })).toMatchObject({ kind: 'available', content: {
+      machineId, origin: { originSessionId: sourceSessionId }, workspaceTarget: { project: { machineId, directory } },
+    } });
   });
 
   it('retains accepted Project access while refreshing Workflow Action policy without listing Artifact or Role inventories', async () => {

@@ -374,8 +374,9 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         },
       });
       const resolveMaterializationHost: NonNullable<Parameters<typeof createProductionWorkflowRunCoordinator>[0]['resolveMaterializationHost']> = async (claim) => {
+        // The admitted origin supplies context. The claim's workspace still belongs to the executor.
         const origin = claim.originSessionId ? await resolveWorkflowSessionConversation({
-          credentials: params.credentials, sessionId: claim.originSessionId, machineId: input.machineId,
+          credentials: params.credentials, sessionId: claim.originSessionId,
           ...(claim.signal ? { signal: claim.signal } : {}),
         }) : null;
         if (claim.originSessionId && !origin) {
