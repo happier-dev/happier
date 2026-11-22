@@ -2,16 +2,17 @@ import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import type { AgentUsageObservedPayloadV1 } from '@happier-dev/protocol/runtime/agentUsageObservedPayloadV1';
 import { describe, expect, it } from 'vitest';
+import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery } from '@happier-dev/protocol/usage/usageCost';
 import { foldScopedUsageContributions as foldHead } from './query/__fixtures__/headScopedUsageContributionFold';
 import { bySubject, headBatchRow, headPopulation } from './query/__fixtures__/headUsagePopulation';
 import { foldScopedUsageContributions } from './query/scopedUsageContributionFold';
-import { projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
-import { orderRuntimeObservations } from './query/resolveScopedUsageContributions';
-import { toScopedUsageEventRow } from './query/scopedUsageEventRow';
+import { normalizeUsageAnalyticsEvidenceRows, prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
+import { orderRuntimeObservations, usageAccountingSubjectKey } from './query/resolveScopedUsageContributions';
+import { toScopedUsageEventRow, toScopedUsageEvidenceRow, type ScopedUsageEvidenceRow } from './query/scopedUsageEventRow';
 import { projectUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 import { resolveCapturedUsageModelPriceCatalog } from './usageModelPriceCatalog';
 import { projectUsageAnalytics, type UsageAnalyticsSnapshot } from './usageQueryService';
@@ -305,7 +306,112 @@ async function expectHeadBytes(label: string, rows: readonly Row[]) {
     }
 }
 
+// Date-row ordering from the parent of 19409b01c98, before the tie shortcut.
+function headRuntimeOrder<Row extends ScopedUsageEvidenceRow>(rows: readonly Row[]): Row[] {
+    const compareChronologically = (left: Row, right: Row) => left.observedAt.getTime() - right.observedAt.getTime()
+        || left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id);
+    const ordered = [...rows].sort(compareChronologically);
+    for (let start = 0; start < ordered.length;) {
+        let end = start + 1;
+        while (end < ordered.length && ordered[end]!.observedAt.getTime() === ordered[start]!.observedAt.getTime()) end++;
+        const streams = new Map<string, { slots: number[]; rows: Array<{ row: Row; sequence: number }> }>();
+        for (let index = start; index < end; index++) {
+            const row = ordered[index]!;
+            const accounting = row.accountingEvidence?.accounting;
+            const order = accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
+            if (!order) continue;
+            const stream = streams.get(order.runtimeIncarnationId) ?? { slots: [], rows: [] };
+            stream.slots.push(index);
+            stream.rows.push({ row, sequence: order.sequence });
+            streams.set(order.runtimeIncarnationId, stream);
+        }
+        for (const stream of streams.values()) {
+            stream.rows.sort((left, right) => left.sequence - right.sequence || compareChronologically(left.row, right.row));
+            stream.slots.forEach((slot, index) => { ordered[slot] = stream.rows[index]!.row; });
+        }
+        start = end;
+    }
+    return ordered;
+}
+
 describe('accounting fold compatibility', () => {
+    it('preserves HEAD replay and full batch delivery for a runtime tie and linked legacy report at the period boundary', async () => {
+        const boundary = start + dayMs;
+        const tied = (row: Row, id: string, createdOffset: number, sequence?: number): Row => ({
+            ...row, id, observedAt: new Date(boundary), createdAt: new Date(boundary + createdOffset),
+            ...(sequence === undefined ? { sessionId: 'claude-session' } : {}),
+            metadata: JSON.stringify({ ...(row.metadata as object), usageAccounting: {
+                    ...(row.metadata as { usageAccounting: object }).usageAccounting,
+                    ...(sequence === undefined ? { nativeSessionKey: 'c'.repeat(64) }
+                        : { runtimeEventOrder: { runtimeIncarnationId: 'codex-runtime', sequence } }),
+            } }),
+        });
+        const [baseline, next] = runtimeCounters('codex');
+        const codexFirst = tied(next!, 'codex-sequence-1', 3, 1);
+        const codexSecond = tied({ ...next!, inputTokens: 120, totalTokens: 130 }, 'codex-sequence-2', 1, 2);
+        const claudeFinal = tied(claudeRuntimeStream(0, 1)[1]!, 'claude-final', 2);
+        const linkedPrior = observation(7, 0, 'runtime', 7, 0.01, { id: 'linked-prior', agentId: 'pi' });
+        expect([claudeFinal.scope, codexFirst.scope, codexSecond.scope]).toEqual(['session_final', 'session_cumulative', 'session_cumulative']);
+        const captured: UsageAnalyticsSnapshot = {
+            ...snapshot([codexSecond, claudeFinal, codexFirst, linkedPrior, { ...baseline!, id: 'codex-prior' }]),
+            legacyReports: [{ id: 'linked', sessionId: 'session', key: 'retained',
+                data: { tokens: { total: 1000 }, cost: { total: 10 } },
+                createdAt: new Date(boundary - 1), updatedAt: new Date(boundary) }],
+        };
+        const input = UsageAnalyticsQueryBatchRequestSchema.parse({
+            queries: [queries(0, 1)[0], queries(1, 2)[0]],
+            contributionQueries: [queries(0, 1)[0], queries(1, 2)[0]],
+        });
+        const reference = new Map<string, UsageAnalyticsSnapshot>();
+        for (const query of input.queries) {
+            const current = prepareUsageAnalyticsSnapshot(captured, query);
+            const { startMs, endMs } = query.dateRange!;
+            const reports = captured.legacyReports.filter(report => report.updatedAt.getTime() < endMs);
+            const rows = captured.rows.filter(row => row.observedAt.getTime() < endMs);
+            const evidenceRows = normalizeUsageAnalyticsEvidenceRows(rows.map(toScopedUsageEvidenceRow), reports);
+            const ordered = headRuntimeOrder(evidenceRows);
+            const actualOrder = [...current.replayContext!.ranks.keys()];
+            expect(actualOrder).toEqual(ordered.map(row => row.id));
+            expect(actualOrder).toEqual(startMs === start ? ['codex-prior', linkedPrior.id]
+                : ['codex-prior', linkedPrior.id, 'legacy-report:linked', codexFirst.id, claudeFinal.id, codexSecond.id]);
+
+            const ranks = new Map(ordered.map((row, index) => [row.id, index]));
+            const subjects = new Map(evidenceRows.map(row => [row.id, usageAccountingSubjectKey(row)]));
+            const selectedSubjects = new Set(evidenceRows.filter(row => row.observedAt.getTime() >= startMs)
+                .map(row => subjects.get(row.id)!));
+            const legacySessions = new Set(evidenceRows.flatMap(row => row.sessionId && row.source === 'legacy_usage_report'
+                && selectedSubjects.has(subjects.get(row.id)!) ? [row.sessionId] : []));
+            for (const row of evidenceRows) {
+                if (row.sessionId && legacySessions.has(row.sessionId)) selectedSubjects.add(subjects.get(row.id)!);
+            }
+            const selectedEventIds = new Set(evidenceRows.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id));
+            expect([...current.replayContext!.selectedEventIds]).toEqual([...selectedEventIds]);
+            expect(current.replayContext!.selectedEventIds.has(linkedPrior.id)).toBe(true);
+            if (startMs === boundary) {
+                const residual = projectUsageAnalyticsPopulation(captured, query).totalContributions
+                    .find(row => row.source === 'legacy_usage_report');
+                expect(residual?.tokens.total).toBe(863);
+            }
+            for (const group of bySubject(rows.map(toScopedUsageEventRow)).values()) {
+                expect(JSON.stringify(foldScopedUsageContributions(group, new Map(current.replayContext!.ranks))))
+                    .toBe(JSON.stringify(foldHead(group, new Map(ranks))));
+            }
+            const preparedQueryKey = getUsageAnalyticsQueryRequestKey(query);
+            reference.set(preparedQueryKey, { ...captured, rows: rows.filter(row => selectedEventIds.has(row.id)),
+                legacyReports: reports, evidenceRows, replayContext: { ranks, subjects, selectedEventIds }, preparedQueryKey });
+        }
+        const deliver = async (snapshots: Map<string, UsageAnalyticsSnapshot>) => {
+            const projected = await projectUsageAnalyticsBatch({ priceCatalog: catalogCapture, snapshots },
+                input.queries, true, true, undefined, input);
+            return collectUsageAnalyticsBatchDelivery(projectUsageAnalyticsBatchDelivery(projected, input, false));
+        };
+        const actual = await deliver(new Map(input.queries.map(query => [getUsageAnalyticsQueryRequestKey(query), { ...captured }])));
+        expect(actual.results.every(result => 'value' in result && result.value.coverage)).toBe(true);
+        expect(actual.contributionPages?.map(page => page.rows.length)).toEqual([2, expect.any(Number)]);
+        expect(actual.contributionPages?.[1]?.rows.length).toBeGreaterThan(1);
+        expect(JSON.stringify(actual)).toBe(JSON.stringify(await deliver(reference)));
+    });
+
     it('preserves HEAD fold and scalar, rich and compact read bytes for keyless streams in every read mode', async () => {
         for (const [label, rows] of keylessStreams()) {
             await expectHeadBytes(label, rows);
