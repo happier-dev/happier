@@ -24,6 +24,7 @@ export function createSessionPageScreenOptions(): Readonly<Record<string, Native
         'message/[messageId]': t('common.message'),
         sharing: t('session.collaboration.title'),
         runs: t('session.subagents.panel.title'),
+        permissions: t('sessionRemotePermissionGrants.title'),
         triggers: t('sessionInfo.title'),
         automations: t('sessionInfo.title'),
         'automations/new': t('sessionInfo.title'),

@@ -40,7 +40,7 @@ describe('Session route screen options', () => {
         ['log', 'sessionLog.title'], ['usage', 'usage.sessionUsage'], ['template', 'botTemplates.title'],
         ['file', 'common.fileViewer'], ['commit', 'common.commit'], ['message/[messageId]', 'common.message'],
         ['sharing', 'session.collaboration.title'], ['triggers', 'sessionInfo.title'], ['automations', 'sessionInfo.title'],
-        ['runs', 'session.subagents.panel.title'],
+        ['runs', 'session.subagents.panel.title'], ['permissions', 'sessionRemotePermissionGrants.title'],
         ['automations/new', 'sessionInfo.title'], ['automations/when-turn-finishes', 'sessionInfo.title'],
     ] as const)('names %s before its body or compatibility redirect resolves', (childRouteName, key) => {
         expect(buildSessionRouteScreenOptions({ childRouteName })).toMatchObject({ headerShown: true, headerTitle: t(key) });

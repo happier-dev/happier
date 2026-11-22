@@ -17,6 +17,7 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { t } from '@/text';
 import { useUnistyles } from 'react-native-unistyles';
 import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
+import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 
 const REMOTE_PERMISSION_GRANTS_PAGE_SIZE = 50;
 
@@ -239,10 +240,18 @@ export function SessionRemotePermissionGrantsView(props: Readonly<{
 
     const actionsAddress = React.useMemo(() => props.serverId
         ? { serverId: props.serverId, sessionId: props.sessionId } : null, [props.serverId, props.sessionId]);
+    // A Session sub-page names its Session: the page stays "Allowed" (bar, tab, title), and the Session it
+    // belongs to is the header's one fact, so a phone opened straight here still says whose permissions these are.
+    const sessionTitle = useSessionDisplayTitles(React.useMemo(() => [{ sessionId: props.sessionId, serverId: props.serverId }], [props.serverId, props.sessionId]))[0] ?? null;
+    const headerMeta = React.useMemo(() => sessionTitle
+        ? [{ key: 'session', icon: 'chat-circle' as const, text: sessionTitle, testID: 'session-allowed-session' }] : undefined, [sessionTitle]);
     const header = (
         <PageHeader
             title={t('sessionRemotePermissionGrants.title')}
             description={t('sessionPages.permissions.description')}
+            meta={headerMeta}
+            // Back stays in the phone bar on a deep link: the route hands it the way back to this Session.
+            alwaysShowBack
         />
     );
     // The Session's own Action overrides lead; the native remote grants keep their own section and states.

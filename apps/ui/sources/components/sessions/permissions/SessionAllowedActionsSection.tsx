@@ -22,6 +22,7 @@ import {
   buildActionSettingsEntries,
   type ActionSettingsContributedAction,
 } from '@/components/settings/actions/buildActionSettingsEntries';
+import { groupActionSettingsEntriesByFamily } from '@/components/settings/actions/groupActionSettingsEntriesByFamily';
 import { useActionSettingsAvailability } from '@/components/settings/actions/useActionSettingsAvailability';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -229,6 +230,7 @@ export function SessionAllowedActionsGroup(
           onOpenChange={setAddOpen}
           listed={listed}
           contributed={catalog?.actions ?? NO_ITEMS}
+          pluginTitles={catalog?.pluginTitles}
           disabled={disabled}
           onSelect={add}
         />
@@ -328,7 +330,10 @@ function useSessionConsentScopeLabel(serverId: string | null, scope: ActionAppro
         : t('sessionRemotePermissionGrants.consent.onTarget', { target: name });
 }
 
-/** "Add an Action": the Account's own Action catalog, built only while the menu is open. */
+/**
+ * "Add an Action": the Account's own Action catalog, built only while the menu is open, grouped and described as
+ * Settings › Actions groups it (one family owner), and searchable.
+ */
 function SessionAllowedAddAction(
   props: Readonly<{
     open: boolean;
@@ -336,34 +341,40 @@ function SessionAllowedAddAction(
     listed: ReadonlySet<string>;
     /** The Session Machine's contributed Actions, offered alongside the host catalog as Settings › Actions does. */
     contributed: readonly ActionSettingsContributedAction[];
+    /** Contributing plugins' names: their Actions sit under their own plugin, as on Settings › Actions. */
+    pluginTitles?: ReadonlyMap<string, string>;
     disabled: boolean;
     onSelect: (actionId: string) => void;
   }>,
 ) {
   const raw = useSetting('actionsSettingsV1');
   const availability = useActionSettingsAvailability();
-  const { open, listed, contributed } = props;
+  const { open, listed, contributed, pluginTitles } = props;
   const items = React.useMemo(() => {
     if (!open) return NO_ITEMS;
-    return buildActionSettingsEntries({
+    const eligible = buildActionSettingsEntries({
       query: '',
       settings: normalizeActionsSettingsV1(raw),
       availability,
       contributedActions: contributed,
       translate: t,
-    })
-      .filter(
-        (entry) =>
-          !listed.has(entry.actionId) &&
-          entry.targets.some((target) => target.id === AUDIENCE) &&
-          isSessionApprovalConsentEligibleV1(entry.actionId),
-      )
-      .map((entry) => ({
+    }).filter(
+      (entry) =>
+        !listed.has(entry.actionId) &&
+        entry.targets.some((target) => target.id === AUDIENCE) &&
+        isSessionApprovalConsentEligibleV1(entry.actionId),
+    );
+    return groupActionSettingsEntriesByFamily(eligible, pluginTitles).flatMap((section) => {
+      const category = section.title ?? t(section.titleKey);
+      return section.entries.map((entry) => ({
         id: entry.actionId,
         title: entry.title,
+        ...(entry.description ? { subtitle: entry.description } : {}),
+        category,
         testID: `session-allowed-actions:add:${entry.actionId}`,
       }));
-  }, [availability, contributed, listed, open, raw]);
+    });
+  }, [availability, contributed, listed, open, pluginTitles, raw]);
   return (
     <DropdownMenu
       testID="session-allowed-actions:add"
@@ -372,6 +383,7 @@ function SessionAllowedAddAction(
       items={items}
       onSelect={props.onSelect}
       search
+      showCategoryTitles
       emptyLabel={t('sessionRemotePermissionGrants.consent.noActionsToAdd')}
       matchTriggerWidth={false}
       popoverAccessibilityLabel={t(

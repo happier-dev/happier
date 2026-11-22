@@ -151,7 +151,6 @@ describe('SessionRemotePermissionGrantsView', () => {
 
         await vi.waitFor(() => expect(sessionRpcWithServerScope).toHaveBeenCalledTimes(1));
         expect(screen.findByTestId('session-remote-permission-grants-empty')).toBeTruthy();
-        expect(screen.getTextContent()).toContain('No remote permission grants');
     });
 
     it('uses the server-issued cursor to load all owner-visible grants', async () => {

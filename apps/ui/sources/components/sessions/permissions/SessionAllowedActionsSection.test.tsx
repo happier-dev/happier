@@ -41,7 +41,7 @@ const publishKey = JSON.stringify([publish, null, null]);
 /** The Session Machine's contributed Actions, as Settings › Actions reads them from its daemon projection. */
 const CATALOG = {
   actions: [{ pluginId: 'acme.publisher', localId: 'releases/publish', title: 'Publish release notes',
-    description: null, icon: null, surfaces: ['agent', 'ui'] }],
+    description: 'Posts the notes to the release page.', icon: null, surfaces: ['agent', 'ui'] }],
   pluginTitles: new Map([['acme.publisher', 'Acme Publisher']]),
 } as const;
 
@@ -187,5 +187,16 @@ describe('Session › Allowed › Actions', () => {
     await vi.waitFor(() => expect(screen.findByTestId(`session-allowed-actions:add:${publish}:scroll-frame`)).not.toBeNull());
     await screen.pressByTestIdAsync(`session-allowed-actions:add:${publish}`);
     await vi.waitFor(() => expect(writes).toEqual([{ actionId: publish, audience: 'agent', mode: 'allowed' }]));
+  });
+
+  it('groups Add an Action as Settings › Actions does, each Action with what it does', async () => {
+    const screen = await renderScreen(group({ status: 'ready', rows: [] }, undefined, CATALOG));
+    await screen.pressByTestIdAsync('session-allowed-actions:add:trigger');
+    await vi.waitFor(() => expect(screen.findAll((node) => typeof node.props.onChangeText === 'function').length).toBeGreaterThan(0));
+    await act(async () => { screen.findAll((node) => typeof node.props.onChangeText === 'function')[0]?.props.onChangeText('Publish release'); });
+    await vi.waitFor(() => expect(screen.findByTestId(`session-allowed-actions:add:${publish}:scroll-frame`)).not.toBeNull());
+    // The contributing plugin titles its group; the row says what the Action does.
+    expect(screen.getTextContent()).toContain('Acme Publisher');
+    expect(screen.getTextContent()).toContain('Posts the notes to the release page.');
   });
 });
