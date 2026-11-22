@@ -247,6 +247,56 @@ describe('Session input live-work notification stability', () => {
       unsubscribe();
     }
   });
+  it.each([
+    ['an empty take settles input', null, 'settled'],
+    ['a taken context item stays held work', { message: 'host context', mode: 'mode', isolate: true, hash: 'context' }, 'active'],
+  ] as const)('parks a context preparation behind held Pending rows: %s', async (_name, taken, input) => {
+    // Live W21-A-GUEST r2: a startup pass began a context take before Pending was known; a wake
+    // won the race, then the guest's two rows were held (blocked). Held rows keep every later
+    // pass off the context path, so no pass retains the settled take.
+    const controller = new AbortController();
+    const context = createDeferred<typeof taken>();
+    const preparing = createDeferred<void>();
+    const metadataWaiters = new Set<() => void>();
+    let pending: { known: true; pendingCount: number; pendingBlockedCount: number; pendingVersion: number } =
+      { known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 1 };
+    const consumer = createSessionProviderInputConsumer({ messageQueue: new MessageQueue2<string>(() => 'mode'), session: {
+      waitForMetadataUpdate: signal => new Promise<boolean>(resolve => {
+        const wake = () => { metadataWaiters.delete(wake); resolve(true); };
+        metadataWaiters.add(wake);
+        signal?.addEventListener('abort', () => { metadataWaiters.delete(wake); resolve(false); }, { once: true });
+      }),
+      getMetadataSnapshot: () => ({}), getAgentStateSnapshot: () => ({}),
+      readSubagentLiveWork: () => ({ state: 'settled', activeCount: 0 }), readRuntimeActivitySnapshotTail: idleTail,
+      getPendingQueueState: () => pending,
+      readPendingQueueStateForLiveWork: async () => pending,
+      hasPendingProviderInput: () => pending.pendingCount > 0,
+      materializeNextPendingMessageSafely: async () => ({ type: 'no_pending' as const }),
+    }, takeContextOnlyInput: async () => {
+      preparing.resolve();
+      return await context.promise;
+    } });
+    const reports: Array<ReturnType<typeof consumer.readLiveWork>> = [];
+    const unsubscribe = consumer.subscribeLiveWork(() => { reports.push(consumer.readLiveWork()); });
+    const waiting = consumer.waitForNextInput({ abortSignal: controller.signal });
+    try {
+      await preparing.promise;
+      await expect(consumer.readLiveWork()).resolves.toMatchObject({ input: 'active' });
+      pending = { known: true, pendingCount: 2, pendingBlockedCount: 2, pendingVersion: 7 };
+      for (const wake of [...metadataWaiters]) wake();
+      await new Promise<void>(resolve => setImmediate(resolve));
+      context.resolve(taken);
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await expect(consumer.readLiveWork()).resolves.toMatchObject({ input });
+      // The daemon's access-loss end waits on pushes only: settlement must be pushed.
+      expect((await Promise.all(reports)).map(report => report.input).at(-1) ?? 'active').toBe(input);
+    } finally {
+      context.resolve(null);
+      controller.abort();
+      await waiting;
+      unsubscribe();
+    }
+  });
   it('keeps settled input parked across metadata wakes until its context source changes', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(100);

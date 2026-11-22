@@ -677,10 +677,18 @@ export function createSessionProviderInputConsumer<Mode, Message>(
             // A take can acquire context custody before its asynchronous preparation
             // finishes. Keep that one operation across user-input wakes and waits.
             if (contextOnlyPreparation === null) {
-              contextOnlyPreparation = (async () => await opts.takeContextOnlyInput?.(signal) ?? null)().then(
+              const preparation = (async () => await opts.takeContextOnlyInput?.(signal) ?? null)().then(
                 value => ({ status: 'fulfilled' as const, value }),
                 reason => ({ status: 'rejected' as const, reason }),
               );
+              contextOnlyPreparation = preparation;
+              // An empty take holds nothing once it settles, even when no pass retains it
+              // (a pass parked behind held Pending rows never reaches the context path).
+              void preparation.then((result) => {
+                if (contextOnlyPreparation !== preparation || result.status !== 'fulfilled' || result.value !== null) return;
+                contextOnlyPreparation = null;
+                notifyLiveWorkChanged();
+              });
               // No notification here: a context invalidation can yield an empty take,
               // which is not work. Readers still see the in-flight
               // preparation as busy; the retained result below is the edge observers are told about.
