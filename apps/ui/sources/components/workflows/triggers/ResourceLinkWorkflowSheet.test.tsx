@@ -117,7 +117,7 @@ describe('Link a workflow to a resource', () => {
     } finally { await screen.unmount(); }
   });
 
-  it('retains configured Event input when choosing another Workflow', async () => {
+  it('retains the configured Event and its subject when choosing another Workflow', async () => {
     const eventRef = { pluginId: 'acme.deploy', localId: 'released' };
     const eventOption = {
       id: 'event:acme.deploy/released', label: 'Released', relation: 'event', subject,
@@ -143,8 +143,9 @@ describe('Link a workflow to a resource', () => {
       // The real Event editor's accepted configuration is the presentation owner's input.
       await act(async () => screen.findAllByType(TriggerPluginEventRows)[0]!.props.onChange(configured));
       expect(screen.findAllByType(TriggerPluginEventRows)[0]!.props.when).toMatchObject(configured);
+      expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:review-and-converge', trigger: configured.value }, eventOption);
       await act(async () => workflowSelect!.props.onSelect('builtin:plan-with-a-panel'));
-      expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:plan-with-a-panel', trigger: configured.value });
+      expect(link.setDraft).toHaveBeenLastCalledWith({ workflow: 'builtin:plan-with-a-panel', trigger: configured.value }, eventOption);
     } finally { await screen.unmount(); }
   });
 
