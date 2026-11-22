@@ -1215,6 +1215,9 @@ it.each(['preparation', 'mint', 'binding', 'requester_bootstrap'] as const)(
       const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(args[1]);
       expect(request.sessionActionOrigin?.caller).toMatchObject({ kind: 'session', sessionId: h.sessionId });
       if (phase === 'mint') return { status: 401, data: { error: 'invalid_token' } };
+      // The successful local mint is the Home admission; the issuer no longer
+      // verifies that same proof again before projecting requester custody.
+      if (phase === 'requester_bootstrap') await h.requester.bootstrap.dispose();
       return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'issuer-fixture-proof', binding: {
         accountId: phase === 'binding' ? 'foreign-account' : 'requester',
         authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId: home,
@@ -1223,12 +1226,6 @@ it.each(['preparation', 'mint', 'binding', 'requester_bootstrap'] as const)(
         accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
         sessionActionOrigin: request.sessionActionOrigin, sessionActionSource: request.sessionActionSource,
       } }) };
-    }
-    if (path === bindExternalActionExecutionAuthorizationVerifyHttpPathV1('projects.list')) {
-      // End the real captured credential lifetime only after the issuer has
-      // accepted Home's binding; the requester projection must then refuse.
-      if (phase === 'requester_bootstrap') await h.requester.bootstrap.dispose();
-      return { status: 200, data: { ok: true } };
     }
     return homeWrite(...args);
   });
