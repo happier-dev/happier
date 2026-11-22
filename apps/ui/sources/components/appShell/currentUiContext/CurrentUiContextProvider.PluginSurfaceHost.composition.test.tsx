@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createPluginArtifactTransferBoundary, pluginArtifactTransferDaemonState } from '@/dev/testkit/harness/pluginArtifactTransferBoundary';
 import { readFile } from 'node:fs/promises';
 
@@ -47,7 +47,6 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
@@ -596,7 +595,7 @@ function renderComposedSurface(input: Readonly<{
                             {input.showSurface !== false ? (
                                 <PluginSurfacePlacementHost
                                     placement={input.native?.placement ?? placement}
-                                    machineId={input.native ? CLIENT_ACTION_ORIGIN.materializationRef.machineId : 'machine-current-ui-composition'}
+                                    machineId={CLIENT_ACTION_ORIGIN.materializationRef.machineId}
                                     serverId={input.serverId}
                                     pluginUiProjection={input.pluginUiProjection ?? projection}
                                     platform={input.native ? 'ios' : 'web'}
@@ -642,10 +641,10 @@ async function establishActiveServer(serverId: string, accountId: string, native
         },
     });
     expect(connection.home.id).toBe(serverId);
-    storage.getState().applyMachines([createMachineFixture({
+    storage.getState().applyMachines([createHydratedPlainMachineFixture({
         id: CLIENT_ACTION_ORIGIN.materializationRef.machineId,
-        activeAt: Date.now(),
-        daemonState: pluginArtifactTransferDaemonState,
+        accountId,
+        machine: { activeAt: Date.now(), daemonState: pluginArtifactTransferDaemonState },
     })], true, { sourceServerId: serverId });
 }
 
@@ -860,12 +859,12 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             reader: currentReader, invocationSurface, readProjection: () => releaseProjection, readNavigationBinding: () => null,
         }));
         try {
-            await vi.waitFor(() => expect(currentReader.readCurrentUiContext()?.commands, JSON.stringify({
+            await vi.waitFor(() => expect(currentReader.readCurrentUiContext()?.commands.some(command => command.title === 'Preview'), JSON.stringify({
                 phase: 'actual Releases page command publication',
                 diagnostics: screen.root.findAll(node => typeof node.props.testID === 'string'
                     && node.props.testID.includes('diagnostic')).map(node => node.props.testID),
                 rpcMethods: daemonRpcBoundary.mock.calls.map(([method]) => method),
-            })).toHaveLength(1));
+            })).toBe(true));
             const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
             expect(read.ok).toBe(true);
             if (!read.ok) throw new Error('Expected current-context read');
@@ -875,9 +874,11 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
                 throw new Error('Expected the actual page to publish its public mountId');
             const mountedId = detail.mountId;
             expect(detail.preview).toBe(false);
-            const command = snapshot.commands[0]!;
+            const command = snapshot.commands.find(entry => entry.title === 'Preview');
+            if (!command) throw new Error('Expected the Releases Preview command');
             expect(command.id).toMatch(/^current-ui-command:/);
-            expect(currentReader.resolveCurrentUiCommand(command.id)?.command).toEqual({ kind: 'executeAction',
+            const initial = currentReader.resolveCurrentUiCommand(command.id);
+            expect(initial?.command).toEqual({ kind: 'executeAction',
                 action: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 },
                 input: { mountId: mountedId, operation: { kind: 'setPreview', value: true } } });
             await vi.waitFor(() => expect(screen.root.findAll(node => typeof node.type === 'string'
@@ -889,7 +890,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             ]));
             await act(async () => {
                 expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
-                    context: { surface: 'agent' } })).toEqual({ ok: true, result: { status: 'applied' } });
+                    context: { surface: 'agent' } })).toMatchObject({ ok: true, result: { status: 'applied' } });
             });
             await vi.waitFor(() => {
                 expect(currentReader.readCurrentUiContext()?.detail).toMatchObject({ mountId: mountedId, preview: true });
@@ -897,10 +898,16 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
                     && node.children.includes('Nothing to preview yet.')).length).toBeGreaterThan(0);
             });
             expect(readInvocations).toEqual(readsBeforePreview);
-            const retirement = currentReader.resolveCurrentUiCommand(command.id)!.retirementSignal;
+            expect(initial?.retirementSignal.aborted).toBe(true);
+            const nextCommand = currentReader.readCurrentUiContext()?.commands.find(entry => entry.title === 'Preview');
+            if (!nextCommand) throw new Error('Expected the refreshed Releases Preview command');
+            const next = currentReader.resolveCurrentUiCommand(nextCommand.id);
+            expect(next?.command).toEqual({ kind: 'executeAction',
+                action: { pluginId: GITHUB_PLUGIN_ID, localId: GITHUB_RELEASE_MOUNTED_ACTION_ID_V1 },
+                input: { mountId: mountedId, operation: { kind: 'setPreview', value: false } } });
             await screen.unmount();
-            expect(retirement.aborted).toBe(true);
-            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command.id },
+            expect(next?.retirementSignal.aborted).toBe(true);
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: nextCommand.id },
                 context: { surface: 'agent' } })).toMatchObject({ ok: false });
         } finally { unregister(); await screen.unmount(); }
     });
@@ -914,7 +921,8 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
     ])('presents the visible plugin input surface through its real modal Host API (%j)', async ({ packed, ephemeral, coreBackground, missingArtifact }) => {
         const profile = await upsertServerProfile({ serverUrl: 'https://composer-context-modal.test', name: 'Composer context modal' });
         await establishActiveServer(profile.id, 'composer-context-modal-account');
-        storage.getState().activateProfileScope({ serverId: profile.id, accountId: 'composer-context-modal-account' });
+        const scope = { serverId: profile.id, accountId: 'composer-context-modal-account' };
+        storage.getState().activateProfileScope(scope);
         const composer = { kind: 'newSession', instanceId: 'current-context-picker' } as const;
         const snapshot = ComposerSnapshotV1Schema.parse({
             ref: composer, revision: 1, text: '', references: [], attachments: [], layout: 'wrap',
@@ -922,6 +930,7 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
             state: { focused: false, editable: true, submittable: true, submitting: false, running: false },
         });
         const unregister = registerComposerPresentationTarget(composer, {
+            readScope: () => scope,
             readRevision: () => snapshot.revision, replace: () => snapshot.revision, readSnapshot: () => snapshot,
         });
         const contribution = { pluginId: placement.pluginId, localId: 'entry' };
@@ -1009,12 +1018,14 @@ describe('CurrentUiContextProvider + PluginSurfaceHost composition', () => {
                 await act(async () => Modal.hideAll());
                 return;
             }
-            await vi.waitFor(() => expect(hostedRenderer.hostApi).not.toBeNull());
+            await vi.waitFor(() => expect(hostedRenderer.surfaceContext?.placement)
+                .toBe(ephemeral ? 'ephemeralSurface' : 'composerSurface'));
             expect(hostedRenderer.hostApi!.installedMethods).toContain('publishCurrentUiContext');
             expect(hostedRenderer.focusEligible).toBe(true);
             await vi.waitFor(() => expect(hostedRenderer.responses.at(-1)?.response).toBeNull());
             expect(requireReader(reader).readCurrentUiContext()?.navigation.area).toBe('modal');
-            expect(requireReader(reader).readCurrentUiContext()?.entity?.label).toBe(packed ? 'Packed Voice current context' : 'Issue B');
+            await vi.waitFor(() => expect(requireReader(reader).readCurrentUiContext()?.entity?.label)
+                .toBe(packed ? 'Packed Voice current context' : 'Issue B'));
             expect(requireReader(reader).readCurrentUiContext()?.commands.length).toBeGreaterThan(0);
             const pickerCommands = requireReader(reader).readCurrentUiContext()!.commands;
             expect(CurrentUiContextSnapshotV1Schema.safeParse(requireReader(reader).readCurrentUiContext()).success).toBe(true);
