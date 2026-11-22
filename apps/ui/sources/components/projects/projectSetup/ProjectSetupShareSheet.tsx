@@ -62,6 +62,7 @@ function shareChrome(sourceName: string): CustomModalChromeCardConfig {
     subtitleLines: 1,
     testID: 'project-setup-share',
     scrollHost: 'bounded',
+    bodyScroll: 'auto',
     dimensions: {
       width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide,
       maxHeightRatio: 0.86,

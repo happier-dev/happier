@@ -73,6 +73,7 @@ function sharedSetupUpdateChrome(sourceName: string | null, changed: boolean, pe
     subtitleLines: 1,
     testID: 'project-shared-setup-update',
     scrollHost: 'bounded',
+    bodyScroll: 'auto',
     dimensions: { width: HAPPIER_PAGE_METRICS.dialogWidthPx.wide, maxHeightRatio: 0.86, size: 'lg' },
     phonePresentation: 'sheet',
   };
