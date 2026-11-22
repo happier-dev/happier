@@ -24,15 +24,15 @@ export function bySubject(rows: readonly ReturnType<typeof toScopedUsageEventRow
 
 /** HEAD's captured-row selection and contribution-only coverage, with no released reports in these fixtures. */
 export function headPopulation(rows: readonly Row[], query: Query): UsageAnalyticsPopulation {
-    const range = query.dateRange!;
-    const history = rows.filter(row => row.observedAt.getTime() < range.endMs).map(toScopedUsageEventRow);
+    const { startMs = -Infinity, endMs = Infinity } = query.dateRange ?? {};
+    const history = rows.filter(row => row.observedAt.getTime() < endMs).map(toScopedUsageEventRow);
     const ranks = new Map(orderRuntimeObservations(history).map((row, index) => [row.id, index]));
     const publicPopulation = query.population === 'public_eligible_personal';
     const groups = [...bySubject(history).values()];
-    const selected = groups.filter(group => group.some(row => row.observedAt.getTime() >= range.startMs
+    const selected = groups.filter(group => group.some(row => row.observedAt.getTime() >= startMs
         && canMatchUsageFilters(row, query.filters)));
     const contributions = selected.flatMap(group => foldHead(group, ranks).totalContributions)
-        .filter(row => row.observedAt.getTime() >= range.startMs)
+        .filter(row => row.observedAt.getTime() >= startMs)
         .sort((left, right) => ranks.get(left.id)! - ranks.get(right.id)! || left.id.localeCompare(right.id));
     const totalContributions = contributions.filter(row => (!publicPopulation || isPublicEligibleUsageRow(row))
         && matchesUsageFilters(row, query.filters));
