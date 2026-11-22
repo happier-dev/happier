@@ -111,12 +111,14 @@ it('offers the latest eligible join per Home and retires it after an Action dism
         const run = { plan: prepared.plan, selection: { team: a.address, lifetime: account.accountLifetime, sources: [source] } };
         await act(async () => {
             const result = await plan.getCurrent().run(run);
+            expect(result.completed).toBe(false);
             expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'prepared' } } }]);
         });
         expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({ ok: true, result: { hiddenSetupStepIds: [b.stepId] } });
         setup = 'notRequired';
         await act(async () => {
             const result = await plan.getCurrent().run(run);
+            expect(result.completed).toBe(true);
             expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'notRequired' } } }]);
         });
         await expect.poll(() => agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({

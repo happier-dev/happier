@@ -42,7 +42,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
     const actions = React.useMemo(() => ({
         prepare: (input: Omit<Parameters<typeof prepareTeamSetupPlan>[0], 'executeAction' | 'context'>) =>
             prepareTeamSetupPlan({ ...input, executeAction, context }),
-        run: async (input: Omit<Parameters<typeof runTeamSetupPlan>[0], 'executeAction' | 'context' | 'repositoryRequestIds' | 'onCompleted'>
+        run: async (input: Omit<Parameters<typeof runTeamSetupPlan>[0], 'executeAction' | 'context' | 'repositoryRequestIds'>
             & Readonly<{ selection?: TeamSetupBatchSelection }>) => {
             const { selection: selected, ...run } = input;
             if (!selected) return runTeamSetupPlan({ ...run, executeAction, context });
@@ -72,15 +72,14 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                         } : current);
                         run.onRepositoryOpening?.(id);
                     },
-                    onCompleted: () => {
-                        if (repositories.length !== selected.sources.length || !selected.lifetime.isCurrent()) return;
-                        void executeAction('home.hub.layout.update', {
-                            intent: { kind: 'setup_visibility', stepId: teamSetupStepId(selected.lifetime.scope, selected.team), hidden: true },
-                        }, context).catch(() => {
-                            // The settled setup remains available and the offer can still be dismissed manually.
-                        });
-                    },
                 });
+                if (settlement.completed && repositories.length === selected.sources.length && selected.lifetime.isCurrent()) {
+                    void executeAction('home.hub.layout.update', {
+                        intent: { kind: 'setup_visibility', stepId: teamSetupStepId(selected.lifetime.scope, selected.team), hidden: true },
+                    }, context).catch(() => {
+                        // The settled setup remains available and the offer can still be dismissed manually.
+                    });
+                }
                 return settlement;
             } finally {
                 setBatch(current => current?.selection === selection ? { ...current, running: false, settlement } : current);

@@ -79,7 +79,7 @@ it('offers the Team’s first task after Done and opens it only when the member 
   const onOpen = vi.fn();
   const screen = await renderScreen(
     view({
-      run: { kind: 'done', operationId: null },
+      run: { kind: 'done', operationId: null, completed: true },
       firstTask: {
         title: 'Fix the cart badge',
         markdown: 'Read the checkout flow and fix the flaky test.',
@@ -160,7 +160,7 @@ it('keeps a folder search failure visible with its reason', async () => {
 
 it('ends a finished setup on another-machine instead of a disabled Set up button', async () => {
   const onSetUpAnother = vi.fn();
-  const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1' }, canRun: false, onSetUpAnother }));
+  const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1', completed: true }, canRun: false, onSetUpAnother }));
   expect(screen.findByTestId('team-setup-run')).toBeNull();
   // Repositories are opened by then; finding clones belongs to the review before a run.
   expect(screen.findByTestId('team-setup-find-clones')).toBeNull();

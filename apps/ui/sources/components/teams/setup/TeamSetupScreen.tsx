@@ -78,7 +78,7 @@ export type TeamSetupRunState =
       operationId: string | null;
       failure: ActionExecuteFailure | null;
     }>
-  | Readonly<{ kind: 'done'; operationId: string | null }>;
+  | Readonly<{ kind: 'done'; operationId: string | null; completed: boolean }>;
 
 export type TeamSetupPreparedMachine = Readonly<{
   key: string;
@@ -96,13 +96,6 @@ function readHomeDir(
 }
 
 type OpenedProject = Extract<OpenProjectResultV1, { kind: 'opened' }>;
-
-/** The Open owner's own answer for one repository of the settled batch, once it opened. */
-function readOpenedProject(batch: TeamSetupBatch | null, sourceId: string): OpenedProject | null {
-  const row = batch?.selection.repositories.find((repository) => repository.source.id === sourceId);
-  const result = row ? batch?.settlement?.repositories.find((repository) => repository.id === row.repositoryId)?.result : null;
-  return result?.ok && 'kind' in result.result && result.result.kind === 'opened' ? result.result : null;
-}
 
 export type TeamSetupFirstTaskView = Readonly<{
   title: string;
@@ -355,7 +348,7 @@ function TeamSetupPlanPage(
     setRun(
       machineFailure
         ? { kind: 'stopped', operationId, failure: machineFailure }
-        : { kind: 'done', operationId },
+        : { kind: 'done', operationId, completed: result.completed },
     );
   }, [
     context.address,
@@ -393,7 +386,10 @@ function TeamSetupPlanPage(
     const result = await plan.openFirstTask({ project, machineId, prompt });
     if (!result.ok) Modal.alert(t('common.error'), result.error);
   }, [machineId, plan]);
-  const taskProject = suggestedTask ? readOpenedProject(plan.batch, suggestedTask.sourceId) : null;
+  // Repository rows observe the native runs. The suggested task consumes the same snapshots.
+  const taskProject = useTeamSetupBatchProgress(
+    suggestedTask ? plan.batch : null, suggestedTask?.sourceId ?? '', undefined, { observeOpen: false },
+  )?.readyProject ?? null;
   const firstTask = React.useMemo<TeamSetupFirstTaskView | null>(() => suggestedTask && taskProject ? {
     title: suggestedTask.title,
     markdown: suggestedTask.markdown,
@@ -449,7 +445,7 @@ function TeamSetupPlanPage(
   return (
     <TeamSetupPageView
       header={<TeamSetupHeader context={context} lead preview={props.preview}
-        {...(run.kind === 'done' ? { doneOn: machineName ?? null } : {})} />}
+        {...(run.kind === 'done' && run.completed ? { doneOn: machineName ?? null } : {})} />}
       preview={props.preview ? {
         onClose: () => router.back(),
         presetSetup: presetValue?.setup,
@@ -768,8 +764,10 @@ export function TeamSetupPageView(
           testID="team-setup-repositories"
           title={t('teams.join.setupPage.repositoriesTitle')}
           description={
-            run.kind === 'done' && machineLabel
-              ? t('teams.join.setupPage.repositoriesReady', { machine: machineLabel })
+            run.kind === 'done'
+              ? run.completed && machineLabel && props.excluded.size === 0
+                ? t('teams.join.setupPage.repositoriesReady', { machine: machineLabel })
+                : undefined
               : machineLabel
               ? t('teams.join.setupPage.repositoriesDescription', {
                   machine: machineLabel,
@@ -895,7 +893,7 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
   }>,
 ) {
   const progress = useTeamSetupBatchProgress(props.batch, props.source.id);
-  const opened = progress?.ready ? readOpenedProject(props.batch, props.source.id) : null;
+  const opened = progress?.readyProject;
   // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
   const { checkout } = props;
   const existingPath = checkout?.rootPath ?? props.adoptedPath;

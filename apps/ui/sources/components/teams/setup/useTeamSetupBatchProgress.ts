@@ -22,6 +22,7 @@ export type TeamSetupBatchRepositoryProgress = Readonly<{
     settlement: TeamSetupBatch['settlement'];
     progress: TeamSetupRepositoryProgress;
     ready: boolean;
+    readyProject: Extract<OpenProjectResultV1, { kind: 'opened' }> | null;
     phase: TeamSetupRepositoryPhase;
 }>;
 
@@ -67,6 +68,7 @@ export function useTeamSetupBatchProgress(
     batch: TeamSetupBatch | null,
     sourceId: string,
     onReady?: (repository: TeamSetupBatchRepositoryProgress) => void,
+    options?: Readonly<{ observeOpen?: boolean }>,
 ): TeamSetupBatchRepositoryProgress | null {
     const row = batch?.selection.repositories.find(repository => repository.source.id === sourceId);
     const dispatched = !!(batch && row && batch.dispatched.has(row.repositoryId));
@@ -76,19 +78,20 @@ export function useTeamSetupBatchProgress(
         machineId: dispatched ? batch?.selection.target.machineId ?? null : null,
         sourceId: row?.source.id ?? null,
         requestId: row?.requestId,
-    }, batch?.selection.lifetime ?? null);
+    }, options?.observeOpen === false ? null : batch?.selection.lifetime ?? null);
     const ownerResult = batch?.settlement?.repositories.find(repository => repository.id === row?.repositoryId)?.result ?? null;
     const returnedOpen = ownerResult?.ok && ownerResult.result.kind === 'opened' ? ownerResult.result : null;
     const opened = progress.result?.kind === 'opened' ? progress.result : returnedOpen;
     const openSucceeded = progress.openOperation?.snapshot.state === 'succeeded' || (!progress.openOperation && !!returnedOpen);
-    const ready = openSucceeded && !!opened
-        && (opened.setup === 'notRequired' || progress.setupOperation?.snapshot.state === 'succeeded');
+    const readyProject = openSucceeded && opened
+        && (opened.setup === 'notRequired' || progress.setupOperation?.snapshot.state === 'succeeded') ? opened : null;
+    const ready = readyProject !== null;
     const observation = (progress.setupOperation ?? progress.openOperation)?.observation;
     const value = React.useMemo<TeamSetupBatchRepositoryProgress | null>(() => batch && row ? {
         team: batch.selection.team, target: batch.selection.target, source: row.source, requestId: row.requestId,
-        queued: batch.running && !dispatched, dispatched, running: batch.running, settlement: batch.settlement, progress, ready,
+        queued: batch.running && !dispatched, dispatched, running: batch.running, settlement: batch.settlement, progress, ready, readyProject,
         phase: readPhase(batch, dispatched, progress, ownerResult, ready),
-    } : null, [batch?.selection, batch?.running, batch?.settlement, row, dispatched, progress, ownerResult, ready]);
+    } : null, [batch?.selection, batch?.running, batch?.settlement, row, dispatched, progress, ownerResult, ready, readyProject]);
     const active = (progress.setupOperation ?? progress.openOperation)?.snapshot;
     const previous = React.useRef<Readonly<{ requestId: string; ready: boolean; sawActive: boolean; dispatched: boolean }> | null | undefined>(undefined);
     React.useEffect(() => {

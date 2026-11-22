@@ -79,10 +79,13 @@ function view(overrides: Partial<ViewProps>): React.ReactElement {
 const checkout = { id: 'ws-web', serverId: 'home', machineId: 'devbox', rootPath: '/home/mara/code/acme-web', createdAtMs: 1,
   source: { sourceId: 'acme-web', revision: 1 } } as never;
 
-it('says the repositories are ready once setup is done', async () => {
+it('says the repositories are ready only when the batch completed its work', async () => {
   const { t } = await import('@/text');
-  const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1' }, canRun: false }));
-  expect(screen.getTextContent()).toContain(t('teams.join.setupPage.repositoriesReady', { machine: 'devbox' }));
+  const ready = t('teams.join.setupPage.repositoriesReady', { machine: 'devbox' });
+  const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1', completed: false }, canRun: false }));
+  expect(screen.getTextContent()).not.toContain(ready);
+  await screen.update(view({ run: { kind: 'done', operationId: 'op-1', completed: true }, canRun: false }));
+  expect(screen.getTextContent()).toContain(ready);
   expect(screen.getTextContent()).not.toContain(t('teams.join.setupPage.repositoriesDescription', { machine: 'devbox' }));
 });
 

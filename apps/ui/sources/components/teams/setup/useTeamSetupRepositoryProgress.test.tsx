@@ -84,7 +84,7 @@ describe('selected Team batch progress', () => {
             source: { id: 'next', revision: 1, name: 'Next repository' } });
         expect(hook.getCurrent().unrelated).toBeNull();
         expect(daemonReply).not.toHaveBeenCalled();
-        current = { ...batch, running: false, settlement: { machine: { ok: false, errorCode: 'setup_failed', error: 'Setup failed' },
+        current = { ...batch, running: false, settlement: { completed: false, machine: { ok: false, errorCode: 'setup_failed', error: 'Setup failed' },
             machineSettlement: null, repositories: [] } };
         await hook.rerender();
         expect(hook.getCurrent().pending).toMatchObject({ phase: 'failed', queued: false, ready: false,
@@ -102,6 +102,7 @@ describe('selected Team batch progress', () => {
             snapshots: [opening({ requestId: 'selected-request', state: 'succeeded', settledAt: 2, result: preparedResult })] }));
         const hook = await renderHook(() => useTeamSetupBatchProgress(batch, 'source', onReady));
         expect(hook.getCurrent()).toMatchObject({ phase: 'prepared', queued: false, ready: false });
+        expect(hook.getCurrent()?.readyProject).toBeNull();
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [setupOperation()] }));
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [setupOperation({ revision: 2,
             state: 'failed', settledAt: 4, error: { errorCode: 'setup_exit_nonzero', error: 'Setup failed' } })] }));
@@ -114,6 +115,7 @@ describe('selected Team batch progress', () => {
             operationId: 'retry', revision: 2, createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 })] }));
         expect(hook.getCurrent()?.ready).toBe(true);
         expect(hook.getCurrent()?.phase).toBe('ready');
+        expect(hook.getCurrent()?.readyProject).toEqual(preparedResult);
         expect(onReady).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ source: batch.selection.repositories[0]!.source }));
         act(() => actionOperationStore.setMachineObservation(query, 'reconnecting'));
         act(() => actionOperationStore.setMachineObservation(query, 'available'));
@@ -131,10 +133,17 @@ describe('selected Team batch progress', () => {
         const onReady = vi.fn();
         const summary = opening({ requestId: 'selected-request', state: 'succeeded', settledAt: 2 });
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [summary] }));
-        const hook = await renderHook(() => useTeamSetupBatchProgress(batch, 'source', onReady));
-        expect(hook.getCurrent()?.ready).toBe(false);
+        const hook = await renderHook(() => ({
+            row: useTeamSetupBatchProgress(batch, 'source', onReady),
+            task: useTeamSetupBatchProgress(batch, 'source', undefined, { observeOpen: false }),
+        }));
+        expect(hook.getCurrent().row?.ready).toBe(false);
+        expect(hook.getCurrent().task?.readyProject).toBeNull();
+        await vi.waitFor(() => expect(daemonReply).toHaveBeenCalledTimes(1));
         full.resolve({ kind: 'found', operation: { ...summary, result: { ...preparedResult, setup: 'notRequired' } } });
-        await vi.waitFor(() => expect(hook.getCurrent()?.ready).toBe(true));
+        await vi.waitFor(() => expect(hook.getCurrent().task?.readyProject).toEqual({ ...preparedResult, setup: 'notRequired' }));
+        expect(hook.getCurrent().row?.ready).toBe(true);
+        expect(daemonReply).toHaveBeenCalledTimes(1);
         expect(onReady).not.toHaveBeenCalled();
         await hook.unmount();
     });
@@ -159,7 +168,7 @@ describe('selected Team batch progress', () => {
         { machine: null, phase: 'stopped' },
     ])('leaves undispatched selection $phase when its native prerequisite stops the runner', async ({ machine, phase }) => {
         const batch: TeamSetupBatch = { ...selectedBatch(), running: false, settlement: {
-            machine, machineSettlement: null, repositories: [],
+            completed: false, machine, machineSettlement: null, repositories: [],
         } };
         const hook = await renderHook(() => useTeamSetupBatchProgress(batch, 'next'));
         expect(hook.getCurrent()).toMatchObject({ phase, queued: false, ready: false });
@@ -172,7 +181,7 @@ describe('selected Team batch progress', () => {
         const hook = await renderHook(() => useTeamSetupBatchProgress(batch, 'source', onReady));
         batch = selectedBatch();
         await hook.rerender();
-        batch = { ...batch, running: false, settlement: { machine: null, machineSettlement: null, repositories: [
+        batch = { ...batch, running: false, settlement: { completed: true, machine: null, machineSettlement: null, repositories: [
             { id: 'source', result: { ok: true, result: { ...preparedResult, setup: 'notRequired' } } },
         ] } };
         await hook.rerender();

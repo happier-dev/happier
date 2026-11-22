@@ -163,7 +163,7 @@ function SetupFrame(props: Readonly<{ done?: boolean }>) {
         machineId={MACHINE_ID}
         machineLabel={MACHINE_LABEL}
         homeDir="/Users/leo"
-        run={props.done ? { kind: 'done', operationId: null } : { kind: 'idle' }}
+        run={props.done ? { kind: 'done', operationId: null, completed: true } : { kind: 'idle' }}
         canRun={!props.done}
         onRun={noop}
         onOpenOperation={noop}

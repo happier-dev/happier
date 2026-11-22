@@ -41,6 +41,7 @@ export type TeamSetupOwnerResult<T> = ActionExecuteFailure | Readonly<{
     result: T | ActionApprovalRequestCreatedResult;
 }>;
 export type TeamSetupRunResult = Readonly<{
+    completed: boolean;
     machine: TeamSetupOwnerResult<MachineSetupApplyResultV1> | null;
     machineSettlement: ActionExecuteFailure | null;
     repositories: readonly Readonly<{ id: string; result: TeamSetupOwnerResult<OpenProjectResultV1> }>[];
@@ -90,7 +91,6 @@ export async function runTeamSetupPlan(params: Readonly<{
     repositoryRequestIds?: ReadonlyMap<string, string>;
     onRepositoryOpening?: (id: string) => void;
     onRepositoryOpened?: (id: string, result: TeamSetupOwnerResult<OpenProjectResultV1>) => void;
-    onCompleted?: () => void;
 }>): Promise<TeamSetupRunResult> {
     let machine: TeamSetupRunResult['machine'] = null;
     let machineSettlement: ActionExecuteFailure | null = null;
@@ -113,7 +113,7 @@ export async function runTeamSetupPlan(params: Readonly<{
         // These checkouts need the selected Machine setup. Pending approval or a
         // failed prerequisite stays visible through the owner's result, without replay.
         if (!machine.ok || ActionApprovalRequestCreatedResultSchema.safeParse(machine.result).success || machineSettlement) {
-            return { machine, machineSettlement, repositories: [] };
+            return { completed: false, machine, machineSettlement, repositories: [] };
         }
     }
     const repositories: TeamSetupRunResult['repositories'][number][] = [];
@@ -127,12 +127,10 @@ export async function runTeamSetupPlan(params: Readonly<{
         repositories.push({ id: repository.id, result });
         params.onRepositoryOpened?.(repository.id, result);
     }
-    if (params.onCompleted && !params.context.signal?.aborted && (machine || repositories.length > 0)
+    const completed = !params.context.signal?.aborted && (machine !== null || repositories.length > 0)
         && repositories.length === params.plan.repositories.length
-        && repositories.every(({ result }) => result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired')) {
-        params.onCompleted();
-    }
-    return { machine, machineSettlement, repositories };
+        && repositories.every(({ result }) => result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired');
+    return { completed, machine, machineSettlement, repositories };
 }
 
 /** Opening an editable composer is a separate person action, never a side effect of joining or setup. */
