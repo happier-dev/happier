@@ -9,16 +9,16 @@ import {
   type ComposerAttachmentSendPreparationRegistryV1,
 } from './prepareComposerAttachmentDraftsForSendV1';
 
+import { rejectUnavailableSessionInputV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+
 export type PluginSessionInputAttachmentAdmissionV1 =
   | Readonly<{
     status: 'admitted';
     meta: Record<string, unknown>;
     attachments: readonly ComposerAttachmentInputV1[];
   }>
-  | Readonly<{
-    status: 'rejected';
-    code: 'session_input_invalid' | 'session_input_target_unavailable';
-  }>;
+  | Readonly<{ status: 'rejected'; code: 'session_input_invalid' }>
+  | ReturnType<typeof rejectUnavailableSessionInputV1>;
 
 /**
  * Builds the canonical draft envelope for a plugin-authored Session input.
@@ -89,7 +89,7 @@ export async function admitPluginSessionInputAttachmentsV1(params: Readonly<{
   signal?: AbortSignal;
 }>): Promise<PluginSessionInputAttachmentAdmissionV1> {
   if (!params.attachments) {
-    return { status: 'rejected', code: 'session_input_target_unavailable' };
+    return rejectUnavailableSessionInputV1('session.message.attachment_registry');
   }
   try {
     const drafts = buildPluginSessionInputAttachmentDraftsV1(params);

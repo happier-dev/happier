@@ -2892,6 +2892,7 @@ describe("pendingMessageService (shared sessions)", () => {
                 const earlier = await delivery(source, receiver, earlierTurnId);
                 expect(earlier.result).toMatchObject({ ok: true, result: {
                     status: 'held', code: 'session_input_target_unavailable',
+                    failureCause: { phase: 'session.input.follow_source_turn_root' },
                 } });
             }
             const representedLocalId = preset === 'everything' && i > 0

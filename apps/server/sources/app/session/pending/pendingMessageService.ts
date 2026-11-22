@@ -44,7 +44,8 @@ import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/se
 import { normalizePendingRequestedActionV1, PendingRequestedActionV1Schema, PendingRequestedActionV1StoredSchema, type PendingRequestedActionV1 } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { isPendingLocalId, readPendingLocalId } from '@happier-dev/protocol/sessions/pending/pendingLocalId';
 import { PendingMessageMutationFingerprintV1Schema } from '@happier-dev/protocol/sessions/pending/pendingMessageMutationFingerprintV1';
-import { SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_INPUT_REQUEST_META_KEY, SESSION_INPUT_AUTHORITY_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputEnqueueResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { rejectUnavailableSessionInputV1, SessionInputAdmissionReceiptV1Schema, SessionInputRequestEqualityEvidenceV1Schema, SESSION_INPUT_REQUEST_META_KEY, SESSION_INPUT_AUTHORITY_META_KEY, SESSION_MESSAGE_PROVENANCE_META_KEY, readSessionInputAuthority, readSessionInputRequest, readSessionMessageProvenance, requiresAuthenticatedMachineAdmissionForSessionInput, settleSessionInputRequestV1, settleSessionInputRequestV2, settleSessionMessageProvenanceV1, settleSessionMessageProvenanceV2, withSessionInputAuthority, deriveWorkflowSessionInputLocalIdV2, type SessionInputAdmissionReceiptV1, type SessionInputAdmissionResultV1, type SessionInputEnqueueResultV1, type SessionInputRequestEqualityEvidenceV1, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { deriveSessionMessageAuthorAccountIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageAccountActorV1';
 import { SessionInputAdmissionRejectionCodeV1Schema, type SessionInputAdmissionRejectionCodeV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
@@ -687,6 +688,7 @@ export type EnqueuePendingMessageResult =
         error: PendingSessionAccessError | "forbidden" | "invalid-params" | "internal";
         code?: EncryptionPolicyRejectionCode | "session_access_forbidden";
         admissionRejectionCode?: SessionInputAdmissionRejectionCodeV1;
+        failureCause?: ActionFailureCauseV1;
       }
     | { ok: false; error: "transaction-unavailable"; retryAfterMs: number; correlationId?: string };
 
@@ -1005,7 +1007,8 @@ async function enqueuePendingMessageWithAdmission(
                 : await readCurrentCommittedSessionInputMachineTargetForSessionInTx(tx, { ...session, id: sessionId });
             const bindingUnavailable = admission.kind === 'account' && access.access.level === 'owner' && targetExecutionRunId === null
                 ? { error: 'forbidden', admissionRejectionCode: 'session_input_machine_binding_unavailable' } as const
-                : { error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable' } as const;
+                : { error: 'session-not-found', admissionRejectionCode: 'session_input_target_unavailable',
+                    failureCause: projectActionFailureCauseV1(undefined, 'session.input.committed_machine_binding') } as const;
             if (requiresMachineTarget && session.runtimeMachineTarget != null && !committedTarget) {
                 return { ok: false, ...bindingUnavailable } as const;
             }
@@ -1020,9 +1023,11 @@ async function enqueuePendingMessageWithAdmission(
                 const targetMachineId = admission.kind === "machine" ? admission.targetMachineId : params.targetMachineId ?? committedTarget?.machineId;
                 if (!targetMachineId) return {
                     ok: false, error: "session-not-found", admissionRejectionCode: "session_input_target_unavailable",
+                    failureCause: projectActionFailureCauseV1(undefined, 'session.input.machine_target_missing'),
                 } as const;
                 if (committedTarget && targetMachineId !== committedTarget.machineId) return {
                     ok: false, error: "session-not-found", admissionRejectionCode: "session_input_target_unavailable",
+                    failureCause: projectActionFailureCauseV1(undefined, 'session.input.machine_target_mismatch'),
                 } as const;
                 const [sourceMachine, targetAccess] = await Promise.all([
                     admission.kind === "machine" ? tx.machine.findFirst({
@@ -1104,7 +1109,8 @@ async function enqueuePendingMessageWithAdmission(
             const requesterBootstrap = admission.kind === 'account' && admission.requireOwner
                 ? admission.requesterBootstrap : undefined;
             if (requesterBootstrap && requesterBootstrap.installationId !== transactionAdmittedTarget?.installationId) {
-                return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable' } as const;
+                return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable',
+                    failureCause: projectActionFailureCauseV1(undefined, 'session.input.requester_installation_mismatch') } as const;
             }
 
             let suppressedFollow: Pick<Parameters<typeof retainSuppressedSessionFollowInputInTx>[1], 'delivery' | 'progresses' | 'relations'> | undefined;
@@ -1622,7 +1628,8 @@ async function enqueuePendingMessageWithAdmission(
             const replyTargetMachineId = admission.kind === 'machine' ? admission.targetMachineId
                 : replyProgress?.humanOrigin ? inputAdmissionReceipt.admittedTarget?.machineId : undefined;
             if (replyProgress?.humanOrigin && !replyTargetMachineId) return { ok: false, error: 'invalid-params',
-                admissionRejectionCode: 'session_input_target_unavailable' } as const;
+                admissionRejectionCode: 'session_input_target_unavailable',
+                failureCause: projectActionFailureCauseV1(undefined, 'session.input.reply_machine_target') } as const;
             if (replyProgress && replyTargetMachineId) {
                 const machine = await tx.machine.findUnique({ where: { id: replyTargetMachineId },
                     select: { operationProtocolCapabilities: true, operationProtocolCapabilitiesRevision: true } });
@@ -1634,7 +1641,8 @@ async function enqueuePendingMessageWithAdmission(
                 const muted = await readSessionFollowInputSuppressionInTx(tx, {
                     accountId: session.accountId, destinationSessionId: sessionId, receipt: inputAdmissionReceipt, readMuted,
                 });
-                if (muted === null) return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable' } as const;
+                if (muted === null) return { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_target_unavailable',
+                    failureCause: projectActionFailureCauseV1(undefined, 'session.input.follow_mute_authority') } as const;
                 if (muted) {
                     await retainSuppressedFollowInputInTx(tx, { destinationSessionId: sessionId, localId,
                         content, requestedAction, receipt: inputAdmissionReceipt, position });
@@ -1796,12 +1804,12 @@ export async function enqueuePendingMessageByAuthenticatedMachine(params: Readon
     let executionRunFrontier: ExecutionRunFollowFrontierWitness | undefined;
     const original = params.followDeliveryV1?.original;
     if (original && isRunFollowOriginalV1(original) && original.source.kind === 'execution_run') {
-        if (!params.followSourceApp) return { status: 'rejected', code: 'session_input_target_unavailable' };
+        if (!params.followSourceApp) return rejectUnavailableSessionInputV1('session.input.run_follow_source_transport');
         const read = await readCurrentExecutionRunFollowSource({ app: params.followSourceApp, accountId: params.accountId,
             ...original.source,
             authentication: params.sourceAuthentication ?? backgroundDeliveryAuthentication() });
         if (!read.ok || 'terminalEventId' in original && read.value.terminalEventId !== original.terminalEventId)
-            return { status: 'rejected', code: 'session_input_target_unavailable' };
+            return rejectUnavailableSessionInputV1('session.input.run_follow_source_frontier');
         executionRunFrontier = read.value;
     }
     const inputAdmissionReceipt = SessionInputAdmissionReceiptV1Schema.parse({
@@ -1892,6 +1900,10 @@ async function publishPendingInputAdmissionResult(params: Readonly<{
             code: "session_input_admission_outcome_unknown",
         };
     }
+    if (result.admissionRejectionCode === 'session_input_target_unavailable' ||
+        (!result.admissionRejectionCode && !result.code && result.error === 'session-not-found')) {
+        return rejectUnavailableSessionInputV1('session.input.pending_session_lookup', result);
+    }
     return {
         status: "rejected",
         code: result.admissionRejectionCode
@@ -1899,9 +1911,7 @@ async function publishPendingInputAdmissionResult(params: Readonly<{
                 ? "session_input_encryption_mode_mismatch"
                 : result.error === "forbidden"
                     ? "session_input_unauthorized"
-                    : result.error === "session-not-found"
-                        ? "session_input_target_unavailable"
-                        : "session_input_invalid"),
+                    : "session_input_invalid"),
     };
 }
 
@@ -2028,7 +2038,8 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
         exchangeRootState?: ReturnType<typeof createAutonomousExchangeStateV1> }>
     | Readonly<{ ok: false; exchangeRoot?: { sessionId: string; localId: string };
         rejectionCode?: SessionInputAdmissionRejectionCodeV1;
-        holdReason?: 'autonomous_check_in' | 'session_input_target_unavailable' }>
+        holdReason?: 'autonomous_check_in' | 'session_input_target_unavailable';
+        failureCause?: ActionFailureCauseV1 }>
 > {
     // Settlement reads its admitted original, including materialized inputs.
     const original = params.original ?? await params.tx.sessionPendingMessage.findUnique({ where: { sessionId_localId: {
@@ -2065,7 +2076,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
         if (!originalProgress.success || !isDeepStrictEqual(originalProgress.data.discussion, addressing)
             || originalProgress.data.disposition === 'released') return { ok: false, rejectionCode: 'session_input_cancelled' };
         if (await isForeignDiscussionCauseHeldInTx(params.tx, { accountId: params.accountId, reply: originalProgress.data })) {
-            return { ok: false, holdReason: 'session_input_target_unavailable' };
+            return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.foreign_discussion_cause'), holdReason: 'session_input_target_unavailable' };
         }
         const question = await params.tx.discussionMessage.findUnique({ where: { id: addressing.messageId }, select: { addressingV1: true } });
         const snapshot = createStoredReadSchema(DiscussionMessageAddressingV1Schema).safeParse(question?.addressingV1);
@@ -2152,7 +2163,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
                     phase: 'session.input.follow_source_turn_root', code: 'session_input_target_unavailable',
                     sessionId: params.targetSessionId, localId: params.localId,
                     sourceSessionId: sourceSession.sourceSessionId, sourceTurnId: sourceSession.sourceTurnId });
-                return { ok: false, holdReason: 'session_input_target_unavailable' };
+                return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.follow_source_turn_root'), holdReason: 'session_input_target_unavailable' };
             }
             exchangeRoot = resolved.root;
         }
@@ -2222,7 +2233,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     if (retainedRoot) exchangeRoot = retainedRoot;
     if (exchangeRoot && !returnedAnswer) {
         const choice = params.validation?.autonomousCheckIn;
-        if (!choice && !params.settledOriginal) return { ok: false, holdReason: 'session_input_target_unavailable', exchangeRoot };
+        if (!choice && !params.settledOriginal) return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_choice'), holdReason: 'session_input_target_unavailable', exchangeRoot };
         const root = await params.tx.sessionMessage.findUnique({
             where: { sessionId_localId: { sessionId: exchangeRoot.sessionId,
                 localId: exchangeRoot.localId } },
@@ -2234,11 +2245,11 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
         if (!root && exchangeRoot.sessionId === params.targetSessionId && exchangeRoot.localId === params.localId
             && originalReceipt.success && isAutonomousExchangeRootReceiptForAccount(
                 originalReceipt.data, params.accountId, params.targetSessionId)) {
-            if (!choice) return { ok: false, holdReason: 'session_input_target_unavailable', exchangeRoot };
+            if (!choice) return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_receiver_choice'), holdReason: 'session_input_target_unavailable', exchangeRoot };
             exchangeRootState = createAutonomousExchangeStateV1(choice.afterTurns);
         } else if (!root || root.session.accountId !== params.accountId
             || !isAutonomousExchangeRootReceiptForAccount(root.inputAdmissionReceipt, params.accountId, exchangeRoot.sessionId)) {
-            return { ok: false, holdReason: 'session_input_target_unavailable', exchangeRoot };
+            return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_root_custody'), holdReason: 'session_input_target_unavailable', exchangeRoot };
         } else {
             const state = createStoredReadSchema(AutonomousExchangeStateV1Schema).safeParse(root.autonomousExchangeState);
             // An admitted local input may predate an available Account choice.
@@ -2249,7 +2260,7 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
                 ? !choice || state.data.afterTurns === choice.afterTurns ? state.data
                     : { ...state.data, afterTurns: choice.afterTurns }
                 : choice ? createAutonomousExchangeStateV1(choice.afterTurns) : null;
-            if (!current) return { ok: false, holdReason: 'session_input_target_unavailable', exchangeRoot };
+            if (!current) return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_state'), holdReason: 'session_input_target_unavailable', exchangeRoot };
             if (!state.success || current !== state.data) {
                 const updated = await params.tx.sessionMessage.updateMany({
                     where: { id: root.id, rowRevision: root.rowRevision },
@@ -2525,7 +2536,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
                             ok: true,
                             result: validation.rejectionCode
                                 ? { status: 'rejected', code: validation.rejectionCode } as const
-                                : { status: 'held', localId, code: validation.holdReason! } as const,
+                                : { status: 'held', localId, code: validation.holdReason!,
+                                    ...(validation.failureCause ? { failureCause: validation.failureCause } : {}) } as const,
                             ...state,
                             recipientCursorsPending: state.recipientCursors,
                             recipientCursorsMessage: [],
@@ -2617,7 +2629,8 @@ export async function settlePendingInputAdmission(params: Readonly<{
                 const state = await applyPendingSessionStateChange({ tx, sessionId,
                     pendingBlockedCountDelta: 1 });
                 return { ok: true, result: { status: 'held', localId,
-                    code: domainValidation.holdReason }, ...state,
+                    code: domainValidation.holdReason,
+                    ...(domainValidation.failureCause ? { failureCause: domainValidation.failureCause } : {}) }, ...state,
                     recipientCursorsPending: state.recipientCursors,
                     recipientCursorsMessage: [] } as const;
             }

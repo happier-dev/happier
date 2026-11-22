@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import { compareSessionFollowFrontierProgressV1, isSessionFollowFrontierEqualV1, isSessionFollowTurnEqualV1, isSessionFollowConsumptionWithinCurrentV1, type SessionFollowFrontierV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { deriveSessionFollowWakeEventLocalIdV1, normalizeSessionFollowWakeObservationsV1,
@@ -1230,7 +1231,10 @@ export type SessionFollowObservationResultV1 = Readonly<{
 
 type FollowWakeAdmissionDecision = NonNullable<Extract<SessionFollowObservePendingResponseV1, { ok: true }>['wakeAdmission']>;
 
-const unavailableWake = { status: 'held', code: 'session_input_target_unavailable' } as const;
+function unavailableWake(phase: string) {
+    return { status: 'held', code: 'session_input_target_unavailable',
+        failureCause: projectActionFailureCauseV1(undefined, phase) } as const satisfies FollowWakeAdmissionDecision;
+}
 
 /** Potential interrupt eligibility only; actual source event selection is the hydrated executor's job. */
 function policyAllowsFollowWake(policy: FollowPolicyV1): boolean {
@@ -1254,9 +1258,9 @@ async function readFollowWakeAdmissionInTx(tx: Tx, input: Readonly<{
         if (deriveSessionFollowWakeEventLocalIdV1({
             destinationSessionId: input.destinationSessionId,
             publisherGeneration: input.publisherGeneration.toString(), observations,
-        }) !== input.wakeAdmission.eventLocalId) return unavailableWake;
+        }) !== input.wakeAdmission.eventLocalId) return unavailableWake('session.follow.event_identity');
     } catch {
-        return unavailableWake;
+        return unavailableWake('session.follow.observation_normalization');
     }
     let commonRoot: AutonomousExchangeRoot | null = null;
     let needsReceiverRoot = false;
@@ -1271,11 +1275,11 @@ async function readFollowWakeAdmissionInTx(tx: Tx, input: Readonly<{
             || !isSessionFollowFrontierEqualV1(pending.delivered, observation.expected)
             || !isSessionFollowConsumptionWithinCurrentV1({ expected: observation.expected,
                 observed: pending.observed, consumed: observation.consumed, current: pending.observed })) {
-            return unavailableWake;
+            return unavailableWake('session.follow.observation_membership');
         }
         const source = await tx.session.findUnique({ where: { id: observation.sourceSessionId },
             select: { accountId: true, latestTurnId: true } });
-        if (!source) return unavailableWake;
+        if (!source) return unavailableWake('session.follow.source_session');
         if (source.accountId !== input.destinationAccountId) {
             const localRoot = await readReceiverAutonomousExchangeRootInTx(tx, {
                 accountId: input.destinationAccountId, sessionId: input.destinationSessionId,
@@ -1286,7 +1290,7 @@ async function readFollowWakeAdmissionInTx(tx: Tx, input: Readonly<{
                 needsReceiverRoot = true;
                 continue;
             }
-            if (commonRoot && (commonRoot.sessionId !== localRoot.sessionId || commonRoot.localId !== localRoot.localId)) return unavailableWake;
+            if (commonRoot && (commonRoot.sessionId !== localRoot.sessionId || commonRoot.localId !== localRoot.localId)) return unavailableWake('session.follow.receiver_root_conflict');
             commonRoot = localRoot;
             continue;
         }
@@ -1303,27 +1307,27 @@ async function readFollowWakeAdmissionInTx(tx: Tx, input: Readonly<{
             : [];
         const resolved = await readAutonomousExchangeSourceRoot({ tx, sourceSessionId: observation.sourceSessionId,
             actorAccountId: input.destinationAccountId, sourceInputs });
-        if (resolved.status !== 'found') return unavailableWake;
+        if (resolved.status !== 'found') return unavailableWake('session.follow.source_root');
         if (commonRoot && (commonRoot.sessionId !== resolved.root.sessionId
-            || commonRoot.localId !== resolved.root.localId)) return unavailableWake;
+            || commonRoot.localId !== resolved.root.localId)) return unavailableWake('session.follow.source_root_conflict');
         commonRoot = resolved.root;
     }
     const choice = input.wakeAdmission.autonomousCheckIn;
     if (!commonRoot) return needsReceiverRoot && choice
-        ? { status: 'allowed', originatingDiscussion: null } : unavailableWake;
+        ? { status: 'allowed', originatingDiscussion: null } : unavailableWake('session.follow.receiver_choice_or_root');
     const original = await tx.sessionMessage.findUnique({ where: { sessionId_localId: {
         sessionId: commonRoot.sessionId, localId: commonRoot.localId } },
         select: { inputAdmissionReceipt: true, autonomousExchangeState: true, session: { select: { accountId: true } } } });
     if (!original || original.session.accountId !== input.destinationAccountId
-        || !isAutonomousExchangeRootReceiptForAccount(original.inputAdmissionReceipt, input.destinationAccountId, commonRoot.sessionId)) return unavailableWake;
+        || !isAutonomousExchangeRootReceiptForAccount(original.inputAdmissionReceipt, input.destinationAccountId, commonRoot.sessionId)) return unavailableWake('session.follow.root_custody');
     // Only the exact validated exchange root decides which Discussion's
     // preference the owner client reads, including later inherited Follow wakes.
     const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).parse(original.inputAdmissionReceipt);
     const originatingDiscussion = receipt.issuer === 'authenticatedMachine' && receipt.discussionAddressing
         ? { serverId: receipt.admittedTarget!.homeId, discussionId: receipt.discussionAddressing.discussionId } : null;
-    if (!choice) return { ...unavailableWake, originatingDiscussion };
+    if (!choice) return { ...unavailableWake('session.follow.check_in_choice'), originatingDiscussion };
     const state = createStoredReadSchema(AutonomousExchangeStateV1Schema).safeParse(original.autonomousExchangeState);
-    if (!state.success && original.autonomousExchangeState !== null) return unavailableWake;
+    if (!state.success && original.autonomousExchangeState !== null) return unavailableWake('session.follow.root_state');
     if (state.success && state.data.stopped) return { status: 'held', code: 'session_input_cancelled', originatingDiscussion };
     const current = state.success ? { ...state.data, afterTurns: choice.afterTurns }
         : createAutonomousExchangeStateV1(choice.afterTurns);

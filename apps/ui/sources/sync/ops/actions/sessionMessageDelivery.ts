@@ -1,9 +1,9 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { supportsSessionMessageInputJsonSchema } from '@happier-dev/protocol/actions/actionInputJsonSchemaValidation';
 import { withSessionMessageModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
-import { supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { rejectUnavailableSessionInputV1, supportsAccountPendingForSessionInput } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { isSessionAccessRecipient } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
@@ -145,10 +145,11 @@ export function createSessionMessageDelivery(params: Readonly<{
       if (requiresTargetInputSchema) {
         try {
           advertisedInputSchema = await readSessionMessageInputSchema({ account, sessionId, hostOccurrence, machineId, context, signal });
-        } catch {
+        } catch (error) {
           throwIfAborted(signal);
           account.assertCurrent();
-          return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+          return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
+            failureCause: projectActionFailureCauseV1(error, 'session.message.input_schema') };
         }
         account.assertCurrent();
         throwIfAborted(signal);
@@ -167,7 +168,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           messageLocalId: localId, ...(signal ? { signal } : {}),
           isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
         });
-        if (!uploaded) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+        if (!uploaded) return rejectUnavailableSessionInputV1('session.message.composer_attachment_upload');
         if ('ok' in uploaded) return uploaded;
         const { reconcileBrowserContextPictures } = await import('@/sync/domains/session/input/browserContext');
         const { appendPictureStepNotes } = await import('@/components/sessions/attachments/pictureStepNotes');
@@ -188,7 +189,7 @@ export function createSessionMessageDelivery(params: Readonly<{
           executionTarget: { serverId: account.serverId, machineId },
           messageLocalId: localId, signal, isCurrent: () => account.accountLifetime.isCurrent() && composerSubmission.isCurrent(),
         });
-        if (!preparedAttachments) return { ok: false, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' };
+        if (!preparedAttachments) return rejectUnavailableSessionInputV1('session.message.composer_attachment_prepare');
         const { RawIngressStructuredInputV1Schema } = await import('@happier-dev/protocol/runtime/input/structuredInputV1');
         input = { ...input, structuredInput: RawIngressStructuredInputV1Schema.parse({
           ...input.structuredInput, composerAttachments: preparedAttachments.attachments,

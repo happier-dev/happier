@@ -1,3 +1,5 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { rejectUnavailableSessionInputV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readPrismaDriverErrorCause } from "@/storage/prismaErrors";
 import { isTransactionStorageError } from '@/storage/transactionErrors';
 import { sessionAliveEventsCounter, socketMessageAckCounter, websocketEventsCounter } from "@/app/monitoring/metrics/index";
@@ -731,8 +733,10 @@ export function sessionUpdateHandler(
                     ? [] : observations,
                 ...(request.data.wakeAdmission ? { wakeAdmission:
                     autonomousExchangeEnabled && request.data.supportsWakeAdmission === true
-                        ? result.wakeAdmission ?? { status: 'held', code: 'session_input_target_unavailable' }
-                        : { status: 'held', code: 'session_input_target_unavailable' } } : {}),
+                        ? result.wakeAdmission ?? { status: 'held', code: 'session_input_target_unavailable',
+                            failureCause: projectActionFailureCauseV1(undefined, 'session.follow.admission_absent') }
+                        : { status: 'held', code: 'session_input_target_unavailable',
+                            failureCause: projectActionFailureCauseV1(undefined, 'session.follow.observation_unavailable') } } : {}),
             });
         } catch (error) {
             log({
@@ -2337,7 +2341,8 @@ export function sessionUpdateHandler(
                             : result.error === "conflict"
                                 ? "session_input_source_authority_mismatch"
                                 : "session_input_invalid";
-                    respond({ v: 1, result: { status: "rejected", code } });
+                    respond({ v: 1, result: code === 'session_input_target_unavailable'
+                        ? rejectUnavailableSessionInputV1('session.input.settlement_lookup') : { status: "rejected", code } });
                 } catch (error) {
                     log(
                         { module: "session-input-admission-settlement", level: "error", sessionId, localId },

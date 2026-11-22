@@ -143,7 +143,7 @@ import { createMachineSkillHostService, resolveMachineSkillInstallTarget } from 
 import { createMachineSkillActionExecutor } from '@/prompts/skills/machineInstall/machineSkillActionExecutor';
 import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
 import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { PendingActivationRequestedEphemeralV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { rejectUnavailableSessionInputV1, PendingActivationRequestedEphemeralV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, SessionPendingRequesterBootstrapRequestV1Schema,
     SessionPendingRequesterBootstrapResponseV1Schema, type SessionPendingRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
 import { SESSION_MESSAGE_REPLY_MUTATE_EVENT_V1, SessionMessageReplyMachineMutationV1Schema,
@@ -5194,10 +5194,7 @@ export class ApiMachineClient {
         }
         const socket = this.socket;
         if (!socket) {
-            return {
-                status: 'rejected',
-                code: 'session_input_target_unavailable',
-            };
+            return rejectUnavailableSessionInputV1('session.message.machine_admission_socket');
         }
         const parsed = request.v === 2
             ? SessionPendingExecutionRunEnqueueByMachineRequestV2Schema.parse(request)
@@ -5260,7 +5257,7 @@ export class ApiMachineClient {
                 };
         } catch (error) {
             if (error instanceof SocketAckError && error.code === 'socket_not_connected') {
-                return { status: 'rejected', code: 'session_input_target_unavailable' };
+                return rejectUnavailableSessionInputV1('session.message.machine_admission_disconnected', error);
             }
             const code = error instanceof SocketAckAbortError
                 ? 'machine_admission_cancelled_after_emit'

@@ -1,3 +1,4 @@
+import { rejectUnavailableSessionInputV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { readSessionTargetHolderArtifacts } from '@/subprocess/supervision/sessionHolderTargetArtifacts';
 import { publishDaemonHostEvent } from './events/publishDaemonHostEvent';
@@ -790,7 +791,7 @@ export async function startDaemon(
     ) => {
       const currentApiMachine = apiMachineForSessions;
       if (!currentApiMachine) {
-        return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
+        return rejectUnavailableSessionInputV1('session.input.daemon_machine_client');
       }
       return await currentApiMachine.enqueueSessionPendingByMachine(request, options);
     };

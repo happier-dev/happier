@@ -774,7 +774,9 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
             ok: result.ok,
             ...(result.ok ? { localInputId: result.localId, suppressed: result.suppressed === true } : { code: result.code,
               ...(result.admissionResult && 'code' in result.admissionResult
-                ? { admissionResultCode: result.admissionResult.code } : {}) }),
+                ? { admissionResultCode: result.admissionResult.code,
+                    ...('failureCause' in result.admissionResult && result.admissionResult.failureCause
+                      ? { failureCause: result.admissionResult.failureCause } : {}) } : {}) }),
           });
           if (!result.ok) {
             workWaitingFor = 'receiver';

@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import { SentFromSchema } from '../../sentFrom.js';
 import * as zMini from '../../zodRuntimePolicy.js';
@@ -1143,10 +1144,19 @@ export const SessionInputEnqueueResultV1Schema = lazyZodSchema(() => z.discrimin
   z.strictObject({
     status: z.literal('rejected'),
     code: SessionInputAdmissionRejectionCodeV1Schema,
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
   SessionInputOutcomeUnknownV1Schema,
 ]));
 export type SessionInputEnqueueResultV1 = z.infer<typeof SessionInputEnqueueResultV1Schema>;
+
+export function rejectUnavailableSessionInputV1(phase: string, error?: unknown) {
+  return {
+    status: 'rejected',
+    code: 'session_input_target_unavailable',
+    failureCause: projectActionFailureCauseV1(error, phase),
+  } as const satisfies SessionInputEnqueueResultV1;
+}
 
 export const SessionInputAdmissionResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   SessionInputEnqueueResultV1Schema,
@@ -1154,6 +1164,7 @@ export const SessionInputAdmissionResultV1Schema = lazyZodSchema(() => z.discrim
     status: z.literal('held'),
     localId: PendingLocalIdSchema,
     code: z.enum(['autonomous_check_in', 'session_input_target_unavailable']),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
   }),
 ]));
 export type SessionInputAdmissionResultV1 = z.infer<typeof SessionInputAdmissionResultV1Schema>;

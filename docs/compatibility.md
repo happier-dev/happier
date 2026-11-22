@@ -797,6 +797,13 @@ together. These additions introduce no wire epoch or released mixed-version prom
 
 ## Failure cause carriers (unreleased 0.3)
 
+Session Send and Follow admission can carry an optional `failureCause` on an
+unavailable target receipt. The existing Action projector limits the field to
+a phase, class, code and HTTP status. It carries no target identity or input
+content. Receipts that omit it remain valid. Earlier strict development
+readers require matching Protocol and host source. The 0.2 frontier
+`24731ff73c` has no Session input admission schema. Pending storage is unchanged.
+
 Execution-run Action completion observations and review, plan and narration terminal
 values retain optional `runtimeIssueV1`. External-linked takeover operation errors
 and owner progress retain the same optional metadata. The existing runtime issue

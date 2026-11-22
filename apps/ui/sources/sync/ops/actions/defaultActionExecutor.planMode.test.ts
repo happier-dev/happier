@@ -1183,6 +1183,9 @@ describe('default Action executor mode and catalog contracts', () => {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'rejected',
         code: client === 'triage_schema_unavailable' ? 'session_input_target_unavailable' : 'session_input_target_update_required' } });
       if (client === 'triage_schema_unavailable') {
+        expect(result).toMatchObject({ ok: true, result: { failureCause: {
+          phase: 'session.message.input_schema', errorCode: 'plugin_action_execution_placement_unavailable',
+        } } });
         const { log } = await import('@/log');
         const prefix = '[session-input-schema] ';
         const diagnostic = log.getLogs().findLast(line => line.startsWith(prefix));

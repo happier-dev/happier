@@ -1,3 +1,4 @@
+import { rejectUnavailableSessionInputV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { stageObservedExit } from '@/daemon/sessions/stageObservedExit';
 import { readNativeExecutionRunOfferedModel } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
 import { resolveExecutionRunRuntimeBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
@@ -13586,10 +13587,7 @@ export async function startDaemonSessionControlRuntime(
                           context.signal
                             ? { signal: context.signal }
                             : undefined,
-                        )) ?? {
-                        status: 'rejected' as const,
-                        code: 'session_input_target_unavailable' as const,
-                      });
+                        )) ?? rejectUnavailableSessionInputV1('session.input.daemon_control_machine_client'));
               return {
                 ok: true as const,
                 result: {

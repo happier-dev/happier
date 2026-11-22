@@ -1,5 +1,5 @@
 import { isPendingDeliveryProviderEffectPossibleV1, projectPendingDeliveryFailureCauseV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
-import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionFailureCauseV1Schema, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { randomUUID } from 'node:crypto';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectUsageSessionMessageTimingV1 } from '@happier-dev/protocol/usage/usageWorkEvidence';
@@ -29,6 +29,7 @@ import { normalizeParticipantRecipientRoutingIdentityV1, withParticipantRecipien
 import { ExecutionRunGetResponseSchema, ExecutionRunInputTurnV1Schema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, sanitizeSessionInputForgeEvidenceMetaV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { rejectUnavailableSessionInputV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionMessageRefV1Schema, type SessionMessageRefV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageRefV1';
 import { EXECUTION_RUN_REPLY_REFUSALS_META_KEY, readExecutionRunReplyRefusal } from '@/agent/runtime/bridges/executionRun/messages/sessionMessageReply';
@@ -333,6 +334,7 @@ function cancelledBeforeAdmission(
 
 function rejectedProtectedInputBeforeAdmission(
   code: Extract<SendSessionMessageResult, Readonly<{ ok: false }>>['code'],
+  phase = 'session.message.target_lookup',
 ): SessionInputEnqueueResultV1 {
   if (code === 'session_archived') {
     return { status: 'rejected', code: 'session_input_archived' };
@@ -343,7 +345,7 @@ function rejectedProtectedInputBeforeAdmission(
   if (code === 'encryption_material_unavailable') {
     return { status: 'rejected', code: 'session_input_encryption_mode_mismatch' };
   }
-  return { status: 'rejected', code: 'session_input_target_unavailable' };
+  return rejectUnavailableSessionInputV1(phase, { ok: false, errorCode: code, error: code });
 }
 
 function readHttpResponseStatus(error: unknown): number | null {
@@ -364,6 +366,14 @@ function readHttpAdmissionRejectionCode(error: unknown): SessionInputAdmissionRe
     (data as Record<string, unknown>).code,
   );
   return parsed.success ? parsed.data : null;
+}
+
+function readHttpAdmissionFailureCause(error: unknown) {
+  const response = error && typeof error === 'object' && 'response' in error ? error.response : undefined;
+  const data = response && typeof response === 'object' && 'data' in response ? response.data : undefined;
+  const failure = ActionFailureCauseV1Schema.safeParse(data && typeof data === 'object' && 'failureCause' in data
+    ? data.failureCause : undefined);
+  return failure.success ? failure.data : undefined;
 }
 
 function isExactRequestedActionConflictHttpResponse(error: unknown): boolean {
@@ -661,7 +671,9 @@ function projectBlockedPromptDeliveryAdmissionResult(reason: PendingQueueDeliver
     return { status: 'outcomeUnknown', localId, code: 'session_input_turn_outcome_unknown' };
   }
   const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(reason);
-  return { status: 'rejected', code: rejection.success ? rejection.data : 'session_input_target_unavailable' };
+  return !rejection.success || rejection.data === 'session_input_target_unavailable'
+    ? rejectUnavailableSessionInputV1('session.message.pending_delivery', { code: reason })
+    : { status: 'rejected', code: rejection.data };
 }
 
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
@@ -1630,7 +1642,7 @@ export async function sendSessionMessage(
       code: sessionTarget.code,
       ...(sessionTarget.candidates ? { candidates: sessionTarget.candidates } : {}),
       ...(params.inputAdmission
-        ? { admissionResult: rejectedProtectedInputBeforeAdmission(sessionTarget.code) }
+        ? { admissionResult: rejectedProtectedInputBeforeAdmission(sessionTarget.code, 'session.message.target_lookup') }
         : {}),
     };
   }
@@ -1644,7 +1656,7 @@ export async function sendSessionMessage(
       ok: false,
       code: 'session_archived',
       ...(params.inputAdmission
-        ? { admissionResult: rejectedProtectedInputBeforeAdmission('session_archived') }
+        ? { admissionResult: rejectedProtectedInputBeforeAdmission('session_archived', 'session.message.target_lookup') }
         : {}),
     };
   }
@@ -1716,7 +1728,7 @@ export async function sendSessionMessage(
         code: 'takeover_required',
         message: 'This session is linked to an external agent; complete External Sessions takeover before sending input',
         ...(params.inputAdmission
-          ? { admissionResult: rejectedProtectedInputBeforeAdmission('takeover_required') }
+          ? { admissionResult: rejectedProtectedInputBeforeAdmission('takeover_required', 'session.message.target_takeover') }
           : {}),
       };
     }
@@ -1991,10 +2003,9 @@ export async function sendSessionMessage(
           ok: false,
           code: transportError?.code ?? 'admission_rejected',
           message: transportError?.message ?? 'Protected Session input target is unavailable',
-          admissionResult: {
-            status: 'rejected',
-            code: 'session_input_target_unavailable',
-          },
+          admissionResult: transportError
+            ? rejectUnavailableSessionInputV1('session.message.machine_admission_transport', transportError)
+            : rejectUnavailableSessionInputV1('session.message.machine_target'),
         };
       }
       machineAdmissionInvoked = true;
@@ -2090,7 +2101,8 @@ export async function sendSessionMessage(
         ...(params.targetMachineId ? { targetMachineId: params.targetMachineId } : {}),
       });
       if (!targetMachineId) {
-        return { ok: false, code: 'admission_rejected', admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
+        return { ok: false, code: 'admission_rejected',
+          admissionResult: rejectUnavailableSessionInputV1('session.message.run_machine_target') };
       }
       enqueueResult = await enqueuePendingExecutionRunMessageViaHttp({
         token: params.credentials.token, sessionId, recipient: executionRunRecipient,
@@ -2109,7 +2121,7 @@ export async function sendSessionMessage(
       if (!targetMachineId && usesAccountPending && sessionRole === 'owner') return { ok: false, code: 'admission_rejected',
         admissionResult: { status: 'rejected', code: 'session_input_machine_binding_unavailable' } };
       if (!targetMachineId && params.targetMachineId) return { ok: false, code: 'admission_rejected',
-        admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' } };
+        admissionResult: rejectUnavailableSessionInputV1('session.message.account_pending_target') };
       if (targetMachineId && usesAccountPending && shouldResumeInactiveSession && params.explicitMessageSend === true
         && !params.machineResumeTransport && !params.spawnSession) {
         const { prepareOriginalAccountPendingSessionResume } = await import('@/api/externalActionExecutionAuthorization');
@@ -2190,7 +2202,12 @@ export async function sendSessionMessage(
         ok: false,
         code: 'admission_rejected',
         message: `Pending enqueue was rejected before admission (HTTP ${status})`,
-        admissionResult: { status: 'rejected', code: admissionRejectionCode },
+        admissionResult: admissionRejectionCode === 'session_input_target_unavailable'
+          ? rejectUnavailableSessionInputV1('session.message.pending_http_admission', {
+              failureCause: readHttpAdmissionFailureCause(error)
+                ?? projectActionFailureCauseV1(error, 'session.message.pending_http_admission'),
+            })
+          : { status: 'rejected', code: admissionRejectionCode },
       };
     }
     const errorMessage = error instanceof Error ? error.message : String(error ?? '');

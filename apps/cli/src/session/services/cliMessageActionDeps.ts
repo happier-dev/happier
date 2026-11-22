@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { readAgentStartCallerWorkDepthV1, AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { SessionBridgeLifecycleHookEventIdV1, ActionExecutorDeps, ActionExecutorContext, ComposerAttachmentInputV1, SessionMessageSendResultV1 } from '@happier-dev/protocol';
-import { derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { rejectUnavailableSessionInputV1, derivePluginSessionInputLocalIdV1, deriveWorkflowSessionInputLocalIdV2, buildTrustedHostSessionInputAdmissionV1, SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmissionRejectionV1';
 import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers/ids';
 import { HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1, RawIngressStructuredInputV1Schema, hasRawSessionAttachmentSelectionV1 } from '@happier-dev/protocol/runtime/input/structuredInputV1';
@@ -295,7 +295,7 @@ export function createCliMessageActionDeps(
         const selectedTarget = context?.externalActionTarget;
         if (!machineId || selectedTarget && (selectedTarget.kind === 'machine'
           ? selectedTarget.machineId !== machineId : selectedTarget.sessionId !== transport.sessionId)) {
-          return { ok: true, result: { status: 'rejected', code: 'session_input_target_unavailable' } };
+          return { ok: true, result: rejectUnavailableSessionInputV1('session.message.requester_machine_target') };
         }
         const { projectExternalActionRequesterInvocationV1 } = await import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1');
         const accountId = readAccountIdFromToken(credentials.token);
@@ -329,10 +329,14 @@ export function createCliMessageActionDeps(
         if (execution.ok) return execution.result;
         if (execution.effectAttempted === false) {
           const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(execution.errorCode);
-          return { status: 'rejected' as const, code: rejection.success ? rejection.data
-            : execution.errorCode === 'cancelled' ? 'session_input_cancelled' as const
-            : execution.errorCode === 'credential_scope_denied' || execution.errorCode === 'not_authenticated'
-              ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const };
+          if (rejection.success && rejection.data !== 'session_input_target_unavailable') {
+            return { status: 'rejected' as const, code: rejection.data };
+          }
+          if (execution.errorCode === 'cancelled') return { status: 'rejected' as const, code: 'session_input_cancelled' as const };
+          if (execution.errorCode === 'credential_scope_denied' || execution.errorCode === 'not_authenticated') {
+            return { status: 'rejected' as const, code: 'session_input_unauthorized' as const };
+          }
+          return rejectUnavailableSessionInputV1('session.message.requester_dispatch', execution);
         }
         if (isActionOutcomeUnknownErrorCodeV1(execution.errorCode)) {
           return { status: 'outcomeUnknown' as const, localId: pluginLocalId, code: execution.errorCode };
@@ -355,11 +359,9 @@ export function createCliMessageActionDeps(
         const transport = await resolveTransportForSession(sessionId, signal,
           externalActionRequest && messageContext ? { context: messageContext, actionId: preparationActionId } : undefined,
           context?.expectedSessionAddress);
-        return transport.ok ? transport : {
-          status: 'rejected' as const,
-          code: transport.code === 'not_authenticated'
-            ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const,
-        };
+        if (transport.ok) return transport;
+        if (transport.code === 'not_authenticated') return { status: 'rejected' as const, code: 'session_input_unauthorized' as const };
+        return rejectUnavailableSessionInputV1('session.message.attachment_target_lookup', { code: transport.code });
       };
       const composerAttachmentRegistry = params.resolveComposerAttachmentSendPreparation?.() ?? null;
       const prepareAttachmentsOnSession = params.composerAttachmentPreparationTarget === 'session';
@@ -383,8 +385,9 @@ export function createCliMessageActionDeps(
             authored: attachments,
           });
         } catch {
-          return { status: 'rejected' as const,
-            code: composerAttachmentRegistry ? 'session_input_invalid' as const : 'session_input_target_unavailable' as const };
+          return composerAttachmentRegistry
+            ? { status: 'rejected' as const, code: 'session_input_invalid' as const }
+            : rejectUnavailableSessionInputV1('session.message.attachment_registry');
         }
         const structuredInput = { v: 1 as const, composerAttachments: attachmentDrafts };
         const rawAttachmentMeta = { [HAPPIER_STRUCTURED_INPUT_METADATA_KEY_V1]: structuredInput };
@@ -441,11 +444,9 @@ export function createCliMessageActionDeps(
             if (code === 'composer_attachment_admission_failed') {
               return { status: 'rejected' as const, code: 'session_input_invalid' as const };
             }
-            return {
-              status: 'rejected' as const,
-              code: code === 'not_authenticated'
-                ? 'session_input_unauthorized' as const : 'session_input_target_unavailable' as const,
-            };
+            return code === 'not_authenticated'
+              ? { status: 'rejected' as const, code: 'session_input_unauthorized' as const }
+              : rejectUnavailableSessionInputV1('session.message.attachment_prepare', { code });
           }
           const prepared = response.data;
           try {
@@ -488,7 +489,7 @@ export function createCliMessageActionDeps(
             ...(signal ? { signal } : {}),
           });
           if (attachmentAdmission.status === 'rejected') {
-            return { status: 'rejected' as const, code: attachmentAdmission.code };
+            return attachmentAdmission;
           }
           admittedAttachmentMeta = attachmentAdmission.meta;
           admittedComposerAttachments = attachmentAdmission.attachments;
@@ -756,7 +757,7 @@ export function createCliMessageActionDeps(
         }
         const admissionResult = projectSessionMessageSendActionResult(protectedResult);
         if (!admissionResult) {
-          return { status: 'rejected' as const, code: 'session_input_target_unavailable' as const };
+          return rejectUnavailableSessionInputV1('session.message.protected_admission_result', { code: protectedResult.ok ? undefined : protectedResult.code });
         }
         if (!protectedResult.ok || protectedResult.suppressed) return admissionResult;
         const canonicalSessionId = typeof protectedResult.sessionId === 'string'

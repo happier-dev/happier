@@ -222,7 +222,8 @@ export async function dispatchSessionMessages(inv: Pick<CoreInvocation, 'actionI
             // code as a domain result so plugin bridges do not throw it into
             // a caller's ambiguous transport-failure recovery.
             const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(result.errorCode);
-            if (rejection.success) return { ok: true, result: { status: 'rejected', code: rejection.data } };
+            if (rejection.success) return { ok: true, result: { status: 'rejected', code: rejection.data,
+              ...(result.failureCause ? { failureCause: result.failureCause } : {}) } };
           }
           return result;
         }

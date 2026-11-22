@@ -5939,7 +5939,8 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
     actionId === 'session.message.send' && opts?.sessionMessageComposerSubmission
       // Session-scoped token transport cannot acquire the Account/Machine
       // source custody required by the private target-preparation adapter.
-      ? { ok: false as const, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable' }
+      ? { ok: false as const, errorCode: 'session_input_target_unavailable', error: 'session_input_target_unavailable',
+          failureCause: projectActionFailureCauseV1(undefined, 'session.message.api_token_attachment_custody') }
       : null;
   const accountScopeFailure = (error: unknown) => isActionAccountScopeChangedError(error)
     ? { ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' }

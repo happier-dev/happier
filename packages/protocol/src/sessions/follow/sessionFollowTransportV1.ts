@@ -6,6 +6,7 @@ import { encodeBase64 } from '../../crypto/base64.js';
 import { SessionIdSchema } from '../idsV1.js';
 import { DiscussionAddressingV1Schema, DiscussionAddressV1Schema, type DiscussionAddressingV1 } from '../../discussions/references.js';
 import { DiscussionMessageRefV1Schema } from '../../discussions/messageRefs.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { SessionInputMachineTargetV1Schema } from '../messages/sessionInputAdmission.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { PendingLocalIdSchema } from '../pending/pendingLocalId.js';
@@ -372,7 +373,8 @@ export const SessionFollowObservePendingResponseV1Schema = lazyZodSchema(() => z
         originatingDiscussion: z.optional(z.nullable(DiscussionAddressV1Schema)) }),
       z.strictObject({ status: z.literal('held'), code: z.enum([
         'autonomous_check_in', 'session_input_target_unavailable', 'session_input_cancelled',
-      ]), originatingDiscussion: z.optional(z.nullable(DiscussionAddressV1Schema)) }),
+      ]), originatingDiscussion: z.optional(z.nullable(DiscussionAddressV1Schema)),
+        failureCause: z.optional(ActionFailureCauseV1Schema) }),
     ])),
   }),
   z.strictObject({
