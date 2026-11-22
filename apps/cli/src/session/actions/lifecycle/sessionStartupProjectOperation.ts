@@ -43,6 +43,21 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
     };
     return async options => {
         // Webhook acknowledgement and native open consume one startup budget.
+        // Human setup review retains this original operation and pauses that
+        // budget; it is not evidence that native startup failed.
+        let reviewElapsedMs = 0;
+        let pendingReview: Promise<void> | undefined;
+        const startupOperation: ProjectSetupOperationContext | undefined = operation ? { ...operation, operationReview: {
+            waitForResume: (details, producer) => {
+                const startedAtMs = Date.now();
+                const waiting = operation.operationReview!.waitForResume(details, producer).finally(() => {
+                    reviewElapsedMs += Date.now() - startedAtMs;
+                    if (pendingReview === waiting) pendingReview = undefined;
+                });
+                pendingReview = waiting;
+                return waiting;
+            },
+        } } : undefined;
         // Resume has no fresh-creation operation, but a webhook still does not
         // prove that native authentication and Session construction succeeded.
         const observeNativeOpen = Boolean(operation || (options.existingSessionId && !options.freshSessionCreation));
@@ -50,10 +65,7 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         if (observeNativeOpen && (!input.awaitAgentSessionOpen || !input.stopSession)) {
             return projectDaemonSpawnUnavailable('session_startup_observation_unavailable', 'Session native startup observation or retirement unavailable');
         }
-        const spawnOptions = operation ? { ...options, projectSetupOperation: operation } : options;
-        const result = context?.signal
-            ? await input.spawnSession(spawnOptions, context.signal)
-            : await input.spawnSession(spawnOptions);
+        const result = await input.spawnSession({ ...options, ...(startupOperation ? { projectSetupOperation: startupOperation } : {}) });
         if (result.type !== 'success' || !result.sessionId || !observeNativeOpen) return result;
         // The native-fork owner awaits this same attestation inside its child
         // cleanup scope. Keep its physical child id available before refusal.
@@ -64,8 +76,16 @@ export function createSessionStartupProjectSpawn(input: Readonly<{
         if (operation?.operationAcceptance?.actionId === 'session.spawn_new') {
             operation.operationAcceptance.accept({ type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted', sessionId: result.sessionId });
         }
-        const opened = await input.awaitAgentSessionOpen!({ sessionId: result.sessionId,
-            timeoutMs: Math.max(0, startupDeadline! - Date.now()), signal: context?.signal });
+        const observe = () => input.awaitAgentSessionOpen!({ sessionId: result.sessionId!,
+            timeoutMs: Math.max(0, startupDeadline! + reviewElapsedMs - Date.now()), signal: context?.signal });
+        let accountedReviewMs = reviewElapsedMs;
+        let opened = await observe();
+        while (opened.status === 'timeout' && (pendingReview || reviewElapsedMs > accountedReviewMs)) {
+            await pendingReview;
+            context?.signal?.throwIfAborted();
+            accountedReviewMs = reviewElapsedMs;
+            opened = await observe();
+        }
         context?.signal?.throwIfAborted();
         // A native-mode refusal remains terminal after row commitment;
         // creation reconciliation must not reinterpret it as success.

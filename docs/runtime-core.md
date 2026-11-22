@@ -791,6 +791,11 @@ owner in 0.3 development source. Session creation can be acknowledged before its
 caller offers the first input, so the failed host keeps its existing Pending
 consumer available until ordinary Stop. Later originals receive the terminal
 pre-effect refusal; no native prompt, Ready event or successful startup hook runs.
+The Session startup observation budget counts webhook and native preparation
+time, excluding time awaiting the original Action's human Project setup review.
+That same review continuation retains the operation and worker reservation;
+resuming it continues native open and initial input without replaying startup.
+Cancellation still terminates that original operation and releases preparation.
 The native-open owner records a refused outcome through its existing runner
 attestation before entering that resident refusal path. The daemon observes it
 under the same exact runner and Agent-source custody as a committed open; it

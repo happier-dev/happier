@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
 import { ExternalActionExecutionAuthorizationV1Schema, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -6,10 +6,113 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
 
 import { createSessionStartupProjectSpawn } from './sessionStartupProjectOperation';
+import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
+import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import type { TrackedSession } from '@/daemon/types';
+import { createProjectWorkerAdmission } from '@/workspaces/execution/projectWorkerAdmission';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
+import { resolveSessionStartupTimeoutMs } from '@/daemon/spawn/waitForSessionWebhook';
 import { createSpawnNewSessionLifecycleActionHandler } from './createSpawnNewSessionLifecycleActionHandler';
 import { createMachineSessionServerStartSpawnLifecycleTransport } from '@/rpc/handlers/sessionServerStartLifecycleAdapter';
 
 describe('resume native startup observation', () => {
+    it.each(['resume', 'cancel', 'native-timeout'] as const)('retains the original startup through a long setup review until %s', async decision => {
+        vi.useFakeTimers();
+        const timeoutMs = resolveSessionStartupTimeoutMs();
+        const scope = { accountId: 'person', machineId: 'machine' };
+        const details = { kind: 'pendingApproval', code: 'project_setup_consent_required', reviewedEffectDigest: 'setup',
+            reviewedEffect: { commands: ['reviewed command'] } } as const;
+        const admission = createProjectWorkerAdmission({ machineId: 'machine', admissionDrain: createDaemonAdmissionDrain(),
+            readPolicy: async () => ({ status: 'ready', policy: { accepting: true, runAtMost: 1 }, source: 'default', metadataVersion: 1 }) });
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4321),
+            startedBy: 'daemon', pid: 4321, happySessionId: 'session',
+            agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/runner-authority.json' };
+        const changes = createSessionLiveWorkProducer({ readSessions: () => [tracked],
+            readActivity: async () => ({ session: 'unknown', input: 'unknown' }) });
+        const operations = createHostActionOperationRuntime({ machineId: 'machine',
+            resolveAccountId: async () => 'person', generateOperationId: () => 'startup', supportsCoreCancellation: () => true });
+        let observationStarted!: () => void;
+        const started = new Promise<void>(resolve => { observationStarted = resolve; });
+        let settled = false;
+        let nativeOpens = 0;
+        const observing = operations.observeExecution({ actionId: 'session.spawn_new',
+            input: { creationKey: 'creation' }, execute: async operation => {
+                const spawn = createSessionStartupProjectSpawn({
+                    context: { signal: operation.signal, localActionContext: operation },
+                    spawnSession: async options => {
+                        const startup = options.projectSetupOperation!;
+                        startup.operationOwnerUpdate.update({ domainRef: { kind: 'projectCommand', purpose: 'setup',
+                            serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace', cwd: '/repo' } });
+                        void admission.execute({ operationId: 'startup', workspaceRefId: 'workspace', signal: operation.signal,
+                            accept() {}, run: async reservation => {
+                                reservation.phase('setup');
+                                try {
+                                    await startup.operationReview!.waitForResume(details);
+                                    if (decision !== 'native-timeout') {
+                                        nativeOpens++;
+                                        tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
+                                            request: { kind: 'create', sessionId: 'session', cwd: '/repo' }, providerSessionId: null };
+                                        changes.notifySessionChanged('session');
+                                    }
+                                    return { kind: 'no_launch', result: { ok: true, result: {} } };
+                                } catch {
+                                    return { kind: 'no_launch', result: { ok: false, errorCode: 'cancelled', error: 'cancelled' } };
+                                }
+                            } });
+                        return { type: 'success', sessionId: 'session' };
+                    },
+                    stopSession: async () => true,
+                    awaitAgentSessionOpen: input => {
+                        observationStarted();
+                        return awaitTrackedRunnerAgentSessionOpen({ ...input,
+                            getTrackedSessions: () => [tracked],
+                            subscribeChanges: listener => changes.subscribe(listener, 'session') });
+                    },
+                });
+                const result = await spawn({ directory: '/repo' });
+                settled = true;
+                return { ok: true, result };
+            } });
+        void observing.catch(() => undefined);
+        try {
+            await started;
+            await vi.advanceTimersByTimeAsync(timeoutMs + 1_000);
+            expect(settled).toBe(false);
+            expect(operations.store.get(scope, 'startup')).toMatchObject({ state: 'running', setupReview: details });
+            expect(admission.dependencies()).toMatchObject([{ operationId: 'startup', state: 'setup' }]);
+            if (decision !== 'cancel') {
+                // Exact re-entry resumes the existing review continuation.
+                const replay = operations.observeExecution({ actionId: 'session.spawn_new', input: { creationKey: 'creation' },
+                    execute: async () => { throw new Error('Must not replay startup'); } });
+                if (decision === 'native-timeout') {
+                    await vi.advanceTimersByTimeAsync(timeoutMs - 1);
+                    expect(settled).toBe(false);
+                    await vi.advanceTimersByTimeAsync(1);
+                    await expect(observing).resolves.toMatchObject({ result: { type: 'error',
+                        errorDetail: { code: 'SESSION_WEBHOOK_TIMEOUT' } } });
+                }
+                await replay;
+                await observing;
+                expect(settled).toBe(true);
+                expect(nativeOpens).toBe(decision === 'resume' ? 1 : 0);
+            } else {
+                operations.runner.cancel(scope, 'startup');
+                await expect(observing).rejects.toMatchObject({ name: 'AbortError' });
+                await vi.advanceTimersByTimeAsync(0);
+                expect(nativeOpens).toBe(0);
+            }
+            expect(admission.dependencies()).toEqual([]);
+        } finally {
+            // Native open is the process boundary; the tracked-runner wait and
+            // original Action lifecycle above are the production owners.
+            tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
+                request: { kind: 'create', sessionId: 'session', cwd: '/repo' }, providerSessionId: null };
+            changes.notifySessionChanged('session');
+            operations.runner.cancel(scope, 'startup');
+            try { await observing.catch(() => undefined); } finally { vi.useRealTimers(); }
+        }
+    });
     it('keeps the admitted Session requester on postbirth HTTP effects instead of spending the daemon credential', async () => {
         const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(19));
         const target = { kind: 'machine' as const, machineId: 'controller' };
