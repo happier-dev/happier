@@ -22,7 +22,7 @@ export function executeTriageMountedUiAction(host: PluginUiHostApi, mountId: str
 
 /** Mounted controls share one diagnostic and visible refusal presenter. */
 export async function presentTriageMountedUiActionFailure(host: PluginUiHostApi, error: unknown,
-  text: (key: string, fallback: string) => string): Promise<void> {
+  text: (key: string, fallback: string) => string, contextMessage?: string): Promise<void> {
     const diagnostics = isPluginError(error) && error.diagnostics?.length
       ? error.diagnostics : [{ code: 'triage_mounted_ui_failed', severity: 'error' as const }];
     for (const diagnostic of diagnostics) host.diagnostic(diagnostic);
@@ -35,9 +35,10 @@ export async function presentTriageMountedUiActionFailure(host: PluginUiHostApi,
       ...(authored.failureCause === undefined ? {} : { failureCause: authored.failureCause }),
       ...(requestId === undefined ? {} : { requestId }),
     }) : null;
-    await host.notify(presentation === null ? text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.')
+    const message = presentation === null ? text('happier.plugin-ui.action.error.unavailable', 'This isn’t available right now. Try again in a moment.')
       : [presentation.reason, presentation.nextStep, ...presentation.technicalDetails.map(line => `${line.label}: ${line.value}`)]
-        .filter(value => value != null).join('\n'),
+        .filter(value => value != null).join('\n');
+    await host.notify([contextMessage, message].filter(value => value !== undefined).join('\n'),
     { severity: 'error' }).catch(() => {
       host.diagnostic({ code: 'triage_mounted_ui_notification_unavailable', severity: 'warning' });
     });

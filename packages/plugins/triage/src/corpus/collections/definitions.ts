@@ -8,6 +8,7 @@ import {
     TriageAdmittedReviewV1Schema,
     TriageEntryRefV1JsonSchema,
     TriageReviewSkipV1Schema,
+    PullRequestReviewResolvedRulesV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -51,6 +52,10 @@ const IDENTITY_TAG_SCHEMA: PluginJsonSchema = {
 
 /** Our own clock, in milliseconds. Never a provider clock. */
 const TIMESTAMP_MS_SCHEMA: PluginJsonSchema = { type: 'integer', minimum: 0 };
+
+// Embedded resolved rules use the enclosing Collection's JSON Schema dialect,
+// as in the published v3 declaration.
+const { $schema: _reviewRulesDialect, ...STORED_REVIEW_SKIP_RULES_SCHEMA } = PullRequestReviewResolvedRulesV1Schema.jsonSchema;
 
 const boundedText = (maxLength: number): PluginJsonSchema => ({
     type: 'string',
@@ -240,7 +245,15 @@ export const CORPUS_USER_MARKS_COLLECTION = defineAccountCollection({
                 },
             },
             // Private payload beside the admitted Review: never projected or indexed, sealed on an E2EE Account.
-            [CORPUS_USER_MARKS_FIELD.reviewSkip]: TriageReviewSkipV1Schema.jsonSchema,
+            // Published v3 marks retain the resolved rules, including inline severity.
+            // The detail reader projects only rules that can decide a skip.
+            [CORPUS_USER_MARKS_FIELD.reviewSkip]: {
+                ...TriageReviewSkipV1Schema.jsonSchema,
+                properties: {
+                    ...TriageReviewSkipV1Schema.jsonSchema.properties,
+                    rules: STORED_REVIEW_SKIP_RULES_SCHEMA,
+                },
+            },
             [CORPUS_USER_MARKS_FIELD.originError]: {
                 type: 'object',
                 properties: { entryRef: TriageEntryRefV1JsonSchema, display: MARK_DISPLAY_SCHEMA },

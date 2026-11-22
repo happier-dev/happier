@@ -65,6 +65,17 @@ function admit(definition: (typeof CORPUS_ACCOUNT_COLLECTIONS)[number]) {
 }
 
 describe('durable Collection declarations', () => {
+    it('admits the published user-marks v3 writer with retained Review skip rules', () => {
+        // Public Account declaration captured on 2026-11-22, not private Collection content.
+        const contribution = PluginAccountCollectionContributionV1Schema.parse(JSON.parse(readFileSync(
+            new URL('../testkit/fixtures/userMarksV3.reviewSkip.json', import.meta.url), 'utf8')));
+        const retained = normalizePluginAccountCollectionContractV1({ pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, contribution });
+        const current = admit(CORPUS_USER_MARKS_COLLECTION);
+        expect(retained.contractDigest).toBe('wB-Y-mNZ64alj8vaLiZtlyd-FpYCbHGyAvl_OlyLk6Q');
+        expect(isPluginCollectionSchemaWideningV1({ source: retained, target: current })).toBe(true);
+        expect(resolvePluginCollectionContractAccessV1({ currentWriter: retained, requested: current })).not.toBeNull();
+    });
+
     it('reads the retained QA82 source-instances v4 writer without narrowing stored configuration', () => {
         // Public declaration captured from #82 on 2026-10-31, not Collection content.
         const retained = NormalizedPluginAccountCollectionContractV1Schema.parse(JSON.parse(readFileSync(
@@ -82,6 +93,8 @@ describe('durable Collection declarations', () => {
             projectPluginAccountCollectionDeclaration(CORPUS_USER_MARKS_COLLECTION.id, CORPUS_USER_MARKS_COLLECTION));
         const registered = (reviewId: { type: 'string'; minLength?: number }) => {
             const schema = structuredClone(declaration.schema);
+            // READY241 predates optional Review skip marks; keep its historical contract fixed.
+            delete schema.properties!.reviewSkip;
             schema.properties!.admittedReview!.properties!.reviewId = reviewId;
             return normalizePluginAccountCollectionContractV1({
                 pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
@@ -110,7 +123,8 @@ describe('durable Collection declarations', () => {
         expect(isValidPluginJsonSchemaValue(validateNarrowed, mark('review-1'))).toBe(true);
 
         expect(isPluginCollectionSchemaWideningV1({ source: incumbent, target: current })).toBe(true);
-        expect(resolvePluginCollectionContractAccessV1({ currentWriter: incumbent, requested: current })).toBe('writable');
+        // The pre-skip writer can serve reads; publishing the widening admits current writes.
+        expect(resolvePluginCollectionContractAccessV1({ currentWriter: incumbent, requested: current })).toBe('readOnly');
         expect(isPluginCollectionSchemaWideningV1({ source: narrowed, target: current })).toBe(true);
     });
 

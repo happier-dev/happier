@@ -72,7 +72,8 @@ export function TriagePullRequestReviewChooser(
         code: failure.codes[0] ?? 'unavailable',
         diagnostics: failure.codes.slice(1).map(code => ({ code, severity: 'error' })),
         ...(failure.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),
-      }), text);
+      }), text, continuation.kind === 'settled' && continuation.result.status === 'accepted'
+        ? text('plugins.triage.review.relationNotRecorded', 'Review started. Relation not recorded.') : undefined);
       if (continuation.kind === 'unknown') { setPhase({ kind: 'failed', failure: 'reviewUnknown' }); return; }
       if (continuation.kind !== 'settled' || continuation.result.status === 'refused') {
         setPhase({ kind: 'failed', failure: 'reviewRefused' }); return;

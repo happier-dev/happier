@@ -1,6 +1,7 @@
 import type { TriageTaskOriginReviewV1 } from '../../actions/taskReviewProtocol.js';
 import { isPluginError, PluginError, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { TriageAdmittedReviewV1, TriageEntryRefV1, TriageReviewSkipV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
+import { projectTriageReviewSkipRulesV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { CorpusCollectionsV1 } from '../collections/bindCorpusCollections.js';
 import { putCorpusRowOnce } from '../collections/putRowOnce.js';
@@ -375,7 +376,9 @@ export async function readReviewOutcome(input: Readonly<{
     const value = (await readLiveMark(input.collections, markTag, options))?.value;
     return {
         ...(value?.admittedReview === undefined ? {} : { admittedReview: value.admittedReview }),
-        ...(value?.reviewSkip === undefined ? {} : { reviewSkip: value.reviewSkip }),
+        ...(value?.reviewSkip === undefined ? {} : { reviewSkip: {
+            ...value.reviewSkip, rules: projectTriageReviewSkipRulesV1(value.reviewSkip.rules),
+        } }),
     };
 }
 

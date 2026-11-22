@@ -1,0 +1,611 @@
+{
+  "id": "user-marks",
+  "schema": {
+    "type": "object",
+    "required": [
+      "markTag",
+      "pinned",
+      "markedAtMs",
+      "entryRef",
+      "displayAtMark"
+    ],
+    "properties": {
+      "pinned": {
+        "type": "boolean"
+      },
+      "markTag": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9_-]{43}$",
+        "maxLength": 43,
+        "minLength": 43
+      },
+      "entryRef": {
+        "type": "object",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "required": [
+          "source",
+          "kindId",
+          "collisionScope",
+          "entryId"
+        ],
+        "properties": {
+          "kindId": {
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "minLength": 1,
+            "x-happier-max-utf8-bytes": 128
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "pluginId",
+              "localId"
+            ],
+            "properties": {
+              "localId": {
+                "type": "string",
+                "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                "maxLength": 256,
+                "minLength": 1
+              },
+              "pluginId": {
+                "type": "string",
+                "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                "maxLength": 256,
+                "minLength": 3
+              }
+            },
+            "additionalProperties": false
+          },
+          "entryId": {
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "minLength": 1,
+            "x-happier-max-utf8-bytes": 128
+          },
+          "collisionScope": {
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+            "minLength": 1,
+            "x-happier-max-utf8-bytes": 192
+          }
+        },
+        "additionalProperties": false
+      },
+      "markedAtMs": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "reviewSkip": {
+        "type": "object",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "required": [
+          "headSha",
+          "reason",
+          "rules",
+          "occurrence"
+        ],
+        "properties": {
+          "rules": {
+            "type": "object",
+            "required": [
+              "baseRevision",
+              "provenance"
+            ],
+            "properties": {
+              "baseRefs": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "minItems": 1
+              },
+              "provenance": {
+                "type": "object",
+                "properties": {
+                  "baseRefs": {
+                    "anyOf": [
+                      {
+                        "const": "projectAutomation"
+                      },
+                      {
+                        "const": "baseCommit"
+                      }
+                    ]
+                  },
+                  "skipDrafts": {
+                    "anyOf": [
+                      {
+                        "const": "projectAutomation"
+                      },
+                      {
+                        "const": "baseCommit"
+                      }
+                    ]
+                  },
+                  "authorKinds": {
+                    "anyOf": [
+                      {
+                        "const": "projectAutomation"
+                      },
+                      {
+                        "const": "baseCommit"
+                      }
+                    ]
+                  },
+                  "ignorePaths": {
+                    "anyOf": [
+                      {
+                        "const": "projectAutomation"
+                      },
+                      {
+                        "const": "baseCommit"
+                      }
+                    ]
+                  },
+                  "inlineThreshold": {
+                    "anyOf": [
+                      {
+                        "const": "projectAutomation"
+                      },
+                      {
+                        "const": "baseCommit"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": false
+              },
+              "skipDrafts": {
+                "anyOf": [
+                  {
+                    "const": true
+                  },
+                  {
+                    "const": false
+                  }
+                ]
+              },
+              "authorKinds": {
+                "type": "array",
+                "items": {
+                  "anyOf": [
+                    {
+                      "const": "human"
+                    },
+                    {
+                      "const": "bot"
+                    },
+                    {
+                      "const": "unsupported"
+                    }
+                  ]
+                },
+                "minItems": 1
+              },
+              "ignorePaths": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "baseRevision": {
+                "type": "string",
+                "minLength": 1
+              },
+              "inlineThreshold": {
+                "enum": [
+                  "blocker",
+                  "high",
+                  "medium",
+                  "low",
+                  "nit"
+                ],
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "baseRef"
+              },
+              {
+                "const": "authorKind"
+              },
+              {
+                "const": "draft"
+              },
+              {
+                "const": "noReviewablePaths"
+              }
+            ]
+          },
+          "headSha": {
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "minLength": 1,
+            "x-happier-max-utf8-bytes": 128
+          },
+          "occurrence": {
+            "type": "object",
+            "properties": {
+              "baseRef": {
+                "type": "string",
+                "minLength": 1
+              },
+              "authorKind": {
+                "anyOf": [
+                  {
+                    "const": "human"
+                  },
+                  {
+                    "const": "bot"
+                  },
+                  {
+                    "const": "unsupported"
+                  }
+                ]
+              }
+            },
+            "additionalProperties": false
+          },
+          "automationId": {
+            "type": "string",
+            "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+            "minLength": 1,
+            "x-happier-max-utf8-bytes": 128
+          }
+        },
+        "additionalProperties": false
+      },
+      "originError": {
+        "type": "object",
+        "required": [
+          "entryRef",
+          "display"
+        ],
+        "properties": {
+          "display": {
+            "type": "object",
+            "required": [
+              "title",
+              "scopeLabel"
+            ],
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scopeLabel": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "additionalProperties": false
+          },
+          "entryRef": {
+            "type": "object",
+            "$schema": "http://json-schema.org/draft-07/schema#",
+            "required": [
+              "source",
+              "kindId",
+              "collisionScope",
+              "entryId"
+            ],
+            "properties": {
+              "kindId": {
+                "type": "string",
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "minLength": 1,
+                "x-happier-max-utf8-bytes": 128
+              },
+              "source": {
+                "type": "object",
+                "required": [
+                  "pluginId",
+                  "localId"
+                ],
+                "properties": {
+                  "localId": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                    "maxLength": 256,
+                    "minLength": 1
+                  },
+                  "pluginId": {
+                    "type": "string",
+                    "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                    "maxLength": 256,
+                    "minLength": 3
+                  }
+                },
+                "additionalProperties": false
+              },
+              "entryId": {
+                "type": "string",
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                "minLength": 1,
+                "x-happier-max-utf8-bytes": 128
+              },
+              "collisionScope": {
+                "type": "string",
+                "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                "minLength": 1,
+                "x-happier-max-utf8-bytes": 192
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      },
+      "originReview": {
+        "type": "object",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "required": [
+          "reviewId",
+          "findingIds"
+        ],
+        "properties": {
+          "reviewId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "findingIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "displayAtMark": {
+        "type": "object",
+        "required": [
+          "title",
+          "scopeLabel"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scopeLabel": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "admittedReview": {
+        "type": "object",
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "required": [
+          "reviewId",
+          "roundOrdinal"
+        ],
+        "properties": {
+          "reviewId": {
+            "type": "string"
+          },
+          "roundOrdinal": {
+            "type": "integer",
+            "maximum": 9007199254740991,
+            "minimum": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "fixPullRequests": {
+        "type": "object",
+        "required": [
+          "linked",
+          "dismissed"
+        ],
+        "properties": {
+          "linked": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "entryRef",
+                "displayAtLink",
+                "linkedAtMs"
+              ],
+              "properties": {
+                "entryRef": {
+                  "type": "object",
+                  "$schema": "http://json-schema.org/draft-07/schema#",
+                  "required": [
+                    "source",
+                    "kindId",
+                    "collisionScope",
+                    "entryId"
+                  ],
+                  "properties": {
+                    "kindId": {
+                      "type": "string",
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "source": {
+                      "type": "object",
+                      "required": [
+                        "pluginId",
+                        "localId"
+                      ],
+                      "properties": {
+                        "localId": {
+                          "type": "string",
+                          "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                          "maxLength": 256,
+                          "minLength": 1
+                        },
+                        "pluginId": {
+                          "type": "string",
+                          "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                          "maxLength": 256,
+                          "minLength": 3
+                        }
+                      },
+                      "additionalProperties": false
+                    },
+                    "entryId": {
+                      "type": "string",
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 128
+                    },
+                    "collisionScope": {
+                      "type": "string",
+                      "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                      "minLength": 1,
+                      "x-happier-max-utf8-bytes": 192
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "linkedAtMs": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "displayAtLink": {
+                  "type": "object",
+                  "required": [
+                    "title",
+                    "scopeLabel"
+                  ],
+                  "properties": {
+                    "title": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "scopeLabel": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "dismissed": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "$schema": "http://json-schema.org/draft-07/schema#",
+              "required": [
+                "source",
+                "kindId",
+                "collisionScope",
+                "entryId"
+              ],
+              "properties": {
+                "kindId": {
+                  "type": "string",
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "source": {
+                  "type": "object",
+                  "required": [
+                    "pluginId",
+                    "localId"
+                  ],
+                  "properties": {
+                    "localId": {
+                      "type": "string",
+                      "pattern": "^[a-z0-9]+(?:[-/][a-z0-9]+)*$(?![\\s\\S])",
+                      "maxLength": 256,
+                      "minLength": 1
+                    },
+                    "pluginId": {
+                      "type": "string",
+                      "pattern": "^(?!.*(?:^|\\.)(?:__proto__|constructor|prototype)(?:\\.|$))[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$(?![\\s\\S])",
+                      "maxLength": 256,
+                      "minLength": 3
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                "entryId": {
+                  "type": "string",
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+$",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 128
+                },
+                "collisionScope": {
+                  "type": "string",
+                  "pattern": "^[^\\u0000-\\u001f\\u007f]+(?:\\u001f[^\\u0000-\\u001f\\u007f]+)?$",
+                  "minLength": 1,
+                  "x-happier-max-utf8-bytes": 192
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "indexes": [
+    {
+      "id": "by-pinned",
+      "fields": [
+        {
+          "field": "pinned",
+          "direction": "asc"
+        },
+        {
+          "field": "markedAtMs",
+          "direction": "desc"
+        }
+      ]
+    }
+  ],
+  "relations": [],
+  "uiQueries": [],
+  "migrations": [
+    {
+      "id": "user-marks-v1-to-v2",
+      "toSchemaVersion": 2,
+      "fromSchemaVersion": 1
+    },
+    {
+      "id": "user-marks-v2-to-v3",
+      "toSchemaVersion": 3,
+      "fromSchemaVersion": 2
+    }
+  ],
+  "rowIdField": "markTag",
+  "schemaVersion": 3,
+  "identityFields": [
+    "markTag"
+  ],
+  "serverReadable": [
+    "pinned",
+    "markedAtMs"
+  ],
+  "migrationArtifact": {
+    "artifactId": "triage-collection-migrations",
+    "exportName": "collectionMigrations"
+  },
+  "readableSchemaVersions": [
+    1,
+    2,
+    3
+  ]
+}

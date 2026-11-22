@@ -1,9 +1,33 @@
 import { describe, expect, it } from 'vitest';
+import { TriageReviewSkipV1Schema } from '@happier-dev/triage-protocol/v1';
+import { deriveUserMarkTag } from '../identity/tags.js';
+import { toCorpusStoredValue } from '../collections/rowCodec.js';
 import { createTestkitCorpusCollections } from '../testkit/corpusCollections.test-support.js';
 import { testkitEntryRef } from '../testkit/observations.test-support.js';
 import { readAdmittedReview, readReviewOutcome, setAdmittedReview, setPinned, setReviewSkip } from './setPinned.js';
 
 describe('the admitted Review relation at the user-mark owner', () => {
+    it('reads a retained skip through the current detail contract and replaces it with an admitted Review', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const entryRef = testkitEntryRef();
+        const displayAtMark = { title: 'Pull request 17', scopeLabel: 'example/repository' };
+        const reviewSkip = { headSha: 'a'.repeat(40), reason: 'baseRef' as const, occurrence: { baseRef: 'feature/relay-v2' },
+            rules: { baseRefs: ['main'], baseRevision: 'b'.repeat(40), inlineThreshold: 'low' as const,
+                provenance: { baseRefs: 'baseCommit' as const, inlineThreshold: 'baseCommit' as const } } };
+        const markTag = await deriveUserMarkTag(collections.userMarks, entryRef);
+        await collections.userMarks.batch([{ kind: 'put', expectedRevision: 'absent', value: toCorpusStoredValue({
+            markTag, pinned: true, markedAtMs: 10, entryRef, displayAtMark, reviewSkip,
+        }) }]);
+
+        const outcome = await readReviewOutcome({ collections, entryRef });
+        expect(TriageReviewSkipV1Schema.parse(outcome.reviewSkip)).toEqual({ ...reviewSkip,
+            rules: { baseRefs: ['main'], baseRevision: 'b'.repeat(40), provenance: { baseRefs: 'baseCommit' } } });
+        await setAdmittedReview({ collections, entryRef, displayAtMark, nowMs: 20,
+            admittedReview: { reviewId: 'review-1', roundOrdinal: 1 } });
+        expect(await readReviewOutcome({ collections, entryRef })).toEqual({ admittedReview: { reviewId: 'review-1', roundOrdinal: 1 } });
+        expect((await collections.userMarks.get(markTag))?.value).toMatchObject({ pinned: true });
+    });
+
     it('refuses an empty Review ID without changing the mark', async () => {
         const { collections } = createTestkitCorpusCollections();
         const input = { collections, entryRef: testkitEntryRef(),

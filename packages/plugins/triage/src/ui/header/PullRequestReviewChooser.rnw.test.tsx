@@ -328,6 +328,7 @@ describe('the mounted selected-PR review chooser', () => {
     });
     if (admission === 'workflowWithWarning') {
       expect(notifications.join(' ')).toContain('relation-write-17');
+      expect(notifications.join(' ')).toContain('Review started. Relation not recorded.');
     }
   });
 
