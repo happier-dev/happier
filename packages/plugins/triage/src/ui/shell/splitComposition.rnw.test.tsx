@@ -6,6 +6,10 @@ import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { JsonValue } from '@happier-dev/plugin-sdk';
+import type { PluginUiTargetedContributionsV1 } from '@happier-dev/plugin-sdk/ui';
+import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
+    TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1, TriageSourceDescriptorV1Schema } from '@happier-dev/triage-protocol/v1';
 
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../../actions/entryDetailProtocol.js';
 import {
@@ -146,13 +150,15 @@ type ShellMountOptions = Readonly<{
     detailsPane?: Readonly<{ available: boolean }>;
     /** The host's page facts: whether Triage's own views column is on screen beside the page. */
     page?: Readonly<{ columnVisible: boolean }>;
+    /** The admitted sources the page reads its kinds from. */
+    targetedContributions?: PluginUiTargetedContributionsV1;
 }>;
 
 const requestedActions: string[] = [];
 const pageLocations: string[] = [];
 
 async function mountShell(options: number | ShellMountOptions = {}): Promise<PluginUiTestkit> {
-    const { textScale = 1, detailsPane, page } = typeof options === 'number' ? { textScale: options } : options;
+    const { textScale = 1, detailsPane, page, targetedContributions } = typeof options === 'number' ? { textScale: options } : options;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -168,6 +174,7 @@ async function mountShell(options: number | ShellMountOptions = {}): Promise<Plu
                 },
                 textScale,
                 ...(page === undefined ? {} : { page }),
+                ...(targetedContributions === undefined ? {} : { targetedContributions }),
             }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope,
@@ -572,5 +579,45 @@ describe('the Triage entry detail in the host details pane', () => {
 
         expect(detailsPaneNode()?.textContent).toContain(ENTRY_TITLE);
         expect(openEntryInLocation()).toBe(true);
+    });
+});
+
+/**
+ * The page that opens a detail decides where a tabbed issue's task controls sit (lab merged-detail-issue): on
+ * PRs & Issues the work leads and the status change waits in ⋯. The host pane draws the detail outside the page's
+ * tree, so the decision must travel with the one `renderDetail`, the same for the pane and the pushed page.
+ */
+function tabbedTaskSource(): PluginUiTargetedContributionsV1 {
+    const protocol = { id: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1, version: TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1 };
+    const contributor = { pluginId: SOURCE.pluginId, contributionId: SOURCE.localId, occurrenceId: 'source-one',
+        sourceCustody: { kind: 'development' as const, registeredRootId: 'task-source' } };
+    return {
+        target: { pluginId: 'happier.triage', occurrenceId: 'triage-one', sourceCustody: { kind: 'development', registeredRootId: 'triage-source' } },
+        points: [{ pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocols: [{ protocol, contributions: [{
+            contributor, protocol,
+            descriptor: TriageSourceDescriptorV1Schema.parse({ ...createTriageSourceV1Fixture().descriptor,
+                kinds: [{ id: ENTRY_REF.kindId, task: true, workflowSubject: 'issue', displayName: 'Issue',
+                    detailTabs: [{ kind: 'shared', id: 'overview' }],
+                    taskCapabilities: { editFields: ['labelIds'], transitions: [
+                        { id: 'close', label: 'Closed', state: { presentation: 'resolved', nativeLabel: 'Closed', completionReason: 'completed' } },
+                    ] } }] }),
+            operations: ['edit', 'get', 'transition'].map((role) => ({ point: { pointId: TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, protocol },
+                contributor, role, action: { pluginId: SOURCE.pluginId, localId: role } })),
+            surfaces: [],
+        }] }] }],
+    };
+}
+
+describe('the PRs & Issues placement of a task issue\'s controls', () => {
+    it.each([
+        ['in the host details pane', { available: true }, DESKTOP_WIDTH],
+        ['in the pushed page', { available: false }, PHONE_WIDTH],
+    ] as const)('leads with the work %s: no status control before it', async (_where, detailsPane, width) => {
+        const shell = await mountShell({ detailsPane, targetedContributions: tabbedTaskSource() });
+        await measureFillRegion(width);
+        await openTheRow(shell);
+        const detail = detailsPane.available ? detailsPaneNode() : document.body;
+        expect(detail?.textContent).toContain(ENTRY_TITLE);
+        expect(detail?.querySelector('[aria-label="Change status, Open"]') ?? null).toBeNull();
     });
 });

@@ -2490,8 +2490,17 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       /></Stack> : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
   );
 
-  /** The one detail composition, in whichever container the Collection holds it. */
-  const renderDetail = (key: string, { headerHosted, pushed }: CollectionDetailRenderContext): React.ReactNode => key === TRIAGE_TASK_DRAFT_KEY_V1
+  /**
+   * The one detail composition, in whichever container the Collection holds it. PRs & Issues leads an issue's detail
+   * with the work (lab merged-detail-issue); Tasks with its Status (lab t1). The placement travels with the detail,
+   * because the host's details pane draws it outside this page's tree.
+   */
+  const renderDetail = (key: string, context: CollectionDetailRenderContext): React.ReactNode => (
+    <TriageTaskControlsPlacementContext.Provider value={taskAudience === undefined ? 'story' : 'header'}>
+      {renderDetailContent(key, context)}
+    </TriageTaskControlsPlacementContext.Provider>
+  );
+  const renderDetailContent = (key: string, { headerHosted, pushed }: CollectionDetailRenderContext): React.ReactNode => key === TRIAGE_TASK_DRAFT_KEY_V1
     ? <TriageCreateTaskFields key={props.createDraftId ?? localTaskDraft?.input.draftId ?? 'task-draft'}
       draftId={props.createDraftId ?? localTaskDraft?.input.draftId} sources={configuredSources.sources}
       sourcesLoaded={configuredSources.loaded} sourcesUnavailableReason={configuredSources.unavailableReason}
@@ -2639,8 +2648,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <TriageEntryPublicationContext.Provider value={entryPublication}>
       <TriageHeaderPublicationContext.Provider value={readPublishedHeader}>
       <TriageListRowEnvironmentContext.Provider value={rowEnvironment}>
-      {/* PRs & Issues leads an issue's detail with the work (lab merged-detail-issue); Tasks with its Status (lab t1). */}
-      <TriageTaskControlsPlacementContext.Provider value={taskAudience === undefined ? 'story' : 'header'}>
         <Collection<TriageListItemV1>
           resizeKey="triage"
           model={collection}
@@ -3057,7 +3064,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           )}
         />
-      </TriageTaskControlsPlacementContext.Provider>
       </TriageListRowEnvironmentContext.Provider>
       </TriageHeaderPublicationContext.Provider>
       </TriageEntryPublicationContext.Provider>
