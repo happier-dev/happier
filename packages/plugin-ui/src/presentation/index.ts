@@ -7,6 +7,9 @@ export { resolveHappierThemeSurfaceStyle } from './themeSurface.js';
 // Host-only active semantic inspection; no portable registry or plugin ABI changes.
 export { beginThemeSurfaceInspection, createThemeSurfaceInspectionBinding } from './themeSurfaceInspection.js';
 export * from './index.public.js';
+// Host-only: which text edge a section's plain action stands on (`start` once it drops beneath the section's text), so a
+// host action row can order its controls for that edge from the header's own measured decision.
+export { HappierTextActionEdgeContext } from './interaction/textActionEdge.js';
 // Host-only: the resting view a passive phone viewer of a Browser or Computer stream gets (the picture fills its pane).
 export { fillViewTransform } from './media/gestureMapping.js';
 // Host-only: the page count line a core main screen's head draws under its band; plugins reach the same owner

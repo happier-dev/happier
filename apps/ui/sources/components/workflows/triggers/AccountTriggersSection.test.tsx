@@ -722,6 +722,16 @@ describe('Account Workflow Library and settings', () => {
         expect(screen.findByTestId('subject-triggers-link-pending')).not.toBeNull();
         expect(screen.findByTestId('subject-triggers-link')).toBeNull();
         expect(screen.getTextContent()).toContain('workflows.triggers.section.startsUnavailable');
+        // Phone width (layout is the platform boundary): the actions drop beneath the text and lead from its edge, so
+        // Automate… leads and Link's unseen place trails it instead of pushing it in beside an invisible button.
+        const actionOrder = () => [...new Set(screen.findAll((node) => node.props?.testID === 'subject-triggers-add'
+            || node.props?.testID === 'subject-triggers-link-pending').map((node) => node.props.testID as string))];
+        expect(actionOrder()).toEqual(['subject-triggers-link-pending', 'subject-triggers-add']);
+        const header = screen.findAll((node) => typeof node.props?.onLayout === 'function'
+            && [node.props.style].flat(Infinity).some((entry) => (entry as { flexDirection?: string } | null)?.flexDirection === 'row')
+            && node.findAll((child) => child.props?.testID === 'subject-triggers-add').length > 0).at(-1)!;
+        await act(async () => { header.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 80 } } }); });
+        expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link-pending']);
         await screen.unmount();
     });
     it('keeps Environment Automations rows and explains that their starts need the catalog Machine online', async () => {

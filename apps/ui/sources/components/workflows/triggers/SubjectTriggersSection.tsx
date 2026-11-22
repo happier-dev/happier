@@ -4,6 +4,7 @@ import { useRouter } from 'expo-router';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { HappierTextActionEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 
@@ -288,8 +289,8 @@ export const SubjectTriggersSectionContent = React.memo(
     ), [widget, linkSlot, linkHeld, linkExpanded, openAutomate]);
     const sectionActions = widget ? null : (
       <View ref={addAnchor} collapsable={false} style={styles.actions}>
-        {linkSlot === 'offered' ? (
-          <View ref={linkAnchor} collapsable={false}>
+        <SectionActionsInEdgeOrder link={linkSlot === 'offered' ? (
+          <View key="link" ref={linkAnchor} collapsable={false}>
             <SectionActionButton
               testID="subject-triggers-link"
               icon="link"
@@ -299,18 +300,19 @@ export const SubjectTriggersSectionContent = React.memo(
             />
           </View>
         ) : linkHeld ? (
-          <View testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
+          <View key="link" testID="subject-triggers-link-pending" style={styles.heldSlot} pointerEvents="none"
             aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
             <SectionActionButton icon="link" title={t('workflows.triggers.section.link')} disabled onPress={() => {}} />
           </View>
-        ) : null}
-        {/* Automate… closes the row on the section's trailing edge; Link (or its held place) sits before it. */}
-        <SectionActionButton
-          testID="subject-triggers-add"
-          icon="plus"
-          title={t('workflows.triggers.section.automate')}
-          onPress={openAutomate}
-        />
+        ) : null} automate={
+          <SectionActionButton
+            key="automate"
+            testID="subject-triggers-add"
+            icon="plus"
+            title={t('workflows.triggers.section.automate')}
+            onPress={openAutomate}
+          />
+        } />
       </View>
     );
     const section = (
@@ -426,6 +428,17 @@ export const SubjectTriggersSectionContent = React.memo(
 );
 
 /** Lends the section's actions to the widget frame that heads it; mounted only in that presentation. */
+/**
+ * The section's two actions in the order of the edge they stand on. Beside the title, Automate… closes the row on the
+ * section's trailing edge and Link (or its held place) sits before it. Dropped beneath the text on a narrow page, the
+ * row leads from the text edge (the header's own measured decision), so Automate… leads and Link's place trails: an
+ * unseen held slot never pushes it in, and nothing moves when Link arrives. Keyed, so the swap never remounts either.
+ */
+function SectionActionsInEdgeOrder(props: Readonly<{ link: React.ReactNode; automate: React.ReactNode }>) {
+  const leadsFromTextEdge = React.useContext(HappierTextActionEdgeContext) === 'start';
+  return <>{leadsFromTextEdge ? [props.automate, props.link] : [props.link, props.automate]}</>;
+}
+
 function WidgetFrameHeaderActions(props: Readonly<{ node: React.ReactNode }>) {
   useWidgetFrameBodyMeta(props.node);
   return null;

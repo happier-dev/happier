@@ -237,6 +237,9 @@ export const ActionOperationDetailModal = React.memo(
           t('inbox.actionOperations.unavailableTitle'),
         testID: 'action-operation-detail',
         titleTestID: 'action-operation-detail-heading',
+        // The dialog preset's own height bound holds the card in the window; its body scrolls inside (FIN P4).
+        scrollHost: 'bounded',
+        bodyScroll: 'auto',
         dimensions: { size: 'dialog' },
       });
       return () => props.setChrome?.(null);
@@ -366,7 +369,8 @@ export const ActionOperationDetailModal = React.memo(
           accessibilityLiveRegion="polite"
           style={[
             styles.hero,
-            isolationReceipt?.quiet ? styles.heroQuiet : undefined,
+            // Red on the glyph only (FIN ruling, as the Inbox row draws it): a failure reads as glyph + ink word, no band.
+            isolationReceipt?.quiet || status.tone === 'danger' ? styles.heroQuiet : undefined,
           ]}
         >
           {!terminal &&
@@ -401,7 +405,6 @@ export const ActionOperationDetailModal = React.memo(
               }
               style={[
                 styles.status,
-                status.tone === 'danger' ? styles.danger : undefined,
                 isolationReceipt?.quiet ? styles.statusQuiet : undefined,
               ]}
             >
@@ -764,9 +767,6 @@ const styles = StyleSheet.create((theme) => ({
   statusQuiet: {
     color: theme.colors.text.secondary,
     fontWeight: '400',
-  },
-  danger: {
-    color: theme.colors.status.error,
   },
   progress: {
     color: theme.colors.text.secondary,
