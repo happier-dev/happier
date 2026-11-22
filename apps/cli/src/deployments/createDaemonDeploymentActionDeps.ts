@@ -1140,7 +1140,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
         return result;
     };
     const domainHost: Parameters<typeof createOwnServerDomainActions>[0] = { ...host,
-        storage, headers, dispatch: sendChild, open, readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
+        storage, headers, dispatch: sendChild,
+        open: (id, context, effectActionId) => open(id, context, artifactAuthorization(context, effectActionId)),
+        readEnvironment: targetHostReaders.readEnvironment, readReceipt: targetHostReaders.readReceipt, readInstallation,
         readTelemetryCollectorPlacement,
         async createContent(content, owner, context) {
             const binding = context.externalActionExecutionAuthorization?.binding;

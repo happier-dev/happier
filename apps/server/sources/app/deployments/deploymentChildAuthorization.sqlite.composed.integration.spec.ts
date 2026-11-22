@@ -16,6 +16,9 @@ import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '..
 import { createRpcHandlerManager } from '../../../../cli/src/api/rpc/RpcHandlerManager';
 import { decrypt, encrypt } from '../../../../cli/src/api/encryption';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
+import { createAccountArtifactStore } from '../../../../cli/src/api/artifacts/accountArtifactStore';
+import { requesterAccountEncryptionMode } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionContext';
+import { createOwnServerDomainContentWriter } from '../../../../cli/src/deployments/targets/ownServer/ownServerDomainActions';
 import { createDaemonDeploymentActionDeps } from '../../../../cli/src/deployments/createDaemonDeploymentActionDeps';
 import { registerDaemonDeploymentChildRpcHandler } from '../../../../cli/src/deployments/daemonDeploymentChildRpc';
 import { createOwnServerDeploymentRuntimeForHost } from '../../../../cli/src/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
@@ -137,6 +140,7 @@ import { isDeploymentPreparationHttpPurposeInTx, isDeploymentReadOperandInAdmitt
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createDatabaseIntegrationHarness } from '@/testkit/databaseIntegrationHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { removeTeamMemberForActorInTx } from '@/app/teams/memberships/memberAdministration';
@@ -196,13 +200,24 @@ import { readProjectDeploymentDefaultsInTx } from '@/app/projects/projectDeploym
 
 describe('deployment children retain their controller Action authority', () => {
     const serverId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
+    const postgresMembershipContract = process.env.HAPPIER_DB_PROVIDER === 'postgres'
+        && Boolean(process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID);
     let harness: LightSqliteHarness;
+    let postgresHarness: Awaited<ReturnType<typeof createDatabaseIntegrationHarness>> | undefined;
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-deployment-child-', initAuth: true, initEncrypt: true,
+        const options = { tempDirPrefix: 'happier-deployment-child-', initAuth: true, initEncrypt: true,
             env: { HAPPIER_SERVER_IDENTITY_ID: serverId, AUTH_REQUIRED_LOGIN_PROVIDERS: '',
-                HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: 'true' } });
+                HAPPIER_FEATURE_MACHINES_TRANSFER_DIRECT_PEER__ENABLED: 'true' } };
+        if (postgresMembershipContract) postgresHarness = await createDatabaseIntegrationHarness(options);
+        else harness = await createLightSqliteHarness(options);
     }, 180_000);
-    afterAll(async () => { await harness?.close(); });
+    afterAll(async () => { await (postgresHarness ?? harness)?.close(); });
+    if (postgresMembershipContract) {
+        // The disposable provider contract selects the backend-independent membership cases.
+        registerPlainDeployCandidateCases();
+        registerRetainedMembershipDomainCases();
+        return;
+    }
 
     async function expectHttpRefusalWarning(expected: Readonly<{ phase: string; method: string; path: string }>,
         run: () => Promise<unknown>, secrets: readonly string[] = []) {
@@ -225,7 +240,8 @@ describe('deployment children retain their controller Action authority', () => {
     async function fixture(ownerKind: 'account' | 'team' = 'account', credential: 'account' | 'api' = 'account',
         options: Readonly<{ readableEnvironment?: boolean; separateMemberCustodian?: boolean; separateControllerCustodian?: boolean; separateContentOwner?: boolean;
             workflowOrigin?: boolean; templateRoot?: boolean; contentMode?: 'plain' | 'e2ee'; platformTarget?: 'vercel' | 'workers';
-            persistedR76Placement?: boolean; sourceWithoutRepository?: boolean; confirmedCompactDeploy?: boolean }> = {}) {
+            persistedR76Placement?: boolean; sourceWithoutRepository?: boolean; confirmedCompactDeploy?: boolean;
+            checkFreshDeployCandidate?: boolean }> = {}) {
         const contentMode = options.contentMode ?? 'plain';
         const accountKeys = nacl.box.keyPair(), memberContentKeys = nacl.box.keyPair();
         const account = await db.account.create({ data: { encryptionMode: contentMode,
@@ -375,6 +391,29 @@ describe('deployment children retain their controller Action authority', () => {
             input: originalActionEnvelope.input,
             ...(beforeReview ? { deploymentReview: { originalAuthorizationToken: beforeReview.token, candidate: receiptContent } } : {}),
         });
+        if (options.checkFreshDeployCandidate) {
+            const { token, binding } = authorization;
+            const { contentArtifactId } = receiptContent;
+            expect(binding.actionId).toBe('deployments.deploy');
+            expect(binding.deploymentCandidatePublication?.reviewed?.contentArtifactId).toBe(contentArtifactId);
+            const path = `/v1/artifacts/${contentArtifactId}`;
+            await withAuthenticatedTestApp(artifactsRoutes, async app => {
+                const response = await app.inject({ method: 'GET', url: path, headers: {
+                    ...currentAccountStoredContentCompatibilityHeaders,
+                    [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: token,
+                    [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: binding.actionId,
+                    [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                    [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                        authorizationToken: token, effectActionId: binding.actionId, target,
+                        installationId: controller.installationId, requestId: binding.requestId,
+                        method: 'GET', path, privateKey: controller.keys.secretKey }),
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                const artifact = ArtifactHttpReadV1Schema.parse(response.json());
+                expect(artifact).toMatchObject({ id: contentArtifactId, ownerAccountId: account.id, bodyVersion: 1 });
+                expect(artifact.body).toEqual(expect.any(String));
+            }, { authentication: 'real' });
+        }
         const admissionPath = `/v1/deployments/environments/${environment.id}/deploy`;
         const admissionInput = { ...input, actionOperationId };
         const reviewedChild = options.templateRoot ? { actionId: 'deployments.deploy', role: 'template.deploy',
@@ -1003,6 +1042,113 @@ describe('deployment children retain their controller Action authority', () => {
             }
         }, { authentication: 'real' });
     });
+
+    function registerPlainDeployCandidateCases() {
+        it.each(['plain', 'e2ee'] as const)('reads the fresh Deploy candidate before receipt admission for %s Accounts', async contentMode => {
+            await fixture('account', 'account', { readableEnvironment: true, contentMode, confirmedCompactDeploy: true,
+                checkFreshDeployCandidate: true });
+        });
+    }
+    registerPlainDeployCandidateCases();
+
+    function registerRetainedMembershipDomainCases() {
+        it.each(['redeploy', 'joining'] as const)('scopes retained Tunnel Domain Artifacts to the admitted Deploy during %s', async mode => {
+            const f = await fixture('account', 'account', { readableEnvironment: true });
+            if (mode === 'joining') await db.deploymentTargetLinkMachine.updateMany({
+                where: { targetLinkId: f.link.id }, data: { state: 'joining' },
+            });
+            const ingress = { kind: 'cloudflareTunnel', connectorsPerMachine: 2 };
+            const environmentContent = await f.content('deployment-environment.v1', { ...createDeploymentEnvironmentDetailV1().content, ingress });
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: environmentContent });
+            const originalContent = DeploymentDomainContentV1Schema.parse({
+                hostname: 'retained.example.test', target: { service: 'api', containerPort: 8080 },
+            });
+            const retained = await f.content('deployment-domain.v1', originalContent);
+            const placements = [{ machineId: f.member.id, installationId: f.member.installationId,
+                nativeServer: 'private' as const, listener: 'privateOrigin' as const, dockerEngineId: 'membership-engine' }];
+            const created = await inTx(tx => createDeploymentDomainInTx(tx, f.account.id, {
+                serverId, environmentId: f.environment.id, domainId: crypto.randomUUID(),
+                expectedRevision: f.environmentRevision, targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision,
+                requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID(),
+                ...retained, placements,
+            }));
+            if (!created.ok) throw new Error(created.error);
+            const domain = await db.deploymentDomain.update({ where: { id: created.domain.id }, data: { state: 'active' } });
+            const sibling = await db.deploymentEnvironment.create({ data: { ...f.environment, id: crypto.randomUUID(),
+                ...await f.content('deployment-environment.v1') } });
+            const siblingLink = await db.deploymentTargetLink.create({ data: { ...f.link, id: crypto.randomUUID(),
+                environmentId: sibling.id, ...await f.content('deployment-target-link.v1') } });
+            const foreign = await db.deploymentDomain.create({ data: { environmentId: sibling.id,
+                targetLinkId: siblingLink.id, createdByAccountId: f.account.id, state: 'active', ...await f.content('deployment-domain.v1') } });
+            const unrelated = await f.content('deployment-domain.v1');
+            const target = f.originalActionEnvelope.target;
+            const signedHeaders = (effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => ({
+                ...currentAccountStoredContentCompatibilityHeaders,
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: f.authorization.token, effectActionId, target,
+                    installationId: f.controller.installationId, requestId: f.authorization.binding.requestId,
+                    ...request, privateKey: f.controller.keys.secretKey }),
+            });
+            await withAuthenticatedTestApp(app => {
+                registerDeploymentRoutes(app);
+                artifactsRoutes(app);
+                registerAccountEncryptionRoutes(app);
+            }, async app => {
+                const request = (method: 'GET' | 'DELETE', artifactId: string, effectActionId = 'deployments.domains.add') => {
+                    const path = `/v1/artifacts/${artifactId}`;
+                    return app.inject({ method, url: path, headers: signedHeaders(effectActionId, { method, path }) });
+                };
+                const opened = await request('GET', domain.contentArtifactId);
+                expect(opened.statusCode, opened.body).toBe(200);
+                expect(ArtifactHttpReadV1Schema.parse(opened.json()).id).toBe(domain.contentArtifactId);
+                for (const artifactId of [foreign.contentArtifactId, unrelated.contentArtifactId, environmentContent.contentArtifactId]) {
+                    const refused = await request('GET', artifactId);
+                    expect.soft(refused.statusCode, 'A retained Domain read cannot spend Account-wide Artifact access').toBe(403);
+                    expect.soft(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
+                    expect.soft(refused.json()).not.toHaveProperty('body');
+                }
+                const mislabeled = await request('GET', domain.contentArtifactId, 'deployments.domains.remove');
+                expect(mislabeled.json()).toMatchObject({ authorizationRefusal: 'effect_family' });
+                const write = await request('DELETE', domain.contentArtifactId);
+                expect(write.json()).toMatchObject({ authorizationRefusal: 'effect_family' });
+
+                const path = `/v1/deployments/environments/${f.environment.id}/domains`;
+                const body = { serverId, environmentId: f.environment.id, domainId: domain.id,
+                    expectedRevision: created.revision, expectedDomainRevision: domain.revision,
+                    targetLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision, ...retained,
+                    requestKey: crypto.randomUUID(), requestId: f.authorization.binding.requestId,
+                    actionOperationId: f.receipt.actionOperationId!, membershipDeploymentId: f.receipt.id,
+                    membershipMachines: [{ machineId: f.member.id, installationId: f.member.installationId }],
+                    placements };
+                const accepted = await app.inject({ method: 'POST', url: path, payload: body,
+                    headers: signedHeaders('deployments.domains.add', { method: 'POST', path, body }) });
+                expect(accepted.statusCode, accepted.body).toBe(200);
+                const admitted = DeploymentDomainMutationResultV1Schema.parse(accepted.json());
+                if (!admitted.ok || !admitted.domain.placements?.[0]) throw new Error('Expected admitted membership capture');
+
+                const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+                const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+                const writer = createOwnServerDomainContentWriter({ serverId, serverHttpBaseUrl: origin,
+                    artifacts: createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' }),
+                    headers: async (_context, effectActionId, request) => ({ ...signedHeaders(effectActionId, request),
+                        [requesterAccountEncryptionMode]: 'plain' as const }),
+                });
+                const content = { ...originalContent, cloudflarePreparation: { tunnelId: 'retained-tunnel',
+                    owned: [], dnsOwnership: [], connectorsPerMachine: ingress.connectorsPerMachine } };
+                const written = await writer({ domain: admitted.domain, capture: admitted.domain.placements[0], content, context: {} });
+                expect(written).toMatchObject({ contentArtifactId: domain.contentArtifactId, contentBodyVersion: 2 });
+                const reloaded = await request('GET', domain.contentArtifactId);
+                expect(reloaded.statusCode, reloaded.body).toBe(200);
+                const stored = ArtifactHttpReadV1Schema.parse(reloaded.json());
+                expect(stored.bodyVersion).toBe(2);
+                expect(decodePlainArtifactStoredContent(stored.body!)).toEqual({ body: JSON.stringify(content) });
+            }, { authentication: 'real' });
+        });
+    }
+    registerRetainedMembershipDomainCases();
 
     it('reconciles joining membership under an accepted existing-Environment template Deploy root', async () => {
         const f = await fixture('account', 'account', { templateRoot: true });

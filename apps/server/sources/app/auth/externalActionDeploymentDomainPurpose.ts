@@ -13,12 +13,14 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 export type DomainHttpPurpose = Readonly<{ kind: 'transition'; input: DeploymentDomainTransitionInputV1 }>
     | Readonly<{ kind: 'secret-facts'; input: EnvironmentSecretLaunchAdmissionInputV1;
         materialization: Extract<EnvironmentSecretLaunchAdmissionInputV1['materialization'], { kind: 'domain' }> }>
+    | Readonly<{ kind: 'membership-content-read'; artifactId: string }>
     | Readonly<{ kind: 'prepared-content'; input: DeploymentDomainPreparedContentInputV1 }>
     | Readonly<{ kind: 'admission'; input: DeploymentDomainAddAdmissionInputV1 | DeploymentDomainRemoveAdmissionInputV1 }>;
 
 /** The installed controller may submit only the existing Domain owner's typed operations. */
 export function readExternalActionDeploymentDomainPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     effectActionId: string, proof: Readonly<{ method: string; path: string; body: unknown; routeInput?: unknown; reviewedChild?: ReviewedActionChildHttpProofV1 }>,
+    readArtifactId: () => string | null,
 ): DomainHttpPurpose | null {
     const reviewedCreate = binding.actionId !== effectActionId && isDeploymentDomainAddActionIdV1(effectActionId)
         && proof.reviewedChild?.actionId === effectActionId
@@ -28,6 +30,10 @@ export function readExternalActionDeploymentDomainPurpose(binding: ExternalActio
         && deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) === effectActionId;
     const membershipAdd = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && isDeploymentDomainAddActionIdV1(effectActionId);
+    if (membershipAdd && proof.reviewedChild === undefined) {
+        const artifactId = readArtifactId();
+        if (artifactId !== null) return { kind: 'membership-content-read', artifactId };
+    }
     if ((!isDeploymentDomainChildActionIdV1(binding.actionId) || effectActionId !== binding.actionId) && !reviewedCreate && !teardownRemoval && !membershipAdd
         || proof.method.toUpperCase() !== 'POST'
         || proof.routeInput !== undefined && !sameStrictJsonValue(proof.routeInput, proof.body)) return null;

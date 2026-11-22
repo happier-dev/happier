@@ -40,6 +40,7 @@ export default defineConfig({
                 resolve(__dirname, '../cli/src/deployments/deploymentComposeJourney.composed.integration.spec.ts'),
             ] : []),
             ...(process.env.HAPPIER_DB_PROVIDER === 'postgres' ? [
+                'sources/app/deployments/deploymentChildAuthorization.sqlite.composed.integration.spec.ts',
                 'sources/app/automations/automationActionAdmission.composed.integration.spec.ts',
                 'sources/app/automations/automationScheduleOccurrenceProjection.integration.spec.ts',
                 'sources/app/automations/automationClaimService.integration.spec.ts',

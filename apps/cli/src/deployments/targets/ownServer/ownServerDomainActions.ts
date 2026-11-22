@@ -12,6 +12,7 @@ import {
     type DeploymentDomainChildActionIdV1, type DeploymentTeardownInputV1,
     type ActionExecutorContext, type ActionExecutorDeps, type DeploymentDomainChildRpcV1, type DeploymentDomainDiscoverChildRpcV1, type DeploymentDomainDnsChildRpcV1,
 } from '@happier-dev/protocol';
+import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
     DeploymentDomainObservationV1Schema, DeploymentDomainTransitionInputV1Schema,
     DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainHeaderV1, type DeploymentDomainTopologyV1,
@@ -451,7 +452,7 @@ export function createOwnServerDomainActions(host: Readonly<{
     readReceipt: OwnServerDeploymentTargetHostInput['readReceipt'];
     readInstallation(machineId: string, context: ActionExecutorContext): Promise<string>;
     readTelemetryCollectorPlacement?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorPlacement'];
-    open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null>;
+    open(id: string, context: ActionExecutorContext, effectActionId?: string): Promise<DeploymentArtifactDocumentV1 | null>;
     createContent(content: DeploymentDomainContentV1,
         owner: Awaited<ReturnType<OwnServerDeploymentTargetHostInput['readEnvironment']>>['environment']['owner'],
         context: ActionExecutorContext): Promise<{ contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>;
@@ -490,7 +491,8 @@ export function createOwnServerDomainActions(host: Readonly<{
                         return { input: { ...metadata, ...await host.createContent(authored, environment.environment.owner, context) },
                             opened: { ok: true as const, content: authored } };
                     })() : { input: original,
-                        opened: readDeploymentDomainArtifactV1(original, await host.open(original.contentArtifactId, context)) };
+                        opened: readDeploymentDomainArtifactV1(original, await host.open(original.contentArtifactId, context,
+                            original.membershipDeploymentId ? DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 : undefined)) };
                     const { input: preparedInput, opened } = prepared;
                     if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                     privateContent = opened.content;
@@ -631,7 +633,8 @@ export function createOwnServerDomainActions(host: Readonly<{
             context.signal?.throwIfAborted();
             if (input.reconcileTunnelConnectorsOnly) {
                 if (domain.provider || domain.state === 'removing') continue;
-                const opened = readDeploymentDomainArtifactV1(domain, await host.open(domain.contentArtifactId, context));
+                const opened = readDeploymentDomainArtifactV1(domain, await host.open(
+                    domain.contentArtifactId, context, DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1));
                 if (!opened.ok) return failure(opened.error, undefined, opened.failureCause);
                 const prepared = opened.content.cloudflarePreparation;
                 if (!prepared?.connectors?.length || opened.content.target.kind === 'telemetry') continue;

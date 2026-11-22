@@ -164,7 +164,7 @@ export function enableAuthentication(app: Fastify) {
             const refuseExecution = (phase?: ExternalActionAuthorizationRefusalPhase) => {
                 if (phase) refuseExternalActionExecutionRequest(phase, { method: request.method, path: request.url,
                     onRefusal: refusal => { authorizationRefusal = refusal; } });
-                return requesterVerification?.status === 'verified'
+                return requesterVerification?.status === 'verified' || authorizationFailure?.errorCode === 'credential_scope_denied'
                     ? reply.code(403).send({ error: 'credential_scope_denied', ...(authorizationRefusal ? { authorizationRefusal } : {}),
                         ...(authorizationFailure?.details === undefined ? {} : { details: authorizationFailure.details }),
                         ...(authorizationFailure?.failureCause === undefined ? {} : { failureCause: authorizationFailure.failureCause }) })
@@ -273,7 +273,8 @@ export function enableAuthentication(app: Fastify) {
             request.externalActionRegistryAppUpdateRead = verified.registryAppUpdateRead;
             request.externalActionDeploymentSourceRead = verified.deploymentPreparationSourceRead;
             const reviewedEnvironmentId = verified.createPreparationAdmission?.child?.environmentId
-                ?? verified.deploymentDomainPurpose?.input.environmentId;
+                ?? (verified.deploymentDomainPurpose && 'input' in verified.deploymentDomainPurpose
+                    ? verified.deploymentDomainPurpose.input.environmentId : undefined);
             request.externalActionReviewedChildAdmission = verified.reviewedChildAdmission
                 ? { ...verified.reviewedChildAdmission, ...(reviewedEnvironmentId ? { environmentId: reviewedEnvironmentId } : {}) } : undefined;
             // Ordinary authenticated callers have no PAT input ceiling.

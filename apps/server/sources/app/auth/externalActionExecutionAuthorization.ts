@@ -1656,7 +1656,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         && isMachineGrantSetAccessReadV1({ rootActionId: binding.actionId, effectActionId,
             serverId: binding.serverIdentityId, machineId: binding.target.machineId, request: proof });
     const reviewedManagedAcquirePurpose = await isReviewedManagedAcquirePurpose(binding, effectActionId, proof);
-    const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof);
+    const domainPurpose = readExternalActionDeploymentDomainPurpose(binding, effectActionId, proof, () => readArtifactGetHttpPurpose(proof));
     const teardownDomainContinuation = binding.actionId === 'deployments.teardown' && domainPurpose?.kind === 'transition';
     const membershipDomainContinuation = isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && effectActionId === 'deployments.domains.add' && domainPurpose !== null;
@@ -1981,7 +1981,8 @@ async function verifyCommon(
                 && await isIssuedNativeCredentialFactReportInTx(db, binding, nativeReport.data)
                 ? { kind: 'issued-managed-native-credential-fact', report: nativeReport.data }
             : retainedDiscussionSource ? { kind: 'retained-discussion-publication', source: retainedDiscussionSource } : undefined;
-    const domainContinuation = domainPurpose && domainPurpose.kind !== 'admission' && binding.actionId !== 'deployments.domains.verify'
+    const domainContinuation = domainPurpose && domainPurpose.kind !== 'admission' && domainPurpose.kind !== 'membership-content-read'
+        && binding.actionId !== 'deployments.domains.verify'
         ? domainPurpose : null;
     const machine = await db.machine.findFirst({
         where: { id: binding.machineId, accountId: binding.custodianAccountId, installationId: binding.installationId },
@@ -2115,7 +2116,8 @@ async function verifyCommon(
         && await readAcceptedDeploymentReceiptInTx(db, binding, deploymentContinuation, {
             // A declared read spends the job principal only while its job runs.
             ...(platformMaterial ? { cancelRequestedAt: null, state: { in: deploymentInProgressStates() } }
-                : declaredPreparationRead || childPurpose.deploymentWorkspaceRead || childPurpose.deploymentReferenceRead
+                : declaredPreparationRead || domainPurpose?.kind === 'membership-content-read'
+                    || childPurpose.deploymentWorkspaceRead || childPurpose.deploymentReferenceRead
                     || !deploymentContinuation && isDeclaredReadActionId(effectActionId.data)
                     ? { state: { in: deploymentInProgressStates() } } : {}),
             // Prove the original job is active without constraining a pinned
@@ -4290,7 +4292,7 @@ export async function verifyExternalActionDomainExecutionRequest(
 ): Promise<VerifiedExternalActionExecutionRequest | null> {
     const verified = await verifyCommon(proof);
     if (!verified) return null;
-    const refuse = (phase: ExternalActionAuthorizationRefusalPhase) => refuseExternalActionExecutionRequest(phase, proof, undefined,
+    const refuse = (phase: ExternalActionAuthorizationRefusalPhase, failure?: ActionExecuteFailure) => refuseExternalActionExecutionRequest(phase, proof, failure,
         { rootActionId: verified.binding.actionId, effectActionId: verified.effectActionId });
     const snapshotBatch = readSessionSnapshotBatchHttpDemand(proof);
     if (proof.path === '/v2/sessions/read-batch' && !snapshotBatch) return refuse('verification_purpose');
@@ -4362,17 +4364,21 @@ export async function verifyExternalActionDomainExecutionRequest(
     // Its child reads use the receipt's custody.
     const reviewedCandidateArtifact = verified.acceptedDeploymentReceipt || verified.deploymentChildAdmission?.acceptedReceipt ? undefined
         : readReviewedDeploymentCandidateArtifactPurpose(verified.binding, verified.effectActionId, proof);
+    const membershipDomainRead = verified.deploymentDomainPurpose?.kind === 'membership-content-read'
+        ? verified.deploymentDomainPurpose : undefined;
     const domainPreparation = verified.deploymentChildRouting ? null
         : await readDeploymentDomainPreparationHttpPurpose(db, verified.binding, verified.effectActionId, proof,
         verified.deploymentDomainPurpose?.kind === 'admission' ? verified.deploymentDomainPurpose.input.environmentId : undefined,
         verified.acceptedDeploymentReceipt !== undefined, {
             artifact: isReadOnlyArtifactHttpPurpose(proof),
             environment: isAccountActionHttpOperation('deployments.environments.get', proof),
-        });
+        }, membershipDomainRead ? { artifactId: membershipDomainRead.artifactId,
+            environmentId: verified.acceptedDeploymentReceipt?.environmentId } : undefined);
     let subtreeObservationHttpPurpose: boolean | null;
     let accountHttpPurpose: boolean | null;
     let accountHttpRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
-    if (domainPreparation === false) return refuse('deployment_domain_preparation');
+    if (domainPreparation === false) return refuse('deployment_domain_preparation', membershipDomainRead
+        ? { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' } : undefined);
     if (proof.reviewedChild?.role === PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1) {
         // The requester's installation signs the body. The Trust route validates
         // its Project and reads the authenticated requester's Account row.

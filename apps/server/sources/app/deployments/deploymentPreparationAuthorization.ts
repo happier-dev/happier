@@ -375,8 +375,13 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
  */
 export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
     binding: Parameters<typeof readAdmittedDeploymentScopeInTx>[1], operands: unknown, acceptedEnvironmentId?: string,
-    operandKind?: AdmittedDeploymentOperandKind, readActionId?: string, setupReceiverMachineId?: string, preparationEffectRead = false,
+    operandKind?: AdmittedDeploymentOperandKind | 'retainedDomainArtifact', readActionId?: string, setupReceiverMachineId?: string, preparationEffectRead = false,
 ): Promise<boolean | null> {
+    if (operandKind === 'retainedDomainArtifact') {
+        return acceptedEnvironmentId !== undefined && typeof operands === 'string'
+            && await tx.deploymentDomain.findFirst({ where: { environmentId: acceptedEnvironmentId, contentArtifactId: operands,
+                deletedAt: null }, select: { id: true } }) !== null;
+    }
     if (readActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
         const parsed = DeploymentEnvironmentListInputV1Schema.safeParse(operands);
         if (!parsed.success || parsed.data.serverId !== binding.serverIdentityId) return false;
@@ -956,6 +961,7 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
     admittedEnvironmentId?: string,
     acceptedReceipt = false,
     preparationRead?: Readonly<{ artifact: boolean; environment: boolean }>,
+    membershipContentRead?: Readonly<{ artifactId: string; environmentId?: string }>,
 ): Promise<boolean | null> {
     const reviewed = binding.actionId !== effectActionId ? proof.reviewedChild : undefined;
     const admission = reviewed?.deploymentNativeAdmission ?? binding.deploymentNativeAdmission;
@@ -963,8 +969,12 @@ export async function readDeploymentDomainPreparationHttpPurpose(tx: Tx, binding
         || deploymentChildEffectActionIdForRootV1(binding.actionId, binding.deploymentPreparationAdmission, effectActionId) !== effectActionId) return null;
     if (isDeploymentMembershipActionIdV1(binding.actionId, binding.deploymentPreparationAdmission)
         && reviewed?.actionId !== effectActionId) {
-        // Membership reads and writes consume the accepted receipt/Domain owners.
-        return null;
+        // Membership reads are confined to retained Domain content of the accepted job's Environment.
+        // Writes consume the accepted Domain capture at their existing owners.
+        return membershipContentRead
+            ? isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, membershipContentRead.artifactId,
+                membershipContentRead.environmentId, 'retainedDomainArtifact')
+            : null;
     }
     if (binding.actionId !== effectActionId && (!reviewed
         || reviewed.actionId !== effectActionId || !reviewed.role.startsWith('template.domain:'))) return false;
