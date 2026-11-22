@@ -372,6 +372,18 @@ describe('default Action executor Session lifecycle contracts', () => {
     expect(navigate).not.toHaveBeenCalled();
   });
 
+  it('preserves the creator refusal detail in the Fork failure state', async () => {
+    installSession();
+    const errorDetail = { kind: 'session_creation_team_credential_refused',
+      code: 'session_team_credential_binding_rejected', reason: 'team_context_required' } as const;
+    daemonAnswer = () => ({ ok: false, errorCode: errorDetail.code,
+      errorMessage: 'Team credential binding refused', errorDetail });
+    const { harness, navigate } = await mountForkFlow();
+    await act(async () => { await harness.getCurrent().submit('replay'); });
+    expect(harness.getCurrent().failure).toMatchObject({ route: 'replay', kind: 'error', errorDetail });
+    expect(navigate).not.toHaveBeenCalled();
+  });
+
   it('keeps the daemon attempt identity stable for a safe retry and distinct for another route', async () => {
     installSession();
     await installForkRequestIdentityMachine();

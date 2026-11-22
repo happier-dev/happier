@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { normalizeSpawnSessionErrorDetail, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
 
 import { SessionForkRpcResultSchema } from '@happier-dev/protocol/sessions/fork';
 import { type LlmTaskRunnerConfigV1} from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
@@ -38,6 +39,7 @@ export type SessionForkStrategyFailure = Readonly<{
     route: SessionForkOperationRoute;
     kind: 'update_required' | 'error';
     message: string | null;
+    errorDetail?: SpawnSessionErrorDetail;
 }>;
 
 /**
@@ -231,7 +233,9 @@ export function useSessionForkStrategyFlow(params: Readonly<{
             }, { actionRequestId: requestId });
             const result = action.ok
                 ? SessionForkRpcResultSchema.safeParse(action.result)
-                : { success: true as const, data: { ok: false as const, errorCode: action.errorCode, errorMessage: action.error } };
+                : { success: true as const, data: { ok: false as const, errorCode: action.errorCode, errorMessage: action.error,
+                    errorDetail: normalizeSpawnSessionErrorDetail(action.details && typeof action.details === 'object'
+                        ? Reflect.get(action.details, 'errorDetail') : undefined) } };
             if (!result.success) {
                 applyPhase({ type: 'unknown', route, checking: false, lastCheck: null });
                 return;
@@ -246,7 +250,8 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 return;
             }
             if (mountedRef.current) {
-                setFailure({ route, kind: outcome.kind, message: outcome.message });
+                setFailure({ route, kind: outcome.kind, message: outcome.message,
+                    ...(outcome.errorDetail ? { errorDetail: outcome.errorDetail } : {}) });
             }
             applyPhase({ type: 'choosing' });
         } catch {

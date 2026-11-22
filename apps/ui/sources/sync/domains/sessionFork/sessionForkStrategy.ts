@@ -22,6 +22,7 @@ export type SessionForkRpcOutcomeV1 =
         kind: 'update_required' | 'error';
         errorCode: string;
         message: string | null;
+        errorDetail?: Extract<SessionForkRpcResult, { ok: false }>['errorDetail'];
     }>
     /**
      * The request was emitted and we cannot prove what happened to it. A blind
@@ -64,6 +65,7 @@ export function classifySessionForkRpcOutcome(result: SessionForkRpcResult): Ses
         kind: errorCode === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE ? 'update_required' : 'error',
         errorCode,
         message: normalizeNonEmptyString(result.errorMessage),
+        ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
     };
 }
 
