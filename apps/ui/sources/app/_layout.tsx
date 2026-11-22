@@ -48,6 +48,7 @@ import { CommandPaletteProvider } from '@/components/appShell/commandPalette/Com
 import { NewSessionShellHostProvider } from '@/components/sessions/new/navigation/newSessionEntry';
 import { NewSessionDockedHost } from '@/components/sessions/new/components/NewSessionDockedHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
+import { AuthenticatedTeamSetupPlanProvider } from '@/components/teams/setup/TeamSetupPlanProvider';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useWorkspaceNavigationActive } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
@@ -925,6 +926,7 @@ function AppBoot() {
                                 <WebServerOverrideGate>
                                 <ConcurrentSessionCacheRuntime>
                                 <SessionCockpitChromeRegistryProvider>
+                                <AuthenticatedTeamSetupPlanProvider>
                                 <WorkspaceAppShellProvider browserWindow={browserAppWindow}>
                                 {primaryRealm ? <RestartBugReportNavigation pending={restartBugReportPending} onDispatched={onRestartBugReportDispatched} /> : null}
                                 <NewSessionShellHostProvider>
@@ -940,6 +942,7 @@ function AppBoot() {
                                 </NewSessionShellHostProvider>
                                 {!embedWindowContext ? <ThemeTryBarHost /> : null}
                                 </WorkspaceAppShellProvider>
+                                </AuthenticatedTeamSetupPlanProvider>
                                 </SessionCockpitChromeRegistryProvider>
                                 </ConcurrentSessionCacheRuntime>
                                 </WebServerOverrideGate>

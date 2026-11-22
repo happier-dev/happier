@@ -161,23 +161,23 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
     // Holding the existing lifetime open while the Undo control is focused or
     // hovered keeps it from disappearing mid-use. This is the same one host
     // lifecycle, not a second scheduler.
-    const [undoControlEngaged, setUndoControlEngaged] = React.useState(false);
-    const undo = notice?.undo ?? null;
+    const [controlEngaged, setControlEngaged] = React.useState(false);
+    const control = notice?.undo ?? notice?.action ?? null;
     React.useEffect(() => {
-        if (!undo) setUndoControlEngaged(false);
-    }, [undo]);
+        if (!control) setControlEngaged(false);
+    }, [control]);
 
     React.useEffect(() => {
-        if (!notice || !shouldSchedulePresentationNoticeRetirement(notice, undoControlEngaged)) return;
+        if (!notice || !shouldSchedulePresentationNoticeRetirement(notice, controlEngaged)) return;
         const timeout = setTimeout(() => retirePresentationNotice(notice.key), 4_000);
         return () => clearTimeout(timeout);
-    }, [notice, undoControlEngaged]);
+    }, [notice, controlEngaged]);
 
-    const onUndoPress = React.useCallback(() => {
-        if (!notice?.undo) return;
-        notice.undo.run();
+    const onControlPress = React.useCallback(() => {
+        if (!notice || !control) return;
+        control.run();
         retirePresentationNotice(notice.key);
-    }, [notice]);
+    }, [notice, control]);
 
     // The empty space beside the card must keep passing touches through to the
     // app underneath, while the card's own Undo stays hit-testable. React Native
@@ -187,10 +187,10 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
     const hostPointerEvents = resolveOverlayPointerEvents('box-none');
     const shown = notice ?? lastShownRef.current;
     const leaving = notice === null;
-    const noticePointerEvents = resolveOverlayPointerEvents((undo || notice?.sticky) && !leaving ? 'auto' : 'none');
+    const noticePointerEvents = resolveOverlayPointerEvents((control || notice?.sticky) && !leaving ? 'auto' : 'none');
 
     if (!present || !shown) return null;
-    const shownUndo = leaving ? shown.undo ?? null : undo;
+    const shownControl = leaving ? shown.undo ?? shown.action : control;
     const content = (
         <View
             style={[
@@ -215,17 +215,18 @@ export const PresentationNoticeHost = React.memo(function PresentationNoticeHost
                 {shown.leading ? <View style={styles.noticeLeading}>{shown.leading}</View> : null}
                 {shown.approval && !leaving ? <NoticeApproval key={shown.approval.artifactId} registration={shown.approval} />
                     : <Text style={styles.noticeText}>{renderNoticeMessage(shown.message, shown.emphasis, styles.noticeEmphasis)}</Text>}
-                {shownUndo ? (
+                {shownControl ? (
                     <HappierPressable
-                        testID={leaving ? undefined : 'current-session-presentation-notice-undo'}
+                        testID={leaving ? undefined : shown.undo
+                            ? 'current-session-presentation-notice-undo' : 'current-session-presentation-notice-action'}
                         accessibilityRole="button"
-                        accessibilityLabel={shownUndo.label}
-                        onPress={onUndoPress}
-                        onFocusChange={setUndoControlEngaged}
-                        onHoverChange={setUndoControlEngaged}
+                        accessibilityLabel={shownControl.label}
+                        onPress={onControlPress}
+                        onFocusChange={setControlEngaged}
+                        onHoverChange={setControlEngaged}
                         style={({ pressed }) => [styles.undoControl, pressed && styles.undoControlActive]}
                     >
-                        <Text style={styles.undoLabel}>{shownUndo.label}</Text>
+                        <Text style={styles.undoLabel}>{shownControl.label}</Text>
                     </HappierPressable>
                 ) : null}
                 {shown.sticky ? (

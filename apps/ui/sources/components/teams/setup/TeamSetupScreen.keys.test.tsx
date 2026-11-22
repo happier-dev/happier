@@ -45,6 +45,8 @@ const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orch
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { t } = await import('@/text');
 const { TeamSetupPageView, TeamSetupScreen } = await import('./TeamSetupScreen');
+const { TeamSetupPlanProvider } = await import('./TeamSetupPlanProvider');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 beforeEach(async () => {
   await homes.reset();
 });
@@ -147,7 +149,9 @@ it('lists the keys a Team shares on its setup page instead of calling the Team e
     },
   });
   const screen = await renderScreen(
-    <TeamSetupScreen serverId={serverId} teamId={team.id} />,
+    <TeamSetupPlanProvider execute={createFrontDoorActionExecute()} context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}>
+      <TeamSetupScreen serverId={serverId} teamId={team.id} />
+    </TeamSetupPlanProvider>,
   );
   try {
     await waitForHomeGovernance(() =>

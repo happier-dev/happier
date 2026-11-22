@@ -37,6 +37,8 @@ const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orch
 const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
 const { t } = await import('@/text');
 const { TeamSetupScreen } = await import('./TeamSetupScreen');
+const { TeamSetupPlanProvider } = await import('./TeamSetupPlanProvider');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 beforeEach(async () => {
   await homes.reset();
 });
@@ -79,7 +81,10 @@ it('previews the member page from the same Team reads, with nothing to run and a
       ],
     })], coverage: { complete: true, nextCursor: null } },
   });
-  const screen = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} preview />);
+  const screen = await renderScreen(<TeamSetupPlanProvider execute={createFrontDoorActionExecute()}
+    context={{ surface: 'ui', serverId, expectedAccountId: 'admin' }}>
+    <TeamSetupScreen serverId={serverId} teamId={team.id} preview />
+  </TeamSetupPlanProvider>);
   try {
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('team-setup-repository:source-web'), screen.getTextContent()).not.toBeNull());

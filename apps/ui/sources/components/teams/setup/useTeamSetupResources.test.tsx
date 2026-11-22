@@ -114,7 +114,11 @@ it.each([
         expect(screen.findByTestId('joined-action')).not.toBeNull();
     } finally { await screen.unmount(); }
     const { TeamSetupScreen } = await import('./TeamSetupScreen');
-    const setup = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} />);
+    const { TeamSetupPlanProvider } = await import('./TeamSetupPlanProvider');
+    const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+    const setup = await renderScreen(<TeamSetupPlanProvider execute={createFrontDoorActionExecute()} context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}>
+        <TeamSetupScreen serverId={serverId} teamId={team.id} />
+    </TeamSetupPlanProvider>);
     try {
         const row = secondRepository ? 'team-setup-repository:shared-tools' : 'team-setup-source:shared-tools';
         await waitForHomeGovernance(() => expect(setup.findByTestId(row), setup.getTextContent()).not.toBeNull());
@@ -142,7 +146,11 @@ it.each(['source_backend_unavailable', 'source_unavailable'] as const)(
         const respondAfter = new Promise<void>(resolve => { release = resolve; });
         homes.answer(serverId, '/v1/projects/sources', { respondAfter, body: { ok: false, error: failure } });
         const { TeamSetupScreen } = await import('./TeamSetupScreen');
-        const screen = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} />);
+        const { TeamSetupPlanProvider } = await import('./TeamSetupPlanProvider');
+        const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+        const screen = await renderScreen(<TeamSetupPlanProvider execute={createFrontDoorActionExecute()} context={{ surface: 'ui', serverId, expectedAccountId: 'member' }}>
+            <TeamSetupScreen serverId={serverId} teamId={team.id} />
+        </TeamSetupPlanProvider>);
         try {
             await waitForHomeGovernance(() => expect(homes.requests.some(request => request.path.split('?')[0] === '/v1/projects/sources'), screen.getTextContent()).toBe(true));
             await waitForHomeGovernance(() => expect(screen.findByTestId('team-setup-header')).not.toBeNull());

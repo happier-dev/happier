@@ -40,7 +40,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { BareSectionContent } from '@/components/ui/lists/BareSectionContent';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
-import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useLayoutPresentationActive, useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { GITHUB_CONNECTED_SERVICE_ROUTE } from '@/sync/domains/connectedServices/githubConnectedServiceRoute';
 import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
 import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
@@ -70,7 +70,8 @@ import { buildTeamSetupRepository } from './teamSetupRepositories';
 import { useTeamSetupExistingClones, type TeamSetupExistingClones } from './useTeamSetupExistingClones';
 import { useTeamSetupFirstTask } from './useTeamSetupFirstTask';
 import { findTeamSetupSourceCheckout, TeamSetupSourceChange } from './TeamSetupSourceChange';
-import { useTeamSetupPlan, type TeamSetupBatch } from './useTeamSetupPlan';
+import { useRetainedTeamSetupPlan } from './TeamSetupPlanProvider';
+import type { TeamSetupBatch } from './useTeamSetupPlan';
 import { useTeamSetupBatchProgress, type TeamSetupRepositoryPhase } from './useTeamSetupBatchProgress';
 import {
   useTeamSetupResources,
@@ -207,6 +208,13 @@ function TeamSetupPlanPage(
   const { context } = props;
   const router = useRouter();
   const presented = useLayoutPresentationActive();
+  const presentation = useLayoutPresentationSignal();
+  const mounted = React.useRef(false);
+  React.useLayoutEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
+  const isReviewPresented = React.useCallback(() => mounted.current && presentation.get(), [presentation]);
   const teamName = context.team.name;
   const resources = useTeamSetupResources({
     scope: context.scope,
@@ -244,7 +252,10 @@ function TeamSetupPlanPage(
     }),
     [context.scope.accountId, context.scope.serverId],
   );
-  const plan = useTeamSetupPlan(execute, actionContext);
+  const { batch: retainedBatch, prepare, run: runPlan, openFirstTask } = useRetainedTeamSetupPlan();
+  const currentBatch = !props.preview && retainedBatch?.selection.team.serverId === context.address.serverId
+    && retainedBatch.selection.team.teamId === context.address.teamId
+    && retainedBatch.selection.lifetime === props.lifetime ? retainedBatch : null;
 
   const presetValue = resources.preset?.state.value ?? null;
   const repositories = resources.repositorySources;
@@ -269,8 +280,7 @@ function TeamSetupPlanPage(
     const preset = presetRef.current;
     if (!prepareKey || !machineId || !homeId || !preset) return;
     const key = prepareKey;
-    void plan
-      .prepare({
+    void prepare({
         target: { serverId: context.scope.serverId, homeId, machineId },
         preset,
         repositories: [],
@@ -284,7 +294,7 @@ function TeamSetupPlanPage(
             : { key, plan: null, failure: result },
         );
       });
-  }, [context.scope.serverId, homeId, machineId, plan.prepare, prepareKey]);
+  }, [context.scope.serverId, homeId, machineId, prepare, prepareKey]);
   const machinePlan = prepared?.key === prepareKey ? prepared : null;
 
   const included = repositories.filter((source) => !excluded.has(source.id));
@@ -344,10 +354,10 @@ function TeamSetupPlanPage(
       machinePlan?.plan?.machine ?? null, repositoryInputs);
     let operationId: string | null = null;
     setRun({ kind: 'running', operationId });
-    const result = await plan.run({
+    const result = await runPlan({
       plan: batch,
       selection: { team: context.address, lifetime: props.lifetime, sources: included,
-        retireOffer: resources.sources.state.status === 'ready' && resources.sources.state.coverage.complete },
+        retireOffer: resources.sources.state.status === 'ready' && resources.sources.state.coverage.complete, isReviewPresented },
       onMachineApplied: (applied) => {
         if (applied.ok && 'operationId' in applied.result) {
           operationId = applied.result.operationId;
@@ -378,18 +388,15 @@ function TeamSetupPlanPage(
     included,
     machineId,
     machinePlan,
-    plan,
+    runPlan,
+    isReviewPresented,
     resources.sources.state,
   ]);
 
-  const batchSelection = plan.batch?.selection;
-  const complete = plan.complete;
-  const markRepositoryReady = React.useCallback((requestId: string) => {
-    if (!batchSelection || !complete(batchSelection, requestId)) return;
-    setRun(current => current.kind === 'done' && current.completed ? current : {
-      kind: 'done', operationId: current.kind === 'idle' ? null : current.operationId, completed: true,
-    });
-  }, [batchSelection, complete]);
+  React.useEffect(() => {
+    if (!currentBatch?.completed) return;
+    setRun(current => current.kind === 'done' && !current.completed ? { ...current, completed: true } : current);
+  }, [currentBatch?.completed, run.kind]);
 
   // The Machine owner decides whether the Team's preset moved on since this Machine applied it.
   const presetUpdates = useMachinePresetUpdates({
@@ -411,12 +418,12 @@ function TeamSetupPlanPage(
   const suggestedTask = taskSelection?.task;
   const openTask = React.useCallback(async (project: OpenedProject, prompt: string) => {
     if (!machineId) return;
-    const result = await plan.openFirstTask({ project, machineId, prompt });
+    const result = await openFirstTask({ project, machineId, prompt });
     if (!result.ok) Modal.alert(t('common.error'), result.error);
-  }, [machineId, plan]);
-  // Repository rows observe the native runs. The suggested task consumes the same snapshots.
+  }, [machineId, openFirstTask]);
+  // Rows and the suggested task consume the retained observer's native snapshots.
   const taskProject = useTeamSetupBatchProgress(
-    suggestedTask ? plan.batch : null, suggestedTask?.sourceId ?? '', undefined, { observeOpen: false },
+    suggestedTask ? currentBatch : null, suggestedTask?.sourceId ?? '', undefined, { observeOpen: false },
   )?.readyProject ?? null;
   const firstTask = React.useMemo<TeamSetupFirstTaskView | null>(() => suggestedTask && taskProject ? {
     title: suggestedTask.title,
@@ -512,8 +519,7 @@ function TeamSetupPlanPage(
       repositoryFreeSources={resources.repositoryFreeSources}
       excluded={excluded}
       onToggleRepository={toggleRepository}
-      batch={plan.batch}
-      onRepositoryReady={markRepositoryReady}
+      batch={currentBatch}
       requirements={requirements}
       sharedKeys={sharedKeys}
       keyDisplayNames={resources.credentialDisplayNames}
@@ -561,7 +567,6 @@ export function TeamSetupPageView(
     excluded: ReadonlySet<string>;
     onToggleRepository: (sourceId: string, included: boolean) => void;
     batch: TeamSetupBatch | null;
-    onRepositoryReady?: (requestId: string) => void;
     requirements?: ReturnType<typeof useSourceSetupRequirementNames>;
     sharedKeys: TeamSetupResources['credentials']['resources'];
     keyDisplayNames: Readonly<Record<string, string | null>>;
@@ -864,7 +869,6 @@ export function TeamSetupPageView(
               teamName={teamName}
               onStartSession={props.onStartSession}
               batch={props.batch}
-              onReady={props.onRepositoryReady}
               requirements={readRequirementsForSource(props.requirements?.entries.get(source.id), source.revision)}
               onRetryRequirements={props.requirements?.retry}
               disabled={running || run.kind === 'done'}
@@ -961,7 +965,6 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     teamName: string;
     onStartSession?: (project: OpenedProject) => void;
     batch: TeamSetupBatch | null;
-    onReady?: (requestId: string) => void;
     requirements?: SourceSetupRequirementRead;
     onRetryRequirements?: () => void;
     disabled: boolean;
@@ -969,14 +972,10 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     onToggle: (included: boolean) => void;
   }>,
 ) {
-  const progress = useTeamSetupBatchProgress(props.batch, props.source.id);
+  const progress = useTeamSetupBatchProgress(props.batch, props.source.id, undefined, { observeOpen: false });
   const router = useRouter();
   const [choosingClone, setChoosingClone] = React.useState(false);
   const opened = progress?.readyProject;
-  const readyRequest = opened ? progress?.requestId : undefined;
-  React.useEffect(() => {
-    if (readyRequest) props.onReady?.(readyRequest);
-  }, [readyRequest, props.onReady]);
   // The member's existing checkout of this Source on the chosen Machine, whose owner says if its shared setup moved on.
   const { checkout } = props;
   const cloneChoice = props.clonePaths && props.clonePaths.length > 1 ? props.clonePaths : null;

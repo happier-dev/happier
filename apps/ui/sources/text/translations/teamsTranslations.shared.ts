@@ -855,6 +855,8 @@ export const english = {
                 statusQueued: 'Queued',
                 statusOpening: 'Opening…',
                 statusReady: 'Ready',
+                repositoryReadyNotice: ({ repository }: { repository: string }) => `${repository} is ready`,
+                repositoryReadyStart: ({ repository }: { repository: string }) => `Start on ${repository}`,
                 statusApproval: 'Waiting for approval',
                 statusFailed: 'Couldn’t open',
                 partial: 'Some setup steps still need attention',

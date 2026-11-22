@@ -1,8 +1,11 @@
+import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
-import { createDeferred, renderHook, standardCleanup } from '@/dev/testkit';
+import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { readPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import 'fake-indexeddb/auto';
@@ -18,6 +21,10 @@ installHomeGovernanceBoundaries(homes);
 const daemonRequests = installSessionActionRpcBoundary((request, context) => daemonReply(request, context));
 const { useTeamSetupRepositoryProgress } = await import('./useTeamSetupRepositoryProgress');
 const { useTeamSetupBatchProgress } = await import('./useTeamSetupBatchProgress');
+const { TeamSetupPlanProvider, useRetainedTeamSetupPlan } = await import('./TeamSetupPlanProvider');
+const { createFrontDoorActionExecute } = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
+const { PresentationNoticeHost } = await import('@/components/sessions/presentation/PresentationNoticeHost');
 import type { TeamSetupBatch } from './useTeamSetupPlan';
 await import('@/sync/domains/actionOperations/observeActionOperationByRequestId');
 const { captureServerCredentialAccountScopeLifetime, resolveServerCredentialAccountScope } =
@@ -39,6 +46,7 @@ beforeEach(async () => {
     lifetime = captureServerCredentialAccountScopeLifetime(resolution);
 });
 afterEach(async () => {
+    retirePresentationNotice();
     standardCleanup();
     actionOperationStore.reset();
     const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
@@ -57,7 +65,7 @@ function selectedBatch(): TeamSetupBatch {
         repositories: [
             { repositoryId: 'source', source: { id: 'source', revision: 2, name: 'Shared repository' }, requestId: 'selected-request' },
             { repositoryId: 'next', source: { id: 'next', revision: 1, name: 'Next repository' }, requestId: 'next-request' },
-        ] }, dispatched: new Set(['source']), running: true, settlement: null };
+        ] }, dispatched: new Set(['source']), running: true, completed: false, settlement: null };
 }
 function preparedResultFixture() {
     const result = OpenProjectResultV1Schema.parse({ kind: 'opened', setup: 'prepared', directory: '/repo',
@@ -75,6 +83,60 @@ function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): Act
         ...overrides });
 }
 describe('selected Team batch progress', () => {
+    it('opens the exact editable draft from the ready notice after leaving Joined Setup', async () => {
+        const openProject = createDeferred<typeof preparedResult>();
+        const openDraft = vi.fn(async () => ({ kind: 'opened', draftId: 'new-draft', destination: 'newSession' } as const));
+        const executor = createActionExecutor({ projectsOpen: () => openProject.promise, sessionAuthoringOpen: openDraft });
+        const execute = createFrontDoorActionExecute({ ...executor, executeConfirmed: (id, input, context) =>
+            executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})) });
+        const context = { serverId: query.serverId, surface: 'ui', expectedAccountId: query.accountId } as const;
+        let controller!: ReturnType<typeof useRetainedTeamSetupPlan>;
+        let leaveReview!: () => void;
+        let isPresented = true;
+        function Review() {
+            controller = useRetainedTeamSetupPlan();
+            React.useLayoutEffect(() => () => { isPresented = false; }, []);
+            return null;
+        }
+        function App() {
+            const [review, setReview] = React.useState(true);
+            leaveReview = () => setReview(false);
+            return <TeamSetupPlanProvider execute={execute} context={context}>
+                {review ? <Review /> : null}<PresentationNoticeHost />
+            </TeamSetupPlanProvider>;
+        }
+        daemonReply.mockReturnValue(new Promise(() => {}));
+        const screen = await renderScreen(<App />);
+        const source = { id: query.sourceId, name: 'Shared repository', revision: 2 };
+        const plan = await controller.prepare({ target: { serverId: query.serverId, homeId: 'home', machineId: query.machineId },
+            repositories: [{ id: source.id, input: { source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } }],
+            isCurrent: () => true });
+        if (!plan?.ok) throw new Error('Could not review the selected repository');
+        let run!: ReturnType<typeof controller.run>;
+        await act(async () => {
+            run = controller.run({ plan: plan.plan, selection: { team: { serverId: query.serverId, teamId: 'team' },
+                lifetime, sources: [source], retireOffer: false, isReviewPresented: () => isPresented } });
+        });
+        const requestId = controller.batch?.selection.repositories[0]?.requestId;
+        if (!requestId) throw new Error('No native request from the selected batch');
+        act(() => leaveReview());
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
+            snapshots: [opening({ requestId, state: 'succeeded', settledAt: 2, result: preparedResult }), setupOperation()] }));
+        await act(async () => { openProject.resolve(preparedResult); await run; });
+        expect(readPresentationNotice()).toBeNull();
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [setupOperation({ revision: 2,
+            state: 'succeeded', settledAt: 4 })] }));
+        expect(readPresentationNotice()?.message).toBe('Shared repository is ready');
+        expect(openDraft).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('current-session-presentation-notice-action');
+        expect(openDraft).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ input: { seed: {
+            placement: { kind: 'exactTarget', serverId: query.serverId, machineId: query.machineId, directory: '/repo' },
+        } } }));
+        act(() => actionOperationStore.setMachineObservation(query, 'reconnecting'));
+        act(() => actionOperationStore.setMachineObservation(query, 'available'));
+        expect(readPresentationNotice()).toBeNull();
+        expect(daemonReply.mock.calls.length).toBeLessThanOrEqual(1);
+    });
     it('queues only explicit pending selection and stops queuing when its runner settles', async () => {
         const batch = selectedBatch();
         let current: TeamSetupBatch | null = batch;

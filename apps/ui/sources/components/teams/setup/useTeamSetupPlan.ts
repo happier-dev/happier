@@ -13,6 +13,7 @@ export type TeamSetupBatchSelection = Readonly<{
     lifetime: ServerAccountScopeLifetime;
     sources: readonly ProjectSourceIdentityV1[];
     retireOffer?: boolean;
+    isReviewPresented?: () => boolean;
 }>;
 export type TeamSetupBatch = Readonly<{
     selection: Readonly<{
@@ -20,9 +21,11 @@ export type TeamSetupBatch = Readonly<{
         lifetime: ServerAccountScopeLifetime;
         target: TeamSetupTarget;
         repositories: readonly Readonly<{ repositoryId: string; source: ProjectSourceIdentityV1; requestId: string }>[];
+        isReviewPresented?: () => boolean;
     }>;
     dispatched: ReadonlySet<string>;
     running: boolean;
+    completed: boolean;
     settlement: TeamSetupRunResult | null;
 }>;
 
@@ -48,6 +51,8 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             if (requestId) candidate.pending.delete(requestId);
             else candidate.pending.clear();
             if (candidate.pending.size !== 0) return false;
+            setBatch(current => current?.selection === selection && !current.completed
+                ? { ...current, completed: true } : current);
             if (candidate.retireOffer && !candidate.submitted) {
                 candidate.submitted = true;
                 void executeAction('home.hub.layout.update', {
@@ -82,6 +87,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             });
             const selection: TeamSetupBatch['selection'] = {
                 team: selected.team, lifetime: selected.lifetime, target: run.plan.target, repositories,
+                isReviewPresented: selected.isReviewPresented,
             };
             completion.current = {
                 selection,
@@ -89,7 +95,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                 retireOffer: selected.retireOffer !== false && repositories.length === selected.sources.length,
                 submitted: false,
             };
-            setBatch({ selection, dispatched: new Set(), running: true, settlement: null });
+            setBatch({ selection, dispatched: new Set(), running: true, completed: false, settlement: null });
             let settlement: TeamSetupRunResult | null = null;
             try {
                 settlement = await runTeamSetupPlan({ ...run, executeAction, context,

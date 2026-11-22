@@ -21,6 +21,17 @@ afterEach(() => {
 });
 
 describe('PresentationNoticeHost', () => {
+    it('starts the addressed repository only when the person presses its ready notice', async () => {
+        const run = vi.fn();
+        publishPresentationNotice({ key: 'repo-ready', message: 'Example is ready', severity: 'info',
+            action: { label: 'Start on Example', run } });
+        const screen = await renderScreen(<PresentationNoticeHost />);
+        expect(run).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('current-session-presentation-notice-action');
+        expect(run).toHaveBeenCalledOnce();
+        expect(readPresentationNotice()).toBeNull();
+    });
+
     it('keeps a sticky inverse until exact retirement or replacement, then resumes transient expiry', async () => {
         vi.useFakeTimers();
         try {

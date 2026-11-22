@@ -13,11 +13,12 @@ export type PresentationNoticeSeverity = 'info' | 'warning' | 'error';
  * audited action owner and surface failures through this notice owner. A replaced
  * notice stops offering its inverse; there is no undo stack or separate lifetime.
  */
-export type PresentationNoticeUndo = Readonly<{
+export type PresentationNoticeControl = Readonly<{
     /** Already-localized action label, e.g. "Undo". */
     label: string;
     run: () => void;
 }>;
+export type PresentationNoticeUndo = PresentationNoticeControl;
 
 export type PresentationNotice = Readonly<{
     key: string;
@@ -31,6 +32,8 @@ export type PresentationNotice = Readonly<{
     /** The part of `message` that names its subject; the host sets it in the stronger weight. */
     emphasis?: string;
     undo?: PresentationNoticeUndo;
+    /** An explicit next step bound by the local publisher to its exact target. */
+    action?: PresentationNoticeControl;
     /** Result custody for an inverse whose original surface may already be closed. */
     approval?: ActionApprovalContinuation;
     /** Stays until dismissed, retired by its publisher, or replaced by a newer notice. */
