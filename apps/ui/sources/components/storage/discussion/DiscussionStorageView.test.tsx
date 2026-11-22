@@ -144,6 +144,25 @@ describe('Storage scoped to one Discussion (storage-view lab scene 5 A, scene 3)
     }
   });
 
+  it("names the Discussion in the phone page's description, and keeps the general one while its title is unknown", async () => {
+    for (const [discussionTitle, description] of [
+      ['Checkout bug triage', 'artifacts.browser.storageView.discussion.descriptionNamed(title=Checkout bug triage)'],
+      [null, 'artifacts.browser.storageView.discussion.description'],
+    ] as const) {
+      const screen = await renderScreen(
+        <DiscussionStorageView totalBytes={86_400_000} accountTotalBytes={null} files={FILES} presentation="page"
+          discussionTitle={discussionTitle} onRemove={vi.fn()} />,
+      );
+      try {
+        const text = textOf(screen.findHostByTestId('storage:discussion'));
+        expect(text).toContain(description);
+        if (discussionTitle === null) expect(text).not.toContain('descriptionNamed');
+      } finally {
+        await screen.unmount();
+      }
+    }
+  });
+
   it('confirms with what clearing frees, and for old versions what the Artifact limit becomes', async () => {
     await expect(
       confirmRemoveDiscussionFile({

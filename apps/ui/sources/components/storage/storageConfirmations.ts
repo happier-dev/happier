@@ -29,7 +29,10 @@ export async function confirmTrimOldVersions(input: Readonly<{
     });
 }
 
-/** Remove a committed Discussion file: the message stays and says the file was removed (owner Q2: author or owner). */
+/**
+ * Remove a committed Discussion file: the message stays and says the file was removed (owner Q2: author or owner). The
+ * body reads in secondary ink like the shipped Artifact delete (lab scene 3); only the Remove action is destructive.
+ */
 export async function confirmRemoveDiscussionFile(input: Readonly<{
     name: string;
     /** The Discussion's name when the caller has it; without it the body says "the message". */
@@ -44,7 +47,7 @@ export async function confirmRemoveDiscussionFile(input: Readonly<{
         messageParagraphs: [
             { text: input.discussionTitle === null ? t('artifacts.browser.storageView.confirm.removeBody')
                 : input.own ? t('artifacts.browser.storageView.confirm.removeOwnBody', { discussion: input.discussionTitle })
-                    : t('artifacts.browser.storageView.confirm.removeOtherBody', { discussion: input.discussionTitle }), irreversible: true },
+                    : t('artifacts.browser.storageView.confirm.removeOtherBody', { discussion: input.discussionTitle }) },
         ],
         facts: [{ label: t('artifacts.browser.storageView.confirm.freesLabel'), value: formatBytes(input.freesBytes) }],
     });

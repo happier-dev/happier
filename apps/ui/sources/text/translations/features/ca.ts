@@ -3668,6 +3668,7 @@ const artifactsBrowserTranslations = { ca: {
             discussion: {
                 row: ({ size }) => `Emmagatzematge · ${size}`,
                 description: 'Fitxers d’aquesta discussió',
+                descriptionNamed: ({ title }) => `Fitxers de ${title}`,
                 say: ({ size, count }) => `${size} en ${count} fitxers.`,
                 sayBody: 'Cada fitxer es queda amb el seu missatge.',
                 ofAccount: 'Del teu compte',

@@ -55,6 +55,7 @@ import {
   resolveHappierCollectionListRowPadding,
   useHappierCollectionListRow,
   useHappierCollectionTableRow,
+  HappierCollectionRowActionsAtRestContext,
   HappierCollectionTreeRowContext,
   HappierListRowFollowedContext,
   HappierListRowRule,
@@ -732,6 +733,8 @@ export function HappierListItem({
   // Inside a Collection's table or list a row takes the dense collection anatomy (full bleed, hairline,
   // whole-row hover and open fills, the open row's leading edge); see `HappierCollectionTableRowContext`.
   const collectionItem = useHappierCollectionTableRow();
+  // The Collection shows its rows' actions at rest: they stay in the row's own cell, drawn, on every pointer.
+  const rowActionsAtRest = useContext(HappierCollectionRowActionsAtRestContext) && collectionItem !== null;
   const treeRow = useContext(HappierCollectionTreeRowContext);
   const collectionRow = collectionItem !== null && pageSection === null && !navigationRow;
   // The open row (its detail is showing) carries the edge; a row in the bulk set is filled without one.
@@ -1118,7 +1121,7 @@ export function HappierListItem({
   // menu) and a precise pointer sees them over the row's end while the row is the pointer's. The trigger
   // stays mounted and announced, so the menu anchors to the row's end, focus reveals it and assistive
   // technology reaches it; it shows while its menu is open.
-  const overlayRowActions = collectionRow && hasSecondaryActions && accessoryIsRowActions === true && cardCornerAccessory === null
+  const overlayRowActions = !rowActionsAtRest && collectionRow && hasSecondaryActions && accessoryIsRowActions === true && cardCornerAccessory === null
     && behavior.accessoryPlacement === 'outside' && collectionItem?.table !== true
     && (!precisePointer || collectionItem?.hairline === false);
   // A mouse or trackpad shows a collection row's actions when the row is the pointer's, has focus inside, is
@@ -1127,7 +1130,7 @@ export function HappierListItem({
   // overflow itself reads this through `HappierRowActionsReveal`, whatever else shares the row's accessory.
   // That holds for a collection's rows on a page sheet and in a navigation column too (U8 A3: a "…" at rest on
   // every Reviews row); they keep their own anatomy and fills, only the overflow waits for the pointer.
-  const hoverRevealRowActions = (collectionItem !== null || navigationRow) && hasSecondaryActions && cardCornerAccessory === null
+  const hoverRevealRowActions = !rowActionsAtRest && (collectionItem !== null || navigationRow) && hasSecondaryActions && cardCornerAccessory === null
     && behavior.accessoryPlacement === 'outside' && !overlayRowActions && (precisePointer || collectionItem?.table === true);
   const rowActionsRevealed = cardActionsShown.focused || selected === true || openRow || accessoryHeld === true;
   const layered = contentBesidePressable === true && isInteractive && resolvedTheme !== undefined && resolvedTheme !== null;

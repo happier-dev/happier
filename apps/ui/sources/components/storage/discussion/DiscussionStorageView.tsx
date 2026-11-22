@@ -8,6 +8,7 @@ import { formatStorageDay } from '@/components/machines/storage/storageCategoryT
 import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
+import { useStorageKindMarks } from '@/components/storage/storageKindMarks';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
@@ -91,10 +92,12 @@ export function DiscussionStorageView(props: Readonly<{
     const { theme } = useUnistyles();
     const phone = useDeviceType() === 'phone';
     const model = useHappierCollection<DiscussionStorageFile>({ items: props.files, keyOf: readFileKey, openKey: null, onOpenChange: noop });
+    // Its files are attachments: the share takes their mark from the owner the Account's bar uses.
+    const attachmentColor = useStorageKindMarks().discussionAttachments.color;
     const share = React.useMemo((): readonly CompositionSegment[] => props.totalBytes === null || props.accountTotalBytes === null ? NO_SEGMENTS : [
         { id: 'discussion', label: t('artifacts.browser.storageView.kinds.shortNames.discussionAttachments'), value: props.totalBytes,
-            color: theme.colors.text.secondary },
-    ], [props.accountTotalBytes, props.totalBytes, theme.colors.text.secondary]);
+            color: attachmentColor },
+    ], [attachmentColor, props.accountTotalBytes, props.totalBytes]);
     const anatomy = React.useMemo((): CollectionAnatomy<DiscussionStorageFile> => ({
         glyph: (file) => <Icon name={fileIcon(file.name)} size={16} color={theme.colors.text.secondary} />,
         title: (file) => file.name,
@@ -118,7 +121,10 @@ export function DiscussionStorageView(props: Readonly<{
         <ItemList testID="storage:discussion" style={props.presentation === 'page' ? PAGE_LIST_STYLE : stylesheet.paneList}>
             {props.presentation === 'page' ? (
                 // The bar above the large title names where Back returns: the Discussion (lab "‹ Checkout bug triage").
-                <PageHeader title={t('artifacts.browser.storageView.title')} description={t('artifacts.browser.storageView.discussion.description')}
+                // The description names the Discussion ("Files in Checkout bug triage") once this device has its title.
+                <PageHeader title={t('artifacts.browser.storageView.title')} description={props.discussionTitle
+                    ? t('artifacts.browser.storageView.discussion.descriptionNamed', { title: props.discussionTitle })
+                    : t('artifacts.browser.storageView.discussion.description')}
                     navigationTitle={props.discussionTitle || t('session.collaboration.discussion.title')} alwaysShowBack />
             ) : null}
             {props.onRetry ? (
@@ -144,7 +150,8 @@ export function DiscussionStorageView(props: Readonly<{
                 <FileCommandsContext.Provider value={commands}>
                     <CoreCollectionScope>
                         <Collection<DiscussionStorageFile> testID="storage:discussion:files" model={model} anatomy={anatomy}
-                            useRowActions={useFileRowActions} accessibilityLabel={t('artifacts.browser.storageView.discussion.description')}
+                            // A few files people act on where they stand: each row's "…" shows at rest, in the pane and on a phone.
+                            useRowActions={useFileRowActions} rowActionsAtRest accessibilityLabel={t('artifacts.browser.storageView.discussion.description')}
                             presentation="list" detail="none" scroll="page" minListWidth={0} minDetailWidth={0} preferredListRatio={1}
                             loading={props.totalBytes === null && props.files.length === 0 && !props.onRetry} loadingRows={LOADING_ROWS} />
                     </CoreCollectionScope>

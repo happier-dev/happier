@@ -8,6 +8,7 @@ import {
   type CollectionRowActions,
 } from '@happier-dev/plugin-ui';
 import {
+  CompositionStrip,
   formatHappierDataBytes,
   happierPageTextMetrics,
   Treemap,
@@ -21,6 +22,7 @@ import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { STORAGE_TREEMAP_MIN_NODE_PX } from '@happier-dev/protocol/storage/storageV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
 import { ArtifactQuotaNotice } from '@/components/artifacts/ArtifactQuotaNotice';
 import { createArtifactActionsClient, createMountedArtifactActionExecute, useStorageInventoryRead } from '@/components/artifacts/artifactActionsClient';
 import { presentArtifactActionFailure } from '@/components/artifacts/artifactActionFailure';
@@ -52,7 +54,8 @@ import {
   StorageCapacityRow,
 } from '@/components/storage/StorageCapacityRow';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
-import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
+import { StorageSizeCell, StorageSizeMeter } from '@/components/storage/StorageSizeBar';
+import { useStorageKindMarks, type StorageKindMark } from '@/components/storage/storageKindMarks';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { SelectionTiles } from '@/components/ui/forms/SelectionTiles';
@@ -80,8 +83,8 @@ import {
   listAccountStorageItemKinds,
   parseAccountStorageItemFilter,
   projectAccountStorageItems,
-  projectAccountStorageKinds,
   projectArtifactLimit,
+  projectShownAccountStorageKinds,
   readAccountStorageItemArtifactIds,
   type AccountStorageItem,
   type AccountStorageItemFilter,
@@ -362,23 +365,9 @@ function AccountStorageSay(
   );
 }
 
-/** Ink steps for the kinds the Artifact limit does not count; the usage accent marks the one it counts (lab). */
-function useKindColors(): Readonly<Record<AccountStorageKindId, string>> {
-  const { theme } = useUnistyles();
-  return React.useMemo(
-    () => ({
-      artifacts: usageSignatureAccent(theme),
-      artifactOldVersions: usageSignatureAccent(theme),
-      discussionAttachments: theme.colors.text.secondary,
-      accountPets: theme.colors.text.tertiary,
-      pluginCollections: theme.colors.border.strong,
-      pluginArtifacts: theme.colors.text.placeholder,
-      profilePictures: theme.colors.border.default,
-      avatars: theme.colors.border.default,
-      teamLogos: theme.colors.border.default,
-    }),
-    [theme],
-  );
+/** A kind's legend entry: its mark (the shared storage owner's colour and pattern) beside its short name. */
+function kindSegment(id: AccountStorageKindId, mark: StorageKindMark, label: string, value: number | null): CompositionSegment {
+  return { id, label, value, color: mark.color, ...(mark.hatched ? { pattern: 'hatched' as const } : {}) };
 }
 
 /** Row 1 of the capacity sheet: the whole Account, always (owner Q1 = A). */
@@ -390,24 +379,18 @@ function AccountCapacityRow(
     showDivider: boolean;
   }>,
 ) {
-  const colors = useKindColors();
-  const kinds = projectAccountStorageKinds(props.inventory);
+  const marks = useStorageKindMarks();
+  const kinds = projectShownAccountStorageKinds(props.inventory);
   const inventory = props.inventory;
   const legend = React.useMemo(
     (): CompositionSegment[] =>
-      kinds
-        .filter((kind) => kind.bytes === null || kind.bytes > 0)
-        .map((kind) => ({
-          ...(kind.id === 'artifactOldVersions' ? { pattern: 'hatched' as const } : {}),
-          id: kind.id,
-          // A kind the Home does not measure says so in its legend entry ("Picture size not recorded").
-          label: kind.bytes === null
-            ? `${t(`artifacts.browser.storageView.kinds.shortNames.${kind.id}`)} ${t('artifacts.browser.storageView.account.unmeasured')}`
-            : t(`artifacts.browser.storageView.kinds.shortNames.${kind.id}`),
-          value: kind.bytes,
-          color: colors[kind.id],
-        })),
-    [colors, kinds],
+      kinds.map((kind) => kindSegment(kind.id, marks[kind.id],
+        // A kind the Home does not measure says so in its legend entry ("Picture size not recorded").
+        kind.bytes === null
+          ? `${t(`artifacts.browser.storageView.kinds.shortNames.${kind.id}`)} ${t('artifacts.browser.storageView.account.unmeasured')}`
+          : t(`artifacts.browser.storageView.kinds.shortNames.${kind.id}`),
+        kind.bytes)),
+    [marks, kinds],
   );
   const bar = React.useMemo(
     () => legend.filter((segment) => segment.value !== null && !IMAGE_KIND_IDS.has(segment.id)),
@@ -553,8 +536,9 @@ function AccountStorageKinds(
   }>,
 ) {
   const { theme } = useUnistyles();
-  const colors = useKindColors();
-  const kinds = projectAccountStorageKinds(props.inventory);
+  const marks = useStorageKindMarks();
+  // Kinds holding 0 B are left out; a kind whose size is not recorded stays and says so.
+  const kinds = projectShownAccountStorageKinds(props.inventory);
   const largest = kinds.reduce(
     (max, kind) => Math.max(max, kind.bytes ?? 0),
     0,
@@ -578,7 +562,7 @@ function AccountStorageKinds(
           pending={props.inventory === null && !props.unread}
           unread={props.inventory === null && props.unread}
           largest={largest}
-          color={kind.id === 'artifacts' ? colors.artifacts : undefined}
+          mark={marks[kind.id]}
           compact={props.compact}
           selected={props.filter === kind.id}
           showDivider={index < kinds.length - 1}
@@ -603,7 +587,7 @@ function AccountStorageKindRow(
     /** The read failed: no size, and no claim that the Home does not record it. */
     unread: boolean;
     largest: number;
-    color?: string;
+    mark: StorageKindMark;
     compact: boolean;
     selected: boolean;
     showDivider: boolean;
@@ -633,7 +617,8 @@ function AccountStorageKindRow(
       facts={t(`artifacts.browser.storageView.kinds.facts.${kind.id}`)}
       bytes={props.pending ? null : kind.bytes}
       largest={props.largest}
-      barColor={props.color}
+      barColor={props.mark.color}
+      hatched={props.mark.hatched}
       size={
         props.pending
           ? null
@@ -674,16 +659,17 @@ function AccountStorageItems(
 ) {
   const { theme } = useUnistyles();
   const router = useRouter();
-  const colors = useKindColors();
+  const marks = useStorageKindMarks();
+  const serverId = useActiveServerAccountScope()?.serverId ?? null;
   // The owner's pages as they are: already narrowed to the chosen kind and in its order.
   const page = props.items;
   const largest = page.reduce((max, item) => Math.max(max, item.bytes ?? 0), 0);
   const open = React.useCallback(
     (item: AccountStorageItem) => {
-      const route = itemRoute(item);
+      const route = itemRoute(item, serverId);
       if (route) router.push(route as never);
     },
-    [router],
+    [router, serverId],
   );
   const pageRef = React.useRef(page);
   pageRef.current = page;
@@ -731,12 +717,10 @@ function AccountStorageItems(
         minWidth: 170,
         priority: 3,
         align: 'end',
-        render: (item) => (
-          <ItemSize item={item} bar largest={largest} color={item.kind === 'artifacts' || item.kind === 'artifactOldVersions' ? colors.artifacts : undefined} />
-        ),
+        render: (item) => <ItemSize item={item} bar largest={largest} mark={marks[item.kind]} />,
       },
     ],
-    [colors.artifacts, largest],
+    [largest, marks],
   );
   const anatomy = React.useMemo(
     (): CollectionAnatomy<AccountStorageItem> => ({
@@ -749,18 +733,27 @@ function AccountStorageItems(
       // An item's name stays on one line, cut at its end, on a phone row as in the table (lab scene 1, 390).
       titleTruncates: true,
       // Where it lives reads quiet after the name in the table (Machines' rows do the same); a phone row's line 2 says it.
-      // Only a filed item says more than "Artifacts", which every row would repeat.
-      titleSuffix: (item) => (item.folderName ? itemWhere(item) : null),
-      byline: (item) => (
-        <Text style={stylesheet.where} numberOfLines={1}>
-          {props.compact
-            ? `${itemKindLabel(item)} · ${itemWhere(item)}`
-            : itemWhere(item)}
-        </Text>
+      // Only a filed item says more than "Artifacts", which every row would repeat; the Kind column says the kind.
+      titleSuffix: (item) => (item.folderName ? itemLocation(item) : null),
+      // Line 2 is where it lives; on a phone, which has no Kind column, "Kind · where", the kind said once (lab scene 1).
+      byline: (item) => props.compact ? (
+        <View style={stylesheet.phoneLine}>
+          <Text testID={`storage:item:${item.key}:line`} style={stylesheet.where} numberOfLines={1}>
+            {[itemKindLabel(item), itemLocation(item)].filter(Boolean).join(' · ')}
+          </Text>
+          {/* The meter under the line, against the largest listed item (lab 390). */}
+          {item.bytes === undefined ? null : (
+            <StorageSizeMeter label={itemTitle(item)} bytes={item.bytes} largest={largest}
+              hatched={marks[item.kind].hatched} color={marks[item.kind].color} />
+          )}
+        </View>
+      ) : itemLocation(item) === null ? null : (
+        <Text testID={`storage:item:${item.key}:line`} style={stylesheet.where} numberOfLines={1}>{itemLocation(item)}</Text>
       ),
       fields,
+      // A phone row's size rides its title line at the row's end (lab 390); the table has its Size column.
       ...(props.compact
-        ? { reason: (item: AccountStorageItem) => <ItemSize item={item} /> }
+        ? { titleMeta: (item: AccountStorageItem) => <ItemSize item={item} /> }
         : {}),
       accessibilityLabel: (item) =>
         t('artifacts.browser.storageView.items.rowLabel', {
@@ -774,7 +767,7 @@ function AccountStorageItems(
       testID: (item) => `storage:item:${item.key}`,
       columnTitles: { title: t('artifacts.browser.storageView.items.name') },
     }),
-    [fields, props.compact, theme.colors.text.secondary],
+    [fields, largest, marks, props.compact, theme.colors.text.secondary],
   );
   const kinds = props.kinds;
   const commands = React.useMemo(() => ({ open, changed: props.onChanged }), [open, props.onChanged]);
@@ -852,12 +845,11 @@ function AccountStorageItems(
           </View>
         ) : null}
       </ItemGroup>
-      {props.shape === 'map' && page.length > 0 ? (
-        <ItemGroup header="none">
-          <StorageItemsMap items={page} onOpen={open} />
-        </ItemGroup>
-      ) : null}
+      {/* The Map and the table share one sheet (lab scene 1 Map): the picture, its key, then the same rows. */}
       <ItemGroup header="none">
+        {props.shape === 'map' && page.length > 0 ? (
+          <StorageItemsMap items={page} onOpen={open} />
+        ) : null}
         <ItemCommandsContext.Provider value={commands}>
           <CoreCollectionScope>
             <Collection<AccountStorageItem>
@@ -865,6 +857,8 @@ function AccountStorageItems(
               model={model}
               anatomy={anatomy}
               useRowActions={useStorageItemRowActions}
+              // The owner asked for delete from this view: each row's "…" shows at rest, at both widths.
+              rowActionsAtRest
               accessibilityLabel={t(
                 'artifacts.browser.storageView.items.listLabel',
               )}
@@ -907,8 +901,10 @@ function StorageItemsMap(
   const { theme } = useUnistyles();
   const pluginTheme = usePluginUiTheme(theme);
   const motion = useMotionPreferences();
+  const marks = useStorageKindMarks();
   const [width, setWidth] = React.useState(0);
   const [pointed, setPointed] = React.useState<string | null>(null);
+  // Each tile takes its kind's mark from the owner the Account bar and its legend use.
   const parts = React.useMemo(
     (): HappierChartPart[] =>
       props.items.flatMap((item) =>
@@ -921,11 +917,19 @@ function StorageItemsMap(
                 value: item.bytes,
                 valueLabel: formatBytes(item.bytes),
                 tone: 'accent' as const,
+                color: marks[item.kind].color,
+                ...(marks[item.kind].hatched ? { hatched: true } : {}),
               },
             ],
       ),
-    [props.items],
+    [marks, props.items],
   );
+  // The key names the kinds the tiles show, in the Account legend's order and marks; names only, the tiles say sizes.
+  const legend = React.useMemo((): CompositionSegment[] => {
+    const shown = new Set(props.items.map((item) => item.kind));
+    return KIND_LEGEND_ORDER.filter((kind) => shown.has(kind)).map((kind) =>
+      kindSegment(kind, marks[kind], t(`artifacts.browser.storageView.kinds.shortNames.${kind}`), null));
+  }, [marks, props.items]);
   const itemsRef = React.useRef(props.items);
   itemsRef.current = props.items;
   const onOpen = props.onOpen;
@@ -946,7 +950,7 @@ function StorageItemsMap(
       {width > 0 ? (
         <Treemap
           theme={pluginTheme}
-          accentColor={usageSignatureAccent(theme)}
+          accentColor={marks.artifacts.color}
           items={parts}
           width={width}
           height={MAP_HEIGHT}
@@ -966,12 +970,25 @@ function StorageItemsMap(
         <View style={{ height: MAP_HEIGHT }} />
       )}
       </View>
-      <Text style={stylesheet.mapHint}>
-        {t('artifacts.browser.storageView.items.mapHint')}
-      </Text>
+      <View style={stylesheet.mapKey}>
+        <View style={stylesheet.mapLegend}>
+          <CompositionStrip theme={pluginTheme} label={t('artifacts.browser.storageView.items.mapLabel')} total={null}
+            segments={legend} variant="legend" unknownLabel="" appearance={MAP_LEGEND_APPEARANCE} />
+        </View>
+        <Text style={stylesheet.mapHint}>
+          {t('artifacts.browser.storageView.items.mapHint')}
+        </Text>
+      </View>
     </View>
   );
 }
+
+/** The Account legend's order of kinds, for the Map's key. */
+const KIND_LEGEND_ORDER: readonly AccountStorageKindId[] = [
+  'artifacts', 'artifactOldVersions', 'discussionAttachments', 'accountPets', 'pluginCollections', 'pluginArtifacts',
+  'profilePictures', 'avatars', 'teamLogos',
+];
+const MAP_LEGEND_APPEARANCE = { legend: 'compact', textStyle: happierPageTextMetrics('meta') } as const;
 
 /**
  * A row's "…" (lab scenes 1 and 3), each through its Action and offered only where its owner admits it:
@@ -990,12 +1007,16 @@ function useStorageItemRowActions(item: AccountStorageItem): CollectionRowAction
   const trim = useTrimOldVersions(item, commands?.changed);
   const location = item.location;
   if (location.kind === 'discussion') {
-    if (!item.viewerMayRemove) return {};
+    // Show in the message opens the file where it lives, for anyone who can see it; Remove only where the server admits it.
     return {
       busy: removeFile.busy,
-      secondaryActions: [{ id: 'remove', label: t('artifacts.browser.storageView.discussion.removeFile'), destructive: true, disabled: removeFile.busy }],
+      secondaryActions: [
+        { id: 'show', label: t('artifacts.browser.storageView.discussion.showInMessage') },
+        ...(item.viewerMayRemove ? [{ id: 'remove', label: t('artifacts.browser.storageView.discussion.removeFile'), destructive: true, disabled: removeFile.busy }] : []),
+      ],
       onSecondaryAction: (id) => {
-        if (id === 'remove') return removeFile.run({ discussionId: location.discussionId, messageId: location.messageId,
+        if (id === 'show') commands?.open(item);
+        else if (id === 'remove') return removeFile.run({ discussionId: location.discussionId, messageId: location.messageId,
           blobId: location.attachmentId ?? item.id, name: itemTitle(item), bytes: item.bytes ?? 0, discussionTitle: null, own: false });
       },
     };
@@ -1055,10 +1076,11 @@ function useTrimOldVersions(item: AccountStorageItem, onChanged?: () => void) {
 }
 
 /** The item's stored size through the shared storage size cell (the Artifacts table draws the same cell). */
-function ItemSize(props: Readonly<{ item: AccountStorageItem; bar?: boolean; largest?: number; color?: string }>) {
+function ItemSize(props: Readonly<{ item: AccountStorageItem; bar?: boolean; largest?: number; mark?: StorageKindMark }>) {
   return (
     <StorageSizeCell label={itemTitle(props.item)} bytes={props.item.bytes} largest={props.largest ?? 0} bar={props.bar === true}
-      color={props.color} testID={`storage:item:${props.item.key}:size`} unknownLabel={t('artifacts.browser.storage.sizeUnknown')} />
+      color={props.mark?.color} hatched={props.mark?.hatched === true} testID={`storage:item:${props.item.key}:size`}
+      unknownLabel={t('artifacts.browser.storage.sizeUnknown')} />
   );
 }
 
@@ -1091,18 +1113,26 @@ function itemIcon(item: AccountStorageItem): IconName {
   return KIND_ICONS[item.kind];
 }
 
-function itemWhere(item: AccountStorageItem): string {
-  const where = item.folderName
+/**
+ * Where an item lives, never its kind again: an Artifact and its old versions live in Artifacts (› its folder). A
+ * Discussion file's Discussion joins when the storage read names it (STORAGE-1119); until then the row says nothing more.
+ */
+function itemLocation(item: AccountStorageItem): string | null {
+  if (item.location.kind !== 'artifact') return null;
+  return item.folderName
     ? `${t('artifacts.browser.storageView.items.where')} › ${item.folderName}`
     : t('artifacts.browser.storageView.items.where');
-  if (item.kind === 'artifactOldVersions') return t('artifacts.browser.storageView.items.oldVersionsWhere', { where });
-  return item.location.kind === 'artifact' ? where : t(`artifacts.browser.storageView.kinds.names.${item.kind}`);
 }
 
 /** Where an item lives: its Artifact's own page, or its Discussion at its message. */
-function itemRoute(item: AccountStorageItem): string | null {
+function itemRoute(item: AccountStorageItem, serverId: string | null): string | null {
   const artifact = item.row?.artifact;
   if (artifact) return opensInArtifactView(artifact) ? artifactViewRoute(artifact.id) : resolveArtifactOpenRoute(artifact);
+  const location = item.location;
+  if (location.kind === 'discussion' && serverId !== null) {
+    return buildDiscussionRouteHref({ target: { kind: 'discussion', address: { serverId },
+      discussionId: location.discussionId, messageId: location.messageId } });
+  }
   return null;
 }
 
@@ -1195,6 +1225,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.secondary,
   },
+  // A phone row's line 2 with its meter under it.
+  phoneLine: {
+    gap: theme.space.s6,
+  },
   foot: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1207,9 +1241,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
     fontVariant: ['tabular-nums'],
   },
+  // The map, then its key, over the table in the same sheet; a hairline parts the key from the table's header.
   map: {
     gap: theme.space.s8,
-    padding: theme.space.s12,
+    paddingTop: theme.space.s12,
+    paddingHorizontal: theme.space.s12,
+    paddingBottom: theme.space.s10,
+    borderBottomWidth: 1,
+    borderBottomColor: theme.colors.border.subtle,
+  },
+  mapKey: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: theme.space.s12,
+  },
+  mapLegend: {
+    flexGrow: 1,
+    flexShrink: 1,
   },
   mapHint: {
     ...Typography.default(),

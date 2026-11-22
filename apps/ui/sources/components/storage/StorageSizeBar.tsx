@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { readStorageBarInk } from '@/components/storage/storageKindMarks';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 
@@ -15,7 +16,7 @@ const CELL_BAR_WIDTH = 96;
 
 /**
  * The one size bar of Storage rows (lab `rs` `.rss-row > .br`, storage-view lab `sv-mb`): a thing's size against the
- * largest beside it, in ink (`color` only for what a limit counts), hatched once it is set aside. A wide row draws it
+ * largest beside it, in the storage ink's mid step (`color` for a kind's own mark), hatched once it is set aside. A wide row draws it
  * a step thicker than a phone row, so the hatch reads at a glance. Machines › Storage and the Account's Storage view
  * share it.
  */
@@ -46,10 +47,25 @@ export function StorageSizeBar(
         size="inline"
         height={props.compact ? undefined : theme.space.s6}
         showCaption={false}
-        color={props.color ?? theme.colors.text.secondary}
+        color={props.color ?? readStorageBarInk(theme)}
         trackColor={theme.colors.border.default}
         pattern={props.hatched ? 'hatched' : 'solid'}
       />
+    </View>
+  );
+}
+
+/**
+ * A listed item's meter on its own, at the table cell's width (a phone row draws it under line 2, lab scene 1 390), so
+ * every row's track is the same length and the fills compare against the largest item.
+ */
+export function StorageSizeMeter(
+  props: Readonly<{ label: string; bytes: number; largest: number; hatched: boolean; color?: string }>,
+) {
+  return (
+    <View style={styles.bar}>
+      <StorageSizeBar label={props.label} bytes={props.bytes} largest={props.largest} compact hatched={props.hatched}
+        color={props.color} />
     </View>
   );
 }
@@ -68,6 +84,8 @@ export function StorageSizeCell(
     /** A table cell draws the bar; a phone row's trailing value is the size alone. */
     bar: boolean;
     color?: string;
+    /** Hatch the bar: what can be cleared (an Artifact's old versions). */
+    hatched?: boolean;
     testID?: string;
     unknownLabel: string;
   }>,
@@ -85,7 +103,7 @@ export function StorageSizeCell(
             bytes={props.bytes}
             largest={props.largest}
             compact={false}
-            hatched={false}
+            hatched={props.hatched === true}
             color={props.color}
           />
         </View>

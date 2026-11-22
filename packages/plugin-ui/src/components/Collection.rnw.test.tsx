@@ -415,6 +415,7 @@ type HarnessOptions = Readonly<{
   }>;
   useDetailHeader?: CollectionProps<Entry>['useDetailHeader'];
   useRowActions?: CollectionProps<Entry>['useRowActions'];
+  rowActionsAtRest?: CollectionProps<Entry>['rowActionsAtRest'];
   useRowItem?: CollectionProps<Entry>['useRowItem'];
   selection?: CollectionProps<Entry>['selection'];
   modelSelection?: (
@@ -467,6 +468,7 @@ function Harness(props: HarnessProps): ReactElement {
       {...(props.useRowActions === undefined
         ? {}
         : { useRowActions: props.useRowActions })}
+      {...(props.rowActionsAtRest === undefined ? {} : { rowActionsAtRest: props.rowActionsAtRest })}
       {...(props.modelSelection === undefined
         ? props.selection === undefined
           ? {}
@@ -1947,6 +1949,57 @@ describe('Collection table', () => {
       };
       expect(overlaid()).toBe(false);
       expect(along((node) => getComputedStyle(node).opacity, '1')).toBe('0');
+    } finally {
+      view.unmount();
+      (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;
+      if (viewportWidth) Object.defineProperty(document.documentElement, 'clientWidth', viewportWidth);
+      else Reflect.deleteProperty(document.documentElement, 'clientWidth');
+      window.dispatchEvent(new Event('resize'));
+    }
+  });
+
+  // A collection of few rows that people act on (a storage pane's files, lab storage-view-1119 fixes 2, 11, 12) shows
+  // each row's ⋯ at rest on every pointer, laid out in the row (never overlaying its end); the default is unchanged.
+  it.each([
+    ['table', 1440, true],
+    ['list', 390, true],
+    ['list', 390, false],
+  ] as const)("shows a %s row's actions at rest when the Collection asks for them (width %s, precise pointer %s)", (presentation, width, precise) => {
+    const matchMedia = (globalThis as { matchMedia?: unknown }).matchMedia;
+    const viewportWidth = Object.getOwnPropertyDescriptor(document.documentElement, 'clientWidth');
+    Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: width });
+    window.dispatchEvent(new Event('resize'));
+    (globalThis as { matchMedia?: unknown }).matchMedia = (query: string) => ({
+      matches: precise && (query === '(pointer: fine)' || query === '(hover: hover)'),
+    });
+    const view = mount({
+      presentation,
+      detail: 'none',
+      anatomy: { ...anatomy, peek: undefined },
+      rowActionsAtRest: true,
+      useRowActions: () => ({
+        secondaryActions: [{ id: 'pin', label: 'Pin' }],
+        onSecondaryAction: () => undefined,
+      }),
+    });
+    try {
+      view.measure(width);
+      const row = view.query('row:a')!;
+      const trigger = view.container.querySelector<HTMLElement>('[aria-label="More actions"]')!;
+      expect(trigger).not.toBeNull();
+      let item: HTMLElement = row;
+      while (!item.contains(trigger)) item = item.parentElement!;
+      const along = (read: (node: HTMLElement) => string, skip: string) => {
+        for (let node: HTMLElement | null = trigger; node !== null && node !== item; node = node.parentElement) {
+          const value = read(node);
+          if (value !== '' && value !== skip) return value;
+        }
+        return skip;
+      };
+      // Drawn at rest, with nothing hovered, focused, selected or open.
+      expect(along((node) => getComputedStyle(node).opacity, '1')).toBe('1');
+      // In the row's flow: the row's end keeps a place for it instead of the ⋯ covering the row's last figure.
+      expect(along((node) => getComputedStyle(node).position, 'static')).not.toBe('absolute');
     } finally {
       view.unmount();
       (globalThis as { matchMedia?: unknown }).matchMedia = matchMedia;

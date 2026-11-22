@@ -1774,7 +1774,10 @@ The list then draws it on one line in the host's mono face, ending in an
 ellipsis, instead of wrapping it like a name; keep the whole value in
 `accessibilityLabel`. When a title is a record's name that should stay on one
 line (a file name such as `checkout-bug-repro.mov`), set `titleTruncates: true`
-instead: the list keeps it in the body face and ends it in an ellipsis. Pass the narrowings in force as `search.tokens`
+instead: the list keeps it in the body face and ends it in an ellipsis. A row's
+`⋯` (from `useRowActions`) waits for the pointer, focus or a long press; for a
+short list of records people act on where they stand (a few files), pass
+`rowActionsAtRest` on the Collection so every row shows its `⋯` at rest. Pass the narrowings in force as `search.tokens`
 (`{ key, qualifier, label, onRemove }`): they sit inside the search field, each one
 press to remove. To put that search into your own toolbar row, pass `header` as a
 render: `header={({ search, selection, pageActions }) => <Row>{search}{selection}{trailing controls}{pageActions}</Row>}`

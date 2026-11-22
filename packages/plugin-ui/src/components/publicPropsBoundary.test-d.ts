@@ -53,7 +53,7 @@ type IsEqual<Left, Right> = (
 type _AuthorCollectionKeysAreCurated = Assert<IsEqual<keyof CollectionProps<unknown>,
   | 'model' | 'anatomy' | 'accessibilityLabel' | 'title' | 'titleKind' | 'presentation' | 'boardLayout' | 'detail' | 'detailOpenIntent' | 'renderDetail' | 'detailHeader' | 'useDetailHeader'
   | 'minListWidth' | 'minDetailWidth' | 'preferredListRatio' | 'minCardWidth' | 'narrowGrid' | 'groupAction' | 'collapsedGroups'
-  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'useRowItem' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
+  | 'scroll' | 'virtualizer' | 'loading' | 'loadingRows' | 'useRowActions' | 'rowActionsAtRest' | 'useRowItem' | 'selection' | 'pageRoot' | 'search' | 'create' | 'empty' | 'afterRows' | 'header' | 'headerPlacement' | 'footer'
   | 'windowStatement' | 'testID' | 'listTestID' | 'detailTestID'
   | 'sort' | 'summaryRows' | 'sheetAfter' | 'labels'
   | 'listWidthPx' | 'onListWidthChange' | 'onListWidthCommit' | 'onListWidthReset' | 'resizeKey'

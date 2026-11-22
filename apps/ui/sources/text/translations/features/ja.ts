@@ -3626,6 +3626,7 @@ const artifactsBrowserTranslations = { ja: {
             discussion: {
                 row: ({ size }) => `ストレージ · ${size}`,
                 description: 'このディスカッションのファイル',
+                descriptionNamed: ({ title }) => `${title} のファイル`,
                 say: ({ size, count }) => `${count} 件のファイルで ${size}。`,
                 sayBody: '各ファイルはメッセージとともに残ります。',
                 ofAccount: 'アカウント全体のうち',

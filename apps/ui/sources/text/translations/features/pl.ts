@@ -3680,6 +3680,7 @@ const artifactsBrowserTranslations = { pl: {
             discussion: {
                 row: ({ size }) => `Miejsce · ${size}`,
                 description: 'Pliki w tej dyskusji',
+                descriptionNamed: ({ title }) => `Pliki w dyskusji ${title}`,
                 say: ({ size, count }) => `${size} w ${count} plikach.`,
                 sayBody: 'Każdy plik zostaje przy swojej wiadomości.',
                 ofAccount: 'Z twojego konta',

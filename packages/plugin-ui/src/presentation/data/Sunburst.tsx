@@ -418,12 +418,14 @@ export function Sunburst(props: HappierSunburstProps) {
     const folded = arc ? arc.folded !== null : false;
     const depth = arc?.depth ?? 0;
     const tone = folded ? 'quiet' : (part?.tone ?? 'ink');
+    // A part with its kind's colour (`HappierChartPart.color`) is tinted the way an accent part is.
+    const ownColor = folded ? undefined : part?.color;
     const step =
       INK_STEPS[
         Math.min(rank.get(arc ? rootOf(key) : key) ?? 0, INK_STEPS.length - 1)
       ]!;
     const fill =
-      tone === 'accent'
+      tone === 'accent' || ownColor !== undefined
         ? 0.3 - depth * 0.04
         : tone === 'quiet'
           ? 0.06
@@ -436,7 +438,7 @@ export function Sunburst(props: HappierSunburstProps) {
       <G key={key} opacity={g.opacity}>
         <Path
           d={d}
-          fill={tone === 'accent' ? (props.accentColor ?? theme.colors.accent) : ink}
+          fill={ownColor ?? (tone === 'accent' ? (props.accentColor ?? theme.colors.accent) : ink)}
           opacity={fill}
         />
         {part?.hatched ? <Path d={d} fill={`url(#${id}-hatch)`} /> : null}

@@ -48,7 +48,7 @@ import type { HappierTypeRole, HappierUiTheme, HappierUiTypography } from '../en
 import { useOptionalPluginUiPresentationHost, type PluginUiMenuSelection } from '../presentationHost/context.js';
 import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
-import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, HappierListRowTrailingCellContext, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
+import { HAPPIER_COLLECTION_LIST_METRICS, HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionRowActionsAtRestContext, HappierCollectionTableRowContext, resolveHappierCollectionRowRole, type HappierCollectionRowRole, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts, HappierListRowFollowedContext, HappierListRowOpenContext, HappierListRowPrecedesSelectedContext, HappierListRowRule, HappierListRowTrailingCellContext, resolveHappierCatalogDirectoryRowEdges, resolveHappierListRowRuleShown } from '../presentation/collection/CollectionList.js';
 import { useHappierListRowHovered } from '../presentation/collection/ListItemFrame.js';
 import {
   HAPPIER_COLLECTION_INSTANT_MOTION,
@@ -597,6 +597,12 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    * the caller's own context.
    */
   useRowActions?: (item: Item) => CollectionRowActions;
+  /**
+   * Show each row's `⋯` at rest, on every pointer, in the row's own trailing cell. By default a row's actions wait for
+   * the pointer, focus or a long press, because a `⋯` on every row of a long list is noise. Set it for a short list of
+   * records people act on from where they stand (a storage view's files): there the hover-only column reads as a gap.
+   */
+  rowActionsAtRest?: boolean;
   /**
    * Subscribe to this row's current facts at the row boundary. The stable hook must return the same key;
    * membership, grouping and order remain the model's responsibility, rather than a second row inventory.
@@ -3458,6 +3464,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
 
   return (
     <HappierPageLargeTitleDrawnContext.Provider value={largeTitle !== null}>
+    <HappierCollectionRowActionsAtRestContext.Provider value={props.rowActionsAtRest === true}>
     <CollectionVirtualizerContext.Provider value={props.virtualizer}>
     <ListMultiSelectionProvider store={multipleStore}>
     <HappierCollectionLayoutContext.Provider value={layoutState}>
@@ -3645,6 +3652,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     </HappierCollectionLayoutContext.Provider>
     </ListMultiSelectionProvider>
     </CollectionVirtualizerContext.Provider>
+    </HappierCollectionRowActionsAtRestContext.Provider>
     </HappierPageLargeTitleDrawnContext.Provider>
   );
 }

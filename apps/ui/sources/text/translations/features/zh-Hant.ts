@@ -3572,6 +3572,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             discussion: {
                 row: ({ size }) => `儲存空間 · ${size}`,
                 description: '此討論中的檔案',
+                descriptionNamed: ({ title }) => `${title} 中的檔案`,
                 say: ({ size, count }) => `${count} 個檔案，共 ${size}。`,
                 sayBody: '每個檔案都保留在其訊息中。',
                 ofAccount: '佔你的帳戶',

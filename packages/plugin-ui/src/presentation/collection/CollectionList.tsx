@@ -477,6 +477,12 @@ export const HappierListRowTrailingCellContext = createContext(false);
 export type HappierCollectionRestingRows = 'air' | 'air-page' | 'ruled';
 export const HappierCollectionRestingRowsContext = createContext<HappierCollectionRestingRows>('air');
 
+/**
+ * Set by a Collection whose rows show their `⋯` at rest (`CollectionProps.rowActionsAtRest`): each row's actions stand in
+ * the row's own trailing cell on every pointer, drawn without hover and never overlaying the row's end.
+ */
+export const HappierCollectionRowActionsAtRestContext = createContext(false);
+
 export function useHappierCollectionTableRow(): HappierCollectionTableRowFacts | null {
   return useContext(HappierCollectionTableRowContext);
 }

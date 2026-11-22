@@ -46,6 +46,16 @@ export function projectAccountStorageKinds(inventory: StorageInventoryV1 | null)
     ];
 }
 
+/**
+ * The kinds the view shows (What's stored, the Account bar's legend): a kind that holds something, or whose size the
+ * Home does not record ("— Size not recorded"); a kind holding 0 B says nothing. While the read is out every known
+ * kind keeps its place. The sizes stay the owner's; this decides only what is drawn.
+ */
+export function projectShownAccountStorageKinds(inventory: StorageInventoryV1 | null): readonly AccountStorageKind[] {
+    const kinds = projectAccountStorageKinds(inventory);
+    return inventory === null ? kinds : kinds.filter((kind) => kind.bytes === null || kind.bytes > 0);
+}
+
 export type ArtifactLimitStanding = Readonly<{
     usedBytes: number;
     limitBytes: number;

@@ -3672,6 +3672,7 @@ const artifactsBrowserTranslations = { ru: {
             discussion: {
                 row: ({ size }) => `Хранилище · ${size}`,
                 description: 'Файлы в этом обсуждении',
+                descriptionNamed: ({ title }) => `Файлы в обсуждении ${title}`,
                 say: ({ size, count }) => `${size} в файлах: ${count}.`,
                 sayBody: 'Каждый файл остаётся со своим сообщением.',
                 ofAccount: 'От вашего аккаунта',

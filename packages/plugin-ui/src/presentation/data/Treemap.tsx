@@ -34,7 +34,9 @@ import {
  * One drawable part of a folder level. The chart is a picture of the list the host draws beneath it, so
  * every item carries the words the host already has (`valueLabel`) and the host decides each mark:
  * `accent` (the host's own data), `ink` (stepped by rank, so switching views keeps every colour) or `quiet`
- * (folded small items, hidden space). `hatched` overlays what is collected; it never changes the layout.
+ * (folded small items, hidden space). `hatched` overlays what is collected, in the part's own colour; it never changes
+ * the layout. `color` gives a part its kind's fixed colour from the host's legend (a storage kind) in place of its
+ * tone's: the tile takes it as an accent tile takes the accent, so the picture and the legend beside it agree.
  */
 export type HappierChartPart = Readonly<{
   key: string;
@@ -42,6 +44,7 @@ export type HappierChartPart = Readonly<{
   value: number;
   valueLabel: string;
   tone: 'ink' | 'accent' | 'quiet';
+  color?: string;
   hatched?: boolean;
   dotted?: boolean;
   locked?: boolean;
@@ -232,6 +235,17 @@ export function Treemap(props: HappierTreemapProps) {
   };
 
   const ink = props.theme.colors.text;
+  const accentColor = props.accentColor ?? props.theme.colors.accent;
+  // One hatch per colour a hatched part is drawn in: a collected part hatches in its own colour, as its legend swatch does.
+  const hatchColors = useMemo(() => {
+    const colors: string[] = [];
+    for (const part of parts.values()) {
+      if (!part.hatched) continue;
+      const color = part.color ?? (part.tone === 'accent' ? accentColor : ink);
+      if (!colors.includes(color)) colors.push(color);
+    }
+    return colors;
+  }, [accentColor, ink, parts]);
   const pointedTile = pointed
     ? (tiles.find((tile) => tile.key === pointed) ?? null)
     : null;
@@ -254,15 +268,18 @@ export function Treemap(props: HappierTreemapProps) {
       <Animated.View style={{ opacity: fade }}>
         <Svg width={width} height={height}>
           <Defs>
-            <Pattern
-              id={`${id}-hatch`}
-              width={6}
-              height={6}
-              patternUnits="userSpaceOnUse"
-              patternTransform="rotate(45)"
-            >
-              <Rect width={1.6} height={6} fill={ink} opacity={0.55} />
-            </Pattern>
+            {hatchColors.map((color, index) => (
+              <Pattern
+                key={color}
+                id={`${id}-hatch-${index}`}
+                width={6}
+                height={6}
+                patternUnits="userSpaceOnUse"
+                patternTransform="rotate(45)"
+              >
+                <Rect width={1.6} height={6} fill={color} opacity={0.55} />
+              </Pattern>
+            ))}
             <Pattern
               id={`${id}-dots`}
               width={5}
@@ -279,7 +296,8 @@ export function Treemap(props: HappierTreemapProps) {
               tile={tile}
               part={parts.get(tile.key) ?? null}
               theme={props.theme}
-              accentColor={props.accentColor ?? props.theme.colors.accent}
+              accentColor={accentColor}
+              hatchColors={hatchColors}
               rank={rank.get(tile.parentKey ?? tile.key) ?? 0}
               pointed={tile.key === pointed}
               smallerLabel={props.smallerLabel}
@@ -320,6 +338,7 @@ function TreemapTileShape(
     part: HappierChartPart | null;
     theme: HappierUiTheme;
     accentColor: string;
+    hatchColors: readonly string[];
     rank: number;
     pointed: boolean;
     smallerLabel: (count: number) => string;
@@ -330,10 +349,13 @@ function TreemapTileShape(
   if (width <= 0 || height <= 0) return null;
   const folded = tile.folded !== null;
   const tone = folded ? 'quiet' : (part?.tone ?? 'ink');
-  const fill = tone === 'accent' ? props.accentColor : theme.colors.text;
+  // A part with its kind's colour is tinted the way an accent part is, whatever its tone.
+  const ownColor = folded ? undefined : part?.color;
+  const fill = ownColor ?? (tone === 'accent' ? props.accentColor : theme.colors.text);
+  const hatchIndex = part?.hatched ? props.hatchColors.indexOf(ownColor ?? (tone === 'accent' ? props.accentColor : theme.colors.text)) : -1;
   const step = INK_STEPS[Math.min(props.rank, INK_STEPS.length - 1)]!;
   const opacity =
-    tone === 'accent'
+    tone === 'accent' || ownColor !== undefined
       ? tile.depth === 0
         ? 0.24
         : 0.3
@@ -354,7 +376,7 @@ function TreemapTileShape(
   const kidName = kidValue ? label : fitText(label, room, 11, 'semibold');
   return (
     <G>
-      {tile.depth === 1 && tone === 'ink' ? (
+      {tile.depth === 1 && tone === 'ink' && ownColor === undefined ? (
         <Rect x={x} y={y} width={width} height={height} rx={radius} fill={theme.colors.surface} opacity={0.5}
           stroke={theme.colors.text} strokeOpacity={0.12} strokeWidth={1} />
       ) : (
@@ -367,7 +389,7 @@ function TreemapTileShape(
           width={width}
           height={height}
           rx={radius}
-          fill={`url(#${props.id}-hatch)`}
+          fill={`url(#${props.id}-hatch-${Math.max(0, hatchIndex)})`}
         />
       ) : null}
       {folded || part?.dotted ? (

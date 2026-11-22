@@ -3675,6 +3675,7 @@ const artifactsBrowserTranslations = { it: {
             discussion: {
                 row: ({ size }) => `Spazio · ${size}`,
                 description: 'File in questa discussione',
+                descriptionNamed: ({ title }) => `File in ${title}`,
                 say: ({ size, count }) => `${size} in ${count} file.`,
                 sayBody: 'Ogni file resta con il suo messaggio.',
                 ofAccount: 'Del tuo account',

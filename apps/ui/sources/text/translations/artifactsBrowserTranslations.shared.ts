@@ -289,6 +289,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
         discussion: Readonly<{
             row: (params: Readonly<{ size: string }>) => string;
             description: string;
+            descriptionNamed: (params: Readonly<{ title: string }>) => string;
             say: (params: Readonly<{ size: string; count: string }>) => string;
             sayBody: string;
             ofAccount: string;
@@ -667,6 +668,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
             discussion: {
                 row: ({ size }) => `Storage · ${size}`,
                 description: 'Files in this Discussion',
+                descriptionNamed: ({ title }) => `Files in ${title}`,
                 say: ({ size, count }) => `${size} in ${count} files.`,
                 sayBody: 'Each file stays with its message.',
                 ofAccount: 'Of your Account',

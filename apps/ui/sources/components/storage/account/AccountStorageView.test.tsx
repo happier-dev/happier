@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { Dimensions } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ReactTestInstance } from 'react-test-renderer';
@@ -357,6 +358,76 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         await vi.waitFor(() => expect(mutations).toContainEqual({ method: 'DELETE', path: `/v1/artifacts/${SMALL}/revisions` }));
         await act(async () => { await menu('remove')!.props.onSelect('remove'); });
         await vi.waitFor(() => expect(mutations.some((request) => request.path.includes('/attachments/'))).toBe(true));
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it("lists only the kinds that hold something or whose size is not recorded in What's stored", async () => {
+    const disconnect = await serve(null);
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(textOf(screen.findHostByTestId('storage:kind:artifacts'))).toContain(storage(200_000_000)));
+        // Plugin Artifacts hold 0 B: no row. The Profile picture's size is not recorded: its row stays and says so.
+        expect(screen.findHostByTestId('storage:kind:pluginArtifacts')).toBeNull();
+        expect(textOf(screen.findHostByTestId('storage:kind:profilePictures'))).toContain('—');
+        expect(screen.findHostByTestId('storage:kind:discussionAttachments')).not.toBeNull();
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it("opens a Discussion file at its message from the row's menu, beside Remove where admitted", async () => {
+    const disconnect = await serve(null);
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        await layOut(screen, 'storage:collection:stage');
+        const rowMenu = (key: string) => screen.findAll((node) => node.props.testID === `storage:item:${key}`).at(0)
+          ?.findAll((node) => Array.isArray(node.props.items) && typeof node.props.onSelect === 'function' && node.props.triggerIcon === 'more')
+          .at(0);
+        await vi.waitFor(() => expect(rowMenu(`discussionAttachments-${BLOB}`)).toBeDefined());
+        const ids = (key: string) => ((rowMenu(key)?.props.items ?? []) as Array<{ id: string }>).map((item) => item.id);
+        expect(ids(`discussionAttachments-${BLOB}`)).toEqual(['show', 'remove']);
+        // Someone else's file the server does not let this viewer remove still opens where it lives.
+        await vi.waitFor(() => expect(ids(`discussionAttachments-${OTHER_BLOB}`)).toEqual(['show']));
+        await act(async () => { await rowMenu(`discussionAttachments-${BLOB}`)!.props.onSelect('show'); });
+        const pushed = String(routerMock.spies.push.mock.calls.at(-1)?.[0] ?? '');
+        expect(pushed).toContain('discussion-1');
+        expect(pushed).toContain('message-1');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it("says a phone row's kind and where it lives on line 2, never the kind twice", async () => {
+    vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 2, fontScale: 1 });
+    const disconnect = await serve(null);
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        await act(async () => {
+          invokeTestInstanceHandler(screen.findHostByTestId('storage:collection:stage'), 'onLayout',
+            { nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 800 } } });
+        });
+        const line = (key: string) => textOf(screen.findHostByTestId(`storage:item:${key}:line`));
+        await vi.waitFor(() => expect(line(`artifactOldVersions-${SMALL}`)).not.toBe(''));
+        expect(line(`artifactOldVersions-${SMALL}`)).toBe(
+          'artifacts.browser.storageView.kinds.shortNames.artifactOldVersions · artifacts.browser.storageView.items.where');
+        // A Discussion file's line names its kind once; where it lives joins when the storage read names it.
+        expect(line(`discussionAttachments-${BLOB}`)).toBe('artifacts.browser.storageView.kinds.shortNames.discussionAttachments');
       } finally {
         await screen.unmount();
       }

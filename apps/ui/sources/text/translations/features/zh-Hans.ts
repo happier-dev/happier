@@ -3571,6 +3571,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             discussion: {
                 row: ({ size }) => `存储 · ${size}`,
                 description: '此讨论中的文件',
+                descriptionNamed: ({ title }) => `${title} 中的文件`,
                 say: ({ size, count }) => `${count} 个文件，共 ${size}。`,
                 sayBody: '每个文件都保留在其消息中。',
                 ofAccount: '占你的账户',
