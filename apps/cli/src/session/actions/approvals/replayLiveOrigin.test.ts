@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { projectActionOperationFailure } from '@/daemon/actionOperations/actionOperationFailure';
+import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import * as sessionRpc from '@/session/transport/rpc/sessionRpc';
 import { buildApprovalDecisionResult } from '@happier-dev/protocol/actions/executor/approvalResults';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { replayLiveCliApprovalOrigin } from './replayLiveOrigin';
 import { createLiveCliApprovalOrigin } from './liveOrigin';
+import { selectApprovalReplayCredentials } from './replayCredentials';
 
 const request = ApprovalRequestV2Schema.parse({ v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1,
   createdBy: { surface: 'cli' }, actionId: 'secrets.create', actionArgs: { name: 'fixture' }, summary: 'Review',
@@ -60,5 +63,38 @@ describe('live CLI approval decision replay', () => {
     expect(effectCompleted).toBe(true);
     expect(controller.signal.aborted).toBe(true);
     expect(result).toEqual(receipt);
+  });
+});
+
+describe('approval replay credential selection', () => {
+  const credentials = (accountId: string, signature: string) => ({
+    token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.${signature}`,
+    encryption: null,
+    credentialProvenance: 'stored_session' as const,
+  });
+  const captured = credentials('original', 'captured');
+  const refreshed = credentials('original', 'refreshed');
+  const other = credentials('other', 'current');
+  const unreadable = { ...captured, token: 'malformed-fixture' };
+
+  it.each([
+    ['captured_credentials_unavailable', null, refreshed],
+    ['current_credentials_unavailable', captured, null],
+    ['captured_account_differs', other, refreshed],
+    ['captured_account_differs', unreadable, refreshed],
+  ] as const)('reports %s through the managed-child failure projection (%#)', (reason, prior, current) => {
+    const failure = selectApprovalReplayCredentials(prior, current, 'original');
+    const expected = { ok: false, errorCode: 'account_mismatch', effectAttempted: false,
+      failureCause: { nativeErrorReason: reason } };
+    expect(failure).toMatchObject(expected);
+    if (failure.ok) throw new Error('Expected an approval replay refusal');
+    const error = ManagedMachineControllerError.fromActionFailure(failure, 'machines.setup.adminAccess.set');
+    expect(projectActionOperationFailure(error, 'action_operation_failed', 'machines.managed.acquire'))
+      .toMatchObject(expected);
+  });
+
+  it('uses refreshed credentials for the same Account and the capture after an Account switch', () => {
+    expect(selectApprovalReplayCredentials(captured, refreshed, 'original')).toEqual({ ok: true, credentials: refreshed });
+    expect(selectApprovalReplayCredentials(captured, other, 'original')).toEqual({ ok: true, credentials: captured });
   });
 });

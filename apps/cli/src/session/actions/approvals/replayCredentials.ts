@@ -10,8 +10,15 @@ export function selectApprovalReplayCredentials(
 ): Readonly<{ ok: true; credentials: StoredCredentials }> | ActionExecuteFailure {
   const capturedAccountId = captured ? readAccountIdFromToken(captured.token) : null;
   if (!captured || !current || (expectedAccountId && capturedAccountId !== expectedAccountId)) {
+    const reason = !captured ? 'captured_credentials_unavailable'
+      : !current ? 'current_credentials_unavailable'
+        : 'captured_account_differs';
     return {
       ok: false, effectAttempted: false, errorCode: 'account_mismatch',
+      failureCause: {
+        phase: 'approval.replay.credentials', errorClass: 'Error', errorCode: 'account_mismatch',
+        httpStatus: null, nativeErrorReason: reason,
+      },
       error: 'Approval replay credentials are unavailable for the original Account. Sign in to its recorded origin profile and retry this approval.',
     };
   }
