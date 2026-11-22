@@ -118,6 +118,12 @@ does not establish message acceptance or foreground activity. UI normalization a
 filters already-persisted internal records, while genuinely unknown output retains
 the unsupported-output diagnostic.
 
+The Claude transcript filter withholds text-only user rows marked as provider
+context. Claude marks these rows `isSynthetic` in the SDK stream and `isMeta`
+in JSONL. SDK conversion checks the flags before mapping the row, and native
+history applies the same rule. Structured tool results and projected task or peer
+deliveries retain their existing transcript paths.
+
 In development source, native peer deliveries (cross-session messages, teammate
 messages and subagent hand-backs) use the shared
 `attachments/claudePeerMessageProjection.ts` conversation projector. Delivered

@@ -1,7 +1,7 @@
 import type { DirectTranscriptRawMessageV1 } from '@happier-dev/protocol';
 
 import { resolveClaudeSessionMessageRole } from '@/api/session/messageRole';
-import { isClaudeInternalTranscriptMessage } from '@/backends/claude/utils/isClaudeInternalTranscriptMessage';
+import { isClaudeHiddenTranscriptMessage } from '@/backends/claude/utils/isClaudeInternalTranscriptMessage';
 import { normalizeClaudeToolUseNamesInRawJsonLines } from '@/backends/claude/utils/normalizeClaudeToolUseNames';
 import { parseRawJsonLinesObject } from '@/backends/claude/utils/parseRawJsonLines';
 import { readClaudeUserMessageText } from '@/backends/claude/utils/readClaudeUserMessageText';
@@ -122,7 +122,7 @@ export function mapClaudeJsonlLineToDirectMessages(params: Readonly<{
   }
 
   const normalized = normalizeClaudeToolUseNamesInRawJsonLines(parsed);
-  if (isClaudeInternalTranscriptMessage(normalized)) {
+  if (isClaudeHiddenTranscriptMessage(normalized)) {
     return [];
   }
   const normalizedForOutput = ensureClaudeOutputMessageRole(normalized);
