@@ -28,6 +28,7 @@ export default defineConfig({
             "sources/app/deployments/environmentSecretGrantRepository.db.contract.test.ts",
             "sources/app/deployments/deploymentPromotion.sqlite.integration.spec.ts",
             "sources/app/deployments/deploymentAppEnrollment.sqlite.integration.spec.ts",
+            "sources/app/deployments/deploymentTemplateTeamArtifact.integration.spec.ts",
             "sources/app/deployments/environmentSecretLaunchAdmission.sqlite.composed.integration.spec.ts",
             "sources/app/teams/credentials/resourceActivity.sqlite.integration.spec.ts",
             "sources/app/session/access/sessionAccessMembershipImpact.sqlite.integration.spec.ts",

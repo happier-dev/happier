@@ -16,7 +16,7 @@ import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/action
 import { ManagedControlAdmissionInputV1Schema, ManagedListInputV1Schema,
     managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { Tx } from '@/storage/inTx';
-import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx } from '@/app/projects/sources/projectSourceService';
+import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, resolveProjectSourceAccessInTx, canManageProjectSourceOwnerInTx, sourceOwner } from '@/app/projects/sources/projectSourceService';
 import { MACHINE_SERVICE_ADOPT_ACTION_ID, MACHINE_SERVICE_ADOPT_CREATE_ROLE_V1,
     MACHINE_SERVICE_ADOPT_BINDINGS_ROLE_V1 } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { loadDeploymentEnvironmentInTx, lockDeploymentEnvironmentInTx, readCreatedDeploymentEnvironmentIdInTx,
@@ -1452,12 +1452,10 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
                 .every(([key, value]) => parsed.data[key as keyof typeof parsed.data] === value))
             && sameStrictJsonValue(parsed.data.deployerPrincipals ?? [], admission.deployerPrincipals ?? []) && matches(parsed.data));
     }
-    const match = /^\/v1\/artifacts\/([^/?#]+)(?:\/access\/(grants|recipients|key-envelopes))?$/u.exec(proof.path);
-    if (!match) return null;
-    let artifactId: string;
-    try { artifactId = decodeURIComponent(match[1]); } catch { return null; }
-    if (!artifactId || encodeURIComponent(artifactId) !== match[1]) return null;
-    if (method === 'GET' && proof.body === undefined && (match[2] === undefined || match[2] === 'recipients' || match[2] === 'grants')
+    const artifactRoute = readDeploymentPreparationArtifactRoute(proof.path);
+    if (!artifactRoute) return null;
+    const { artifactId, step } = artifactRoute;
+    if (method === 'GET' && proof.body === undefined && (step === undefined || step === 'recipients' || step === 'grants')
         && matches({ id: artifactId })) {
         if (!childEffect && (artifactId === admission.candidate?.contentArtifactId
             // Every Environment-creating root (Create, adoption) owns one create-only candidate id.
@@ -1479,11 +1477,11 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
                 ? [{ targetLinks: { some: { contentArtifactId: artifactId } } }] : []),
                 ...(deployEffect ? [{ deployments: { some: { contentArtifactId: artifactId } } }] : [])] },
             select: { id: true } })) return admit(true);
-        if (!childEffect && admission.source && match[2] === undefined && await tx.projectDeploymentDefaults.findFirst({
+        if (!childEffect && admission.source && step === undefined && await tx.projectDeploymentDefaults.findFirst({
             where: { projectSourceId: admission.source.id, contentArtifactId: artifactId }, select: { projectSourceId: true },
         })) return admit(true);
         // Only adoption looks for an existing native target (findExistingNativeComposeTargetLinkV1).
-        if (binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID && effectActionId === binding.actionId && match[2] === undefined) {
+        if (binding.actionId === MACHINE_SERVICE_ADOPT_ACTION_ID && effectActionId === binding.actionId && step === undefined) {
             const owner = await readCreateAdmissionOwnerInTx(tx, admission);
             if (owner && await isOwnerRuntimeOwnServerLinkContentInTx(tx, binding.machineId, owner, artifactId)) return admit(true);
         }
@@ -1491,30 +1489,45 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
     if (domainEffect) return null;
     if (await readDeploymentCandidatePublicationHttpPurposeInTx(tx, binding, effectActionId, proof)) return admit(true);
     if (deployEffect) return null;
-    // The same authenticated Artifact owner still decides grant eligibility,
-    // current access, recipient census and key-envelope fencing at its routes.
-    // Stored kind is optional on existing canonical writers; no hint is not a
-    // new authority fact. A positively different kind is never a create operand.
     if (childEffect && await tx.deploymentEnvironment.findFirst({ where: {
         id: { not: environmentId! }, contentArtifactId: artifactId,
     }, select: { id: true } })) return null;
-    const owner = await readCreateAdmissionOwnerInTx(tx, admission);
-    if (owner?.kind !== 'team') return null;
+    return admit(await allowsTeamOwnerArtifactPreparationInTx(tx, binding.accountId,
+        await readCreateAdmissionOwnerInTx(tx, admission), artifactRoute, method, proof));
+}
+
+function readDeploymentPreparationArtifactRoute(path: string): Readonly<{ artifactId: string; step: string | undefined }> | null {
+    const match = /^\/v1\/artifacts\/([^/?#]+)(?:\/access\/(grants|recipients|key-envelopes))?$/u.exec(path);
+    if (!match) return null;
+    let artifactId: string;
+    try { artifactId = decodeURIComponent(match[1]); } catch { return null; }
+    if (!artifactId || encodeURIComponent(artifactId) !== match[1]) return null;
+    return { artifactId, step: match[2] };
+}
+
+// The Artifact routes still decide grant eligibility, recipient census and key-envelope fencing.
+// Established deployment writers may leave the stored kind unset.
+async function allowsTeamOwnerArtifactPreparationInTx(tx: Tx, accountId: string, owner: ProjectSourceOwnerV1 | null,
+    { artifactId, step }: NonNullable<ReturnType<typeof readDeploymentPreparationArtifactRoute>>,
+    method: string, proof: Readonly<{ body?: unknown; routeInput?: unknown }>,
+): Promise<boolean> {
+    if (owner?.kind !== 'team') return false;
     const artifact = await tx.artifact.findUnique({ where: { id: artifactId }, select: { kind: true, accountId: true } });
-    if (!artifact || artifact.accountId !== binding.accountId
+    if (!artifact || artifact.accountId !== accountId
         || artifact.kind !== null && artifact.kind !== DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1
-        && artifact.kind !== DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1) return null;
-    if (method === 'GET' && proof.body === undefined && (match[2] === undefined || match[2] === 'recipients')) return admit(matches({ id: artifactId }));
-    if (method === 'PUT' && match[2] === 'grants') {
+        && artifact.kind !== DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1) return false;
+    const matches = (expected: unknown) => proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, expected);
+    if (method === 'GET' && proof.body === undefined && (step === undefined || step === 'recipients')) return matches({ id: artifactId });
+    if (method === 'PUT' && step === 'grants') {
         const parsed = ArtifactAccessGrantSetInputV1Schema.safeParse(proof.body);
-        return admit(parsed.success && parsed.data.artifactId === artifactId && parsed.data.accessLevel === 'admin'
-            && sameStrictJsonValue(parsed.data.principal, owner) && matches({ id: artifactId, ...parsed.data }));
+        return parsed.success && parsed.data.artifactId === artifactId && parsed.data.accessLevel === 'admin'
+            && sameStrictJsonValue(parsed.data.principal, owner) && matches({ id: artifactId, ...parsed.data });
     }
-    if (method === 'POST' && match[2] === 'key-envelopes') {
+    if (method === 'POST' && step === 'key-envelopes') {
         const parsed = ArtifactRecipientKeyEnvelopeCommitInputV1Schema.safeParse(proof.body);
-        return admit(parsed.success && parsed.data.artifactId === artifactId && matches({ id: artifactId, ...parsed.data }));
+        return parsed.success && parsed.data.artifactId === artifactId && matches({ id: artifactId, ...parsed.data });
     }
-    return null;
+    return false;
 }
 
 /** The optional finite setup carrier admits this one metadata effect, not a managed family. */
@@ -1938,8 +1951,6 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             && (!proof.reviewedChild || effect.success
                 && computeActionInputApprovalDigestV1(effect.data, reviewedInput) === proof.reviewedChild.inputDigest);
     }
-    if (admission.operation === 'template'
-        && !await isAdmittedTemplateInstantiationScopeCurrentInTx(tx, binding, admission)) return false;
     if (admission.operation !== 'template') {
         if (admission.operation === 'catalog') {
             if (binding.actionId !== deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 || admission.machineId !== binding.machineId
@@ -1971,13 +1982,22 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             && (!isReadOnlyArtifactPurpose || isReadOnlyArtifactPurpose(proof));
     }
     if (admission.operation === 'template') {
-        const environmentId = await readTemplateEnvironmentId(tx, binding, admission);
+        const scope = await readAdmittedTemplateInstantiationScopeInTx(tx, binding, admission);
+        if (!scope) return false;
+        const environmentId = scope.environment?.id;
         if (effectActionId === DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1)
             return isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof);
         const child = readDeclaredPreparationScope(binding)?.storageEffects.includes(effectActionId) === true;
         if (effectActionId !== binding.actionId && !child) return false;
         if (effectActionId === binding.actionId && admission.workspace
             && isDeploymentWorkspaceReadHttpPurpose(binding.serverIdentityId, admission.workspace, proof)) return true;
+        if (effectActionId === binding.actionId && admission.mode === 'apply') {
+            const artifactRoute = readDeploymentPreparationArtifactRoute(proof.path);
+            if (artifactRoute?.step !== undefined) {
+                const owner = admission.newProject?.owner ?? (scope.source ? sourceOwner(scope.source) : null);
+                return allowsTeamOwnerArtifactPreparationInTx(tx, binding.accountId, owner, artifactRoute, method, proof);
+            }
+        }
         if (method === 'GET' && proof.body === undefined) {
             if (await isDeploymentEnvironmentHttpReadInAdmittedScopeInTx(tx, binding, proof, false, undefined, true)) return true;
             if (await isDeploymentPreparationMachineReadHttpPurposeInTx(tx, binding, effectActionId, proof)) return true;
