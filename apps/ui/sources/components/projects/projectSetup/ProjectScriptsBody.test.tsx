@@ -41,7 +41,9 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { openExternalActionRequesterAccountContextV1, openManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_GET_ACTION_ID_V1, isRequesterOperationActionIdV1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { readRequesterOperationRequestV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
+import { executeActionOperationActionV1 } from '@happier-dev/protocol/actions/executor/actionOperationActions';
 import { ActionOperationGetActionInputV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -51,7 +53,7 @@ import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttp
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2,
-  ActionOperationGetV1ResponseSchema, ActionOperationGetV2RequestSchema, ActionOperationCancelV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
+  ActionOperationGetV2RequestSchema, ActionOperationCancelV1RequestSchema } from '@happier-dev/protocol/actions/operations/v1';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 installDisconnectedServerSocketBoundary();
@@ -444,7 +446,7 @@ async function render(
         const syncAdmission = request.envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(actionId, request.envelope.input) : undefined;
         const requestId = request.envelope.requestId;
         if (!requestId) throw new Error('Project Action fixture requires a request ID');
-        const requesterOperationRead = actionId === ACTION_OPERATION_GET_ACTION_ID_V1
+        const requesterOperationRead = isRequesterOperationActionIdV1(actionId)
           && request.envelope.v === 2 && request.envelope.requesterOperationRead;
         return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'scripts-body-root',
           ...(requesterOperationRead ? { requesterOperationReadInstallationPublicKey: encodeBase64(installationKeys.publicKey, 'base64url') } : {}), binding: {
@@ -467,7 +469,7 @@ async function render(
         const actionId = ActionIdSchema.parse(decodeURIComponent(action[1]!));
         const body: unknown = JSON.parse(String(init?.body));
         const root = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
-        if (actionId === ACTION_OPERATION_GET_ACTION_ID_V1 && root.success
+        if (isRequesterOperationActionIdV1(actionId) && root.success
           && root.data.envelope.v === 2 && root.data.envelope.requesterOperationRead) {
           const { envelope, executionAuthorization, machineId } = root.data;
           const material = openManagedControllerActionCodecV1({ authorization: executionAuthorization,
@@ -479,13 +481,13 @@ async function render(
           const opened = material && openExternalActionRequestV2({ envelope, binding, material,
             projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1 });
           if (!material || !opened) throw new Error('Expected an installed requester operation read');
-          const input = ActionOperationGetActionInputV1Schema.parse(opened.input);
-          expect(input).toMatchObject({ serverId: workspace.serverId, machineId });
-          shared.requesterOperationReads.push(input);
-          const { serverId, machineId: _target, ...payload } = input;
-          const result = ActionOperationGetV1ResponseSchema.parse(await shared.operationRead({
-            serverId, machineId, method: ACTION_OPERATION_RPC_METHODS_V2.get, payload,
-          }));
+          const operation = readRequesterOperationRequestV1(actionId, opened.input);
+          if (!operation) throw new Error('Expected a requester operation input');
+          expect(operation.input).toMatchObject({ serverId: workspace.serverId, machineId });
+          if (actionId === ACTION_OPERATION_GET_ACTION_ID_V1)
+            shared.requesterOperationReads.push(ActionOperationGetActionInputV1Schema.parse(operation.input));
+          const result = await executeActionOperationActionV1({ ...operation,
+            transport: request => shared.operationRead(request) });
           return Response.json(prepareExternalActionResponseV2({ binding, request: envelope, material,
             executedMachineId: machineId, randomBytes: nacl.randomBytes,
             execution: { ok: true, result },
