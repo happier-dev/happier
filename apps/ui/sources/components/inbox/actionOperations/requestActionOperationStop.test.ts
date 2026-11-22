@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
+import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { decideApprovalAsInbox, installOwnMachineApprovalReplayBoundary } from '@/dev/testkit/harness/approvalInbox';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
@@ -127,18 +128,26 @@ describe('requestActionOperationStop', () => {
         const held = { serverId, snapshot };
         actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
         await harness.addHome({ name: 'Ambient', serverUrl: 'https://ambient.test', accountId: 'alice' });
-        rpc.machine.mockResolvedValue({ ok: true, result: { ok: true } });
+        let current: ActionOperationSnapshotV1 = snapshot;
+        rpc.machine.mockImplementation(async ({ method }) => method === 'actionOperation.get.v2'
+            ? { kind: 'found', operation: current } : { ok: true, result: { ok: true } });
+        const responses = () => rpc.machine.mock.calls.map(([request]) => request).filter(request => request.method === 'capabilities.invoke');
         await expect(submitActionOperationTaskAnswer(held, { password: 'one-use-password' })).resolves.toEqual({ ok: true });
-        expect(rpc.machine).toHaveBeenCalledTimes(1);
-        expect(rpc.machine.mock.calls[0]?.[0]).toMatchObject({ serverId, accountId: 'alice', machineId: 'machine-1',
+        expect(responses()).toHaveLength(1);
+        expect(responses()[0]).toMatchObject({ serverId, machineId: 'machine-1',
             payload: { id: 'tool.systemTasks', method: 'respond', params: {
                 taskId: 'actual-task', expectedPromptKind: 'sudo.password', answer: { password: 'one-use-password' },
             } } });
-        expect(rpc.machine.mock.calls[0]?.[0].payload.params).not.toHaveProperty('responseAuthorization');
-        actionOperationStore.mergeSnapshots({ serverId, snapshots: [{ ...snapshot, revision: snapshot.revision + 1,
-            domainRef: { ...snapshot.domainRef, setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' } } }] });
+        expect(responses()[0].payload.params).not.toHaveProperty('responseAuthorization');
+        current = { ...snapshot, scope: { ...snapshot.scope, accountId: 'another-account' } };
         await expect(submitActionOperationTaskAnswer(held, { password: 'another-password' })).resolves.toEqual({ ok: false, errorCode: 'action_operation_unavailable' });
-        expect(rpc.machine).toHaveBeenCalledTimes(1);
+        expect(responses()).toHaveLength(1);
+        const cleared = { ...snapshot, revision: snapshot.revision + 1,
+            domainRef: { ...snapshot.domainRef, setupTask: { id: 'actual-task', taskKind: 'machine.setup.apply.v1' as const } } };
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [cleared] });
+        current = cleared;
+        await expect(submitActionOperationTaskAnswer(held, { password: 'another-password' })).resolves.toEqual({ ok: false, errorCode: 'action_operation_unavailable' });
+        expect(responses()).toHaveLength(1);
     });
 
     it('routes through the operation transport Home rather than ambient focus', async () => {

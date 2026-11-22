@@ -103,13 +103,14 @@ describe('ActionOperationDetailModal sudo answer', () => {
     });
     const snapshot = heldSetup(serverId);
     actionOperationStore.mergeSnapshots({ serverId, snapshots: [snapshot] });
-    const screen = await renderScreen(
+    const renderDetail = () => renderScreen(
       <ActionOperationDetailModal
         serverId={serverId}
         operationId="setup-operation"
         onClose={vi.fn()}
       />,
     );
+    let screen = await renderDetail();
 
     // Needs password: the secure field names the administrator; Send waits for a value; Stop stays the canceller.
     const field = screen.findHostByTestId('action-operation-sudo-password');
@@ -123,6 +124,16 @@ describe('ActionOperationDetailModal sudo answer', () => {
     expect(
       screen.findByTestId('action-operation-project-command.target'),
     ).toBeNull();
+
+    // Closing detail keeps the same native question, while disposing of its UI-only draft.
+    screen.changeTextByTestId('action-operation-sudo-password', DUMMY);
+    await flushHookEffects();
+    expect(fieldValue(screen)).toBe(DUMMY);
+    await screen.unmount();
+    screen = await renderDetail();
+    expect(fieldValue(screen)).toBe('');
+    expect(screen.findHostByTestId('action-operation-sudo-password')?.props.autoFocus).toBe(true);
+    expect(rpc.machine.mock.calls.filter(([request]) => request.method === 'capabilities.invoke')).toHaveLength(0);
 
     // Submitting: the value leaves the field at once; the field and Send hold while the machine answers.
     const reply = createDeferred<unknown>();
