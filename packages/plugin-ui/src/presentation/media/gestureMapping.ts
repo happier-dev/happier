@@ -39,14 +39,15 @@ const boundAxis = (offset: number, scale: number, viewportSize: number, contentS
 /**
  * The view that fills the pane with the picture, from its top-left corner: the picture's shorter side meets the
  * pane and the rest continues past the far edges. A picture that already fills the pane is shown whole, and so is
- * one the fill would draw past its own size (`native`: the picture's own size in the same units as the pane), so
- * a small window stays sharp and whole instead of being blown up (owner 2026-11-20).
+ * one the fill would draw past its own size in device pixels (`native`: the picture's own size in the same units as
+ * the pane; `pixelRatio`: device pixels per pane unit). A page a little shorter than the pane fills it, while a
+ * small window that would be blown up many times stays sharp and whole (owner 2026-11-20).
  */
 export function fillViewTransform(viewport: Readonly<{ width: number; height: number }>, content: HappierLiveStreamGestureGeometry['content'],
-    native: Readonly<{ width: number; height: number }>): HappierLiveStreamViewTransform {
+    native: Readonly<{ width: number; height: number }>, pixelRatio = 1): HappierLiveStreamViewTransform {
     if (!(content.width > 0 && content.height > 0 && viewport.width > 0 && viewport.height > 0)) return WHOLE_PICTURE;
     const scale = Math.max(viewport.width / content.width, viewport.height / content.height);
-    const nativeScale = native.width / content.width;
+    const nativeScale = native.width * Math.max(1, pixelRatio) / content.width;
     return scale > 1 && scale <= nativeScale ? { scale, x: -content.x * scale || 0, y: -content.y * scale || 0 } : WHOLE_PICTURE;
 }
 

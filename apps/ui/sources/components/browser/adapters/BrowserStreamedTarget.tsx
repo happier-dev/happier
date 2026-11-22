@@ -5,8 +5,8 @@ import type { MachineLiveStreamControlSidebandV1 } from '@happier-dev/protocol/m
 import type { BrowserEventBatchV1 } from '@happier-dev/protocol/browser/events/v1';
 import { BrowserInputModifierV1Schema, type BrowserInputEventV1, type BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
 
-import { RemoteViewerStage, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
-import { fillViewTransform, useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
+import { RemoteViewerStage, remoteViewerFillTransform, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { useRemoteViewerActions, type RemoteViewerKeyboard } from '@happier-dev/plugin-ui/presentation';
 import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import type { RemoteViewerClipboardShortcut } from '@happier-dev/plugin-ui/presentation';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
@@ -416,7 +416,7 @@ export function BrowserStreamedTarget(props: Readonly<{
     React.useEffect(() => {
         // The Agent's cursor is drawn over the page where it rests: filled on a passive phone, whole elsewhere.
         // A viewer's own pan or pinch moves only the picture (as local zoom always has).
-        const view = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect, pageShape ?? pageRect) : null;
+        const view = fillsPane && pageRect && viewport ? remoteViewerFillTransform(viewport, pageRect, pageShape ?? pageRect) : null;
         onPageRectChange?.(view && pageRect ? { ...pageRect, x: pageRect.x * view.scale + view.x, y: pageRect.y * view.scale + view.y,
             width: pageRect.width * view.scale, height: pageRect.height * view.scale } : pageRect);
     }, [onPageRectChange, fillsPane, viewport, pageRect?.x, pageRect?.y, pageRect?.width, pageRect?.height, frameSize, pageShape?.width, pageShape?.height]); // eslint-disable-line react-hooks/exhaustive-deps

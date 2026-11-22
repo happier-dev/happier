@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { PixelRatio, View } from 'react-native';
 import Svg, { Polyline } from 'react-native-svg';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { fillViewTransform, type HappierLiveStreamInputMode, type HappierLiveStreamRect, type HappierLiveStreamViewTransform,
@@ -38,6 +38,16 @@ export function useRemoteViewerFillsPane(passive: boolean): boolean {
     return useDeviceType() === 'phone' && passive;
 }
 
+/**
+ * The one resting fill for a passive phone viewer, shared by the stage and what its hosts draw over the picture
+ * (the Agent's cursor, the paused scrim): it is measured against this screen's device pixels, so a page a little
+ * shorter than the pane fills it while a small window stays whole.
+ */
+export function remoteViewerFillTransform(viewport: Readonly<{ width: number; height: number }>, content: HappierLiveStreamRect,
+    native: Readonly<{ width: number; height: number }>): HappierLiveStreamViewTransform {
+    return fillViewTransform(viewport, content, native, PixelRatio.get());
+}
+
 /** The sides of the drawn picture that continue past the pane under the current view. */
 export function remoteViewerContinuingEdges(viewport: Readonly<{ width: number; height: number }>, content: HappierLiveStreamRect,
     transform: HappierLiveStreamViewTransform): ScrollEdgeFadeVisibility {
@@ -62,7 +72,7 @@ export function RemoteViewerStage(props: Readonly<{
     viewport: Readonly<{ width: number; height: number }>;
     /** Where the picture is drawn whole in the viewport (contain); the fill and the edges derive from it. */
     content?: HappierLiveStreamRect | null;
-    /** The picture's own size in viewport units; the fill never draws it larger. Unknown: it is not filled. */
+    /** The picture's own size in viewport units; the fill never draws it past that in device pixels. Unknown: it is not filled. */
     pictureSize?: Readonly<{ width: number; height: number }> | null;
     /** This viewer watches without driving the source. */
     passive?: boolean;
@@ -87,7 +97,7 @@ export function RemoteViewerStage(props: Readonly<{
     const pictureWidth = props.pictureSize?.width ?? contentWidth;
     const pictureHeight = props.pictureSize?.height ?? contentHeight;
     const restTransform = React.useMemo(() => fill
-        ? fillViewTransform({ width: viewportWidth, height: viewportHeight }, { x: contentX, y: contentY, width: contentWidth, height: contentHeight },
+        ? remoteViewerFillTransform({ width: viewportWidth, height: viewportHeight }, { x: contentX, y: contentY, width: contentWidth, height: contentHeight },
             { width: pictureWidth, height: pictureHeight })
         : FIT, [fill, viewportWidth, viewportHeight, contentX, contentY, contentWidth, contentHeight, pictureWidth, pictureHeight]);
     // The input layer's gesture owner publishes the view it holds; until it does (or after Reset) the view rests.

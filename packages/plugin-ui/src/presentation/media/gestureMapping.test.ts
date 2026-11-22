@@ -132,6 +132,18 @@ describe('shared live stream gesture mapping', () => {
             expect(fillViewTransform(viewport, small, { width: 636, height: 136 })).toEqual({ scale: 1, x: 0, y: 0 });
         });
 
+        it('fills a phone stage with a page a little shorter than it, and keeps a tiny window whole, against device pixels', () => {
+            // Observed on a 390-wide phone stage (DESIGN-ACCEPT-138): a 780x493 page drawn 390x246.5 needs a 2.07x fill.
+            const stage = { width: 390, height: 511 };
+            const page = { x: 0, y: 0, width: 390, height: 246.5 };
+            const filled = fillViewTransform(stage, page, { width: 780, height: 493 }, 3);
+            expect(filled.scale).toBeCloseTo(511 / 246.5);
+            expect(filled.x).toBe(0);
+            // A 636x136 window at three device pixels per point is drawn at most 212x45.3: an 11x fill stays whole.
+            const tiny = { x: 89, y: 233, width: 212, height: 636 / 212 * 136 / 3 };
+            expect(fillViewTransform(stage, tiny, { width: 212, height: tiny.height }, 3)).toEqual({ scale: 1, x: 0, y: 0 });
+        });
+
         it('maps taps to the same remote point at fill, panned, and with the whole page shown', () => {
             const scale = 700 / 234;
             const mapper = createLiveStreamGestureMapper();

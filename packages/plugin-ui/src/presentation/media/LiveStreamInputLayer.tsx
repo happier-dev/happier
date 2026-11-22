@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type GestureResponderEvent, type LayoutChangeEvent } from 'react-native';
+import { Platform, StyleSheet, View, type GestureResponderEvent, type LayoutChangeEvent, type ViewStyle } from 'react-native';
 import type { HappierLiveStreamInputGesture, HappierLiveStreamInputControlKind, HappierLiveStreamOrientation, HappierLiveStreamRect } from './inputGesture.js';
 import type { HappierStyleProp } from '../portableTypes.js';
 import type { HappierLiveStreamInputMode, HappierLiveStreamViewTransform } from './inputGesture.js';
@@ -55,7 +55,11 @@ function readMultiTouch(event: GestureResponderEvent): readonly [InputPoint, Inp
     return first && second ? [first, second] : undefined;
 }
 
-const layerStyle = { flex: 1, minHeight: 0 } as const;
+// The capture owns every touch on the picture: a pinch or pan zooms or moves the viewer's picture (or reaches the
+// source), never the app page around it.
+const layerStyle = StyleSheet.create({
+    layer: { flex: 1, minHeight: 0, ...(Platform.OS === 'web' ? { touchAction: 'none' } as unknown as ViewStyle : null) },
+}).layer;
 
 /**
  * The one viewer-input surface over a live stream: it turns pointer, touch and keyboard input into

@@ -15,8 +15,8 @@ import { buildBrowserStreamSidebandControl } from '@/components/browser/adapters
 import { BrowserPresenceFooter, type BrowserPresenceAgent, type BrowserPresenceCapsuleProps } from '@/components/browser/copresence/BrowserPresenceCapsule';
 import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgentCursor';
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
-import { RemoteViewerStage, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
-import { fillViewTransform, useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
+import { RemoteViewerStage, remoteViewerFillTransform, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
+import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
 import { RemoteViewerControlBar } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
@@ -415,10 +415,10 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     // drawn over the picture outside the stage (the paused scrim, the Agent's cursor) follows that resting view.
     const passive = props.presence.kind !== 'human';
     const fillsPane = useRemoteViewerFillsPane(passive);
-    // The window's own size in points: the fill never draws it past one window pixel per device pixel.
+    // The window's own size at one window pixel per device pixel; the fill is measured against it (see the stage).
     const pictureSize = React.useMemo(() => frameSize ? { width: frameSize.width / PixelRatio.get(), height: frameSize.height / PixelRatio.get() } : null,
         [frameSize]);
-    const restView = fillsPane && pageRect && viewport ? fillViewTransform(viewport, pageRect, pictureSize ?? pageRect) : null;
+    const restView = fillsPane && pageRect && viewport ? remoteViewerFillTransform(viewport, pageRect, pictureSize ?? pageRect) : null;
     const shownRect = restView && pageRect ? { x: pageRect.x * restView.scale + restView.x, y: pageRect.y * restView.scale + restView.y,
         width: pageRect.width * restView.scale, height: pageRect.height * restView.scale } : pageRect;
     const [menuOpen, setMenuOpen] = React.useState(false);

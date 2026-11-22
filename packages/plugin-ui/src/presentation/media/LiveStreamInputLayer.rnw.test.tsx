@@ -81,6 +81,19 @@ describe('live stream keyboard focus', () => {
             expect(capture.getAttribute('aria-label')).toBe('Control the page');
         } finally { mounted.unmount(); }
     });
+    it.each([true, false])('owns every touch on the picture, so a pinch never zooms the app page (input accepted: %s)', inputAccepted => {
+        const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted={inputAccepted} supports={() => true}
+            viewport={{ width: 390, height: 511 }} onGesture={() => {}} testID="viewer" />);
+        try {
+            const capture = mounted.container.querySelector('[data-testid="viewer-capture"]')! as HTMLElement;
+            // React Native Web writes atomic classes; jsdom does not compute touch-action, so read the capture's rules.
+            const rules = Array.from(document.styleSheets).flatMap(sheet => Array.from(sheet.cssRules)) as CSSStyleRule[];
+            const touchAction = rules.filter(rule => rule.selectorText && Array.from(capture.classList)
+                .some(name => rule.selectorText.split(',').some(selector => selector.trim() === `.${name}`)))
+                .map(rule => rule.style.getPropertyValue('touch-action')).filter(Boolean);
+            expect(capture.style.getPropertyValue('touch-action') || touchAction.at(-1)).toBe('none');
+        } finally { mounted.unmount(); }
+    });
     it.each(['direct', 'trackpad'] as const)('%s emits a wire-valid atomic drag from fractional browser timestamps', async mode => {
         const actions: HappierLiveStreamInputGesture[] = [];
         const mounted = mountThroughReactNativeWeb(<HappierLiveStreamInputLayer inputAccepted mode={mode}
