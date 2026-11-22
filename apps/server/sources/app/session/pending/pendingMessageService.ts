@@ -56,7 +56,9 @@ import { backgroundDeliveryAuthentication } from '@/app/session/access/sessionAc
 import type { Fastify } from '@/app/api/types';
 import { readCurrentExecutionRunFollowSource, type ExecutionRunFollowFrontierWitness } from '@/app/session/follow/executionRunFollowSource';
 import { readAutonomousExchangeSourceRoot, readCommittedPersonFollowRootInTx, readReceiverAutonomousExchangeRootInTx,
-    isAutonomousExchangeRootReceiptForAccount, AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
+    isAutonomousExchangeRootReceiptForAccount, readAutonomousExchangeRootReceiptForAccount,
+    AUTONOMOUS_EXCHANGE_SOURCE_INPUT_SELECT } from '@/app/session/messages/readAutonomousExchangeSourceRoot';
+import { readDiscussionSettingsInTx } from '@/app/discussions/settings';
 import { AutonomousExchangeStateV1Schema, createAutonomousExchangeStateV1,
     readAutonomousExchangeAdmissionV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
 import { supportsMachineOperationProtocolCapabilityV1, supportsMachineSessionInputAdmissionProtocolVersion } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -2020,6 +2022,12 @@ function matchesOriginalReplyAdmission(progress: SessionMessageReplyProgressV1, 
 const SETTLEMENT_ORIGINAL_PROJECTION = { replyProgress: true, inputAdmissionReceipt: true, turnStartWitnessId: true,
     autonomousExchangeRootSessionId: true, autonomousExchangeRootLocalId: true } as const;
 
+async function initializeAutonomousExchangeRootStateInTx(tx: Tx, accountAfterTurns: number | null, discussionId?: string) {
+    const discussion = discussionId ? await readDiscussionSettingsInTx(tx, discussionId) : undefined;
+    const override = discussion?.ok ? discussion.value.settings.coordination?.autonomousCheckIn : undefined;
+    return createAutonomousExchangeStateV1(accountAfterTurns, override);
+}
+
 async function validateInputSettlementDomainFactsInTx(params: Readonly<{
     tx: Tx;
     accountId: string;
@@ -2246,20 +2254,25 @@ async function validateInputSettlementDomainFactsInTx(params: Readonly<{
             && originalReceipt.success && isAutonomousExchangeRootReceiptForAccount(
                 originalReceipt.data, params.accountId, params.targetSessionId)) {
             if (!choice) return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_receiver_choice'), holdReason: 'session_input_target_unavailable', exchangeRoot };
-            exchangeRootState = createAutonomousExchangeStateV1(choice.afterTurns);
-        } else if (!root || root.session.accountId !== params.accountId
-            || !isAutonomousExchangeRootReceiptForAccount(root.inputAdmissionReceipt, params.accountId, exchangeRoot.sessionId)) {
-            return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_root_custody'), holdReason: 'session_input_target_unavailable', exchangeRoot };
+            exchangeRootState = await initializeAutonomousExchangeRootStateInTx(params.tx, choice.afterTurns, addressing?.discussionId);
         } else {
+            const rootReceipt = root?.session.accountId === params.accountId
+                ? readAutonomousExchangeRootReceiptForAccount(root.inputAdmissionReceipt, params.accountId, exchangeRoot.sessionId)
+                : null;
+            if (!root || !rootReceipt) {
+                return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_root_custody'), holdReason: 'session_input_target_unavailable', exchangeRoot };
+            }
+            const discussionId = rootReceipt.issuer === 'authenticatedMachine' ? rootReceipt.discussionAddressing?.discussionId : undefined;
             const state = createStoredReadSchema(AutonomousExchangeStateV1Schema).safeParse(root.autonomousExchangeState);
             // An admitted local input may predate an available Account choice.
             // Initialize only this Account's existing root once it is available.
             if (!state.success && root.autonomousExchangeState !== null) return { ok: false };
             if (state.success && state.data.stopped) return { ok: false, rejectionCode: 'session_input_cancelled' };
+            // Discussion roots retain their creation-time choice, including explicit Never pause.
             const current = state.success
-                ? !choice || state.data.afterTurns === choice.afterTurns ? state.data
+                ? discussionId || !choice || state.data.afterTurns === choice.afterTurns ? state.data
                     : { ...state.data, afterTurns: choice.afterTurns }
-                : choice ? createAutonomousExchangeStateV1(choice.afterTurns) : null;
+                : choice ? await initializeAutonomousExchangeRootStateInTx(params.tx, choice.afterTurns, discussionId) : null;
             if (!current) return { ok: false, failureCause: projectActionFailureCauseV1(undefined, 'session.input.exchange_state'), holdReason: 'session_input_target_unavailable', exchangeRoot };
             if (!state.success || current !== state.data) {
                 const updated = await params.tx.sessionMessage.updateMany({

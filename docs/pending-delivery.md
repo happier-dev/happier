@@ -526,10 +526,15 @@ outbox. Automation's immutable final-result handoff remains its own contract.
 Protected Pending admission and the native Session Turn owner share one count on
 the admitted input's exchange root. Admission alone does not spend allowance:
 the exact accepted input must join its actual new-turn witness. Same-turn
-supplements, steering and returned answers do not count. At the Account's current
+supplements, steering and returned answers do not count. At the exchange's
 check-in limit, the next autonomous input remains Pending with
-`autonomous_check_in`; the root's person can Continue, allow ten more starts, or
+`autonomous_check_in`. The root's person can Continue, allow ten more starts, or
 Stop through the existing revision-bound exchange control.
+
+When Pending initializes a Discussion-origin exchange, it reads the originating
+Discussion's check-in override. An absent override uses the Account setting.
+Later admissions use the value stored on the root. An explicit Never pause
+disables check-ins for the exchange. Spawn depth and authority still apply.
 
 The receiver Account's Pending reader includes `autonomousExchangeRoot:
 {sessionId, localId}` only on a queued `autonomous_check_in` hold whose original

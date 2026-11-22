@@ -17,6 +17,7 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { setDiscussionSettings } from './settings';
 import { archiveDiscussion, createDiscussion, postDiscussionMessage, renameDiscussion, restoreDiscussion } from './mutations';
 import { getDiscussion, listDiscussions, readDiscussionMessages } from './queries';
 import { setDiscussionReadCursor } from './readState';
@@ -2207,8 +2208,16 @@ describe('First-class Discussions service (SQLite)', () => {
             principal: { kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: watcher.id,
         }))).observations).toEqual([]);
     });
-    it('delivers a native Discussion-origin addressed post through the real Follow intake and Pending owner', async () => {
+    it.each([
+        { name: 'Account default', accountAfterTurns: 2, override: undefined, expectedAfterTurns: 2 },
+        { name: 'configured limit', accountAfterTurns: 5, override: { afterTurns: 3 }, expectedAfterTurns: 3 },
+        { name: 'Never pause', accountAfterTurns: 5, override: { afterTurns: null }, expectedAfterTurns: null },
+    ])('applies the $name to a native Discussion-origin exchange through Follow intake and Pending', async ({
+        accountAfterTurns, override, expectedAfterTurns,
+    }) => {
         const { owner, discussionId } = await fixture();
+        if (override) expect(await setDiscussionSettings({ authentication, actorAccountId: owner.id, discussionId,
+            settings: { coordination: { autonomousCheckIn: override } } })).toMatchObject({ ok: true });
         const source = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const target = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         for (const session of [source, target]) expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
@@ -2236,7 +2245,7 @@ describe('First-class Discussions service (SQLite)', () => {
         await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurnId, status: 'completed', startedAt: 1n, updatedAt: 2n,
             transcriptAnchorsJson: JSON.stringify({ userMessageSeqs: [1] }) } });
         const sourceSession = { sourceSessionId: source.id, sourceTurnId, sourceInputId, via: 'action' as const, discussionAddressing: originalAddressing };
-        for (let start = 0; start < 3; start++) {
+        for (let start = 0; start < (expectedAfterTurns === null ? 6 : expectedAfterTurns + 1); start++) {
             let response: unknown;
             await getSocketHandler(socket, DISCUSSION_AGENT_POST_EVENT_V1)({ v: 1, sessionId: source.id, discussionId, sourceSession,
                 request: { ...postRequest('Agent question'), mentionedSessionIds: [target.id], content: { t: 'plain', v: { v: 1,
@@ -2307,14 +2316,14 @@ describe('First-class Discussions service (SQLite)', () => {
                     sessionId: target.id, localId, decision: { kind: 'admit', finalContent,
                         validation: { sourceSession, reply: { mode: 'return', sourceSession, discussion: observation.addressing,
                             ...(targetRequest.actionRequestAttributionV1 ? { actionRequestAttributionV1: targetRequest.actionRequestAttributionV1 } : {}) },
-                        autonomousCheckIn: { afterTurns: 2 } } } }, (value: unknown) => { settlement = value; });
+                        autonomousCheckIn: { afterTurns: accountAfterTurns } } } }, (value: unknown) => { settlement = value; });
                 const settled = SessionPendingAdmissionSettlementResponseV1Schema.parse(settlement);
-                if (start === 2) {
+                if (start === expectedAfterTurns) {
                     expect(settled.result).toMatchObject({ status: 'held', code: 'autonomous_check_in' });
                     expect(await db.sessionMessage.findUnique({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
                         .toBeNull();
                     expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
-                        .autonomousExchangeState).toMatchObject({ observedStarts: 2 });
+                        .autonomousExchangeState).toMatchObject({ observedStarts: expectedAfterTurns });
                     continue;
                 }
                 expect(settled, settled.result.status === 'rejected' || settled.result.status === 'held' ? settled.result.code : settled.result.status)
@@ -2324,7 +2333,7 @@ describe('First-class Discussions service (SQLite)', () => {
                         autonomousExchangeCause: 'agent_session' });
                 // The person's initial Discussion wake is not an autonomous start.
                 expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
-                    .toMatchObject({ autonomousExchangeCause: null, autonomousExchangeState: { afterTurns: 2, observedStarts: start } });
+                    .toMatchObject({ autonomousExchangeCause: null, autonomousExchangeState: { observedStarts: start } });
                 // The real native adapter must expose its immutable input witness
                 // while the real host lifecycle consumes the synchronous start.
                 let emitNative: ((event: AgentSessionRuntimeEvent) => void) | undefined;
@@ -2389,12 +2398,18 @@ describe('First-class Discussions service (SQLite)', () => {
                     expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: true });
                     expect(await resolveAcceptedPendingDelivery(accepted)).toMatchObject({ ok: true, didResolve: false });
                     expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
-                        .autonomousExchangeState).toMatchObject({ afterTurns: 2, observedStarts: start + 1 });
+                        .autonomousExchangeState).toMatchObject({ observedStarts: start + 1 });
                     expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: target.id, localId } } }))
                         .toMatchObject({ turnStartWitnessId: turnId, acceptedTurnCounted: true });
                 } finally { unsubscribe(); await runtime.resetOrDisposeRuntime('runtime_recovery'); }
             } finally { restoreHttp(); await app.close(); }
+            if (start === 0 && expectedAfterTurns === 3) {
+                expect(await setDiscussionSettings({ authentication, actorAccountId: owner.id, discussionId,
+                    settings: { coordination: { autonomousCheckIn: { afterTurns: null } } } })).toMatchObject({ ok: true });
+            }
         }
+        expect((await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: sourceInputId } } }))
+            .autonomousExchangeState).toMatchObject({ afterTurns: expectedAfterTurns });
     });
     it('commits one immutable addressed set and cutoff, with reply addressing and silent negative controls', async () => {
         const { owner, discussionId } = await fixture();

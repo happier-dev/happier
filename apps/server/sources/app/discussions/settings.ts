@@ -2,12 +2,21 @@ import { isDeepStrictEqual } from 'node:util';
 import { DiscussionSettingsV1Schema, DiscussionSettingsV1StoredSchema, type DiscussionSettingsV1,
     type DiscussionSettingsResponseV1 } from '@happier-dev/protocol/discussions/settings';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
-import { inTx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { prepareDiscussionMutationAccounts, resolveDiscussionContextInTx } from './access';
 import { markDiscussionReadersChangedInTx } from './changes';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
 
 type SettingsActor = Readonly<{ actorAccountId: string; discussionId: string; authentication: SessionAccessAuthentication }>;
+
+/** Read operational settings for an already-admitted Discussion. */
+export async function readDiscussionSettingsInTx(tx: Tx, discussionId: string): Promise<DiscussionResult<DiscussionSettingsResponseV1>> {
+    const row = await tx.discussion.findUnique({ where: { id: discussionId }, select: { settingsV1: true } });
+    if (!row) return discussionFailure('discussion_not_found');
+    const settings = DiscussionSettingsV1StoredSchema.safeParse(row.settingsV1 ?? {});
+    return settings.success ? discussionSuccess({ discussionId, settings: settings.data })
+        : discussionFailure('discussion_content_unavailable');
+}
 
 /** Settings are operational facts, readable with live resource access without a content key. */
 export async function getDiscussionSettings(input: SettingsActor): Promise<DiscussionResult<DiscussionSettingsResponseV1>> {
@@ -15,11 +24,7 @@ export async function getDiscussionSettings(input: SettingsActor): Promise<Discu
         const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId,
             accountId: input.actorAccountId, authentication: input.authentication });
         if (!context) return discussionFailure('discussion_not_found');
-        const row = await tx.discussion.findUnique({ where: { id: input.discussionId }, select: { settingsV1: true } });
-        if (!row) return discussionFailure('discussion_not_found');
-        const settings = DiscussionSettingsV1StoredSchema.safeParse(row.settingsV1 ?? {});
-        return settings.success ? discussionSuccess({ discussionId: input.discussionId, settings: settings.data })
-            : discussionFailure('discussion_content_unavailable');
+        return readDiscussionSettingsInTx(tx, input.discussionId);
     });
 }
 

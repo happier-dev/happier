@@ -27,7 +27,7 @@ type SourceInput = Readonly<{
 
 export type AutonomousExchangeRoot = AutonomousExchangeRootV1;
 
-function readAutonomousExchangeRootReceiptForAccount(value: unknown, accountId: string, sessionId: string): SessionInputAdmissionReceiptV1 | null {
+export function readAutonomousExchangeRootReceiptForAccount(value: unknown, accountId: string, sessionId: string): SessionInputAdmissionReceiptV1 | null {
     const receipt = createStoredReadSchema(SessionInputAdmissionReceiptV1Schema).safeParse(value);
     return receipt.success && (receipt.data.issuer === 'authenticatedAccount'
         ? receipt.data.actorAccountId === accountId
