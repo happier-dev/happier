@@ -81,7 +81,8 @@ import {
     type WorkflowRunAsTargetKind,
 } from '../run/workflowRunAsTargets';
 import { useWorkflowDetachedRunSupport } from '../run/useWorkflowDetachedRunSupport';
-import { resolveContextualWorkflowProjectTarget } from './resolveContextualWorkflowTarget';
+import { resolveContextualWorkflowProjectTarget, resolveWorkflowProjectTargetOnMachine } from './resolveContextualWorkflowTarget';
+import { prepareWorkflowNativeTrigger } from '../triggers/prepareWorkflowNativeTrigger';
 import { readWorkflowReviewedRunSeed } from '@/sync/domains/workflows/workflowReviewedRunSeed';
 import { deriveWorkflowPlanRunId, readWorkflowPlanResult, startWorkflowPlanReview } from '@/sync/domains/workflows/workflowPlanReview';
 import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
@@ -105,7 +106,7 @@ import { WorkflowEditorCurrentContext } from './WorkflowEditorCurrentContext';
 import { WorkflowExamplesSection } from '../library/WorkflowExamplesSection';
 import { WorkflowTriggerSection } from '../triggers/WorkflowTriggerSection';
 import { useWorkflowTriggerEditing } from '../triggers/useWorkflowTriggerEditing';
-import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflowTriggerRows, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
+import { editWorkflowTriggerDraft, EMPTY_WORKFLOW_TRIGGER_DRAFT, projectWorkflowTriggerEvents, projectWorkflowTriggerRows, WorkflowTriggerSnapshotRestoreError, type WorkflowTriggerSnapshot } from '../triggers/workflowTriggerDraft';
 import { formatTriggerResultDecides } from '../triggers/formatTriggerSummary';
 import { useWorkflowEditorHistory, useWorkflowEditorHistoryLabels, workflowEditorSnapshotsEqual } from '../editor/useWorkflowEditorHistory';
 import { createWorkflowEditorReadable, useWorkflowEditorSelector, type WorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
@@ -1182,21 +1183,23 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const testRunPresentation = useWorkflowTestRunPresentation({ runId: testRun?.runId ?? null, definition: testRun?.definition ?? null, editable: canEditDefinition });
 
     const handleSave = React.useCallback(async (caller?: WorkflowActionCallerContext, asCopy = false): Promise<WorkflowDraftMutationResultV1> => {
-        const draft = snapshotRef.current?.draft ?? null;
-        const description = snapshotRef.current?.description ?? '';
-        const project = snapshotRef.current?.projectTarget ?? null;
+        const snapshot = snapshotRef.current;
         // Try again on a failed Copy keeps that Copy, rather than saving back
         // into the source Artifact. Once acknowledged, Copy starts a new intent.
         const copying = asCopy || pendingDefinitionCreatesRef.current.copy !== null;
         if (!canManagePersonalTriggers || (copying && !canEditDefinition)) return { status: 'refused', reason: 'workflow_draft_read_only' };
-        if (draft === null) return { status: 'unavailable' };
+        if (snapshot === null) return { status: 'unavailable' };
         if (savePending) return { status: 'refused', reason: 'save_pending' };
         history.commit();
-        if (!triggers.complete) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
+        const { draft, description, projectTarget: project } = snapshot;
+        const { pending, edits } = snapshot.incompleteTriggers;
+        const nativeFacts = pending.flatMap(row => row.nativeEvent === undefined ? [] : [{ row, fact: row.nativeEvent }]);
+        if (!triggers.complete && (copying || caller !== undefined || Object.keys(edits).length > 0 || nativeFacts.length !== pending.length)) {
+            return { status: 'refused', reason: 'workflow_trigger_setup_required' };
+        }
         const definitionChanged = canEditDefinition && (copying || saved === null
             || definitionHasChanges(draft) || description !== savedDescriptionRef.current);
-        const validation = validateWorkflowEditorDraft(draft, { triggerEvents: triggers.triggerEvents });
-        if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) return { status: 'refused', reason: 'invalid_workflow' };
+        const draftRevision = history.getRevision();
         const lifetime = accountLifetime;
         if (!lifetime?.isCurrent()) return { status: 'unavailable' };
         // Same Account is not the same workflow: a save that resolves after this
@@ -1222,11 +1225,54 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setSaveFailure(undefined);
         return (async (): Promise<WorkflowDraftMutationResultV1> => {
             let persisted = saved;
+            let preparedDraft;
+            let eventProjection = { triggerEvents: triggers.triggerEvents, intendedTriggers: triggers.intendedTriggers };
             try {
+                if (nativeFacts.length > 0) {
+                    let next = triggers.draft;
+                    const first = nativeFacts[0]!;
+                    const runsOn = next.context?.project ?? triggers.set?.project ?? project
+                        ?? resolveWorkflowProjectTargetOnMachine({
+                            machineId: first.fact.machineId, machines, recentMachinePaths: recentMachinePaths ?? [],
+                        });
+                    if (runsOn === null) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
+                    for (const { row, fact } of nativeFacts) {
+                        const configured = await prepareWorkflowNativeTrigger(fact, lifetime, abort?.signal);
+                        if (!isCurrent() || draftRevision !== history.getRevision()) return { status: 'refused', reason: 'draft_retired' };
+                        if (!configured) return { status: 'refused', reason: 'workflow_trigger_setup_required' };
+                        next = editWorkflowTriggerDraft(next, { kind: 'add', clientId: row.clientId,
+                            trigger: { ...configured.trigger, enabled: row.enabled ?? true }, payloadSchema: configured.payloadSchema });
+                    }
+                    if (triggers.set === null && project === null) {
+                        next = editWorkflowTriggerDraft(next, { kind: 'setContext', context: { ...next.context, project: runsOn } });
+                    }
+                    const triggerSnapshot = triggers.captureSnapshot(next);
+                    const configuredRows = triggerSnapshot.rows.filter(row => nativeFacts.some(({ row: pendingRow }) => pendingRow.clientId === row.identity.clientId));
+                    // Enrollment completes the same Add intent. Undo/Redo keep its identity and the surrounding edits.
+                    history.mapSnapshots(previous => {
+                        const resolved = configuredRows.filter(row => previous.incompleteTriggers.pending.some(item => item.clientId === row.identity.clientId));
+                        if (resolved.length === 0) return previous;
+                        return { ...previous,
+                            triggers: { ...previous.triggers, project: previous.triggers.project ?? triggerSnapshot.project,
+                                rows: [...previous.triggers.rows, ...resolved] },
+                            incompleteTriggers: { ...previous.incompleteTriggers, pending: previous.incompleteTriggers.pending
+                                .filter(item => !resolved.some(row => row.identity.clientId === item.clientId)) },
+                        };
+                    });
+                    triggers.setDraft(next);
+                    triggers.updateIncomplete(() => EMPTY_WORKFLOW_TRIGGER_INCOMPLETE);
+                    preparedDraft = next;
+                    eventProjection = projectWorkflowTriggerEvents(triggers.set, preparedDraft);
+                }
+                const validation = validateWorkflowEditorDraft(draft, { triggerEvents: eventProjection.triggerEvents });
+                if (definitionChanged && (!validation.valid || validation.normalizedDefinition === undefined)) {
+                    setSaveFailure(t('workflows.save.failedBody'));
+                    return { status: 'refused', reason: 'invalid_workflow' };
+                }
                 if (definitionChanged && validation.normalizedDefinition !== undefined) {
                     const createIntent = copying ? 'copy' : 'save';
                     persisted = await saveWorkflowEditorDefinition({ draft, description, definition: validation.normalizedDefinition,
-                        ...(triggers.intendedTriggers === undefined ? {} : { intendedTriggers: triggers.intendedTriggers }),
+                        ...(eventProjection.intendedTriggers === undefined ? {} : { intendedTriggers: eventProjection.intendedTriggers }),
                         saved: persisted, baseline: { draft: savedDraftRef.current ?? initialDraftBaselineRef.current, description: savedDescriptionRef.current },
                         pendingCreate: pendingDefinitionCreatesRef.current[createIntent],
                         retainCreate: (pending) => { pendingDefinitionCreatesRef.current[createIntent] = pending; },
@@ -1274,7 +1320,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 if (copying) return { status: 'applied' };
                 // Then the trigger delta; a failure here reads "Workflow saved · Triggers not
                 // updated" and keeps the pending trigger edits for Try again (07 S4).
-                const triggerOutcome = await triggers.save(persisted.definitionId, isCurrent, caller, operation);
+                const triggerOutcome = await triggers.save(persisted.definitionId, isCurrent, caller, operation, preparedDraft);
                 if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
                 if (abort?.signal.aborted) return { status: 'refused', reason: 'cancelled' };
                 if (typeof triggerOutcome === 'object') setSaveFailure(triggerOutcome.message);
@@ -1338,12 +1384,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 }
             }
         })();
-    }, [accountLifetime, canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, definitionDraftDirty, descriptionDraftDirty, description, saved, savePending, sourceKind, triggers, rememberAuthoringMemory, rememberedProject]);
+    }, [accountLifetime, canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, definitionDraftDirty, descriptionDraftDirty, description, saved, savePending, sourceKind, triggers, history, machines, recentMachinePaths, rememberAuthoringMemory, rememberedProject]);
 
     const presentSaveResult = React.useCallback((asCopy: boolean) => {
         const sourceIsCurrent = captureSourceGeneration();
         void handleSave(undefined, asCopy).then(result => {
             if (result.status !== 'refused' || result.reason !== 'workflow_trigger_setup_required' || !sourceIsCurrent()) return;
+            setSaveFailure(t('workflows.triggers.card.incomplete'));
             setView('steps');
             editorCommandsRef.current?.schedule();
             void Modal.alert(t('workflows.save.failedTitle'), t('workflows.triggers.card.incomplete'),

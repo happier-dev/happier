@@ -76,7 +76,7 @@ export type WorkflowTriggerEditing = Readonly<{
      * `failed` keeps exactly the edits that were not applied.
      */
     /** A failed Save says why (F11): its message names the cause through the workflow problem owner. */
-    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext, operation?: WorkflowActionOperation) => Promise<'saved' | 'stale' | WorkflowTriggerSaveFailure>;
+    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext, operation?: WorkflowActionOperation, draft?: WorkflowTriggerDraft) => Promise<'saved' | 'stale' | WorkflowTriggerSaveFailure>;
 }>;
 
 /**
@@ -183,8 +183,9 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const identitiesRef = React.useRef({ rowIdentities, identify });
     identitiesRef.current = { rowIdentities, identify };
 
-    const save = React.useCallback<WorkflowTriggerEditing['save']>(async (workflow, isCurrent, caller, operation) => {
-        const captured = stateRef.current;
+    const save = React.useCallback<WorkflowTriggerEditing['save']>(async (workflow, isCurrent, caller, operation, draft) => {
+        const state = stateRef.current;
+        const captured = draft === undefined ? state : { ...state, draft };
         const capturedIdentities = identitiesRef.current;
         const lifetime = params.accountLifetime === undefined ? captureActiveServerAccountScopeCurrentness() : params.accountLifetime;
         const current = () => mounted.current && identityRef.current === captured.identity && lifetime?.isCurrent() === true && isCurrent();

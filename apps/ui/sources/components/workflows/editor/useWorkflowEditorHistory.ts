@@ -99,6 +99,13 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
         state.current.revision += 1;
         notify();
     }, [commit, notify]);
+    const mapSnapshots = React.useCallback((project: (snapshot: T) => T) => {
+        const current = state.current;
+        const map = (change: Change<T>) => ({ ...change, before: project(change.before), after: project(change.after) });
+        current.past = current.past.map(map);
+        current.future = current.future.map(map);
+        if (current.pending) current.pending = map(current.pending);
+    }, []);
     const reset = React.useCallback(() => {
         const current = state.current;
         current.past = [];
@@ -123,5 +130,5 @@ export function useWorkflowEditorHistory<T extends WorkflowEditorHistorySnapshot
         undo, redo, subscribe,
     }), [redo, subscribe, undo]);
     const getRevision = React.useCallback(() => state.current.revision, []);
-    return { controls, record, commit, reset, getRevision };
+    return { controls, record, commit, mapSnapshots, reset, getRevision };
 }

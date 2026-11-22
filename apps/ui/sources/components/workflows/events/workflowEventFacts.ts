@@ -159,7 +159,7 @@ export function readWorkflowEventAddsLine(fact: WorkflowActivityFact, match: Wor
 /** Authoring intent only: the ordinary Event setup Action acquires source identity and cursor. */
 export function readWorkflowEventDraftSeed(
   fact: Parameters<typeof readWorkflowEventTrigger>[0],
-  catalog: Readonly<{ serverId: string | null; events: readonly WorkflowTriggerEventOption[] }>,
+  catalog: Readonly<{ serverId: string | null; events: readonly Pick<WorkflowTriggerEventOption, 'eventRef' | 'automation' | 'payloadSchema'>[] }>,
 ): Readonly<{ setupRequired: true; trigger: null;
     eventSeed: NonNullable<WorkflowDefinitionDraftSeed['eventSeed']>; payloadSchema?: WorkflowDefinitionDraftSeed['payloadSchema'] }>
   | Readonly<{ setupRequired: false; trigger: AutomationTriggerDefinitionInput }>
