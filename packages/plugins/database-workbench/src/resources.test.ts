@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import type { PluginDynamicResourceInvocationOptionsV1 } from '@happier-dev/plugin-sdk/resources';
-import type { DatabaseDescriptorV1, DatabaseManualTargetV1 } from '@happier-dev/plugin-sdk/database';
+import type { DatabaseDescriptorV1, DatabaseManualTargetV1, DatabaseWorktreeTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { openManualDatabaseConnection } from './connection.js';
 import { createDatabaseConnectionResourceRuntime } from './resources.js';
 
@@ -20,14 +20,48 @@ const descriptor: DatabaseDescriptorV1 = { target, label: 'Selected database', e
 const unavailable = () => { throw new Error('No Action or Resource port is used by the held connection'); };
 
 describe('database connection Resource', () => {
+    it('publishes the admitted worktree database subject in the snapshot and held Describe', async () => {
+        const worktree: DatabaseWorktreeTargetV1 = {
+            kind: 'worktree', accountId: target.accountId, installationId: target.installationId,
+            projectKey: target.projectKey, workspace: target.workspace,
+            source: { kind: 'env_file', path: '.env', variable: 'DATABASE_URL' },
+        };
+        const admitted: DatabaseDescriptorV1 = { ...descriptor, target: worktree, engine: 'postgresql' };
+        const runtime = createDatabaseConnectionResourceRuntime({ async resolve() {
+            return { descriptor: admitted, connection: { execute: unavailable, async close() {} } };
+        } });
+        const signal = new AbortController().signal;
+        const options: PluginDynamicResourceInvocationOptionsV1 = {
+            signal, context: { kind: 'surface', mountInstanceKey: 'worktree', launchInput: { operation: 'describe', target: worktree } },
+            requesterAccount: { accountId: target.accountId }, secrets: { readSavedSecret: unavailable },
+            resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
+            readAction: unavailable, observeAction: unavailable,
+        };
+        const producer = await runtime.createProducer!(options);
+        const expected = {
+            ...admitted, automationSubject: { ok: true, subject: { kind: 'database', serverId: 'server', target: worktree } },
+        };
+        try {
+            expect(JSON.parse(String(await producer.read(options)))).toEqual({
+                descriptor: expected, ownWriteRevision: 0, relationRevisions: [],
+            });
+            expect(await producer.invoke!({ operation: 'describe', target: worktree }, { signal })).toEqual({
+                ok: true, operation: 'describe', descriptor: expected,
+            });
+        } finally { await producer.dispose(); }
+    });
+
     it('retains revisions for two committed tables before a read and a separate unknown-table write', async () => {
+        const unavailableSubject: DatabaseDescriptorV1 = {
+            ...descriptor, automationSubject: { ok: false, code: 'subject_kind_unavailable' },
+        };
         const directory = await mkdtemp(join(tmpdir(), 'dbw-demand-relations-')); directories.push(directory);
         const path = join(directory, 'selected.sqlite');
         const database = openSqliteDatabaseSync(path);
         database.exec('CREATE TABLE first(label TEXT); CREATE TABLE second(label TEXT);'); database.close();
         const secretValue = pathToFileURL(path).toString();
         const runtime = createDatabaseConnectionResourceRuntime({ async resolve(input) {
-            return { descriptor, connection: await openManualDatabaseConnection({ target,
+            return { descriptor: unavailableSubject, connection: await openManualDatabaseConnection({ target,
                 secretValue: await input.secrets.readSavedSecret(target.savedSecretId), access: 'read', signal: input.signal }) };
         } });
         const controller = new AbortController();
@@ -51,12 +85,12 @@ describe('database connection Resource', () => {
             await producer.notify!({ target: { ...target, savedSecretId: 'unrelated' }, relation: first });
             const relationRevisions = [{ relation: first, revision: 2 }, { relation: second, revision: 1 }];
             expect(JSON.parse(String(await producer.read(options))))
-                .toEqual({ descriptor, ownWriteRevision: 0, relationRevisions });
+                .toEqual({ descriptor: unavailableSubject, ownWriteRevision: 0, relationRevisions });
             expect(await write.execute({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
                 statements: [{ sql: "INSERT INTO first VALUES ('console')", parameters: [] }] })).toMatchObject({ ok: true });
             await producer.notify!({ target });
             expect(JSON.parse(String(await producer.read(options))))
-                .toEqual({ descriptor, ownWriteRevision: 1, relationRevisions });
+                .toEqual({ descriptor: unavailableSubject, ownWriteRevision: 1, relationRevisions });
         } finally { await write.close(); controller.abort(); await producer.dispose(); }
     });
 
@@ -84,10 +118,13 @@ describe('database connection Resource', () => {
         const producer = await runtime.createProducer!(options);
         let invalidations = 0;
         const observation = await producer.observe(() => { invalidations++; }, options);
+        const published = {
+            ...descriptor, automationSubject: { ok: true, subject: { kind: 'database', serverId: 'server', target } },
+        };
         try {
-            expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor, ownWriteRevision: 0, relationRevisions: [] });
+            expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor: published, ownWriteRevision: 0, relationRevisions: [] });
             expect(await producer.invoke!({ operation: 'describe', target }, { signal: controller.signal }))
-                .toEqual({ ok: true, operation: 'describe', descriptor });
+                .toEqual({ ok: true, operation: 'describe', descriptor: published });
             const read = { operation: 'statement.run' as const, target, mode: 'read' as const,
                 statement: { sql: 'SELECT label FROM selected', parameters: [] } };
             expect(await producer.invoke!(read, { signal: controller.signal }))
@@ -100,7 +137,7 @@ describe('database connection Resource', () => {
             finally { await write.close(); }
             producer.notify!({ target: { ...target, savedSecretId: 'unrelated' } }); expect(invalidations).toBe(0);
             producer.notify!({ target }); expect(invalidations).toBe(1);
-            expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor, ownWriteRevision: 1, relationRevisions: [] });
+            expect(JSON.parse(String(await producer.read(options)))).toEqual({ descriptor: published, ownWriteRevision: 1, relationRevisions: [] });
             expect(await producer.invoke!(read, { signal: controller.signal }))
                 .toMatchObject({ ok: true, results: [{ rows: [{ cells: [{ type: 'text', value: 'after' }] }] }] });
             expect({ acquisitions, resolutions }).toEqual({ acquisitions: 1, resolutions: 1 });

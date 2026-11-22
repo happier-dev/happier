@@ -10,6 +10,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { DatabaseOwnWriteV1Schema, type DatabaseDemandSnapshotV1 } from '@happier-dev/database-protocol';
 import type { DatabaseWorkbenchConnection } from './connection.js';
+import { projectDatabaseDescriptor } from './descriptor.js';
 import { workbenchTargetKey } from './targetIdentity.js';
 
 export { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/database-protocol';
@@ -39,7 +40,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
             }
             const input = DatabaseDescribeInputV1Schema.parse(context.context.launchInput);
             const targetKey = workbenchTargetKey(input.target);
-            const { descriptor, connection } = await options.resolve({
+            const { descriptor: resolvedDescriptor, connection } = await options.resolve({
                 input, requesterAccount: context.requesterAccount, secrets: context.secrets, signal: context.signal,
                 ...(context.chosenMachine ? { chosenMachine: context.chosenMachine } : {}),
                 ...(context.daemonStorage ? { daemonStorage: context.daemonStorage } : {}),
@@ -49,6 +50,7 @@ export function createDatabaseConnectionResourceRuntime(options: Readonly<{
                 ...(context.agentCaller === undefined ? {} : { agentCaller: context.agentCaller }),
                 ...(context.authority ? { authority: context.authority } : {}),
             });
+            const descriptor = projectDatabaseDescriptor(resolvedDescriptor);
             let ownWriteRevision = 0;
             const relationRevisions = new Map<string, { relation: DatabaseRelationV1; revision: number }>();
             let invalidate: (() => void) | undefined;

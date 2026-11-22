@@ -1,4 +1,3 @@
-import { readAutomationDatabaseSubjectV1 } from '@happier-dev/plugin-sdk/automations';
 import { databaseActionLocalIdV1, databaseActionMetadata } from '@happier-dev/plugin-sdk/actions';
 import type { JsonValue, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
@@ -7,11 +6,7 @@ import * as databaseAbi from '@happier-dev/plugin-sdk/database';
 import { databaseOperationActions } from './operationActions.js';
 import { exportSelectedRows } from './selectedExport.js';
 import { FileDownloadResultV1ProtocolSchema, projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
-
-function projectDescriptor(descriptor: databaseAbi.DatabaseDescriptorV1): databaseAbi.DatabaseDescriptorV1 {
-    return { ...descriptor, automationSubject: descriptor.automationSubject
-        ?? readAutomationDatabaseSubjectV1(descriptor.placement.serverId, descriptor.target) };
-}
+import { projectDatabaseDescriptor } from './descriptor.js';
 
 export type DatabaseActionProducers = Readonly<{
     listTargets?: (input: databaseAbi.DatabaseTargetsListInputV1, context: PluginInvocationContext)
@@ -75,7 +70,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             // definePlugin supplies the value admitted by this exact input schema.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
                 const result = await listTargets(input as databaseAbi.DatabaseTargetsListInputV1, context);
-                return projectNativeJsonValueForTransport({ ...result, targets: result.targets.map(projectDescriptor) });
+                return projectNativeJsonValueForTransport({ ...result, targets: result.targets.map(projectDatabaseDescriptor) });
             },
         };
     }
@@ -88,7 +83,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             resultSchema: databaseAbi.DatabaseDescriptorV1Schema,
             // The SDK admits the canonical association input before acquiring a connection.
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
-                projectDescriptor(await connectTarget(input as database.DatabaseTargetsConnectInputV1, context))),
+                projectDatabaseDescriptor(await connectTarget(input as database.DatabaseTargetsConnectInputV1, context))),
         };
     }
     const forgetTarget = producers.forgetTarget;
@@ -117,7 +112,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
             run: async (input: JsonValue, context: PluginInvocationContext) => {
                 const result = await executeOperation(input as databaseAbi.DatabaseOperationInputV1, context);
                 return projectNativeJsonValueForTransport(result.ok && result.operation === 'describe'
-                    ? { ...result, descriptor: projectDescriptor(result.descriptor) } : result);
+                    ? { ...result, descriptor: projectDatabaseDescriptor(result.descriptor) } : result);
             },
         };
     }
