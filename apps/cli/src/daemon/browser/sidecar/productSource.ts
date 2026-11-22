@@ -211,14 +211,13 @@ export function createProductBrowserSidecarControlAdapterFactory(params: Readonl
             };
             const stop = (): Promise<void> => {
                 session.closing = true;
-                // Cancel an unfinished launch, but let an established adapter publish
-                // intentional closure before cancellation closes its native transport.
+                // Cancel an unfinished launch. Established engines finish orderly
+                // disposal before cancellation closes their native transport.
                 if (!session.result) cancellation.abort();
                 stopping ??= (async () => {
                     const result = await session.promise?.catch(() => undefined);
                     try {
                         const disposal = result?.ok ? result.dispose?.() : undefined;
-                        cancellation.abort();
                         await disposal;
                     } catch (error) {
                         // An observed child exit releases its memory slot even if

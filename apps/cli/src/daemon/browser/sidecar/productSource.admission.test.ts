@@ -41,6 +41,7 @@ async function host(initialOverride: number | null = null,
         totalBytes: 4 * 1024 ** 3, availableBytes: 4 * 1024 ** 3, usedBytes: 0, pressure: { level: 'calm', source: 'none' } })) {
     let override = initialOverride;
     let failTransportDisposal = false;
+    let rejectBrowserClose = false;
     let deferredExit: (() => void) | undefined;
     const children: EventEmitter[] = [];
     const profiles = createBrowserProfileStore({ storageRootDirectory: '/unused/admission',
@@ -72,21 +73,38 @@ async function host(initialOverride: number | null = null,
             connectTransport: async () => ({ dispose: () => {
                 if (failTransportDisposal) { failTransportDisposal = false; throw new Error('CDP connection cleanup failed'); }
             }, transport: { openPage,
-                dispatchPageCommand, dispatchBrowserCommand: async () => ({ success: true }) } }),
+                dispatchPageCommand, dispatchBrowserCommand: async () => {
+                    if (rejectBrowserClose) throw new Error('fixture_close_rejected');
+                    return { success: true };
+                } } }),
         }),
     });
     const factoryInput = { machineId: 'machine', readMachineMemory };
     const runtime = await factory(factoryInput);
     if (!runtime.ok) throw new Error(runtime.disabledReason);
-    const open = (session: string, viewId = 'view') => runtime.adapter.dispatchCommand({ kind: 'openView', commandId: `open_${session}_${viewId}`,
+    const open = (session: string, viewId = 'view', profileId?: string) => runtime.adapter.dispatchCommand({ kind: 'openView', commandId: `open_${session}_${viewId}`,
         browserSessionId: session, viewId, platform: 'web', focus: true,
+        ...(profileId ? { profileId } : {}),
         target: { kind: 'externalUrl', targetId: 'target', url: 'https://example.test' } });
     return { runtime, profiles, children, open, setOverride: (value: number | null) => { override = value; },
         deferProcessExit: () => new Promise<void>(resolve => { deferredExit = resolve; }),
-        failNextTransportDisposal: () => { failTransportDisposal = true; } };
+        failNextTransportDisposal: () => { failTransportDisposal = true; },
+        rejectBrowserClose: () => { rejectBrowserClose = true; } };
 }
 
 describe('browser session memory admission', () => {
+    it('settles retained Session stop through process teardown when Browser.close is rejected', async () => {
+        const h = await host();
+        h.profiles.register({ profileId: 'retained-stop', storageMode: 'user',
+            owner: { kind: 'user', id: 'owner' }, cleanupOnSessionClose: false });
+        try {
+            expect(await h.open('retained', 'view', 'retained-stop')).toMatchObject({ status: 'dispatched' });
+            h.rejectBrowserClose();
+            await expect(h.runtime.stopSession?.('retained')).resolves.toBeUndefined();
+            expect(h.runtime.readResourceTargets?.()).toEqual([]);
+        } finally { await h.runtime.dispose?.(); }
+    });
+
     it('keeps one usable engine when memory is unreported and honors an explicit override', async () => {
         const h = await host(null, undefined, undefined, () => null);
         try {
