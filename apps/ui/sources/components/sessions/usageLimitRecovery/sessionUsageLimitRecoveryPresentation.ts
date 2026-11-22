@@ -17,6 +17,7 @@ export { readSessionUsageLimitRecoveryFromMetadata } from '@happier-dev/protocol
 import type { AgentInputStatusBadge, AgentInputStatusBadgeTone } from '@/components/sessions/agentInput/agentInputContracts';
 import { summarizeConnectedServiceQuotaRecoveryCredits } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { formatMoment } from '@/utils/datetime/formatMoment';
+import { isUsageLimitedRuntimeIssue } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 
 export const SESSION_USAGE_LIMIT_RECOVERY_BADGE_KEY = 'usage-limit-recovery';
 
@@ -148,10 +149,6 @@ export type SessionUsageLimitRecoveryTranslate = <K extends SessionUsageLimitRec
         ? [params: SessionUsageLimitRecoveryTranslationParams[K]]
         : []
 ) => string;
-
-function isUsageLimitIssue(issue: SessionRuntimeIssueV1 | null | undefined): issue is SessionRuntimeIssueV1 {
-    return issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
-}
 
 function isTemporaryThrottleIssue(issue: SessionRuntimeIssueV1 | null | undefined): boolean {
     return issue?.temporaryThrottle?.v === 1 && issue.temporaryThrottle.recoverability === 'retry';
@@ -363,7 +360,7 @@ export function buildSessionUsageLimitRecoveryPresentation(params: Readonly<{
     const lastRuntimeIssue = params.lastRuntimeIssue;
     if (!lastRuntimeIssue) return null;
     const temporaryThrottle = isTemporaryThrottleIssue(lastRuntimeIssue);
-    if (!isUsageLimitIssue(lastRuntimeIssue) && !temporaryThrottle) return null;
+    if (!isUsageLimitedRuntimeIssue(lastRuntimeIssue) && !temporaryThrottle) return null;
     const daemonRetry = readDaemonRetryRecovery(params.recoveryState);
     if (temporaryThrottle) {
         if (params.latestTurnStatus === 'completed' || (!daemonRetry && params.hasActivityAfterRuntimeIssue === true)) return null;

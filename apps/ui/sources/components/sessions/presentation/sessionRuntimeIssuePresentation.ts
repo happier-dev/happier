@@ -311,7 +311,9 @@ export function formatSessionFailureLine(parts: readonly (string | null | undefi
 }
 
 /** Whether a runtime issue is a usage limit: the one rule the failure line and a failed task's route choice share. */
-export function isUsageLimitedRuntimeIssue(issue: Readonly<{ code?: string | null; source?: string | null }> | null | undefined): boolean {
+export function isUsageLimitedRuntimeIssue<Issue extends Readonly<{ code?: string | null; source?: string | null }>>(
+    issue: Issue | null | undefined,
+): issue is Issue {
     return issue?.source === 'usage_limit' || issue?.code === 'usage_limit';
 }
 

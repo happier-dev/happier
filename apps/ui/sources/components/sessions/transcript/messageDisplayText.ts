@@ -22,7 +22,7 @@ import { resolveInlineMessageReference, resolveMessageStructuredReferences, type
 import { readRuntimeIssueMessageMeta } from './events/runtimeIssueMessage';
 import { presentSessionTeamCredentialDenial } from '../presentation/sessionTeamCredentialDenialPresentation';
 import { presentSessionAgentAuthRequired } from '../presentation/sessionAgentAuthRequiredPresentation';
-import { formatSessionFailureLine, presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
+import { formatSessionFailureLine, isUsageLimitedRuntimeIssue, presentSessionRuntimeIssue } from '../presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionStartFailureNotice } from '../startFailure/sessionStartFailureNotice';
 import { readApprovalResultReceiptText } from './references/approvalResultInput';
 
@@ -92,8 +92,7 @@ export function prepareTranscriptMessageBody(
     const agentAuth = message.kind === 'agent-text' && !message.isThinking
         ? presentSessionAgentAuthRequired(runtimeIssue)
         : null;
-    const usageLimitIssue = runtimeIssue?.source === 'usage_limit' || runtimeIssue?.code === 'usage_limit'
-        ? presentSessionRuntimeIssue(runtimeIssue) : null;
+    const usageLimitIssue = isUsageLimitedRuntimeIssue(runtimeIssue) ? presentSessionRuntimeIssue(runtimeIssue) : null;
     // Every failure row reads as one line through the line owner: what failed · its cause, ending as a sentence.
     const runtimeFailure = usageLimitIssue
         // Worded like the usage card's cause; the card owns the recovery action.
