@@ -8,8 +8,9 @@ import type { Tx } from "@/storage/inTx";
 import { resolveArtifactAccessInTx, resolveArtifactAudienceInTx } from "@/app/artifacts/artifactAccessService";
 import { readAccessibleArtifactIdsInTx } from '@/app/artifacts/artifactGrantStorageAdapter';
 import { resolveTeamMembershipContextsInTx } from "@/app/teams/memberships/effectiveMembership";
-import { readTeamSummaryForActorInTx } from "@/app/teams/lifecycle";
-import type { TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
+import { qualifyTeamProjectionReadAuthenticationsInTx, resolveTeamActorContextsInTx,
+    type TeamOperationAuthenticationContext } from "@/app/teams/actorContext";
+import { toTeamViewer } from "@/app/teams/viewer";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from "@/app/encryption/accountEncryptionMode";
 import { acquireAccountEncryptionTransitionFenceInTx, deriveAccountEncryptionMigrationKeyFingerprints } from "@/app/encryption/accountEncryptionTransition";
 import { deriveAccountEncryptionCurrentnessFromRow } from "@/app/encryption/accountContentKeyAdmission";
@@ -161,13 +162,19 @@ export async function resolveWorkflowRunAdmissionVisibilityInTx(tx: Tx, input: R
     }
     const grants = input.sourceArtifactId
         ? await tx.artifactGrant.findMany({ where: { principalKind: 'team', artifactId: input.sourceArtifactId }, select: { teamId: true } }) : [];
-    const viewableTeamIds: string[] = [];
-    for (const grant of grants) {
-        const result = await readTeamSummaryForActorInTx(tx, { teamId: grant.teamId!, actorAccountId: input.actorAccountId,
-            authentication: input.authentication });
-        if (result.ok) viewableTeamIds.push(grant.teamId!);
-        else if (result.error !== "team_not_found") throw new WorkflowRunAccessError("run_access_denied");
+    const contexts = await resolveTeamActorContextsInTx(tx, {
+        actorAccountId: input.actorAccountId, teamIds: grants.map(grant => grant.teamId!),
+    });
+    const viewers = [...contexts.values()].filter(context => toTeamViewer(context) !== null);
+    const qualifications = await qualifyTeamProjectionReadAuthenticationsInTx(tx, {
+        contexts: viewers.filter(context => context.teamCapabilities.viewTeam || !context.homeAuthority.manageAllTeams),
+        ...input.authentication,
+    });
+    // Like the Team summary read, independent Home administration does not depend on Team authentication.
+    if (viewers.some(context => !context.homeAuthority.manageAllTeams && !qualifications.get(context.team.id)?.ok)) {
+        throw new WorkflowRunAccessError("run_access_denied");
     }
+    const viewableTeamIds = viewers.map(context => context.team.id);
     const visibility = resolveWorkflowRunVisibleTeamV1(viewableTeamIds, input.visibleTeamId);
     if (!visibility.ok) throw new WorkflowRunAccessError(visibility.code);
     return visibility.visibleTeamId;

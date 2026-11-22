@@ -21,6 +21,7 @@ import type { Socket } from 'socket.io';
 import { createFakeSocket } from '@/app/api/testkit/socketHarness';
 import { replayWorkflowRunMachineWakes } from './workflowRunMachineRouting';
 import { inTx } from '@/storage/inTx';
+import { resolveWorkflowRunAdmissionVisibilityInTx } from "./workflowRunAccess";
 import { tryClaimAutomationRunInTx } from '@/app/automations/automationRunClaim';
 import { admitWorkflowInvocations, commitWorkflowInvocationFact, completeWorkflowInvocationReview, listWorkflowRunInvocations, listWorkflowRuns, listWorkflowRunsForRecovery, recordWorkflowRequesterCustodyUnavailable, summarizeWorkflowRuns } from "./workflowRunService";
 import { createDbMaintenanceClient, onDbClientQuery, type PrismaClientType } from "@/storage/prisma";
@@ -646,6 +647,54 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow narrow
             await db.automationRun.deleteMany({ where: { automationId: { in: automationIds } } });
             await db.automation.deleteMany({ where: { id: { in: automationIds } } });
             await db.session.delete({ where: { id: sourceSession.id } });
+        }
+    });
+
+    it("batches granted Team reads for Workflow admission while preserving status and authentication", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const sourceId = randomUUID();
+        const selectedTeamId = randomUUID();
+        const restrictedTeamId = randomUUID();
+        const unreadableTeamId = randomUUID();
+        const teamIds = [selectedTeamId, restrictedTeamId, unreadableTeamId];
+        await db.artifact.create({ data: { id: sourceId, accountId: ownerId,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        try {
+            await db.team.createMany({ data: teamIds.map(id => ({ id, name: "Workflow grant census" })) });
+            await db.teamMembership.createMany({ data: [{ teamId: selectedTeamId, accountId: account.id, role: "member" }] });
+            await db.artifactGrant.createMany({ data: teamIds.map(teamId => ({
+                artifactId: sourceId, principalKind: "team", teamId, accessLevel: "view", createdByAccountId: ownerId,
+            })) });
+            const read = (visibleTeamId?: string) => inTx(tx => resolveWorkflowRunAdmissionVisibilityInTx(tx, {
+                actorAccountId: account.id, sourceArtifactId: sourceId, visibleTeamId,
+            }));
+            let actorProjectionReads = 0;
+            let totalTeamReads = 0;
+            const stop = observePrismaRequests(client, { before: request => {
+                if (request.model !== "Team" || (request.action !== "findUnique" && request.action !== "findMany")) return;
+                totalTeamReads += 1;
+                const args = request.args as { select?: { directorySources?: unknown } } | undefined;
+                if (args?.select?.directorySources) actorProjectionReads += 1;
+            } });
+            try {
+                expect(await read(selectedTeamId)).toBe(selectedTeamId);
+            } finally { stop(); }
+            console.info("WORKFLOW_GRANTED_TEAM_READS", { grants: teamIds.length, actorProjectionReads, totalTeamReads });
+
+            expect(await read()).toBe(selectedTeamId);
+            await db.teamMembership.createMany({ data: [{ teamId: restrictedTeamId, accountId: account.id, role: "member" }] });
+            await expect(read()).rejects.toMatchObject({ code: "visible_team_not_granted" });
+            await expect(read(unreadableTeamId)).rejects.toMatchObject({ code: "visible_team_not_granted" });
+            await db.team.update({ where: { id: restrictedTeamId }, select: { id: true }, data: { authenticationPolicy: {
+                v: 1, mode: "restricted", accepted: [{ kind: "home_method", methodId: "email_password" }],
+            } } });
+            await expect(read(selectedTeamId)).rejects.toMatchObject({ code: "run_access_denied" });
+            expect(actorProjectionReads).toBe(1);
+        } finally {
+            await db.artifactGrant.deleteMany({ where: { artifactId: sourceId } });
+            await db.artifact.delete({ where: { id: sourceId } });
+            await db.team.deleteMany({ where: { id: { in: teamIds } } });
+            await db.account.delete({ where: { id: account.id } });
         }
     });
 
