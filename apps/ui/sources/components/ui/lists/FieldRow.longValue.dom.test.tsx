@@ -63,3 +63,24 @@ describe('a page fact with a long value', () => {
     expect(segments.slice(0, -1).every((segment) => segment.endsWith('/'))).toBe(true);
   });
 });
+
+describe('a page fact that lists many names', () => {
+  // PAGE-ACCEPT-176: a folder review can exclude dozens of paths; the list collapses past a handful and is never hidden.
+  it('shows the first names and opens the rest on request', async () => {
+    const names = Array.from({ length: 9 }, (_, index) => `excluded-${index}.log`);
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    await act(async () => {
+      root!.render(<FieldLayout label="Left out" columns><FieldValue value="" names={names} /></FieldLayout>);
+    });
+    const text = () => container!.textContent ?? '';
+    expect(text()).toContain('excluded-0.log');
+    expect(text()).toContain('excluded-4.log');
+    expect(text()).not.toContain('excluded-8.log');
+    const more = container.querySelector('[role="button"]');
+    expect(more).toBeTruthy();
+    await act(async () => { (more as HTMLElement).click(); });
+    expect(text()).toContain('excluded-8.log');
+  });
+});

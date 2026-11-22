@@ -544,6 +544,9 @@ describe('Environment draft Machine Home', () => {
       expect(copyReview).toContain('Kept for rollback');
       expect(copyReview).toContain('Rollout and restore settings');
       expect(copyReview).not.toMatch(/definition:stored|retainPreviousDeployments:copy|ownServer/);
+      // PAGE-ACCEPT-176 R12-D6: the Review replaces the form; the form stays mounted (Back returns to it) but is not shown.
+      const formStyle = screen.findByTestId('project-deployments.draft.form')?.props.style;
+      expect([formStyle].flat(4).some((style: unknown) => (style as { display?: string } | null)?.display === 'none')).toBe(true);
       const reviewTitle = header().props.primaryAction.title;
       await act(async () => header().props.primaryAction.onPress());
       if (outcome !== 'partial') {

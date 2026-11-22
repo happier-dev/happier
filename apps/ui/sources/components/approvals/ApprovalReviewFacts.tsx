@@ -42,6 +42,7 @@ import { ComputerApprovalCapture } from './ComputerApprovalCapture';
 import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
 import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
+import { FieldValue } from '@/components/ui/lists/FieldRow';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
 import { readApprovalDocEditProposal } from './actionApprovalReview';
 import { HandoffTargetConsequencesCard, describeHandoffTargetApproval } from './HandoffTargetConsequencesCard';
@@ -230,8 +231,11 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults`,
     namedMachineId: plan?.runs ? plan.runsOn.machineId : null });
   const runsOn = plan?.runsOn;
-  const folderRows = review.folder ? describeDeploymentFolderReviewFiles(review.folder).map(({ key, label, value }) =>
-    <Item key={key} testID={`${testID}.${key}`} mode="info" title={label} subtitle={value} />) : null;
+  // What is left out reads as the same names the Deploy review lists, collapsed past a handful by the shared value.
+  const folderRows = review.folder ? describeDeploymentFolderReviewFiles(review.folder).map((row) => 'names' in row
+    ? <Item key={row.key} testID={`${testID}.${row.key}`} title={row.label} accessoryLayout="stacked" showChevron={false}
+        rightElement={<FieldValue value={row.value} names={row.names} />} />
+    : <Item key={row.key} testID={`${testID}.${row.key}`} mode="info" title={row.label} subtitle={row.value} />) : null;
   return <>
     {plan ? <ItemGroup testID={`${testID}.creates`} title={t('newApp.deploy.plan.createsTitle')}>
       {plan.newProjectName ? <Item testID={`${testID}.creates.project`} mode="info" icon={<Icon name="folder" />}

@@ -212,10 +212,11 @@ export function describeDeploymentFolderReviewFiles(folder: DeploymentFolderRevi
     { key: 'folderFiles', label: t('projects.deployments.review.folderFiles'),
       value: t('projects.deployments.review.folderContents', { count: folder.fileCount,
         size: formatHappierDataBytes(folder.totalBytes, { kind: 'storage' }) }) },
+    // Each path left out with its reason, as names: the shared value collapses a long list past a handful.
     { key: 'folderExcluded', label: t('projects.deployments.review.folderExcluded'),
-      value: excluded.length ? excluded.join('\n')
-        : t('projects.deployments.review.folderNoneExcluded') },
-  ];
+      value: excluded.length ? excluded.join('\n') : t('projects.deployments.review.folderNoneExcluded'),
+      ...(excluded.length ? { names: excluded } : {}) },
+  ] satisfies ReadonlyArray<Readonly<{ key: string; label: string; value: string; names?: readonly string[] }>>;
 }
 
 const field = (path: string, title: string, value: string | null | undefined, extras: ApprovalFieldExtras = {}) =>
@@ -282,7 +283,7 @@ function describeReviewFields(
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
       : replaces ? revisionText(replaces.revision) : t('projects.deployments.review.replacesNothing'))),
     ...(revision?.kind === 'folder' ? describeDeploymentFolderReviewFiles(revision)
-      .flatMap(({ key, label, value }) => field(key, label, value)) : []),
+      .flatMap((row) => field(row.key, row.label, row.value, 'names' in row ? { names: row.names } : {})) : []),
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
       names: secretBindingNames,
       note: soleMachine ? t('projects.deployments.review.secretsNoteOn', { machine: soleMachine }) : t('projects.deployments.review.secretsNote'),

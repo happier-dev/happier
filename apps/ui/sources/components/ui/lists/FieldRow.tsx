@@ -5,6 +5,8 @@ import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
 import { Text } from '@/components/ui/text/Text';
 import { InlineCode } from '@/components/ui/text/InlineCode';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { t } from '@/text';
 import { Typography } from '@/constants/Typography';
 
 /** A path or command has no spaces to break at; on web it wraps anywhere instead of running past the row. Native text already breaks long words. */
@@ -61,6 +63,9 @@ export function FieldLayout(
   );
 }
 
+/** A list of names collapses past a handful: the first ones and "+N more", which opens the rest (never hidden). */
+const FIELD_NAMES_SHOWN = 5;
+
 /**
  * A value, the names it lists as chips, then the quieter line that finishes it. `code` sets a literal people compare
  * character by character (a fingerprint, an image, a command) in the code face at the row's size.
@@ -73,13 +78,19 @@ export function FieldValue(
     code?: boolean;
   }>,
 ) {
+  const [allNames, setAllNames] = React.useState(false);
+  const names = props.names ?? [];
+  // One more than the handful shows whole: "+1 more" would hide nothing worth a press.
+  const collapsed = !allNames && names.length > FIELD_NAMES_SHOWN + 1;
   return (
     <View style={styles.value}>
-      {props.names?.length ? (
+      {names.length ? (
         <View style={styles.names}>
-          {props.names.map((name) => (
+          {(collapsed ? names.slice(0, FIELD_NAMES_SHOWN) : names).map((name) => (
             <InlineCode key={name}>{name}</InlineCode>
           ))}
+          {collapsed ? <TextLinkButton size="meta" label={t('tools.common.more', { count: names.length - FIELD_NAMES_SHOWN })}
+            onPress={() => setAllNames(true)} /> : null}
         </View>
       ) : (
         <Text style={props.code ? styles.codeValueText : styles.valueText}>

@@ -1208,10 +1208,13 @@ export const DeploymentEnvironmentDraft = React.memo(
           {partialProgress ?? <>
           {refusalBanner}
           {reviewBody}
+          {/* The Review replaces the form (PAGE-ACCEPT-176 R12-D6); the form stays mounted, so Back returns to what was typed. */}
+          <View testID="project-deployments.draft.form" style={reviewBody ? styles.hiddenStep : null}>
           {projectChoiceGroups}
           {whereGroup}
           {configureGroups}
           {deployerGroups}
+          </View>
           </>}
         </ItemList>
         {props.phone ? (
