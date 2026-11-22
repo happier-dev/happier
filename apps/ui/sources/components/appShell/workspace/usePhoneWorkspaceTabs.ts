@@ -4,7 +4,7 @@ import type { IconName } from '@/components/ui/icons/Icon';
 import { t } from '@/text';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import {
-    hrefForDestinationRef, readDestinationSessionAddress, resolveCurrentAppDestination, useDestinationInstanceTitles, type CompactAppDestination, type DestinationInstanceTitleEntry,
+    readDestinationSessionAddress, resolveWorkspaceDestinationInstanceRoute, useDestinationInstanceTitles, type CompactAppDestination, type DestinationInstanceTitleEntry,
 } from '../destinations/compactAppDestinationCatalog';
 import { useOptionalWorkspaceNavigation } from './WorkspaceNavigationContext';
 import { projectWorkspacePhoneTabs, type WorkspacePhoneTab } from './workspacePhoneProjection';
@@ -80,11 +80,11 @@ export function usePhoneWorkspaceTabs(contentDemandKeys: ReadonlySet<string> | n
     const titles = useDestinationInstanceTitles(catalog ?? NO_CATALOG, titleEntries, contentDemandKeys);
     const tabs = React.useMemo((): readonly PhoneWorkspaceTab[] => projected.map((tab) => {
         const pane = tab.panes.find((item) => item.id === tab.activeTabId) ?? tab.panes[0];
-        const href = catalog ? hrefForDestinationRef(catalog, pane.target) : null;
-        const destination = href && catalog ? resolveCurrentAppDestination(catalog, href) : null;
+        const route = resolveWorkspaceDestinationInstanceRoute(catalog ?? NO_CATALOG, pane.target);
+        const { destination, presentation } = route;
         const isSession = pane.target.kind === 'session' && typeof pane.target.params.id === 'string';
-        const title = titles.get(tab.id) ?? t(href ? 'common.loading' : 'common.unavailable');
-        const unavailable = href === null || (destination?.kind === 'plugin' && destination.availability === 'unavailable');
+        const title = titles.get(tab.id) ?? t(route.href ? 'common.loading' : 'common.unavailable');
+        const unavailable = route.href === null || (destination?.kind === 'plugin' && destination.availability === 'unavailable');
         const position = tab.panes.findIndex((item) => item.id === pane.id) + 1;
         const context = unavailable
             ? (destination?.kind === 'plugin' ? destination.unavailableReason : undefined) ?? t('phoneNav.rail.notAvailableTitle')
@@ -95,7 +95,7 @@ export function usePhoneWorkspaceTabs(contentDemandKeys: ReadonlySet<string> | n
             ...tab,
             title,
             context,
-            icon: isSession ? null : destination?.icon ?? 'file',
+            icon: isSession ? null : presentation?.icon ?? 'file',
             session: isSession ? { sessionId: pane.target.params.id, serverId: pane.target.params.serverId ?? null } : null,
             unavailable,
             pinned: tab.panes.some((item) => item.pinned),

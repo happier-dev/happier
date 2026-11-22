@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 
 import {
+    buildPluginSurfaceDestinationId,
     resolvePluginSurfaceDestinations,
     type PluginSurfaceDestination,
 } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
@@ -200,6 +201,18 @@ export function resolvePluginPageForRoute(input: Readonly<{
         return null;
     }
     return input.pages.find((page) => page.pluginId === pluginId && page.localId === localId) ?? null;
+}
+
+/** A declared view supplies the page's presentation while the route retains its base page. */
+export function resolvePluginPageView<Page extends Readonly<{ id: string }>>(
+    page: Page | null,
+    pages: readonly Page[] | undefined,
+    pluginId: string,
+    view: string | null,
+): Page | null {
+    if (view === null) return page;
+    const id = buildPluginSurfaceDestinationId(pluginId, view.trim());
+    return page?.id === id ? page : pages?.find(candidate => candidate.id === id) ?? page;
 }
 
 /**

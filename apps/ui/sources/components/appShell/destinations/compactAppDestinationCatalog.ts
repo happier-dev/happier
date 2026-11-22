@@ -31,6 +31,7 @@ import { getPreferredLanguage } from '@/text/preferredLanguage';
 import type { SupportedLanguage } from '@/text/_all';
 import {
     resolvePluginPages,
+    resolvePluginPageView,
     selectPluginPagePlacements,
     type PluginPage,
 } from '@/components/plugins/pages/pluginPages';
@@ -1187,14 +1188,13 @@ function resolveSavedInstanceTitle(catalog: readonly CompactAppDestination[], re
  * "Board", a terminal), a settings page's title, or the catalog's title for a plugin page or an
  * app area. `null` when only live data can name it (a session or Project) or nothing can.
  */
-function resolveStaticInstanceTitle(catalog: readonly CompactAppDestination[], ref: DestinationRef): string | null {
+function resolveStaticInstanceTitle(ref: DestinationRef, { href, destination, presentation }: DestinationInstanceRoute): string | null {
     if (ref.kind === 'newTab') return t('workspaceBar.newTab');
     if (ref.kind === 'session' || ref.kind === 'project') return null;
     if (ref.kind === 'sessionDetails') {
         const details = parseSessionPaneUrlState(ref.params)?.details;
         return details ? createSessionPaneDetailsTab(details)?.title ?? null : null;
     }
-    const href = hrefForDestinationRef(catalog, ref);
     if (!href) return null;
     const pathname = href.split(/[?#]/, 1)[0]!;
     if (isApprovalInstanceRef(ref)) return t('approvals.title');
@@ -1205,28 +1205,25 @@ function resolveStaticInstanceTitle(catalog: readonly CompactAppDestination[], r
         const key = resolveSettingsRouteTitleKey(pathname);
         if (key) return t(key);
     }
-    const destination = resolveCurrentAppDestination(catalog, pathname);
-    if (destination?.kind === 'plugin') return resolvePluginRouteViewTitle(catalog, destination, href) ?? destination.title;
+    if (destination?.kind === 'plugin') return presentation?.title ?? destination.title;
     return destination && pathname === destination.routePath ? destination.title : null;
 }
 
-/**
- * The declared view a plugin page's route presents (`?view=`, written by the page's location owner), named from the
- * catalog before anything mounts: a cold load of that route says the view's name from its first frame. A view the
- * plugin does not declare as a page leaves the page's own name.
- */
-function resolvePluginRouteViewTitle(
-    catalog: readonly CompactAppDestination[],
-    destination: CompactAppPluginDestination,
-    href: string,
-): string | null {
-    const query = href.split('#', 1)[0]!.split('?')[1];
-    const view = query === undefined ? null : readPluginAppPageRouteView(new URLSearchParams(query).get('view'));
-    if (view === null || view === destination.destination.localId) return null;
-    const viewed = catalog.find(candidate => candidate.kind === 'plugin' && candidate.container === 'appPage'
-        && candidate.destination.pluginId === destination.destination.pluginId && candidate.destination.localId === view);
-    return viewed?.title ?? null;
+/** Resolve the route owner and the declared presentation of this workspace instance. */
+export function resolveWorkspaceDestinationInstanceRoute(catalog: readonly CompactAppDestination[], ref: DestinationRef) {
+    const href = hrefForDestinationRef(catalog, ref);
+    const destination = href ? resolveCurrentAppDestination(catalog, href) : null;
+    const presentation = destination?.kind === 'plugin' && destination.container === 'appPage'
+        ? resolvePluginPageView(destination, catalog, destination.destination.pluginId, readPluginAppPageRouteView(ref.params.view))
+        : destination;
+    return { href, destination, presentation };
 }
+
+type DestinationInstanceRoute = ReturnType<typeof resolveWorkspaceDestinationInstanceRoute>;
+type DestinationInstanceTitleSource = DocumentTabTitleSource & Readonly<{
+    href: string | null;
+    icon: IconName | undefined;
+}>;
 
 function resolveProjectInstanceTitle(ref: DestinationRef, workspaceRefs: readonly WorkspaceRefV1[]): string | null {
     if (!ref.params.workspaceRefId) return null;
@@ -1245,21 +1242,27 @@ function resolveProjectInstanceTitle(ref: DestinationRef, workspaceRefs: readonl
 }
 
 /** One fallback rule for live chrome and synchronous history/drag snapshots. */
-function resolvePublishedOrStaticInstanceTitle(catalog: readonly CompactAppDestination[], ref: DestinationRef, options?: DestinationInstanceTitleOptions, storedTitle?: string | null): string | null {
-    const href = hrefForDestinationRef(catalog, ref);
+function resolvePublishedOrStaticInstanceTitle(
+    catalog: readonly CompactAppDestination[],
+    ref: DestinationRef,
+    options?: DestinationInstanceTitleOptions,
+    storedTitle?: string | null,
+    route = resolveWorkspaceDestinationInstanceRoute(catalog, ref),
+): string | null {
+    const { href, destination } = route;
     const pathname = href?.split(/[?#]/, 1)[0];
     const redirectSource = options?.publishedTitle?.ref === ref ? options.publishedTitle.redirectSource : undefined;
     if (ref.kind === 'settings' && redirectSource?.kind === 'settings') {
-        const sourcePath = hrefForDestinationRef(catalog, redirectSource)?.split(/[?#]/, 1)[0];
-        const collectionTitle = resolveStaticInstanceTitle(catalog, redirectSource);
+        const sourceRoute = resolveWorkspaceDestinationInstanceRoute(catalog, redirectSource);
+        const sourcePath = sourceRoute.href?.split(/[?#]/, 1)[0];
+        const collectionTitle = resolveStaticInstanceTitle(redirectSource, sourceRoute);
         if (sourcePath && pathname?.startsWith(`${sourcePath}/`) && collectionTitle) return collectionTitle;
     }
     // Home's greeting is content, while the shell catalog calls its rail Sessions.
     if (ref.kind === SESSIONS_DESTINATION_ID && pathname === '/') return t('common.home');
     const publishParams = pathname === '/settings/plugins/publish' ? new URLSearchParams(href?.split('?')[1]) : null;
     const templatePublisher = Boolean(publishParams?.get('templateArtifactId') && publishParams.get('templateServerId'));
-    const staticTitle = templatePublisher ? null : resolveStaticInstanceTitle(catalog, ref);
-    const destination = pathname ? resolveCurrentAppDestination(catalog, pathname) : null;
+    const staticTitle = templatePublisher ? null : resolveStaticInstanceTitle(ref, route);
     // Collection/status headlines and automatically selected detail panels do not
     // rename their destination. Explicit entity routes have no static identity here.
     if (staticTitle && (ref.kind === 'settings'
@@ -1279,7 +1282,7 @@ function resolvePublishedOrStaticInstanceTitle(catalog: readonly CompactAppDesti
         const key = resolveSettingsRouteTitleKey(href.split(/[?#]/, 1)[0]);
         if (key) return t(key);
     }
-    return resolveCurrentAppDestination(catalog, href)?.title ?? t('common.unavailable');
+    return destination?.title ?? t('common.unavailable');
 }
 
 /**
@@ -1451,6 +1454,7 @@ function resolveStoredInstanceTitle(ref: DestinationRef, state: ReturnType<typeo
 /** One tab's projection is invalidated by its own records, never an unrelated root publication. */
 function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDestination[], entry: DestinationInstanceTitleEntry) {
     const { ref, fallbackTitle } = entry;
+    const route = resolveWorkspaceDestinationInstanceRoute(catalog, ref);
     const savedTitle = resolveSavedInstanceTitle(catalog, ref, fallbackTitle);
     const settingsDemand = readSettingsEntityTitleDemand(ref);
     const session = isSessionTitleRef(ref);
@@ -1472,7 +1476,7 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
     let titleInputs: readonly unknown[] | undefined;
     let title: string | null = null;
     return {
-        entry, catalog, fallbackTitle, settingsDemand, session, managedRunId,
+        entry, catalog, fallbackTitle, settingsDemand, session, managedRunId, route,
         read(state: ReturnType<typeof readRegisteredStorageState>) {
             // Producer-owned record/container identities decide whether canonical lookup is needed.
             const nextStoreInputs = [state?.profileScope,
@@ -1516,7 +1520,7 @@ function createDestinationInstanceTitleProjection(catalog: readonly CompactAppDe
             const nextInputs = [value, settings, discussion, published];
             if (!titleInputs || !shallow(titleInputs, nextInputs)) {
                 titleInputs = nextInputs;
-                const fallback = resolvePublishedOrStaticInstanceTitle(catalog, ref, { publishedTitle: published, fallbackTitle }, settings ?? value.stored);
+                const fallback = resolvePublishedOrStaticInstanceTitle(catalog, ref, { publishedTitle: published, fallbackTitle }, settings ?? value.stored, route);
                 title = value.missing ?? (discussion || null) ?? (value.session || null) ?? value.project ?? fallback;
             }
             return title;
@@ -1574,7 +1578,7 @@ export function useDestinationInstanceTitleSources(
     entries: readonly DestinationInstanceTitleEntry[],
     /** The entries whose Session content is demanded (the tabs a strip has mounted); every entry when omitted. */
     contentDemandKeys?: ReadonlySet<string> | null,
-): ReadonlyMap<string, DocumentTabTitleSource> {
+): ReadonlyMap<string, DestinationInstanceTitleSource> {
     const destinationTitles = useWorkspaceDestinationTitles();
     const accountLifetime = useActiveServerAccountScopeLifetime();
     const previous = React.useRef(new Map<string, ReturnType<typeof createDestinationInstanceTitleProjection>>());
@@ -1650,12 +1654,12 @@ export function useDestinationInstanceTitleSources(
         projection: ReturnType<typeof createDestinationInstanceTitleProjection>;
         published: WorkspaceDestinationTitle | undefined;
         discussion: string | null | undefined;
-        source: DocumentTabTitleSource;
+        source: DestinationInstanceTitleSource;
     }>;
     const previousSources = React.useRef(new Map<string, TitleSourceEntry>());
     return React.useMemo(() => {
         const next = new Map<string, TitleSourceEntry>();
-        const sources = new Map<string, DocumentTabTitleSource>();
+        const sources = new Map<string, DestinationInstanceTitleSource>();
         const discussionsByKey = new Map(discussionEntries.map((entry, index) => [entry.key, discussionTitles[index]]));
         for (const projection of projections) {
             const entry = projection.entry;
@@ -1663,7 +1667,9 @@ export function useDestinationInstanceTitleSources(
             const published = destinationTitles?.[entry.instanceKey ?? entry.key];
             const discussion = discussionsByKey.get(entry.key);
             const old = previousSources.current.get(entry.key);
-            const source = old?.projection === projection && old.published === published && old.discussion === discussion ? old.source : {
+            const source: DestinationInstanceTitleSource = old?.projection === projection && old.published === published && old.discussion === discussion ? old.source : {
+                href: projection.route.href,
+                icon: projection.route.presentation?.icon,
                 getSnapshot: () => {
                     if (address && !readSessionRecordingVisibility()(address)) return t('session.untitled');
                     const state = readRegisteredStorageState();

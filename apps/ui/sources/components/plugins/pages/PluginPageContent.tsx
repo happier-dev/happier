@@ -34,7 +34,7 @@ import { usePluginDetailNavigation } from './pluginDetailNavigation';
 import { PluginPageNavigationContext } from './pluginPageNavigationContext';
 
 import type { AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import { resolvePluginPageForRoute, type PluginPage } from './pluginPages';
+import { resolvePluginPageView, type PluginPage } from './pluginPages';
 import type { PluginUiPolicyEvaluationContext } from '@/sync/domains/plugins/ui/policy';
 import {
     usePluginPageLaunch,
@@ -371,9 +371,7 @@ export function PluginPageContent(props: Readonly<{
     // The route's `?view=` is the view on screen until the page settles another: losing liveness for a moment (its
     // execution origin revalidating) retires the owner's step and view without any location change.
     const selectedView = settledView ?? props.initialView ?? null;
-    const viewPage = selectedView === null || props.views === undefined ? null
-        : resolvePluginPageForRoute({ pages: props.views, pluginId: props.pluginId, localId: selectedView });
-    const chromeTitle = (viewPage ?? page)?.label ?? null;
+    const chromeTitle = resolvePluginPageView(page, props.views, props.pluginId, selectedView)?.label ?? null;
     const headerTitle = chromeTitle ?? t('pluginSurfaces.appPage.title');
 
     const pageHeaderActions = React.useMemo(

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { hrefForDestinationRef, readDestinationSessionAddress, resolveCurrentAppDestination, useDestinationInstanceTitles, useDestinationInstanceTitleSources, type CompactAppDestination, type DestinationRef, type DestinationInstanceTitleEntry } from '@/components/appShell/destinations/compactAppDestinationCatalog';
+import { hrefForDestinationRef, readDestinationSessionAddress, useDestinationInstanceTitles, useDestinationInstanceTitleSources, type CompactAppDestination, type DestinationInstanceTitleEntry } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import { DETAILS_TAB_STRIP_METRICS as M } from '@/components/appShell/panes/details/header/detailsTabHeaderMetrics';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -34,9 +34,6 @@ import { useWorkspaceOpenActions } from '../useWorkspaceOpenActions';
 
 type WorkspaceDocumentTab = DocumentTabItem & Readonly<{
     icon: IconName;
-    target: DestinationRef;
-    catalog: readonly CompactAppDestination[];
-    href: string | null;
 }>;
 type MenuState = Readonly<{ tabId: string; anchor: PopoverAnchor | undefined }>;
 const EMPTY_TITLE_ENTRIES: readonly DestinationInstanceTitleEntry[] = [];
@@ -110,22 +107,19 @@ export function WorkspaceGroupTabs(props: Readonly<{
             const tab = workspace.state.tabs[id];
             if (!tab) continue;
             const previous = previousTabs.current.get(id);
-            const sameTarget = previous?.target === tab.target && previous.catalog === props.catalog;
-            const href = sameTarget ? previous.href : hrefForDestinationRef(props.catalog, tab.target);
-            const icon = sameTarget ? previous.icon : (href ? resolveCurrentAppDestination(props.catalog, href)?.icon : null) ?? 'file';
             const titleSource = titleSources.get(id);
+            const href = titleSource?.href ?? null;
+            const icon = titleSource?.icon ?? 'file';
             const next: WorkspaceDocumentTab = {
                 key: tab.id,
                 title: previous && previous.titleSource === titleSource ? previous.title : titleSource?.getSnapshot() ?? t(href ? 'common.loading' : 'common.unavailable'),
                 titleSource,
                 isPinned: tab.pinned, isPreview: tab.preview, canPin: !tab.pinned,
-                icon, target: tab.target, catalog: props.catalog, href,
+                icon,
             };
             byId.set(id, previous
                 && previous.title === next.title
                 && previous.titleSource === next.titleSource
-                && previous.target === next.target
-                && previous.catalog === next.catalog
                 && previous.isPinned === next.isPinned
                 && previous.isPreview === next.isPreview
                 && previous.canPin === next.canPin
@@ -134,7 +128,7 @@ export function WorkspaceGroupTabs(props: Readonly<{
         // Reconcile the lightweight projection so another tab's publication leaves this tab unchanged.
         previousTabs.current = byId;
         return byId;
-    }, [group.tabIds, titleSources, props.catalog, workspace.state.tabs]);
+    }, [group.tabIds, titleSources, workspace.state.tabs]);
 
     const stripTabs = React.useMemo(() => group.tabIds.flatMap((id) => tabs.get(id) ?? []), [group.tabIds, tabs]);
     const livePresentations = useDestinationInstanceTabPresentations(titleEntries);

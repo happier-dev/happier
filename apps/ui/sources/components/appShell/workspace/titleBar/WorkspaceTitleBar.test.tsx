@@ -3,7 +3,7 @@ import { act, type ReactTestInstance } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
-import { renderScreen } from '@/dev/testkit/render/renderScreen';
+import { findTestInstanceByTypeContainingText, renderScreen } from '@/dev/testkit/render/renderScreen';
 import type { RenderWithAppProvidersOptions } from '@/dev/testkit/render/renderWithAppProviders';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import type { SplitCanvasHostControls } from '../../splitCanvas/components/SplitCanvasHost';
@@ -26,6 +26,8 @@ import { WorkspaceGroupTabs } from './WorkspaceGroupTabs';
 import { resolveCompactAppDestinations, resolveDestinationRefFromHref, type CompactAppDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import * as workspaceRoutes from '@/components/appShell/workspace/workspaceRoutes';
 import { storage } from '@/sync/domains/state/storageStore';
+import { ChromeGlyph } from '@/components/ui/icons/chromeGlyphInk';
+import type { PluginPage } from '@/components/plugins/pages/pluginPages';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 installPanelCommonModuleMocks();
@@ -133,6 +135,36 @@ function threePanes(): WorkspaceState {
 }
 
 describe('WorkspaceTitleBar', () => {
+    it.each([
+        { query: '', title: 'Pull Requests', icon: 'git-pull-request' },
+        { query: '?view=tasks', title: 'Tasks', icon: 'task' },
+        { query: '?view=missing', title: 'Pull Requests', icon: 'git-pull-request' },
+    ])('shows the declared title and glyph for a plugin tab with query "$query"', async ({ query, title, icon }) => {
+        const page: PluginPage = {
+            target: { kind: 'app' }, visible: true, id: 'plugin:acme.triage:pull-requests',
+            pluginId: 'acme.triage', descriptorId: 'pull-requests', localId: 'pull-requests',
+            label: 'Pull Requests', icon: 'git-pull-request', order: 40, disabledReason: null,
+            placement: {} as PluginPage['placement'], routePath: '/plugins/acme.triage/pull-requests',
+        };
+        const tasks: PluginPage = {
+            ...page, id: 'plugin:acme.triage:tasks', descriptorId: 'tasks', localId: 'tasks',
+            label: 'Tasks', icon: 'task', routePath: '/plugins/acme.triage/tasks',
+        };
+        const catalog = resolveCompactAppDestinations({ pages: [page, tasks],
+            builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        const target = resolveDestinationRefFromHref(catalog, page.routePath + query)!;
+        const initial = createWorkspaceState(tab('plugin-view', { target }));
+        const screen = await renderScreen(<Harness initial={initial} clusterEndPx={200} tabsOnly catalog={catalog} />);
+        try {
+            const tabButton = screen.findHostByTestId('workspace-tab-plugin-view');
+            expect(tabButton).toBeDefined();
+            expect(findTestInstanceByTypeContainingText(tabButton!, 'Text', title)).toBeTruthy();
+            expect(tabButton?.findByType(ChromeGlyph).props.name).toBe(icon);
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('resolves only the arriving route at 153 tabs and does no route work on a real Machine arrival', async () => {
         const original = storage.getState();
         const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
