@@ -120,9 +120,11 @@ it('plays measured agent mix, linked Work, and recorded night activity from the 
   expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.eventCount', { count: 7 }));
   await screen.pressByTestIdAsync('usage-recap-story-forward');
   // The native night events did not witness any interval or Coach finding.
-  expect(screen.findByTestId('usage-recap-story-slide-night')).toBeFalsy();
-  expect(screen.findByTestId('usage-recap-story-slide-parallel')).toBeFalsy();
-  expect(screen.findByTestId('usage-recap-story-slide-coach')).toBeFalsy();
+  await vi.waitFor(() => {
+    expect(Boolean(screen.findByTestId('usage-recap-story-slide-night'))).toBe(false);
+    expect(Boolean(screen.findByTestId('usage-recap-story-slide-parallel'))).toBe(false);
+    expect(Boolean(screen.findByTestId('usage-recap-story-slide-coach'))).toBe(false);
+  });
   expect(home!.requests.filter(request => request.path === '/v2/usage/query')).toEqual([]);
 });
 
