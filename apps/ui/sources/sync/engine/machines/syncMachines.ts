@@ -1,3 +1,4 @@
+import { isMachineRetiredForKeyPreparationV1 } from '@happier-dev/protocol/machines/prepareMachineDataKeyEnvelopesV1';
 import { readAccountE2eeCustody, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { admitMachineRowPlainMode } from '@happier-dev/sync-client';
 import { log } from '@/log';
@@ -121,11 +122,12 @@ export function isMachineRowOwnedBy(machine: Pick<FetchedMachineRow, 'access'>, 
     return access.success && access.data.custodian.accountId === viewerAccountId;
 }
 
-/** The Account's own rows, revoked included: the census an Account-wide conversion must cover. */
-export async function fetchOwnedMachineRows(params: Parameters<typeof fetchMachineRows>[0] & Readonly<{
+/** The Account conversion census includes offline Machines and excludes revoked and replaced rows. */
+export async function fetchLiveOwnedMachineRows(params: Parameters<typeof fetchMachineRows>[0] & Readonly<{
     accountId: string;
 }>): Promise<readonly FetchedMachineRow[]> {
-    return (await fetchMachineRows(params)).filter(row => isMachineRowOwnedBy(row, params.accountId));
+    return (await fetchMachineRows(params)).filter(row =>
+        isMachineRowOwnedBy(row, params.accountId) && !isMachineRetiredForKeyPreparationV1(row));
 }
 
 export async function fetchMachineRows(params: Readonly<{

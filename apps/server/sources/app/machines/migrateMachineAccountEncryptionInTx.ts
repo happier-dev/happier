@@ -42,7 +42,7 @@ async function readMachineAccountEncryptionMigrationRowsInTx(
     accountId: string,
 ): Promise<readonly MachineAccountEncryptionMigrationRow[]> {
     return await tx.machine.findMany({
-        where: { accountId },
+        where: { accountId, revokedAt: null, replacedByMachineId: null },
         select: withMachineContentSelect({
             id: true,
             kind: true,

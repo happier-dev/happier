@@ -15464,6 +15464,7 @@ settingsSession: {
         deleteAccountCleanupFailedTitle: "Konto gelöscht",
         deleteAccountCleanupFailed: "Das Home hat die Löschung bestätigt, aber dieses Gerät konnte die lokalen Daten nicht vollständig entfernen. Öffne Happier erneut und melde dich ab, falls das Konto noch erscheint.",
         encryptionUpdateFailed: 'Die Verschlüsselungseinstellung ließ sich nicht ändern',
+        encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier konnte den Verschlüsselungsschlüssel für ${name} nicht öffnen. Kopple diesen Computer erneut oder entferne ihn aus der Computerliste und versuche es noch einmal.`,
         encryptionPluginDataBlocks: "Dieses Konto enthält Plugin-Daten, die noch nicht zwischen Verschlüsselungsmodi übertragen werden können. Es wurde nichts geändert. Verwende den aktuellen Verschlüsselungsmodus weiter, bis die Konvertierung von Plugin-Daten unterstützt wird.",
         encryptionPluginDataBlocksTitle: "Verschlüsselung kann noch nicht gewechselt werden",
         encryptionInventoryChanged: "Die Kontodaten passen nicht mehr zu dieser Umstellung. Aktualisiere die Ansicht und versuche es erneut.",

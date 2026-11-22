@@ -17,7 +17,7 @@ import {
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
 
-import { migrateMachineAccountEncryptionInTx } from "./migrateMachineAccountEncryptionInTx";
+import { matchMachineAccountEncryptionMigrationPostStateInTx, migrateMachineAccountEncryptionInTx } from "./migrateMachineAccountEncryptionInTx";
 
 const TARGETS = [
     {
@@ -96,6 +96,14 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
             daemonState: encodePlainMachineStoredContent({ status: "running" }), daemonStateVersion: 3,
             dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64")),
         } })));
+        const retired = await Promise.all([{
+            revokedAt: new Date(), replacedByMachineId: null,
+        }, {
+            revokedAt: null, replacedByMachineId: machines[0].id,
+        }].map(lifecycle => db.machine.create({ data: {
+            ...lifecycle, id: randomUUID(), accountId: account.id, metadata: "unreadable-retired-content",
+            dataEncryptionKey: Uint8Array.of(7, 8, 9),
+        } })));
         const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
         await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: machines[0].id, accountId: recipient.id, accessLevel: "view", createdByAccountId: account.id,
@@ -118,8 +126,11 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
         expect(await migrate(items.slice(0, 1))).toEqual({ status: "migration_incomplete" });
         expect(await migrate(items.map((item, index) => index ? { ...item, expectedMetadataVersion: 1 } : item))).toEqual({ status: "migration_incomplete" });
         expect(await db.machine.findMany({ where: { accountId: account.id }, orderBy: { id: "asc" } }))
-            .toEqual([...machines].sort((a, b) => a.id.localeCompare(b.id)));
+            .toEqual([...machines, ...retired].sort((a, b) => a.id.localeCompare(b.id)));
         expect(await migrate(items)).toEqual({ status: "applied" });
+        expect(await inTx(tx => matchMachineAccountEncryptionMigrationPostStateInTx({
+            tx, accountId: account.id, toMode: "e2ee", directive: { action: "migrate", items },
+        }))).toEqual({ status: "matched" });
         expect((await db.account.findUniqueOrThrow({ where: { id: recipient.id } })).seq).toBeGreaterThan(recipientCursor);
         for (const item of items) {
             const encrypted = await db.machine.findUniqueOrThrow({ where: { id: item.machineId } }).then(decodeMachineStoredContent);
@@ -133,6 +144,9 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
                 dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
             })) },
         }))).toEqual({ status: "applied" });
+        for (const removed of retired) {
+            expect(await db.machine.findUniqueOrThrow({ where: { id: removed.id } })).toEqual(removed);
+        }
         for (const machine of machines) {
             expect(decodePlainMachineStoredContent((await db.machine.findUniqueOrThrow({ where: { id: machine.id } })).metadata)).toEqual(metadata);
         }
@@ -145,7 +159,7 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
             state: revoked ? "revoked" : "active",
         }))),
     )(
-        "rejects a complete $name directive containing an $state Runner before any durable change",
+        "refuses a $name directive that includes an $state Runner before any durable change",
         async (target) => {
             const account = await db.account.create({
                 data: {
@@ -235,7 +249,7 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
             );
 
             expect(result).toEqual({
-                status: "unsupported_machine_kind",
+                status: target.revoked ? "migration_incomplete" : "unsupported_machine_kind",
             });
             expect(markChanged).not.toHaveBeenCalled();
             await expect(db.account.findUniqueOrThrow({

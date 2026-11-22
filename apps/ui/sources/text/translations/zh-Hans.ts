@@ -14883,6 +14883,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "账户已删除",
     deleteAccountCleanupFailed: "Home已确认删除，但此设备未能完成本地数据清理。请重新打开 Happier；如果仍显示此账户，请退出登录。",
     encryptionUpdateFailed: "更新加密设置失败",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier 无法打开 ${name} 的加密密钥。请重新配对此机器，或将它从机器列表中移除，然后重试。`,
     encryptionPluginDataBlocks: "此账户包含尚无法在加密模式之间迁移的插件数据。未进行任何更改。请继续使用当前加密模式，直到支持插件数据转换。",
     encryptionPluginDataBlocksTitle: "暂时无法切换加密方式",
     encryptionInventoryChanged: "账户数据与此次转换不再匹配。请刷新后重试。",

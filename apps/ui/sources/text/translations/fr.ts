@@ -15239,6 +15239,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "Compte supprimé",
     deleteAccountCleanupFailed: "Le Home a confirmé la suppression, mais cet appareil n’a pas pu terminer l’effacement des données locales. Rouvre Happier et déconnecte-toi si le compte apparaît encore.",
     encryptionUpdateFailed: "Échec de la mise à jour du réglage de chiffrement",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier n’a pas pu ouvrir la clé de chiffrement de ${name}. Associez de nouveau cette machine ou retirez-la de la liste des machines, puis réessayez.`,
     encryptionPluginDataBlocks: "Ce compte contient des données de plugins qui ne peuvent pas encore être transférées entre les modes de chiffrement. Rien n’a été modifié. Continuez à utiliser le mode de chiffrement actuel jusqu’à ce que la conversion des données de plugins soit prise en charge.",
     encryptionPluginDataBlocksTitle: "Impossible de changer le chiffrement pour l’instant",
     encryptionInventoryChanged: "Les données du compte ne correspondent plus à cette conversion. Actualisez et réessayez.",

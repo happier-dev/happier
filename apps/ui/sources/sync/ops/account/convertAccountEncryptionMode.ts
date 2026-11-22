@@ -3,6 +3,9 @@ import { z } from 'zod/mini';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { sync } from '@/sync/sync';
+import { storage } from '@/sync/domains/state/storage';
+import { getMachineDisplayName, readMachineName } from '@/utils/sessions/machineDisplayNames';
+import { HappyError } from '@/utils/errors/errors';
 import { isLegacyAuthCredentials, isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { migrateAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMigrate';
@@ -15,11 +18,11 @@ import { AccountEncryptionMigrateRequestSchema, AccountEncryptionMigrateSettings
     createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
 import { accountEncryptionSettingsHistoryUnavailable, type AccountEncryptionSettingsHistoryMigrationCandidate } from './buildAccountEncryptionSettingsHistoryDirective';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { fetchOwnedMachineRows } from '@/sync/engine/machines/syncMachines';
+import { fetchLiveOwnedMachineRows } from '@/sync/engine/machines/syncMachines';
 import { fetchAccountEncryptionMigrationKvInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationKvInventory';
 import { createArtifactAccessApi, fetchArtifactBlob, stageArtifactBlobAccountEncryptionConversion, cancelArtifactBlobAccountEncryptionConversion } from '@/sync/api/artifacts/apiArtifacts';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
-import { buildAccountEncryptionMigrationStorageDirectives } from '@/sync/ops/account/buildAccountEncryptionMigrationStorageDirectives';
+import { AccountEncryptionMachineKeyUnavailableError, buildAccountEncryptionMigrationStorageDirectives } from '@/sync/ops/account/buildAccountEncryptionMigrationStorageDirectives';
 import { fetchAccountEncryptionMigrationSessionInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationSessionInventory';
 import { fetchAccountEncryptionMigrationArtifactInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationArtifactInventory';
 import { fetchAccountEncryptionMigrationDiscussionInventory } from '@/sync/ops/account/buildAccountEncryptionDiscussionsDirective';
@@ -259,7 +262,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             privateLabelsInventory,
             managedMachinePresetsInventory,
         ] = await Promise.all([
-            fetchOwnedMachineRows({
+            fetchLiveOwnedMachineRows({
                 credentials,
                 request: homeRequest,
                 fresh: true,
@@ -676,6 +679,15 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             error, migrationIssued: retainStagedArtifactUploads, firstKey: firstKeyArtifactCustody,
         });
         if (!retainStagedArtifactUploads) await cancelStagedArtifactUploads?.();
+        if (error instanceof AccountEncryptionMachineKeyUnavailableError && capturedRequest?.isCurrent()) {
+            const machines = storage.getState().machineListByServerId[capturedRequest.scope.serverId];
+            const machine = machines?.find(row => row.id === error.machineId);
+            const name = machine && readMachineName(machine) ? getMachineDisplayName(machine, machines ?? undefined) : error.machineId;
+            throw new HappyError(t('settingsAccount.encryptionMachineKeyUnavailable', { name }), false, {
+                code: error.code,
+                cause: error,
+            });
+        }
         throw error;
     } finally { capturedRequest?.dispose(); }
 }

@@ -18412,6 +18412,7 @@ const enSettingsAccount = {
   deleteAccountCleanupFailed:
     'The Home confirmed deletion, but this device could not finish clearing local data. Reopen Happier, then sign out if this account still appears.',
   encryptionUpdateFailed: 'Failed to update encryption setting',
+  encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier couldn’t open the encryption key for ${name}. Pair this Machine again or remove it from Machines, then try again.`,
   encryptionPluginDataBlocks: "This Account has plugin data that cannot move between encryption modes yet. Nothing was changed. Keep using the current encryption mode until plugin data conversion is supported.",
   encryptionPluginDataBlocksTitle: "Can’t switch encryption yet",
   encryptionInventoryChanged: "Account data no longer matches this conversion. Refresh and try again.",

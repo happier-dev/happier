@@ -64,6 +64,15 @@ import type { AccountEncryptionMigrateManagedMachinePresetsDirectiveV1,
     ManagedMachinePresetAccountEncryptionMigrationInventoryV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { buildAccountEncryptionManagedMachinePresetsDirective } from './buildAccountEncryptionManagedMachinePresetsDirective';
 
+export class AccountEncryptionMachineKeyUnavailableError extends Error {
+    readonly code = 'machine_encryption_key_unavailable';
+
+    constructor(readonly machineId: string) {
+        super('Machine data key is unavailable');
+        this.name = 'AccountEncryptionMachineKeyUnavailableError';
+    }
+}
+
 export type AccountEncryptionMigrationMachineRow = Readonly<{
     id: string;
     metadata: string | null;
@@ -197,9 +206,7 @@ async function openMachineRows(params: Readonly<{
                 ? await encryption.decryptEncryptionKey(row.dataEncryptionKey)
                 : null;
             if (row.dataEncryptionKey && !key) {
-                throw new Error(
-                    `Failed to open Machine data key (${row.id})`,
-                );
+                throw new AccountEncryptionMachineKeyUnavailableError(row.id);
             }
             keys.set(row.id, key);
         }

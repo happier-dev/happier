@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { fetchOwnedMachineRows } from './syncMachines';
+import { fetchLiveOwnedMachineRows } from './syncMachines';
 
 vi.mock('@/log', () => ({ log: { log: vi.fn() } }));
 
@@ -9,10 +9,8 @@ const credentials = {
   token: `e30.${btoa(JSON.stringify({ sub: 'account-a' }))}.signature`,
 } satisfies AuthCredentials;
 
-describe('fetchOwnedMachineRows', () => {
-  // The Home's Account conversion census is Machine.accountId: a Machine shared with
-  // the Account in the directive makes every conversion attempt inventory-changed.
-  it('keeps the Account’s own rows, revoked and access-less included, and drops Machines shared with it', async () => {
+describe('fetchLiveOwnedMachineRows', () => {
+  it('keeps the Account’s own rows, including offline and access-less Machines, and drops retired and shared rows', async () => {
     const owned = createPlainMachineRowFixture({
       id: 'owned',
       accountId: 'account-a',
@@ -32,14 +30,15 @@ describe('fetchOwnedMachineRows', () => {
       }),
       revokedAt: 1,
     };
+    const retired = { ...owned, id: 'retired-own', replacedByMachineId: owned.id };
     const paths: string[] = [];
-    const rows = await fetchOwnedMachineRows({
+    const rows = await fetchLiveOwnedMachineRows({
       credentials,
       accountId: 'account-a',
       fresh: true,
       request: async (path) => {
         paths.push(path);
-        return new Response(JSON.stringify([owned, shared, legacy, revoked]), {
+        return new Response(JSON.stringify([owned, shared, legacy, revoked, retired]), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -48,7 +47,6 @@ describe('fetchOwnedMachineRows', () => {
     expect(rows.map((row) => row.id)).toEqual([
       'owned',
       'legacy-own',
-      'revoked-own',
     ]);
     expect(paths).toEqual(['/v1/machines?includeRevoked=true']);
   });

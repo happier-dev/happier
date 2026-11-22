@@ -15589,6 +15589,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "Account eliminato",
     deleteAccountCleanupFailed: "L’Home ha confermato l’eliminazione, ma questo dispositivo non ha completato la cancellazione dei dati locali. Riapri Happier ed esci se l’account è ancora visibile.",
     encryptionUpdateFailed: "Impossibile aggiornare l’impostazione di crittografia",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier non ha potuto aprire la chiave di crittografia di ${name}. Associa nuovamente questa macchina o rimuovila dall’elenco delle macchine, quindi riprova.`,
     encryptionPluginDataBlocks: "Questo account contiene dati dei plugin che non possono ancora essere trasferiti tra modalità di crittografia. Non è stato modificato nulla. Continua a usare la modalità di crittografia attuale finché non sarà supportata la conversione dei dati dei plugin.",
     encryptionPluginDataBlocksTitle: "Non è ancora possibile cambiare la crittografia",
     encryptionInventoryChanged: "I dati dell’account non corrispondono più a questa conversione. Aggiorna e riprova.",

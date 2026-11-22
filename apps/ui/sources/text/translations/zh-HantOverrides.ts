@@ -12515,6 +12515,7 @@ settingsSession: {
         deleteAccountCleanupFailedTitle: "帳戶已刪除",
         deleteAccountCleanupFailed: "Home已確認刪除，但此裝置未能完成本機資料清理。請重新開啟 Happier；如果仍顯示此帳戶，請登出。",
         encryptionUpdateFailed: '無法更新加密設定',
+        encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier 無法開啟 ${name} 的加密金鑰。請重新配對此機器，或將它從機器清單移除，然後再試一次。`,
         encryptionPluginDataBlocks: "此帳戶包含尚無法在加密模式之間移轉的外掛資料。未進行任何變更。請繼續使用目前的加密模式，直到支援外掛資料轉換。",
         encryptionPluginDataBlocksTitle: "暫時無法切換加密方式",
         encryptionInventoryChanged: "帳戶資料與此次轉換已不相符。請重新整理後再試。",

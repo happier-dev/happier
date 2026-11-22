@@ -443,6 +443,18 @@ describe('buildAccountEncryptionMigrationStorageDirectives', () => {
         expect(decodePlainMachineStoredContent(plain.machines.items[0]!.daemonState!)).toEqual(daemonState);
     });
 
+    it('identifies the live Machine whose E2EE envelope cannot be opened', async () => {
+        const sourceEncryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const otherEncryption = await Encryption.create(new Uint8Array(32).fill(8));
+        const dataEncryptionKey = Buffer.from(await otherEncryption.encryptEncryptionKey(new Uint8Array(32).fill(9))).toString('base64');
+        await expect(buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,
+            fromMode: 'e2ee', toMode: 'plain', sourceEncryption, targetEncryption: null,
+            machines: [{ id: 'unreadable-machine', metadata: 'encrypted', metadataVersion: 1, dataEncryptionKey }],
+            todos: [], artifacts: [], sessions: [],
+            sessionSourceCredentials: legacyCredentials, sessionTargetCredentials: tokenOnlyCredentials,
+        })).rejects.toMatchObject({ code: 'machine_encryption_key_unavailable', machineId: 'unreadable-machine' });
+    });
+
     it('refuses an inventory containing a Machine with unavailable metadata instead of omitting it', async () => {
         const encryption = await Encryption.create(new Uint8Array(32).fill(7));
         await expect(buildAccountEncryptionMigrationStorageDirectives({ ...emptyTransitionInventories,

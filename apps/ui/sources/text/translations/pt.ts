@@ -15485,6 +15485,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "Conta excluída",
     deleteAccountCleanupFailed: "O Home confirmou a exclusão, mas este dispositivo não conseguiu terminar de limpar os dados locais. Reabra o Happier e saia se a conta ainda aparecer.",
     encryptionUpdateFailed: "Falha ao atualizar a configuração de criptografia",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `O Happier não conseguiu abrir a chave de criptografia de ${name}. Emparelhe esta máquina novamente ou remova-a da lista de máquinas e tente de novo.`,
     encryptionPluginDataBlocks: "Esta conta tem dados de plugins que ainda não podem ser transferidos entre modos de criptografia. Nada foi alterado. Continue usando o modo de criptografia atual até que a conversão de dados de plugins seja compatível.",
     encryptionPluginDataBlocksTitle: "Ainda não é possível mudar a criptografia",
     encryptionInventoryChanged: "Os dados da conta já não correspondem a esta conversão. Atualize e tente novamente.",

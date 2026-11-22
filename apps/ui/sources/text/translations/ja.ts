@@ -15653,6 +15653,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "アカウントを削除しました",
     deleteAccountCleanupFailed: "Homeは削除を確認しましたが、この端末のローカルデータを完全に消去できませんでした。Happier を開き直し、アカウントが残っている場合はログアウトしてください。",
     encryptionUpdateFailed: "暗号化設定の更新に失敗しました",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `${name} の暗号化キーを開けませんでした。このマシンを再ペアリングするか、マシン一覧から削除してから、もう一度お試しください。`,
     encryptionPluginDataBlocks: "このアカウントには、暗号化モード間でまだ移行できないプラグインデータがあります。変更は行われていません。プラグインデータの変換がサポートされるまで、現在の暗号化モードを使い続けてください。",
     encryptionPluginDataBlocksTitle: "まだ暗号化を切り替えられません",
     encryptionInventoryChanged: "アカウントのデータがこの変換の内容と一致しなくなりました。更新して再試行してください。",

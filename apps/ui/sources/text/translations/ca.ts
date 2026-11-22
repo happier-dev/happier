@@ -14420,6 +14420,7 @@ settingsSession: {
         deleteAccountCleanupFailedTitle: "Compte suprimit",
         deleteAccountCleanupFailed: "El Home ha confirmat la supressió, però aquest dispositiu no ha pogut acabar d’esborrar les dades locals. Torna a obrir Happier i tanca la sessió si el compte encara apareix.",
         encryptionUpdateFailed: 'No s\'ha pogut actualitzar la configuració de xifrat',
+        encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `El Happier no ha pogut obrir la clau de xifrat de ${name}. Torna a vincular aquesta màquina o elimina-la de Màquines i torna-ho a provar.`,
         encryptionPluginDataBlocks: "Aquest compte té dades de connectors que encara no es poden moure entre modes de xifrat. No s’ha canviat res. Continua fent servir el mode de xifrat actual fins que s’admeti la conversió de dades de connectors.",
         encryptionPluginDataBlocksTitle: "Encara no es pot canviar el xifratge",
         encryptionInventoryChanged: "Les dades del compte ja no coincideixen amb aquesta conversió. Actualitza i torna-ho a provar.",

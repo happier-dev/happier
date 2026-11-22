@@ -8038,6 +8038,13 @@ rules above.
 
 ### Account-mode transition status
 
+The 0.3 development conversion covers live, Account-owned Machines, including
+offline Machines. The Home excludes revoked and replaced rows from both
+transaction coverage and replay verification. Their stored contents and
+versions remain historical. When the client cannot open a live Machine's
+key envelope, conversion refuses before changing modes. Account Settings
+identifies the Machine and directs the person to pair it again or remove it.
+
 In 0.3 development, retained Settings history participates in the same atomic
 conversion as current Settings through `settingsHistory: { items }`. The existing
 client conversion owner pages the initiating Home's history inventory, opens each

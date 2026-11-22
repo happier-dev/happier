@@ -15375,6 +15375,7 @@ settingsSession: {
     deleteAccountCleanupFailedTitle: "Cuenta eliminada",
     deleteAccountCleanupFailed: "El Home confirmó la eliminación, pero este dispositivo no pudo terminar de borrar los datos locales. Vuelve a abrir Happier y cierra sesión si la cuenta aún aparece.",
     encryptionUpdateFailed: "No se pudo actualizar la configuración de cifrado.",
+    encryptionMachineKeyUnavailable: ({ name }: { name: string }) => `Happier no pudo abrir la clave de cifrado de ${name}. Vuelve a vincular esta máquina o elimínala de la lista de máquinas y vuelve a intentarlo.`,
     encryptionPluginDataBlocks: "Esta cuenta tiene datos de plugins que aún no se pueden trasladar entre modos de cifrado. No se ha cambiado nada. Sigue usando el modo de cifrado actual hasta que se admita la conversión de datos de plugins.",
     encryptionPluginDataBlocksTitle: "Aún no se puede cambiar el cifrado",
     encryptionInventoryChanged: "Los datos de la cuenta ya no coinciden con esta conversión. Actualiza y vuelve a intentarlo.",
