@@ -2,6 +2,7 @@ import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
 import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1, isReviewAgentRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
+import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { type ExternalActionHeaderRefusal, refuseExternalActionHeaders } from './externalActionHeaderRefusal';
@@ -833,7 +834,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
       || spec.originalExecution?.terminalRoot !== 'host'
         && (spec.approvalPolicy?.uiConfirmation !== undefined
           || isAgentInitiatedApprovalRequiredByDefault(action.data)))
-    || isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect'
+    || isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || isRequesterProjectDefinitionActionIdV1(actionId)
     || isWorkspaceSyncRelationshipWriteActionId(actionId)
     || readDeploymentTargetRetentionMachineIds(actionId, input).length > 0
     || actionId === 'agents.models.list' || actionId === 'agents.config_options.list'
@@ -1941,7 +1942,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || isProjectCheckoutRemovalActionIdV1(authorization.binding.actionId)
     || isProjectWorkspaceSyncPreparationActionV1(authorization.binding.actionId)
     || isMachineTerminalOpenOrRestartActionIdV1(authorization.binding.actionId)
-    || authorization.binding.actionId === 'projects.inspect'
+    || isRequesterProjectDefinitionActionIdV1(authorization.binding.actionId)
     || authorization.binding.actionId === 'projects.worker.status'
     || authorization.binding.actionId === 'projects.execution.output.read'
     || authorization.binding.actionId === 'projects.execution.output.copy' ? requesterContext : undefined;

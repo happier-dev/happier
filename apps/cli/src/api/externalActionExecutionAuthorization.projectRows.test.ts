@@ -15,6 +15,7 @@ import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows'
 import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
 
 it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, ...ACTION_IDS.filter(isProjectCheckoutRemovalActionIdV1),
+    'projects.inspect', 'projects.worktree.ports.reassign',
     'review.start', 'review.new_round', 'review.follow_up', 'review.walkthrough', 'review.explain_findings'])(
     'reads the admitted requester source association through its own Account HTTP custody for %s', async actionId => {
     const app = fastify();
