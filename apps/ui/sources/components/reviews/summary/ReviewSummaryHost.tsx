@@ -18,7 +18,7 @@ export function ReviewSummaryHost(props: Readonly<{
     footerAction?: ReviewSummaryProps['footerAction'];
 }>): React.ReactElement {
     const detail = useReviewDetail(props.reviewId, { scope: props.scope });
-    const glance = projectReviewGlance(undefined, detail.data?.review ?? null);
+    const glance = projectReviewGlance(undefined, detail.data?.review ?? null, { needsYou: detail.data?.human.needsYou });
     if (!glance) return <SurfaceStateCard kind={detail.status === 'error' ? 'error' : 'loading'}
         title={t(detail.status === 'error' ? 'common.error' : 'common.loading')}
         action={detail.status === 'error' ? { label: t('common.retry'), onPress: () => void detail.refresh() } : undefined} />;

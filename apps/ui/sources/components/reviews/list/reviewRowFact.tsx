@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { HappierTone } from '@happier-dev/plugin-ui/presentation';
 import type { ReviewListResponseV1 } from '@happier-dev/protocol/reviews/reviewListV1';
+import { projectHappierReviewGlance } from '@happier-dev/plugin-ui/components';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
@@ -13,13 +14,14 @@ type ReviewRow = ReviewListResponseV1['items'][number];
  * (the collection, Home, a Team's shared Reviews) reads its rows through this.
  */
 export function reviewRowFact(item: ReviewRow): Readonly<{ label: string; tone: HappierTone }> | null {
-    if (item.counts.needsDecision > 0) {
-        return { label: t('reviewWalkthrough.detail.glanceToDecide', { count: item.counts.needsDecision }), tone: 'attention' };
-    }
-    if (item.needsYou.requestedVerdict) return { label: t('reviewWalkthrough.detail.requestedFromYou'), tone: 'attention' };
-    if (item.state !== 'completed' && item.state !== 'partial') return null;
-    return { label: item.counts.total === 0 ? t('reviewWalkthrough.detail.glanceNoFindings')
-        : t('reviewWalkthrough.detail.glanceAllDecided'), tone: 'secondary' };
+    const glance = projectHappierReviewGlance(undefined, item, {
+        running: '', failed: '',
+        noFindings: t('reviewWalkthrough.detail.glanceNoFindings'),
+        allDecided: t('reviewWalkthrough.detail.glanceAllDecided'),
+        requestedFromYou: t('reviewWalkthrough.detail.requestedFromYou'),
+        toDecide: count => t('reviewWalkthrough.detail.glanceToDecide', { count }),
+    });
+    return glance?.sentence ? { label: glance.sentence, tone: glance.tone === 'attention' ? 'attention' : 'secondary' } : null;
 }
 
 /**

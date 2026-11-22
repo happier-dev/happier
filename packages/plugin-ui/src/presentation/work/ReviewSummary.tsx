@@ -23,12 +23,23 @@ export type HappierReviewGlance = Readonly<{
   facts: readonly string[];
 }>;
 
+/** The Review row's single fact, shared by collection rows and both native and plugin glances. */
+function projectHappierReviewFact(
+  review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }>; needsYou?: Readonly<{ requestedVerdict: boolean }> }>,
+  words: Readonly<{ noFindings: string; allDecided: string; requestedFromYou: string; toDecide: (count: number) => string }>,
+): Readonly<{ label: string; tone: 'attention' | 'secondary' }> | null {
+  if (review.counts.needsDecision > 0) return { label: words.toDecide(review.counts.needsDecision), tone: 'attention' };
+  if (review.needsYou?.requestedVerdict) return { label: words.requestedFromYou, tone: 'attention' };
+  if (review.state !== 'completed' && review.state !== 'partial') return null;
+  return { label: review.counts.total === 0 ? words.noFindings : words.allDecided, tone: 'secondary' };
+}
+
 /** Localized words supplied by each host; the Review owner's state and counts decide the verdict once. */
 export function projectHappierReviewGlance(
   round: Readonly<{ state: string; summary?: string }> | undefined,
-  review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }> }> | null,
+  review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }>; needsYou?: Readonly<{ requestedVerdict: boolean }> }> | null,
   words: Readonly<{
-    running: string; failed: string; noFindings: string; allDecided: string;
+    running: string; failed: string; noFindings: string; allDecided: string; requestedFromYou: string;
     toDecide: (count: number) => string;
     /** The total as a fact; omitted where the counts live elsewhere (the Review page's filter chips). */
     findingsCount?: (count: number) => string;
@@ -36,16 +47,17 @@ export function projectHappierReviewGlance(
 ): HappierReviewGlance | null {
   const state = round?.state ?? review?.state;
   if (!state) return null;
+  const fact = review ? projectHappierReviewFact(review, words) : null;
+  const facts = round?.summary ? [round.summary] : [];
+  const total = review?.counts.total ?? 0;
+  if (fact?.tone === 'attention') return { sentence: fact.label, tone: 'attention',
+    facts: [...(words.findingsCount && total > 0 && total !== review?.counts.needsDecision ? [words.findingsCount(total)] : []), ...facts] };
   if (state === 'running') return { sentence: words.running, tone: 'quiet', facts: [] };
   if (state === 'failed') return { sentence: words.failed, tone: 'failed', facts: [] };
   if (!review) return round?.summary ? { sentence: round.summary, tone: 'quiet', facts: [] } : null;
-  const { total, needsDecision } = review.counts;
-  const facts = round?.summary ? [round.summary] : [];
-  if (total === 0) return { sentence: words.noFindings, tone: 'quiet', facts };
-  // The total is a fact only when it says something the sentence does not ("1 to decide" of 1 is one fact).
-  if (needsDecision > 0) return { sentence: words.toDecide(needsDecision), tone: 'attention',
-    facts: [...(words.findingsCount && total !== needsDecision ? [words.findingsCount(total)] : []), ...facts] };
-  return { sentence: words.allDecided, tone: 'quiet', facts: [...(words.findingsCount ? [words.findingsCount(total)] : []), ...facts] };
+  if (!fact) return null;
+  return { sentence: fact.label, tone: 'quiet',
+    facts: [...(words.findingsCount && total > 0 ? [words.findingsCount(total)] : []), ...facts] };
 }
 
 export type HappierReviewSummaryRow = Readonly<{

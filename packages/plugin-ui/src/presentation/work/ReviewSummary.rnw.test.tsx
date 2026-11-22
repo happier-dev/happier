@@ -61,3 +61,13 @@ describe('HappierReviewSummary for plugin authors', () => {
     }
   });
 });
+
+it('uses the requested-verdict fact for a finding-free people Review', () => {
+  const words = { running: 'Running', failed: 'Failed', noFindings: 'Nothing to fix', allDecided: 'All decided',
+    requestedFromYou: 'Review requested from you', toDecide: (count: number) => `${count} to decide` };
+  const review = { state: 'completed', counts: { total: 0, needsDecision: 0 }, needsYou: { requestedVerdict: true } };
+  expect(authorBarrel.projectHappierReviewGlance(undefined, review, words))
+    .toMatchObject({ sentence: words.requestedFromYou, tone: 'attention' });
+  expect(authorBarrel.projectHappierReviewGlance(undefined, { ...review, needsYou: { requestedVerdict: false } }, words))
+    .toMatchObject({ sentence: words.noFindings, tone: 'quiet' });
+});

@@ -613,7 +613,7 @@ export function ReviewDetailHost(props: Readonly<{
         ...menu,
         ...(operations.canManage ? [{ id: 'delete', testID: 'review-detail:delete', title: t('artifacts.delete'), destructive: true,
           loading: operations.deleting, onSelect: operations.remove }] : [])]}
-      glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount })}
+      glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount, needsYou: human?.roundOrdinal === round?.ordinal ? human?.needsYou : undefined })}
       quality={roundQuality.quality}
       qualityUnavailableReason={roundQuality.unavailableReason}
       qualityReviewers={qualityReviewers}

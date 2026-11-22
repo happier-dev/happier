@@ -67,7 +67,8 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
     await Promise.all([detailResource.refresh(), findingResource.refresh()]);
   }, [detailResource.refresh, findingResource.refresh]);
   React.useImperativeHandle(ref, () => ({ refresh }), [refresh]);
-  const glance = projectHappierReviewGlance(undefined, detail.value?.review ?? null, {
+  const glance = projectHappierReviewGlance(undefined, detail.value ? { ...detail.value.review, needsYou: detail.value.human.needsYou } : null, {
+    requestedFromYou: text('happier.plugin-ui.review.glance.requestedFromYou', 'Review requested from you'),
     running: text('happier.plugin-ui.review.glance.running', 'Reviewing…'),
     failed: text('happier.plugin-ui.review.glance.failed', 'The review couldn’t finish'),
     noFindings: text('happier.plugin-ui.review.glance.noFindings', 'Nothing to fix'),

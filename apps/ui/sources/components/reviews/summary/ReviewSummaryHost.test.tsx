@@ -16,7 +16,7 @@ const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
 afterEach(async () => { await homes.reset(); });
 
-it('opens an embedded verdict from the addressed Review metadata without reading its Artifact body', async () => {
+it.each([false, true])('opens an embedded verdict from the addressed Review metadata without reading its Artifact body', async (requestedVerdict) => {
     const serverId = await homes.addHome({ serverUrl: 'https://summary-review.example', name: 'Summary', accountId: 'alice' });
     const otherHome = await homes.addHome({ serverUrl: 'https://summary-active.example', name: 'Active', accountId: 'bob' });
     await setActiveServerId(otherHome, { scope: 'device' });
@@ -26,12 +26,12 @@ it('opens an embedded verdict from the addressed Review metadata without reading
             counts: { total: 0, needsDecision: 0 } },
         human: { reviewId: 'summary-review', roundOrdinal: 1, requests: [], verdicts: [],
             needsYou: { reviewId: 'summary-review', roundOrdinal: 1, reason: 'review_needs_you', needsYou: false,
-                requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+                requestedVerdict, pendingDecisions: false, canSubmitVerdict: false } },
     } }) });
     const open = vi.fn();
     const screen = await renderScreen(<ReviewSummaryHost reviewId="summary-review" scope={{ serverId, accountId: 'alice' }} onOpenReview={open} />);
     try {
-        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.glanceNoFindings')));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t(requestedVerdict ? 'reviewWalkthrough.detail.requestedFromYou' : 'reviewWalkthrough.detail.glanceNoFindings')));
         expect(homes.requestsFor('/v1/reviews/get').map(request => request.serverId)).toEqual([serverId]);
         expect(homes.requests.some(request => request.path.startsWith('/v1/artifacts'))).toBe(false);
         await screen.pressByTestIdAsync('review-summary:open');
@@ -40,9 +40,9 @@ it('opens an embedded verdict from the addressed Review metadata without reading
         publishHomeAccountChange(serverId, ['summary-review'], { changeKinds: ['artifact'],
             artifactKinds: [deriveArtifactStoredKindV1({ kind: REVIEW_ARTIFACT_KIND_V1 })] });
         await waitForHomeGovernance(() => expect(screen.findByTestId('review-summary:retry')).not.toBeNull());
-        expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.glanceNoFindings'));
+        expect(screen.getTextContent()).toContain(t(requestedVerdict ? 'reviewWalkthrough.detail.requestedFromYou' : 'reviewWalkthrough.detail.glanceNoFindings'));
         await screen.update(<ReviewSummaryHost reviewId="summary-review" scope={{ serverId, accountId: 'different-account' }} onOpenReview={open} />);
-        expect(screen.getTextContent()).not.toContain(t('reviewWalkthrough.detail.glanceNoFindings'));
+        expect(screen.getTextContent()).not.toContain(t(requestedVerdict ? 'reviewWalkthrough.detail.requestedFromYou' : 'reviewWalkthrough.detail.glanceNoFindings'));
         expect(homes.requestsFor('/v1/reviews/get')).toHaveLength(2);
     } finally { await screen.unmount(); }
 });
