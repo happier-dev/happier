@@ -5179,6 +5179,7 @@ const detailsChromeTranslations = { es: {
             ? 'Cambió 1 archivo en esta sesión. Léelo aquí sin salir de la conversación.'
             : `Cambiaron ${count} archivos en esta sesión. Léelos aquí sin salir de la conversación.`),
         splitNeedsWiderPane: 'La vista en paralelo necesita un panel más ancho. Ensancha Detalles o usa Enfoque.',
+        openingTab: ({ title }) => `Abriendo ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "es">;
 
 return { detailsChromeTranslations };

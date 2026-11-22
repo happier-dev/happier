@@ -5181,6 +5181,7 @@ const detailsChromeTranslations = { 'zh-Hant': {
         reviewChanges: ({ count }) => `檢視 ${count} 處變更`,
         reviewChangesReason: ({ count }) => `此工作階段中有 ${count} 個檔案被變更。無需離開對話即可在這裡閱讀。`,
         splitNeedsWiderPane: '並排顯示需要更寬的面板。請加寬詳細資料或使用專注模式。',
+        openingTab: ({ title }) => `正在開啟 ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "zh-Hant">;
 
 return { detailsChromeTranslations };

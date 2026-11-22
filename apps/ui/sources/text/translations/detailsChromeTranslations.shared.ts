@@ -9,6 +9,8 @@ export type DetailsChromeTranslations = Readonly<{
     reviewChanges: (params: Readonly<{ count: number }>) => string;
     reviewChangesReason: (params: Readonly<{ count: number }>) => string;
     splitNeedsWiderPane: string;
+    /** A Details tab whose page is still loading: names what is opening, never a bare "Loading". */
+    openingTab: (params: Readonly<{ title: string }>) => string;
 }>;
 
 
@@ -23,4 +25,5 @@ export const detailsChromeTranslationsEnglish = { en: {
             ? '1 file changed in this session. Read it here without leaving the conversation.'
             : `${count} files changed in this session. Read them here without leaving the conversation.`),
         splitNeedsWiderPane: 'Side by side needs a wider pane. Widen Details or use Focus.',
+        openingTab: ({ title }) => `Opening ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "en">;

@@ -5180,6 +5180,7 @@ const detailsChromeTranslations = { 'zh-Hans': {
         reviewChanges: ({ count }) => `查看 ${count} 处更改`,
         reviewChangesReason: ({ count }) => `此会话中有 ${count} 个文件被更改。无需离开对话即可在这里阅读。`,
         splitNeedsWiderPane: '并排显示需要更宽的面板。请加宽详情或使用专注模式。',
+        openingTab: ({ title }) => `正在打开 ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "zh-Hans">;
 
 return { detailsChromeTranslations };

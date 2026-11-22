@@ -98,6 +98,18 @@ describe('DetailsTabGroupPanel with one tab (lab session-D)', () => {
     expect(seen.at(-1)).toEqual({ showsTitle: false, publisher: true });
   });
 
+  it('says what is opening while a tab\'s page loads, never a bare "Loading" (DESIGN-ACCEPT-142 item 18)', async () => {
+    const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+    const pending = new Promise<never>(() => {});
+    function Loading(): React.ReactElement { throw pending; }
+    const screen = await renderScreen(<DetailsTabGroupPanel pane={pane}
+      group={group([tab('page', 'Price point')])} testIds={testIds} renderTabContent={() => <Loading />} />);
+    const card = screen.root.findByType(SurfaceStateCard);
+    expect(card.props.kind).toBe('loading');
+    expect(card.props.title).toBe('detailsSurface.chrome.openingTab');
+    await screen.unmount();
+  });
+
   it('names each retained tab from its presented detail and restores its resource title on withdrawal', async () => {
     const { useNavigationTitleChromePublisher } = await import('@/components/ui/layout/navigationTitleChrome');
     let publish: ((title: string | undefined) => void) | undefined;

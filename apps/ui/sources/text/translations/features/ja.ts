@@ -5240,6 +5240,7 @@ const detailsChromeTranslations = { ja: {
         reviewChanges: ({ count }) => `${count} 件の変更を確認`,
         reviewChangesReason: ({ count }) => `このセッションで ${count} 個のファイルが変更されました。会話を離れずにここで確認できます。`,
         splitNeedsWiderPane: '左右に並べて表示するには、もっと広いパネルが必要です。詳細を広げるか、フォーカスを使ってください。',
+        openingTab: ({ title }) => `${title} を開いています…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "ja">;
 
 return { detailsChromeTranslations };

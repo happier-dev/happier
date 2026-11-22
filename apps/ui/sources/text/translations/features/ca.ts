@@ -5284,6 +5284,7 @@ const detailsChromeTranslations = { ca: {
             ? 'Ha canviat 1 fitxer en aquesta sessió. Llegeix-lo aquí sense sortir de la conversa.'
             : `Han canviat ${count} fitxers en aquesta sessió. Llegeix-los aquí sense sortir de la conversa.`),
         splitNeedsWiderPane: 'La vista en paral·lel necessita un panell més ample. Amplia Detalls o fes servir Focus.',
+        openingTab: ({ title }) => `S'està obrint ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "ca">;
 
 return { detailsChromeTranslations };

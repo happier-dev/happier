@@ -5291,6 +5291,7 @@ const detailsChromeTranslations = { it: {
             ? 'In questa sessione è cambiato 1 file. Leggilo qui senza lasciare la conversazione.'
             : `In questa sessione sono cambiati ${count} file. Leggili qui senza lasciare la conversazione.`),
         splitNeedsWiderPane: 'Il confronto affiancato richiede un pannello più largo. Allarga Dettagli o usa Focus.',
+        openingTab: ({ title }) => `Apertura di ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "it">;
 
 return { detailsChromeTranslations };

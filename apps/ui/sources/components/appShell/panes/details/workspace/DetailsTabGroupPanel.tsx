@@ -384,7 +384,8 @@ export const DetailsTabGroupPanel = React.memo((props: DetailsTabGroupPanelProps
                                 <RetainedPanelSurface isActive={presented} mode="flow">
                                     <DetailsTabChromeProvider value={chromeFor(tab.key)}>
                                         <HeaderActionsScope scopeKey={lendsControls && isActive ? headerActionsScopeKey : null}>
-                                            <React.Suspense fallback={<PaneLoadingFallback />}>
+                                            <React.Suspense fallback={<PaneLoadingFallback
+                                                title={t('detailsSurface.chrome.openingTab', { title: presentedTitles.get(tab.key) ?? tab.title })} />}>
                                                 <DetailsTabBody scopeId={props.pane.scopeId} tab={tab} active={presented} renderTabContent={props.renderTabContent} />
                                             </React.Suspense>
                                         </HeaderActionsScope>

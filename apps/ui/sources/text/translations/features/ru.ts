@@ -5308,6 +5308,7 @@ const detailsChromeTranslations = { ru: {
         reviewChanges: ({ count }) => `Просмотреть изменения (${count})`,
         reviewChangesReason: ({ count }) => `В этой сессии изменено файлов: ${count}. Прочитайте их здесь, не покидая разговор.`,
         splitNeedsWiderPane: 'Для сравнения рядом нужна более широкая панель. Расширьте «Подробности» или включите фокус.',
+        openingTab: ({ title }) => `Открывается: ${title}…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "ru">;
 
 return { detailsChromeTranslations };

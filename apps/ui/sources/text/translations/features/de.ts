@@ -5297,6 +5297,7 @@ const detailsChromeTranslations = { de: {
             ? 'In dieser Sitzung wurde 1 Datei geändert. Lies sie hier, ohne das Gespräch zu verlassen.'
             : `In dieser Sitzung wurden ${count} Dateien geändert. Lies sie hier, ohne das Gespräch zu verlassen.`),
         splitNeedsWiderPane: 'Nebeneinander braucht einen breiteren Bereich. Verbreitere Details oder nutze Fokus.',
+        openingTab: ({ title }) => `${title} wird geöffnet…`,
     } } satisfies Pick<Record<string, DetailsChromeTranslations>, "de">;
 
 return { detailsChromeTranslations };
