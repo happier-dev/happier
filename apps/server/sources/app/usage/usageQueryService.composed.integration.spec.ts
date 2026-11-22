@@ -15,6 +15,7 @@ import { buildClaudeAssistantUsageObservation } from '../../../../../packages/pl
 import { buildClaudeSdkResultUsageObservation } from '../../../../../packages/plugins/claude/src/agent/usage/buildSdkResultObservation';
 import { buildUsageEventIngestRequest } from '../../../../cli/src/usage/buildUsageEventIngestRequest';
 import { queryUsageAnalytics } from './usageQueryService';
+import { captureUsageAnalyticsBatch, projectUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 import { recordUsageEvent } from './usageWriteService';
 import { readUsageAccountingMetadata } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { deriveNativeUsageAccountingIdentity } from '../../../../cli/src/usage/collector/nativeUsageAccountingIdentity';
@@ -58,6 +59,53 @@ describe('native usage producer → ingest → query', () => {
             () => db.machine.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it.each([
+        { scenario: 'Muse child counters', agentId: 'muse', scope: 'session_cumulative', inputIncludesCache: true, outputIncludesReasoning: true,
+            tokens: { input: 39_314, output: 19, reasoning: 7, cacheRead: 0, cacheWrite: 0, total: null }, measured: 39_333 },
+        { scenario: 'Muse child counters with cache', agentId: 'muse', scope: 'session_cumulative', inputIncludesCache: true, outputIncludesReasoning: true,
+            tokens: { input: 39_314, output: 19, reasoning: 7, cacheRead: 10, cacheWrite: 2, total: null }, measured: 39_333 },
+        { scenario: 'undeclared Muse child counters', agentId: 'muse', scope: 'session_cumulative',
+            inputIncludesCache: undefined, outputIncludesReasoning: undefined,
+            tokens: { input: 39_314, output: 19, reasoning: 7, cacheRead: 0, cacheWrite: 0, total: null }, measured: 39_340 },
+        { scenario: 'Claude disjoint counters', agentId: 'claude', scope: 'turn_delta', inputIncludesCache: false, outputIncludesReasoning: false,
+            tokens: { input: 100, output: 19, reasoning: null, cacheRead: 10, cacheWrite: 2, total: null }, measured: 131 },
+    ] as const)('projects declared token overlaps for $agentId across the accounting reads ($scenario)', async test => {
+        const account = await db.account.create({ data: { publicKey: `parts-overlap-${test.agentId}` } });
+        const session = await db.session.create({ data: {
+            accountId: account.id, tag: 'parts-overlap', encryptionMode: 'plain', metadata: '{}',
+        } });
+        const source = `${test.agentId}-runtime-parts`;
+        const observedAt = Date.UTC(2026, 10, 22, 0, 1);
+        const input = buildUsageEventIngestRequest({ sessionId: session.id, observedAt, externalKey: source,
+            observation: { provider: test.agentId, source, key: source, scope: test.scope, modelId: null,
+                tokens: test.tokens, cost: null, contextUsedTokens: null, contextWindowTokens: null },
+            metadata: { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true,
+                inputIncludesCache: test.inputIncludesCache, outputIncludesReasoning: test.outputIncludesReasoning } },
+        });
+        if (!input) throw new Error('Usage fixture did not build an ingest request');
+        const recorded = await recordUsageEvent(account.id, input);
+        expect(recorded).toMatchObject({ ok: true });
+        const query = UsageAnalyticsQueryRequestSchema.parse({ includeActivity: true, includeSeries: false,
+            granularity: 'day', timeZoneOffsetMinutes: 0, dateRange: { startMs: observedAt - 60_000, endMs: observedAt + 60_000 } });
+        const scalar = await queryUsageAnalytics(account.id, query);
+        expect(scalar.totals.tokens).toEqual({ ...test.tokens, measured: { total: test.measured, fromParts: true } });
+        const batch = await captureUsageAnalyticsBatch(account.id, [query]);
+        const rich = (await projectUsageAnalyticsBatch(batch, [query], true, false)).results[0];
+        expect(rich).toMatchObject({ value: { totals: scalar.totals, coverage: scalar.coverage } });
+        const withOverlap = test.inputIncludesCache === true || test.outputIncludesReasoning === true;
+        expect(rich && "value" in rich && rich.value.contributions?.map(row => row.tokens)).toEqual([withOverlap
+            ? { ...test.tokens, measured: { total: test.measured, fromParts: true } } : test.tokens]);
+        const demand = { contributionQueries: [], sessionQueries: [query] };
+        // Warm responses have crossed the JSON cache boundary.
+        const expected = JSON.parse(JSON.stringify({ totals: scalar.totals, coverage: scalar.coverage }));
+        for (const phase of ['cold', 'warm']) {
+            const compact = await captureUsageAnalyticsBatch(account.id, [query], undefined, demand);
+            expect(compact.activitySummary, phase).toBeDefined();
+            const projected = await projectUsageAnalyticsBatch(compact, [query], false, true, undefined, demand);
+            expect(JSON.parse(JSON.stringify(projected.results[0])), phase).toMatchObject({ value: expected });
+        }
     });
 
     it.each([

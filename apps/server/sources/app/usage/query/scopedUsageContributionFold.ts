@@ -1,4 +1,5 @@
 import type { UsageAccountingCoverageReason } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { projectDeclaredUsageMeasuredTokens } from '@happier-dev/protocol/usage/usageAggregation';
 import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens, subtractUsageCost, subtractUsageTokens, usageHasAnyValue } from '../usageMetrics';
 import type { ResolvedScopedUsageContributions, ScopedUsageContribution, ScopedUsageEventRow } from './resolveScopedUsageContributions';
 import { isScopedUsageTurnDelta, readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
@@ -11,7 +12,8 @@ function scopedUsageInferenceId(row: ScopedUsageEventRow): string | undefined {
 
 function contribution(row: ScopedUsageEventRow, tokens = row.tokens, cost = row.cost,
     contributingEventIds: readonly string[] = [row.id]): ScopedUsageContribution {
-    return { ...row, tokens, cost, contributingEventIds };
+    const { accounting } = readScopedUsageAccountingEvidence(row);
+    return { ...row, tokens: projectDeclaredUsageMeasuredTokens(tokens, accounting), cost, contributingEventIds };
 }
 
 /** A missing category is no new counter reading, so retain its last measured baseline. */

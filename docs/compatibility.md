@@ -10827,6 +10827,17 @@ frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
 `packages/protocol/src/usage` counterpart. No adapter, wire epoch or second
 reconciliation path is introduced.
 
+Unreleased 0.3 Usage contributions can also carry the existing optional
+`tokens.measured` shape. If a producer declares overlapping counters and omits
+its aggregate, the server resolves their measured total at contribution
+admission. Consumers conserve that amount while the original counters remain
+available. Disjoint and undeclared contributions keep their previous response
+shape and arithmetic. A sum of undeclared parts can exceed the provider’s
+aggregate if its parts overlap. Matching strict 0.3 readers accept the optional
+shape. Older strict development readers reject enriched contributions. The
+private activity summary rebuilds from retained observations using its cache
+version. Ingest, stored observations and database schema are unchanged.
+
 The consumed public-profile snapshot facts also carry optional `tokensFromParts`
 on their headline and Agent/source token amounts. The existing token consent
 owner removes both amounts and their provenance, including declarative layout

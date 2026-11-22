@@ -1,4 +1,4 @@
-import type { UsageAnalyticsTokens, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
+import type { UsageAccountingMetadata, UsageAnalyticsTokens, UsageObservationCost, UsageObservationTokens } from './usageAnalyticsContracts.js';
 import { resolveEffectiveUsageCostUsd, resolveUsageCostBasis, type UsageCostMode, type UsageSelectedCostBasis } from './usageCostFacts.js';
 import { addUsageMoney, createUsageMoneyAccumulator, hasUsageMoneyProvenance, readUsageMoney, usageMoneyToNumber, withUsageMoney, type ExactUsageMoney } from './usageMoney.js';
 
@@ -15,16 +15,32 @@ export function addUsageMeasurements(left: number | null, right: number | null):
     return left === null ? right : right === null ? left : left + right;
 }
 
-/** Returns the measured lower bound when a provider omits its aggregate total. */
+/** Sums the reported parts. This is a lower bound only when the parts are disjoint. */
 export function sumKnownUsageTokenParts(tokens: Readonly<Partial<UsageObservationTokens>>): number | null {
     return [tokens.input, tokens.output, tokens.reasoning, tokens.cacheRead, tokens.cacheWrite]
         .reduce<number | null>((sum, value) => addUsageMeasurements(sum, value ?? null), null);
 }
 
+/** Resolve declared overlaps once while the contribution still has its producer evidence. */
+export function projectDeclaredUsageMeasuredTokens(
+    tokens: UsageObservationTokens,
+    accounting: Pick<UsageAccountingMetadata, 'inputIncludesCache' | 'outputIncludesReasoning'> | null | undefined,
+): UsageAnalyticsTokens {
+    if (tokens.total !== null || (accounting?.inputIncludesCache !== true && accounting?.outputIncludesReasoning !== true)) return tokens;
+
+    const combine = (whole: number | null, part: number | null, included: boolean | undefined) =>
+        included && whole !== null && part !== null ? Math.max(whole, part) : addUsageMeasurements(whole, part);
+    const cache = addUsageMeasurements(tokens.cacheRead, tokens.cacheWrite);
+    const input = combine(tokens.input, cache, accounting.inputIncludesCache);
+    const output = combine(tokens.output, tokens.reasoning, accounting.outputIncludesReasoning);
+    const total = addUsageMeasurements(input, output);
+    return total === null ? tokens : { ...tokens, measured: { total, fromParts: true } };
+}
+
 /**
- * Each admitted contribution uses its reported total, otherwise its measured parts as a floor.
- * Aggregates conserve these per-contribution amounts and retain fromParts if any operand used
- * a floor. Raw total remains the distinct reported fact; floor-containing comparisons are inexact.
+ * Preserve a resolved measurement or the reported aggregate. Undeclared contributions retain
+ * the sum of their reported parts. fromParts identifies a total derived from parts and
+ * carries through presentation folds; only the raw total is the provider's aggregate.
  */
 export function resolveUsageMeasuredTokens(tokens: Readonly<Pick<UsageAnalyticsTokens, 'total' | 'measured'>
     & Partial<UsageObservationTokens>>): Readonly<{ total: number | null; fromParts: boolean }> {

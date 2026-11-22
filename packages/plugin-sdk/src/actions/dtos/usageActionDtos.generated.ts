@@ -7714,6 +7714,10 @@ export type UsageActionResultById = {
                         cacheRead: null | number;
                         cacheWrite: null | number;
                         total: null | number;
+                        measured?: undefined | {
+                            total: number;
+                            fromParts: true;
+                        };
                     };
                     cost: {
                         reportedUsd: null | number;
@@ -12531,6 +12535,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -14424,6 +14432,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;
@@ -14665,6 +14677,10 @@ export type UsageActionResultById = {
                             cacheRead: null | number;
                             cacheWrite: null | number;
                             total: null | number;
+                            measured?: undefined | {
+                                total: number;
+                                fromParts: true;
+                            };
                         };
                         cost: {
                             reportedUsd: null | number;

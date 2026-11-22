@@ -1,4 +1,4 @@
-import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnalyticsQueryRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnalyticsQueryRequest, UsageAnalyticsTokens, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { UsageAnalyticsSourceContext } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { readScopedUsageAccountingEvidence, type ScopedUsageAccountingEvidence, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 
@@ -38,6 +38,7 @@ export interface ScopedUsageEventRow {
 }
 
 export interface ScopedUsageContribution extends ScopedUsageEventRow {
+    tokens: UsageAnalyticsTokens;
     contributingEventIds: readonly string[];
     coverageReasons?: readonly UsageAccountingCoverageReason[];
 }

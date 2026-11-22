@@ -495,7 +495,7 @@ export const UsageAnalyticsContributionSchema = lazyZodSchema(() => z.strictObje
   workspaceId: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   source: z.nullable(z.string().check(z.trim(), z.minLength(1))),
   sourceContext: z.optional(UsageAnalyticsSourceContextSchema),
-  tokens: UsageObservationTokensSchema,
+  tokens: UsageAnalyticsTokensSchema,
   tokenCategories: z.optional(UsageObservationTokensSchema),
   cost: UsageObservationCostSchema,
 }));

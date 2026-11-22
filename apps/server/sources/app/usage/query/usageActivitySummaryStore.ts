@@ -15,7 +15,7 @@ export interface UsageActivitySourceChange {
     fingerprint: string | null;
 }
 
-export const USAGE_ACTIVITY_SUMMARY_VERSION = 9;
+export const USAGE_ACTIVITY_SUMMARY_VERSION = 11;
 
 const compressChunk = promisify(brotliCompress);
 const decompressChunk = promisify(brotliDecompress);
