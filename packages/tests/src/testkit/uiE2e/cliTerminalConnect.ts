@@ -272,7 +272,6 @@ export async function startCliAuthLoginForTerminalConnect(params: Readonly<{
     params.cliLaunchSpec,
     () => resolveCliTestLaunchSpec(
       { testDir: params.testDir, env: sanitizedEnv },
-      { snapshotDir: resolvePath(params.testDir, 'cli-dist') },
     ),
   );
 

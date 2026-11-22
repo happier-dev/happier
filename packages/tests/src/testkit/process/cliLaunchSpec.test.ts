@@ -88,6 +88,29 @@ function expectCanonicalPublishedSourceSnapshotDir(
 }
 
 describe('resolveCliTestLaunchSpec', () => {
+  it('uses the shared prepared build for independent E2E run directories', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-shared-'));
+    const snapshotDir = resolve(repoRoot, '.project', 'tmp', 'cli-dist-snapshot');
+    try {
+      mkdirSync(resolve(snapshotDir, 'dist'), { recursive: true });
+      mkdirSync(resolve(snapshotDir, 'node_modules'), { recursive: true });
+      writeFileSync(resolve(snapshotDir, '.cli-dist-snapshot.ready.json'), '{"v":1}\n');
+      writeFileSync(resolve(snapshotDir, 'dist', 'index.mjs'), 'export {};\n');
+
+      for (const run of ['first', 'second']) {
+        const testDir = resolve(repoRoot, '.project', 'logs', 'e2e', run);
+        const spec = await resolveCliTestLaunchSpec(
+          { testDir, env: {} },
+          { repoRoot, preparedDistSnapshotOnly: true },
+        );
+        expect(spec.args[1]).toBe(resolve(snapshotDir, 'dist', 'index.mjs'));
+        expect(existsSync(resolve(testDir, 'cli-dist'))).toBe(false);
+      }
+    } finally {
+      rmSync(repoRoot, { recursive: true, force: true });
+    }
+  });
+
   it('launches an already-prepared dist snapshot without rebuilding or falling back to source mode', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'happier-cli-launch-spec-prepared-'));
     const snapshotDir = resolve(repoRoot, 'prepared-snapshot');

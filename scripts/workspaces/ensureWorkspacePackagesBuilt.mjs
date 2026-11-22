@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtempSync, existsSync, lstatSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { cp, lstat, mkdir, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -9,6 +9,7 @@ import { readBundledPluginPackageNames } from '../../apps/cli/scripts/build-owne
 import { createCliSourceLoader } from '../../packages/cli-common/cliSourceLoader.mjs';
 
 import { createOwnedBuildStaging } from '../../apps/stack/scripts/utils/fs/abandoned_build_staging.mjs';
+import { removeOwnedDirectorySync } from '../../apps/stack/scripts/utils/fs/fs.mjs';
 import { buildIntoTempThenReplace } from '../../apps/stack/scripts/utils/fs/atomic_dir_swap.mjs';
 import { readCachedFileDigestSync } from '../../apps/stack/scripts/utils/fs/cached_file_digest.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../apps/stack/scripts/build/source_author_inputs.mjs';
@@ -75,6 +76,20 @@ function isCompilerDeclarationOutput(path) {
 }
 
 const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
+
+function createWorkspaceBuildResultDirectory(prefix) {
+  const root = mkdtempSync(join(tmpdir(), prefix));
+  const cleanupOnExit = () => removeOwnedDirectorySync(root);
+  process.once('exit', cleanupOnExit);
+  return {
+    root,
+    async cleanup() {
+      await rm(root, { recursive: true, force: true });
+      process.off('exit', cleanupOnExit);
+    },
+  };
+}
+
 const WORKSPACE_BUILD_EVENT_PREFIX = '[workspace-build-progress] ';
 let bundledPluginUiManifestGenerator;
 function serializeWorkspaceBuildError(error) {
@@ -553,7 +568,7 @@ export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
     }
     await preparePlannedProtocolExports(plan, demand.packageJsonByDir, { env, signal });
     const resources = workspaceBuildBatchResources(demand);
-    const resultDir = await mkdtemp(join(tmpdir(), 'happier-typecheck-batch-result-'));
+    const { root: resultDir, cleanup: cleanupResultDir } = createWorkspaceBuildResultDirectory('happier-typecheck-batch-result-');
     const resultPath = join(resultDir, 'result.json');
     const request = { repoDir: demand.monorepoRoot, components, identity: resources.identity,
       readerAdmissionClass: admissionClass, resultPath, buildMode: env[WORKSPACE_BUILD_MODE_ENV],
@@ -580,7 +595,7 @@ export async function ensureWorkspacePackagesBuiltForComponents(componentDirs, {
       }
       if (!response?.result) throw new Error('Workspace preparation batch did not publish its result');
       return response.result;
-    } finally { await rm(resultDir, { recursive: true, force: true }); }
+    } finally { await cleanupResultDir(); }
   } });
 }
 
@@ -1652,7 +1667,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
   // so tests can exercise this same deterministic publisher without mocking it.
   if (workspaceBuildBoundary.workerModule) {
     const { resolveWorkspacePackageBuildAdmissionClass } = await import('../../apps/stack/scripts/utils/dev_targets/remote_commands.mjs');
-    const resultDir = await mkdtemp(join(tmpdir(), 'happier-workspace-build-result-'));
+    const { root: resultDir, cleanup: cleanupResultDir } = createWorkspaceBuildResultDirectory('happier-workspace-build-result-');
     const resultPath = join(resultDir, 'result.json');
     const request = { monorepoRoot, packageDir, packageJsonPath, quiet, force, requestedBuildAt, timeoutMs,
       publicationMode, buildMode, dependencyDirs, resultPath,
@@ -1719,7 +1734,7 @@ async function ensureWorkspacePackageBuilt(packageDir, {
       }
       return response.result;
     } finally {
-      await rm(resultDir, { recursive: true, force: true });
+      await cleanupResultDir();
     }
   }
   // The in-process compiler boundary uses the same joint resource owner.
@@ -1996,7 +2011,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
     packageDirsByName, packageJsonByDir, env });
   const resources = workspaceBuildBatchResources({ monorepoRoot, componentInputs: [], packageNames: closure,
     consumerOnlyPackageNames: [], packageDirsByName, packageJsonByDir, admissionClass });
-  const resultDir = await mkdtemp(join(tmpdir(), 'happier-workspace-batch-result-'));
+  const { root: resultDir, cleanup: cleanupResultDir } = createWorkspaceBuildResultDirectory('happier-workspace-batch-result-');
   const resultPath = join(resultDir, 'result.json');
   const request = { monorepoRoot, packageNames, options, resultPath, identity: resources.identity,
     boundaryModule: workspaceBuildBoundary.workerModule, boundaryExport: workspaceBuildBoundary.workerExport };
@@ -2040,7 +2055,7 @@ async function buildWorkspacePackageNamesInOneAdmission(monorepoRoot, packageNam
     }
     return response.result;
   } finally {
-    await rm(resultDir, { recursive: true, force: true });
+    await cleanupResultDir();
   }
 }
 

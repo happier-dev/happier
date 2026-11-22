@@ -134,7 +134,6 @@ export async function runCliJson(params: Readonly<{
     () => resolveCliTestLaunchSpec(
       { testDir: params.testDir, env: launchEnv },
       {
-        snapshotDir: resolvePath(join(params.testDir, 'cli-dist')),
         preferSourceEntrypoint: params.launchOptions?.preferSourceEntrypoint,
         skipSourceFreshnessCheck: params.launchOptions?.skipSourceFreshnessCheck,
       },
