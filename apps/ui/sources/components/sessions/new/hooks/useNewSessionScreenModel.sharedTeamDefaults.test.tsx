@@ -131,6 +131,8 @@ describe('shared Team defaults through New Session', () => {
             });
             expect(simple().permissionMode).toBe('default');
             await vi.waitFor(() => expect(sourceRequested).toBe(true));
+            await vi.waitFor(() => expect(simple().agentInputExtraActionChips?.find(chip => chip.controlId === 'approvalProfile')
+                ?.collapsedOptionsPopover?.label).toContain(machineProfile.name));
             await act(async () => sourceArrival.resolve());
             await vi.waitFor(() => expect({ permissionMode: simple().permissionMode, modelMode: simple().modelMode })
                 .toEqual({ permissionMode: 'read-only', modelMode: modelId }));
@@ -138,6 +140,12 @@ describe('shared Team defaults through New Session', () => {
                 .toMatchObject({ value: sourceProfile.id, source: 'project', teamOrGroupDerived: true }));
             await vi.waitFor(() => expect(simple().agentInputExtraActionChips?.find(chip => chip.controlId === 'approvalProfile')
                 ?.collapsedOptionsPopover?.label).toBe(sourceProfile.name));
+            const { APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID } = await import('@/components/approvals/ApprovalProfileSelect');
+            const menu = simple().agentInputExtraActionChips?.find(chip => chip.controlId === 'approvalProfile')?.collapsedOptionsPopover;
+            if (menu?.presentation !== 'list') throw new Error('Expected the approval profile choice list');
+            const machineChoice = menu.rootStep.sections.flatMap(section => 'options' in section ? section.options : [])
+                .find(option => option.id === APPROVAL_PROFILE_MACHINE_DEFAULT_OPTION_ID);
+            expect(machineChoice?.label).toContain(machineProfile.name);
             expect(readNewSessionDraftFromRepository({ scope, draftId: opened.draftId })).not.toHaveProperty('approvalProfileId');
         } finally {
             sourceArrival.resolve();

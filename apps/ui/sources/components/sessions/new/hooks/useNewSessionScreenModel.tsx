@@ -4550,7 +4550,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         const followsMachine = approvalProfileDecision.source === 'machine';
         return createApprovalProfileComposerChip({
             value: followsMachine ? undefined : approvalProfileDecision.value, profiles: approvalProfiles.displayProfiles,
-            machineDefault: followsMachine ? approvalProfileMachineDefault : null,
+            machineDefault: approvalProfileMachineDefault,
             ready: approvalProfiles.ready, displayReady: approvalProfiles.ready || approvalProfiles.selectedDescriptor !== undefined,
             requestCatalog: approvalProfiles.requestCatalog, onChange: changeApprovalProfile,
         });
