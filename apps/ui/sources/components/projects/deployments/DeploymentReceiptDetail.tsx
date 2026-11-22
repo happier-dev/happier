@@ -252,9 +252,10 @@ export const DeploymentReceiptDetail = React.memo(
     const providerEnvironment = content.platform?.providerEnvironment.selection.kind;
     const rollback = mayDeploy && (!platform || (platformTarget?.rollback
       && (providerEnvironment === 'production' || providerEnvironment === 'script'))) ? props.rollback : null;
-    const mayPromote = platform ? mayDeploy && platformTarget?.promote === true
-      && deployment.state === 'succeeded' && Boolean(content.platform?.observation.providerDeploymentId)
-      : canPromoteDeploymentReceipt(value, environmentValue);
+    const promotionTarget = platform
+      ? mayDeploy && platformTarget?.promote && deployment.state === 'succeeded' && content.platform?.observation.providerDeploymentId
+        ? { kind: 'platform' as const, consequence: platformTarget.promote.consequence } : null
+      : canPromoteDeploymentReceipt(value, environmentValue) ? { kind: 'ownServer' as const } : null;
     // Source eligibility is shared with admission; the serving release needs no rollback.
     const retainedTarget = facts.retainedRollbackTarget;
     const { review } = props;
@@ -430,9 +431,9 @@ export const DeploymentReceiptDetail = React.memo(
         linkPath={props.linkPath}
         environmentName={props.environmentName}
         onOpenEnvironment={onBack}
-        onPromote={environmentValue && mayPromote && promote
+        onPromote={environmentValue && promotionTarget && promote
           ? () => showDeploymentPromotionSheet({ controller: props.controller, serverId: props.serverId,
-              initialDestination: promotionDestination.current,
+              target: promotionTarget, initialDestination: promotionDestination.current,
               onChooseDestination: (chosen) => { promotionDestination.current = chosen; },
               sourceEnvironmentId: environmentId, sourceDeploymentId: deployment.id,
               name: props.environmentName ?? environmentValue.content.name, version: deploymentSourceLabel(content) ?? deployment.id,

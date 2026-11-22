@@ -83,6 +83,7 @@ describe('Promote', () => {
           serverId: 'home',
           sourceEnvironmentId: 'staging',
           sourceDeploymentId: 'receipt-61',
+          target: { kind: 'ownServer' },
           name: 'Staging',
           version: '7f3e2b1',
           promote: promote as never,
@@ -149,7 +150,7 @@ describe('Promote', () => {
     const promote = vi.fn(async () => ({ ok: true as const, deploymentId: 'promoted' }));
     let remembered: Parameters<NonNullable<Parameters<typeof showDeploymentPromotionSheet>[0]['onChooseDestination']>>[0] | null = null;
     const open = () => showDeploymentPromotionSheet({
-      controller, serverId: 'home', sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-61', name: 'Staging',
+      controller, serverId: 'home', sourceEnvironmentId: 'staging', sourceDeploymentId: 'receipt-61', target: { kind: 'ownServer' }, name: 'Staging',
       version: '7f3e2b1', promote: promote as never, review: { pendingId: null, request() {}, open() {} }, onOpenReceipt: () => {},
       initialDestination: remembered, onChooseDestination: (chosen) => { remembered = chosen; },
     });
@@ -203,6 +204,7 @@ describe('Promote', () => {
     try {
       await act(async () => {
         showDeploymentPromotionSheet({ controller, serverId: 'home', sourceEnvironmentId: preview.environment.id, sourceDeploymentId: 'receipt-1',
+          target: { kind: 'ownServer' },
           name: 'Preview 12', version: 'a41c09e', promote: vi.fn() as never,
           review: { pendingId: null, request() {}, open() {} }, onOpenReceipt: () => {} });
       });

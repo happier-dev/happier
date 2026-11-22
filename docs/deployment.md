@@ -60,8 +60,10 @@ before preparing a local checkout. When the controller has no matching checkout,
 the gesture runs the existing `projects.open` Action before dispatching
 `deployments.deploy`. It uses Open's destination suggestion and input builders
 and the person's ordinary destination review. An Open refusal or uncertain
-outcome stops the sequence. Stored definitions and provider Git integration do
-not require this checkout step. Deploy itself never opens a checkout internally.
+outcome stops the sequence. When the typed Projects Open refusal names an
+unsupported hosting provider, the Deploy panel includes its display name.
+Stored definitions and provider Git integration do not require this checkout
+step. Deploy itself never opens a checkout internally.
 
 If Upload cannot clone a Source, the Deploy panel shows the checkout failure and
 its repair step. The failed checkout is recorded by Projects Open. A deployment
@@ -1951,6 +1953,9 @@ the signed binding. Preparation reads consume that same admitted scope through
 the existing ActionSpec transports.
 The current native producer supports recorded-image promotion between stored
 definitions; explicit rebuild remains typed unsupported until its producer lands.
+For platform receipts, the Promote sheet shows the effect declared by the
+target's Promote action. A platform Rollback review shows which provider
+deployment will serve and keeps its data.
 Compact requests require the corresponding protocol and controller reload;
 older controllers continue to require prepared references and reject this new input.
 Pending supersession retains its source intent and request/operation identity,

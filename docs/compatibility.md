@@ -10173,6 +10173,14 @@ An older Home does not serve this route. The daemon still returns the typed
 source refusal when publication fails.
 
 
+Unreleased 0.3 SCM provisioning refusals can include an optional
+`remediation.providerDisplayName` for an unsupported provider. The existing loose
+SCM remediation preserves the display fact. Its closed Projects Open V1
+projection accepts the named field, so strict development producers and readers
+load together. Omission keeps the existing repair wording. The display name
+carries no routing or authorization meaning, and changes no stored format. The
+inspected 0.2 frontier at `24731ff73c` has neither schema.
+
 The unreleased managed-policy census accepts an optional nonempty set of
 managed IDs on its existing closed request. Omission and the single-ID request
 keep their existing meanings. Batches cannot carry a requester or request

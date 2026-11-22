@@ -20,9 +20,14 @@ it('names and opens the Machine whose native Domain setup was refused', () => {
 it('routes a repository clone refusal with INVALID_REQUEST to repair the deployment Source', () => {
     const cause = { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null };
     const refused = { kind: 'refused', code: 'INVALID_REQUEST', effectAttempted: false,
-        remediation: { kind: 'unsupported_provider' }, failureCause: cause };
+        remediation: { kind: 'unsupported_provider', providerDisplayName: 'QA fixture forge' }, failureCause: cause };
     expect(readDeploymentRefusalRecoveryV1(refused.code, refused)).toMatchObject({
-        remedy: expect.stringMatching(/could not clone.*hosting provider/i),
+        remedy: expect.stringMatching(/could not clone.*QA fixture forge/i),
+        nextAction: { destination: 'source' },
+    });
+    expect(readDeploymentRefusalRecoveryV1(refused.code, { ...refused,
+        remediation: { kind: 'unsupported_provider' } })).toMatchObject({
+        remedy: expect.stringMatching(/could not clone.*selected hosting provider/i),
         nextAction: { destination: 'source' },
     });
     expect(readDeploymentRefusalRecoveryV1(refused.code, { ...refused, remediation: undefined })).toBeNull();

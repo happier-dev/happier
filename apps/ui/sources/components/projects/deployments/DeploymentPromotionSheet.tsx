@@ -36,6 +36,7 @@ export type DeploymentPromotionSheetInput = Readonly<{
   serverId: string;
   sourceEnvironmentId: string;
   sourceDeploymentId: string;
+  target: Readonly<{ kind: 'ownServer' } | { kind: 'platform'; consequence: string | null }>;
   name: string;
   version: string;
   promote: ReturnType<typeof createDeploymentActions>['promote'];
@@ -78,8 +79,7 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
   const isDestination = (row: DeploymentEnvironmentCollectionV1['items'][number]) => row.environment.id !== props.sourceEnvironmentId
     && row.environment.capabilities.manage && row.environment.capabilities.deploy;
   const busy = press.running || press.reviewPending;
-  // Promote runs the exact images. Only when they cannot reach the destination does it offer a separately reviewed
-  // rebuild of the same version (P40 promotion rule); a rebuild is never the first choice or a silent fallback.
+  // Own servers offer a separately reviewed rebuild only when the exact images cannot reach the destination.
   const [artifact, setArtifact] = React.useState<'image' | 'rebuild'>('image');
   const request = (choice: 'image' | 'rebuild') => {
     if (!destination) return;
@@ -88,8 +88,13 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
       sourceDeploymentId: props.sourceDeploymentId, artifact: choice }));
   };
   const confirm = () => request('image');
-  const exactImageUnavailable = artifact === 'image' && press.outcome?.kind === 'refused'
+  const target = props.target;
+  const ownServer = target.kind === 'ownServer';
+  const exactImageUnavailable = ownServer && artifact === 'image' && press.outcome?.kind === 'refused'
     && press.outcome.code === 'rollback_image_unavailable';
+  const effect = ownServer
+    ? { title: t('projects.deployments.promotion.image'), subtitle: t('projects.deployments.promotion.imageBody') }
+    : target.consequence ? { title: target.consequence } : null;
   const footer = (
     <ModalCardFooterActions cancel={{ onPress: onClose, testID: 'project-deployments.promote.cancel', disabled: busy }}>
       <RoundButton testID="project-deployments.promote.confirm" title={t('projects.deployments.promotion.review')}
@@ -127,10 +132,11 @@ function DeploymentPromotionSheet(props: DeploymentPromotionSheetInput & CustomM
           diagnosticCode={gaps.result.reason}
           action={gaps.result.retryable ? { label: t('common.retry'), onPress: () => { void gaps.retry(); } } : undefined} />
           : null}
-        <ItemGroup header="none">
-          <Item title={t('projects.deployments.promotion.image')} subtitle={t('projects.deployments.promotion.imageBody')}
-            showChevron={false} />
-        </ItemGroup>
+        {effect ? (
+          <ItemGroup header="none">
+            <Item {...effect} showChevron={false} />
+          </ItemGroup>
+        ) : null}
         {exactImageUnavailable ? <SurfaceStateCard testID="project-deployments.promote.rebuild" size="line" kind="error"
           title={t('projects.deployments.receipt.rebuildTitle')} reason={t('projects.deployments.receipt.rebuildBody')}
           action={{ label: t('projects.deployments.receipt.rebuildAction'), testID: 'project-deployments.promote.rebuild.confirm',

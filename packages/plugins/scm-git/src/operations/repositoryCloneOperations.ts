@@ -273,13 +273,15 @@ async function describeCloneTargets(input: Readonly<{
     const registry = await readRegistry(input.deps);
     const adapter: HostingProviderRepositoryCloneCapability | undefined =
         registry?.getRepositoryClone(input.request.provider.id);
+    const providerDisplayName = input.request.provider.displayName;
+    const remediation = { kind: 'unsupported_provider' as const, providerDisplayName };
     if (!registry?.getProvider(input.request.provider.id)) {
         return {
             ok: false,
             response: errorResponse(
-                `The selected hosting provider "${input.request.provider.displayName}" (${input.request.provider.id}) is not registered.`,
+                `The selected hosting provider "${providerDisplayName}" (${input.request.provider.id}) is not registered.`,
                 SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE,
-                { remediation: { kind: 'unsupported_provider' } },
+                { remediation },
             ),
         };
     }
@@ -287,9 +289,9 @@ async function describeCloneTargets(input: Readonly<{
         return {
             ok: false,
             response: errorResponse(
-                `The selected hosting provider "${input.request.provider.displayName}" does not support repository clone target discovery.`,
+                `The selected hosting provider "${providerDisplayName}" does not support repository clone target discovery.`,
                 SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
-                { remediation: { kind: 'unsupported_provider' } },
+                { remediation },
             ),
         };
     }
@@ -298,9 +300,9 @@ async function describeCloneTargets(input: Readonly<{
         return {
             ok: false,
             response: errorResponse(
-                `The selected hosting provider "${input.request.provider.displayName}" does not recognize this repository deployment.`,
+                `The selected hosting provider "${providerDisplayName}" does not recognize this repository deployment.`,
                 SCM_OPERATION_ERROR_CODES.INVALID_REQUEST,
-                { remediation: { kind: 'unsupported_provider' } },
+                { remediation },
             ),
         };
     }

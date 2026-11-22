@@ -370,8 +370,8 @@ describe('deployment platforms from bundled declarations', () => {
     const { manifest: cloudflareManifest } = await import('../../../../../../packages/plugins/deploy-cloudflare/src/manifest');
     const [vercel, workers, pages] = readDeploymentPlatformTargets([vercelManifest, cloudflareManifest]
       .map(value => ({ manifest: PluginPortableReleaseManifestV1Schema.parse(value) })));
-    expect(vercel).toMatchObject({ promote: true, rollback: true });
-    expect(workers).toMatchObject({ promote: true, rollback: true });
+    expect(vercel).toMatchObject({ promote: { consequence: expect.stringMatching(/production traffic.*Vercel/) }, rollback: true });
+    expect(workers).toMatchObject({ promote: { consequence: expect.stringMatching(/all traffic.*Cloudflare Worker/) }, rollback: true });
     expect(pages).toMatchObject({ rollback: true });
     expect(pages).not.toHaveProperty('promote');
   });

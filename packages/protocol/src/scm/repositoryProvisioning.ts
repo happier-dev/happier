@@ -72,6 +72,7 @@ export type ScmRepositoryProvisioningRemediationKind =
 
 export const ScmRepositoryProvisioningRemediationSchema = lazyZodSchema(() => z.looseObject({
     kind: ScmRepositoryProvisioningRemediationKindSchema,
+    providerDisplayName: z.optional(z.string().check(z.minLength(1))),
     label: z.optional(z.string().check(z.minLength(1))),
     action: z.optional(z.string().check(z.minLength(1))),
     url: z.optional(z.string().check(z.url())),

@@ -275,7 +275,10 @@ function sourceFileRecovery(details: Record<string, unknown>) {
 export type DeploymentRefusalRequestV1 = Readonly<{ pullRequestHead?: boolean }>;
 // An exact pull-request head the Source can't supply is that head's problem, not the Source's setup.
 const pullRequestHeadRecovery = recovery('This pull request head could not be fetched for deploy. The pull request may be merged, closed or from a fork. Read its latest head again, or deploy its branch.', 'source', 'Open Source details');
-const unsupportedCloneProviderRecovery = recovery('Happier could not clone the repository because the selected hosting provider does not support the repository address. Open Source details and choose a supported provider and repository, then deploy again.', 'source', 'Open Source details');
+function unsupportedCloneProviderRecovery(providerDisplayName: string | undefined) {
+    const provider = providerDisplayName ?? 'the selected hosting provider';
+    return recovery(`Happier could not clone the repository because ${provider} does not support the repository address. Open Source details and choose a supported provider and repository, then deploy again.`, 'source', 'Open Source details');
+}
 
 function recoveryDetails(details: Record<string, unknown>): Record<string, unknown> {
     // Store keeps completed steps alongside the Domain owner's failure. Its
@@ -293,7 +296,9 @@ function recoveryFor(details: Record<string, unknown>, errorCode?: string, reque
     details = recoveryDetails(details);
     if (details.kind === 'refused') {
         const open = OpenProjectRefusalV1Schema.safeParse(details);
-        if (open.success && open.data.remediation?.kind === 'unsupported_provider') return unsupportedCloneProviderRecovery;
+        if (open.success && open.data.remediation?.kind === 'unsupported_provider') {
+            return unsupportedCloneProviderRecovery(open.data.remediation.providerDisplayName);
+        }
     }
     // The transport sets this fact only after consuming Home's confirmed rollback.
     if (details.requiredFact === 'transaction_commit') return transactionRollbackRecovery;

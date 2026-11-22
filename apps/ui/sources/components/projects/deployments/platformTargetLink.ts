@@ -3,7 +3,7 @@ import type { DeploymentRuntimeTargetV1, DeploymentSourceMethodV1 } from '@happi
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import type { EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { patchHappierActionInputPath, readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import {
   DeploymentTargetLinkProviderContentV1Schema,
   describeDeploymentTargetGitCreateV1,
@@ -51,7 +51,7 @@ export type DeploymentPlatformTarget = Readonly<{
   generatedDomains?: true;
   gitSource?: DeploymentRuntimeTargetV1['gitSource'];
   teardown?: true;
-  promote?: true;
+  promote?: Readonly<{ consequence: string | null }>;
   rollback?: true;
   /** The provider's own words for what its teardown deletes ("Delete this Vercel project and its deployments?"). */
   teardownConsequence?: string;
@@ -71,11 +71,15 @@ const record = (value: unknown): value is UnknownRecord =>
 const text = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0;
 
-/** A delete Action's declared confirmation names what the provider deletes with the resource (runtime and data targets). */
-export function readTeardownConsequence(actions: readonly unknown[], localId: string) {
+function readPlatformActionConsequence(actions: readonly unknown[], localId: string): string | null {
   const action = actions.find(entry => record(entry) && entry.id === localId);
   const title = record(action) && record(action.confirmation) ? action.confirmation.title : undefined;
-  const consequence = title === undefined ? '' : resolvePluginLocalizedStringV2Text(title);
+  return title === undefined ? null : resolvePluginLocalizedStringV2Text(title) || null;
+}
+
+/** A delete Action's declared confirmation names what the provider deletes with the resource (runtime and data targets). */
+export function readTeardownConsequence(actions: readonly unknown[], localId: string) {
+  const consequence = readPlatformActionConsequence(actions, localId);
   return consequence ? { teardownConsequence: consequence } : {};
 }
 
@@ -167,11 +171,13 @@ export function readDeploymentPlatformTargets(
           ...(() => {
             const normalized = normalizedTargets.find(candidate => candidate.source.kind === 'plugin'
               && candidate.source.contribution.localId === target.id);
+            const promoteRole = normalized?.role === 'runtime' ? normalized.actions.promote : undefined;
+            const promoteAction = promoteRole?.kind === 'plugin' ? parseQualifiedPluginActionId(promoteRole.actionId) : null;
             return normalized?.role === 'runtime' ? {
               ...(normalized.accepts === undefined ? {} : { accepts: normalized.accepts }),
               ...(normalized.needs === undefined ? {} : { needs: normalized.needs }),
               ...(normalized.plans?.length ? { plans: normalized.plans } : {}),
-              ...(normalized.actions.promote ? { promote: true as const } : {}),
+              ...(promoteAction ? { promote: { consequence: readPlatformActionConsequence(actions, promoteAction.localId) } } : {}),
               ...(normalized.gitSource ? { gitSource: normalized.gitSource } : {}),
               ...(normalized.generatedDomains ? { generatedDomains: true as const } : {}),
               ...(normalized.logFollow === false ? { logFollow: false as const } : {}),

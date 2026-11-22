@@ -330,7 +330,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
       if (context.invocation?.presentUserConfirmation?.reviewDigest !== reviewDigest) return { reviewRequired: input };
       effects.push('open');
       if (openResult === 'unsupported-forge') return { kind: 'refused', code: 'INVALID_REQUEST', effectAttempted: false,
-        remediation: { kind: 'unsupported_provider' },
+        remediation: { kind: 'unsupported_provider', providerDisplayName: 'QA fixture forge' },
         failureCause: { phase: 'projects.open', errorClass: 'Error', errorCode: 'INVALID_REQUEST', httpStatus: null } };
       return openResult === 'refused' ? { kind: 'refused', code: 'destination_exists', effectAttempted: false } : {
         kind: 'opened', workspace: { serverId: scope.serverId, machineId, workspaceId: 'checkout', rootPath: '/home/me/src/app' },
@@ -380,7 +380,7 @@ it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepar
           errorCode: 'deployment_source_clone_failed', effectAttempted: false,
           failureCause: { phase: 'projects.open', errorCode: 'INVALID_REQUEST' },
         });
-        expect(screen.getTextContent()).toMatch(/could not clone.*hosting provider/i);
+        expect(screen.getTextContent()).toMatch(/could not clone.*QA fixture forge/i);
       }
     });
   } finally { account.dispose(); await act(async () => { controller.retire(); }); }
@@ -1149,12 +1149,15 @@ describe('Project deployments page', () => {
   });
 
   it.each([
-    { target: 'vercel-preview', promoteAvailable: true, rollbackAvailable: false },
-    { target: 'vercel-production', promoteAvailable: true, rollbackAvailable: true },
-    { target: 'pages-preview', promoteAvailable: false, rollbackAvailable: false },
-    { target: 'pages-production', promoteAvailable: false, rollbackAvailable: true },
-  ])('shows only declared rollout Actions from the $target receipt', async ({ target, promoteAvailable, rollbackAvailable }) => {
+    { target: 'vercel-preview', promotion: /Send production traffic to this Vercel deployment/, rollbackAvailable: false },
+    { target: 'vercel-production', promotion: /Send production traffic to this Vercel deployment/, rollbackAvailable: true },
+    { target: 'workers', promotion: /Send all traffic to this Cloudflare Worker version/, rollbackAvailable: true },
+    { target: 'pages-preview', promotion: null, rollbackAvailable: false },
+    { target: 'pages-production', promotion: null, rollbackAvailable: true },
+  ])('presents declared rollout Actions from the $target receipt', async ({ target, promotion, rollbackAvailable }) => {
     const vercel = target.startsWith('vercel');
+    const workers = target === 'workers';
+    const { Modal, ModalProvider } = await import('@/modal');
     const { manifest, activateAccount } = vercel
       ? await import('../../../../../../packages/plugins/deploy-vercel/src/index')
       : await import('../../../../../../packages/plugins/deploy-cloudflare/src/index');
@@ -1166,10 +1169,10 @@ describe('Project deployments page', () => {
     const { accountLifetime: lifetime } = await captureLazyActionAccountContext(scope.serverId);
     const installed = await installPortableAccountPluginReleaseForTest({ manifest, activate: activateAccount,
       accountLifetime: lifetime, publishProjection: true });
-    const selection: Record<string, string> = target.endsWith('preview')
+    const selection: Record<string, string> = workers ? { kind: 'script', scriptName: 'app' } : target.endsWith('preview')
       ? { kind: 'preview', gitBranch: 'main' } : { kind: 'production' };
     const providerEnvironment = { kind: 'native' as const, selection };
-    const source = { kind: 'plugin' as const, contribution: { pluginId: manifest.id, localId: vercel ? 'runtime' : 'pages' } };
+    const source = { kind: 'plugin' as const, contribution: { pluginId: manifest.id, localId: vercel ? 'runtime' : workers ? 'workers' : 'pages' } };
     const base = environmentDetailForHome();
     const native = createDeploymentReceiptDetailV1();
     const sourceIntent = native.content.sourceIntent;
@@ -1178,7 +1181,7 @@ describe('Project deployments page', () => {
       purpose: { consumer: { pluginId: manifest.id, localId: 'inspect' }, purpose: 'deploy.manage' },
       target: { kind: 'account' as const, account: { service: { pluginId: manifest.id, localId: 'account' }, accountId: 'connected' } } };
     const providerIdentity = { providerAccountId: 'account', providerResourceId: 'project',
-      providerEnvironment: selection.kind === 'production' ? 'production' : 'preview:main' };
+      providerEnvironment: workers ? 'script:app' : selection.kind === 'production' ? 'production' : 'preview:main' };
     const makeReceipt = (id: string, sha: string) => createDeploymentReceiptDetailV1({
       deployment: createDeploymentReceiptHeaderV1({ id, state: 'succeeded' }),
       content: { machines: [], images: [], machineResults: [], steps: [], sourceMethod: 'upload',
@@ -1190,24 +1193,30 @@ describe('Project deployments page', () => {
     const retained = makeReceipt('retained', 'a'.repeat(40));
     const detail = environmentDetailForHome({ targetLinks: base.targetLinks.map(row => ({
       targetLink: { ...row.targetLink, source, activeDeploymentId: serving.deployment.id, machines: [], members: [],
-        targetKind: vercel ? 'vercel' : 'cloudflare-pages' },
+        targetKind: vercel ? 'vercel' : workers ? 'cloudflare-workers' : 'cloudflare-pages' },
       content: { credentialPrincipal, providerIdentity, providerEnvironment },
     })) });
     const { controller } = controllerFor({ detail, receipt: serving, history: [serving, retained] });
     const actions = createDeploymentActions(lifetime, scope.projectSourceId);
     try {
-      const screen = await renderScreen(<DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
+      const screen = await renderScreen(<ModalProvider><DeploymentReceiptDetail controller={controller} environmentId={detail.environment.id}
         deploymentId={serving.deployment.id} environmentName={target} demand={shown} lifetime={lifetime}
         accountId={scope.accountId} serverId={scope.serverId} phone={false} onBack={() => {}}
         rollback={actions.rollback} cancel={null} deploy={null} promote={actions.promote} readLogs={null} linkPath={null}
-        review={noReview} onOpenReceipt={() => {}} />);
+        review={noReview} onOpenReceipt={() => {}} /></ModalProvider>);
       await waitForContent(screen, 'project-deployments.receipt.header');
       await act(async () => { await screen.pressByTestIdAsync('project-deployments.receipt.menu'); });
       await waitForContent(screen, 'project-deployments.receipt.menu.environment');
-      if (promoteAvailable) await waitForContent(screen, 'project-deployments.receipt.promote');
-      expect(screen.findByTestId('project-deployments.receipt.promote') !== null).toBe(promoteAvailable);
+      if (promotion) await waitForContent(screen, 'project-deployments.receipt.promote');
+      expect(screen.findByTestId('project-deployments.receipt.promote') !== null).toBe(promotion !== null);
       expect(screen.findByTestId('project-deployments.receipt.rollback') !== null).toBe(rollbackAvailable);
-    } finally { await act(async () => { controller.retire(); await installed.dispose(); }); }
+      if (promotion) {
+        await screen.pressByTestIdAsync('project-deployments.receipt.promote');
+        await waitForContent(screen, 'project-deployments.promote');
+        expect(screen.getTextContent()).toMatch(promotion);
+        expect(screen.getTextContent()).not.toMatch(/reuse the images.*stored Compose/i);
+      }
+    } finally { await act(async () => { Modal.hideAll(); controller.retire(); await installed.dispose(); }); }
   });
 
   it.each(['repository', 'platform'] as const)('hides promotion for an unsupported %s receipt and platform header', async kind => {

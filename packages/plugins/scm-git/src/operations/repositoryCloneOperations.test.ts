@@ -284,19 +284,23 @@ describe('git repository clone operation', () => {
         expect(response.snapshot?.branch).toMatchObject({ head: 'main', headOid: expected, detached: false });
     });
 
-    it('refuses an unregistered provider or an unrecognized deployment before creating a checkout', async () => {
+    it('names the unsupported provider before creating a checkout', async () => {
         const parent = createWorkspace();
         const description = makeCloneTargetDescription('/tmp/unused.git');
-        const repositoryClone = getRepositoryCloneOperation({ registry: makeProviderRegistry(description) });
-        for (const [provider, errorCode] of [
-            [{ ...description.repository.provider, id: 'missing/provider' }, SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE],
-            [{ ...description.repository.provider, baseUrl: 'https://attacker.example' }, SCM_OPERATION_ERROR_CODES.INVALID_REQUEST],
+        const declared = description.repository.provider;
+        const registered = makeProviderRegistry(description);
+        const lacksClone = makeProviderRegistry(description, null);
+        for (const [registry, provider, errorCode] of [
+            [registered, { ...declared, id: 'missing/provider' }, SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE],
+            [lacksClone, declared, SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED],
+            [registered, { ...declared, baseUrl: 'https://attacker.example' }, SCM_OPERATION_ERROR_CODES.INVALID_REQUEST],
         ] as const) {
-            const response = await cloneWithRealGitRuntime(repositoryClone, {
+            const response = await cloneWithRealGitRuntime(getRepositoryCloneOperation({ registry }), {
                 context: makeContext(parent),
                 request: { ...makeRequest(parent, '/tmp/unused.git'), provider },
             });
-            expect(response).toMatchObject({ success: false, errorCode });
+            expect(response).toMatchObject({ success: false, errorCode,
+                remediation: { kind: 'unsupported_provider', providerDisplayName: provider.displayName } });
             expect(existsSync(join(parent, 'happier'))).toBe(false);
         }
     });
