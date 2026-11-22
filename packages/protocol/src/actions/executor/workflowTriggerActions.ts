@@ -47,7 +47,7 @@ import {
   type WorkflowTriggerHealthSourceV1,
   WorkflowDeploymentBackupTargetV1Schema,
   summarizeWorkflowTriggerRowsV1,
-  isWorkflowTriggerSourceGoneV1,
+  isWorkflowTriggerSourceGoneV1, readWorkflowTriggerSubjectProjectV1,
   SessionInitialTriggerV1Schema, type SessionInitialTriggerV1, type SessionInitialTriggerDefinitionV1,
 } from '../../workflows/triggers/workflowTriggerActionsV1.js';
 import { SessionInitialTriggerAdmissionV1Schema, type SessionInitialTriggerAdmissionV1 } from '../../sessions/creation/sessionInitialTriggerAdmissionV1.js';
@@ -1276,7 +1276,9 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           assignments: [], triggers: [{ triggerId, trigger: input.trigger }] }, undefined, caller?.signal);
         return writeResult(row, row.triggers[0]?.id ?? triggerId, input.includeEventDefinition === true);
       }
-      const targetProject = scope || !input.project ? input.project : resolveWorkflowProjectTargetMachineV1(input.project);
+      const subjectProject = !scope && !input.lifetimeSession && !input.project
+        ? readWorkflowTriggerSubjectProjectV1(input.trigger) : undefined;
+      const targetProject = !scope && input.project ? resolveWorkflowProjectTargetMachineV1(input.project) : input.project ?? subjectProject;
       if ((input.trigger.kind === 'prComment' || input.trigger.kind === 'ciFailed') && !scope) refuseInput('session_trigger_scope_required');
       const target = input.target ?? { kind: 'workflow' as const, ref: input.workflow! };
       let sourceTerminal = false;
@@ -1294,6 +1296,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
         const usesInvocationPlacement = row.executionRecipe?.v === 2 && row.executionRecipe.placement === 'action_invocation';
         if (usesInvocationPlacement !== (targetProject === undefined)) continue;
         const current = await opened(row, false, caller);
+        if (subjectProject && (row.assignments[0]?.machineId !== subjectProject.machineId
+          || !sameStrictJsonValue(current.context.workspace, context.workspace))) continue;
         const mergedContext = AutomationStoredWorkflowDefinitionV2Schema.parse({ ...current.context, ...(context.workspace && { workspace: context.workspace }),
           ...(input.executionTarget === undefined ? {} : { executionTarget: input.executionTarget }),
           ...(input.inputs === undefined ? {} : { inputs: input.inputs }),

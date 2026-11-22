@@ -16,7 +16,7 @@ import { AutomationHealthCheckSubjectV1Schema } from '../../automations/automati
 import { AutomationTriggerReferenceV1Schema } from '../../automations/automationTriggerIdentity.js';
 import { AutomationDefinitionListRequestSchema } from '../../automations/automationApiV3.js';
 import { WorkflowRunLastStartedSummaryV1Schema } from '../workflowProgressV1.js';
-import { AutomationSubjectV1Schema } from '../../automations/automationSubjectV1.js';
+import { AutomationSubjectV1Schema, type AutomationSubjectV1 } from '../../automations/automationSubjectV1.js';
 import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchema,
@@ -26,7 +26,7 @@ import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchem
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
 import { AutomationDeploymentTriggerFilterV1Schema, AutomationManagedTargetV1Schema, AutomationObservationOnlyDefinitionV1Schema, AutomationStoredWorkflowDefinitionV2Schema } from '../../automations/automationWorkflowRecipeV2.js';
-import { WorkflowProjectTargetV1Schema } from '../workflowWorkspaceV1.js';
+import { WorkflowProjectTargetV1Schema, type WorkflowProjectTargetV1 } from '../workflowWorkspaceV1.js';
 import { WorkflowDefinitionRefV1StringSchema } from '../workflowDefinitionRefV1.js';
 import { TriggerTargetV1Schema } from './triggerTargetV1.js';
 import { SessionIdSchema } from '../../sessions/idsV1.js';
@@ -201,6 +201,21 @@ const WorkflowTriggerLifetimeSessionV1Schema = lazyZodSchema(() => z.strictObjec
   sessionId: asProtocolZod(SessionIdSchema),
   onComplete: z.optional(AutomationStoredWorkflowDefinitionV2Schema.shape.onComplete),
 }));
+/** A Machine-local Database Event already names the accepted checkout where it can run. */
+export function readWorkflowTriggerSubjectProjectV1(trigger: Readonly<{ kind: string; subject?: AutomationSubjectV1 }>): WorkflowProjectTargetV1 | undefined {
+  if (trigger.kind !== 'pluginEvent' || trigger.subject?.kind !== 'database') return undefined;
+  const { target, serverId } = trigger.subject;
+  if (target.kind !== 'worktree' && target.kind !== 'manual') return undefined;
+  const { workspace } = target;
+  if (workspace.serverId !== serverId) return undefined;
+  const project = WorkflowProjectTargetV1Schema.safeParse({
+    machineId: workspace.kind === 'managed' ? workspace.controller.machineId : workspace.machineId,
+    directory: workspace.rootPath, workspaceRefId: workspace.workspaceId,
+    ...(workspace.kind === 'managed' ? { sessionPlacement: { kind: 'in_place', workspace } } : {}),
+  });
+  return project.success ? project.data : undefined;
+}
+
 const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strictObject({
   workflow: zMini.optional(WorkflowDefinitionRefV1StringSchema),
   target: zMini.optional(TriggerTargetV1Schema),
@@ -216,7 +231,8 @@ const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strict
   const usesInvocationPlacement = (value.workflow !== undefined || value.target?.kind === 'workflow')
     && value.trigger.kind === 'action' && !('consentFor' in value.trigger)
     && value.actionApproval !== 'automatic' && value.deployment === undefined && value.deploymentPreview === undefined;
-  if (value.project === undefined && value.lifetimeSession === undefined && !usesInvocationPlacement) {
+  if (value.project === undefined && value.lifetimeSession === undefined && !usesInvocationPlacement
+    && readWorkflowTriggerSubjectProjectV1(value.trigger) === undefined) {
     ctx.addIssue({ code: 'custom', path: ['project'], message: 'Choose an execution project or Session lifetime' });
   }
   if ((value.workflow === undefined) === (value.target === undefined)) {

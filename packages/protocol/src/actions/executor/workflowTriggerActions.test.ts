@@ -455,6 +455,35 @@ describe('profile subject mutation admission', () => {
     });
 });
 
+describe('Database Event Link placement', () => {
+  it.each([
+    { kind: 'worktree', source: { kind: 'env_file', path: '.env', variable: 'DATABASE_URL' } },
+    { kind: 'manual', savedSecretId: 'saved-database-secret' },
+  ] as const)('places a $kind Database Event Link on the subject workspace', async target => {
+    const f = fixture();
+    const workspace = { serverId: 'home-one', machineId: 'database-machine', workspaceId: 'database-workspace',
+      rootPath: '/database-worktree' };
+    const subject = { kind: 'database' as const, serverId: workspace.serverId, target: {
+      ...target, accountId: 'account-one', workspace, installationId: 'database-installation', projectKey: 'database-project',
+    } };
+    const eventRef = { pluginId: 'happier.database', localId: 'finding-observed' };
+    const prior = await f.actions.add({ workflow, project, trigger });
+    const saved = await f.actions.add({ workflow, trigger: {
+      kind: 'pluginEvent', enabled: true, subject, eventRef,
+      sourceInstanceId: 'database-findings', sourceContractVersion: 1, sourceConfig: {}, displayLabel: 'Database findings',
+      filter: null, maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
+        watcherMaterializationRef: { machineId: workspace.machineId, pluginId: eventRef.pluginId, materializationId: 'findings' } },
+    } });
+    expect(saved.set.automationId).not.toBe(prior.set.automationId);
+    expect(f.rows.get(prior.set.automationId)?.assignments).toMatchObject([{ machineId: project.machineId, enabled: true }]);
+    expect(saved.set.project).toEqual({ machineId: workspace.machineId, directory: workspace.rootPath, workspaceRefId: workspace.workspaceId });
+    expect(f.rows.get(saved.set.automationId)).toMatchObject({
+      scopeSessionId: null, assignments: [{ machineId: workspace.machineId, enabled: true }],
+      triggers: [{ id: saved.triggerId, eventRef }],
+    });
+  });
+});
+
 describe('inline Event reference authoring', () => {
   const event = { pluginId: 'com.acme.events', localId: 'pull-request' };
   const eventTrigger = { kind: 'pluginEvent' as const, enabled: true, eventRef: event,
