@@ -3,7 +3,7 @@ import nacl from 'tweetnacl';
 import type { Socket } from 'socket.io';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { encodeExternalActionResolvedTargetV1, encodeReviewedActionChildHttpProofV1,
+import { computeExternalActionRequestEnvelopeDigestV1, encodeExternalActionResolvedTargetV1, encodeReviewedActionChildHttpProofV1,
     signExternalActionMachineRequestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
@@ -14,7 +14,7 @@ import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/proto
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol';
-import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
 import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
 import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
@@ -230,6 +230,74 @@ describe('signed Session Agent readiness children', () => {
                     expect(http).toBeNull();
                 }
             }
+        } finally { await f.app.close(); }
+    });
+
+    it('admits a native Copy readiness child only on the original Machine for its exact read', async () => {
+        const f = await createSignedDiscussionHttpFixture();
+        try {
+            await db.machine.update({ where: { id: f.machine.id }, data: { active: true, lastActiveAt: new Date(),
+                operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({
+                    requesterExecutionIsolation: { protocolVersions: [1] }, externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
+            const session = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+            await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.machine.id,
+                sessionId: session.id, data: 'opaque-key' } });
+            const serverIdentityId = await getOrCreateServerIdentityId();
+            const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: f.machine.id },
+                input: { source: { kind: 'artifact', serverId: serverIdentityId, artifactId: randomUUID() },
+                    expectedVersion: '1.0.0', expectedRevision: 1, setup: { software: [], accounts: [], mcpServers: [] },
+                    creation: { executionTarget: { serverId: serverIdentityId, machineId: f.machine.id }, creationKey: randomUUID(),
+                        directory: { kind: 'path', path: '/workspace' },
+                        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } } } };
+            const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1, requestId: envelope.requestId,
+                caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
+                sourceTurnId: randomUUID(), callerPermissionMode: 'default',
+                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+            // Session publisher discovery is the network boundary. Minting, the
+            // source and effect signatures, and Home admission use real owners.
+            const resolveCurrentSessionMachine = async ({ accountId, sessionId: sourceSessionId }: { accountId: string; sessionId: string }) =>
+                accountId === f.account.id && sourceSessionId === session.id ? f.machine.id : null;
+            const authorization = await auth.mintExternalActionExecutionAuthorization({
+                accountId: f.account.id, serverIdentityId, machineId: f.machine.id, actionId: 'template.instantiate',
+                target: envelope.target, requestId: envelope.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, sessionActionOrigin,
+                sessionActionSource: { machineId: f.machine.id, installationId: f.machine.installationId! },
+            }, { resolveCurrentSessionMachine });
+            const child = SESSION_AGENT_READINESS_CHILDREN_V1.inventory;
+            const reviewedChild = { actionId: child.action, role: child.role,
+                inputDigest: computeActionInputApprovalDigestV1(child.action, { machineId: f.machine.id, agentId: 'codex', refresh: true }) };
+            const verify = (options: { method?: string; machineId?: string | null; installationId?: string;
+                witness?: ReviewedActionChildHttpProofV1; effect?: typeof child.action | 'template.instantiate' } = {}) => {
+                const rpc = options.method ?? RPC_METHODS.CAPABILITIES_DETECT;
+                const method = options.machineId === null ? rpc : `${options.machineId ?? f.machine.id}:${rpc}`;
+                const requestId = randomUUID();
+                const params = 'opaque-child-input';
+                const signed = { authorizationToken: authorization.token, effectActionId: options.effect ?? child.action,
+                    target: envelope.target, installationId: options.installationId ?? f.machine.installationId!, method, requestId, params,
+                    ...(options.witness ? { reviewedChild: options.witness } : {}) };
+                return verifyExternalActionMachineRpcExecution({ v: 1, authorization, effectActionId: signed.effectActionId,
+                    target: signed.target, installationId: signed.installationId,
+                    ...(options.witness ? { reviewedChild: options.witness } : {}),
+                    machineSignature: signExternalActionMachineRpcRequestV1({ ...signed, privateKey: f.keyPair.secretKey }) },
+                { method, requestId, params, resolveCurrentSessionMachine });
+            };
+            await expect(verify({ witness: reviewedChild })).resolves.toMatchObject({ effectActionId: child.action,
+                binding: { actionId: 'template.instantiate', machineId: f.machine.id }, sessionAgentReadinessAdmission: { machineId: f.machine.id } });
+            await expect(verify()).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate' })).resolves.toMatchObject({
+                effectActionId: 'template.instantiate',
+                binding: { actionId: 'template.instantiate', machineId: f.machine.id },
+            });
+            await expect(verify({ effect: 'template.instantiate', machineId: randomUUID() })).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate', machineId: null })).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate', installationId: randomUUID() })).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate', witness: { ...reviewedChild, role: 'unreviewed' } })).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate', method: RPC_METHODS.BASH })).resolves.toBeNull();
+            await expect(verify({ effect: 'template.instantiate',
+                method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE })).resolves.toBeNull();
+            await expect(verify({ witness: reviewedChild, machineId: randomUUID() })).resolves.toBeNull();
+            await expect(verify({ witness: reviewedChild, method: RPC_METHODS.BASH })).resolves.toBeNull();
+            await expect(verify({ witness: { ...reviewedChild, role: 'unreviewed' } })).resolves.toBeNull();
         } finally { await f.app.close(); }
     });
 

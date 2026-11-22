@@ -5864,7 +5864,11 @@ export async function verifyExternalActionMachineRpcExecution(
                 ? binding.actionId : null
             : pendingEvent
             ? request.method === request.event ? 'session.message.send' : null
-            : resolveMachineRpcExternalActionEffectV1(method, binding);
+            : method === RPC_METHODS.CAPABILITIES_DETECT
+                ? resolveMachineRpcExternalActionEffectV1(method, binding, {
+                    machineId: request.method.slice(0, Math.max(separator, 0)), installationId: execution.installationId,
+                }, execution.reviewedChild)
+                : resolveMachineRpcExternalActionEffectV1(method, binding);
         if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && !projectPrepareReviewPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)

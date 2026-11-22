@@ -23,6 +23,7 @@ import { AGENT_SIGN_IN_PREPARE_RPC_METHOD, AGENT_SIGN_IN_STATUS_RPC_METHOD } fro
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../rpc/methods.js';
 import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../../../connect/configurationActionIdsV1.js';
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
+import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../../../bots/templates/botTemplateActionIdsV1.js';
 import { isProviderActionIdV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
@@ -1218,6 +1219,18 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
     // Account membership discovery is a read phase of this admitted inventory
     // Action. Preserve its requester and exact installed Machine.
     return binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
+  }
+  if (method === RPC_METHODS.CAPABILITIES_DETECT && binding?.actionId === BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1
+    && !reviewedChild && 'authentication' in binding && binding.sessionActionOrigin
+    && (binding.authentication.kind === 'account' || binding.authentication.kind === 'terminal')) {
+    // A native Copy can spend its root to detect the Agent on its own
+    // installed Machine. The reviewed child remains the route for other readiness effects.
+    return binding.accountId === binding.custodianAccountId
+      && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && binding.sessionActionSource?.machineId === binding.machineId
+      && binding.sessionActionSource.installationId === binding.installationId
       && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
       ? binding.actionId : null;
   }
