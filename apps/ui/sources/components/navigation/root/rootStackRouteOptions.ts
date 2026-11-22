@@ -246,6 +246,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: NewSessi
         'friends/index': options.friendsIndex,
         'discussions/index': options.hiddenHeader,
         'discussions/new': options.visibleBlankBack,
+        'discussions/storage': options.visibleBlankBack,
         'discussions/[discussionId]': options.visibleBlankBack,
         'oauth/[provider]': options.hiddenHeader,
         'oauth/mcp/callback': options.hiddenHeader,

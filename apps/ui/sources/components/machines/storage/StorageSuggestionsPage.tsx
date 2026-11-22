@@ -23,7 +23,8 @@ import { useMachineStorageSummary } from '@/sync/domains/machines/storage/useMac
 import { t } from '@/text';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
 
-import { StorageHint, StoragePageHead, StorageSayLine } from './StoragePageHead';
+import { StorageSayLine } from '@/components/storage/StorageSayLine';
+import { StorageHint, StoragePageHead } from './StoragePageHead';
 import {
   useStorageCollect,
   type StorageCollectController,

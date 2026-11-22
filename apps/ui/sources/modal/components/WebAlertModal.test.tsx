@@ -63,6 +63,21 @@ describe('WebAlertModal', () => {
         expect(StyleSheet.flatten(label?.props.style)?.color).toBe(lightTheme.colors.state.danger.textForeground);
     });
 
+    it('draws a confirmation\'s facts as label and value pairs after its message', async () => {
+        const { WebAlertModal } = await import('./WebAlertModal');
+        const screen = await renderScreen(<WebAlertModal config={{
+            id: 'facts', type: 'confirm', title: 'Delete 11 old versions?',
+            messageParagraphs: [{ text: 'The current version stays.' }],
+            facts: [{ label: 'Frees', value: '186 MB' }, { label: 'Artifact limit after', value: '3.57 GB left of 5 GB' }],
+            confirmText: 'Delete versions', destructive: true,
+        }} onClose={() => {}} />);
+        const texts = screen.findAllByType('Text').map(node => node.props.children);
+        // Each fact is its own label and value, in order, after the message (lab storage-view scene 3).
+        expect(texts.indexOf('Frees')).toBeGreaterThan(texts.indexOf('The current version stays.'));
+        expect(texts[texts.indexOf('Frees') + 1]).toBe('186 MB');
+        expect(texts[texts.indexOf('Artifact limit after') + 1]).toBe('3.57 GB left of 5 GB');
+    });
+
     it('wraps the dialog content in the shared card frame and keeps backdrop dismissal disabled', async () => {
         const { WebAlertModal } = await import('./WebAlertModal');
 

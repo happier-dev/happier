@@ -287,6 +287,11 @@ export type PaneHeaderProps = PaneHeaderContent & Readonly<{
     /** Leads the band with Back: the pane is a sub-page of the column it sits in (lab AR1 EFv). */
     onBack?: () => void;
     /**
+     * Names where Back returns, beside its glyph: a tab showing one of its own sub-views goes back to the tab
+     * (storage-view lab scene 5 A, "‹ Details"). Without it Back is the glyph alone.
+     */
+    backLabel?: string;
+    /**
      * A phone screen's navigation band (calm-shell `cshead.H1p`): Back to the previous screen leads it,
      * and with `includeTopInset` the band also clears the status bar.
      */
@@ -414,7 +419,18 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     onPress={props.navigation.onBack}
                 />
             ) : null}
-            {props.onBack ? (
+            {props.onBack && props.backLabel ? (
+                // Where Back returns reads as its own word: a step apart from the sub-view's name after it.
+                <View style={styles.labelledBack}>
+                    <DefaultBackButton
+                        testID={`${testID}.back`}
+                        tintColor={theme.colors.chrome.header.foreground}
+                        label={props.backLabel}
+                        trailingReachPx={theme.space.s2 / 2}
+                        onPress={props.onBack}
+                    />
+                </View>
+            ) : props.onBack ? (
                 <IconButton
                     testID={`${testID}.back`}
                     iconName="caret-left"
@@ -517,6 +533,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     // Back takes the band's leading inset: its glyph sits where the title would start.
     bandWithBack: {
         paddingLeft: HEADER_BAND_HORIZONTAL_PADDING_PX / 2,
+    },
+    labelledBack: {
+        marginRight: theme.space.s12,
     },
     large: {
         flexShrink: 0,

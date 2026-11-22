@@ -22,7 +22,8 @@ import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
-import { StoragePageHead, StorageSayLine } from './StoragePageHead';
+import { StorageSayLine } from '@/components/storage/StorageSayLine';
+import { StoragePageHead } from './StoragePageHead';
 import {
   StorageCollectToggle,
   useStorageCollect,

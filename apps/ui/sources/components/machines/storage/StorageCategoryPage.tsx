@@ -24,7 +24,8 @@ import { describeStorageFailure, type StorageCategory } from './storageViewModel
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { useMachineStorageCleanup } from '@/sync/domains/machines/storage/useMachineStorageCleanup';
 import { useStorageCollect, type StorageCollectController } from './StorageCollectToggle';
-import { StoragePageHead, StorageSayLine } from './StoragePageHead';
+import { StorageSayLine } from '@/components/storage/StorageSayLine';
+import { StoragePageHead } from './StoragePageHead';
 import { StorageRestoreRecovery, useTrackedRestoreRefusals } from './StorageRestoreRecovery';
 import { StoragePileDock } from './StoragePileDock';
 import { StoragePolicyNotice } from './StoragePolicyNotice';

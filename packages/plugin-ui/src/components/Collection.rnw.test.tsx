@@ -3871,6 +3871,22 @@ describe('a phone list', () => {
     expect(['', 'none']).toContain(getComputedStyle(title).webkitLineClamp ?? title.style.webkitLineClamp ?? '');
     view.unmount();
   });
+
+  it('keeps a record name the anatomy marks as truncating on one line with an end ellipsis, in the body face', () => {
+    const view = mount({ anatomy: { ...anatomy, titleTruncates: true } });
+    view.measure(360);
+    const row = view.query('row:a')!;
+    const title = [...row.querySelectorAll<HTMLElement>('[dir="auto"]')].find(
+      (node) => node.textContent === 'Retry idempotent payment intents',
+    )!;
+    expect(title).toBeDefined();
+    const style = getComputedStyle(title);
+    // One line, cut at its end: a file name ("checkout-bug-repro.mov") never breaks mid-word across two lines.
+    expect(style.webkitLineClamp === '1' || style.whiteSpace === 'nowrap' || title.style.webkitLineClamp === '1').toBe(true);
+    // Not an identifier: the name keeps the body face, never the mono one.
+    expect(style.fontFamily).not.toMatch(/mono/i);
+    view.unmount();
+  });
 });
 
 describe('resting list rows', () => {

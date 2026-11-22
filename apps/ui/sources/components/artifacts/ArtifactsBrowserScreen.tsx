@@ -12,11 +12,15 @@ import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPane
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { TactilePressable } from '@/components/ui/interactions/TactilePressable';
+import { accountStorageViewRoute } from '@/components/storage/account/storageViewRoute';
+import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
+import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CompactSearchField } from '@/components/ui/forms/CompactSearchField';
 import { SelectionListFilterChip } from '@/components/ui/selectionList';
-import { Icon } from '@/components/ui/icons/Icon';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
 import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
 import { NavigationBackChromeProvider, useNavigationBackControl } from '@/components/ui/layout/NavigationBackChrome';
@@ -190,7 +194,9 @@ export function ArtifactsBrowser(props: Readonly<{
     React.useEffect(() => { if (openId !== null && paneOpen) requestFocus(openId); }, [openId, paneOpen, requestFocus]);
     // A phone's list is the page's one sheet of rows (lab A1p); wider layouts keep the table that recomposes by width.
     const collectionPresentation = presentation === 'grid' ? 'grid' : phoneLayout ? 'list' : 'table';
-    const anatomy = useBrowserAnatomy(presentation === 'grid' ? 'grid' : 'list');
+    // The table's size bars are each row's stored bytes against the largest listed row: ratios of server numbers.
+    const largestStored = React.useMemo(() => rows.reduce((max, row) => Math.max(max, row.artifact.storedSizeBytes ?? 0), 0), [rows]);
+    const anatomy = useBrowserAnatomy(presentation === 'grid' ? 'grid' : 'list', sort, largestStored);
     const newDocument = React.useCallback(() => router.push('/artifacts/new' as never), [router]);
     // The title row's "+" and, on a phone, the bar's "+" beside the tabs run the same action (the main-screen head).
     const create = React.useMemo<PageCreateAction>(() => ({
@@ -212,6 +218,9 @@ export function ArtifactsBrowser(props: Readonly<{
             <BrowserHeader
                 total={listed.length}
                 partial={!loaded}
+                // The Artifacts' stored bytes are an Account fact: said beside the count only while the page lists the
+                // library itself, never beside a search or a single kind it does not describe.
+                wholeLibrary={!query.trim() && (kind === 'home' || kind === 'all')}
                 savedToday={savedToday}
                 usage={usage}
                 // A count is a fact about a list that has been read: never "0 artifacts" over the skeleton. The
@@ -407,10 +416,14 @@ function renderBrowserPageScroller(children: React.ReactNode): React.ReactNode {
     );
 }
 
-/** A phone row's second line: "Prompt", or "Document · Shared with you" — only facts the artifact carries. */
-function ArtifactListFacts(props: Readonly<{ row: ArtifactBrowserRow }>) {
+/**
+ * A phone row's second line: "Prompt", or "Document · Shared with you" — only facts the artifact carries. The fact the
+ * list is not sorted by joins after the kind ("Image · 2d", "Document · 3.48 MB"); the sorted-by fact trails the title.
+ */
+function ArtifactListFacts(props: Readonly<{ row: ArtifactBrowserRow; fact: string | null }>) {
     const { row } = props;
-    const kind = row.artifact.isDecrypted === false ? null : rowKindFact(row).label;
+    const kindLabel = row.artifact.isDecrypted === false ? null : rowKindFact(row).label;
+    const kind = kindLabel === null ? props.fact : props.fact === null ? kindLabel : `${kindLabel} · ${props.fact}`;
     const provenance = readArtifactProvenance(row.artifact);
     const fallback = readArtifactProvenanceFallback(row.artifact);
     const source = provenance === null && fallback === null ? null : (
@@ -430,6 +443,8 @@ function BrowserHeader(props: Readonly<{
     total: number;
     /** The rows shown are only what is loaded so far: the count is not a final total. */
     partial: boolean;
+    /** The rows are the library itself (no search, no single kind): the Artifacts' stored bytes may join the count. */
+    wholeLibrary: boolean;
     savedToday: number;
     usage: StorageInventoryV1 | null;
     showPresent: boolean;
@@ -446,13 +461,22 @@ function BrowserHeader(props: Readonly<{
     const overQuota = props.usage !== null && limit !== null && props.usage.byKind.artifacts >= limit;
     // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
     // Nothing listed in the chosen kinds: the page's line says what belongs here, so no count sits above it.
+    // With no limit the count says what the Artifacts hold (owner 11-19); a set limit's meter already says it.
+    const artifactsBytes = props.usage !== null && limit === null && props.wholeLibrary && !props.partial
+        ? formatHappierDataBytes(props.usage.byKind.artifacts, { kind: 'storage' }) : null;
     const count = props.showPresent && props.total > 0 ? [
         props.partial ? t('artifacts.browser.countSoFar', { count: props.total })
             : props.total === 1 ? t('artifacts.countSingular') : t('artifacts.countPlural', { count: props.total }),
+        // A phone's line drops the Artifacts' bytes: beside the header total a bare second figure reads as a contradiction.
+        artifactsBytes === null || phone ? null : t('artifacts.browser.storage.artifactsPart', { size: artifactsBytes }),
         props.savedToday > 0 && !props.partial ? t('artifacts.browser.savedToday', { count: props.savedToday }) : null,
     ] : undefined;
-    const meter = props.showPresent && props.usage !== null && limit !== null
-        ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} /> : null;
+    // A set limit keeps its meter; without one the Account's total stands in its place (owner 11-19), whenever the
+    // library lists something or the Account stores anything. While the read is out the line keeps its place.
+    const meter = props.usage === null
+        ? (props.showPresent || props.reservePresent ? <StorageLinePending /> : null)
+        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} /> : null)
+            : props.showPresent || props.usage.totalBytes > 0 ? <StorageTotal inventory={props.usage} /> : null;
     return (
         // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
         // same action); the kind and order chips sit right under it on every width (owner O5), the count line last.
@@ -461,7 +485,8 @@ function BrowserHeader(props: Readonly<{
             title={t('artifacts.title')}
             alwaysShowTitle
             description={phone && (props.showPresent || props.reservePresent) ? undefined : t('artifacts.browser.description')}
-            details={phone ? undefined : meter ?? undefined}
+            // The total (or the meter) stands under the title on every width, above the chips (lab scene 4, 390 too).
+            details={meter ?? undefined}
             {...(count === undefined ? {} : { count })}
             countPending={!props.showPresent && props.reservePresent}
             search={props.search}
@@ -473,11 +498,69 @@ function BrowserHeader(props: Readonly<{
                     <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.byKind.artifacts, limitBytes: limit }} />
                 ) : null}
             </> : undefined}
-            status={phone ? meter ?? undefined : undefined}
             // A phone's view switch ends the count line; with nothing listed there is no line and nothing to switch.
             countTrailing={phone ? props.viewSwitch : undefined}
         />
     );
+}
+
+/**
+ * The Account's stored total when no Artifact limit is set: every kind the Home measures, as the owner reports it.
+ * Kinds it cannot measure yet make it a minimum, and the line says so.
+ */
+function StorageTotal(props: Readonly<{ inventory: StorageInventoryV1 }>) {
+    const styles = stylesheet;
+    const { theme } = useUnistyles();
+    const size = formatHappierDataBytes(props.inventory.totalBytes, { kind: 'storage' });
+    const atLeast = props.inventory.unmeasuredKinds.length > 0;
+    return (
+        <StorageOpen label={atLeast ? t('artifacts.browser.storage.totalAtLeastA11y', { size }) : t('artifacts.browser.storage.totalA11y', { size })}>
+            <View style={styles.meter} testID="artifacts:storageTotal">
+                <Icon name="hard-drives" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+                <Text style={styles.presentText}>
+                    {atLeast ? t('artifacts.browser.storage.totalAtLeast', { size }) : t('artifacts.browser.storage.total', { size })}
+                </Text>
+            </View>
+        </StorageOpen>
+    );
+}
+
+/**
+ * The header's storage figure opens the Account's Storage view filtered to Artifacts (storage-view lab scene 4); Back
+ * returns here. The figure keeps its words; the chevron says it goes somewhere.
+ */
+function StorageOpen(props: Readonly<{ label: string; children: React.ReactNode }>) {
+    const router = useRouter();
+    const { theme } = useUnistyles();
+    return (
+        <TactilePressable testID="artifacts:storageOpen" accessibilityLabel={props.label} accessibilityHint={t('artifacts.browser.storageView.openStorage')}
+            static onPress={() => router.push(accountStorageViewRoute('artifacts') as never)} style={stylesheet.meter}>
+            {props.children}
+            <Icon name="caret-right" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
+        </TactilePressable>
+    );
+}
+
+/** The storage line's place while the Account's numbers are read, so nothing under it moves when they arrive. */
+function StorageLinePending() {
+    return <Text style={stylesheet.presentText} testID="artifacts:storagePending">{' '}</Text>;
+}
+
+/**
+ * A row's stored bytes as the Home counts them, through the Storage view's size cell: in the table with its bar against
+ * the largest listed row (lab scene 4), on a phone row the size alone; a row it has not measured says so with a dash.
+ */
+function ArtifactStoredSize(props: Readonly<{ row: ArtifactBrowserRow; bar: boolean; largest: number }>) {
+    const { theme } = useUnistyles();
+    return (
+        <StorageSizeCell label={rowTitle(props.row)} bytes={props.row.artifact.storedSizeBytes} largest={props.largest} bar={props.bar}
+            color={usageSignatureAccent(theme)} testID={`artifacts:row:${props.row.key}:size`} unknownLabel={t('artifacts.browser.storage.sizeUnknown')} />
+    );
+}
+
+function formatStoredSize(row: ArtifactBrowserRow): string | null {
+    const bytes = row.artifact.storedSizeBytes;
+    return bytes === undefined ? null : formatHappierDataBytes(bytes, { kind: 'storage' });
 }
 
 /** The storage meter: shown only when the server reports an Account budget (unset is the default). */
@@ -488,19 +571,20 @@ function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number }>
     const used = formatHappierDataBytes(props.usedBytes, { kind: 'storage' });
     const limit = formatHappierDataBytes(props.limitBytes, { kind: 'storage' });
     return (
-        <View
-            style={styles.meter}
-            testID="artifacts:storageMeter"
-            accessible
-            accessibilityRole="progressbar"
-            accessibilityLabel={t('artifacts.browser.storage.a11y', { used, limit })}
-            accessibilityValue={{ min: 0, max: 100, now: Math.round(ratio * 100) }}
-        >
-            <View style={styles.meterTrack}>
-                <View style={[styles.meterFill, full ? styles.meterFillFull : null, { width: `${Math.round(ratio * 100)}%` }]} />
+        <StorageOpen label={t('artifacts.browser.storage.a11y', { used, limit })}>
+            <View
+                style={styles.meter}
+                testID="artifacts:storageMeter"
+                accessibilityRole="progressbar"
+                accessibilityLabel={t('artifacts.browser.storage.a11y', { used, limit })}
+                accessibilityValue={{ min: 0, max: 100, now: Math.round(ratio * 100) }}
+            >
+                <View style={styles.meterTrack}>
+                    <View style={[styles.meterFill, full ? styles.meterFillFull : null, { width: `${Math.round(ratio * 100)}%` }]} />
+                </View>
+                <Text style={[styles.presentText, full ? styles.meterTextFull : null]}>{t('artifacts.browser.storage.meter', { used, limit })}</Text>
             </View>
-            <Text style={[styles.presentText, full ? styles.meterTextFull : null]}>{t('artifacts.browser.storage.meter', { used, limit })}</Text>
-        </View>
+        </StorageOpen>
     );
 }
 
@@ -598,25 +682,43 @@ function BrowserToolbar(props: Readonly<{
 }
 
 /** One anatomy for both presentations: kind mark, title, provenance, kind and age; cards add the preview. */
-function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<ArtifactBrowserRow> {
+function useBrowserAnatomy(presentation: 'grid' | 'list', sort: ArtifactBrowserSort, largest: number): CollectionAnatomy<ArtifactBrowserRow> {
     const { theme } = useUnistyles();
     // A phone's row already shows the kind as its mark (lab A1p): the word under the age would say it twice.
     const phone = useDeviceType() === 'phone';
+    // On a phone one value trails the title: the fact the list is sorted by (size under Largest first, else the age);
+    // the other joins line 2 after the kind (UI refinements ruling 11-20).
+    const bySize = sort === 'size_desc';
+    const phoneList = phone && presentation === 'list';
     return React.useMemo((): CollectionAnatomy<ArtifactBrowserRow> => ({
         glyph: (row) => <Icon name={row.artifact.isDecrypted === false ? 'lock' : rowKindFact(row).icon} size={20} color={theme.colors.text.secondary} />,
         title: (row) => (row.artifact.isDecrypted === false ? t('settingsAccount.restoreRequiredTitle') : rowTitle(row)),
         // A phone's one list line says what the row is: its kind, then where it came from (owner 11-11).
-        where: phone && presentation === 'list' ? (row) => <ArtifactListFacts row={row} /> : (row) => {
+        where: phoneList ? (row) => <ArtifactListFacts row={row}
+            fact={bySize ? formatShortRelativeTime(row.artifact.updatedAt) : formatStoredSize(row)} /> : (row) => {
             const provenance = readArtifactProvenance(row.artifact);
             const fallback = readArtifactProvenanceFallback(row.artifact);
             if (provenance === null && fallback === null) return undefined;
             return <ArtifactProvenanceLabel provenance={provenance} fallback={fallback ?? ''} presentation="line"
                 testID={`artifacts:row:${row.key}:provenance`} />;
         },
-        // Shared card anatomy composes the held kind, age and provenance as quiet facts.
-        ...(phone && presentation === 'list' ? {} : { reason: (row: ArtifactBrowserRow) => rowKindFact(row).label }),
+        // Shared card anatomy composes the held kind, age and provenance as quiet facts; a card's foot adds the size. A phone
+        // card's foot stays one line: the kind, then the sorted-by fact (the age is the Collection's own, under date sorts).
+        ...(phoneList ? {} : presentation === 'grid' ? { reason: (row: ArtifactBrowserRow) => {
+            const kind = rowKindFact(row).label;
+            const size = formatStoredSize(row);
+            return size === null || (phone && !bySize) ? kind : `${kind} · ${size}`;
+        } } : { reason: (row: ArtifactBrowserRow) => rowKindFact(row).label }),
+        // Each row's stored size: in the table a Size column wide enough for its bar (the Storage view's items column);
+        // on a phone row, the title line's end under Largest first.
+        ...(presentation === 'grid' ? {} : phoneList ? (bySize ? {
+            titleMeta: (row: ArtifactBrowserRow) => <ArtifactStoredSize row={row} bar={false} largest={largest} />,
+        } : {}) : {
+            fields: [{ key: 'size', title: t('artifacts.browser.storage.column'), minWidth: 170, priority: 7, align: 'end' as const,
+                render: (row: ArtifactBrowserRow) => <ArtifactStoredSize row={row} bar largest={largest} /> }],
+        }),
         // The "Edited" column is a narrow tabular one: the bare age ("45m") fits where "45m ago" was cut off (lab A2).
-        age: (row) => formatShortRelativeTime(row.artifact.updatedAt),
+        ...(phone && bySize ? {} : { age: (row: ArtifactBrowserRow) => formatShortRelativeTime(row.artifact.updatedAt) }),
         ...(presentation === 'grid' ? {
             preview: (row: ArtifactBrowserRow) => (
                 <ArtifactCardPreview preview={readArtifactPreview(row.artifact)} kind={row.kind} testID={`artifacts:row:${row.key}:previewBody`} />
@@ -629,8 +731,9 @@ function useBrowserAnatomy(presentation: 'grid' | 'list'): CollectionAnatomy<Art
             reason: t('artifacts.browser.kindLabel'),
             where: t('artifacts.browser.sourceLabel'),
             age: t('artifacts.browser.folders.columnEdited'),
+            titleMeta: t('artifacts.browser.storage.column'),
         },
-    }), [phone, presentation, theme.colors.text.secondary]);
+    }), [bySize, largest, phone, phoneList, presentation, theme.colors.text.secondary]);
 }
 
 const stylesheet = StyleSheet.create((theme) => ({

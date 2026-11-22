@@ -59,7 +59,7 @@ import { useArtifactTitleProjections } from '@/components/artifacts/useArtifactT
 import { ArtifactEditProposal, type AdmittedDocRead } from '@/components/artifacts/ArtifactEditProposal';
 import { docProposalSelections } from '@/components/artifacts/docProposalSelection';
 import { createArtifactActionsClient, type ArtifactActionsClient } from '@/components/artifacts/artifactActionsClient';
-import { buildDiscussionRouteHref } from './discussionRoutes';
+import { buildDiscussionRouteHref, buildDiscussionStorageRouteHref } from './discussionRoutes';
 import { useLayoutMaxWidthStyle } from '@/components/ui/layout/layout';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { DiscussionSpeakerFace } from '@/components/discussions/DiscussionSpeakerFace';
@@ -159,6 +159,7 @@ import { AgentContentView } from '@/components/sessions/transcript/AgentContentV
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels, type DiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
 import { DiscussionDetailsPanel } from './DiscussionDetailsPanel';
+import type { DiscussionStorageMessage, DiscussionStorageSource } from '@/components/storage/discussion/DiscussionStorage';
 import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './discussionComposerContextItems';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionRepository as useRepository, useNewDiscussionCreate } from './useNewDiscussionCreate';
@@ -993,6 +994,18 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         // DISC-17: this Discussion's own check-in, after the lifecycle rows (its own kind, so the menu divides them).
         ...(checkInAction && discussion.archivedAt === null ? [{ ...checkInAction, disabled: checkInAction.disabled || mutationsDisabled }] : []),
     ] : [], [checkInAction, discussion, lifecycle, mutationsDisabled, patternCapture.open, props.accountLifetime]);
+    // Storage (storage-view lab scene 5 A): Details shows it as a row; a header "…" without Details pushes its page.
+    const storageMenuAction = React.useMemo<PageHeaderMenuAction | null>(() => discussionId ? {
+        id: 'storage', title: t('artifacts.browser.storageView.title'), testID: 'discussion-storage',
+        onSelect: () => router.push(buildDiscussionStorageRouteHref({ serverId: props.scope.serverId, discussionId }) as Href),
+    } : null, [discussionId, props.scope.serverId, router]);
+    const menuLifecycleActions = storageMenuAction ? [...lifecycleActions, storageMenuAction] : lifecycleActions;
+    // The thread's loaded messages name its files there, by each stored file's message triple.
+    const storageAuthorLabel = React.useCallback((message: DiscussionStorageMessage) => resolveAccountLabel(message.authorAccountId)
+        ?? resolveDiscussionMessageAuthorLabel(message, viewer), [resolveAccountLabel, viewer]);
+    const storageSource = React.useMemo<DiscussionStorageSource | null>(() => discussionId ? { scope: props.scope, discussionId,
+        title: discussion?.title ?? null, messages, authorLabel: storageAuthorLabel } : null,
+    [discussion?.title, discussionId, messages, props.scope, storageAuthorLabel]);
     const displayMessages = React.useMemo<readonly DiscussionDisplayMessage[]>(() => {
         if (!discussionId || !mutation?.content || mutation.status === 'observed_success' || messages.some((message) => message.localId === mutation.localId)) return messages;
         return [...messages, {
@@ -1313,7 +1326,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
             management={participantManagement}
             canManage={canManageParticipants}
         />,
-        discussionDetails: <DiscussionDetailsPanel actions={lifecycleActions} />,
+        discussionDetails: storageSource ? <DiscussionDetailsPanel actions={lifecycleActions} storage={storageSource} /> : null,
     } : railHosted ? props.draftPresentation?.panels ?? null : null);
     if (props.draftPresentation) return <DiscussionSurfaceFrame {...props.draftPresentation} drafting
         dataKey={dataKey} eligibleMessageIds={[]} />;
@@ -1446,7 +1459,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
     // A phone folds the header into its one navigation band; the way back to the source moves into ⋯.
     const anchorOpen = anchorFact && anchorFact.kind !== 'diffStat' ? anchorFact.onPress : undefined;
     // With the phone bar's Details surface, the band keeps only what that surface does not offer.
-    const phoneLifecycleActions = railHosted ? [] : lifecycleActions;
+    const phoneLifecycleActions = railHosted ? [] : menuLifecycleActions;
     const phoneMenuActions: readonly PageHeaderMenuAction[] = anchorFact && anchorOpen
         ? [{ id: 'open-anchor', title: t('session.collaboration.discussion.openAnchor', { name: anchorFact.kind !== 'diffStat' ? anchorFact.text : '' }), onSelect: anchorOpen }, ...phoneLifecycleActions]
         : phoneLifecycleActions;
@@ -1505,7 +1518,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
                 </View> : null}
                 controls={rename !== null ? <TextInput testID="session-discussion-rename-input" style={[styles.input, { flex: 1 }]} value={rename} onChangeText={setRename} accessibilityLabel={t('session.collaboration.discussion.rename')} autoFocus /> : undefined}
                 buttons={rename !== null ? [{ label: t('common.save'), disabled: !rename.trim() || mutationsDisabled, onPress: () => void lifecycle('rename') }] : undefined}
-                menu={rename === null && lifecycleActions.length > 0 && !railHosted ? <View ref={patternCaptureAnchorRef} collapsable={false}><PageHeaderMenu triggerTestID="session-discussion-actions-menu" actions={[...lifecycleActions, ...lentMenuRows]} /></View> : undefined}
+                menu={rename === null && menuLifecycleActions.length > 0 && !railHosted ? <View ref={patternCaptureAnchorRef} collapsable={false}><PageHeaderMenu triggerTestID="session-discussion-actions-menu" actions={[...menuLifecycleActions, ...lentMenuRows]} /></View> : undefined}
             />}
             {phoneChrome && railHosted ? <DiscussionPhonePageStrip /> : null}
             {threadStaleLabel ? <SurfaceFreshnessLine

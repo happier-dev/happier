@@ -165,7 +165,7 @@ class ModalManagerClass implements IModal {
     ): Promise<boolean> {
         const signal = options?.signal;
         if (signal?.aborted) return false;
-        if (Platform.OS === 'web' || options?.messageParagraphs || signal || options?.commandBridge) {
+        if (Platform.OS === 'web' || options?.messageParagraphs || options?.facts || signal || options?.commandBridge) {
             // Native alerts cannot be dismissed by their invocation's cancellation owner.
             // The existing app dialog owns cancellable and structured confirmations everywhere.
             if (!this.showModalFn) {
@@ -179,6 +179,7 @@ class ModalManagerClass implements IModal {
                 title,
                 message,
                 messageParagraphs: options?.messageParagraphs,
+                facts: options?.facts,
                 cancelText: options?.cancelText,
                 confirmText: options?.confirmText,
                 destructive: options?.destructive,

@@ -87,6 +87,15 @@ export const SETTINGS_PAGE_CATALOG: readonly SettingsPageNode[] = [
                         icon: ({ theme }) => <Icon name="chart-line" size={16} color={theme.colors.text.secondary} />,
                     },
                     {
+                        // What the Account keeps on this server (storage-view lab scene 1): after Usage, ungated like Artifacts.
+                        id: 'storage',
+                        titleKey: 'artifacts.browser.storageView.title',
+                        subtitleKey: 'artifacts.browser.storageView.settingsSubtitle',
+                        route: SETTINGS_ROUTES.storage,
+                        keywordsKey: 'artifacts.browser.storageView.searchKeywords',
+                        icon: ({ theme }) => <Icon name="hard-drives" size={16} color={theme.colors.text.secondary} />,
+                    },
+                    {
                         id: 'deployments',
                         titleKey: 'projects.deployments.title',
                         subtitleKey: 'settings.deploymentsSubtitle',

@@ -263,6 +263,10 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
                     options={rootStackRouteOptions['discussions/new']}
                 />
                 <Stack.Screen
+                    name="discussions/storage"
+                    options={rootStackRouteOptions['discussions/storage']}
+                />
+                <Stack.Screen
                     name="discussions/[discussionId]"
                     options={rootStackRouteOptions['discussions/[discussionId]']}
                 />

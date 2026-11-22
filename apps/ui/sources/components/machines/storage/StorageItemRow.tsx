@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { CapacityBar, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
-import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { StorageSizeBar } from '@/components/storage/StorageSizeBar';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -18,25 +18,6 @@ import type { StorageCollectState } from './storagePileModel';
 import { formatStorageSize } from './storageViewModel';
 
 const BAR_WIDTH = 64;
-
-/**
- * The one size bar of Storage rows (lab `rs` `.rss-row > .br`): a thing's size against the largest beside
- * it, in ink (`color` only for Happier's own), hatched once it is in the pile or the Trash. A wide row
- * draws it a step thicker than a phone row, so the hatch reads at a glance.
- */
-export function StorageSizeBar(props: Readonly<{ label: string; bytes: number; largest: number; hatched: boolean; compact: boolean; color?: string }>) {
-    const { theme } = useUnistyles();
-    const pluginTheme = usePluginUiTheme(theme);
-    // Drawn for the eye: the row already says its size in the words it shows, so the bar adds no raw byte counts.
-    return (
-        <View aria-hidden accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-            <CapacityBar theme={pluginTheme} label={props.label} value={props.bytes} capacity={Math.max(1, props.largest)}
-                size="inline" height={props.compact ? undefined : theme.space.s6} showCaption={false}
-                color={props.color ?? theme.colors.text.secondary} trackColor={theme.colors.border.default}
-                pattern={props.hatched ? 'hatched' : 'solid'} />
-        </View>
-    );
-}
 
 /**
  * One storage item, the same shape on every page behind the breakdown (lab `rs` SUB: "the row never

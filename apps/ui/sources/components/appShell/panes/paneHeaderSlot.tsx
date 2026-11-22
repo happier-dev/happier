@@ -62,6 +62,11 @@ export type PaneHeaderSlotContent = Readonly<{
      * headers that also carry the pane's own tabs (the desktop sidebar) keep drawing.
      */
     immersive?: boolean;
+    /**
+     * The tab's body shows one of its own sub-views (Details › Storage): the band names that view and leads with
+     * Back to the tab, as a pushed page's bar does. The tab clears it when the sub-view closes.
+     */
+    subpage?: Readonly<{ title: string; onBack: () => void }>;
 }>;
 
 type PaneHeaderSlotStore = Readonly<{
@@ -89,6 +94,7 @@ function sameContent(left: PaneHeaderSlotContent | null, right: PaneHeaderSlotCo
     if (left === right) return true;
     if (!left || !right) return false;
     return left.action === right.action && left.menuActions === right.menuActions && left.immersive === right.immersive
+        && left.subpage?.title === right.subpage?.title && left.subpage?.onBack === right.subpage?.onBack
         && sameLine(left.line, right.line);
 }
 

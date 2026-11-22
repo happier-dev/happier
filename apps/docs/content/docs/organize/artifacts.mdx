@@ -19,9 +19,11 @@ development-only behavior, not released availability.
 ## Browse and open
 
 Open **Artifacts** in the app navigation. Search matches titles; **Kind** narrows
-the collection, and **Sort** orders it by recently updated, recently created or
-title. Choose **Grid** for previews or **List** for a compact view. Happier
-remembers that choice on the device.
+the collection, and **Sort** orders it by recently updated, recently created,
+title or **Largest first**. Each artifact shows the space it takes on the Home:
+its current version, the versions it keeps and its files. An artifact the Home
+has not measured yet shows a dash and sorts last. Choose **Grid** for previews or
+**List** for a compact view. Happier remembers that choice on the device.
 
 On a wide screen, a document opens beside the collection. On a phone, it opens
 as its own page. Prompts, Boards, Workflows, Roles and launch profiles open in
@@ -167,10 +169,20 @@ network-off restriction is reported as an unknown outcome, not a usable link.
 
 ## Storage and failed saves
 
-When the operator sets an Account storage budget, the browser shows usage and
-the limit. Retained versions count toward storage too. Without a configured
-Account limit, the meter is hidden; a missing usage read is not proof that
-storage is unlimited.
+Without an Account storage budget, the Artifacts page shows how much your
+Account stores on the Home: artifacts, Discussion files, Pets and plugin data.
+Profile pictures, avatars and Team logos are not measured yet, so the page says
+the total is a minimum. The count line adds what your artifacts take, versions
+included.
+
+When the operator sets an Account storage budget, the page shows the artifacts'
+usage against that limit instead. Retained versions count toward it too. The
+budget covers artifacts only.
+
+Press the total, or the meter, to open [Settings → Storage](/accounts/storage)
+with Artifacts chosen: your biggest Artifacts, largest first, with a way to
+open or delete each one. When saving fails because the Account budget is full,
+the notice offers **See what's using space**, which opens the same view.
 
 A Home can also set a per-document budget. A save that exceeds either budget
 shows the size and limit and keeps your edits in the editor. For an Account
@@ -185,6 +197,7 @@ Operators configure the Account budget with
 
 ## Related
 
+- [Storage](/accounts/storage)
 - [Sharing and Teams](/accounts/session-sharing)
 - [Encryption](/security/encryption)
 - [Search](/organize/search)

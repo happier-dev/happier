@@ -2,7 +2,7 @@ import * as React from 'react';
 import { v5 as uuidv5 } from 'uuid';
 import type { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema, ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, type ArtifactActionInputV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, type ArtifactActionInputV1, type StorageInventoryInputV1, type StorageInventoryItemV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DocCollaborationActionInputSchemasV1, DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactAccessActionOutputSchemasV1, type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
@@ -36,7 +36,7 @@ export type ArtifactActionFailure = Readonly<{
 export type ArtifactActionOutcome<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; failure: ArtifactActionFailure }>;
 
 type SurfaceMutationActionId = 'artifact.create' | 'artifact.publish_from_file' | 'artifact.access.grants.set'
-    | 'artifact.update' | 'artifact.revisions.restore' | 'artifact.delete' | 'widgets.area.layout.delete' | 'doc.comment.reply' | 'doc.edit.propose' | 'doc.edit.accept' | 'doc.edit.decline';
+    | 'artifact.update' | 'artifact.revisions.restore' | 'artifact.revisions.trim' | 'artifact.delete' | 'widgets.area.layout.delete' | 'doc.comment.reply' | 'doc.edit.propose' | 'doc.edit.accept' | 'doc.edit.decline';
 type SurfaceActionId = 'artifact.get' | 'artifact.export' | 'artifact.revisions.list' | typeof STORAGE_INVENTORY_READ_ACTION_ID_V1 | 'doc.read' | 'artifact.access.grants.list' | SurfaceMutationActionId;
 const SURFACE_OUTPUT_SCHEMAS = { ...ArtifactActionOutputSchemasV1, ...DocCollaborationActionOutputSchemasV1,
     ...ArtifactAccessActionOutputSchemasV1, 'widgets.area.layout.delete': WidgetInstanceActionOutputSchemasV1['widgets.area.layout.delete'] };
@@ -161,7 +161,10 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
             runMutation('artifact.publish_from_file', input, { ...operation, ...(source ? { defaultSessionId: source.sessionId } : {}) }),
         setAccessGrant: (input: ArtifactAccessGrantSetInputV1, operation?: ArtifactActionOperation) => runMutation('artifact.access.grants.set', input, operation),
         updateArtifact: (input: ArtifactActionInputV1<'artifact.update'>, operation?: ArtifactActionOperation) => runMutation('artifact.update', input, operation),
-        storageUsage: () => run(STORAGE_INVENTORY_READ_ACTION_ID_V1, {}),
+        storageUsage: (input: StorageInventoryInputV1 = {}) => run(STORAGE_INVENTORY_READ_ACTION_ID_V1, input),
+        /** Clear a document's retained versions (the current version and its file stay). */
+        trimRevisions: (input: ArtifactActionInputV1<'artifact.revisions.trim'>, operation?: ArtifactActionOperation) =>
+            runMutation('artifact.revisions.trim', input, operation),
         listRevisions,
         /** Who the document is shared with (its grant roster), for the page's audience line. */
         listAccessGrants: (artifactId: string) => run('artifact.access.grants.list', { artifactId }),
@@ -177,9 +180,13 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
 
 export type ArtifactActionsClient = ReturnType<typeof createArtifactActionsClient>;
 
-/** The Artifacts client for the active Account, or `null` while no Account is active. */
-export function useArtifactActionsClient(): ArtifactActionsClient | null {
-    const scope = useActiveServerAccountScope();
+/**
+ * The Artifacts client for the active Account, or for `home` when the caller reads one Home's own record (a Discussion
+ * on its Home); `null` while no Account is active.
+ */
+export function useArtifactActionsClient(home?: ServerAccountScope | null): ArtifactActionsClient | null {
+    const active = useActiveServerAccountScope();
+    const scope = home ?? active;
     const serverId = scope?.serverId ?? null;
     const accountId = scope?.accountId ?? null;
     return React.useMemo(
@@ -188,20 +195,79 @@ export function useArtifactActionsClient(): ArtifactActionsClient | null {
     );
 }
 
+/** The Account's storage read and where it stands: `failed` only while no read of this scope has landed. */
+export type StorageInventoryRead = Readonly<{
+    /** The first page's summary (totals, per-kind sizes, the limit), as the storage read owner reports it. */
+    inventory: StorageInventoryV1 | null;
+    /** Every page read so far, in the owner's order (largest first). */
+    items: readonly StorageInventoryItemV1[];
+    status: 'loading' | 'ready' | 'failed';
+    retry: () => void;
+    /** Reads the next page through the same Action; `null` when the owner reported no further page. */
+    more: (() => void) | null;
+    loadingMore: boolean;
+}>;
+
+type StorageInventorySelection = Readonly<Pick<StorageInventoryInputV1, 'scope' | 'kinds'> & {
+    /** The Home and Account to read; the active Account when absent (a Discussion's scope reads its own Home). */
+    home?: ServerAccountScope | null;
+    /**
+     * `false` for a reader that loads the Artifact headers its own page names: applying those first-seen headers
+     * advances the Artifacts' storage revision without any stored byte changing, so following it would read the
+     * inventory again for every page. Such a reader refreshes after its own deletions instead.
+     */
+    followStorageRevision?: boolean;
+}>;
+const NO_STORAGE_ITEMS: readonly StorageInventoryItemV1[] = Object.freeze([]);
+
 /**
- * Read the active Account's authoritative usage on mount and whenever stored Artifact versions
- * change. Retain the last successful read during refresh; never carry it to another
- * Account. The server, not the retained local heads, accounts for storage and revision bytes.
+ * Read the active Account's authoritative storage (`storage.inventory.read`, largest first) on mount, whenever stored
+ * Artifact versions change, and on Try again, one Action read per page; `more` reads the owner's next page. Retain the
+ * last successful read during refresh (a failed refresh keeps it); never carry it to another Account or selection. The
+ * server, not the retained local heads, accounts for storage and revision bytes.
  */
-export function useArtifactStorageUsage(): StorageInventoryV1 | null {
-    const client = useArtifactActionsClient();
-    const storageRevision = getStorage()((state) => state.artifactsStorageRevision);
-    const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; usage: StorageInventoryV1 }> | null>(null);
+export function useStorageInventoryRead(selection?: StorageInventorySelection): StorageInventoryRead {
+    const client = useArtifactActionsClient(selection?.home ?? null);
+    const follow = selection?.followStorageRevision !== false;
+    const storageRevision = getStorage()((state) => (follow ? state.artifactsStorageRevision : 0));
+    const [attempt, setAttempt] = React.useState(0);
+    const key = JSON.stringify({ scope: selection?.scope ?? null, kinds: selection?.kinds ?? null });
+    const input = React.useMemo((): StorageInventoryInputV1 => ({
+        ...(selection?.scope ? { scope: selection.scope } : {}), ...(selection?.kinds ? { kinds: [...selection.kinds] } : {}), sort: 'size_desc',
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the selection's value, not its identity, keys the read.
+    }), [key]);
+    const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string; pages: readonly StorageInventoryV1[] }> | null>(null);
+    const [failed, setFailed] = React.useState<Readonly<{ client: ArtifactActionsClient; key: string }> | null>(null);
+    const [loadingMore, setLoadingMore] = React.useState(false);
     React.useEffect(() => {
         if (!client) return;
         let current = true;
-        void client.storageUsage().then((outcome) => { if (current && outcome.ok) setSnapshot({ client, usage: outcome.value }); });
+        void client.storageUsage(input).then((outcome) => {
+            if (!current) return;
+            if (outcome.ok) { setSnapshot({ client, key, pages: [outcome.value] }); setFailed(null); }
+            else setFailed({ client, key });
+        }, () => { if (current) setFailed({ client, key }); });
         return () => { current = false; };
-    }, [client, storageRevision]);
-    return snapshot && snapshot.client === client ? snapshot.usage : null;
+    }, [client, input, key, storageRevision, attempt]);
+    const pages = snapshot && snapshot.client === client && snapshot.key === key ? snapshot.pages : null;
+    const nextCursor = pages?.[pages.length - 1]?.page?.nextCursor;
+    const more = React.useCallback(() => {
+        if (!client || !pages || !nextCursor || loadingMore) return;
+        setLoadingMore(true);
+        void client.storageUsage({ ...input, cursor: nextCursor }).then((outcome) => {
+            if (outcome.ok) setSnapshot((previous) => previous && previous.client === client && previous.key === key
+                ? { ...previous, pages: [...previous.pages, outcome.value] } : previous);
+        }).finally(() => setLoadingMore(false));
+    }, [client, input, key, loadingMore, nextCursor, pages]);
+    const inventory = pages?.[0] ?? null;
+    const items = React.useMemo(() => pages ? pages.flatMap((page) => page.page?.items ?? []) : NO_STORAGE_ITEMS, [pages]);
+    const retry = React.useCallback(() => { setFailed(null); setAttempt((value) => value + 1); }, []);
+    const status = inventory !== null ? 'ready' : client !== null && failed?.client === client && failed.key === key ? 'failed' : 'loading';
+    return React.useMemo(() => ({ inventory, items, status, retry, more: nextCursor ? more : null, loadingMore }),
+        [inventory, items, status, retry, nextCursor, more, loadingMore]);
+}
+
+/** The Account's stored numbers alone (the Artifacts page header), from the same read. */
+export function useArtifactStorageUsage(): StorageInventoryV1 | null {
+    return useStorageInventoryRead().inventory;
 }

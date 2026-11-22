@@ -225,6 +225,12 @@ export type CollectionAnatomy<Item> = Readonly<{
    */
   titleIdentifier?: boolean | ((item: Item) => boolean);
   /**
+   * The title is a record's name (a file, "checkout-bug-repro.mov") that stays on one line with an end ellipsis in the
+   * body face, even on a resting list where authored names wrap whole. Keep the full name in `accessibilityLabel`. A
+   * function decides per item.
+   */
+  titleTruncates?: boolean | ((item: Item) => boolean);
+  /**
    * The item's name is still arriving (its record is still decrypting): the title's place holds the loading rows'
    * title bar instead of a word like "Loading…", in every geometry, while the rest of the row stays live. `title`
    * and `accessibilityLabel` still name the item for assistive tech.
@@ -1656,6 +1662,7 @@ function ListCells<Item>(props: Readonly<{
   // The list row's title step (a page row's, or the collection list's), shared by the title and its pending bar.
   const listTitleStep = page ? HAPPIER_PAGE_TEXT.rowTitle : HAPPIER_COLLECTION_LIST_TEXT.listRowTitle;
   const titleIdentifier = typeof anatomy.titleIdentifier === 'function' ? anatomy.titleIdentifier(item) : anatomy.titleIdentifier === true;
+  const titleTruncates = typeof anatomy.titleTruncates === 'function' ? anatomy.titleTruncates(item) : anatomy.titleTruncates === true;
   const kindWord = kindLabel === undefined || kindLabel === null || kindLabel === '' ? null : (
     <HappierText variant="meta" tone="secondary" style={catalogKindWordStyle}>{`\u2002${kindLabel}`}</HappierText>
   );
@@ -1740,7 +1747,7 @@ function ListCells<Item>(props: Readonly<{
           {/* A catalog name, and an authored name on the resting page list, is never ellipsized: it wraps and the
               row grows above its floor (ST-5; a phone at large text, FIN-QA-LARGETEXT T1). A dense index row keeps one line. */}
           {anatomy.titlePending?.(item) === true ? <CollectionPendingTitle item={item} anatomy={anatomy} lineHeight={listTitleStep.lineHeight} /> : (
-          <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && !titleIdentifier ? {} : { numberOfLines: 1 })}
+          <HappierText variant="label" tone="neutral" {...((catalog || props.wrapTitle) && !titleIdentifier && !titleTruncates ? {} : { numberOfLines: 1 })}
             style={[titleTextStyle, catalog ? null : flexCellStyle, resolveHappierTextStepStyle(listTitleStep, typography), titleAlign,
               titleIdentifier ? { fontFamily: typography?.mono?.fontFamily ?? IDENTIFIER_FALLBACK_FONT } : null]}>
             {anatomy.title(item)}

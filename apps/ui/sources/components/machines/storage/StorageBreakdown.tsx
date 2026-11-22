@@ -7,7 +7,6 @@ import type { HappierStorageCategoryIdV1 } from '@happier-dev/protocol/storage/s
 
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { Icon } from '@/components/ui/icons/Icon';
-import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { CapacityRing } from '@/components/ui/progress/CapacityRing';
 import { Text } from '@/components/ui/text/Text';
@@ -16,7 +15,7 @@ import { useMachineResourcesPolicy } from '@/sync/domains/machines/resources/use
 import { useMachineStorageCleanup } from '@/sync/domains/machines/storage/useMachineStorageCleanup';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 
-import { StorageSizeBar } from './StorageItemRow';
+import { StorageBreakdownRow, StorageBreakdownTrailingText } from '@/components/storage/StorageBreakdownRow';
 import { t } from '@/text';
 
 import { describeStorageCategoryFacts, formatStorageDay } from './storageCategoryText';
@@ -42,13 +41,11 @@ const RING_SIZE = 172;
 const RING_STROKE = 20;
 /** One ink, four steps lighter: the kinds read as parts of one whole, not as competing colours. */
 const RING_TONES = [1, 0.62, 0.4, 0.22] as const;
-const BAR_WIDTH = 104;
 /**
  * Item's right slot is at most half the row, chevron included. Full figures need a row of about
  * `FULL_FIGURES_MIN_ROW`; narrower rows (beside the ring, or a narrow sheet) take the narrow figures.
  */
 const FULL_FIGURES_MIN_ROW = 780;
-const NARROW_BAR_WIDTH = 56;
 
 /**
  * What Happier keeps, by kind (plan 40 STO-2/STO-5, lab `rs` H / HR / HRV ★ / Hp): one row per kind
@@ -127,15 +124,8 @@ export const StorageCategoryRow = React.memo(function StorageCategoryRow(props: 
     const size = formatStorageSize(category.size.allocatedBytes, isStorageCategoryPartial(category));
     const described = describeStorageCategoryTrailing(category, props.summary);
     const trailing = props.cleanupHidden && (described.kind === 'can_go' || described.kind === 'always_kept') ? { kind: 'none' as const } : described;
-    const bar = (
-        <StorageSizeBar label={title} bytes={category.size.allocatedBytes} largest={props.largest} compact={props.compact}
-            hatched={category.categoryId === 'trash'} />
-    );
     const trailingNode = trailing.kind === 'can_go' ? (
-        <Text style={styles.trailing} numberOfLines={1}>
-            <Text style={styles.trailingStrong}>{formatMachineBytes(trailing.bytes, 'storage')}</Text>
-            {` ${t('machineStorage.breakdown.canGo')}`}
-        </Text>
+        <StorageBreakdownTrailingText strong={formatMachineBytes(trailing.bytes, 'storage')} text={t('machineStorage.breakdown.canGo')} />
     ) : trailing.kind === 'always_kept' ? (
         <View style={styles.kept}>
             <Icon name="lock" size={12} color={theme.colors.text.tertiary} />
@@ -143,30 +133,15 @@ export const StorageCategoryRow = React.memo(function StorageCategoryRow(props: 
         </View>
     ) : trailing.kind === 'trash' ? (
         <TrashEmptyNow serverId={props.serverId} machineId={props.machineId}
-            fallback={trailing.emptiesAt !== null ? <Text style={styles.trailing} numberOfLines={1}>{t('machineStorage.breakdown.empties', { date: formatStorageDay(trailing.emptiesAt) })}</Text> : null} />
+            fallback={trailing.emptiesAt !== null ? <StorageBreakdownTrailingText text={t('machineStorage.breakdown.empties', { date: formatStorageDay(trailing.emptiesAt) })} /> : null} />
     ) : null;
     const open = React.useCallback(() => onOpen(category.categoryId), [category.categoryId, onOpen]);
     const icon = <Icon name={STORAGE_CATEGORY_ICONS[category.categoryId]} size={18} color={theme.colors.text.secondary} />;
-    if (props.compact) {
-        return (
-            <Item testID={`machine-storage-category-${category.categoryId}`} icon={icon} title={title} subtitle={props.facts}
-                subtitleLines={1} showChevron keepChevronWithRightElement onPress={open} showDivider={props.showDivider}
-                rightElement={<Text style={styles.size}>{size}</Text>}
-                bottomElementInset="text" bottomElementOutsidePressable={trailing.kind === 'trash'}
-                bottomElement={<View style={styles.compactBottom}>{bar}{trailingNode}</View>} />
-        );
-    }
     return (
-        <Item testID={`machine-storage-category-${category.categoryId}`} icon={icon} title={title} subtitle={props.facts}
-            subtitleLines={1} showChevron keepChevronWithRightElement onPress={open} showDivider={props.showDivider}
-            rightElementOutsidePressable={trailing.kind === 'trash'}
-            rightElement={
-                <View style={[styles.figures, props.narrowFigures ? styles.figuresNarrow : null]}>
-                    <View style={props.narrowFigures ? styles.barNarrow : styles.bar}>{bar}</View>
-                    <Text style={[styles.size, styles.sizeColumn, props.narrowFigures ? styles.sizeNarrow : null]} numberOfLines={1}>{size}</Text>
-                    <View style={[styles.trailingColumn, props.narrowFigures ? styles.trailingNarrow : null]}>{trailingNode}</View>
-                </View>
-            } />
+        <StorageBreakdownRow testID={`machine-storage-category-${category.categoryId}`} icon={icon} title={title} facts={props.facts}
+            bytes={category.size.allocatedBytes} largest={props.largest} size={size} hatched={category.categoryId === 'trash'}
+            trailing={trailingNode} trailingPressable={trailing.kind === 'trash'} compact={props.compact}
+            narrowFigures={props.narrowFigures} showDivider={props.showDivider} onPress={open} />
     );
 });
 
@@ -288,53 +263,11 @@ const styles = StyleSheet.create((theme) => ({
         color: theme.colors.text.primary,
         fontVariant: ['tabular-nums'],
     },
-    figures: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        gap: theme.space.s16,
-    },
-    bar: {
-        width: BAR_WIDTH,
-    },
-    // Narrow figures fit Item's right slot (half the row, chevron included): bar, size and tail step down.
-    figuresNarrow: {
-        gap: theme.space.s12,
-    },
-    barNarrow: {
-        width: NARROW_BAR_WIDTH,
-    },
-    sizeNarrow: {
-        width: 68,
-    },
-    trailingNarrow: {
-        width: 100,
-    },
-    size: {
-        ...Typography.default('medium'),
-        ...happierPageTextMetrics('rowTitle'),
-        color: theme.colors.text.primary,
-        fontVariant: ['tabular-nums'],
-        textAlign: 'right',
-    },
-    // The figures keep their columns; the title is what gives way (lab: titles truncate, sizes never do).
-    sizeColumn: {
-        width: 76,
-        flexShrink: 0,
-    },
-    trailingColumn: {
-        width: 132,
-        flexShrink: 0,
-        alignItems: 'flex-end',
-    },
     trailing: {
         ...Typography.default(),
         ...happierPageTextMetrics('rowDescription'),
         color: theme.colors.text.secondary,
         fontVariant: ['tabular-nums'],
-    },
-    trailingStrong: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
     },
     // Stays inside its column in every language: a long "Always kept" truncates rather than running into the size.
     kept: {
@@ -345,9 +278,5 @@ const styles = StyleSheet.create((theme) => ({
     },
     keptText: {
         flexShrink: 1,
-    },
-    compactBottom: {
-        gap: theme.space.s6,
-        paddingTop: theme.space.s6,
     },
 }));

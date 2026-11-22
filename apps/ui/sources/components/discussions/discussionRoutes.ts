@@ -13,6 +13,11 @@ export function buildDiscussionsRouteHref(address: DiscussionHomeAddress): strin
     return `/discussions?${new URLSearchParams({ serverId: address.serverId })}`;
 }
 
+/** One Discussion's Storage page (storage-view lab scene 5 A, phone): pushed from its "…" or its Details surface. */
+export function buildDiscussionStorageRouteHref(input: Readonly<{ serverId: string; discussionId: string }>): string {
+    return `/discussions/storage?${new URLSearchParams({ serverId: input.serverId, discussionId: input.discussionId })}`;
+}
+
 /** A supplied invalid key is unavailable, never the ordinary singleton draft. */
 export function readDiscussionRouteDraftId(value: string | string[] | undefined): string | null | undefined {
     if (value === undefined) return undefined;

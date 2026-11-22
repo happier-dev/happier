@@ -84,8 +84,9 @@ import {
   toStorageDiskCollectRow,
 } from './storageDiskModel';
 import { describeStorageVerdict } from './storageReasonPresentation';
-import { StorageSizeBar } from './StorageItemRow';
-import { StorageHint, StorageSaySection } from './StoragePageHead';
+import { StorageSaySection } from '@/components/storage/StorageSayLine';
+import { StorageSizeBar } from '@/components/storage/StorageSizeBar';
+import { StorageHint } from './StoragePageHead';
 import { StoragePileDock } from './StoragePileDock';
 import { storagePathContains } from './storagePileModel';
 import { parseCustomStorageDays } from './storageTidyChoices';

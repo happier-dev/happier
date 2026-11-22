@@ -9,6 +9,7 @@ export const SETTINGS_ROUTES = {
     apiTokens: '/settings/account/api-tokens',
     secrets: '/settings/connected-services/secrets',
     usage: '/settings/usage',
+    storage: '/settings/storage',
     deployments: '/settings/deployments',
     machines: '/settings/machines',
     machineDefaults: '/settings/machines/defaults',

@@ -9,9 +9,11 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
  * through the real `ArtifactsBrowser` with the lab's fixtures, so lab and app compare side by side.
  * `state`: `grid` (A1, the root-cause document open beside the grid), `empty` (A3), `loading` (A4),
  * `quota` (A8, an operator budget that is full), `failed` (first load failed), `elsewhere` (only kinds that live in
- * their own place: the default list says what it keeps and offers every kind).
+ * their own place: the default list says what it keeps and offers every kind), `storage` (no limit set: the Account
+ * total and each Artifact's size, one not measured yet; storage-view lab scene 4 "List"), `storagePending` (the
+ * library listed, the Account's numbers still being read).
  */
-export const ARTIFACTS_SPECIMEN_STATES = ['grid', 'empty', 'loading', 'quota', 'failed', 'elsewhere'] as const;
+export const ARTIFACTS_SPECIMEN_STATES = ['grid', 'empty', 'loading', 'quota', 'failed', 'elsewhere', 'storage', 'storagePending'] as const;
 export type ArtifactsSpecimenState = typeof ARTIFACTS_SPECIMEN_STATES[number];
 
 const MINUTE = 60_000;
@@ -38,11 +40,18 @@ const HANDSHAKE = `export async function retryHandshake(relay) {
   }
 }`;
 
+/** Stored bytes per fixture as the Home would report them; `a3` has not been measured yet. */
+const STORED_SIZE_BYTES: Readonly<Record<string, number>> = {
+    a1: 3_480_000, a2: 96_000, a4: 286_000_000, a5: 41_200_000, a6: 12_400, a7: 33_800, a8: 192_000_000, a9: 4_200_000,
+};
+
 function fixture(id: string, header: Record<string, unknown>, ageMs: number, body: string | undefined, now: number): DecryptedArtifact {
     const title = typeof header.title === 'string' ? header.title : null;
+    const storedSizeBytes = STORED_SIZE_BYTES[id];
     return {
         id, title, header: { title, ...header }, body, headerVersion: 1, bodyVersion: 4, seq: 1,
         createdAt: now - ageMs, updatedAt: now - ageMs, isDecrypted: true, access: 'owner', ownerAccountId: 'specimen-owner',
+        ...(storedSizeBytes === undefined ? {} : { storedSizeBytes }),
     };
 }
 
@@ -63,6 +72,10 @@ function specimenArtifacts(now: number): readonly DecryptedArtifact[] {
 const BUDGET: StorageInventoryV1 = { totalBytes: 18_400_000, artifactLimitBytes: 50_000_000, unmeasuredKinds: [],
     byKind: { artifacts: 18_400_000, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } };
 const FULL: StorageInventoryV1 = { ...BUDGET, totalBytes: 50_000_000, byKind: { ...BUDGET.byKind, artifacts: 50_000_000 } };
+/** No limit set: the Account total across kinds; avatars, profile pictures and Team logos are not measured yet. */
+const UNLIMITED: StorageInventoryV1 = { totalBytes: 1_840_000_000, artifactLimitBytes: null,
+    unmeasuredKinds: ['profilePictures', 'avatars', 'teamLogos'],
+    byKind: { artifacts: 1_620_000_000, pluginArtifacts: 24_000_000, discussionAttachments: 86_400_000, accountPets: 98_000_000, pluginCollections: 11_600_000 } };
 const NOOP = () => {};
 
 export function ArtifactsSpecimen(props: Readonly<{ state: ArtifactsSpecimenState }>): React.ReactElement {
@@ -74,6 +87,8 @@ export function ArtifactsSpecimen(props: Readonly<{ state: ArtifactsSpecimenStat
         case 'failed': return <ArtifactsBrowser artifacts={[]} loaded={false} loadFailed onRetry={NOOP} usage={null} />;
         case 'quota': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={FULL} />;
         case 'elsewhere': return <ArtifactsBrowser artifacts={artifacts.filter((artifact) => ['a5', 'a6', 'a7'].includes(artifact.id))} loaded loadFailed={false} onRetry={NOOP} usage={BUDGET} />;
+        case 'storage': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={UNLIMITED} />;
+        case 'storagePending': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={null} />;
         case 'grid': return <ArtifactsBrowser artifacts={artifacts} loaded loadFailed={false} onRetry={NOOP} usage={BUDGET} initialOpenId="a1" />;
     }
 }

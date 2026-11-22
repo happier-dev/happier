@@ -270,6 +270,7 @@ export const SETTINGS_ROUTE_CHROME_DEFINITIONS: readonly SettingsRouteChromeDefi
     { name: '[serverId]/[teamId]/credentials/[resourceId]/usage', navigator: 'teams', titleKey: 'teams.credentials.usage.title' },
     { name: '[serverId]/[teamId]/credentials/[resourceId]/external-api', navigator: 'teams', titleKey: 'teams.credentials.externalApi.title' },
     { name: 'usage', titleKey: 'settings.usage' },
+    { name: 'storage', titleKey: 'artifacts.browser.storageView.title' },
     { name: 'voice', titleKey: 'settings.voiceAssistant' },
     { name: 'voice/dictation', titleKey: 'settingsVoice.intents.dictation.title' },
     { name: 'voice/conversations', titleKey: 'settingsVoice.intents.conversations.title' },

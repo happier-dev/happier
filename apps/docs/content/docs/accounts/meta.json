@@ -16,6 +16,7 @@
     "session-sharing",
     "friends",
     "public-profiles",
+    "storage",
     "participant-routing"
   ]
 }

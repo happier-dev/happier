@@ -13,28 +13,6 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 /**
- * The one sentence a Storage view opens with (lab `rs` `sayLine`): what is true now in ink ("412 GB free."),
- * then what it means in the secondary ink. Every Storage view and page says it through this owner.
- */
-export function StorageSayLine(props: Readonly<{ lead?: string | null; text: string; testID?: string }>) {
-    return (
-        <Text testID={props.testID} style={styles.sentence}>
-            {props.lead ? <Text style={styles.sentenceLead}>{`${props.lead} `}</Text> : null}
-            {props.text}
-        </Text>
-    );
-}
-
-/** A Storage view's sentence standing on its own in the page column (the Happier and Whole disk views). */
-export function StorageSaySection(props: Readonly<{ lead?: string | null; text: string; testID?: string }>) {
-    return (
-        <ItemGroup surface="none" header="none">
-            <StorageSayLine {...props} />
-        </ItemGroup>
-    );
-}
-
-/**
  * The head of a page behind the Storage tab (lab `rs` `subHead`): the machine tab sub-head with Storage's way back.
  * Worktrees, Suggestions, a kind's page and Protected folders share it.
  */
@@ -73,15 +51,5 @@ const styles = StyleSheet.create((theme) => ({
         ...happierPageTextMetrics('meta'),
         color: theme.colors.text.tertiary,
         flex: 1,
-    },
-    sentence: {
-        ...Typography.default(),
-        ...happierPageTextMetrics('pageDescription'),
-        color: theme.colors.text.secondary,
-        marginTop: theme.space.s6,
-    },
-    sentenceLead: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
     },
 }));

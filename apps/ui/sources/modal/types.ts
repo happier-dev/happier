@@ -49,6 +49,8 @@ export interface ConfirmModalConfig extends BaseModalConfig {
     message?: string;
     /** A paragraph may end with one quiet link to where its subject can be checked (a provider console). */
     messageParagraphs?: readonly Readonly<{ text: string; irreversible?: boolean; link?: Readonly<{ label: string; onPress: () => void }> }>[];
+    /** What the choice changes, as label and value pairs under the message ("Frees" · "186 MB"). */
+    facts?: readonly Readonly<{ label: string; value: string }>[];
     cancelText?: string;
     confirmText?: string;
     destructive?: boolean;
@@ -257,6 +259,7 @@ export interface IModal {
         confirmText?: string;
         destructive?: boolean;
         messageParagraphs?: ConfirmModalConfig['messageParagraphs'];
+        facts?: ConfirmModalConfig['facts'];
         focusReturnRef?: FocusReturnRef;
         /** Dismiss when the operation that owns this decision can no longer execute. */
         signal?: AbortSignal;

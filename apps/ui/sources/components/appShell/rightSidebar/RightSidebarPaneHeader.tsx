@@ -44,7 +44,10 @@ export function RightSidebarPaneHeader(props: Readonly<{
     // restore chip at its leading edge (lab H3).
     const showMainChip = useOptionalAppPaneScopeLayout()?.effectiveDetailsOpen === false;
     if (!tab) return null;
-    const title = getRightSidebarTabLabel(tab);
+    const tabTitle = getRightSidebarTabLabel(tab);
+    // A tab showing one of its own sub-views: the band names it and Back returns to the tab, by the tab's name.
+    const subpage = published?.subpage ?? null;
+    const title = subpage?.title ?? tabTitle;
     const publishedLine = published?.line ?? null;
     const line = props.context
         ? { ...publishedLine, segments: [props.context, ...(publishedLine?.segments ?? [])] }
@@ -55,7 +58,8 @@ export function RightSidebarPaneHeader(props: Readonly<{
         <PaneHeader
             testID={props.testID}
             mainRestoreChip={showMainChip}
-            onBack={props.onBack}
+            onBack={subpage?.onBack ?? props.onBack}
+            backLabel={subpage ? tabTitle : undefined}
             leading={props.leading}
             title={title}
             line={line}

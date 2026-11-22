@@ -19,7 +19,8 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { StoragePolicyNotice } from './StoragePolicyNotice';
-import { StoragePageHead, StorageSayLine } from './StoragePageHead';
+import { StorageSayLine } from '@/components/storage/StorageSayLine';
+import { StoragePageHead } from './StoragePageHead';
 import { formatStorageDay } from './storageCategoryText';
 
 const BUILT_IN = ['personal', 'checkouts', 'inUse', 'agentHomes'] as const;

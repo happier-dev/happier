@@ -19,6 +19,7 @@ import { usePaneActionRailRightPaneHiddenByDetails } from '@/components/appShell
 import type { PaneBuiltinAdapter, PaneRightSidebarAdapter } from '@/components/appShell/panes/types';
 import { RightSidebarActionRail } from '@/components/appShell/rightSidebar/RightSidebarActionRail';
 import { RightSidebarPaneHeader } from '@/components/appShell/rightSidebar/RightSidebarPaneHeader';
+import { PaneHeaderSlotProvider, PaneHeaderSlotScope } from '@/components/appShell/panes/paneHeaderSlot';
 import { toggleRightSidebarTab, usePublishRightSidebarActions } from '@/components/appShell/rightSidebar/rightSidebarActions';
 import {
     getRightSidebarTabLabel,
@@ -85,13 +86,17 @@ function useDiscussionRightSidebarSelection(scopeId: string) {
 function DiscussionRightSidebar(props: Readonly<{ scopeId: string; store: DiscussionRightSidebarPanelsStore }>): React.ReactElement {
     const panels = React.useSyncExternalStore(props.store.subscribe, props.store.read, props.store.read);
     const { pane, tabs, activeTabId } = useDiscussionRightSidebarSelection(props.scopeId);
+    // The open tab tells the band what it shows (Details › Storage) through the pane header slot, as a Session's tabs do.
     return (
+        <PaneHeaderSlotProvider>
         <View testID="discussion-right-sidebar" style={{ flex: 1, minHeight: 0 }}>
             <RightSidebarPaneHeader testID="discussion-right-sidebar.header" tabs={tabs} activeTabId={activeTabId} onClose={pane.closeRight} />
             <SurfaceStateSizeProvider size="pane"><SidePaneBodyProvider>
-                <View style={{ flex: 1, minHeight: 0 }}>{activeTabId && panels ? panels[activeTabId] : null}</View>
+                <View style={{ flex: 1, minHeight: 0 }}>{activeTabId && panels
+                    ? <PaneHeaderSlotScope slotKey={activeTabId}>{panels[activeTabId]}</PaneHeaderSlotScope> : null}</View>
             </SidePaneBodyProvider></SurfaceStateSizeProvider>
         </View>
+        </PaneHeaderSlotProvider>
     );
 }
 

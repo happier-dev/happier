@@ -50,6 +50,24 @@ const stylesheet = StyleSheet.create((theme) => ({
     irreversibleText: {
         color: theme.colors.state.warning.textForeground,
     },
+    facts: {
+        marginTop: theme.space.s12,
+        gap: theme.space.s4,
+    },
+    fact: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        gap: theme.space.s12,
+    },
+    factLabel: {
+        color: theme.colors.text.secondary,
+        flexShrink: 1,
+    },
+    factValue: {
+        color: theme.colors.text.primary,
+        fontVariant: ['tabular-nums'],
+        textAlign: 'right',
+    },
 }));
 
 export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true, visible = true, zIndexBase, onExited }: WebAlertModalProps) {
@@ -131,6 +149,17 @@ export function WebAlertModal({ config, onClose, onConfirm, showBackdrop = true,
                         <Text variant="body" style={styles.message}>
                             {config.message}
                         </Text>
+                    ) : null}
+                    {/* What the choice changes, one fact per line: the label at the start, the value at the end in figures. */}
+                    {isConfirm && config.facts && config.facts.length > 0 ? (
+                        <View style={styles.facts}>
+                            {config.facts.map((fact) => (
+                                <View key={fact.label} style={styles.fact}>
+                                    <Text variant="body" style={styles.factLabel}>{fact.label}</Text>
+                                    <Text variant="body" emphasis="semiBold" style={styles.factValue}>{fact.value}</Text>
+                                </View>
+                            ))}
+                        </View>
                     ) : null}
                 </View>
 

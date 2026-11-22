@@ -41,7 +41,7 @@ import { StorageCategoryPage } from './StorageCategoryPage';
 import { StorageDockerCleanup } from './StorageDockerCleanup';
 import { useStorageCollect } from './StorageCollectToggle';
 import { StorageItemRow } from './StorageItemRow';
-import { StorageSaySection } from './StoragePageHead';
+import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StoragePileDock } from './StoragePileDock';
 import { StoragePolicyNotice } from './StoragePolicyNotice';
 import { StorageReadNotice } from './StorageReadNotice';

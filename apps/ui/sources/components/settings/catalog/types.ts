@@ -23,6 +23,7 @@ export const SETTINGS_PAGE_IDS = {
     apiTokens: 'apiTokens',
     secrets: 'secrets',
     usage: 'usage',
+    storage: 'storage',
     deployments: 'deployments',
     machines: 'machines',
     machinePoolsNew: 'machinePoolsNew',

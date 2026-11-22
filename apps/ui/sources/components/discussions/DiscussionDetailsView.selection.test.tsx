@@ -2956,6 +2956,8 @@ describe('DiscussionDetailsView selection', () => {
         testID: 'discussion-save-as-pattern',
       }),
       expect.objectContaining({ id: 'restore', title: 'Restore Discussion' }),
+      // An archived Discussion still says what its files hold (storage-view lab scene 5 A).
+      expect.objectContaining({ id: 'storage', testID: 'discussion-storage' }),
     ]);
     expect(composerProps.current).toBeNull();
   });

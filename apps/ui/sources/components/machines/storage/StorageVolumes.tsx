@@ -1,25 +1,17 @@
 import * as React from 'react';
-import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { CompositionStrip, happierPageTextMetrics, type CompositionSegment } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, type CompositionSegment } from '@happier-dev/plugin-ui/presentation';
 
-import { usePluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
+import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
 import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
 import { formatMachineBytes, formatMachinePartOfWhole } from '@/components/machines/vitals/machineVitalsPresentation';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 
 import { describeStorageVolumeCleanupRefusal, isStorageSystemPartition, resolveStorageVolumeParts, storageVolumeMountHint, storageVolumeName, type StorageSummary, type StorageVolume } from './storageViewModel';
-
-const BAR_HEIGHT = 10;
-/** A part the legend names stays visible on the bar: Happier's few GB on a 2 TB disk is still a sliver of its colour. */
-const MIN_PART_WIDTH = 4;
-/** The legend reads at the row-description size, like the lab's key under each disk. */
-const LEGEND_TEXT = happierPageTextMetrics('meta');
 
 /**
  * The disks (plan 40 STO-1, lab `rs` H / HR): one bar per volume — everything else, Happier, what is
@@ -42,7 +34,6 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
     after?: 'cleanup' | 'trashEmpties' }>) {
     const language = usePreferredLanguage();
     const { theme } = useUnistyles();
-    const pluginTheme = usePluginUiTheme(theme);
     const { volume } = props;
     const name = storageVolumeName(volume);
     const hint = storageVolumeMountHint(volume);
@@ -70,25 +61,10 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
     const format = React.useCallback((value: number) => formatMachineBytes(value, 'storage'), []);
     const label = t('machineStorage.volumes.barLabel', { volume: name, free: formatMachineBytes(parts.free, 'storage'), total: formatMachineBytes(volume.totalBytes, 'storage') });
     return (
-        <SectionContentRow testID={`machine-storage-volume-${volume.volume.volumeId}`} showDivider={props.showDivider}>
-            <View style={styles.head}>
-                <View style={styles.name}>
-                    <Text style={styles.nameText} numberOfLines={1}>{name}</Text>
-                    {hint && !props.compact ? <Text style={styles.hint} numberOfLines={1}>{hint}</Text> : null}
-                </View>
-                <Text style={styles.figure} numberOfLines={1}>
-                    <Text style={styles.figureStrong}>{figure.part}</Text>
-                    {` ${t('machineStorage.volumes.freeOf', { whole: figure.whole })}`}
-                </Text>
-            </View>
-            <View style={styles.bar} accessible accessibilityRole="image" accessibilityLabel={label}>
-                <CompositionStrip theme={pluginTheme} label={label} total={volume.totalBytes} segments={barSegments}
-                    variant="bar" segmentGap={0} minimumFillWidth={MIN_PART_WIDTH} appearance={{ legend: 'compact', height: BAR_HEIGHT }} />
-            </View>
-            <View style={styles.legend}>
-                <CompositionStrip theme={pluginTheme} label={label} total={volume.totalBytes} segments={legendSegments}
-                    variant="legend" unknownLabel="" appearance={{ legend: 'compact', figure: 'value', textStyle: LEGEND_TEXT }} valueFormatter={format} />
-            </View>
+        <StorageCapacityRow testID={`machine-storage-volume-${volume.volume.volumeId}`} showDivider={props.showDivider}
+            title={name} hint={props.compact ? null : hint}
+            figure={{ strong: figure.part, rest: t('machineStorage.volumes.freeOf', { whole: figure.whole }) }}
+            label={label} total={volume.totalBytes} barSegments={barSegments} legendSegments={legendSegments} formatValue={format}>
             {refusal ? <Text testID={`machine-storage-volume-${volume.volume.volumeId}-cleanup`} style={styles.after}>{refusal}</Text> : null}
             {parts.afterCleanupFree !== null ? (
                 <Text testID={`machine-storage-volume-${volume.volume.volumeId}-after`} style={styles.after}>
@@ -103,53 +79,11 @@ export const StorageVolumeRow = React.memo(function StorageVolumeRow(props: Read
                     {` ${t('machineStorage.volumes.afterCleanupGain', { amount: formatMachineBytes(parts.afterTrashFree - parts.free, 'storage') })}`}
                 </Text>
             ) : null}
-        </SectionContentRow>
+        </StorageCapacityRow>
     );
 });
 
 const styles = StyleSheet.create((theme) => ({
-    head: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: theme.space.s12,
-    },
-    name: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        gap: theme.space.s10,
-        flexShrink: 1,
-        minWidth: 0,
-    },
-    nameText: {
-        ...Typography.default('semiBold'),
-        ...happierPageTextMetrics('rowTitle'),
-        color: theme.colors.text.primary,
-        flexShrink: 0,
-    },
-    hint: {
-        ...Typography.mono(),
-        ...happierPageTextMetrics('meta'),
-        color: theme.colors.text.tertiary,
-        flexShrink: 1,
-    },
-    figure: {
-        ...Typography.default(),
-        ...happierPageTextMetrics('rowDescription'),
-        color: theme.colors.text.secondary,
-        fontVariant: ['tabular-nums'],
-        flexShrink: 0,
-    },
-    figureStrong: {
-        ...Typography.default('semiBold'),
-        color: theme.colors.text.primary,
-    },
-    bar: {
-        marginTop: theme.space.s10,
-    },
-    legend: {
-        marginTop: theme.space.s8,
-    },
     after: {
         ...Typography.default(),
         ...happierPageTextMetrics('rowDescription'),
