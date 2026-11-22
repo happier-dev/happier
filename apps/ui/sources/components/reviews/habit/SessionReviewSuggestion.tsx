@@ -32,7 +32,8 @@ const COVERING_REVIEWS_PAGE = 20;
 /**
  * The transcript's session-finished suggestion (lab `session-finished`): "N changed files haven't been reviewed ·
  * Review them · Review after each turn". Nothing is read while the agent works; the changes, Reviews and habit are
- * read only once it is idle, and only while it has changed files.
+ * read only once it is idle, and only while it has changed files. The decision owner uses the latest turn's
+ * accepted changed-files fact, so older unreviewed files do not repeat the suggestion after an unchanged turn.
  */
 export const SessionReviewSuggestion = React.memo(
   function SessionReviewSuggestion(
@@ -80,6 +81,8 @@ function ChangedSessionSuggestion(
   }>,
 ) {
   const { sessionId, serverId } = props;
+  const latestTurnId = useSessionSelector(sessionId, serverId, session => session?.latestTurnId ?? null);
+  const turns = useSessionSelector(sessionId, serverId, session => session?.sessionTurns?.turns ?? null);
   const lifetime = useActiveServerAccountScopeLifetime();
   const sameHome =
     lifetime !== null &&
@@ -109,6 +112,8 @@ function ChangedSessionSuggestion(
         : resolveSessionReviewSuggestion({
             sessionId,
             thinking: false,
+            latestTurnId,
+            turns,
             changeSet: props.changeSet,
             reviews: reviews.items,
             habitOn: isSessionReviewHabitOn(
@@ -120,6 +125,8 @@ function ChangedSessionSuggestion(
       sameHome,
       habitKnown,
       sessionId,
+      latestTurnId,
+      turns,
       props.changeSet,
       reviews.items,
       sessionHabit.sets,

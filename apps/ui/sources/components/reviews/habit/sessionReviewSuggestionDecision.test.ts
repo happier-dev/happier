@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { SessionTurnV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
 const { isSessionReviewHabitOn, resolveSessionReviewSuggestion } =
   await import('./sessionReviewSuggestionDecision');
@@ -21,15 +22,34 @@ const completed = (sourceSessionSeq: number) => ({
   sourceSessionId: 'session-1',
   sourceSessionSeq,
 });
+const completion = (turnId: string, changedFiles?: boolean | null) => SessionTurnV1Schema.parse({
+  turnId, status: 'completed', startedAt: 1, updatedAt: 2,
+  ...(changedFiles === undefined ? {} : { automationLifecycleFacts: { changedFiles } }),
+});
 
 describe('resolveSessionReviewSuggestion', () => {
   const base = {
     sessionId: 'session-1',
     thinking: false,
+    latestTurnId: 't2',
+    turns: [completion('t2', true)],
     habitOn: false,
     changeSet,
     reviews: [],
   };
+
+  it.each([false, null, undefined])('does not repeat older unreviewed changes after a turn with changedFiles=%s', changedFiles => {
+    expect(resolveSessionReviewSuggestion({ ...base, latestTurnId: 't3',
+      turns: [...base.turns, completion('t3', changedFiles)] })).toBeNull();
+  });
+  it('does not reuse a previous true fact when the latest turn is absent, unknown, or not completed', () => {
+    expect(resolveSessionReviewSuggestion({ ...base, latestTurnId: 't3' })).toBeNull();
+    expect(resolveSessionReviewSuggestion({ ...base, latestTurnId: null })).toBeNull();
+    expect(resolveSessionReviewSuggestion({ ...base, turns: null })).toBeNull();
+    for (const status of ['in_progress', 'failed', 'cancelled'] as const) {
+      expect(resolveSessionReviewSuggestion({ ...base, turns: [{ ...base.turns[0]!, status }] })).toBeNull();
+    }
+  });
 
   it('says how many changed files no completed Review of this Session has covered, from the coverage owner', () => {
     expect(resolveSessionReviewSuggestion(base)).toEqual({

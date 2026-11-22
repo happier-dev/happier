@@ -1,5 +1,6 @@
 import { listUnreviewedSessionChangedFilesV1 } from '@happier-dev/protocol/reviews/reviewSessionCoverageV1';
 import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import type { SessionTurnV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 
 import { findAccountReviewHabit, REVIEW_HABIT_WORKFLOW_ID } from './reviewHabit';
 
@@ -7,19 +8,24 @@ type CoverageInput = Parameters<typeof listUnreviewedSessionChangedFilesV1>[0];
 
 /**
  * The session-finished suggestion (lab `session-finished`, OQ1): "N changed files haven't been reviewed", shown while
- * the agent is idle, there are changes no completed Review of this Session covered, and no review habit is on. The
+ * the agent is idle after a completed turn that changed files, there are unreviewed changes, and no review habit is on. The
  * count is the coverage owner's (`listUnreviewedSessionChangedFilesV1`); this only decides whether to say it.
  */
 export function resolveSessionReviewSuggestion(input: Readonly<{
     sessionId: string;
     thinking: boolean;
     habitOn: boolean;
+    latestTurnId: string | null;
+    /** Accepted turn facts; legacy or not-yet-hydrated turns remain unknown. */
+    turns: readonly SessionTurnV1[] | null;
     /** Null until the Session's changes are derived. */
     changeSet: CoverageInput['changeSet'] | null;
     /** Null until the Session's Reviews are read. */
     reviews: CoverageInput['reviews'] | null;
 }>): Readonly<{ unreviewedCount: number }> | null {
     if (input.thinking || input.habitOn || !input.changeSet || !input.reviews) return null;
+    const latestTurn = input.turns?.find(turn => turn.turnId === input.latestTurnId);
+    if (latestTurn?.status !== 'completed' || latestTurn.automationLifecycleFacts?.changedFiles !== true) return null;
     const unreviewedCount = listUnreviewedSessionChangedFilesV1({
         sessionId: input.sessionId, changeSet: input.changeSet, reviews: input.reviews,
     }).length;
