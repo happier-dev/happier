@@ -104,7 +104,7 @@ import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { admitSessionHandoffExistingState, createSessionHandoffPreflightMachineRpc } from '@/session/handoff/sessionHandoffPreflightMachineRpc';
 import { awaitSpawnedSessionId, abandonSpawnedSessionBestEffort } from '@/session/services/awaitSpawnedSessionId';
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
-import { openSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openSessionRequesterBootstrapRpcRequestV1, sealSessionRequesterBootstrapRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import * as persistence from '@/persistence';
@@ -677,6 +677,39 @@ describe('callMachineRpc', () => {
     await expect(callExactMachineRpc({ credentials: { token: 'bob-token', encryption: null },
       machineId: 'machine-session', method: RPC_METHODS.SESSION_SPAWN_NEW, request,
       requireCurrentMachine: true })).resolves.toEqual({ sessionId: 'bob-session' });
+  });
+
+  it('delivers only the named installation’s sealed Workflow Trigger custody through the Machine Use method', async () => {
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(3));
+    const machineId = 'trigger-machine';
+    const installationId = 'installed-current';
+    const bootstrap = { kind: 'requester_session_bootstrap_v1', scope: 'workflow_trigger',
+      input: { executionTarget: { serverId: 'home', machineId }, scopeId: 'profile-trigger', operation: 'retain' },
+      requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: { token: 'fixture-requester' } },
+    } as const;
+    const seal = (id: string) => sealSessionRequesterBootstrapRpcRequestV1({ installationId: id,
+      installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes, request: bootstrap });
+    axiosGet.mockResolvedValue({ data: { machine: { storageMode: 'plain', id: machineId,
+      installationId, installationPublicKey: encodeBase64(installation.publicKey),
+      dataEncryptionKey: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: null }))),
+    } } });
+    socket.emit.mockImplementation((_event, payload, ack) => {
+      expect(payload.method).toBe(`${machineId}:${RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY}`);
+      expect(JSON.stringify(payload)).not.toContain('fixture-requester');
+      expect(openSessionRequesterBootstrapRpcRequestV1({ request: payload.params, machineId, installationId,
+        installationPrivateKey: installation.secretKey })).toEqual(bootstrap);
+      ack({ ok: true, result: { ok: true } });
+    });
+    const params = { credentials: { token: 'bob-token', encryption: null }, machineId, requireCurrentMachine: true };
+    await expect(callExactMachineRpc({ ...params, method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+      request: seal(installationId) })).resolves.toEqual({ ok: true });
+    await expect(callExactMachineRpc({ ...params, method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+      request: seal('installed-previous') })).rejects.toMatchObject({ reason: 'installation_mismatch' });
+    await expect(callExactMachineRpc({ ...params, method: RPC_METHODS.SESSION_SPAWN_NEW,
+      request: seal(installationId) })).rejects.toMatchObject({ reason: 'private_target_mismatch' });
+    await expect(callExactMachineRpc({ ...params, method: RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY,
+      request: bootstrap })).rejects.toMatchObject({ reason: 'private_target_mismatch' });
+    expect(socket.emit).toHaveBeenCalledOnce();
   });
 
   it.each(['prepare', 'preflight'] as const)('keeps existing-Session handoff %s custody confidential on the same installed-key Machine carrier', async phase => {

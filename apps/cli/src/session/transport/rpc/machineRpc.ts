@@ -640,7 +640,8 @@ export async function callExactMachineRpc(params: Readonly<{
               ? SessionRequesterHandoffWorkspaceCaptureRpcRequestV1Schema.parse(request)
               : SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse(request);
         const expectedMethod = privateRequest.kind === 'requester_session_bootstrap_v1'
-          ? RPC_METHODS.SESSION_SPAWN_NEW : privateRequest.kind === 'requester_session_handoff_bootstrap_v1'
+          ? (privateRequest.scope === 'workflow_trigger' ? RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY : RPC_METHODS.SESSION_SPAWN_NEW)
+          : privateRequest.kind === 'requester_session_handoff_bootstrap_v1'
             ? RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3
             : privateRequest.kind === 'requester_session_handoff_workspace_capture_v1'
               ? RPC_METHODS.DAEMON_SESSION_HANDOFF_WORKSPACE_CAPTURE_V3 : RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3;
@@ -648,6 +649,9 @@ export async function callExactMachineRpc(params: Readonly<{
           ? privateRequest.input.executionTarget.machineId : privateRequest.input.targetMachineId;
         if (params.method !== expectedMethod || targetMachineId !== machineId) throw new MachineRpcTargetNotCurrentError(machineId, 'private_target_mismatch');
         const bootstrap = privateRequest.requesterBootstrap;
+        if (expectedMethod === RPC_METHODS.DAEMON_WORKFLOW_REQUESTER_CUSTODY && !('kind' in bootstrap)) {
+          throw new MachineRpcTargetNotCurrentError(machineId, 'private_target_mismatch');
+        }
         if ('kind' in bootstrap) {
           if (bootstrap.installationId !== machineTarget.installationId) throw new MachineRpcTargetNotCurrentError(machineId, 'installation_mismatch');
         } else if (privateRequest.kind === 'requester_session_handoff_preflight_bootstrap_v1'
