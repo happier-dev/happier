@@ -249,8 +249,10 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
     const disclosure = spec.id === 'relay.runtime.personal_home.backup' ? t('personalHome.settings.backupDisclosureBody') : null;
     const confirmationDraftSubject = input.kind === 'confirmation' && spec.id === 'session.draft.delete'
         ? draftSubject : null;
+    const subjectInReview = input.kind === 'confirmation' && input.preview !== undefined
+        && readActionApprovalSubject(input) !== undefined;
     const title = t('actionPresentation.title', { actionId: spec.id, source: titleSource,
-        subject: roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}`
+        subject: subjectInReview ? null : roleIdentity ? `${roleIdentity.name} · ${roleIdentity.kind}`
             : subject ?? (confirmationDraftSubject ? null : draftSubject ?? null) });
     return {
         confirmLabel,

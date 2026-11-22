@@ -70,7 +70,7 @@ export const ARTIFACT_ACTION_COPY = {
   [STORAGE_INVENTORY_READ_ACTION_ID_V1]: ['Read storage inventory', 'See scoped storage totals and one page of the largest stored items.'],
   'artifact.public_link.create': ['Create document link', 'Create an anonymous or signed-in link to a document.'],
   'artifact.public_link.list': ['List document links', 'See a document’s links for the selected audience.'],
-  'artifact.public_link.revoke': ['Turn off document public link', 'Stop a public link working. People who have it can no longer open the document.'],
+  'artifact.public_link.revoke': ['Turn off document public link', 'People who have it can no longer open the document.'],
   'artifact.public_link.audit': ['Read document public link activity', 'See when a document\'s public link was opened.'],
   'artifact.public_link.join': ['Open signed-in document link', 'Join a signed-in document link with Can copy access.'],
 } as const satisfies Record<ArtifactActionIdV1, readonly [title: string, summary: string]>;

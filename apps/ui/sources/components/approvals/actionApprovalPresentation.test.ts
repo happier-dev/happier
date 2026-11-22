@@ -12,6 +12,27 @@ import { SessionSurfaceItemV1Schema } from '@happier-dev/protocol/sessions/board
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('names a reviewed document once, in its facts rather than the confirmation title', () => {
+        const spec = getActionSpec('artifact.public_link.revoke');
+        const actionArgs = spec.inputSchema.parse({ artifactId: 'release-notes', shareId: 'link-1' });
+        const input = { actionId: spec.id, kind: 'confirmation' as const, actionArgs, subject: 'Release notes',
+            preview: { summary: buildApprovalPreviewSummary(spec, actionArgs) } };
+        expect(readActionApprovalSubject(input)).toEqual({ kind: 'artifact', id: 'release-notes' });
+        expect(presentActionApproval(input).title).not.toContain('Release notes');
+        expect(presentActionApproval({ ...input, preview: undefined }).title).toContain('Release notes');
+        expect(presentActionApproval({ ...input, kind: undefined }).title).toContain('Release notes');
+    });
+    it('preserves standalone delete, provider removal and registry removal confirmations', () => {
+        for (const input of [
+            { actionId: 'artifact.delete', actionArgs: { artifactId: 'document-1' }, subject: 'Release notes' },
+            { actionId: 'providers.connections.delete', actionArgs: { action: 'delete', connectionId: 'provider-1' }, subject: 'Gateway' },
+            { actionId: 'registries.sources.delete', actionArgs: { sourceId: 'registry-1' }, subject: 'Registry' },
+        ]) {
+            const standalone = presentActionApproval(input);
+            expect(presentActionApproval({ ...input, kind: 'confirmation' }).title).toEqual(standalone.title);
+            expect(presentActionApproval({ ...input, kind: 'confirmation' }).summary).toEqual(standalone.summary);
+        }
+    });
     it('never shows a person the agent instructions an Action declares, even when a receiver carries them as its summary', () => {
         const deploy = getActionSpec('deployments.deploy');
         const deployArgs = { serverId: 'home', environmentId: 'env-orders', targetLinkId: 'link-web-01' };
