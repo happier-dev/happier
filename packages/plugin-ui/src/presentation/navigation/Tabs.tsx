@@ -25,7 +25,12 @@ import { resolveHappierRovingTabStop } from '../collection/semantics.js';
 import type { HappierUiTheme } from '../../environment/types.js';
 import { HappierScrollArea } from '../layout/Layout.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
-import { HappierRetainedScrollContextInternal, type HappierRetainedScrollInternal } from '../../presentationHost/scrollActivity.js';
+import {
+  HappierRetainedScrollAnchorContextInternal,
+  HappierRetainedScrollContextInternal,
+  type HappierRetainedScrollAnchorReaderInternal,
+  type HappierRetainedScrollInternal,
+} from '../../presentationHost/scrollActivity.js';
 import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
 import { hasWebFocusableElement } from '../interaction/webFocusableElements.js';
@@ -151,19 +156,31 @@ function HappierTabPanel(props: Readonly<{
   const ancestorActivity = useOptionalHappierTabPanelActivityInternal();
   const active = props.active && ancestorActivity?.active !== false;
   const { retainedScroll } = props;
-  const savedScrollOffset = useRef<number | undefined>(undefined);
+  const enclosingAnchors = useContext(HappierRetainedScrollAnchorContextInternal);
+  const anchors = useMemo(() => retainedScroll ? {
+    scroll: retainedScroll,
+    readers: new Set<HappierRetainedScrollAnchorReaderInternal>(),
+  } : null, [retainedScroll]);
+  const savedScroll = useRef<Readonly<{ offset: number; anchor?: () => number | undefined }> | undefined>(undefined);
   useLayoutEffect(() => {
-    if (!active || !retainedScroll) return;
-    const release = savedScrollOffset.current === undefined
-      ? undefined
-      : retainedScroll.restoreOffset(savedScrollOffset.current);
+    if (!active || anchors === null) return;
+    const { scroll, readers } = anchors;
+    const saved = savedScroll.current;
+    const anchoredOffset = saved?.anchor?.();
+    const release = saved === undefined ? undefined : scroll.restoreOffset(anchoredOffset ?? saved.offset, anchoredOffset !== undefined);
     return () => {
       // The browser can clamp the shared scroller after this commit. Its last
       // delivered offset still belongs to the panel that is leaving.
-      savedScrollOffset.current = retainedScroll.readOffset();
+      const offset = scroll.readOffset();
+      let anchor: ReturnType<HappierRetainedScrollAnchorReaderInternal> = undefined;
+      for (const read of readers) {
+        anchor = read(offset);
+        if (anchor !== undefined) break;
+      }
+      savedScroll.current = anchor === undefined ? { offset } : { offset, anchor };
       release?.();
     };
-  }, [active, retainedScroll]);
+  }, [active, anchors]);
   const panelRef = useRef<View>(null);
   useLayoutEffect(() => {
     const panel: unknown = panelRef.current;
@@ -215,6 +232,7 @@ function HappierTabPanel(props: Readonly<{
 
   return (
     <HappierTabPanelActivityContext.Provider value={activity}>
+      <HappierRetainedScrollAnchorContextInternal.Provider value={anchors ?? enclosingAnchors}>
       <HappierUiAnimationActivityProviderInternal active={props.active}>
       <View
         ref={panelRef}
@@ -234,6 +252,7 @@ function HappierTabPanel(props: Readonly<{
         {props.children}
       </View>
       </HappierUiAnimationActivityProviderInternal>
+      </HappierRetainedScrollAnchorContextInternal.Provider>
     </HappierTabPanelActivityContext.Provider>
   );
 }

@@ -5,7 +5,7 @@ import { Button, ScrollArea, Text, defineUiSurface } from '@happier-dev/plugin-u
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { TriageChangedFilesList, TriageDetailPageScrollProvider, TriageDetailPanel } from '@happier-dev/triage-sources/ui';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 import { createScrollViewNearViewportTracker, resolveNearViewportWindow } from '@/components/widgets/nearViewport';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
@@ -68,11 +68,17 @@ function FilesFixture({ nextPage }: Readonly<{ nextPage: () => Promise<typeof FI
 }
 
 const mounted: PluginUiTestkit[] = [];
+beforeEach(() => {
+    // Deliver each test scroll at a distinct RNW throttle tick.
+    let now = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => (now += 50));
+});
 afterEach(async () => {
     await act(async () => { for (const fixture of mounted.splice(0)) await fixture.dispose(); });
+    vi.restoreAllMocks();
 });
 
-async function mountFiles() {
+async function mountFiles({ diffHeight = DIFF_HEIGHT } = {}) {
     const nextPage = createDeferred<typeof FIRST_PAGE>();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -87,14 +93,24 @@ async function mountFiles() {
     });
     mounted.push(fixture);
     const scroller = document.querySelector<HTMLElement>('[data-testid="compact-detail"]')!;
-    // Implement the browser's scrollTo on the jsdom scroll node so tab restoration exercises its real owner.
-    scroller.scrollTo = (...args: [ScrollToOptions?] | [number, number]) => {
-        scroller.scrollTop = typeof args[0] === 'number' ? args[1]! : (args[0]?.top ?? 0);
+    // RNW calls the browser's scroll primitive. Keep its scroll responder and layout callbacks real.
+    scroller.scroll = (...args: [ScrollToOptions?] | [number, number]) => {
+        const top = typeof args[0] === 'number' ? args[1]! : (args[0]?.top ?? 0);
+        if (top === scroller.scrollTop) return;
+        scroller.scrollTop = top;
+        queueMicrotask(() => { if (scroller.isConnected) scroller.dispatchEvent(new Event('scroll')); });
     };
+    Object.defineProperties(scroller, {
+        clientHeight: { value: VIEWPORT_HEIGHT },
+        scrollHeight: { get: () => FIRST_PAGE.length * ROW_HEIGHT
+            + (scroller.querySelector('[role="listitem"] [aria-expanded="true"]') ? diffHeight : 0) },
+    });
+    const measure = () => reportGeometry(scroller, diffHeight);
+    await measure();
     const press = async (name: string) => {
         await act(async () => { await fixture.press(await fixture.getByRole('button', { name })); });
     };
-    return { nextPage, scroller, press };
+    return { nextPage, scroller, press, measure, diffHeight };
 }
 
 function fileButtons(): HTMLElement[] {
@@ -115,11 +131,37 @@ async function scroll(scroller: HTMLElement, offset: number) {
     });
 }
 
+async function reportGeometry(scroller: HTMLElement, diffHeight: number) {
+    const list = scroller.querySelector<HTMLElement>('[role="list"][aria-label="Changed files"]')!;
+    const content = scroller.firstElementChild as HTMLElement;
+    const rect = () => new DOMRect(0, -scroller.scrollTop, 390, VIEWPORT_HEIGHT);
+    list.getBoundingClientRect = rect;
+    content.getBoundingClientRect = rect;
+    const reportLayout = (node: HTMLElement, height: number) => {
+        const handler: unknown = Reflect.get(node, '__reactLayoutHandler');
+        if (typeof handler !== 'function') throw new Error('Expected a measured RNW view');
+        handler({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height } } });
+    };
+    await act(async () => {
+        reportLayout(scroller, VIEWPORT_HEIGHT);
+        reportLayout(list, VIEWPORT_HEIGHT);
+        for (const button of fileButtons()) {
+            let cell = button;
+            while (cell.parentElement && cell.parentElement !== list) cell = cell.parentElement;
+            reportLayout(cell, fileHeight(button, diffHeight));
+        }
+    });
+}
+
+function fileHeight(button: HTMLElement, diffHeight: number) {
+    return ROW_HEIGHT + (button.getAttribute('aria-expanded') === 'true' ? diffHeight : 0);
+}
+
 /** Supply row box geometry at the jsdom platform boundary. These cases stay in the first mounted window. */
-function readAnchor(scroller: HTMLElement) {
+function readAnchor(scroller: HTMLElement, diffHeight = DIFF_HEIGHT) {
     let top = 0;
     for (const button of fileButtons()) {
-        const height = ROW_HEIGHT + (button.getAttribute('aria-expanded') === 'true' ? DIFF_HEIGHT : 0);
+        const height = fileHeight(button, diffHeight);
         const offset = top - scroller.scrollTop;
         if (offset + height > 0) return { path: filePath(button), offset };
         top += height;
@@ -127,12 +169,13 @@ function readAnchor(scroller: HTMLElement) {
     throw new Error('No file intersects the viewport');
 }
 
-async function scrollPastOpenDiff(scroller: HTMLElement) {
+async function scrollPastOpenDiff({ scroller, measure, diffHeight }: Awaited<ReturnType<typeof mountFiles>>) {
     await act(async () => { fileButtons()[0].click(); });
     expect(fileButtons()[0].getAttribute('aria-expanded')).toBe('true');
+    await measure();
     // Start just inside the anchor row, with the first row's diff above it.
-    await scroll(scroller, DIFF_HEIGHT + 4 * ROW_HEIGHT + 3);
-    const anchor = readAnchor(scroller);
+    await scroll(scroller, diffHeight + 4 * ROW_HEIGHT + 3);
+    const anchor = readAnchor(scroller, diffHeight);
     expect(anchor).toEqual({ path: FIRST_PAGE[4].path, offset: -3 });
     return anchor;
 }
@@ -167,10 +210,43 @@ it('keeps compact Files mounted work in the page window through paging and scrol
 });
 
 it('holds the same visible file and pixel offset through a trailing append with a diff open', async () => {
-    const { scroller, nextPage, press } = await mountFiles();
-    const anchor = await scrollPastOpenDiff(scroller);
+    const files = await mountFiles();
+    const { scroller, nextPage, press } = files;
+    const anchor = await scrollPastOpenDiff(files);
     await press('Show more files');
     await act(async () => { nextPage.resolve(MORE_FILES); });
     expect(readAnchor(scroller)).toEqual(anchor);
     expect(fileButtons().filter(button => button.getAttribute('aria-expanded') === 'true')).toHaveLength(1);
+});
+
+it.each([
+    { name: 'after closing the diff above it', diffHeight: DIFF_HEIGHT },
+    { name: 'when the browser clamps the old position before the closed diff is remeasured', diffHeight: 31_200, clamp: true },
+])('restores the same visible file and pixel offset $name', async ({ diffHeight, clamp }) => {
+    const files = await mountFiles({ diffHeight });
+    const { scroller, press, measure } = files;
+    const anchor = await scrollPastOpenDiff(files);
+    await press('Checks tab');
+    // jsdom does not clamp the shared scroller when the Checks content becomes shorter.
+    await scroll(scroller, 0);
+    await press('Files tab');
+    expect(fileButtons().filter(button => button.getAttribute('aria-expanded') === 'true')).toHaveLength(0);
+    // In a browser the restored offset fits for a frame, then the closed content clamps it before onLayout.
+    if (clamp) await scroll(scroller, scroller.scrollHeight - scroller.clientHeight);
+    await measure();
+    expect(readAnchor(scroller)).toEqual(anchor);
+});
+
+it('holds the same visible file and pixel offset when the next page sorts earlier files above it', async () => {
+    const files = await mountFiles();
+    const { scroller, nextPage, press } = files;
+    const anchor = await scrollPastOpenDiff(files);
+    await press('Show more files');
+    const earlierFiles = MORE_FILES.slice(0, 2).map((file, index) => ({
+        ...file,
+        path: `qa-large-pr/row-00${index}.txt`,
+    }));
+    await act(async () => { nextPage.resolve([...earlierFiles, ...MORE_FILES.slice(2)]); });
+    expect(fileButtons().map(filePath)).toContain(earlierFiles[0].path);
+    expect(readAnchor(scroller)).toEqual(anchor);
 });

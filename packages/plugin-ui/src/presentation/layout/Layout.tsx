@@ -236,7 +236,7 @@ export function HappierScrollArea({
   const theme = useOptionalHappierUiTheme();
   const palette = useOptionalHappierUiPalette(theme) ?? (theme === null ? null : resolveHappierUiPalette(theme));
   const offsetRef = useRef(0);
-  const retainedRestore = useRef<{ offset: number; waitingForContent: boolean } | null>(null);
+  const retainedRestore = useRef<{ offset: number; waitingForContent: boolean; waitForLayout: boolean } | null>(null);
   const leadHeightRef = useRef(0);
   // Under the pinned row the content is at least the rest of the viewport, so the row can stay just under the lead
   // whatever the selected tab holds: a short panel would otherwise clamp the scroll and drop the row back down.
@@ -257,26 +257,42 @@ export function HappierScrollArea({
   // On the web, content that already holds a control adds no tab stop (the browser's keyboard-focusable scrollers).
   const viewportRef = useRef({ width: 0, height: 0 });
   const contentRef = useRef({ width: 0, height: 0 });
-  const retainedScroll = useMemo<HappierRetainedScrollInternal>(() => ({
-    readOffset: () => {
-      const request = retainedRestore.current;
-      return request?.waitingForContent ? request.offset : Math.max(0, offsetRef.current);
-    },
-    restoreOffset: (offset) => {
+  const createTracker = host?.createScrollActivityTracker;
+  const tracker = useMemo(() => createTracker?.(scrollSourceRef, scrollProps.horizontal === true) ?? null,
+    [createTracker, scrollProps.horizontal]);
+  const retainedScroll = useMemo<HappierRetainedScrollInternal>(() => {
+    const scrollToOffset = (offset: number) => {
       const scroller = scrollSourceRef.current;
-      const request = {
-        offset,
-        waitingForContent: Platform.OS !== 'web' && offset > Math.max(0, contentRef.current.height - viewportRef.current.height),
-      };
-      retainedRestore.current = request;
       scroller?.scrollTo({ y: offset, animated: false });
       const webNode: unknown = Platform.OS === 'web' ? scroller?.getScrollableNode() : null;
       offsetRef.current = typeof HTMLElement !== 'undefined' && webNode instanceof HTMLElement ? webNode.scrollTop : offset;
-      return () => {
-        if (retainedRestore.current === request) retainedRestore.current = null;
-      };
-    },
-  }), []);
+      const request = retainedRestore.current;
+      if (request !== null) {
+        request.offset = offset;
+        // An expanded row above a retained anchor can close before its new height reaches the virtualizer.
+        // Keep the requested coordinate through that remeasurement even if the browser already clamped it.
+        request.waitingForContent = Platform.OS === 'web'
+          ? request.waitForLayout && offset - offsetRef.current > 0.5
+          : offset > Math.max(0, contentRef.current.height - viewportRef.current.height);
+      }
+    };
+    return {
+      tracker,
+      readOffset: () => {
+        const request = retainedRestore.current;
+        return request?.waitingForContent ? request.offset : Math.max(0, offsetRef.current);
+      },
+      scrollToOffset,
+      restoreOffset: (offset, waitForLayout = false) => {
+        const request = { offset, waitingForContent: false, waitForLayout };
+        retainedRestore.current = request;
+        scrollToOffset(offset);
+        return () => {
+          if (retainedRestore.current === request) retainedRestore.current = null;
+        };
+      },
+    };
+  }, [tracker]);
   const [overflowing, setOverflowing] = useState(false);
   const axis = scrollProps.horizontal === true ? 'width' : 'height';
   const remeasureOverflow = () => {
@@ -284,9 +300,6 @@ export function HappierScrollArea({
       && !scrollAreaHoldsControl(scrollSourceRef.current);
     setOverflowing(previous => previous === next ? previous : next);
   };
-  const createTracker = host?.createScrollActivityTracker;
-  const tracker = useMemo(() => createTracker?.(scrollSourceRef, scrollProps.horizontal === true) ?? null,
-    [createTracker, scrollProps.horizontal]);
   const insetStyle: ViewStyle | undefined = safeAreaInsets
     ? {
         paddingTop: safeAreaInsets.top,
@@ -313,11 +326,26 @@ export function HappierScrollArea({
         ref={scrollSourceRef}
         {...scrollProps}
         onScroll={event => {
-          offsetRef.current = event.nativeEvent.contentOffset.y;
-          tracker?.onScroll(event); reportTop?.(event.nativeEvent.contentOffset.y); scrollProps.onScroll?.(event);
+          const offset = event.nativeEvent.contentOffset.y;
+          const request = retainedRestore.current;
+          if (Platform.OS === 'web' && request?.waitForLayout && offset !== offsetRef.current) {
+            const node: unknown = scrollSourceRef.current?.getScrollableNode();
+            // The tab can show its retained geometry for a frame before its content contracts.
+            // A newly impossible coordinate is a clamp; movement in the new extent takes ownership.
+            const lostExtent = !request.waitingForContent && typeof HTMLElement !== 'undefined'
+              && node instanceof HTMLElement && request.offset > node.scrollHeight - node.clientHeight;
+            request.waitingForContent = offset < request.offset && lostExtent;
+            request.waitForLayout = request.waitingForContent || offset === request.offset;
+          }
+          offsetRef.current = offset;
+          tracker?.onScroll(event); reportTop?.(offset); scrollProps.onScroll?.(event);
         }}
         onScrollBeginDrag={() => {
-          if (retainedRestore.current) retainedRestore.current.waitingForContent = false;
+          const request = retainedRestore.current;
+          if (request !== null) {
+            request.waitingForContent = false;
+            request.waitForLayout = false;
+          }
         }}
         {...(head === null ? {} : { stickyHeaderIndices: [1] })}
         onLayout={event => {
@@ -329,11 +357,9 @@ export function HappierScrollArea({
         onContentSizeChange={(width: number, height: number) => {
           contentRef.current = { width, height };
           const request = retainedRestore.current;
-          // Native may receive the restore while the outgoing, shorter content is still laid out.
+          // A restore can arrive before the incoming content has its full extent.
           if (request?.waitingForContent && request.offset <= height - viewportRef.current.height) {
-            request.waitingForContent = false;
-            offsetRef.current = request.offset;
-            scrollSourceRef.current?.scrollTo({ y: request.offset, animated: false });
+            retainedScroll.scrollToOffset?.(request.offset);
           }
           remeasureOverflow();
           tracker?.onContentSizeChange(width, height);

@@ -1,8 +1,14 @@
-import { Fragment, useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
+import { Fragment, useCallback, useContext, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { CollectionVirtualizerHandle, CollectionVirtualizerRequest } from './collectionVirtualizer.js';
-import type { PluginUiScrollActivityTracker } from '../../presentationHost/scrollActivity.js';
+import {
+  HappierRetainedScrollAnchorContextInternal,
+  HappierRetainedScrollContextInternal,
+  type HappierRetainedScrollAnchorReaderInternal,
+  type PluginUiScrollActivityTracker,
+} from '../../presentationHost/scrollActivity.js';
+import { useOptionalHappierTabPanelActivityInternal } from '../navigation/Tabs.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { CatalogDirectory } from './CatalogDirectory.js';
 
@@ -25,6 +31,7 @@ type Cell<Item> = Readonly<{
   header: boolean; part: boolean; unit: string | null; inSheet: boolean; items: readonly Item[]; keys: readonly string[]; gap?: number;
 }>;
 const NO_MEASUREMENTS: ReadonlyMap<string, number> = new Map();
+const subscribeWhileHidden = () => () => {};
 function sameMeasuredGeometry(left: PageCollectionGeometry, right: PageCollectionGeometry) {
   return left.width === right.width && left.headerHeight === right.headerHeight && left.defaultRowHeight === right.defaultRowHeight
     && left.directory?.columns === right.directory?.columns && left.rowGapPx === right.rowGapPx;
@@ -37,33 +44,85 @@ function sameMeasuredGeometry(left: PageCollectionGeometry, right: PageCollectio
  * has placed the block, it stands at the page's top, so the first window paints at once; without a window, every
  * part is near.
  */
-export function usePageWindow(tracker: PluginUiScrollActivityTracker) {
+export function usePageWindow(tracker: PluginUiScrollActivityTracker, presented = true) {
   const root = useRef<View | null>(null);
   const [span, setSpan] = useState<Readonly<{ top: number }> | null>(null);
-  const window = useSyncExternalStore(tracker.subscribe, tracker.getWindow, tracker.getWindow);
-  const revision = useSyncExternalStore(tracker.subscribe, tracker.getLayoutRevision, tracker.getLayoutRevision);
+  const lastWindow = useRef<ReturnType<PluginUiScrollActivityTracker['getWindow']>>(null);
+  const active = useRef(presented);
+  const readLastWindow = useCallback(() => lastWindow.current, []);
+  const readHiddenRevision = useCallback(() => 0, []);
+  const subscribe = presented ? tracker.subscribe : subscribeWhileHidden;
+  const readWindow = presented ? tracker.getWindow : readLastWindow;
+  const readRevision = presented ? tracker.getLayoutRevision : readHiddenRevision;
+  const window = useSyncExternalStore(subscribe, readWindow, readWindow);
+  const revision = useSyncExternalStore(subscribe, readRevision, readRevision);
+  useLayoutEffect(() => {
+    active.current = presented;
+    if (presented) lastWindow.current = window;
+  }, [presented, window]);
   const measure = useCallback(async () => {
+    if (!active.current) return;
     const node = root.current;
     const measured = await tracker.measureSpan(node);
-    if (node !== root.current || measured === null) return;
+    if (!active.current || node !== root.current || measured === null) return;
     setSpan(current => current?.top === measured.top ? current : measured);
   }, [tracker]);
-  useLayoutEffect(() => { void measure(); }, [measure, revision]);
+  useLayoutEffect(() => { if (presented) void measure(); }, [measure, presented, revision]);
   const top = span?.top ?? 0;
   const near = (offset: number, height: number) => window === null || (top + offset + height >= window.top && top + offset <= window.bottom);
   return { root, span, window, measure, near };
 }
 
-/** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
-export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, tabStopKey, retainedKeys }: Readonly<{
+type PageRowAnchor = Readonly<{ key: string; inset: number }>;
+type PageCollectionLayout<Item> = Readonly<{ top: number; cells: readonly Cell<Item>[] }>;
+
+function readRowAnchor<Item>(layout: PageCollectionLayout<Item>, offset: number): PageRowAnchor | undefined {
+  const { cells, top } = layout;
+  const at = offset - top;
+  if (at < 0) return undefined;
+  // The first cell whose trailing edge is below the viewport's top.
+  let start = 0;
+  let end = cells.length;
+  while (start < end) {
+    const middle = (start + end) >>> 1;
+    const cell = cells[middle]!;
+    if (cell.offset + cell.height <= at) start = middle + 1;
+    else end = middle;
+  }
+  const cell = cells[start];
+  const key = cell?.keys[0];
+  return cell === undefined || key === undefined ? undefined : { key, inset: at - cell.offset };
+}
+
+function resolveRowAnchor<Item>(layout: PageCollectionLayout<Item>, anchor: PageRowAnchor): number | undefined {
+  const cell = layout.cells.find(cell => cell.keys.includes(anchor.key));
+  return cell === undefined ? undefined : Math.max(0, layout.top + cell.offset + anchor.inset);
+}
+
+type PageCollectionVirtualizerProps<Item> = Readonly<{
   request: CollectionVirtualizerRequest<Item>;
   geometry: PageCollectionGeometry;
   tracker: PluginUiScrollActivityTracker;
   tabStopKey: string | null;
   /** Rows a live interaction anchors to (a deep link's popover); they stay mounted wherever the viewport is. */
   retainedKeys?: ReadonlySet<string>;
-}>) {
-  const { root, span, measure, near } = usePageWindow(tracker);
+}>;
+
+/** List's positioning adapter for rows inside an already-owned physical page, never another scroller. */
+export function PageCollectionVirtualizer<Item>(props: PageCollectionVirtualizerProps<Item>) {
+  const presented = useOptionalHappierTabPanelActivityInternal()?.active !== false;
+  const lastPresented = useRef(props);
+  useLayoutEffect(() => { if (presented) lastPresented.current = props; }, [presented, props]);
+  const content = presented ? props : lastPresented.current;
+  return useMemo(() => <PageCollectionWindow {...content} presented={presented} />, [content, presented]);
+}
+
+function PageCollectionWindow<Item>({ request, geometry, tracker, tabStopKey, retainedKeys, presented }:
+  PageCollectionVirtualizerProps<Item> & Readonly<{ presented: boolean }>) {
+  const { root, span, measure, near } = usePageWindow(tracker, presented);
+  const scroller = useContext(HappierRetainedScrollContextInternal);
+  const scroll = scroller?.tracker === tracker ? scroller : null;
+  const anchors = useContext(HappierRetainedScrollAnchorContextInternal);
   const [measurements, setMeasurements] = useState<Readonly<{ geometry: PageCollectionGeometry; heights: ReadonlyMap<string, number> }>>(
     () => ({ geometry, heights: NO_MEASUREMENTS }),
   );
@@ -114,9 +173,42 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   }, [geometry, measuredHeights, request.kind, request.kind === 'flat' ? request.items : request.sections, request.keyForItem,
     request.kind === 'flat' ? request.renderRows === undefined : request.renderSectionRows === undefined]);
   const totalHeight = cells.length === 0 ? 0 : cells[cells.length - 1]!.offset + cells[cells.length - 1]!.height;
+  const lastLayout = useRef<PageCollectionLayout<Item> | null>(null);
+  const wasPresented = useRef(false);
+  const captureAnchor = useCallback<HappierRetainedScrollAnchorReaderInternal>(offset => {
+    const previous = lastLayout.current;
+    const anchor = previous === null ? undefined : readRowAnchor(previous, offset);
+    if (anchor === undefined) return undefined;
+    return () => lastLayout.current === null ? undefined : resolveRowAnchor(lastLayout.current, anchor);
+  }, []);
+  useLayoutEffect(() => {
+    if (anchors === null || anchors.scroll !== scroll) return;
+    anchors.readers.add(captureAnchor);
+    return () => {
+      anchors.readers.delete(captureAnchor);
+      lastLayout.current = null;
+    };
+  }, [anchors, captureAnchor, scroll]);
+  const scrollToOffset = scroll?.scrollToOffset ?? tracker.scrollToOffset;
+  const top = span?.top;
+  useLayoutEffect(() => {
+    const continuous = wasPresented.current;
+    wasPresented.current = presented;
+    if (!presented || top === undefined) return;
+    const previous = lastLayout.current;
+    const layout = { top, cells };
+    lastLayout.current = layout;
+    // A returning panel restores the anchor it saved on leave, independent of the outgoing tab's scroll.
+    if (!continuous || previous === null || (previous.cells === cells && previous.top === top)) return;
+    const offset = scroll?.readOffset() ?? tracker.getVisibleWindow?.()?.top;
+    if (offset === undefined) return;
+    const anchor = readRowAnchor(previous, offset);
+    const target = anchor === undefined ? undefined : resolveRowAnchor(layout, anchor);
+    if (target !== undefined && target !== offset) scrollToOffset?.(target);
+  }, [cells, presented, scroll, scrollToOffset, top, tracker]);
   const position = useCallback((offset: number) => {
-    if (span !== null) tracker.scrollToOffset?.(Math.max(0, span.top + offset));
-  }, [span, tracker]);
+    if (presented && top !== undefined) scrollToOffset?.(Math.max(0, top + offset));
+  }, [presented, scrollToOffset, top]);
   const handle = useMemo<CollectionVirtualizerHandle>(() => ({
     reveal: location => {
       const cell = cells.find(cell => !cell.header && location.index >= cell.index && location.index < cell.index + cell.count
@@ -135,6 +227,7 @@ export function PageCollectionVirtualizer<Item>({ request, geometry, tracker, ta
   const pinned = (cell: Cell<Item>) => !cell.header && cell.keys.some(key => key === tabStopKey || (retainedKeys?.has(key) ?? false));
   const renderCell = (cell: Cell<Item>) => (
     <View key={cell.key} style={cell.gap ? { paddingBottom: cell.gap } : undefined} onLayout={(event: HappierLayoutChangeEvent) => {
+      if (!presented) return;
       const height = event.nativeEvent.layout.height;
       if (height <= 0 || height === cell.height) return;
       setMeasurements(current => ({ geometry,
