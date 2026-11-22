@@ -2654,26 +2654,51 @@ describe('workflow Session step executor', () => {
     }), expect.anything());
   });
 
-  it('uses the contextual default rather than widening an omitted Session step to the Run ceiling', async () => {
-    const enqueue = vi.fn(async () => ({ status: 'accepted' as const, localId: 'local-1' }));
-    const execute = createWorkflowSessionStepExecutor({
-      credentials: { token: 'token', encryption: null },
-
-      prepareConversation: async () => ({
-        kind: 'workflow_session_conversation', existing: null,
+  it.each([
+    { kind: 'fresh', retainedPermission: null },
+    { kind: 'existing_session', retainedPermission: 'read-only' },
+    { kind: 'existing_session', retainedPermission: null },
+  ] as const)('preserves inherited permission at real Session input admission (%j)', async ({ kind, retainedPermission }) => {
+    installSessionCreationTransport();
+    const read = readiness.get.getMockImplementation()!;
+    readiness.get.mockImplementation(async (url: string) => url.endsWith('/reply-capability')
+      ? { status: 200, data: { v: 1, protocolVersions: [1] } } : read(url));
+    const credentials = { token: 'token', encryption: null };
+    const machineAdmissionTransport = vi.fn(async (_request: Parameters<Parameters<typeof createProductionWorkflowSessionStepExecutor>[0]['machineAdmissionTransport']>[0]) => ({
+      status: 'rejected' as const, code: 'session_input_permission_ceiling_rejected' as const,
+    }));
+    const execute = createProductionWorkflowSessionStepExecutor({
+      credentials, machineId: 'machine-1', machineAdmissionTransport,
+      createFreshConversation: createProductionFreshWorkflowSessionConversation({
+        credentials, serverId: 'server-1', machineId: 'machine-1', workDepth: 0,
+        originRunId: 'run-1', machineAdmissionTransport,
       }),
-      materializeConversation: async () => ({ sessionId: 'session-1', machineAdmissionTransport: vi.fn() }),
-      sessionInput: { enqueue,
-        observe: async () => ({ ok: true, sessionId: 'session-1', localId: 'local-1', result: { kind: 'final_text', text: 'done' } }),
-      },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => ({ sessionId: 'session-1', machineId: 'machine-1', directory: '/repo',
+        runtimeSnapshot: { permissionMode: retainedPermission ? { value: retainedPermission, updatedAt: 0 } : null,
+          modelSelection: null, teamModelSelection: null },
+      }),
     });
-    await execute({
-      runId: 'run-1', step: { result: { kind: 'text' } }, invocation: { logicalInvocationRecordId: 'inv-1' },
-      input: { text: 'work', references: [], attachments: [], values: [] }, execution: {},
+    await expect(execute({
+      runId: 'run-1',
+      step: { kind: 'step', id: 'work', document: { text: 'work', references: [], attachments: [] }, input: [], result: { kind: 'text' } },
+      invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'work', scope: [] }, attempt: '0', logicalInvocationRecordId: 'inv-1' },
+      input: { text: 'work', references: [], attachments: [], values: [] },
+      execution: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        conversation: kind === 'fresh' ? { kind } : { kind, sessionId: 'session-1', machineId: 'machine-1' } },
+      executionTarget: { kind: 'session' },
       authorization: { admittedPermissionCeiling: 'safe-yolo', principal: { kind: 'host' } },
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' }, beforeInputAdmission: async () => {}, onInputAccepted: vi.fn(),
-    } as never);
-    expect(enqueue).toHaveBeenCalledWith(expect.objectContaining({ permissionMode: 'default' }));
+    })).resolves.toEqual({ kind: 'failed', code: 'session_input_permission_ceiling_rejected' });
+    const request = machineAdmissionTransport.mock.calls[0]?.[0];
+    expect(request?.content).toMatchObject({ t: 'plain', v: { meta: { happierInputRequestV1: {
+      permission: retainedPermission ? { requestedPermissionCeiling: retainedPermission } : {},
+    } } } });
+    if (request?.content.t !== 'plain') throw new Error('Expected plain Session input');
+    const admission = readRecord(readRecord(request.content.v).meta).happierInputRequestV1;
+    if (!retainedPermission) {
+      expect(readRecord(admission).permission).not.toHaveProperty('requestedPermissionCeiling');
+    }
   });
 
   it.each([

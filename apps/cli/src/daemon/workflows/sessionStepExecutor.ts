@@ -675,7 +675,7 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
     const originInput = params.conversationBinding?.kind === 'origin_session'
       || params.execution.conversation?.kind === 'origin_session'
       || (isPreparedWorkflowSessionConversation(params.preparedStep) && params.preparedStep.inputPath === 'origin_session');
-    const requestedPermissionCeiling = params.execution.permissionMode === undefined ? 'default' : params.execution.permissionMode;
+    const requestedPermissionCeiling = params.execution.permissionMode;
     let originStopRequested = false;
     const observeOriginInput = async (sessionId: string, localId: string, signal: AbortSignal | undefined) => {
       const withdrawal = new AbortController();
@@ -958,7 +958,8 @@ export function createWorkflowSessionStepExecutor(deps: Readonly<{
     const modelSelection = readAuthoredSessionModelSelection(params.execution);
     const trackedTeamModelSelection = runtime?.teamModelSelection;
     const selectedControls = runtime ? resolveSessionRuntimeSnapshot({
-      incomingOptions: { directory: params.workspace.directory, permissionMode: parsePermissionIntentAlias(requestedPermissionCeiling ?? 'default') ?? undefined,
+      incomingOptions: { directory: params.workspace.directory,
+        permissionMode: requestedPermissionCeiling ? parsePermissionIntentAlias(requestedPermissionCeiling) ?? undefined : undefined,
         permissionModeUpdatedAt: params.execution.permissionModeUpdatedAt, modelSelection: modelSelection ?? undefined },
       trackedSpawnOptions: { directory: params.workspace.directory,
         ...(runtime.permissionMode ? { permissionMode: runtime.permissionMode.value, permissionModeUpdatedAt: runtime.permissionMode.updatedAt } : {}),
