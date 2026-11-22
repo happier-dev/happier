@@ -376,6 +376,86 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
+    it('reports Worker status to direct and Team Manage grantees through the CLI', async () => {
+        const owner = await fixture(true);
+        const requester = await fixture(true);
+        const { machineId } = owner.controller;
+        const actionId = 'projects.worker.status';
+        const serverHttpBaseUrl = 'http://shared-worker-status.test';
+        const input = { workspace: { serverId: homeId, refId: 'requester-workspace' },
+            destination: { kind: 'machine', machineId }, purpose: 'service-start' };
+        const status = { eligible: true, candidate: { serverId: homeId, machineId },
+            load: { kind: 'unknown' }, explanation: 'load_unknown' };
+        const storedSettings = { actionsSettingsV1: { v: 1 } };
+        const deliveries: string[] = [];
+        const instance = await app(async request => {
+            const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+            expect(request.targetUserId).toBe(owner.account.id);
+            expect(dispatch).toMatchObject({ actionId, envelope: { v: 1, input } });
+            expect(dispatch.executionAuthorization?.binding).toMatchObject({
+                accountId: requester.account.id, custodianAccountId: owner.account.id,
+                admittedMachineRole: 'manage', actionId,
+            });
+            deliveries.push(dispatch.envelope.requestId);
+            return { ok: true, result: createExternalActionDaemonDispatchResponseV1(prepareExternalActionResponseEnvelopeV1({
+                v: 1, actionId, requestId: dispatch.envelope.requestId, execution: { ok: true, result: status },
+            })) };
+        }, http => {
+            registerAccountProfileRoute(http);
+            registerAccountEncryptionRoutes(http);
+            registerAutomationActionIndexRoutes(http);
+            http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings }, version: 1 }));
+        }, []);
+        const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: serverHttpBaseUrl });
+        try {
+            const token = await auth.createToken(requester.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+            const cliCredentials = { token, credentialProvenance: 'stored_session' as const, encryption: null };
+            const invokeStatus = async () => {
+                const stdout = captureStdout();
+                const previousExitCode = process.exitCode;
+                try {
+                    await handleActionsCommand(['invoke', actionId, '--machine-id', machineId,
+                        '--input-json', JSON.stringify(input), '--json'], {
+                        readCredentialsFn: async () => cliCredentials,
+                        getServerProfileFn: async () => { throw new Error('No saved profile in this isolated fixture'); },
+                        createExecutorFn: options => createCliActionExecutorFromCredentials({ ...options,
+                            serverId: homeId, serverIdentityId: homeId, serverApiUrl: serverHttpBaseUrl,
+                            onRequesterSessionCredentialDisclosure: async () => true }),
+                    });
+                    return JSON.parse(stdout.text()) as unknown;
+                } finally {
+                    stdout.restore();
+                    process.exitCode = previousExitCode;
+                }
+            };
+            const grantData = { machineId, accessLevel: 'admin', createdByAccountId: owner.account.id } as const;
+            const direct = await db.machineGrant.create({ data: { ...grantData, principalKind: 'account', accountId: requester.account.id } });
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId }))
+                .toMatchObject({ owned: false, role: 'manage' });
+            expect(await resolveMachineAdmission({ actorAccountId: requester.account.id, machineId, rpcMethod: actionId }))
+                .toMatchObject({ kind: 'denied', code: 'custodian_only' });
+            const directStatus = await invokeStatus();
+            expect.soft(directStatus, `Direct Manage: ${JSON.stringify(directStatus)}`).toMatchObject({ ok: true, data: status });
+            await db.machineGrant.delete({ where: { id: direct.id } });
+
+            const team = await db.team.create({ data: { name: 'Worker status readers' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: requester.account.id, role: 'member' } });
+            const shared = await db.machineGrant.create({ data: { ...grantData, principalKind: 'team', teamId: team.id } });
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId }))
+                .toMatchObject({ owned: false, role: 'manage' });
+            const teamStatus = await invokeStatus();
+            expect.soft(teamStatus, `Team Manage: ${JSON.stringify(teamStatus)}`).toMatchObject({ ok: true, data: status });
+            await db.machineGrant.delete({ where: { id: shared.id } });
+
+            expect(await invokeStatus()).toMatchObject({ ok: false, kind: 'actions_invoke',
+                error: { code: 'admission_unavailable', effectAttempted: false } });
+            expect(deliveries).toHaveLength(2);
+        } finally {
+            restoreHttp();
+            await instance.close();
+        }
+    });
+
     it('lets only the admitted requester stop and observe an exact received operation after the grant ends', async () => {
         const owner = await fixture(true);
         const requester = await fixture(true);

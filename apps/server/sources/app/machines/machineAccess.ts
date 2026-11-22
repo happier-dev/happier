@@ -14,7 +14,7 @@ import { resourceTeamShareScopeV1, type ResourceTeamShareScopeV1 } from '@happie
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isRequesterProjectExecutionActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isProjectWorkerCopyInspectActionIdV1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
+import { isProjectWorkerCopyInspectActionIdV1, PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import { isStoredDeploymentExecutionActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/deployments/deploymentPreparationAdmissionV1';
 import { getActionSpec, SignedRootActionIdSchema, PluginPublicationActionOutputSchemas } from '@happier-dev/protocol/actions/actionSpecs';
@@ -633,11 +633,12 @@ async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts |
     if (input.actionId && requiredMachineRoleForBrowserAction(input.actionId) === 'manage') requiredRole = 'manage';
     let method = input.rpcMethod;
     const requesterSessionLifecycle = operationActionId === 'session.spawn_new' || operationActionId === 'session.open';
-    // Exact copy review enters through signed Account admission. The daemon
-    // binds it to retained relationship custody; its raw RPC stays private.
+    // Worker status and copy review use signed Account admission so the daemon
+    // reads requester Project custody. Their raw RPCs stay custodian-only.
     // A signed message uses this Machine only as a carrier; the Session message
     // owner authorizes its effect without exposing a private custodian RPC.
     const requesterActionIngress = requesterSessionLifecycle || requesterCopyPreview
+        || input.actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1
         || input.actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1;
     if (input.actionId && !method) {
         const actionId = SignedRootActionIdSchema.safeParse(input.actionId);

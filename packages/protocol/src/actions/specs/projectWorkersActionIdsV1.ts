@@ -1,5 +1,6 @@
 /** Action identity leaf: schema modules and the registry share these constants. */
 import type { ExternalActionExecutionAuthorizationV1 } from '../externalActionApi.js';
+export const PROJECT_WORKER_STATUS_ACTION_ID_V1 = 'projects.worker.status';
 export const PROJECT_WORKER_COPY_INSPECT_ACTION_ID_V1 = 'projects.worker.copy.inspect';
 export const PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1 = 'projects.worker.copy.retire';
 
@@ -25,6 +26,6 @@ export const PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1 = [
 export const PROJECT_WORKER_ACTION_IDS_V1 = [
   'projects.worker.preferences.get', 'projects.worker.preferences.set', 'projects.worker.preferences.reset',
   'machines.worker.policy.get', 'machines.worker.policy.set',
-  'projects.worker.status', PROJECT_WORKER_COPY_INSPECT_ACTION_ID_V1, PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1,
+  PROJECT_WORKER_STATUS_ACTION_ID_V1, PROJECT_WORKER_COPY_INSPECT_ACTION_ID_V1, PROJECT_WORKER_COPY_RETIRE_ACTION_ID_V1,
   ...PROJECT_SERVICE_PLACEMENT_ACTION_IDS_V1,
 ] as const;
