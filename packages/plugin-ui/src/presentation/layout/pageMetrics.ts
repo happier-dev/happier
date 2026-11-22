@@ -96,10 +96,7 @@ export const HAPPIER_PAGE_METRICS = Object.freeze({
   controlHeightPx: 32,
   /** The dense control inside a row, card or detail header (settings lab `.btn.sm`): a small button draws this tall. */
   smallControlHeightPx: 28,
-  /**
-   * A Collection toolbar's row: the inline find capsule (the search field that leads it) is its tallest control,
-   * and the host's loading identity for a toolbar page holds the same height so the title does not move.
-   */
+  /** The inline Find capsule, which includes its match controls. */
   collectionToolbarHeightPx: 36,
   /**
    * From the column's edge to a sheet's edge. On every platform Happier's

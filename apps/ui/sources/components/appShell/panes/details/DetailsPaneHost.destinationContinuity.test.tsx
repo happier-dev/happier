@@ -27,6 +27,22 @@ await import('../AppPaneProvider');
 await import('./DetailsPaneHost');
 
 describe('destination details presentation continuity', () => {
+    it('reserves the desktop rail for a detail companion even without App-wide sidebar tabs', async () => {
+        const { DetailsPaneHost } = await import('./DetailsPaneHost');
+        const { AppPaneProvider } = await import('../AppPaneProvider');
+        const render = (open: boolean) => <AppPaneProvider><DetailsPaneHost
+            main={<div />}
+            details={open ? { content: <div /> } : null}
+            onCloseDetails={() => {}}
+        /></AppPaneProvider>;
+        const screen = await renderScreen(render(false));
+        expect(screen.findByTestId('pane-action-rail-column')).toBeNull();
+        await screen.update(render(true));
+        expect(screen.findByTestId('pane-action-rail-column')).not.toBeNull();
+        host.width = 390;
+        await screen.update(render(true));
+        expect(screen.findByTestId('pane-action-rail-column')).toBeNull();
+    });
     it('preserves an ordinary host hidden main column and action rail without destination-owned content', async () => {
         const { PaneColumnsHost } = await import('../PaneColumnsHost');
         setPanelsEnabled(false);

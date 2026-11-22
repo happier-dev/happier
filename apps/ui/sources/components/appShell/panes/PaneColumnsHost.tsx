@@ -208,12 +208,13 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
     const requestedMainHidden = props.mainHidden === true && (rightOpen || detailsOpen);
     // Resolve the optional rail's layout first; destination-only content takes the whole host.
     const [railReportsVacant, setRailVacant] = React.useState(false);
-    // The column goes only where the rail's More has another home, so its panels and Customize stay reachable.
+    // Treat the rail as vacant only when More has another home, so panels and Customize stay reachable.
     const railVacant = railReportsVacant && railTail?.railMoreHost != null;
-    const railWidthPx = props.actionRail != null ? PANE_ACTION_RAIL_WIDTH : 0;
-    // An open Details can acquire a companion after it renders. Budget for the rail from
-    // the start so that filling it cannot switch the pane from docked to overlay.
-    const dockContainerWidthPx = Math.max(0, hostWidthPx - (detailsOpen || !railVacant ? railWidthPx : 0));
+    // Details can acquire a companion after its first paint. Its rail keeps the same slot while
+    // vacant, so neither the split width nor the dock/overlay decision changes when the icon arrives.
+    const collapseVacantRail = railVacant && !detailsOpen;
+    const railWidthPx = props.actionRail != null && !collapseVacantRail ? PANE_ACTION_RAIL_WIDTH : 0;
+    const dockContainerWidthPx = Math.max(0, hostWidthPx - railWidthPx);
     const mainMinPx = requestedMainHidden ? 0 : (props.mainMinWidthPx ?? PANE_SIZING_DEFAULTS.mainMinPx);
     // With both side panes docked the canonical main column may run a little narrower; a caller's
     // own minimum is the content's real floor and holds in every layout.
@@ -307,7 +308,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         right: rightPresentation,
         details: detailsPresentation,
     }), [detailsPresentation, kind, mainPresentation, rightPresentation]);
-    // The rail stays mounted while vacant, so it can say when it has an action again; only its column goes.
+    // The rail stays mounted while vacant, so it can say when it has an action again.
     const mountActionRail = props.actionRail != null && !destinationDetailOnly;
     const showActionRail = mountActionRail && !railVacant;
     // A floating companion (the Voice Orb) keeps clear of the rail: its window rectangle is published.
@@ -318,7 +319,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
             reportRailRectValue(width > 0 && height > 0 ? { x, y, width, height } : null);
         });
     }, [reportRailRectValue]);
-    const containerWidthPx = destinationDetailOnly || railVacant ? Math.max(0, hostWidthPx) : dockContainerWidthPx;
+    const containerWidthPx = destinationDetailOnly ? Math.max(0, hostWidthPx) : dockContainerWidthPx;
     const effectiveBottomPresentation = destinationDetailOnly ? 'hidden' : resolvedBottomLayout.presentation;
 
     const bottomStoredMaxHeightPxForSizing =
@@ -349,7 +350,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
         arrangement,
         sessionWidthPx: sessionDragWidthPx ?? sessionColumnWidthPx ?? PANE_SIZING_DEFAULTS.session.defaultPx,
         mainDocked: !mainHidden && resolvedLayout.main === 'docked',
-        containerWidthPx: destinationDetailOnly ? containerWidthPx : dockContainerWidthPx,
+        containerWidthPx,
         mainMinPx,
         rightMinPx: right.minPx,
         detailsMinPx: details.minPx,
@@ -697,7 +698,7 @@ export const PaneColumnsHost = React.memo(function PaneColumnsHost(props: PaneCo
                     ref={railColumnRef}
                     testID="pane-action-rail-column"
                     onLayout={reportRailRect}
-                    style={[styles.railColumn, railVacant ? styles.railColumnVacant : null]}
+                    style={[styles.railColumn, collapseVacantRail ? styles.railColumnVacant : null]}
                 >
                     {/* On the canvas the rail paints nothing of its own: it coats the canvas around its panel's tab
                         (R11-1/R11-2). Inside a page (native, Editor first, a split pane) it stands on the same chrome coat

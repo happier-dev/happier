@@ -14,10 +14,13 @@ const APP_RIGHT_SIDEBAR_ADAPTER: PaneRightSidebarAdapter = Object.freeze({
         <AppScopeRightSidebar scopeId={scopeId} closable testID="app-scope-right-sidebar" />
     ),
 });
-const APP_RIGHT_SIDEBAR_RAIL_ADAPTER: PaneRightSidebarAdapter = Object.freeze({
+const APP_DETAIL_RAIL_ADAPTER: PaneRightSidebarAdapter = Object.freeze({
     ...APP_RIGHT_SIDEBAR_ADAPTER,
-    available: true,
     renderActionRail: ({ scopeId }) => <AppScopeRightSidebarActionRail scopeId={scopeId} />,
+});
+const APP_RIGHT_SIDEBAR_RAIL_ADAPTER: PaneRightSidebarAdapter = Object.freeze({
+    ...APP_DETAIL_RAIL_ADAPTER,
+    available: true,
 });
 
 /**
@@ -37,6 +40,9 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
     onMainColumnControlsChange?: React.ComponentProps<typeof AppPaneScopeHost>['onMainColumnControlsChange'];
 }>) {
     const tabs = useAppRightSidebarTabs();
+    // A detail can publish a companion independently of the App-wide tab catalog.
+    const rightSidebarAdapter = tabs.length > 0 ? APP_RIGHT_SIDEBAR_RAIL_ADAPTER
+        : props.destinationDetails ? APP_DETAIL_RAIL_ADAPTER : APP_RIGHT_SIDEBAR_ADAPTER;
     const destinationScopeId = useDestinationPaneScopeId(APP_PANE_SCOPE_ID);
     const scopeId = props.paneScopeId ?? destinationScopeId;
     const wrapAppScopeContent = React.useCallback((content: React.ReactElement) => (
@@ -48,7 +54,7 @@ export const AppScopePaneHost = React.memo(function AppScopePaneHost(props: Read
             selectedPaneTabKey={props.selectedPaneTabKey}
             main={props.main}
             mainColumn={props.mainColumn}
-            rightSidebarAdapter={tabs.length > 0 ? APP_RIGHT_SIDEBAR_RAIL_ADAPTER : APP_RIGHT_SIDEBAR_ADAPTER}
+            rightSidebarAdapter={rightSidebarAdapter}
             onMainColumnControlsChange={props.onMainColumnControlsChange}
             destinationDetails={props.destinationDetails ?? null}
             mainMinWidthPx={props.mainMinWidthPx}

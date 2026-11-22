@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_PAGE_METRICS, HAPPIER_SEARCH_FIELD_METRICS } from '@happier-dev/plugin-ui/presentation';
 
 import { useClaimedStackHeaderActions } from '@/components/navigation/stackHeaderActions';
 import { Text } from '@/components/ui/text/Text';
@@ -91,7 +91,7 @@ const stylesheet = StyleSheet.create((theme) => ({
         alignItems: 'center',
         justifyContent: 'space-between',
         gap: theme.space.s8,
-        minHeight: HAPPIER_PAGE_METRICS.collectionToolbarHeightPx,
+        minHeight: HAPPIER_SEARCH_FIELD_METRICS.heightPx,
         // The same top space the loaded Collection page opens with (plugin-ui `Collection`), so the title stays put.
         marginTop: HAPPIER_PAGE_METRICS.pageHeaderUnderChromePaddingTopPx,
     },

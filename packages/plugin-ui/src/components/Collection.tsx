@@ -1172,7 +1172,7 @@ export function CollectionLoadingRows(props: CollectionLoadingRowsProps): ReactE
     setViewportHeight((current) => (current === height ? current : height));
   }, []);
   return (
-    <View testID={props.testID} onLayout={onLayout} style={loadingFrameStyle}>
+    <View testID={props.testID} onLayout={onLayout} style={[happierPageSheetFrameStyle(palette), loadingFrameStyle]}>
       <View style={{ height: TABLE.headerHeight, borderBottomWidth: 1, borderBottomColor: theme.colors.divider }} />
       <View style={loadingRowsStyle}>
         <CollectionSkeletonRows
@@ -1190,7 +1190,7 @@ export function CollectionLoadingRows(props: CollectionLoadingRowsProps): ReactE
   );
 }
 
-const loadingFrameStyle: HappierPortableStyle = { flex: 1, minHeight: 0, width: '100%' };
+const loadingFrameStyle: HappierPortableStyle = { flex: 1, minHeight: 0, width: '100%', overflow: 'hidden' };
 const loadingRowsStyle: HappierPortableStyle = { flex: 1, minHeight: 0, overflow: 'hidden' };
 
 function useStage<Item>(): CollectionStage<Item> {

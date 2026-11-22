@@ -6169,6 +6169,8 @@ describe('grid', () => {
         nativeEvent: { layout: { x: 0, y: 0, width: 1300, height: 420 } },
       }),
     );
+    expect(getComputedStyle(frame).borderTopWidth).toBe('1px');
+    expect(getComputedStyle(frame).borderTopLeftRadius).toBe(`${HAPPIER_PAGE_METRICS.sheetRadiusPx}px`);
     const rows = [
       ...mount.container.querySelectorAll<HTMLElement>(
         '[data-testid="loading:skeleton-row"]',

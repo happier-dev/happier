@@ -254,7 +254,7 @@ it.each([
 }) => {
     const { container, root } = mountRoot();
     const { getStorage } = await import('@/sync/domains/state/storage');
-    const { PaneActionRailContext } = await import('./PaneActionRailContext');
+    const { PaneActionRailContext, PANE_ACTION_RAIL_WIDTH } = await import('./PaneActionRailContext');
     const { AppShellTitleMoreSlot } = await import('@/components/navigation/shell/appShellTail');
     const storage = getStorage();
     const previousSettings = storage.getState().localSettings;
@@ -282,7 +282,9 @@ it.each([
     await act(async () => host.__reactLayoutHandler({ nativeEvent: { layout: { width: hostWidth, height: viewport.height } } }));
     await render(true, false);
     const rail = document.querySelector<HTMLElement>('[data-testid="pane-action-rail-column"]')!;
-    expect(getComputedStyle(rail).display).toBe('none');
+    expect(getComputedStyle(rail).display).not.toBe('none');
+    const reservedWidth = getComputedStyle(rail).width;
+    expect(parseFloat(reservedWidth)).toBe(PANE_ACTION_RAIL_WIDTH);
     const readPlacement = () => query('triage-details')?.closest('[data-testid^="multi-pane-details-"]')?.dataset.testid;
     const beforeCompanion = readPlacement();
     const detail = query('triage-details');
@@ -290,6 +292,7 @@ it.each([
     await render(true, true);
     expect(getComputedStyle(rail).display).not.toBe('none');
     expect(rail.textContent).toContain('Session companion');
+    expect(getComputedStyle(rail).width).toBe(reservedWidth);
     expect([beforeCompanion, readPlacement()]).toEqual([
         `multi-pane-details-${placement}`,
         `multi-pane-details-${placement}`,

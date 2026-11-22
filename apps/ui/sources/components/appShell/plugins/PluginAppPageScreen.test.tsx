@@ -1,5 +1,7 @@
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
+import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
@@ -1109,7 +1111,8 @@ describe('plugin app page host route (EU-5b)', () => {
             const screen = await renderPage({ projection: daemonProjection({ headerStyle: 'toolbar' }) });
             const { PageHeader } = await import('@/components/ui/layout/PageHeader');
             expect(screen.findAllByType(PageHeader)).toHaveLength(0);
-            expect(screen.findByTestId(`plugin-page-identity-toolbar:${NOTES_PLUGIN_ID}`)).toBeTruthy();
+            const toolbar = screen.findByTestId(`plugin-page-identity-toolbar:${NOTES_PLUGIN_ID}`);
+            expect(StyleSheet.flatten(toolbar?.props.style)?.minHeight).toBe(HAPPIER_PAGE_METRICS.controlHeightPx);
             expect(reactNativeSurfaceProps).toHaveLength(0);
         } finally { releaseRead(); }
     });
