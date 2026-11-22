@@ -9113,6 +9113,8 @@ const enNewSession = {
   startNewSessionInFolder: 'New session here',
   failedToStart:
     'Couldn’t start the session. Try again or review the selected machine and session settings.',
+  guestReconnectedBeforeSessionConfirmed:
+    'The computer reconnected before Happier could confirm that your session was created. You can retry this start.',
   checkoutUnavailableBody:
     'The selected checkout is not available on this machine. Choose an available checkout or folder, then start the session again.',
   requesterCredentialsUnavailableBody:

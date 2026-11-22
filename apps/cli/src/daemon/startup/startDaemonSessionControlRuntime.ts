@@ -11735,6 +11735,8 @@ export async function startDaemonSessionControlRuntime(
   const externalActionIngressExecutor: ExternalActionIngressOwner['executor'] = {
     execute: (...args) =>
       createExternalActionExecutor(params.credentials).execute(...args),
+    observeSessionBirth: (...args) =>
+      createExternalActionExecutor(params.credentials).observeSessionBirth(...args),
     replayApprovedApprovalRequest: (...args) =>
       createExternalActionExecutor(params.credentials).replayApprovedApprovalRequest(...args),
     continueConfidentialApprovalRequest: (...args) =>

@@ -47,6 +47,7 @@ import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isExternalActionManagedWakeRootV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { prepareManagedFiniteActionWake } from '@/app/machines/managed/managedWake';
+import { readManagedGuestActivityPublicationRowInTx } from '@/app/machines/managed/managedGuestActivity';
 import { log } from '@/utils/logging/log';
 import { isExternalActionManagedResourceAction, readExternalActionManagedAcquireAdmission,
     readExternalActionManagedControlAdmission, readExternalActionManagedRecoveryAdmission } from '@/app/auth/externalActionManagedAdmission';
@@ -981,25 +982,29 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
         };
         options.signal?.addEventListener("abort", cancelTarget, { once: true });
 
+        const callParams = {
+            actionId: request.actionId,
+            envelope: request.envelope,
+            principal: daemonPrincipal,
+            placement,
+            executionAuthorization: currentAuthorization,
+        } satisfies ExternalActionDaemonDispatchRequest;
+        const relay = {
+            io: params.io,
+            targetUserId: currentAuthorization.binding.custodianAccountId,
+            method: `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
+            timeoutMs: null,
+            authorization: ACTION_API_SERVER_ORIGIN,
+            ...requesterContext,
+            ...(machineAdmission ? { machineAdmission } : {}),
+            admittedMachineTarget: capturedMachineAdmission ?? currentAuthorization.binding,
+        } as const;
         let forwarded: DispatchPhaseResult<RpcForwardResult>;
         let submittedUnknown = false;
         try {
             forwarded = await runDispatchPhase('daemon_forward', machineId, () => forwardRpc({
-                io: params.io,
-                targetUserId: currentAuthorization.binding.custodianAccountId,
-                method: `${machineId}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`,
-                timeoutMs: null,
-                callParams: {
-                    actionId: request.actionId,
-                    envelope: request.envelope,
-                    principal: daemonPrincipal,
-                    placement,
-                    executionAuthorization: currentAuthorization,
-                } satisfies ExternalActionDaemonDispatchRequest,
-                authorization: ACTION_API_SERVER_ORIGIN,
-                ...requesterContext,
-                ...(machineAdmission ? { machineAdmission } : {}),
-                admittedMachineTarget: capturedMachineAdmission ?? currentAuthorization.binding,
+                ...relay,
+                callParams,
                 onSubmittedUnknown: () => {
                     submittedUnknown = true;
                 },
@@ -1008,6 +1013,24 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
             }), request.envelope.requestId);
         } finally {
             options.signal?.removeEventListener("abort", cancelTarget);
+        }
+        const signal = options.signal;
+        if (submittedUnknown && (forwarded.kind === 'failed' || !forwarded.value.ok)
+            && request.actionId === 'session.spawn_new' && targetSocketId && signal && !signal.aborted) {
+            const previousSocketId = targetSocketId;
+            const recovered = await runDispatchPhase('daemon_forward', machineId, async () => {
+                if (!await readManagedGuestActivityPublicationRowInTx(db, { accountId: relay.targetUserId,
+                    machineId, installationId: relay.admittedMachineTarget.installationId })) return null;
+                // Only the replacement socket observes birth. The original effect is never resubmitted.
+                return forwardRpc({
+                    ...relay,
+                    callerSocketId: previousSocketId,
+                    callerLifetime: { signal, isCurrent: async () => !signal.aborted },
+                    cancellation: { targetRequestId: randomUUID(), signal, onTargetSelected: () => {} },
+                    callParams: { ...callParams, observeSessionBirth: true } satisfies ExternalActionDaemonDispatchRequest,
+                });
+            }, request.envelope.requestId);
+            if (recovered.kind === 'ready' && recovered.value?.ok) forwarded = { kind: 'ready', value: recovered.value };
         }
         if (forwarded.kind === 'failed' || !forwarded.value.ok) {
             // Read only plaintext transport diagnostics, never an encrypted Action result or RPC prose.

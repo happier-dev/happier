@@ -1885,6 +1885,58 @@ describe('finite managed wake original Action authority (real storage)', () => {
         expect(methods.filter(method => method === guestMethod)).toHaveLength(disposition === 'failed' || disposition === 'cancelled' ? 0 : 1);
     });
 
+    it.each(['committed', 'missing'] as const)('settles a managed Session start after the guest reconnects (%s)', async birth => {
+        const test = await setup();
+        await db.machine.update({ where: { id: test.guest.id }, data: { active: true, lastActiveAt: new Date() } });
+        const actionId = 'session.spawn_new';
+        const envelope = { v: 1 as const, requestId: test.requestId,
+            target: { kind: 'machine' as const, machineId: test.guest.id },
+            input: { executionTarget: { serverId: homeId, machineId: test.guest.id }, directory: { kind: 'managed' } } };
+        const outcome = birth === 'committed'
+            ? { type: 'success', disposition: 'rejoined', sessionId: 'committed-session',
+                executionTarget: envelope.input.executionTarget,
+                organizationPlacement: { sectionId: null, tagIds: [] }, initialInput: { status: 'notRequested' } }
+            : { type: 'error', code: 'spawn_failed', retryable: true,
+                failureCause: { phase: 'session.creation', errorClass: 'Error', errorCode: 'spawn_failed',
+                    nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed', httpStatus: null } };
+        const response = prepareExternalActionResponseEnvelopeV1({
+            v: 1, actionId, requestId: test.requestId, execution: { ok: true, result: outcome },
+        });
+        const deliveries: Array<readonly [string, true | undefined]> = [];
+        let reconnected = false;
+        const guestSocket = (id: string) => ({
+            id,
+            data: { clientType: 'machine-scoped', userId: test.account.id,
+                machineId: test.guest.id, verifiedMachineInstallationId: test.guest.installationId },
+            timeout: () => ({
+                emitWithAck: async (_event: string, request: { params: unknown }) => {
+                    const relay = ExternalActionDaemonDispatchRequestSchema.parse(request.params);
+                    deliveries.push([id, relay.observeSessionBirth]);
+                    expect(relay.envelope).toEqual(envelope);
+                    expect(relay.executionAuthorization?.binding.machineId).toBe(test.guest.id);
+                    if (id === 'original-guest') {
+                        reconnected = true;
+                        throw Object.assign(new Error('Guest dropped its completion ACK'), { code: 'SOCKET_DISCONNECTED' });
+                    }
+                    return createExternalActionDaemonDispatchResponseV1(response);
+                },
+            }),
+        });
+        const original = guestSocket('original-guest');
+        const replacement = guestSocket('replacement-guest');
+        for (const socket of [original, replacement]) qualifyCurrentAccountStoredContentSocket(socket);
+        const methodRoom = `rpc:${test.account.id}:${test.guest.id}:${EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1}`;
+        const io = createSocketRoomDiscoveryHarness(async room => {
+            const current = reconnected ? replacement : original;
+            return room === methodRoom || room === current.id ? [current] : [];
+        });
+        const dispatch = createExternalActionDaemonDispatcher({ io });
+        await expect(dispatch({ actionId, envelope, principal: { accountId: test.account.id, authority: 'present_user',
+            authentication: { kind: 'account', tokenEpoch: test.account.tokenEpoch } } },
+        { signal: new AbortController().signal })).resolves.toMatchObject({ kind: 'response', prepared: response });
+        expect(deliveries).toEqual([['original-guest', undefined], ['replacement-guest', true]]);
+    });
+
     it.each(['cancel', 'unknown', 'credential-retired'] as const)('preserves local wake cancellation and next-destination admission (%s)', async disposition => {
         const test = await setup();
         const cancel = new AbortController();

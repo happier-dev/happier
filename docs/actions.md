@@ -1954,6 +1954,15 @@ retains its existing `outcome_uncertain` result and the CLI reader its
 Uncertainty does not authorize another invocation. Installed-plugin controls
 retain the exact target for their existing read-back recovery rather than
 reporting an unknown mutation as Done or replaying it.
+
+If a managed guest loses the completion acknowledgement for `session.spawn_new`,
+Home keeps the original invocation open for the same guest to reconnect. The
+guest reads the Session by its original creation identity and verifies the
+signed request digest retained in owner metadata. An exact match returns the
+committed Session without claiming initial-input delivery. If the lookup finds
+no Session, the caller gets a retryable `spawn_failed` with
+`daemon_reconnected_before_session_birth_confirmed`. Retry uses the same
+creation identity. Home never resends the start automatically.
 The diagnostic is an unreleased 0.3 source-contract correction; load Home and its
 consuming Protocol/UI/CLI/SDK closure together. An older closed reader may refuse
 the richer envelope; this change introduces no compatibility retry or downgrade.

@@ -146,6 +146,50 @@ function createExactLimitMultibyteResult() {
 }
 
 describe('executeExternalAction', () => {
+  it.each(['committed', 'missing'] as const)('uses the managed start birth observation without running the original Action again (%s)', async birth => {
+    const actionId = 'session.spawn_new';
+    const target = { kind: 'machine', machineId: 'managed-guest' } as const;
+    const authentication = { kind: 'account', tokenEpoch: 1 } as const;
+    const account = { accountId: 'account-1', authentication, authority: 'present_user' } as const;
+    const binding = { accountId: account.accountId, authentication, serverIdentityId: 'srv_home',
+      actionId, requestId: 'managed-start', target };
+    const material = { type: 'dataKey', machineKey: new Uint8Array(32).fill(17) } as const;
+    const spawn = { executionTarget: { serverId: binding.serverIdentityId, machineId: target.machineId },
+      directory: { kind: 'managed' as const }, agentTarget: { kind: 'agent' as const,
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
+    const envelope = sealExternalActionRequestV2({ binding, material, input: spawn, randomBytes: tweetnacl.randomBytes,
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(spawn) });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-root', binding: {
+      accountId: account.accountId, authentication, actionId, requestId: binding.requestId, target,
+      serverIdentityId: binding.serverIdentityId, machineId: target.machineId, custodianAccountId: account.accountId,
+      installationId: 'installation', admittedMachineRole: 'manage', accountEncryptionMode: 'e2ee',
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+    } });
+    const effects = vi.fn(async () => ({ ok: true as const, result: SESSION_SPAWN_PENDING_RESULT }));
+    const persistedResult = { type: 'success', disposition: 'rejoined', sessionId: 'committed-session',
+      executionTarget: spawn.executionTarget, organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' } } as const;
+    const missing = { type: 'error', code: 'spawn_failed', retryable: true,
+      failureCause: { phase: 'session.creation', errorClass: 'Error', errorCode: 'spawn_failed',
+        nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed', httpStatus: null } } as const;
+    const executor = { execute: effects, observeSessionBirth: async () => birth === 'committed' ? persistedResult : missing };
+    const result = await executeExternalAction({ actionId, envelope, principal: account,
+      currentMachineId: target.machineId, currentAccountId: account.accountId, currentInstallationId: 'installation',
+      currentServerId: binding.serverIdentityId, executionAuthorization: authorization, executor,
+      verifyExecutionAuthorization: async () => true,
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).secretKey,
+      resolveEncryption: async () => ({ serverIdentityId: binding.serverIdentityId, material }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'fixture', encryption: null } }),
+      observeSessionBirth: true,
+    });
+    expect(effects).not.toHaveBeenCalled();
+    expect(result.kind === 'response' && openExternalActionResponseV2({ envelope: result.response,
+      request: envelope, binding, material })).toMatchObject(birth === 'committed' ? { ok: true, result: {
+        ...persistedResult, organizationPlacement: { sectionId: null, tagIds: [] },
+      } } : { ok: false, errorCode: 'spawn_failed', details: missing });
+  });
+
   it('rejects a generic operation receipt for an Action without an operation', () => {
     expect(settleActionOutput('session.message.send', { ok: true,
       result: { status: 'accepted', operationId: 'foreign-operation', machineId: 'machine' } }))

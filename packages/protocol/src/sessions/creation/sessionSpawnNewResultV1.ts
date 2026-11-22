@@ -111,6 +111,9 @@ const SessionSpawnNewErrorCodeV1Schema = lazyZodSchema(() => z.union([
 ]));
 export type SessionSpawnNewErrorCodeV1 = z.infer<typeof SessionSpawnNewErrorCodeV1Schema>;
 
+/** The guest reconnected and its lookup found no committed birth for the pending start. */
+export const SESSION_SPAWN_GUEST_RECONNECTED_WITHOUT_BIRTH = 'daemon_reconnected_before_session_birth_confirmed';
+
 /** Content-free predicates; diagnostic facts never supply target or caller authority. */
 export const SessionSpawnNewIncompatibleTargetV1Schema = lazyZodSchema(() => z.strictObject({
   reason: z.enum([

@@ -1041,7 +1041,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             ...(preparedTarget.checkout.branchName !== undefined ? { branchName: preparedTarget.checkout.branchName } : {}),
           }
         : null;
-      const correspondence = buildSessionCreationCorrespondence({
+      const baseCorrespondence = buildSessionCreationCorrespondence({
         identity: { sessionCreationTag },
         recipe: {
           execution: {
@@ -1077,6 +1077,9 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           checkout: immutableCheckout,
         },
       });
+      const correspondence = signedActionBinding?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+        ? { ...baseCorrespondence, externalActionRequestDigest: signedActionBinding.requestEnvelopeDigest }
+        : baseCorrespondence;
       const prepareSessionIsolation: Parameters<typeof createSpawnedSession>[0]['prepareSessionIsolation'] = async () => {
         if (!isolationDecision.ok) throw isolationDecision.error;
         const isolation = isolationDecision.value;

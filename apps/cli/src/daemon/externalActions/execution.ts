@@ -95,7 +95,8 @@ import { createWorkflowRequesterCustody } from '@/daemon/workflows/requesterCust
 import { deliverAdmittedExternalActionRoot } from '@/api/externalActionExecutionAuthorization';
 
 type DaemonExternalActionExecutor = Pick<ReturnType<typeof createCliActionExecutorFromCredentials>,
-  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay }>;
+  'execute' | 'continueConfidentialApprovalRequest'> & Readonly<{ replayApprovedApprovalRequest: ExternalActionApprovalReplay;
+    observeSessionBirth: NonNullable<import('./executeExternalAction').ExternalActionExecutor['observeSessionBirth']> }>;
 
 /** HTTP ingress consumes the same Home-admitted facts as Socket RPC ingress. */
 export function projectAdmittedExternalActionMachineContext(context: RpcActionExecutorContext | undefined,
@@ -1631,6 +1632,11 @@ resolveServerFeaturesSnapshot?: () =>
     }), replay?.artifactId, context?.actionRequestId);
     return {
       execute: (actionId, input, context) => invoke(actionId, input, context),
+      observeSessionBirth: async (actionInput, context) => {
+        const { observeExternalSessionBirth } = await import('@/session/creation/observeExternalSessionBirth');
+        return runWithServerHttpBaseUrl(requesterAccountContext?.serverHttpBaseUrl ?? params.serverBaseUrl,
+          () => observeExternalSessionBirth({ credentials, actionInput, context }));
+      },
       // Keep the private operand on its existing continuation owner, with the same
       // captured Home, native dependencies and requester lifetime as ordinary admission.
       continueConfidentialApprovalRequest: (input, context) => invoke('approval.request.decide', undefined,

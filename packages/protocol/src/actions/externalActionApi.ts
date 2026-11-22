@@ -2036,6 +2036,7 @@ export type ExternalActionDaemonDispatchRequestV1 = z.infer<
 export const ExternalActionDaemonDispatchRequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ExternalActionDaemonDispatchRequestV1Schema, {
   envelope: ExternalActionRequestEnvelopeSchema,
   executionAuthorization: z.optional(ExternalActionExecutionAuthorizationV1Schema),
+  observeSessionBirth: z.optional(z.literal(true)),
 })));
 export type ExternalActionDaemonDispatchRequest = z.infer<typeof ExternalActionDaemonDispatchRequestSchema>;
 

@@ -181,6 +181,7 @@ export function registerExternalActionRpcHandler(
       resolveEncryption: options.resolveEncryption,
       resolveTarget: options.resolveTarget,
       executor: options.executor,
+      ...(request.observeSessionBirth ? { observeSessionBirth: true } : {}),
       invokeResource: options.invokeResource,
       acquirePluginRuntimeRegistryLease: options.acquirePluginRuntimeRegistryLease,
       resolvePluginExecutionOriginContext: options.resolvePluginExecutionOriginContext,

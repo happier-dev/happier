@@ -162,7 +162,8 @@ import {
     type SessionSpawnNewActionResult,
     type SessionSpawnNewCommittedReceipt,
 } from '@/sync/ops/actions/sessionSpawnNewAction';
-import { presentSessionCredentialReconnectFailure, presentSessionSpawnNewAgentIsolationFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
+import { isSessionSpawnGuestReconnectFailure, presentSessionCredentialReconnectFailure,
+    presentSessionSpawnNewAgentIsolationFailure, readSessionSpawnNewFailure } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 import {
     captureNewSessionDraftLaunchCurrentness,
     captureNewSessionDraftWorkflowCurrentness,
@@ -2089,6 +2090,33 @@ export function useCreateNewSession(params: Readonly<{
                 }
                 presentedFirstTurn.observe(actionResult);
                 presentedFirstTurn.settle({ final: false });
+                const spawnFailure = actionResult.ok
+                    ? actionResult.result.type === 'error' ? actionResult.result : null
+                    : actionResult.errorCode === 'spawn_failed' ? readSessionSpawnNewFailure(actionResult) : null;
+                if (spawnFailure && isSessionSpawnGuestReconnectFailure(spawnFailure)) {
+                    launchAttempt = markNewSessionLaunchAttemptFailed(launchAttempt, {
+                        phase: 'spawning', error: new Error('spawn_failed'), retryable: true,
+                    });
+                    submittedLaunch.attempt(launchAttempt);
+                    const message = resolveSessionSpawnNewResultFailureMessage(spawnFailure,
+                        (!actionResult.ok ? actionResult.requestId : undefined)
+                        ?? readManualSessionSpawnOperation(executionAccountScope, launchAttempt.attemptId)?.requestId
+                        ?? launchAttempt.attemptId);
+                    if (!launcherLeftForDestination) {
+                        launchDialogs.alert(t('common.error'), message, [
+                            ...(launcherCanRetry ? [{ text: t('common.retry'), onPress: () => {
+                                if (isLaunchScopeStillActive()
+                                    && readLaunchIntent(latestParamsRef.current) === submittedIntent.signature
+                                    && areServerAccountScopesEqual(current.draftScope, latestParamsRef.current.draftScope)) {
+                                    void handleCreateSession(opts);
+                                }
+                            } }] : []),
+                            { text: t('common.cancel'), style: 'cancel' },
+                        ]);
+                    }
+                    current.setIsCreating(false);
+                    return;
+                }
                 if (!actionResult.ok) {
                     if (isActionApprovalDeclinedErrorCode(actionResult.errorCode)
                         || (observedCanonicalSettlement && actionResult.errorCode === 'action_cancelled')) {

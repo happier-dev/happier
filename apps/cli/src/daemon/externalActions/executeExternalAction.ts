@@ -30,7 +30,8 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import { projectDeploymentReviewedCandidateV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import type { HostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { completeSpawnActionResult, settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { invokeAdmittedReviewedChild } from './managedReviewedChild';
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -87,6 +88,8 @@ export type ExternalActionExecutor = Readonly<{
     input: unknown,
     context?: ActionExecutorContext,
   ) => Promise<ActionExecuteResult>;
+  observeSessionBirth?: (actionInput: unknown, context: ActionExecutorContext) =>
+    Promise<SessionSpawnNewResultV1 | null>;
 }>;
 
 /**
@@ -207,6 +210,8 @@ async function executeExternalActionRequest(input: Readonly<{
   prepareRequesterAccountContext?: PrepareExternalActionRequesterAccountContext;
   resolveTarget: ResolveExternalActionTarget;
   executor: ExternalActionExecutor;
+  /** Only the authenticated Home transport may request this passive observation. */
+  observeSessionBirth?: true;
   /** The daemon's existing runtime lease owner, never chosen by the caller. */
   acquirePluginRuntimeRegistryLease?: () => Promise<PluginRuntimeRegistryLease>;
   /** Live receiving Home/Machine identity from the canonical machine owner. */
@@ -1106,8 +1111,15 @@ async function executeExternalActionRequest(input: Readonly<{
     trace('action_execution.begin');
     effectMayHaveStarted = true;
     internalExecution = await withWebLatencyTrace(envelope.data.requestId, () => timeWebLatencyPhase('daemon.action.execute', async () => {
+      const executor = requesterContext?.executor ?? input.executor;
+      if (input.observeSessionBirth) {
+        const observed = actionId.data === 'session.spawn_new' && admittedAuthorization && originalRootCurrentness
+          && await originalRootCurrentness()
+          ? await executor.observeSessionBirth?.(decodedInput, context) : null;
+        return observed ? completeSpawnActionResult(observed)
+          : projectUnexpectedActionFailureV1(null, envelope.data.requestId);
+      }
       if (!logsOperands.resourceContinuation) {
-        const executor = requesterContext?.executor ?? input.executor;
         const reviewed = await invokeAdmittedReviewedChild({ parent: managedReviewedParent ?? requesterContext?.invocation?.reviewedParent,
           requesterOwnedReview: !managedReviewedParent && Boolean(requesterContext?.invocation?.reviewedParent),
           context, actionId: actionId.data, actionInput: decodedInput,

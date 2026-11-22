@@ -1,6 +1,6 @@
 import type { PendingDeliveryFailureV1 } from '@happier-dev/protocol/sessions/messages/pendingDeliveryStatusV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { SessionSpawnNewActionResultV1Schema, type SessionSpawnNewIncompatibleTargetV1, type SessionSpawnNewInitialInputDispositionV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { SESSION_SPAWN_GUEST_RECONNECTED_WITHOUT_BIRTH, SessionSpawnNewActionResultV1Schema, type SessionSpawnNewIncompatibleTargetV1, type SessionSpawnNewInitialInputDispositionV1, type SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -26,6 +26,13 @@ export function readSessionSpawnNewFailure(result: unknown): Extract<SessionSpaw
         : result;
     const parsed = SessionSpawnNewActionResultV1Schema.safeParse(value);
     return parsed.success && parsed.data.type === 'error' ? parsed.data : null;
+}
+
+export function isSessionSpawnGuestReconnectFailure(result: Exclude<SessionSpawnNewResultV1, { type: 'success' }>): boolean {
+    if (result.type !== 'error' || result.code !== 'spawn_failed' || !result.retryable) return false;
+    const cause = result.failureCause;
+    return cause !== undefined && !('kind' in cause)
+        && cause.nativeErrorReason === SESSION_SPAWN_GUEST_RECONNECTED_WITHOUT_BIRTH;
 }
 
 export type SessionSpawnNewActionFailurePresentation =
@@ -191,6 +198,7 @@ export function resolveSessionSpawnErrorDetailFailureMessage(detail: SpawnSessio
 function resolveSessionSpawnNewResultFailureBody(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
+    if (isSessionSpawnGuestReconnectFailure(result)) return t('newSession.guestReconnectedBeforeSessionConfirmed');
     if (result.type === 'error' && result.code === 'session_team_credential_binding_rejected') {
         return presentSessionTeamCredentialBindingRejection(result.reason);
     }

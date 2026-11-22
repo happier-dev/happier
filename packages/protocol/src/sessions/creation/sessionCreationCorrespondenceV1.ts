@@ -163,6 +163,8 @@ export const SessionCreationCorrespondenceV1Schema = lazyZodSchema(() => z.stric
   v: z.literal(1),
   sessionCreationTag: SessionCreationTagV1Schema,
   recipe: SessionCreationImmutableRecipeV1Schema,
+  /** Host-stamped birth evidence for one original External Action submission. */
+  externalActionRequestDigest: z.optional(z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u))),
 }));
 export type SessionCreationCorrespondenceV1 = z.infer<
   typeof SessionCreationCorrespondenceV1Schema
@@ -194,14 +196,15 @@ export function sessionCreationCorrespondenceMatchesV1(
 }
 
 function semanticCorrespondence(value: SessionCreationCorrespondenceV1) {
-  const { branchName: _observedBranch, ...checkout } = value.recipe.checkout ?? {};
-  const { projectFilesOrigin: _materializedOrigin, ...recipe } = value.recipe;
+  const { externalActionRequestDigest: _birthEvidence, recipe: birthRecipe, ...identity } = value;
+  const { branchName: _observedBranch, ...checkout } = birthRecipe.checkout ?? {};
+  const { projectFilesOrigin: _materializedOrigin, ...recipe } = birthRecipe;
   return {
-    ...value,
+    ...identity,
     recipe: {
       ...recipe,
-      checkout: value.recipe.checkout ? checkout : null,
-      ...normalizeSessionCreationSelectionIdentityV1(value.recipe),
+      checkout: birthRecipe.checkout ? checkout : null,
+      ...normalizeSessionCreationSelectionIdentityV1(birthRecipe),
     },
   };
 }

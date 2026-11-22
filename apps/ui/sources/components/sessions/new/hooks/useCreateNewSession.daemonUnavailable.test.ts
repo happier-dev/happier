@@ -1156,6 +1156,24 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     await hook.unmount();
   });
 
+  it('explains an unconfirmed Session birth and waits for Retry on the same launch', async () => {
+    const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, storageState } = await setupHarness();
+    sessionSpawnNewActionBoundarySpy.mockResolvedValueOnce({ type: 'error', code: 'spawn_failed', retryable: true,
+      failureCause: { phase: 'session.creation', errorClass: 'Error', errorCode: 'spawn_failed',
+        nativeErrorReason: 'daemon_reconnected_before_session_birth_confirmed', httpStatus: null } });
+    const params = createRetryParams(storageState.settings);
+    const hook = await renderHook(() => useCreateNewSession(params));
+    await act(async () => { await hook.getCurrent().handleCreateSession(); });
+    expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(1);
+    expect(modalAlertSpy.mock.calls.at(-1)?.[1]).toContain('newSession.guestReconnectedBeforeSessionConfirmed');
+    const retry = alertRetry(modalAlertSpy);
+    await act(async () => { retry(); });
+    await vi.waitFor(() => expect(sessionSpawnNewActionBoundarySpy).toHaveBeenCalledTimes(2));
+    expect(sessionSpawnNewActionBoundarySpy.mock.calls[1]?.[0].creationKey)
+      .toBe(sessionSpawnNewActionBoundarySpy.mock.calls[0]?.[0].creationKey);
+    await hook.unmount();
+  });
+
   it('retains Provider launch errors and their explicit retry alongside Profile refusal presentation', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, storageState, scope } = await setupTaskHarness({ httpsHome: true });
     const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
