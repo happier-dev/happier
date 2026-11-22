@@ -2609,6 +2609,10 @@ Machine-level shell, setup scripts, package installs,
 service execution/control, reboot, elevation and firewall configuration require
 Manage. Home decides the role once; the terminal intent/custody owner consumes
 that admitted role to distinguish Machine shells from Project terminals.
+For managed Project shells, a signed List, Open or Restart reads the exact
+workspace row from the requester's Account on the bound Home. The daemon
+requires the full accepted address on its current controller installation
+before discovering or opening a shell in that checkout.
 Raw command Actions retain the same Home admission and requester classification
 while preserving captured stdout and stderr. Manage permits host execution;
 requesters without Manage retain their native execution protection. Project package-script terminals

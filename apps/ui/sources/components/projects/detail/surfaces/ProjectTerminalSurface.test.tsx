@@ -165,6 +165,14 @@ describe('Project terminal through the incumbent pane workspace', () => {
             screen = await renderScreen(<AppPaneProvider><RoutedProjectTerminal scopeId={scopeId} workspace={workspace}
                 workspaceRef={ref} phone={false} /></AppPaneProvider>);
             await vi.waitFor(() => expect(screen!.findAllByType(SessionTerminalWorkspaceView)).toHaveLength(1));
+            const launch = { kind: 'package_script', runTargetId: 'project-script' };
+            expect(await invoke({ actionId: 'session.terminals.open', input: { scopeId,
+                target: { kind: 'workspace_shell', workspace, launch },
+            } })).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+            expect(await invoke({ actionId: 'session.terminals.open', input: { scopeId,
+                target: { kind: 'workspace_shell', launch },
+            } })).toMatchObject({ ok: false, errorCode: 'terminal_target_unavailable' });
+            expect(readSessionTerminalWorkspaceForScope(scopeId, EMPTY_TERMINAL_WORKSPACE)?.tabs).toEqual([]);
             await act(async () => screen!.findAllByType(SessionTerminalWorkspaceView)[0]!.props.onNewShell());
             await vi.waitFor(() => expect(readSessionTerminalWorkspaceForScope(scopeId, EMPTY_TERMINAL_WORKSPACE)?.tabs[0]?.terminals[0]?.target)
                 .toEqual({ kind: 'workspace_shell', workspace }));

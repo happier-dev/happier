@@ -1,7 +1,7 @@
 import { randomUUID } from '@/platform/randomUUID';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { SESSION_TERMINAL_ACTION_INPUT_SCHEMAS, type SessionTerminalActionId } from '@happier-dev/protocol/actions/sessionTerminalActionFamily';
-import type { SessionTerminalMemberV1, SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
+import { SessionTerminalTargetV1Schema, type SessionTerminalMemberV1, type SessionTerminalTargetV1 } from '@happier-dev/protocol/terminal/workspace';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
@@ -118,8 +118,11 @@ export async function invokeSessionTerminalAction(request: Readonly<{
                     target = { ...target, workspace: admitted.workspace };
                 }
                 if (target.kind === 'workspace_shell') {
-                    if (isManagedWorkspaceRefV2(admitted.workspace) && target.launch) return sessionTerminalActionFailure('terminal_target_unavailable');
-                    target = { ...target, workspace: admitted.workspace };
+                    const boundTarget = { ...target, workspace: admitted.workspace };
+                    if (target.workspace === undefined && target.launch !== undefined && !SessionTerminalTargetV1Schema.safeParse(boundTarget).success) {
+                        return sessionTerminalActionFailure('terminal_target_unavailable');
+                    }
+                    target = boundTarget;
                 }
                 else if (target.kind === 'machine_shell') {
                     target = { kind: 'workspace_shell', workspace: admitted.workspace,

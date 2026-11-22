@@ -1823,6 +1823,7 @@ describe("external Action execution authorization", () => {
                     accepted: [{ kind: "home_method", methodId: "email_password" }],
                 },
             },
+            select: { id: true, authenticationPolicy: true },
         });
         await db.teamMembership.create({
             data: { teamId: team.id, accountId: account.id, role: "owner" },
@@ -3217,8 +3218,19 @@ describe("external Action execution authorization", () => {
                 expect.soft((await send('/v1/account/project-rows/read', { key: unrelatedKey })).statusCode).toBe(401);
             }
             const singleRow = await send('/v1/account/project-rows/read', { key });
-            if (privateRows || actionId.startsWith('machines.terminal.')) expect.soft(singleRow.statusCode).toBe(401);
-            else expect(singleRow.json()).toMatchObject({ status: 'present', row: { key } });
+            const terminalRowRead = actionId === 'machines.terminal.list' || actionId === 'machines.terminal.open'
+                || actionId === 'machines.terminal.restart';
+            if (privateRows || actionId.startsWith('machines.terminal.') && !terminalRowRead) {
+                expect.soft(singleRow.statusCode, singleRow.body).toBe(401);
+            } else {
+                expect.soft(singleRow.statusCode, singleRow.body).toBe(200);
+                expect.soft(singleRow.json()).toMatchObject({ status: 'present', row: { key } });
+            }
+            if (terminalRowRead) {
+                expect.soft((await send('/v1/account/project-rows/read', { key: unrelatedKeys[1] })).statusCode).toBe(401);
+                expect.soft((await send('/v1/account/project-rows/read', { key: unrelatedKeys[2] })).statusCode).toBe(401);
+                expect.soft((await send('/v1/account/project-rows/read', { key, includeAuthoringSession: true })).statusCode).toBe(401);
+            }
             const trust = await send('/v1/account/project-trust/read', { project: { serverId: homeId, projectId: ref.projectKey } });
             const readsTrust = actionId !== 'projects.worker.status' && (!actionId.startsWith('machines.terminal.')
                 || actionId === 'machines.terminal.open' || actionId === 'machines.terminal.restart');
@@ -3241,6 +3253,92 @@ describe("external Action execution authorization", () => {
             await db.machine.update({ where: { id: fixture.machine.id }, data: { revokedAt: new Date() } });
             expect((await send('/v1/account/project-rows/list', {})).statusCode).toBe(401);
         } finally { await app.close(); }
+    });
+
+    it('lists an accepted managed Project shell through the signed Machine terminal Action', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const credentials = { token, encryption: null };
+        const homeId = await getOrCreateServerIdentityId();
+        const controller = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+        const actionId = 'machines.terminal.list';
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'accepted', managedId: 'guest',
+            controller, rootPath: '/workspace/project' } as const;
+        const { workspaceId, ...placement } = workspace;
+        const key = { kind: 'workspace-ref', serverId: homeId, id: workspaceId } as const;
+        const input = { serverId: homeId, machineId: controller.machineId, workspace };
+        const origin = 'https://managed-terminal.test';
+        const { app } = await createApp(fixture.team.id);
+        const restoreHttp = installAxiosFastifyAdapter({ app, origin });
+        const { registerMachineTerminalRpcHandlers } = await importTestModule<
+            typeof import('../../../../../../cli/src/api/machine/rpcHandlers.terminal')
+        >('../../../../../../cli/src/api/machine/rpcHandlers.terminal');
+        const { resolveAdmittedRequesterAccountReadRuntime } = await importTestModule<
+            typeof import('../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection')
+        >('../../../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection');
+        const { createCliActionDeps } = await importTestModule<
+            typeof import('../../../../../../cli/src/session/actions/createCliActionDeps')
+        >('../../../../../../cli/src/session/actions/createCliActionDeps');
+        const rpc = new RpcHandlerManager({ scopePrefix: controller.machineId, localMachineId: controller.machineId, encryptionMode: 'plain',
+            authorizeRequest: request => authorizeMachineRpcRequest(request, { machineId: controller.machineId,
+                resolveCustodianAccountId: async () => fixture.account.id, resolveInstallationId: () => controller.installationId,
+                resolveHomeServerIdentityId: async () => homeId, verifyMachineAdmission: async () => true }) });
+        const registration = registerMachineTerminalRpcHandlers({ rpcHandlerManager: rpc, deps: {
+            serverId: homeId, resolveHostHomeServerIdentityId: async () => homeId,
+            accountReadRuntime: ingress => resolveAdmittedRequesterAccountReadRuntime({ ingress,
+                ...controller, serverId: homeId, isInstalledCurrent: () => true }),
+        } });
+        try {
+            const graphKey = { kind: 'relationship-graph' } as const;
+            const seed = async (bearer: string, rowKey: typeof key) => {
+                const request = ProjectAccountRowMutationRequestV1Schema.parse({ mutations: [
+                    { key: rowKey, expectedRevision: 'absent', content: { t: 'plain', v: { key: rowKey,
+                        value: { ...placement, id: rowKey.id, projectKey: 'project', createdAtMs: 1 } } } },
+                    { key: graphKey, expectedRevision: 'absent', content: { t: 'plain', v: { key: graphKey,
+                        value: { relationships: [] } } } },
+                ], expectedRefs: [], topologyChange: true });
+                const response = await app.inject({ method: 'POST', url: '/v1/account/project-rows/mutate',
+                    headers: { authorization: `Bearer ${bearer}` }, payload: request });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().status).toBe('updated');
+            };
+            await seed(token, key);
+            const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+            const otherToken = await auth.createToken(other.id, undefined, { kind: 'account', authority: 'present_user' });
+            const foreignKey = { ...key, id: 'foreign-only' };
+            await seed(otherToken, foreignKey);
+            const executor = createActionExecutor(createCliActionDeps({ token, credentials, sessionId: 'cli-global',
+                serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: origin, mode: 'plain', ctx: null,
+                externalActionMachineInstallationId: controller.installationId, externalActionMachineRequestPrivateKey: fixture.keyPair.secretKey,
+                machineActionDirectTargetTransport: { machineId: controller.machineId,
+                    invoke: (method, request, options) => rpc.invokeLocal(method, request, options) },
+            }));
+            const run = async (address: typeof workspace) => {
+                const actionInput = { ...input, workspace: address };
+                const envelope = { ...fixture.envelope, requestId: crypto.randomUUID(), input: actionInput };
+                const root = await mint(app, fixture, actionId, envelope, token);
+                const http = await projectExternalActionRequesterHttpAuthorization({ authorization: root, serverId: homeId,
+                    serverIdentityId: homeId, serverHttpBaseUrl: origin, target: root.binding.target,
+                    installationId: controller.installationId, privateKey: fixture.keyPair.secretKey, rootAdmitted: true });
+                if (!http) throw new Error('Missing requester HTTP projection');
+                const authorization = await projectRequesterAccountActionAuthorization({ authorization: http, serverIdentityId: homeId,
+                    bootstrap: { credentials, serverHttpBaseUrl: origin, isCurrent: async () => true,
+                        attribution: { ...controller, serverId: homeId, accountId: fixture.account.id } } });
+                if (!authorization) throw new Error('Missing requester Account projection');
+                return await executor.execute(actionId, actionInput, { surface: 'cli', authority: 'present_user',
+                    serverId: homeId, actionRequestId: root.binding.requestId, bypassApprovals: true,
+                    externalActionExecutionAuthorization: authorization, externalActionTarget: root.binding.target,
+                    callerInputAuthorization: authorization, verifyMachineAdmissionCurrent: async () => true,
+                    machineAdmission: { ...controller, actorAccountId: fixture.account.id, custodianAccountId: fixture.account.id,
+                        role: 'manage', encryptionMode: 'plain' },
+                } satisfies RpcActionExecutorContext);
+            };
+            expect.soft(await run(workspace)).toMatchObject({ ok: true, result: { ok: true, terminals: [] } });
+            expect.soft(await run({ ...workspace, controller: { ...controller, installationId: 'retired' } }))
+                .toMatchObject({ errorCode: 'terminal_cwd_denied' });
+            expect(await run({ ...workspace, workspaceId: foreignKey.id }))
+                .toMatchObject({ errorCode: 'terminal_cwd_denied' });
+        } finally { registration.dispose(); restoreHttp(); await app.close(); }
     });
 
     it('confines signed checkout teardown Trust to the attested Project on the requester’s installation', async () => {
