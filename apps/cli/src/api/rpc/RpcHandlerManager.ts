@@ -4,7 +4,7 @@ import { createSocketRpcContinuation, type SocketRpcContinuationHandler } from '
 import { SocketRpcContinuationReturnV1Schema } from '@happier-dev/protocol/socketRpc';
 import { openWorkspaceSyncTargetOperationContinuation } from './workspaceSyncOperationContinuation';
 import { isScmRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isReviewScmPreparationEffectV1, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 /**
  * Generic RPC handler manager for session and machine clients
@@ -738,12 +738,14 @@ export class RpcHandlerManager {
             // The Home already verified the installed signer and opaque request. Keep its original
             // Action identity distinct from the relay's target-local cancellation correlation.
             const expectedAuthority = resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data);
+            const effectActionId = resolveMachineRpcExternalActionEffectV1(this.readUnprefixedMethod(request.method), binding);
             return binding.machineId === this.scopePrefix && binding.machineId === this.localMachineId
                 && admission.machineId === binding.machineId && admission.installationId === binding.installationId
                 && admission.actorAccountId === binding.accountId && admission.custodianAccountId === binding.custodianAccountId
                 && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
                 && request.method === `${this.scopePrefix}:${this.readUnprefixedMethod(request.method)}`
-                && resolveMachineRpcExternalActionEffectV1(this.readUnprefixedMethod(request.method), binding) === binding.actionId
+                && (effectActionId === binding.actionId
+                    || isReviewScmPreparationEffectV1(binding.actionId, targetMethod))
                 && request.callerAuthority === expectedAuthority
                 && isDeepStrictEqual(binding.sessionActionOrigin, request.sessionActionOrigin);
         })();

@@ -260,3 +260,49 @@ it.each(['account', 'terminal'] as const)('preserves the %s root authority when 
   expect(await rpc.handleRequest({ ...request, machineAdmission: { ...request.machineAdmission, installationId: 'replaced' } }))
     .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
 });
+
+it.each([
+  ['review.start', RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE],
+  ['review.start', RPC_METHODS.SCM_STATUS_SNAPSHOT],
+  ['review.prepare_round', RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE],
+  ['review.new_round', RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE],
+] as const)('admits the Home-bound %s SCM preparation child at its installed Machine (%s)', async (actionId, method) => {
+  const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-verified-review', binding: {
+    accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 0 },
+    accountEncryptionMode: 'e2ee', serverIdentityId: 'home', machineId: 'machine', installationId: 'installed',
+    actionId, requestId: 'review-request', requestEnvelopeDigest: 'a'.repeat(43),
+    target: { kind: 'machine', machineId: 'machine' },
+  } });
+  let homeAdmits = true;
+  let effects = 0;
+  const rpc = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine', encryptionMode: 'plain', logger: () => {},
+    // Home verifies the signed root and exact encrypted child; local target/authority matching stays real.
+    authorizeRequest: async () => homeAdmits ? { ok: true } : { ok: false, error: 'forbidden', errorCode: RPC_ERROR_CODES.FORBIDDEN } });
+  rpc.registerHandler(method, (_input, context) => {
+    effects += 1;
+    return { captured: true, rootActionId: context?.callerInputAuthorization?.binding.actionId };
+  });
+  const request = { method: `machine:${method}`, params: { cwd: '/owned-repository', source: { kind: 'workingTree' } },
+    callerAuthority: 'account_automation' as const, callerInputAuthorization: root,
+    machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installed', role: 'manage' as const, encryptionMode: 'e2ee' as const } };
+  expect(await rpc.handleRequest(request)).toEqual({ captured: true, rootActionId: actionId });
+  for (const refused of [
+    { ...request, callerAuthority: 'present_user' as const },
+    { ...request, method: `other:${method}` },
+    { ...request, machineAdmission: { ...request.machineAdmission, installationId: 'retired' } },
+    { ...request, machineAdmission: { ...request.machineAdmission, actorAccountId: 'another-person' } },
+    { ...request, callerInputAuthorization: { ...root, binding: { ...root.binding, actionId: 'review.settle_round' } } },
+    { ...request, method: `machine:${RPC_METHODS.SCM_DIFF_SUMMARY_RESULT_READ}` },
+  ]) expect(await rpc.handleRequest(refused)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+  if (method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+    for (const otherRoot of ['review.prepare_round', 'review.new_round'] as const) {
+      expect(await rpc.handleRequest({ ...request,
+        callerInputAuthorization: { ...root, binding: { ...root.binding, actionId: otherRoot } },
+      })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+    }
+  }
+  homeAdmits = false;
+  expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+  expect(effects).toBe(1);
+});
