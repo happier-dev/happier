@@ -63,6 +63,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { decodeRunnerDaemonPluginServiceWireValueV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonPluginServicesProtocol';
 import { authorizeResolvedAgentNativeExecLaunchForHost, issueAgentNativeLaunchQualifierForHost, spawnAuthorizedHostExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 
 await vi.hoisted(async () => {
   const path = new URL('../../../../ui/sources/dev/vitestRnShim.ts', import.meta.url).href;
@@ -409,16 +410,18 @@ it('opens the current accepted Team tuple after an active Session revision chang
   expect(h.tracked.spawnOptions.teamCredentialBindings?.[0]?.expectedResourceRevision).toBe(0);
 });
 
-it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'admission refused', 'tunnel start failed', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
+it.each(['fresh owner native', 'fresh member native', 'fresh member native manage', 'ready', 'requester Home', 'reattached requester Home', 'reattached with a cold registry', 'admission refused', 'tunnel start failed', 'binding not current', 'missing declaration', 'non-204', 'typed non-204', 'unknown non-204', 'socket closed', 'refresh refused', 'slow catalog', 'slow refresh'] as const)(
   'opens the real Codex Team binder with the tracked recipient catalog, never custodian consent (%s)', async scenario => {
   const freshNative = scenario === 'fresh owner native' || scenario === 'fresh member native' || scenario === 'fresh member native manage';
   const freshActor = scenario === 'fresh member native' || scenario === 'fresh member native manage' ? 'member' : 'owner';
   const freshRole = scenario === 'fresh member native' ? 'use' as const : 'manage' as const;
   const freshHome = 'srv_fresh_team_codex';
-  const reattached = scenario === 'reattached requester Home';
+  const coldRegistry = scenario === 'reattached with a cold registry';
+  const reattached = scenario === 'reattached requester Home' || coldRegistry;
   const metadata = reattached ? 'requester Home' : scenario;
   const httpRefusal = metadata === 'non-204' || metadata === 'typed non-204' || metadata === 'unknown non-204';
   let h: Awaited<ReturnType<typeof createInstalledProjectAgentDaemonFixture>>;
+  let restoredRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
   let model: TeamCredentialProviderModelCatalogEntryV1;
   let brokerOpens = 0;
   let catalogReads = 0;
@@ -482,7 +485,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
         }, { machineId: 'machine', accountId: daemonAccount, serverId: 'session-home', happyHomeDir: h.f.directory,
           credentials: daemonAccount === 'requester' ? h.requester.bootstrap.credentials : { token: 'custodian-token', encryption: null },
           serverHttpBaseUrl: h.requester.bootstrap.serverHttpBaseUrl,
-          controller: h.plugin.controller, runtime: workerRuntime, resolveTrustRoots: () => [
+          controller: restoredRuntime?.controller ?? h.plugin.controller, runtime: workerRuntime, resolveTrustRoots: () => [
             { keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
           openTeamDirect: async () => { throw new Error('Unexpected direct material'); } });
       }
@@ -534,6 +537,15 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
   if (reattached) {
     expect(h.tracked.spawnOptions?.connectedServiceMaterializationIdentityV1).toBeUndefined();
     expect(h.tracked.spawnOptions?.connectedServices).toBeUndefined();
+  }
+  if (coldRegistry) {
+    // The surviving runner already has a retained binding, but its replacement
+    // daemon starts with a declaration-only registry and activates on demand.
+    restoredRuntime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: h.f.directory,
+      runtimeOptions: { contributes: h.plugin.registry.contributes } });
+    onTestFinished(restoredRuntime.dispose);
+    expect(restoredRuntime.registry.contributes.agentDefinitionsById.has('codex')).toBe(true);
+    expect(restoredRuntime.registry.agentRuntimesByAgentId.has('codex')).toBe(false);
   }
   bindingSetupStage = 'recipient settings';
   if (!identity) throw new Error('Missing admitted Codex identity');
@@ -893,6 +905,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
         result: { kind: 'provider_broker.refusal', denial: null } });
       expect(bindingPhaseLog).toHaveBeenCalledWith('[provider-broker-application]',
         expect.objectContaining({ stage: 'evidence_read', outcome: 'miss', reason: 'no_evidence' }));
+      if (coldRegistry) return;
       disconnectUpstream = true;
       try {
         const failure = await requestApplication().then(() => null, (error: unknown) => error);

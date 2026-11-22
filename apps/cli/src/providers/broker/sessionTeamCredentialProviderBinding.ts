@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import { resolveAgentRoutingId } from '@happier-dev/agents';
 import { BackendTargetKeyV2Schema } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { ProviderBrokerApplicationBindingV1, ProviderBrokerRuntimeConsumerV1, ProviderBrokerOpenRequestV1, ProviderBrokerOpenResponseV1 } from '@happier-dev/protocol';
@@ -43,9 +44,9 @@ export type SessionTeamCredentialProviderBinding = Readonly<{
   cleanup(): Promise<void>;
 }>;
 
-export type ExactSessionTeamCredentialProviderSelection = Readonly<{
+type BrokeredSessionTeamCredentialProviderSelection = Readonly<{
   resourceId: string;
-  brokerMachineId: string;
+  brokerMachineId?: string;
   expectedResourceRevision: number;
   agentTargetKey: string;
   modelId: string;
@@ -54,6 +55,9 @@ export type ExactSessionTeamCredentialProviderSelection = Readonly<{
   sourceRevision: string;
   sourceFacts?: TeamCredentialModelCompatibilityInput['sourceFacts'];
 }>;
+
+export type ExactSessionTeamCredentialProviderSelection =
+  BrokeredSessionTeamCredentialProviderSelection & Readonly<{ brokerMachineId: string }>;
 
 type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   sessionId?: string;
@@ -65,7 +69,6 @@ type SessionTeamCredentialProviderBindingOpenDependencies = Readonly<{
   signal: AbortSignal;
   exposeEndpoint?: ExposeManagedProviderConsumerEndpoint;
   openBroker(request: ProviderBrokerOpenRequestV1, signal: AbortSignal): Promise<ProviderBrokerOpenResponseV1>;
-  initialBrokerOpen?: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
   openTunnel(request: Readonly<{
     brokerOpen: Extract<ProviderBrokerOpenResponseV1, { ok: true }>;
     refreshBrokerOpen: (signal?: AbortSignal) => Promise<ProviderBrokerOpenResponseV1>;
@@ -165,27 +168,22 @@ function resolveProviderBrokerConsumer(input: Readonly<{
 }
 
 function assertExactSelectionIsCoherent(input: Readonly<{
-  selection: ExactSessionTeamCredentialProviderSelection;
+  selection: BrokeredSessionTeamCredentialProviderSelection;
   agentId: string;
   lease: PluginRuntimeRegistryLease;
-}>): void {
+}>): string | null {
   const { selection } = input;
   const target = BackendTargetKeyV2Schema.safeParse(selection.agentTargetKey);
-  const declaredAgent = input.lease.registry.contributes.agentDefinitionsById.get(input.agentId);
-  const runtimeAgent = input.lease.registry.agentRuntimesByAgentId.get(input.agentId);
-  const targetMatchesAgent = target.success
-    ? (() => {
-        const parsed = parseBackendTargetKeyV2(target.data);
-        if (parsed.kind === 'backend') return parsed.backendId === input.agentId;
-        if (!declaredAgent?.identity || !runtimeAgent) return false;
-        return declaredAgent.identity.pluginId === parsed.identity.pluginId
-          && declaredAgent.identity.localId === parsed.identity.localId
-          && runtimeAgent.pluginId === parsed.identity.pluginId;
-      })()
+  const parsed = target.success ? parseBackendTargetKeyV2(target.data) : null;
+  const declaredIdentity = input.lease.registry.contributes.agentDefinitionsById.get(input.agentId)?.identity;
+  const targetMatchesAgent = parsed
+    ? parsed.kind === 'backend'
+      ? resolveAgentRoutingId(parsed.backendId, [{ id: input.agentId }]) !== null
+      : declaredIdentity?.pluginId === parsed.identity.pluginId && declaredIdentity.localId === parsed.identity.localId
     : selection.agentTargetKey === `backend:${input.agentId}:built_in`;
   if (
     selection.resourceId.length === 0
-    || selection.brokerMachineId.length === 0
+    || selection.brokerMachineId === ''
     || !Number.isSafeInteger(selection.expectedResourceRevision)
     || selection.expectedResourceRevision < 0
     || selection.sourceRevision.length === 0
@@ -195,6 +193,7 @@ function assertExactSelectionIsCoherent(input: Readonly<{
   ) {
     throw new Error('team_credential_provider_selection_invalid');
   }
+  return parsed?.kind === 'agent' ? parsed.identity.pluginId : null;
 }
 
 /**
@@ -207,11 +206,25 @@ export async function openExactSessionTeamCredentialProviderBinding(
     selection: ExactSessionTeamCredentialProviderSelection;
   }>,
 ): Promise<SessionTeamCredentialProviderBinding> {
+  return await openBrokeredSessionTeamCredentialProviderBinding(input);
+}
+
+async function openBrokeredSessionTeamCredentialProviderBinding(
+  input: SessionTeamCredentialProviderBindingOpenDependencies & Readonly<{
+    selection: BrokeredSessionTeamCredentialProviderSelection;
+  }>,
+): Promise<SessionTeamCredentialProviderBinding> {
   input.signal.throwIfAborted();
-  assertExactSelectionIsCoherent(input);
   const selection = input.selection;
+  const expectedAgentPluginId = assertExactSelectionIsCoherent(input);
+  // Admission activates the exact Agent adapter on demand. A retained runner
+  // can reopen against a daemon that only has the Agent declaration loaded.
   const descriptor = await assertTeamCredentialModelAdmission({ lease: input.lease, agentId: input.agentId,
     model: { ...selection, deliveryMode: 'brokered' }, signal: input.signal });
+  if (expectedAgentPluginId !== null
+    && input.lease.registry.agentRuntimesByAgentId.get(input.agentId)?.pluginId !== expectedAgentPluginId) {
+    throw new Error('team_credential_provider_selection_invalid');
+  }
   const consumer = resolveProviderBrokerConsumer(input);
   const materializationScopeId = consumer.kind === 'execution_run'
     ? consumer.executionRunId
@@ -227,12 +240,12 @@ export async function openExactSessionTeamCredentialProviderBinding(
     consumer,
     application: selection.application,
   } as const;
-  const opened = input.initialBrokerOpen ?? await input.openBroker(brokerOpenRequest, input.signal);
+  const opened = await input.openBroker(brokerOpenRequest, input.signal);
   if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode, 'binding', opened.failureCause ? opened : undefined);
   const authority = opened.authority.payload;
   if (
-    opened.target.brokerMachineId !== selection.brokerMachineId
-    || authority.target.machineId !== selection.brokerMachineId
+    authority.target.machineId !== opened.target.brokerMachineId
+    || (selection.brokerMachineId !== undefined && opened.target.brokerMachineId !== selection.brokerMachineId)
   ) {
     throw new Error('team_credential_provider_broker_machine_changed');
   }
@@ -571,25 +584,12 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
   }
 
   if (!input.openBroker || !input.openTunnel) throw new Error('team_credential_provider_broker_unavailable');
-  const opened = await input.openBroker({
-    v: 1,
-    resourceId: row.selection.resourceId,
-    expectedResourceRevision: row.selection.expectedResourceRevision,
-    modelId: row.selection.modelId,
-    sourceRevision: row.sourceRevision,
-    initiatorMachineId: input.machineId,
-    consumer,
-    application: row.application,
-  }, input.signal);
-  if (!opened.ok) throw new SessionTeamCredentialLaunchUnavailableError(opened.reasonCode, 'binding', opened.failureCause ? opened : undefined);
-
-  return await openExactSessionTeamCredentialProviderBinding({
+  return await openBrokeredSessionTeamCredentialProviderBinding({
     consumer,
     machineId: input.machineId,
     agentId: input.agentId,
     selection: {
       resourceId: row.selection.resourceId,
-      brokerMachineId: opened.target.brokerMachineId,
       expectedResourceRevision: row.selection.expectedResourceRevision,
       agentTargetKey: row.selection.agentTargetKey,
       modelId: row.selection.modelId,
@@ -602,7 +602,6 @@ export async function openSessionTeamCredentialProviderBinding(input: Readonly<{
     materializationBaseDir: input.materializationBaseDir,
     signal: input.signal,
     openBroker: input.openBroker,
-    initialBrokerOpen: opened,
     openTunnel: input.openTunnel,
     ...(input.exposeEndpoint ? { exposeEndpoint: input.exposeEndpoint } : {}),
   });

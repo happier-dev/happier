@@ -272,7 +272,7 @@ describe('Session Team credential Provider binding', () => {
       openTunnel: async () => { throw new Error('Refused broker must not open tunnel'); },
     }).then(() => null, (error: unknown) => error);
     expect(refused).toBeInstanceOf(SessionTeamCredentialLaunchUnavailableError);
-    expect(refused).toMatchObject({ code, message: code, failureCause: { code, phase: 'authentication',
+    expect(refused).toMatchObject({ code, failureCause: { code, phase: 'authentication',
       actionCause: { errorClass: 'TypeError', errorCode: 'ECONNREFUSED' } } });
     expect(JSON.stringify(refused)).not.toContain('private-fixture');
   });
@@ -1258,6 +1258,22 @@ describe('Session Team credential Provider binding', () => {
     expect(openBroker).not.toHaveBeenCalled();
     expect(openTunnel).not.toHaveBeenCalled();
     expect(adapter.prepare).not.toHaveBeenCalled();
+  });
+
+  it('rejects an incoherent catalog model before asking Home for broker authority', async () => {
+    const openBroker = vi.fn<ExactOpenBroker>(async () => ({ ok: false, reasonCode: 'broker_unavailable' }));
+    await expect(openSessionTeamCredentialProviderBinding({
+      sessionId: 'session-1', machineId: 'worker-1', agentId: 'codex',
+      agentTargetKey: row.selection.agentTargetKey, modelId: row.selection.modelId,
+      binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: row.selection.resourceId,
+        expectedResourceRevision: row.selection.expectedResourceRevision, deliveryMode: 'brokered' },
+      lease: lease({ v: 1, adapterVersion: 1, prepare: prepareSpawnEnv, materialize: materializeEmptySpawnEnv }),
+      materializationBaseDir: '/tmp/happier-team-broker-test', signal: new AbortController().signal,
+      readCatalog: async () => [{ ...row, descriptor: { ...row.descriptor, id: 'different-model' } }],
+      openBroker,
+      openTunnel: async () => { throw new Error('Unexpected broker tunnel'); },
+    })).rejects.toThrow('team_credential_provider_selection_invalid');
+    expect(openBroker).not.toHaveBeenCalled();
   });
 
   it('closes the exact carrier when Agent materialization fails', async () => {
