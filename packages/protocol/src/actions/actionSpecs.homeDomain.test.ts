@@ -10,6 +10,8 @@ import {
   readHomeDomainActionErrorV1,
   type HomeDomainActionErrorCodeV1,
 } from './homeDomainActionFamily.js';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { describeApprovalActionFields } from './actionApprovalPresentation.js';
 import { serializeActionSpec } from './actionCatalog.js';
 import { isActionDiscoverableOnToolSurface } from './actionToolExposure.js';
 import { getActionSpec, listActionSpecs, PublicActionIdSchema } from './actionSpecs.js';
@@ -21,6 +23,7 @@ import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
 import { TEAM_ACTION_SPECS } from './specs/teams.js';
 import { deriveActionInputHints } from './schemaInputHints.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
+import { buildApprovalPreviewSummary } from './executor/approvalPreparation.js';
 
 describe('Home runtime Action parity', () => {
   it('discovers Team resource reads and policy changes on MCP with the owning approval policy', () => {
@@ -35,6 +38,62 @@ describe('Home runtime Action parity', () => {
       safety: 'danger', requiredAuthority: 'account_automation', approval: { result: 'required', flow: 'deferred' },
     });
   });
+  it.each([
+    {
+      change: { managedDefaults: { team: { approvalProfileId: 'team-profile' }, groups: {} } },
+      path: 'managedDefaults',
+      reviewedValue: { team: { approvalProfileId: 'team-profile' }, groups: {} },
+    },
+    {
+      change: { managedGroupDefaults: { teamGroupId: 'group-a', defaults: { approvalProfileId: 'group-profile' } } },
+      path: 'managedGroupDefaults',
+      reviewedValue: { teamGroupId: 'group-a', defaults: { approvalProfileId: 'group-profile' } },
+    },
+    {
+      change: { managedGroupDefaults: { teamGroupId: 'group-a', defaults: null } },
+      path: 'managedGroupDefaults',
+      reviewedValue: { teamGroupId: 'group-a', defaults: null },
+    },
+    {
+      change: {
+        previousAuthenticationPolicy: null,
+        authenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'github' }] },
+      },
+      path: 'authenticationPolicy.accepted',
+      reviewedValue: [{ kind: 'home_method', methodId: 'github' }],
+    },
+  ])('shows the submitted default change or sign-in change in the Team policy approval for $path', ({ change, path, reviewedValue }) => {
+    const actionArgs = { v: 1, teamId: 'team-a', ...change };
+    expect(getActionSpec(TEAM_POLICY_SET_ACTION_ID_V1).inputSchema.safeParse(actionArgs).success).toBe(true);
+    const presentation = describeApprovalActionFields({ actionId: TEAM_POLICY_SET_ACTION_ID_V1, actionArgs });
+    expect(presentation.unrepresentable).toBeNull();
+    expect(presentation.rows).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'value', path, value: JSON.stringify(reviewedValue) }),
+    ]));
+  });
+
+  it.each([
+    {
+      change: {
+        previousAuthenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'github' }] },
+        authenticationPolicy: null,
+      },
+      summary: /use Home sign-in/i,
+    },
+    {
+      change: { managedDefaults: null },
+      summary: /clear Team member defaults/i,
+    },
+    {
+      change: { managedGroupDefaults: { teamGroupId: 'group-a', defaults: null } },
+      summary: /clear Group member defaults/i,
+    },
+  ])('states the effect of an explicit Team policy clear before approval ($summary)', ({ change, summary }) => {
+    const spec = getActionSpec(TEAM_POLICY_SET_ACTION_ID_V1);
+    const actionArgs = spec.inputSchema.parse({ v: 1, teamId: 'team-a', ...change });
+    expect(buildApprovalPreviewSummary(spec, actionArgs)).toMatch(summary);
+  });
+
   it('exposes invitation admission and Team selection to MCP while retaining dangerous Ask', () => {
     for (const id of ['teams.invitations.preview', 'teams.invitations.accept', 'teams.get', 'teams.list'] as const) {
       expect(getActionSpec(id).surfaces.mcp, id).toBe(true);

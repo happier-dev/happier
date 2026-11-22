@@ -4,6 +4,7 @@ import { TEAM_EXTERNAL_GROUP_BINDING_ACTION_IDS_V1 } from './externalGroupBindin
 import { TEAM_CREDENTIAL_HOME_ACTION_IDS_V1, TEAM_CREDENTIAL_HOST_ACTION_IDS_V1 } from './credentials/actionIdsV1.js';
 
 export const TEAM_CREATE_ACTION_ID_V1 = 'teams.create';
+export const TEAM_POLICY_SET_ACTION_ID_V1 = 'teams.policy.set';
 export const TEAM_GROUP_CREATE_ACTION_ID_V1 = 'teams.groups.create';
 export const TEAM_GROUP_UPDATE_ACTION_ID_V1 = 'teams.groups.update';
 export const TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 = 'teams.sharedResources.summary';
@@ -36,7 +37,7 @@ export const TEAM_HOME_ACTION_IDS_V1 = [
   'teams.update',
   'teams.logo.set',
   'teams.logo.remove',
-  'teams.policy.set',
+  TEAM_POLICY_SET_ACTION_ID_V1,
   'teams.archive',
   'teams.restore',
   'teams.members.list',

@@ -52,7 +52,10 @@ import {
   TeamInvitationsPageV1Schema,
 } from '../../teams/invitation.js';
 import { TeamLogoSetInputV1Schema } from '../../teams/logo.js';
-import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '../../teams/actionIdsV1.js';
+import {
+  TEAM_POLICY_SET_ACTION_ID_V1,
+  TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
+} from '../../teams/actionIdsV1.js';
 import { TeamSharedResourcesSummaryInputV1Schema, TeamSharedResourcesSummaryV1Schema } from '../../teams/teamShareableResourceKindV1.js';
 import {
   TeamMemberAddInputV1Schema,
@@ -104,6 +107,18 @@ import { TeamMembershipHistoryInputV1Schema, TeamMembershipHistoryReadinessV1Sch
 
 const TEAM_MEMBER_ADD_TITLE = 'Add Team member';
 const TEAM_ID_FIELD = approvalField('teamId', 'Team ID', { required: true });
+const TEAM_POLICY_INPUT_HINTS = { fields: [
+  TEAM_ID_FIELD,
+  approvalField('sessionCreationPolicy', 'Session creation policy'),
+  approvalField('reviewCreationPolicy', 'Review creation policy'),
+  approvalField('externalSharingPolicy', 'External sharing policy'),
+  approvalField('defaultSessionHistoryAccess', 'Default history access'),
+  approvalField('admissionMode', 'Admission mode'),
+  approvalField('authenticationPolicy.mode', 'Authentication policy'),
+  approvalField('authenticationPolicy.accepted', 'Accepted sign-in methods', { widget: 'json' }),
+  approvalField('managedDefaults', 'Team member defaults', { widget: 'json' }),
+  approvalField('managedGroupDefaults', 'Group member defaults', { widget: 'json' }),
+] };
 const TEAM_ARCHIVE_INPUT_HINTS = {
   description: 'Waiting invitations are permanently revoked. Restoring the Team does not restore them.',
   fields: [TEAM_ID_FIELD],
@@ -279,7 +294,7 @@ export type TeamActionSpecs = readonly [
   ActionSpec<'teams.update', typeof TeamUpdateInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.logo.set', typeof TeamLogoSetInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.logo.remove', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
-  ActionSpec<'teams.policy.set', typeof TeamPolicySetInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<typeof TEAM_POLICY_SET_ACTION_ID_V1, typeof TeamPolicySetInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.archive', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.restore', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.members.list', typeof TeamMembersListInputV1Schema, typeof TeamMembersPageV1Schema>,
@@ -565,9 +580,21 @@ function createTeamActionSpecs(): TeamActionSpecs {
     inputHints: { fields: [TEAM_ID_FIELD] },
   }),
   homeDomainActionRow({
-    id: 'teams.policy.set', approval: {result: 'required',flow: 'deferred'},
+    id: TEAM_POLICY_SET_ACTION_ID_V1, approval: {result: 'required',flow: 'deferred'},
     mcp: true,
     approvalPolicy: { uiConfirmation: 'direct' },
+    approvalPresentation: {
+      inputHints: TEAM_POLICY_INPUT_HINTS,
+      summary: input => {
+        const change = readRecord(input);
+        const groupChange = readRecord(change?.managedGroupDefaults);
+        return [
+          change?.authenticationPolicy === null ? 'Use Home sign-in policy' : null,
+          change?.managedDefaults === null ? 'Clear Team member defaults and all Group overrides' : null,
+          groupChange?.defaults === null ? 'Clear Group member defaults' : null,
+        ].filter(Boolean).join('. ') || null;
+      },
+    },
     title: 'Set Team policy',
     description: 'Change a Team\'s Session, sharing, history and admission policy. These decide who may reach Team work.',
     safety: 'danger',
@@ -576,15 +603,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/policy/set',
     inputSchema: TeamPolicySetInputV1Schema,
     outputSchema: TeamSummaryV1Schema,
-    inputHints: { fields: [
-      TEAM_ID_FIELD,
-      approvalField('sessionCreationPolicy', 'Session creation policy'),
-      approvalField('reviewCreationPolicy', 'Review creation policy'),
-      approvalField('externalSharingPolicy', 'External sharing policy'),
-      approvalField('defaultSessionHistoryAccess', 'Default history access'),
-      approvalField('admissionMode', 'Admission mode'),
-      approvalField('authenticationPolicy.mode', 'Authentication policy'),
-    ] },
+    inputHints: TEAM_POLICY_INPUT_HINTS,
   }),
   homeDomainActionRow({
     id: 'teams.archive', approval: {result: 'required',flow: 'deferred'},
