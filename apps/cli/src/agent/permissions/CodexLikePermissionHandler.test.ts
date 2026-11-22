@@ -678,7 +678,7 @@ describe('CodexLikePermissionHandler', () => {
     );
   });
 
-  it('denies Happier shell-bridge title calls when coding prompt title updates are disabled', async () => {
+  it('lets the user approve an ordinary shell title command when agent title updates are disabled', async () => {
     const session = new FakeSession();
     const handler = new CodexLikePermissionHandler({
       session: session as any,
@@ -692,21 +692,15 @@ describe('CodexLikePermissionHandler', () => {
       } as any),
     });
 
-    const result = await handler.handleToolCall('tool-1', 'Bash', {
+    const pending = handler.handleToolCall('tool-1', 'Bash', {
       command:
         `happier tools call --session-id cmmfivqgm002d8o1ug15b02o1 --directory /tmp/workspace ` +
-        `--source happier --tool change_title --args-json '{"title":"Blocked"}' --json`,
+        `--source happier --tool change_title --args-json '{"title":"Renamed"}' --json`,
     });
 
-    expect(result.decision).toBe('denied');
-    expect(session.agentState.requests['tool-1']).toBeUndefined();
-    expect(session.agentState.completedRequests['tool-1']).toEqual(
-      expect.objectContaining({
-        tool: 'Bash',
-        status: 'denied',
-        decision: 'denied',
-      }),
-    );
+    expect(session.agentState.requests['tool-1']).toMatchObject({ tool: 'Bash' });
+    await session.rpcHandlerManager.handlers.get('permission')!({ id: 'tool-1', approved: true, decision: 'approved' });
+    await expect(pending).resolves.toMatchObject({ decision: 'approved' });
   });
 
   it('treats setPermissionMode without updatedAt as provisional when newer metadata exists', async () => {
