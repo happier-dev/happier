@@ -20,6 +20,17 @@ function makeError() {
 }
 
 describe('buildSpawnResumeUnreachableErrorResult', () => {
+  it('offers a retry when the reachability check itself fails', () => {
+    const result = buildSpawnResumeUnreachableErrorResult(new ConnectedServiceSpawnResumeUnreachableError({
+      agentId: 'muse', vendorResumeId: 'muse-resume-id', cwd: '/work/repo', targetMaterializedRoot: null,
+      reason: 'resume_reachability_check_failed',
+    }));
+    expect(result.errorDetail).toMatchObject({
+      reason: 'resume_reachability_check_failed',
+      uxDiagnostic: { retryable: true, suggestedActions: ['retry'] },
+    });
+  });
+
   it.each(['resume_reachability_inputs_missing', 'connected_service_materialization_identity_missing'] as const)(
     'presents the actual missing continuity input (%s) on resume', reason => {
       const result = buildSpawnResumeUnreachableErrorResult(new ConnectedServiceSpawnResumeUnreachableError({
@@ -64,6 +75,7 @@ describe('buildSpawnResumeUnreachableErrorResult', () => {
     }
     expect(result.errorDetail.uxDiagnostic.code).toBe('provider_session_state_unavailable_for_resume');
     expect(result.errorDetail.uxDiagnostic.diagnostics?.reason).toBe('no_resumable_session_file');
+    expect(result.errorDetail.uxDiagnostic.retryable).toBe(false);
   });
 
   it('keeps unresolved materialized-root information out of the public detail', () => {

@@ -65,7 +65,10 @@ describe('Muse native resume proof through the admitted catalog', () => {
       }
       const proof = await pending;
       if (outcome === 'found') expect(proof).toEqual({ ok: true, proof: 'native_session' });
-      else expect(proof).toMatchObject({ ok: false });
+      else expect(proof).toEqual({
+        ok: false,
+        reason: outcome === 'not-found' ? 'resume_native_session_unavailable' : 'resume_reachability_check_failed',
+      });
       const audit = await readMuseMspProcessAudit(auditPath);
       expect(audit).toMatchObject({ initializeCount: 1, initializedCount: 1, commandCount: 0,
         cwd: directory, selectedHome, autoUpdate: '1' });

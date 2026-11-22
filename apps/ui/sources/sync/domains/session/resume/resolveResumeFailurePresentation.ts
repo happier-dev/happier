@@ -1,5 +1,5 @@
 import { normalizeSpawnSessionErrorDetail, SPAWN_SESSION_ERROR_CODES } from '@happier-dev/protocol/spawnSession';
-import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES, readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { writePersistedBackendTargetRefV2, type PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { isSessionNativeConversationUnreachable, presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { resolveSessionSpawnNewConnectedAccountFailure, resolveSessionSpawnNewResultFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
@@ -54,6 +54,9 @@ export function resolveResumeFailurePresentation(result: Readonly<{
             recovery: 'connected_accounts', message: pool.message };
     }
     const diagnostic = readConnectedServiceUxDiagnosticFromError({ errorDetail: detail });
+    if (diagnostic?.retryable && diagnostic.code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.providerSessionStateUnavailableForResume) {
+        return { kind: 'alert', message: fallbackMessage, errorCode: diagnostic.code, reasonCode: diagnostic.diagnostics?.reason };
+    }
     if (diagnostic) return { kind: 'alert', errorCode: diagnostic.code,
         message: resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: 'spawn_failed', retryable: diagnostic.retryable,
             launchError: { kind: 'launch_error', code: diagnostic.code, uxDiagnostic: diagnostic, message: fallbackMessage } }) };

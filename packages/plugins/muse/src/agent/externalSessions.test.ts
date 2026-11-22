@@ -6,6 +6,7 @@ import { gunzipSync } from 'node:zlib';
 import { createServer } from 'node:http';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
+import { createJsonRpcApplicationError } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 import type { AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
 import { AgentExternalSessionTranscriptRawRecordSchema } from '@happier-dev/plugin-sdk/sessions/external';
 import * as credentialBoundary from '@/persistence';
@@ -30,8 +31,9 @@ function value<T>(result: AgentExternalSessionsResult<T>): T {
 }
 
 it('retains the native agent_unavailable boundary for external history', () => {
-  const error = Object.assign(new Error('external_session_agent_unavailable'), {
-    name: 'JsonRpcApplicationError',
+  const error = createJsonRpcApplicationError({
+    method: 'session/list',
+    message: 'external_session_agent_unavailable',
     data: { kind: 'agent_unavailable' },
   });
   expect(mapMuseExternalHistoryError(error)).toEqual({ ok: false,

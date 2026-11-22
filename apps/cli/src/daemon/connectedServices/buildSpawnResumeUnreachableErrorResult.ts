@@ -1,4 +1,4 @@
-import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS, CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
 import { SPAWN_SESSION_ERROR_CODES, SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
 import type { SpawnSessionResult } from '@happier-dev/protocol';
 
@@ -34,15 +34,15 @@ export function resolveSafeResumeUnreachableDiagnosticReason(
  *
  * D2 contract: this is purely ADDITIVE on top of the pre-existing mapping. The result still uses
  * `SPAWN_VALIDATION_FAILED` and a human-readable `errorMessage` (so legacy/copy-based consumers keep
- * working), and ALSO carries a structured `errorDetail` so the client can programmatically recognize
- * "resume unreachable" and surface the "switch unavailable" explanation + "start fresh under the new
- * account" affordance. The detail is a UI-safe projection: provider resume ids and local paths stay
- * on the daemon-local error/log path, not in the protocol payload.
+ * working), and carries a structured `errorDetail` with the appropriate retry or continuity recovery.
+ * The detail is a UI-safe projection: provider resume ids and local paths stay on the daemon-local
+ * error/log path.
  */
 export function buildSpawnResumeUnreachableErrorResult(
   error: ConnectedServiceSpawnResumeUnreachableError,
 ): Extract<SpawnSessionResult, { type: 'error' }> {
   const reason = resolveSafeResumeUnreachableDiagnosticReason(error);
+  const retryable = reason === 'resume_reachability_check_failed';
   return {
     type: 'error',
     errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
@@ -58,7 +58,8 @@ export function buildSpawnResumeUnreachableErrorResult(
         failurePhase: 'continuity',
         source: 'spawn_resume',
         agentId: error.agentId,
-        retryable: false,
+        retryable,
+        ...(retryable ? { suggestedActions: [CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry] } : {}),
         diagnostics: {
           reason,
         },

@@ -9,7 +9,7 @@ import { createAgentExternalSessionsProducerOverflowFailure, getAgentExternalSes
   isAgentExternalSessionsResultWithinByteBudget, readSessionInputPromptUserTextV1 } from '@happier-dev/plugin-sdk/sessions/external';
 import { projectExternalSessionCandidateTitle } from '@happier-dev/plugin-sdk/sessions/external';
 import { createMuseEventProjection, readMuseRecord } from './events.js';
-import { openMuseMsp, type MuseMsp } from './msp.js';
+import { isMuseMspSessionNotFound, openMuseMsp, readMuseMspErrorKind, type MuseMsp } from './msp.js';
 
 type NativeMessage = Readonly<{ method: string; params?: JsonValue }>;
 type ReadClient = Pick<PluginJsonRpcClient, 'request'>;
@@ -47,16 +47,9 @@ export async function replayMusePagedHistory(client: ReadClient, request: Readon
   } while (cursor !== undefined);
 }
 
-function nativeErrorKind(error: unknown): string | undefined {
-  // SDK owns JSON-RPC response correlation; branch only on the native open enum.
-  if (!(error instanceof Error) || error.name !== 'JsonRpcApplicationError' || !('data' in error)) return;
-  const data = error.data;
-  return data !== null && typeof data === 'object' && 'kind' in data && typeof data.kind === 'string' ? data.kind : undefined;
-}
-
 export function mapMuseExternalHistoryError(error: unknown): AgentExternalSessionsResult<never> {
-  const kind = nativeErrorKind(error);
-  if (kind === 'sessionNotFound' || kind === 'notFound') return { ok: false, code: 'candidate_not_found' };
+  const kind = readMuseMspErrorKind(error);
+  if (isMuseMspSessionNotFound(kind)) return { ok: false, code: 'candidate_not_found' };
   if (kind === 'invalidParams') return { ok: false, code: 'invalid_request' };
   if (kind === 'agent_unavailable') return { ok: false, code: 'agent_unavailable',
     ...(error instanceof Error && error.message ? { message: error.message } : {}), retryable: true };
@@ -378,7 +371,7 @@ export const museExternalSessionsContribution: AgentExternalSessionsContribution
             severity: 'benign' as const, count: page.events.length, positions: [] }] } : {}),
         }, request);
       } catch (error) {
-        const kind = nativeErrorKind(error);
+        const kind = readMuseMspErrorKind(error);
         if (kind === 'viewTruncated' || kind === 'boundaryPruned' || kind === 'boundaryUnusable' || kind === 'noBoundary') return bounded({ outcome: 'gap_or_cursor_expired' }, request);
         if (kind === 'sessionNotFound') return bounded({ outcome: 'source_unavailable' }, request);
         if (kind === 'sessionStreamMismatch') return bounded({ outcome: 'source_replaced' }, request);

@@ -169,6 +169,21 @@ describe('session resume failure presentation', () => {
         });
     });
 
+    it('leaves Resume available after a retryable native inspection failure', () => {
+        const reason = 'resume_reachability_check_failed';
+        const errorDetail = { kind: 'connected_service_resume_unreachable',
+            continuityErrorCode: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+            agentId: 'muse', reason, uxDiagnostic: {
+                code: 'provider_session_state_unavailable_for_resume', failurePhase: 'continuity',
+                source: 'spawn_resume', retryable: true, suggestedActions: ['retry'],
+                diagnostics: { reason },
+            } };
+        expect(resolveResumeFailurePresentation({ details: { errorDetail } }, 'Resume failed')).toEqual({
+            kind: 'alert', message: 'Resume failed', errorCode: 'provider_session_state_unavailable_for_resume',
+            reasonCode: reason,
+        });
+    });
+
     it.each(['action', 'wake'] as const)('offers Continue from the transcript when the %s Resume finds the native conversation gone', source => {
         const errorDetail = { kind: 'launch_error', code: 'codex_continuation_unreachable', message: 'Agent native Session construction failed',
             failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error', providerErrorCode: 'codex_continuation_unreachable' } };

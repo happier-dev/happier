@@ -3722,7 +3722,10 @@ environment and existing probe lifetime. Returning `{ ok: true, proof: 'native_s
 proves resume reachability only. It supplies no file path or import authority;
 the file-copy path omits native inspection and requires a host-verified declared
 path for the legacy `{ ok: true }` result. Muse uses this protocol path to read
-the exact native UUID without acquiring or resuming a conversation.
+the exact native UUID without acquiring or resuming a conversation. An MSP
+not-found response marks the native Session unavailable. A failed inspection
+or a response for a different UUID reports `resume_reachability_check_failed`
+with the existing retry action.
 
 ## Adding a provider plugin
 

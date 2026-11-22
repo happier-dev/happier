@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { AgentNativeLaunchQualifier, ExecService, PluginExecSpawnRequest, PluginProcessHandle, PluginProcessResult } from '@happier-dev/plugin-sdk/exec';
-import type { PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
+import { readJsonRpcApplicationRejection, type PluginJsonRpcClient } from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 export const MUSE_MSP_LAUNCH = {
     args: ['serve'],
@@ -31,6 +31,17 @@ export type MuseMsp = Readonly<{
     wait(): Promise<PluginProcessResult>;
     dispose(): Promise<void>;
 }>;
+
+export function readMuseMspErrorKind(error: unknown): string | undefined {
+    // The SDK owns JSON-RPC response correlation. MSP owns the open error enum.
+    if (!readJsonRpcApplicationRejection(error) || !(error instanceof Error) || !('data' in error)) return;
+    const data = error.data;
+    return data !== null && typeof data === 'object' && 'kind' in data && typeof data.kind === 'string' ? data.kind : undefined;
+}
+
+export function isMuseMspSessionNotFound(kind: string | undefined): boolean {
+    return kind === 'sessionNotFound' || kind === 'notFound';
+}
 
 /** MSP requires UUIDv7 command identities; they are ephemeral native inputs. */
 function createCommandId(): string {
