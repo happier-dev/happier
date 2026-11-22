@@ -7,6 +7,7 @@ import { standardCleanup } from '@/dev/testkit';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
 import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
+import twoStepRound from '@/dev/testkit/fixtures/twoStepPartialReviewRound.json';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import {
   createSessionFilesViewFixture,
@@ -114,13 +115,13 @@ it('uses the same persisted reviewer results on the round, Runs, notice and Acti
   const textOf = (id: string) => screen.findByTestId(id)?.findAll(node => typeof node.type === 'string')
     .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
   try {
-    await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.collection.statePartial')));
+    await vi.waitFor(() => expect(textOf('review-detail:participant:first')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish')));
     expect(textOf('review-detail:participant:second')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
     expect(textOf('review-detail:partial')).toContain('Claude reviewer');
     expect(textOf('review-detail:partial')).not.toContain('Codex reviewer');
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('runs'));
     expect(textOf('review-detail:run:claude')).toContain('Claude reviewer');
-    expect(textOf('review-detail:run:claude')).toContain(t('reviewWalkthrough.collection.statePartial'));
+    expect(textOf('review-detail:run:claude')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
     expect(textOf('review-detail:run:claude')).toContain(formatElapsedDuration(7000));
     expect(textOf('review-detail:run:claude')).not.toContain(t('reviewWalkthrough.collection.stateRunning'));
     expect(textOf('review-detail:run:codex')).toContain(t('reviewWalkthrough.collection.stateCompleted'));
@@ -128,5 +129,42 @@ it('uses the same persisted reviewer results on the round, Runs, notice and Acti
     await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('activity'));
     expect(textOf('review-activity:reviewer:1:first')).toContain('Claude reviewer');
     expect(textOf('review-activity:reviewer:1:second')).toContain('Codex reviewer');
+  } finally { await screen.unmount(); }
+});
+
+it('names two same-Agent reviewers by step everywhere, counts Runs by its rows and offers Retry both (captured Review 5bee0f3e)', async () => {
+  const reviewId = '5bee0f3e-394c-463f-b1f8-ed1f0142d611';
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://two-step-partial.test', request: async url =>
+    new URL(String(url)).pathname === '/v1/reviews/comments' ? Response.json({ items: [], cursor: null }) : Response.json({}, { status: 404 }) });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Code review', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Code review' }, body: JSON.stringify(twoStepRound),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  const textOf = (id: string) => screen.findByTestId(id)?.findAll(node => typeof node.type === 'string')
+    .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' ') ?? '';
+  const first = t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 1 });
+  const second = t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 2 });
+  try {
+    await vi.waitFor(() => expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(first));
+    expect(textOf('review-detail:participant:step-2-reviewer-1')).toContain(second);
+    expect(textOf('review-detail:participant:step-1-reviewer-1')).toContain(t('reviewWalkthrough.detail.reviewerDidntFinish'));
+    // The notice names who didn't finish (never "Both") and offers to retry them together.
+    expect(textOf('review-detail:partial')).toContain(first);
+    expect(textOf('review-detail:partial')).toContain(second);
+    expect(textOf('review-detail:partial')).toContain(t('reviewWalkthrough.detail.retryUnfinished', { count: 2 }));
+    const view = screen.findByType(ReviewDetailView);
+    expect(view.props.tabs.find((tab: { id: string }) => tab.id === 'runs')?.count).toBe(2);
+    await act(async () => view.props.onSelectTab('runs'));
+    expect(textOf('review-detail:runs')).toContain(t('reviewWalkthrough.detail.reviewers'));
+    expect(textOf('review-detail:run:run_request_f212387f05a3a279d3258266e81d74c93e70d34ef5024eae0c5fa7d8d566655f')).toContain(first);
+    // The Workflow run is the section's way to its run, not a third row.
+    expect(screen.findAllByTestId('review-detail:runs:workflow').length).toBeGreaterThan(0);
+    expect(screen.findByTestId('review-detail:run:bc6b38d7-13ba-4f73-bf98-771ccff08ed8')).toBeNull();
+    await act(async () => screen.findByType(ReviewDetailView).props.onSelectTab('activity'));
+    expect(textOf('review-activity:reviewer:1:step-2-reviewer-1')).toContain(second);
   } finally { await screen.unmount(); }
 });

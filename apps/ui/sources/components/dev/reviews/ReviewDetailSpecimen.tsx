@@ -5,6 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { ReviewFinding } from '@happier-dev/protocol/reviews/ReviewFinding';
 import type { ReviewArtifactV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { ReviewRoundRuns } from '@/components/reviews/detail/ReviewDetailHost';
+import { reviewRoundReviewerRowCount } from '@/components/reviews/reviewRoundReviewers';
 import { ReviewChangesUnavailable } from '@/components/reviews/ReviewChangesHost';
 import { buildReviewCommentFixture } from '@/dev/testkit/fixtures/reviewComments';
 
@@ -294,15 +295,19 @@ const NO_MACHINE_COMMENTS = [
     selected: ['    setDraft(null);'], after: ['  }'] }),
 ];
 
-/** The round's runs as the record keeps them: the Runs tab and its count read the same list. */
+/** The round's reviewers as the record keeps them (lab `detail-runs`): the Runs tab and its count read the same rows. */
 const SPECIMEN_RUNS_ROUND: ReviewArtifactV1['rounds'][number] = {
-  ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['claude', 'codex', 'coderabbit'],
-  runs: [
-    { kind: 'execution', runId: 'run-claude', machineId: 'machine-1', sessionId: 'session-1' },
-    { kind: 'execution', runId: 'run-codex', machineId: 'machine-1', sessionId: 'session-1' },
-    { kind: 'workflow', runId: 'run-workflow' },
+  ordinal: 1, state: 'partial', startedAt: 1, finishedAt: 300_000,
+  reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2', 'step-1-reviewer-3'],
+  reviewerDisplayNames: { 'step-1-reviewer-1': 'claude', 'step-1-reviewer-2': 'codex', 'step-1-reviewer-3': 'CodeRabbit' },
+  reviewerOutcomes: [
+    { reviewerId: 'step-1-reviewer-1', displayName: 'claude', outcome: 'completed', startedAt: 0, finishedAt: 192_000 },
+    { reviewerId: 'step-1-reviewer-2', displayName: 'codex', outcome: 'completed', startedAt: 0, finishedAt: 280_000 },
+    { reviewerId: 'step-1-reviewer-3', displayName: 'CodeRabbit', outcome: 'partial', startedAt: 0, finishedAt: 65_000 },
   ],
+  runs: [{ kind: 'workflow', runId: 'run-workflow' }],
 };
+const retryNothing = () => undefined;
 
 export function ReviewDetailSpecimen(
   props: Readonly<{ scene: string | null }>,
@@ -475,7 +480,7 @@ export function ReviewDetailSpecimen(
       tabs={[
         { id: 'findings', count: rows.length },
         { id: 'changes', count: 9 },
-        { id: 'runs', count: SPECIMEN_RUNS_ROUND.runs.length },
+        { id: 'runs', count: reviewRoundReviewerRowCount(SPECIMEN_RUNS_ROUND) },
         { id: 'activity' },
       ]}
       activeTab={tab}
@@ -544,7 +549,7 @@ export function ReviewDetailSpecimen(
           }}
         />
       ) : tab === 'runs' ? (
-        <ReviewRoundRuns round={SPECIMEN_RUNS_ROUND} scope={null} />
+        <ReviewRoundRuns round={SPECIMEN_RUNS_ROUND} scope={null} subjectKind="comparison" onRetry={retryNothing} />
       ) : (
         <View style={styles.placeholder} />
       )}

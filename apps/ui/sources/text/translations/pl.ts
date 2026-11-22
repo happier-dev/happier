@@ -7448,7 +7448,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
 
   errors: {
     networkError: "Wystąpił błąd sieci",
-    machineNotAnswering: 'Ta maszyna nie odpowiada. Wybierz taką, która jest online, albo spróbuj ponownie, gdy wróci.',
+    machineNotAnswering: 'Ta maszyna nie odpowiada. Spróbuj ponownie, gdy wróci online.',
+    workspaceUnavailableOnMachine: 'Folder projektu nie jest dostępny na tej maszynie. Sprawdź, czy folder nadal istnieje, i spróbuj ponownie.',
     serverError: "Wystąpił błąd Home",
     unknownError: "Wystąpił nieznany błąd",
     connectionTimeout: "Przekroczono czas oczekiwania na połączenie",

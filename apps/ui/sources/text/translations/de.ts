@@ -7586,7 +7586,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
 
     errors: {
         networkError: 'Netzwerkfehler aufgetreten',
-        machineNotAnswering: 'Diese Maschine antwortet nicht. Wähle eine, die online ist, oder versuche es erneut, wenn sie zurück ist.',
+        machineNotAnswering: 'Diese Maschine antwortet nicht. Versuche es erneut, sobald sie wieder online ist.',
+        workspaceUnavailableOnMachine: 'Der Projektordner ist auf dieser Maschine nicht verfügbar. Prüfe, ob der Ordner noch vorhanden ist, und versuche es dann erneut.',
         serverError: 'Homefehler aufgetreten',
         unknownError: 'Ein unbekannter Fehler ist aufgetreten',
         connectionTimeout: 'Zeitüberschreitung bei der Verbindung',

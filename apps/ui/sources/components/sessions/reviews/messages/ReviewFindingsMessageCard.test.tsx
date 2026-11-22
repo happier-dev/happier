@@ -517,6 +517,8 @@ describe('ReviewFindingsMessageCard', () => {
         const screen = await renderScreen(
             <ReviewFindingsMessageCard serverId={home.serverId} payload={payloadFor([finding('f1', 'high', {
                 whyItMatters: 'Switching tabs throws away unsaved edits.',
+                // Where draws the fix; the place alone stays on the facts line (U8 R4 C1).
+                suggestion: 'Keep the draft until the save resolves.',
                 evidence: 'Reproduced with a new test.',
             })])} sessionId="sess_1" canSendMessages presentation="page" />,
         );

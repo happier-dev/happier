@@ -8725,7 +8725,8 @@ const enSettingsFeatures = {
 
 const enErrors = {
   networkError: 'Network error occurred',
-  machineNotAnswering: 'That Machine isn’t answering. Choose one that’s online, or try again once it’s back.',
+  machineNotAnswering: 'That Machine isn’t answering. Try again once it’s back online.',
+  workspaceUnavailableOnMachine: 'The project’s folder isn’t available on that Machine. Check that the folder is still there, then try again.',
   serverError: 'Home error occurred',
   unknownError: 'An unknown error occurred',
   connectionTimeout: 'Connection timed out',

@@ -24,7 +24,8 @@ export type ReviewNewRoundReviewer = Readonly<{
   id: string;
   label: string;
   mark: React.ReactNode | null;
-  continuity: 'continues' | 'fresh' | 'asked_again' | 'unavailable';
+  /** Null while the round's owner has not said yet (its preview is loading or its Machine did not answer). */
+  continuity: 'continues' | 'fresh' | 'asked_again' | 'unavailable' | null;
   required?: boolean;
   costConsent?: Readonly<{ title: string; description?: string }>;
 }>;
@@ -43,11 +44,12 @@ type ReviewNewRoundDialogProps = CustomModalInjectedProps &
     reason?: string | null;
     onFresh?: () => void;
     onRetry?: () => void;
-    /** Retrying one reviewer that didn't finish: the dialog names it and says only it runs again. */
-    retrying?: boolean;
+    /** The reviewers being retried (they didn't finish), by the page's names: the dialog says only they run again. */
+    retrying?: readonly string[];
   }>;
 
-function continuityLabel(reviewer: ReviewNewRoundReviewer): string {
+function continuityLabel(reviewer: ReviewNewRoundReviewer): string | null {
+  if (reviewer.continuity === null) return null;
   if (reviewer.continuity === 'unavailable') return t('common.unavailable');
   if (reviewer.continuity === 'continues')
     return t('reviewWalkthrough.detail.continuesSession');
@@ -74,7 +76,12 @@ export function ReviewNewRoundDialog(
   const [busy, setBusy] = React.useState(false);
   const [failure, setFailure] = React.useState<string | null>(null);
   const { onStart, onClose } = props;
-  const retriedName = props.retrying && props.reviewers.length === 1 ? props.reviewers[0]!.label : null;
+  const retried = props.retrying && props.retrying.length > 0 ? props.retrying : null;
+  // Strings, so a caller's new array of the same names does not publish new chrome.
+  const title = !retried ? t('reviewWalkthrough.detail.newRound') : retried.length === 1
+    ? t('reviewWalkthrough.detail.retryReviewer', { name: retried[0]! }) : t('reviewWalkthrough.detail.retryUnfinished', { count: retried.length });
+  const subtitle = t(!retried ? 'reviewWalkthrough.detail.newRoundDescription' : retried.length === 1
+    ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.retryRoundDescriptionMany');
   const start = React.useCallback(async () => {
     setBusy(true);
     setFailure(null);
@@ -88,8 +95,8 @@ export function ReviewNewRoundDialog(
     (): CustomModalChromeCardConfig => ({
       kind: 'card',
       material: 'solid',
-      title: retriedName !== null ? t('reviewWalkthrough.detail.retryReviewer', { name: retriedName }) : t('reviewWalkthrough.detail.newRound'),
-      subtitle: t(props.retrying ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.newRoundDescription'),
+      title,
+      subtitle,
       subtitleLines: 2,
       testID: 'review-new-round',
       scrollHost: 'bounded',
@@ -105,7 +112,7 @@ export function ReviewNewRoundDialog(
             testID: 'review-new-round:cancel',
             disabled: busy,
           }}
-          note={failure ?? props.reason}
+          note={failure}
           noteTestID="review-new-round:failure"
         >
           <RoundButton
@@ -120,12 +127,15 @@ export function ReviewNewRoundDialog(
         </ModalCardFooterActions>
       ),
     }),
-    [busy, costsAccepted, failure, onClose, props.ready, props.reason, props.retrying, retriedName, start],
+    [busy, costsAccepted, failure, onClose, props.ready, start, subtitle, title],
   );
   useModalCardChrome(props.setChrome, chrome);
   return (
     <View style={styles.body}>
       {props.loading ? <SurfaceStateCard kind="loading" title={t('common.loading')} /> : null}
+      {/* Why the round can't start yet, and its one way forward, on one line above the rows it is about. */}
+      {props.reason ? <SurfaceStateCard testID="review-new-round:unavailable" kind="unavailable" size="line" title={props.reason}
+        {...(props.onRetry ? { action: { label: t('common.retry'), testID: 'review-new-round:retry', onPress: props.onRetry } } : {})} /> : null}
       <ItemGroup header="none" testID="review-new-round:reviewers">
         {props.reviewers.map((reviewer) => (
           <Item
@@ -133,19 +143,17 @@ export function ReviewNewRoundDialog(
             testID={`review-new-round:reviewer:${reviewer.id}`}
             title={reviewer.label}
             icon={reviewer.mark ?? undefined}
-            rightElement={
+            rightElement={continuityLabel(reviewer) === null ? undefined : (
               <Text variant="meta" style={styles.continuity}>
                 {continuityLabel(reviewer)}
               </Text>
-            }
+            )}
           />
         ))}
       </ItemGroup>
       <ReviewCostConsentRows costs={costs} disabled={busy} />
-      {props.onFresh ? <TextLinkButton testID="review-new-round:fresh" label={t('reviewWalkthrough.detail.startsFresh')}
-        onPress={() => { setFailure(null); props.onFresh?.(); }} /> : null}
-      {props.onRetry ? <TextLinkButton testID="review-new-round:retry" label={t('common.retry')}
-        onPress={props.onRetry} /> : null}
+      {props.onFresh ? <View style={styles.inset}><TextLinkButton testID="review-new-round:fresh" label={t('reviewWalkthrough.detail.startsFresh')}
+        onPress={() => { setFailure(null); props.onFresh?.(); }} /></View> : null}
       <Text variant="body" style={styles.note}>
         {t('reviewWalkthrough.detail.newRoundNote', {
           round: props.previousRound,
@@ -172,4 +180,5 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.colors.text.secondary,
     paddingHorizontal: theme.space.s16,
   },
+  inset: { paddingHorizontal: theme.space.s16, alignItems: 'flex-start' },
 }));

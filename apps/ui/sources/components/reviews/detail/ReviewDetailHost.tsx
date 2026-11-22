@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
-import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import {
   openReviewArtifactV1,
   describeReviewRoundQualityV1,
@@ -41,14 +40,16 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunAgentMarkId } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { isReviewRoundReviewerUnfinished, projectReviewRoundReviewers, reviewRoundReviewerOutcomeLabel, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
+import { isReviewRoundReviewerUnfinished, projectReviewRoundReviewers, reviewCommentEngineName, reviewRoundReviewerOutcomeLabel,
+  reviewRoundReviewerRowCount, type ReviewRoundReviewer, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
+import type { ReviewRetriedReviewer } from './useReviewNewRound';
+import { joinList } from '@/utils/text/joinList';
+import { resolveExecutionRunSelectionLabel, resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveExecutionRunSelectionLabel';
+import type { ReviewSubjectKindV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
-import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
-import { resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { resolveItemGroupContentHorizontalInsetPx } from '@/components/ui/lists/itemGroupSpacing';
 import { filterReviewChangesComments } from './reviewChangesComments';
-import { formatReviewerSet } from '@/components/sessions/reviews/findings/reviewFindingsMerge';
 import { ReviewFindingsList, type ReviewFindingsRowSelection } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -111,11 +112,11 @@ const ROUND_STATE_KEYS = {
 
 type ReviewRecordRound = ReviewArtifactV1['rounds'][number];
 
-/** A reviewer's Agent mark, when its run names an Agent that has one; otherwise its name stands alone. */
-function ReviewerRunMark(props: Readonly<{ run: ExecutionRunPublicState }>) {
+/** A reviewer's Agent mark: its run's Agent once read, else the Agent its recorded name is; otherwise its name stands alone. */
+function ReviewerMark(props: Readonly<{ reviewer: Pick<ReviewRoundReviewer, 'agentId' | 'run'>; size?: number }>) {
   const { theme } = useUnistyles();
-  const agentId = resolveExecutionRunAgentMarkId(props.run.backendTarget, theme);
-  return agentId ? <AgentIcon agentId={agentId} size={ICON_SIZE.sm} /> : null;
+  const agentId = props.reviewer.run ? resolveExecutionRunAgentMarkId(props.reviewer.run.backendTarget, theme) : props.reviewer.agentId;
+  return agentId ? <AgentIcon agentId={agentId} size={props.size ?? ICON_SIZE.sm} /> : null;
 }
 
 /**
@@ -146,7 +147,7 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
         participants: reviewers.map(reviewer => ({
           id: reviewer.reviewerId,
           label: reviewer.name,
-          mark: reviewer.run ? <ReviewerRunMark run={reviewer.run} /> : null,
+          mark: reviewer.run || reviewer.agentId ? <ReviewerMark reviewer={reviewer} /> : null,
           state: reviewer.outcome === null ? null : reviewer.outcome === 'completed' && reviewer.findingsCount !== null
               ? t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount })
               : reviewRoundReviewerOutcomeLabel(reviewer.outcome),
@@ -308,9 +309,9 @@ export function ReviewDetailHost(props: Readonly<{
     { id: 'findings' },
     { id: 'changes' },
     // A tab with nothing under it carries no count ("Runs", never "Runs 0").
-    { id: 'runs', count: round?.runs.length || null },
+    { id: 'runs', count: (round ? reviewRoundReviewerRowCount(round) : 0) || null },
     { id: 'activity' },
-  ], [round?.runs.length]);
+  ], [round]);
   const activeTab = tabs.some(item => item.id === tab) ? tab : tabs[0]!.id;
   const presented = useLayoutPresentationActive();
   const comments = useReviewComments({ scope, reviewId: record?.reviewId ?? null,
@@ -350,7 +351,7 @@ export function ReviewDetailHost(props: Readonly<{
     return people ? { ...projected, groups: [...projected.groups, people] } : projected;
   }) ?? [], [human, names, questionRuns.runs, record, round?.ordinal, scope?.accountId]);
   const unfinishedReviewers = React.useMemo(() => round?.state !== 'partial' ? [] : projectReviewRoundReviewers(round, questionRuns.runs)
-    .filter(reviewer => reviewer.outcome !== null && reviewer.outcome !== 'completed'), [questionRuns.runs, round]);
+    .filter(isReviewRoundReviewerUnfinished), [questionRuns.runs, round]);
   const findings = useReviewFindingsModel({ members: questionRuns.members, record: findingRound,
     reviewerCount: round?.reviewerIds.length ?? 0, scope, accountLifetime: binding,
     serverId: scope?.serverId ?? null, sessionId: null, canAct: canEdit, pending: comments.pending,
@@ -570,11 +571,13 @@ export function ReviewDetailHost(props: Readonly<{
         {/* A partial round says once, here, who didn't finish and why (lab notice line); the score line says no more. */}
         {round?.state === 'partial' ? <SurfaceStateCard testID="review-detail:partial" kind="warning" size="line"
           title={unfinishedReviewers.length > 0 ? t('reviewWalkthrough.detail.reviewersDidntFinish', {
-            names: formatReviewerSet(unfinishedReviewers.map(reviewer => reviewer.name)) }) : t('reviewWalkthrough.detail.qualityPartial')}
-          // One reviewer that didn't finish is retried from the notice too (lab `detail-runs`: "Retry CodeRabbit").
-          {...(newRound.retry && unfinishedReviewers.length === 1 && isReviewRoundReviewerUnfinished(unfinishedReviewers[0]!) ? { action: {
-            label: t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name }), testID: 'review-detail:partial:retry',
-            onPress: () => newRound.retry?.(unfinishedReviewers[0]!.reviewerId) } } : {})} /> : null}
+            names: joinList(unfinishedReviewers.map(reviewer => reviewer.name)), count: unfinishedReviewers.length })
+            : t('reviewWalkthrough.detail.qualityPartial')}
+          // Who didn't finish is retried from the notice too, in one new round (lab `detail-runs`: "Retry CodeRabbit").
+          {...(newRound.retry && unfinishedReviewers.length > 0 ? { action: {
+            label: unfinishedReviewers.length === 1 ? t('reviewWalkthrough.detail.retryReviewer', { name: unfinishedReviewers[0]!.name })
+              : t('reviewWalkthrough.detail.retryUnfinished', { count: unfinishedReviewers.length }),
+            testID: 'review-detail:partial:retry', onPress: () => newRound.retry?.(unfinishedReviewers) } } : {})} /> : null}
         {scope && newRound.approval.approvalPending && newRound.approval.approvalId ? <ActionApprovalPendingNotice
         testID="review-detail:new-round-approval" message={t('approvals.title')}
         onOpenApproval={() => router.push(`/inbox/approvals/${encodeURIComponent(newRound.approval.approvalId!)}?serverId=${encodeURIComponent(scope.serverId)}`)} /> : null}
@@ -671,11 +674,8 @@ export function ReviewDetailHost(props: Readonly<{
             accessibilityLabel={t('reviewWalkthrough.start.whoReviews')}
             overflow={{ label: t('reviewWalkthrough.start.whoReviews') }}
             tabs={[{ id: 'all', label: t('common.all'), testID: 'review-changes:reviewer:all' },
-              ...changesReviewers.map((engineId, index) => {
-                const agentId = resolveAgentIdFromFlavor(engineId);
-                return { id: `reviewer:${engineId}`, label: agentId ? resolveAgentCatalogTitle(agentId)
-                  : t('reviewWalkthrough.detail.reviewerRun', { count: index + 1 }), testID: `review-changes:reviewer:${engineId}` };
-              })]}
+              ...changesReviewers.map((engineId, index) => ({ id: `reviewer:${engineId}`,
+                label: reviewCommentEngineName(engineId, index), testID: `review-changes:reviewer:${engineId}` }))]}
             activeTabId={selectedChangesReviewer === null ? 'all' : `reviewer:${selectedChangesReviewer}`}
             onSelectTab={id => { void viewCommands.invoke('review.detail.filter_reviewer', { engineId: id === 'all' ? null : id.slice('reviewer:'.length) }); }} />
         </View> : null}
@@ -684,7 +684,7 @@ export function ReviewDetailHost(props: Readonly<{
         </>
       ) : null}
       {activeTab === 'runs' && round ? <ReviewRoundRuns round={round} scope={scope} reads={questionRuns.runs}
-        onRetry={round.ordinal === lastOrdinal ? newRound.retry : null} /> : null}
+        subjectKind={review?.subjectKind ?? null} onRetry={round.ordinal === lastOrdinal ? newRound.retry : null} /> : null}
       {activeTab === 'activity' ? (
         comments.status === 'idle' || comments.status === 'loading' ? <ItemGroup header="none"><ItemLoadStateRows state={LOADING_ROWS} rows={3} /></ItemGroup>
           : <ReviewActivityFeed events={activityEvents} viewerAccountId={scope?.accountId ?? null} names={names} />
@@ -696,25 +696,39 @@ export function ReviewDetailHost(props: Readonly<{
   );
 }
 
+const REVIEWERS_READ_KEYS = {
+  repository: 'reviewWalkthrough.detail.reviewersReadRepository',
+  comparison: 'reviewWalkthrough.detail.reviewersReadComparison',
+  pull_request: 'reviewWalkthrough.detail.reviewersReadPullRequest',
+} as const satisfies Record<ReviewSubjectKindV1, string>;
+
 /**
- * The round's runs (lab `detail-runs`), each opening its own result page. A reviewer run its Machine answered for is
- * the shared Run row: its Agent's mark and name, model, state, then how many findings it reported and how long it
- * took. A run not read (yet, or its Machine is away) keeps its place by its kind.
+ * The round's reviewers (lab `detail-runs`): a "Reviewers" section, each row its mark, name and (once its run was read)
+ * model, how it ended (rose when it didn't finish), its findings and duration in the meta column, and Retry on one that
+ * didn't finish. A running
+ * reviewer its Machine answered for is the shared Run row. The Workflow that ran them is the section's own link, so the
+ * tab's count is the rows it draws.
  */
 export function ReviewRoundRuns(props: Readonly<{
   round: ReviewRecordRound;
   scope: ServerAccountScope | null;
   reads?: ReadonlyMap<string, ReviewRoundRunRead>;
-  /** Retry one reviewer that did not finish, as a new round with only it (the latest round only). */
-  onRetry?: ((reviewerId: string) => void) | null;
+  /** What the round read, for the section's line ("Each read the whole repository."). */
+  subjectKind?: ReviewSubjectKindV1 | null;
+  /** Retry reviewers that did not finish, as a new round with only them (the latest round only). */
+  onRetry?: ((reviewers: readonly ReviewRetriedReviewer[]) => void) | null;
 }>) {
   const router = useRouter();
+  const { theme } = useUnistyles();
   const { scope } = props;
   const settled = props.round.state !== 'running';
   const reviewers = projectReviewRoundReviewers(props.round, props.reads);
   const runsById = new Map(props.round.runs.map(run => [run.runId, run]));
-  const runs = settled ? props.round.runs.filter(run => run.kind === 'workflow') : props.round.runs;
-  if (runs.length === 0 && (!settled || reviewers.length === 0)) {
+  const workflow = props.round.runs.find(run => run.kind === 'workflow');
+  const executions = props.round.runs.filter(run => run.kind === 'execution');
+  const workflowHref = scope && workflow ? createWorkflowRunRoute(workflow.runId, scope.serverId) : null;
+  const rowCount = reviewRoundReviewerRowCount(props.round);
+  if (rowCount === 0) {
     return (
       <SurfaceStateCard
         testID="review-detail:runs:empty"
@@ -725,41 +739,45 @@ export function ReviewRoundRuns(props: Readonly<{
             ? t('reviewWalkthrough.detail.glanceRunning')
             : t(ROUND_STATE_KEYS[props.round.state])
         }
+        {...(workflowHref ? { action: { label: t('reviewWalkthrough.detail.workflowRun'), testID: 'review-detail:runs:workflow',
+          onPress: () => router.push(workflowHref as never) } } : {})}
       />
     );
   }
+  const executionHref = (reference: ReviewRecordRound['runs'][number] | undefined) => scope && reference?.kind === 'execution'
+    && reference.sessionId ? buildSessionExecutionRunRouteHref({ sessionId: reference.sessionId, runId: reference.runId, serverId: scope.serverId }) : null;
   return (
-    <ItemGroup header="none" testID="review-detail:runs">
+    <ItemGroup testID="review-detail:runs" title={t('reviewWalkthrough.detail.reviewers')}
+      description={props.subjectKind ? t(REVIEWERS_READ_KEYS[props.subjectKind]) : undefined}
+      // The Workflow run they ran in, as a verb so it reads as a way there wherever the header places it.
+      action={workflowHref ? <TextLinkButton testID="review-detail:runs:workflow" label={t('runs.openRun')}
+        onPress={() => router.push(workflowHref as never)} /> : undefined}>
       {settled ? reviewers.map(reviewer => {
-        const reference = reviewer.runId ? runsById.get(reviewer.runId) : undefined;
-        const href = scope && reference?.kind === 'execution' && reference.sessionId
-          ? buildSessionExecutionRunRouteHref({ sessionId: reference.sessionId, runId: reference.runId, serverId: scope.serverId }) : null;
+        const href = executionHref(reviewer.runId ? runsById.get(reviewer.runId) : undefined);
         const duration = reviewer.startedAt !== undefined && reviewer.finishedAt !== undefined
           ? formatElapsedDuration(reviewer.finishedAt - reviewer.startedAt) : null;
+        const model = reviewer.run ? resolveExecutionRunSelectionLabel(reviewer.run.resolvedSelection, () => null, null,
+          resolveRunNativeModelLabel(reviewer.run.backendTarget, undefined, reviewer.run.resolvedSelection)) : null;
+        const unfinished = isReviewRoundReviewerUnfinished(reviewer);
         return <Item key={reviewer.reviewerId} testID={`review-detail:run:${reviewer.runId ?? reviewer.reviewerId}`}
-          title={reviewer.name} subtitle={joinHappierFacts(reviewer.outcome === null ? null
-            : reviewRoundReviewerOutcomeLabel(reviewer.outcome), duration) || undefined}
+          title={joinHappierFacts(reviewer.name, model)} icon={<ReviewerMark reviewer={reviewer} size={20} />}
+          subtitle={reviewer.outcome === null ? undefined : reviewRoundReviewerOutcomeLabel(reviewer.outcome)}
+          // Its findings and how long it took sit in the row's right-aligned meta column (lab `detail-runs`).
+          detail={joinHappierFacts(reviewer.findingsCount === null ? null
+            : t('reviewWalkthrough.detail.findingsCount', { count: reviewer.findingsCount }), duration) || undefined}
+          {...(unfinished ? { subtitleStyle: { color: theme.colors.state.danger.textForeground } } : {})}
           // Lab `detail-runs`: a reviewer that didn't finish offers Retry at its row's end.
-          {...(props.onRetry && isReviewRoundReviewerUnfinished(reviewer) ? { rightElement: <RoundButton size="small" display="secondary"
+          {...(props.onRetry && unfinished ? { rightElement: <RoundButton size="small" display="secondary"
             testID={`review-detail:run-retry:${reviewer.reviewerId}`} title={t('common.retry')}
             accessibilityLabel={t('reviewWalkthrough.detail.retryReviewer', { name: reviewer.name })}
-            onPress={() => props.onRetry?.(reviewer.reviewerId)} /> } : {})}
+            onPress={() => props.onRetry?.([reviewer])} /> } : {})}
           {...(href ? { onPress: () => router.push(href as never) } : {})} />;
-      }) : null}
-      {runs.map((run, index) => {
-        const href =
-          !scope ? null : run.kind === 'workflow'
-            ? createWorkflowRunRoute(run.runId, scope?.serverId ?? null)
-            : run.sessionId
-              ? buildSessionExecutionRunRouteHref({
-                  sessionId: run.sessionId,
-                  runId: run.runId,
-                  serverId: scope?.serverId ?? null,
-                })
-              : null;
+      }) : executions.map(run => {
+        const href = executionHref(run);
         const onPress = href ? () => router.push(href as never) : undefined;
-        const read = run.kind === 'execution' ? props.reads?.get(run.runId)?.run ?? null : null;
-        if (run.kind === 'execution' && read) {
+        const reviewer = reviewers.find(item => item.runId === run.runId);
+        const read = props.reads?.get(run.runId)?.run ?? null;
+        if (read) {
           const findingsCount = props.reads?.get(run.runId)?.findingsCount ?? null;
           const duration = read.finishedAtMs !== undefined ? formatElapsedDuration(read.finishedAtMs - read.startedAtMs) : null;
           return (
@@ -774,12 +792,8 @@ export function ReviewRoundRuns(props: Readonly<{
           <Item
             key={run.runId}
             testID={`review-detail:run:${run.runId}`}
-            title={
-              run.kind === 'workflow'
-                ? t('reviewWalkthrough.detail.workflowRun')
-                : props.round.reviewerDisplayNames?.[props.round.reviewerIds[index] ?? '']
-                  ?? t('reviewWalkthrough.detail.reviewerRun', { count: index + 1 })
-            }
+            title={reviewer?.name ?? t('reviewWalkthrough.detail.workflowRun')}
+            icon={reviewer ? <ReviewerMark reviewer={reviewer} size={20} /> : undefined}
             subtitle={t(ROUND_STATE_KEYS[props.round.state])}
             {...(onPress ? { onPress } : {})}
           />

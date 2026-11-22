@@ -51,3 +51,43 @@ describe('New round paid confirmation', () => {
     await free.unmount();
   });
 });
+
+describe('Retrying reviewers that did not finish', () => {
+  const titles: string[] = [];
+  const startNothing = async () => ({ ok: true as const });
+  function RetryHarness(props: Readonly<{ retried: readonly string[]; onRetry?: () => void; reason?: string | null }>) {
+    const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
+    if (chrome?.kind === 'card' && typeof chrome.title === 'string') titles.push(chrome.title);
+    return <><ReviewNewRoundDialog previousRound={1} retrying={props.retried}
+      reviewers={props.retried.map(name => ({ id: name, label: name, mark: null, continuity: null }))}
+      ready={false} reason={props.reason ?? null} onRetry={props.onRetry}
+      onStart={startNothing} onClose={onClose} setChrome={setChrome} />
+      {chrome?.kind === 'card' ? chrome.footer : null}</>;
+  }
+
+  it('keeps the retried reviewer named while its Machine does not answer, with Retry on the reason line (U8 R4 P5)', async () => {
+    const { t } = await import('@/text');
+    const onRetry = vi.fn();
+    titles.length = 0;
+    const screen = await renderScreen(<RetryHarness retried={['Claude · step 1']} reason="It isn’t answering." onRetry={onRetry} />);
+    try {
+      expect(titles.at(-1)).toBe(t('reviewWalkthrough.detail.retryReviewer', { name: 'Claude · step 1' }));
+      expect(screen.findByTestId('review-new-round:reviewer:Claude · step 1')).not.toBeNull();
+      // The reason and its Retry are one line in the body; the footer no longer repeats the reason.
+      expect(screen.findByTestId('review-new-round:unavailable')).not.toBeNull();
+      expect(screen.findByTestId('review-new-round:failure')).toBeNull();
+      await screen.pressByTestIdAsync('review-new-round:retry');
+      expect(onRetry).toHaveBeenCalledOnce();
+    } finally { await screen.unmount(); }
+  });
+
+  it('names a retry of several reviewers by their count', async () => {
+    const { t } = await import('@/text');
+    titles.length = 0;
+    const screen = await renderScreen(<RetryHarness retried={['Claude · step 1', 'Claude · step 2']} />);
+    try {
+      expect(titles.at(-1)).toBe(t('reviewWalkthrough.detail.retryUnfinished', { count: 2 }));
+      expect(screen.findByTestId('review-new-round:reviewer:Claude · step 2')).not.toBeNull();
+    } finally { await screen.unmount(); }
+  });
+});

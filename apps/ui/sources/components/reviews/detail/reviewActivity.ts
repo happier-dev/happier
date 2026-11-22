@@ -19,6 +19,8 @@ export type ReviewActivityActor =
   | Readonly<{
       kind: 'reviewer';
       name: string;
+      /** The Agent the reviewer is, for its mark (`reviewRoundReviewers`). */
+      agentId: string | null;
     }>;
 
 export type ReviewActivityEvent = Readonly<{
@@ -88,7 +90,7 @@ export function projectReviewActivity(
     for (const reviewer of projectReviewRoundReviewers(round, input.runReads)) {
       if (reviewer.outcome === null || reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
       events.push({ id: `reviewer:${round.ordinal}:${reviewer.reviewerId}`, at: reviewer.finishedAt,
-        actor: { kind: 'reviewer', name: reviewer.name }, kind: 'reviewerFinished', outcome: reviewer.outcome });
+        actor: { kind: 'reviewer', name: reviewer.name, agentId: reviewer.agentId }, kind: 'reviewerFinished', outcome: reviewer.outcome });
     }
   }
   for (const comment of input.comments) {

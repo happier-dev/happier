@@ -23,6 +23,7 @@ import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames
 import { presentSharePrincipal, sharePrincipalKey } from '@/components/sharing/sharePrincipalPresentation';
 import { Avatar } from '@/components/ui/avatar/Avatar';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
+import type { ReviewRoundReviewer } from '../reviewRoundReviewers';
 
 import { ReviewNewRoundDialog, showReviewNewRoundDialog, type ReviewNewRoundReviewer, type ReviewNewRoundStart } from './ReviewNewRoundDialog';
 
@@ -30,6 +31,8 @@ type Round = ReviewArtifactV1['rounds'][number];
 const NO_PREVIEW_ROWS: readonly WorkflowReviewNewRoundReviewerV1[] = Object.freeze([]);
 type NativeRef = Extract<Round['runs'][number], { kind: 'execution' }>;
 type Execution = ReturnType<typeof useMountedActionExecution>;
+/** A reviewer being retried, as the page names it (`reviewRoundReviewers`), so the dialog names it the same way. */
+export type ReviewRetriedReviewer = Pick<ReviewRoundReviewer, 'reviewerId' | 'name' | 'agentId'>;
 type WorkflowPreview = Readonly<{ kind: 'loading' } | { kind: 'failed'; message: string }
     | { kind: 'ready'; machineId: string; reviewers: readonly WorkflowReviewNewRoundReviewerV1[]; inventory: ReviewEngineInventory }>;
 
@@ -57,13 +60,14 @@ function costForReviewer(inventory: ReviewEngineInventory, reviewer: ReviewRevie
 /** The accepted Workflow owns the repeat roster and a single replay, including every executable leaf. */
 function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly<{
     previousRound: number; runId: string; lifetime: ServerAccountScopeLifetime; execute: Execution['execute'];
-    /** Retry only these reviewers of the round (a reviewer that did not finish); absent repeats the whole roster. */
-    reviewerIds?: readonly string[];
+    /** Retry only these reviewers of the round (they did not finish); absent repeats the whole roster. */
+    retried?: readonly ReviewRetriedReviewer[];
 }>) {
     const [preview, setPreview] = React.useState<WorkflowPreview>({ kind: 'loading' });
     // A Review started before reviewer retry existed refuses it; the same dialog then offers the ordinary New round.
     const [retryRefused, setRetryRefused] = React.useState(false);
-    const retried = retryRefused ? undefined : props.reviewerIds;
+    const retriedReviewers = retryRefused ? undefined : props.retried;
+    const retried = React.useMemo(() => retriedReviewers?.map(reviewer => reviewer.reviewerId), [retriedReviewers]);
     const retriedKey = retried?.join('\u0000') ?? null;
     const [attempt, retry] = React.useReducer(value => value + 1, 0);
     React.useEffect(() => {
@@ -95,7 +99,13 @@ function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly
     const labels = useExecutableParticipantLabels(selected, props.lifetime.scope.serverId);
     const principals = React.useMemo(() => selected.flatMap(reviewer => reviewer.kind === 'person' ? [reviewer.principal] : []), [selected]);
     const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, props.lifetime.scope.serverId);
-    const reviewers = preview.kind !== 'ready' ? [] : rows.map((row, index): ReviewNewRoundReviewer => {
+    const retriedById = new Map(retriedReviewers?.map(reviewer => [reviewer.reviewerId, reviewer]));
+    // A retried reviewer keeps its row and the page's name while the preview loads or its Machine doesn't answer; the
+    // dialog's reason line says why it can't start, so the row adds no second "Unavailable".
+    const reviewers = preview.kind !== 'ready' ? (retriedReviewers ?? []).map((reviewer): ReviewNewRoundReviewer => ({
+        id: reviewer.reviewerId, label: reviewer.name, continuity: null,
+        mark: reviewer.agentId ? <ExecutionRunAgentMark size={18} agentId={reviewer.agentId} /> : null,
+    })) : rows.map((row, index): ReviewNewRoundReviewer => {
         const reviewer = row.reviewer;
         if (reviewer.kind === 'person') {
             const presented = presentSharePrincipal({ ref: reviewer.principal,
@@ -105,12 +115,12 @@ function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly
                 mark: presented.avatar ? <Avatar id={presented.avatar.id} imageUrl={presented.avatar.imageUrl ?? null} size={18} /> : null,
                 continuity: row.continuity, required: reviewer.required };
         }
-        return { id: row.id, label: labels[index] ?? (reviewer.kind === 'engine' ? reviewer.engineId : t('runPage.intentTitles.review')),
+        return { id: row.id, label: retriedById.get(row.id)?.name ?? labels[index] ?? (reviewer.kind === 'engine' ? reviewer.engineId : t('runPage.intentTitles.review')),
             mark: reviewer.kind === 'model' ? <ExecutionRunAgentMark size={18}
                 agentId={resolveBundledAgentIdFromContributionIdentity(reviewer.launch.agentTarget.identity)} /> : null,
             continuity: row.continuity, costConsent: costForReviewer(preview.inventory, reviewer) };
     });
-    return <ReviewNewRoundDialog {...props} reviewers={reviewers} retrying={Boolean(retried)} ready={preview.kind === 'ready'} loading={preview.kind === 'loading'}
+    return <ReviewNewRoundDialog {...props} reviewers={reviewers} retrying={retriedReviewers?.map(reviewer => reviewer.name)} ready={preview.kind === 'ready'} loading={preview.kind === 'loading'}
         reason={preview.kind === 'failed' ? preview.message : null} onRetry={preview.kind === 'failed' ? retry : undefined}
         onStart={async costConsent => {
             if (preview.kind !== 'ready') return { ok: false, message: t('common.unavailable') };
@@ -219,13 +229,13 @@ export function useReviewNewRound(input: Readonly<{
                     message: resolveActionExecutionErrorMessage(result, t('common.error')) };
             } });
     }, [available, execution.binding, execution.execute, input.people, input.record, native, previous, workflow]);
-    // Retrying one reviewer starts a new round of the same Workflow with only that reviewer (`review.new_round
+    // Retrying reviewers that didn't finish starts a new round of the same Workflow with only them (`review.new_round
     // { runId, reviewerIds }`); a round its Workflow did not run has no per-reviewer retry.
     const retryAvailable = available && Boolean(workflow);
-    const retry = React.useCallback((reviewerId: string) => {
-        if (!retryAvailable || !previous || !workflow || !execution.binding) return;
+    const retry = React.useCallback((reviewers: readonly ReviewRetriedReviewer[]) => {
+        if (!retryAvailable || !previous || !workflow || !execution.binding || reviewers.length === 0) return;
         Modal.show({ component: WorkflowReviewNewRoundDialog, props: { previousRound: previous.ordinal, runId: workflow.runId,
-            lifetime: execution.binding, execute: execution.execute, reviewerIds: [reviewerId] } });
+            lifetime: execution.binding, execute: execution.execute, retried: reviewers } });
     }, [execution.binding, execution.execute, previous, retryAvailable, workflow]);
     return { available, open, retry: retryAvailable ? retry : null, approval: execution.approval };
 }

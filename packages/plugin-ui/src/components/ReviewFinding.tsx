@@ -139,7 +139,8 @@ export function HappierReviewFindingBody(props: HappierReviewFindingBodyProps) {
   const markdown = props.renderMarkdown ?? ((value: string) => <Markdown value={value} />);
   const location = formatHappierReviewFindingLocation(finding);
   const heading = (label: string) => <Text role="pageRowTitle" strong accessibilityRole="header" style={{ color: theme.colors.text }}>{label}</Text>;
-  const where = location || finding.patch || finding.suggestion;
+  // The place itself is on the finding's facts line; Where draws it again only as the patched code's file.
+  const where = finding.patch || finding.suggestion;
   return (
     <View testID={`review-finding-body:${rowId}`} style={styles.body}>
       <View style={styles.why}>
@@ -151,8 +152,7 @@ export function HappierReviewFindingBody(props: HappierReviewFindingBodyProps) {
       {where ? props.renderWhere ? props.renderWhere(finding) : (
         <View testID={`review-finding-where:${rowId}`} style={styles.section}>
           {heading(props.labels.where)}
-          {finding.patch ? <DiffViewer unifiedDiff={finding.patch} filePath={finding.filePath} label={location ?? props.labels.where} />
-            : location ? <Text role="cardMeta" style={{ color: theme.colors.secondaryText }}>{location}</Text> : null}
+          {finding.patch ? <DiffViewer unifiedDiff={finding.patch} filePath={finding.filePath} label={location ?? props.labels.where} /> : null}
           {finding.suggestion && !finding.patch ? markdown(finding.suggestion, 'suggestion') : null}
         </View>
       ) : null}

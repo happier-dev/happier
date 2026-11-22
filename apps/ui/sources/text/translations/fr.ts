@@ -7423,7 +7423,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
 
   errors: {
     networkError: "Erreur réseau",
-    machineNotAnswering: 'Cette machine ne répond pas. Choisissez-en une en ligne ou réessayez quand elle sera de retour.',
+    machineNotAnswering: 'Cette machine ne répond pas. Réessayez quand elle sera de nouveau en ligne.',
+    workspaceUnavailableOnMachine: 'Le dossier du projet n’est pas disponible sur cette machine. Vérifiez qu’il existe toujours, puis réessayez.',
     serverError: "Erreur Home",
     unknownError: "Une erreur inconnue s’est produite",
     connectionTimeout: "Délai de connexion dépassé",

@@ -7914,7 +7914,8 @@ localTailscale: {
 
   errors: {
     networkError: "ネットワークエラーが発生しました",
-    machineNotAnswering: 'そのマシンは応答していません。オンラインのマシンを選ぶか、復帰後にもう一度お試しください。',
+    machineNotAnswering: 'そのマシンは応答していません。オンラインに戻ったらもう一度お試しください。',
+    workspaceUnavailableOnMachine: 'そのマシンではプロジェクトのフォルダを利用できません。フォルダがまだあるか確認してから、もう一度お試しください。',
     serverError: "Homeエラーが発生しました",
     unknownError: "不明なエラーが発生しました",
     connectionTimeout: "接続がタイムアウトしました",

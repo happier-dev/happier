@@ -1,0 +1,43 @@
+{
+  "v": 1,
+  "rounds": [
+    {
+      "ordinal": 1,
+      "state": "partial",
+      "startedAt": 1795325163708,
+      "finishedAt": 1795325382850,
+      "reviewerIds": [
+        "step-1-reviewer-1",
+        "step-2-reviewer-1"
+      ],
+      "runs": [
+        {
+          "kind": "workflow",
+          "runId": "bc6b38d7-13ba-4f73-bf98-771ccff08ed8"
+        }
+      ],
+      "reviewerDisplayNames": {
+        "step-1-reviewer-1": "claude",
+        "step-2-reviewer-1": "claude"
+      },
+      "reviewerOutcomes": [
+        {
+          "reviewerId": "step-1-reviewer-1",
+          "displayName": "claude",
+          "outcome": "partial",
+          "runId": "run_request_f212387f05a3a279d3258266e81d74c93e70d34ef5024eae0c5fa7d8d566655f",
+          "startedAt": 1795325257471,
+          "finishedAt": 1795325263829
+        },
+        {
+          "reviewerId": "step-2-reviewer-1",
+          "displayName": "claude",
+          "outcome": "partial",
+          "runId": "run_request_b42ac9f6e80d225c31c700ca46ce46b5f6a4e08530582940bdcbe6ea17e16e42",
+          "startedAt": 1795325362146,
+          "finishedAt": 1795325365576
+        }
+      ]
+    }
+  ]
+}

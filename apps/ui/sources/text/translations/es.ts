@@ -7602,7 +7602,8 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
 
   errors: {
     networkError: "Error de conexión",
-    machineNotAnswering: 'Esa máquina no responde. Elige una que esté en línea o vuelve a intentarlo cuando vuelva.',
+    machineNotAnswering: 'Esa máquina no responde. Vuelve a intentarlo cuando esté en línea.',
+    workspaceUnavailableOnMachine: 'La carpeta del proyecto no está disponible en esa máquina. Comprueba que la carpeta sigue ahí y vuelve a intentarlo.',
     serverError: "Error del Home",
     unknownError: "Error desconocido",
     connectionTimeout: "Se agotó el tiempo de conexión",

@@ -7326,7 +7326,8 @@ export const zhHans: TranslationStructure = {
 
   errors: {
     networkError: "发生网络错误",
-    machineNotAnswering: '那台机器没有响应。请选择在线的机器，或等它恢复后再试。',
+    machineNotAnswering: '那台机器没有响应。请等它恢复在线后再试。',
+    workspaceUnavailableOnMachine: '那台机器上没有可用的项目文件夹。请确认文件夹仍然存在，然后再试。',
     serverError: "发生Home错误",
     unknownError: "发生未知错误",
     connectionTimeout: "连接超时",

@@ -7352,7 +7352,8 @@ export const ru: TranslationStructure = {
 
     errors: {
     networkError: "Произошла ошибка сети",
-    machineNotAnswering: 'Эта машина не отвечает. Выберите машину в сети или повторите, когда она вернётся.',
+    machineNotAnswering: 'Эта машина не отвечает. Повторите, когда она снова будет в сети.',
+    workspaceUnavailableOnMachine: 'Папка проекта недоступна на этой машине. Проверьте, что папка всё ещё на месте, и повторите попытку.',
     serverError: "Произошла ошибка Home",
     unknownError: "Произошла неизвестная ошибка",
     connectionTimeout: "Время соединения истекло",

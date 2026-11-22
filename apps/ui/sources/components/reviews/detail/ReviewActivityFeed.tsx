@@ -146,7 +146,8 @@ function presentActor(
       ) : null,
     };
   }
-  return { label: actor.name, mark: null };
+  return { label: actor.name, mark: actor.agentId && hasAgentIconMark(actor.agentId, theme)
+    ? <AgentIcon agentId={actor.agentId} size={ICON_SIZE.sm} /> : null };
 }
 
 function eventSentence(event: ReviewActivityEvent): string {
@@ -161,7 +162,10 @@ function eventSentence(event: ReviewActivityEvent): string {
     case 'verdict':
       return t(VERDICT_WORDS[event.verdict]);
     case 'reviewerFinished':
-      return reviewRoundReviewerOutcomeLabel(event.outcome);
+      // A sentence after the reviewer's name ("Claude · step 2 didn't finish"), in the same words as its row.
+      return event.outcome === 'completed' ? t('reviewWalkthrough.detail.eventRunFinished')
+        : event.outcome === 'cancelled' ? reviewRoundReviewerOutcomeLabel(event.outcome)
+          : t('reviewWalkthrough.detail.eventRunDidntFinish');
     case 'roundStarted':
       return t('reviewWalkthrough.detail.eventRoundStarted', {
         round: event.round,

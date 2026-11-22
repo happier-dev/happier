@@ -7712,7 +7712,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
 
   errors: {
     networkError: "Ocorreu um erro de rede",
-    machineNotAnswering: 'Essa máquina não está respondendo. Escolha uma que esteja online ou tente de novo quando ela voltar.',
+    machineNotAnswering: 'Essa máquina não está respondendo. Tente de novo quando ela voltar a ficar online.',
+    workspaceUnavailableOnMachine: 'A pasta do projeto não está disponível nessa máquina. Verifique se a pasta ainda existe e tente de novo.',
     serverError: "Ocorreu um erro do Home",
     unknownError: "Ocorreu um erro desconhecido",
     connectionTimeout: "Tempo limite da conexão esgotado",

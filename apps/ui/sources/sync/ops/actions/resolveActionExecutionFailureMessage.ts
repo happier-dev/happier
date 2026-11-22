@@ -266,6 +266,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         const details = asRecord(record.details);
         const availability = MachineAvailabilityDiagnosticV1Schema.safeParse(details?.diagnostic ?? details).data;
         if (availability?.reason === 'machine_offline') return t('errors.machineNotAnswering');
+        // A Workflow start whose project folder the target Machine could not use (`workflow_workspace` refusal).
+        if (details?.reason === 'workspace_unavailable') return t('errors.workspaceUnavailableOnMachine');
     }
     if (options?.closedCodesOnly) return null;
     // An error text that only repeats its code ("target_unavailable") is not a sentence: the caller's fallback speaks.

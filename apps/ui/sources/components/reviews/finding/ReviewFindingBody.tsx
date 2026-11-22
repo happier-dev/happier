@@ -29,7 +29,6 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 
-import { formatReviewFindingLocation } from '@/components/sessions/reviews/findings/reviewFindingPresentation';
 
 /** One reviewer that reported a finding, in the order they reported it. */
 export type ReviewFindingReviewer = Readonly<{
@@ -123,19 +122,21 @@ function ReviewFindingSeenBeforeHistory(props: ReviewFindingSeenBefore & Readonl
 /** One earlier appearance, named by its Review ("Also in Fix settings modal remount · 1d ago") when this device holds it. */
 function ReviewFindingSeenBeforeLink(props: Readonly<{ rowId: string; match: Readonly<{ reviewId: string; commentId: string; createdAt: number }>; href: string }>) {
   const title = useArtifact(props.match.reviewId)?.title?.trim() || null;
-  return <Link testID={`review-finding-seen-link:${props.rowId}:${props.match.commentId}`} href={props.href as never} style={styles.cause}>
-    {t('reviewWalkthrough.alsoInReview', { title, time: formatShortRelativeTime(props.match.createdAt) })}
+  // The words are app Text inside the router link: the link alone keeps the browser's default face and ink in dark mode.
+  return <Link testID={`review-finding-seen-link:${props.rowId}:${props.match.commentId}`} href={props.href as never}>
+    <Text style={styles.cause}>{t('reviewWalkthrough.alsoInReview', { title, time: formatShortRelativeTime(props.match.createdAt) })}</Text>
   </Link>;
 }
 
-/** Where: the flagged lines with the suggested fix applied, or the place alone when no fix came with it. */
+/**
+ * Where: the flagged lines with the suggested fix applied, or the suggested fix in words. The place alone is already on
+ * the finding's facts line, so a finding with neither draws no Where (U8 R4 C1).
+ */
 function ReviewFindingWhere(
   props: Readonly<{ finding: ReviewFinding; rowId: string }>,
 ) {
-  const { theme } = useUnistyles();
   const { finding } = props;
-  const location = formatReviewFindingLocation(finding);
-  const path = finding.filePath ?? null;
+  if (!finding.patch && !finding.suggestion) return null;
   return (
     <View testID={`review-finding-where:${props.rowId}`} style={styles.section}>
       <Text
@@ -147,22 +148,10 @@ function ReviewFindingWhere(
         {t('runPage.review.where')}
       </Text>
       {finding.patch ? (
-        <ReviewFindingCode unifiedDiff={finding.patch} path={path} />
-      ) : location ? (
-        <View style={styles.place}>
-          <Icon
-            name="file"
-            size={ICON_SIZE.xs}
-            color={theme.colors.text.secondary}
-          />
-          <Text selectable numberOfLines={1} style={styles.filePath}>
-            {location}
-          </Text>
-        </View>
-      ) : null}
-      {finding.suggestion && !finding.patch ? (
-        <MarkdownView markdown={finding.suggestion} textStyle={styles.prose} />
-      ) : null}
+        <ReviewFindingCode unifiedDiff={finding.patch} path={finding.filePath ?? null} />
+      ) : (
+        <MarkdownView markdown={finding.suggestion!} textStyle={styles.prose} />
+      )}
     </View>
   );
 }
@@ -265,11 +254,6 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.space.s6,
     minWidth: 0,
     flexShrink: 1,
-  },
-  place: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.space.s6,
   },
   filePath: {
     ...Typography.variant('meta'),

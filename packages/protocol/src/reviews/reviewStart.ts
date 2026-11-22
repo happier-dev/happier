@@ -108,6 +108,12 @@ export function reviewReviewerIdForSelectionV1(reviewerIndex: number, stepIndex 
   return `step-${stepIndex + 1}-reviewer-${reviewerIndex + 1}`;
 }
 
+/** The roster slot a provenance id names (both indexes 0-based), or null for an id this owner did not write. */
+export function readReviewReviewerSlotV1(reviewerId: string): Readonly<{ stepIndex: number; reviewerIndex: number }> | null {
+  const match = /^step-([1-9]\d*)-reviewer-([1-9]\d*)$/.exec(reviewerId);
+  return match ? { stepIndex: Number(match[1]) - 1, reviewerIndex: Number(match[2]) - 1 } : null;
+}
+
 /** The one roster an engine-id choice becomes; the Review owner admits it like any authored selection. */
 export function reviewReviewersForEngineIdsV1(engineIds: readonly string[]): Pick<ReviewEngineReviewerSelectionV1, 'kind' | 'engineId'>[] {
   return engineIds.map(engineId => ({ kind: 'engine', engineId }));

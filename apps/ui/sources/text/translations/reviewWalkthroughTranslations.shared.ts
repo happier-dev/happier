@@ -230,8 +230,17 @@ export type ReviewWalkthroughTranslations = {
         retryReviewer: (params: Readonly<{ name: string }>) => string;
         retryReviewerUnavailable: string;
         retryRoundDescription: string;
+        reviewerInStep: (params: Readonly<{ name: string; step: number }>) => string;
+        reviewerOrdinal: (params: Readonly<{ name: string; count: number }>) => string;
+        reviewerDidntFinish: string;
+        retryUnfinished: (params: Count) => string;
+        retryRoundDescriptionMany: string;
+        reviewers: string;
+        reviewersReadRepository: string;
+        reviewersReadComparison: string;
+        reviewersReadPullRequest: string;
         fixedCount: (params: Count) => string;
-        reviewersDidntFinish: (params: Readonly<{ names: string }>) => string;
+        reviewersDidntFinish: (params: Readonly<{ names: string; count: number }>) => string;
         eventDecided: (params: Readonly<{ decision: string; title: string }>) => string;
         eventFixed: (params: Readonly<{ title: string }>) => string;
         eventApproved: string;
@@ -502,7 +511,16 @@ export const en: ReviewWalkthroughTranslations = {
         fixedIn: ({ sha }) => `Fixed in ${sha}`,
         retryReviewer: ({ name }) => `Retry ${name}`,
         retryReviewerUnavailable: 'This Review can’t retry one reviewer. Start a new round with every reviewer instead.',
-        retryRoundDescription: 'Only this reviewer reads the code again, in a new round. The other reviewers’ results stay as they are.',
+        retryRoundDescription: 'Only this reviewer reads the code again, in a new round. The others’ results stay as they are.',
+        reviewerInStep: ({ name, step }) => `${name} · step ${step}`,
+        reviewerOrdinal: ({ name, count }) => `${name} ${count}`,
+        reviewerDidntFinish: 'Didn’t finish',
+        retryUnfinished: ({ count }) => count === 2 ? 'Retry both' : `Retry ${count} reviewers`,
+        retryRoundDescriptionMany: 'Only these reviewers read the code again, in a new round. The others’ results stay as they are.',
+        reviewers: 'Reviewers',
+        reviewersReadRepository: 'Each read the whole repository.',
+        reviewersReadComparison: 'Each read the same changes.',
+        reviewersReadPullRequest: 'Each read the pull request.',
         fixedCount: ({ count }) => `${count} fixed`,
         reviewersDidntFinish: ({ names }) => `${names} didn’t finish`,
         eventDecided: ({ decision, title }) => `chose ${decision} for “${title}”`,

@@ -78,6 +78,14 @@ describe('Action failure presentation', () => {
         // Other target refusals keep the caller's sentence rather than guessing at a cause.
         expect(resolveActionExecutionFailureMessage(refused({ diagnostic: { reason: 'session_absent' } }), fallback)).toBe(fallback);
     });
+    it('says the folder is missing on the Machine when a Workflow start refuses its workspace (Review Retry, U8 R4 P6)', () => {
+        // Observed refusal shape: `actionStartTargetUnavailableV1(..., 'workflow_workspace', 'workspace_unavailable')`.
+        const refused = { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable',
+            details: { code: 'target_unavailable', reason: 'workspace_unavailable' } };
+        expect(resolveActionExecutionFailureMessage(refused, t('common.error'))).toBe(t('errors.workspaceUnavailableOnMachine'));
+        expect(resolveActionExecutionErrorMessage(Object.assign(new Error('target_unavailable'), refused), t('common.error')))
+            .toBe(t('errors.workspaceUnavailableOnMachine'));
+    });
     it('retains a child Session refusal through returned and thrown parent Action failures', () => {
         const child = SessionSpawnNewActionResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
             retryable: false, agentId: 'claude', launchError: { kind: 'launch_error', code: 'agent_signed_out',

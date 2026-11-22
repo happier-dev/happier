@@ -6452,7 +6452,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     errors: {
         networkError: '發生網路錯誤',
-        machineNotAnswering: '那台機器沒有回應。請選擇在線的機器，或等它恢復後再試。',
+        machineNotAnswering: '那台機器沒有回應。請等它恢復連線後再試。',
+        workspaceUnavailableOnMachine: '那台機器上沒有可用的專案資料夾。請確認資料夾仍然存在，然後再試。',
         serverError: '發生Home錯誤',
         unknownError: '發生未知錯誤',
         connectionTimeout: '連線逾時',

@@ -7827,7 +7827,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
 
   errors: {
     networkError: "Si è verificato un errore di rete",
-    machineNotAnswering: 'Quella macchina non risponde. Scegline una online o riprova quando torna.',
+    machineNotAnswering: 'Quella macchina non risponde. Riprova quando torna online.',
+    workspaceUnavailableOnMachine: 'La cartella del progetto non è disponibile su quella macchina. Controlla che la cartella ci sia ancora, poi riprova.',
     serverError: "Si è verificato un errore dell’Home",
     unknownError: "Si è verificato un errore sconosciuto",
     connectionTimeout: "Connessione scaduta",
