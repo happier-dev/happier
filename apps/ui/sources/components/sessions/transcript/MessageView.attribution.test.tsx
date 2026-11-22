@@ -6,6 +6,12 @@ import { installMessageViewCommonModuleMocks } from './messageViewTestHelpers';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import type { SessionMessageProvenance } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { EnsureSessionVisibleForRouteResult } from '@/sync/domains/session/sessionRouteHydrationState';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { PET_IMPORT_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsPetsV1';
+import { buildTrustedHostSessionInputAdmissionV1, SESSION_MESSAGE_PROVENANCE_META_KEY, withSessionInputAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
+import { listTranscriptApprovalArtifactsForSession } from '@/sync/domains/artifacts/approvalArtifacts';
+import { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } from '@/components/tools/shell/approvals/transcriptSettledApprovalPresentations';
 
 const attributionBoundaries = vi.hoisted(() => ({
     push: vi.fn(), transcriptCommits: vi.fn(),
@@ -71,6 +77,60 @@ afterEach(() => {
 });
 
 describe('MessageView Account attribution', () => {
+    it.each(['host result', 'another approval', 'person message', 'originating tool'] as const)(
+        'shows the originless Machine pet receipt only at its retained host result (%s)', async (carrier) => {
+            const sessionId = 'pet-session';
+            const artifactId = 'rust-logo-approval';
+            const packageFormat = 'codex-compatible-atlas-v1';
+            const manifest = { id: 'rust-logo', displayName: 'Rust Logo', description: 'Rust gear', spritesheetPath: 'spritesheet.webp' };
+            const spritesheet = { mediaType: 'image/webp', digest: `sha256:${'a'.repeat(64)}`, sizeBytes: 518400 };
+            const execution = { ok: true, executedAtMs: 3, result: { pet: {
+                accountPetId: 'rust-logo-account-pet', packageFormat, manifest, origin: { kind: 'manualImport' },
+                spritesheetAssetRef: { assetId: 'asset-rust', ...spritesheet },
+                digest: spritesheet.digest, sizeBytes: spritesheet.sizeBytes, createdAt: 3, updatedAt: 3,
+            } } };
+            const approval = ApprovalRequestV2Schema.parse({
+                v: 2, status: 'executed', createdAtMs: 1, updatedAtMs: 3, createdBy: { surface: 'agent', sessionId },
+                requestedSurface: 'agent', actionId: PET_IMPORT_ACTION_ID_V1, summary: 'Add to my pets',
+                executionOriginV1: { v: 1, authority: 'account_automation', surface: 'agent', actionId: PET_IMPORT_ACTION_ID_V1,
+                    caller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 }, serverId: 'home', requestId: 'import-rust' },
+                ...(carrier === 'originating tool' ? { origin: { kind: 'transcript_tool_call', sessionId, toolCallId: 'tool-import-rust' } } : {}),
+                actionArgs: { source: { kind: 'machine', machineId: 'machine-1', sourceKey: 'prepared-rust' } },
+                preview: { validation: { ok: true, packageFormat, manifest, ...spritesheet,
+                    spritesheetPath: '/pets/rust-logo/spritesheet.webp', width: 1536, height: 1872 },
+                    previewHandle: { kind: 'daemonSourceKey', sourceKey: 'prepared-rust' } },
+                decision: { kind: 'approve', decidedAtMs: 2 }, execution,
+            });
+            const requests = listTranscriptApprovalArtifactsForSession([{
+                id: artifactId, isDecrypted: true, header: buildApprovalRequestArtifactHeaderV1(approval), body: JSON.stringify(approval),
+                title: approval.summary, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3,
+            }], { serverId: 'home', sessionId }, { settledPresentations: TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS });
+            expect(requests.map(({ artifact }) => artifact.id)).toEqual([artifactId]);
+            const deliveredId = carrier === 'another approval' ? 'other-approval' : artifactId;
+            const { provenance, request } = buildTrustedHostSessionInputAdmissionV1('mcp');
+            const message: UserTextMessage = {
+                kind: 'user-text', id: 'retained-result', localId: `approval-result:${deliveredId}`, createdAt: 4,
+                text: JSON.stringify({ artifactId: deliveredId, actionId: PET_IMPORT_ACTION_ID_V1, ok: true, status: 'executed', execution }),
+                meta: carrier === 'person message' ? {} : {
+                    ...withSessionInputAuthorityV1({}, { ...request, permission: { admittedPermissionCeiling: 'read-only' } }),
+                    [SESSION_MESSAGE_PROVENANCE_META_KEY]: provenance,
+                },
+            };
+            const source = createReadOnlySessionTranscriptSource({ sessionId, messages: [message], reducerState: null, metadata: null, agentState: null });
+            const screen = await renderBareScreen(<SessionTranscriptSourceProvider source={source}>
+                <MessageView sessionId={sessionId} metadata={null} message={message} approvalRequests={requests} />
+            </SessionTranscriptSourceProvider>);
+            const card = screen.findByTestId('approval-prompt-pet-import');
+            if (carrier === 'host result') {
+                expect(card).not.toBeNull();
+                expect(screen.getTextContent()).toContain('Rust Logo');
+                expect(screen.findByTestId('approval-prompt-pet-import:added')).not.toBeNull();
+            } else {
+                expect(card).toBeNull();
+            }
+        },
+    );
+
     it.each([false, true])('shows onboarding provenance and a selectable example without exposing its model prompt (display facts: %s)', async (displayFacts) => {
         const { normalizeRawMessage } = await import('@happier-dev/session-core/raw');
         const { createReducer, reducer } = await import('@happier-dev/session-core/reducer');

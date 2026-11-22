@@ -103,6 +103,7 @@ type Requests = readonly OpenApprovalArtifactForSession[];
 const noRequests: Requests = Object.freeze([]);
 type ApprovalIndex = Readonly<{
     buckets: ReadonlyMap<string, Requests>;
+    uncorrelatedByArtifactId: ReadonlyMap<string, OpenApprovalArtifactForSession>;
     fallbackNames: ReadonlyMap<string, InputContexts>;
     fallbackSessions: ReadonlyMap<string, InputContexts>;
     selections: Map<string, Requests>;
@@ -118,6 +119,7 @@ function prepareToolApprovalRequests(requests: Requests, prior?: ApprovalIndex):
     const existing = approvalIndexes.get(requests);
     if (existing) return existing;
     const buckets = new Map<string, OpenApprovalArtifactForSession[]>();
+    const uncorrelatedByArtifactId = new Map<string, OpenApprovalArtifactForSession>();
     const fallbackNames = new Map<string, InputContexts>();
     const fallbackSessions = new Map<string, InputContexts>();
     const addContext = (index: Map<string, InputContexts>, key: string, context: InputContext) => {
@@ -132,7 +134,10 @@ function prepareToolApprovalRequests(requests: Requests, prior?: ApprovalIndex):
     };
     for (const request of requests) {
         const origin = request.approval.origin;
-        if (origin?.kind !== 'transcript_tool_call') continue;
+        if (origin?.kind !== 'transcript_tool_call') {
+            uncorrelatedByArtifactId.set(request.artifact.id, request);
+            continue;
+        }
         for (const id of [origin.messageId, origin.parentMessageId]) if (id) add(matchKey(origin.sessionId, 'm', id), request);
         if (origin.toolCallId) add(matchKey(origin.sessionId, 't', origin.toolCallId), request);
         if (origin.messageId || origin.parentMessageId || origin.toolCallId || !origin.toolName) continue;
@@ -155,7 +160,7 @@ function prepareToolApprovalRequests(requests: Requests, prior?: ApprovalIndex):
     // Keep only selections whose requests still belong to this publication; revoked/withdrawn rows
     // cannot survive in the projection. Each mounted transcript owns only its current associations.
     for (const [key, value] of prior?.selections ?? []) if (value.every(request => order.has(request))) selections.set(key, value);
-    const result: ApprovalIndex = { buckets: projectedBuckets, fallbackNames, fallbackSessions, selections, order };
+    const result: ApprovalIndex = { buckets: projectedBuckets, uncorrelatedByArtifactId, fallbackNames, fallbackSessions, selections, order };
     approvalIndexes.set(requests, result);
     return result;
 }
@@ -164,6 +169,14 @@ function prepareToolApprovalRequests(requests: Requests, prior?: ApprovalIndex):
 export function useToolApprovalRequestsIndex(requests: Requests | undefined): void {
     const previous = React.useRef<ApprovalIndex | undefined>(undefined);
     previous.current = prepareToolApprovalRequests(requests ?? noRequests, previous.current);
+}
+
+/** The host result carries the Artifact id for requests without an originating tool occurrence. */
+export function selectDeliveredTranscriptApprovalRequest(
+    requests: Requests | undefined,
+    artifactId: string,
+): OpenApprovalArtifactForSession | undefined {
+    return requests?.length ? prepareToolApprovalRequests(requests).uncorrelatedByArtifactId.get(artifactId) : undefined;
 }
 
 /** Exact associations first; fallback input is prepared once per changed ToolCall input. */

@@ -19,7 +19,10 @@ import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/ap
 import { useLayoutMaxWidthStyle } from "@/components/ui/layout/layout";
 import { ToolView } from '@/components/tools/shell/views/ToolView';
 import { ToolTimelineRow } from '@/components/tools/shell/views/ToolTimelineRow';
-import { selectToolApprovalRequestsForMessages } from '@/components/tools/shell/views/toolApprovalPromptMatching';
+import { selectDeliveredTranscriptApprovalRequest, selectToolApprovalRequestsForMessages } from '@/components/tools/shell/views/toolApprovalPromptMatching';
+import { ApprovalPromptCard } from '@/components/tools/shell/approvals/ApprovalPromptCard';
+import { presentsSettledPetImportApproval } from '@/components/tools/shell/approvals/transcriptSettledApprovalPresentations';
+import { readApprovalResultArtifactId } from './references/approvalResultInput';
 import { buildMessageRouteId } from "@happier-dev/session-core/messages";
 import { readUnsupportedContentMeta } from "@happier-dev/session-core/messages";
 import {
@@ -728,7 +731,10 @@ function RenderBlock(props: {
               serverId={props.serverId} messageId={props.message.id} createdAt={props.message.createdAt} />
           </>;
         }
-        return <TranscriptTextNoticeRow message={props.message} sessionId={props.sessionId} serverId={props.serverId} />;
+        const artifactId = readApprovalResultArtifactId(props.message);
+        const request = artifactId === null ? undefined : selectDeliveredTranscriptApprovalRequest(props.approvalRequests, artifactId);
+        return <TranscriptTextNoticeRow message={props.message} sessionId={props.sessionId} serverId={props.serverId}
+          approvalReceipt={request && presentsSettledPetImportApproval(request.approval) ? request : undefined} />;
       }
       return (
         <UserTextBlock
@@ -851,6 +857,7 @@ function TranscriptTextNoticeRow(props: Readonly<{
   serverId?: string | null;
   tone?: 'failure';
   displayText?: string;
+  approvalReceipt?: OpenApprovalArtifactForSession;
 }>) {
   const transcriptSource = useSessionTranscriptSource();
   const find = useTranscriptFindRow(props.message.id);
@@ -883,7 +890,10 @@ function TranscriptTextNoticeRow(props: Readonly<{
       radius={TRANSCRIPT_EVENT_ROW_HIGHLIGHT_RADIUS}
       style={styles.eventHighlightSurface}
     >
-      {props.tone === 'failure' ? (
+      {props.approvalReceipt ? (
+        <ApprovalPromptCard chrome="inline" artifact={props.approvalReceipt.artifact} approval={props.approvalReceipt.approval}
+          sessionId={props.sessionId} />
+      ) : props.tone === 'failure' ? (
         // Every typed failure keeps its raw cause one press away (Details), under any recovery it offers.
         <TranscriptFailureNotice text={displayText} findSourceRanges={findSourceRanges} issue={runtimeIssue} recovery={recovery} />
       ) : (

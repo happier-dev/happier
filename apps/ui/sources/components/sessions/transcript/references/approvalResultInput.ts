@@ -12,6 +12,16 @@ export function approvalResultLocalId(artifactId: string): string {
   return `${APPROVAL_RESULT_LOCAL_ID_PREFIX}${artifactId}`;
 }
 
+export function readApprovalResultArtifactId(
+  message: Readonly<{ localId?: string | null; meta?: unknown }>,
+): string | null {
+  if (!message.localId?.startsWith(APPROVAL_RESULT_LOCAL_ID_PREFIX))
+    return null;
+  if (readSessionMessageProvenance(message.meta, 'stored')?.kind !== 'host')
+    return null;
+  return message.localId.slice(APPROVAL_RESULT_LOCAL_ID_PREFIX.length);
+}
+
 /**
  * The Agent reads the result payload; a person reads one quiet receipt naming the decided Action.
  * The transcript row and the queued (pending) row both read it, so the payload shows nowhere a person reads.
@@ -20,10 +30,7 @@ export function approvalResultLocalId(artifactId: string): string {
 export function readApprovalResultReceiptText(
   message: Readonly<{ localId?: string | null; text: string; meta?: unknown }>,
 ): string | null {
-  if (!message.localId?.startsWith(APPROVAL_RESULT_LOCAL_ID_PREFIX))
-    return null;
-  if (readSessionMessageProvenance(message.meta, 'stored')?.kind !== 'host')
-    return null;
+  if (readApprovalResultArtifactId(message) === null) return null;
   let actionId: unknown;
   try {
     actionId = (JSON.parse(message.text) as { actionId?: unknown } | null)
