@@ -50,7 +50,8 @@ export function createTailscaleJoinSteps(binding: Readonly<{
             { id: 'tailscale-operator', kind: 'command', executable: 'tailscale',
                 args: ['set', { kind: 'template', value: '--operator={daemon}',
                     variables: { daemon: { kind: 'targetFact', fact: 'daemon.username' } } }],
-                when: [{ input: { op: 'truthy', path: 'setOperator' } }],
+                // Only an explicit `false` opts out; the Tailscale server recipe leaves it unset by default.
+                when: [{ input: { op: 'not', predicate: { op: 'eq', path: 'setOperator', value: false } } }],
                 check: { executable: 'tailscale', args: ['debug', 'prefs'], unsatisfiedExitCodes: [],
                     stdoutJson: { op: 'eq', path: 'OperatorUser', value: { kind: 'targetFact', fact: 'daemon.username' } } } },
     ];

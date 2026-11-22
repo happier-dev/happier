@@ -34,8 +34,9 @@ export const tailscaleServer: Omit<MachineRecipeV1, 'id'> = {
   inputSchema: { type: 'object', properties: {
     distribution: { type: 'string', enum: distributions.map(distribution => distribution.id) },
     joinCredential: SharedSavedSecretReferenceSelectionV1Schema.jsonSchema,
+    // Omitted means the daemon user becomes the operator, so the reachability profile read works.
     setOperator: { type: 'boolean' },
-  }, required: ['distribution', 'joinCredential', 'setOperator'], additionalProperties: false },
+  }, required: ['distribution', 'joinCredential'], additionalProperties: false },
   inputHints: { fields: [{ path: 'joinCredential', title: 'Tailscale setup key', widget: 'select', required: true,
     inputType: { hostType: 'savedSecretReference' } }] },
   steps: [...sources,

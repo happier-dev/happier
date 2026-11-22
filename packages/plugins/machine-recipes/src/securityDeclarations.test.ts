@@ -116,3 +116,19 @@ it('pins Tailscale vendor trust and binds the selected saved key to a reviewed n
   }
   expect(isValidPluginJsonSchemaValue(schema, { distribution: 'ubuntu-noble', authKey: 'must-never-be-a-recipe-input' })).toBe(false);
 });
+
+// O-MACH 2026-11-22 07:39Z (C65): the daemon user becomes the Tailscale operator by default so the
+// reachability profile read (`tailscale switch --list`) works without a root read path.
+it('makes the daemon user the Tailscale operator unless the selection opts out', () => {
+  const recipe = MachineRecipeV1Schema.parse({ id: 'tailscale-server', ...tailscaleServer });
+  const schema = compilePluginJsonSchema(recipe.inputSchema);
+  const operatorStep = (inputs: Record<string, unknown>) => recipe.steps
+    .filter(step => step.when?.every(condition => 'input' in condition && evaluateInputPredicate(condition.input, inputs)) ?? true)
+    .find(step => step.id === 'tailscale-operator');
+  const base = { distribution: 'ubuntu-resolute', joinCredential: { ref: 'happier:shared-secret:v1:tailscale-key', resourceRevision: 7 } };
+  expect(isValidPluginJsonSchemaValue(schema, base)).toBe(true);
+  expect(operatorStep(base)).toMatchObject({ kind: 'command', executable: 'tailscale',
+    args: ['set', { kind: 'template', value: '--operator={daemon}' }] });
+  expect(operatorStep({ ...base, setOperator: true })).toBeDefined();
+  expect(operatorStep({ ...base, setOperator: false })).toBeUndefined();
+});
