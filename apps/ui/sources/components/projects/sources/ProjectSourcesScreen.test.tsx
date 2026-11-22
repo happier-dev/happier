@@ -40,12 +40,12 @@ const shared = vi.hoisted(() => ({
   readGate: null as null | Promise<void>,
 }));
 
-vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
-  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+async function installSourceHostPorts() {
+  const frontDoor = await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
+  const { createFrontDoorActionExecute, createFrontDoorUiActionExecutor } = frontDoor;
   const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
   const { normalizeActionsSettingsV1, setActionApprovalOverride } = await import('@happier-dev/protocol/actions/actionSettings');
   const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
-  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
   const schemas = await import('@happier-dev/protocol/projects/sources/projectSourceV1');
   // Host fixtures receive protocol-validated inputs from the real executor.
   const respond = async (actionId: string, input: any): Promise<unknown> => {
@@ -130,15 +130,12 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
         actionsSettings: directSourceWrites,
       } : context, ...rest),
   };
-  const frontDoor = createFrontDoorActionExecuteForVitest(original);
-  // Substitute the external host ports even when the hook supplies its default host executor.
-  // Both public factories still run their real front-door implementation.
-  return { ...original,
-    createFrontDoorActionExecute: () => frontDoor(hostExecutor),
-    createFrontDoorUiActionExecutor: (_injected?: Parameters<typeof original.createFrontDoorUiActionExecutor>[0],
-      scope?: Parameters<typeof original.createFrontDoorUiActionExecutor>[1]) => original.createFrontDoorUiActionExecutor(hostExecutor, scope),
-  };
-});
+  // Some import paths reach the front door through Sync before the screen loads.
+  // Keep those module references live and give both real factories the external host ports.
+  vi.spyOn(frontDoor, 'createFrontDoorActionExecute').mockImplementation(() => createFrontDoorActionExecute(hostExecutor));
+  vi.spyOn(frontDoor, 'createFrontDoorUiActionExecutor')
+    .mockImplementation((_injected, scope) => createFrontDoorUiActionExecutor(hostExecutor, scope));
+}
 
 const routerSpies = vi.hoisted(() => ({ back: undefined as undefined | { mockClear(): void; mock: { calls: unknown[][] } } }));
 vi.mock('expo-router', async () => {
@@ -178,6 +175,8 @@ vi.mock('@/utils/platform/useViewportClass', async (importOriginal) => {
       viewport.compact ? 'compact' : actual.useViewportClass(...args),
   };
 });
+
+await installSourceHostPorts();
 
 const { ProjectSourcesScreen } = await import('./ProjectSourcesScreen');
 const { storage } = await import('@/sync/domains/state/storageStore');
