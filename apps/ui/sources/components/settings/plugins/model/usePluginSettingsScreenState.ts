@@ -437,21 +437,20 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
                 && !daemonAdministrationAvailable),
     });
     /**
-     * Re-reads daemon-owned plugin truth: the projection cache holds a failure
-     * until something invalidates it, so both a completed mutation and the
-     * projection-failure notice's retry go through this one owner.
+     * A completed mutation refreshes inventory for the selected Machine, including
+     * a passive Browse card. Only management needs the full contribution projection.
      */
     const refreshPluginTruth = React.useCallback(() => {
-        if (!managementDemanded) return;
         const target = administrationTargetSelection.selectedTarget;
-        if (!target) return;
-        setProjectionRefreshKey((prev) => prev + 1);
+        if (!presented || !target) return;
         machineCapabilities.refresh({ bypassCache: true });
+        if (!managementDemanded) return;
+        setProjectionRefreshKey((prev) => prev + 1);
         publishMachineContributionRegistryProjectionInvalidation({
             machineId: target.machineId,
             serverId: target.serverIdentityId,
         }, 'refresh');
-    }, [managementDemanded, administrationTargetSelection.selectedTarget, machineCapabilities.refresh]);
+    }, [presented, managementDemanded, administrationTargetSelection.selectedTarget, machineCapabilities.refresh]);
     /** An uncertain receipt stays uncertain; refreshed inventory never substitutes for its outcome. */
     const reportUnknownMutation = React.useCallback((params: Readonly<{
         target: FreshMachineAdministrationExecutionTargetV1;

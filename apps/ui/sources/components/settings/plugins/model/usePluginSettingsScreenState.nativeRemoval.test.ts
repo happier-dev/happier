@@ -483,10 +483,13 @@ describe('Plugin install/update originating approval state', () => {
             target: { kind: 'machine', machineId: 'controller-1' },
             input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
         } });
-        expect(censusReads).toHaveLength(0);
+        await vi.waitFor(() => expect(hook.getCurrent().installedPluginById.get('example.compute')?.version).toBe('1.2.3'));
+        expect(censusReads).toHaveLength(1);
+        expect(boundary.rpc.mock.calls.some(([request]) =>
+            request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toBe(false);
     });
 
-    it('installs the pinned Browse release once when Install is pressed', async () => {
+    it('installs the pinned Browse release once and settles the same mounted row from Machine inventory', async () => {
         const { storage, catalog, actionRequests, censusReads } = await renderRemovalOwner('disable', [], {
             catalog: true, browse: true, management: false,
         });
@@ -504,6 +507,7 @@ describe('Plugin install/update originating approval state', () => {
         const plus = `settings.plugins.marketplace.action.install.${catalog.source.id}.example.compute`;
         await waitForControl(screen, plus);
         await vi.waitFor(() => expect(screen.findByTestId(plus)?.props.disabled).toBe(false));
+        expect(censusReads).toHaveLength(0);
         await screen.pressByTestIdAsync(plus);
         await vi.waitFor(() => expect(actionRequests).toHaveLength(1));
         expect(screen.findByTestId(`${plus}.confirm`)).toBeNull();
@@ -511,7 +515,11 @@ describe('Plugin install/update originating approval state', () => {
             target: { kind: 'machine', machineId: 'controller-1' },
             input: { source: { kind: 'marketplace', sourceId: catalog.source.id, pluginId: 'example.compute', version: '1.2.3' } },
         } });
-        expect(censusReads).toHaveLength(0);
+        await waitForControl(screen, `settings.plugins.marketplace.installedStatus.${catalog.source.id}.example.compute`);
+        expect(screen.findByTestId(plus)).toBeNull();
+        expect(censusReads).toEqual([{ machineId: 'controller-1', installed: [expect.objectContaining({
+            pluginId: 'example.compute', version: '1.2.3',
+        })] }]);
     });
 
     it('projects Browse install progress only for the selected source while retaining the plugin guard', async () => {
