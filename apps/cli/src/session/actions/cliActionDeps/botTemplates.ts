@@ -7,11 +7,14 @@ import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/session
 import { createAcknowledgedAccountArtifactTransport, type ArtifactRequestAuthorizationHeaders,
   type createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { resolveExternalActionServerRequestHeaders } from '@/api/externalActionExecutionAuthorization';
+import { requireExternalActionHeaders } from '@/api/externalActionHeaderRefusal';
 import type { CliSessionActionTransport } from '@/session/transport/cliActionTransport';
 import { updateSessionMetadataForTarget } from '@/session/services/updateSessionMetadataForTarget';
 import type { CliActionDepsParams } from './types';
 import type { PromptLibraryStackActionPortV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
 import { readRequesterDeploymentArtifactStore } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionTransportContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
 
@@ -33,15 +36,6 @@ export function createCliBotTemplateActionDeps(
     if (root && root.binding.accountId !== host.homeAccountId) return null;
     return root ? { ...context, externalActionExecutionAuthorization: undefined } : context;
   };
-  const resolveHeaders = async (context: ActionExecutorContext, actionId: string,
-    request: Readonly<{ method: string; path: string; body?: unknown }>) => {
-    const root = context.externalActionExecutionAuthorization;
-    if (root && 'credentialId' in root.binding) {
-      return host.resolveServerRequestHeaders(context, actionId, request);
-    }
-    const accountContext = ordinaryContext(context);
-    return accountContext ? host.resolveServerRequestHeaders(accountContext, actionId, request) : null;
-  };
   const metadataHeaders = async (context: ActionExecutorContext, actionId: string):
     Promise<NonNullable<Parameters<typeof updateSessionMetadataForTarget>[0]['resolveAuthorizationHeaders']>> => {
     const root = context.externalActionExecutionAuthorization;
@@ -62,10 +56,22 @@ export function createCliBotTemplateActionDeps(
         && authorization.binding.accountEncryptionMode === 'e2ee') return refuse('content_unavailable');
       return host.roleArtifactStore ?? refuse('not_authenticated');
     };
-    const authorizationHeaders: ArtifactRequestAuthorizationHeaders = async request => {
-      const headers = await resolveHeaders(context, args.actionId, request);
-      return headers ? { ...headers } : refuse('execution_not_authorized');
+    const artifactHeaders = (caller: ActionExecutorContext): ArtifactRequestAuthorizationHeaders => async request => {
+      const root = caller.externalActionExecutionAuthorization;
+      if (root && 'credentialId' in root.binding) {
+        return host.resolveServerRequestHeaders(caller, args.actionId, request) ?? refuse('execution_not_authorized');
+      }
+      const accountContext = ordinaryContext(caller) ?? refuse('execution_not_authorized');
+      if (readRequesterDeploymentArtifactStore(root)) {
+        // The admitted Artifact store holds the original requester's credential.
+        const requester = readRequesterAccountActionTransportContext(root) ?? refuse('execution_not_authorized');
+        return requireExternalActionHeaders(resolveExternalActionServerRequestHeaders({
+          context: accountContext, effectActionId: args.actionId, ...request, daemonToken: requester.credentials.token,
+        }));
+      }
+      return host.resolveServerRequestHeaders(accountContext, args.actionId, request) ?? refuse('execution_not_authorized');
     };
+    const authorizationHeaders = artifactHeaders(context);
     const readOwnedSession = async (source: Readonly<{ serverId: string; sessionId: string }>) => {
       if (!host.homeAccountId || !params.credentials) return refuse('not_authenticated');
       if (!host.isSameActionHomeId(source.serverId)) return refuse('server_scope_mismatch');
@@ -105,10 +111,7 @@ export function createCliBotTemplateActionDeps(
       isSameServerId: (left, right) => host.isSameActionHomeId(left) && host.isSameActionHomeId(right),
       recipient: { content: host.content,
         reportAcceptedVersion: (input, reportContext) => requireStore().reportTemplateAcceptedVersion(input, reportContext.signal, {
-        authorizationHeaders: async request => {
-          const headers = await resolveHeaders(reportContext, args.actionId, request);
-          return headers ? { ...headers } : refuse('execution_not_authorized');
-        },
+          authorizationHeaders: artifactHeaders(reportContext),
       }), readSession: readOwnedSession, writeInstance: async (ref, instance, instanceContext) => {
         const credentials = params.credentials ?? refuse('not_authenticated');
         const updater = createSessionStateFieldMetadataUpdater('intent.templateInstance', instance, undefined, null);
