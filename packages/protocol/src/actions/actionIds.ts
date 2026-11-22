@@ -22,6 +22,13 @@ export const REVIEW_START_ACTION_ID_V1 = 'review.start' as const;
 export const REVIEW_PREPARE_ROUND_ACTION_ID_V1 = 'review.prepare_round' as const;
 export const REVIEW_SETTLE_ROUND_ACTION_ID_V1 = 'review.settle_round' as const;
 export const REVIEW_NEW_ROUND_ACTION_ID_V1 = 'review.new_round' as const;
+/** Review comparison preparation spends only its native capture and source-facts children. */
+export function isReviewScmPreparationEffectV1(rootActionId: string, effectActionId: string): boolean {
+  return effectActionId === 'scm.diffSummary.capture'
+      && (rootActionId === REVIEW_START_ACTION_ID_V1 || rootActionId === REVIEW_PREPARE_ROUND_ACTION_ID_V1
+        || rootActionId === REVIEW_NEW_ROUND_ACTION_ID_V1)
+    || rootActionId === REVIEW_START_ACTION_ID_V1 && effectActionId === 'scm.status.snapshot';
+}
 /** These roots persist Review round records through the existing Artifact writer. */
 export function isReviewRecordWriteActionIdV1(actionId: string): boolean {
   return actionId === REVIEW_START_ACTION_ID_V1 || actionId === REVIEW_NEW_ROUND_ACTION_ID_V1

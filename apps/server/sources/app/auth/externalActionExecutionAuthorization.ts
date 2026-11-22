@@ -31,7 +31,7 @@ import { TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/t
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
-import { REVIEW_START_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_RUN_GET_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1, isReviewRecordWriteActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_START_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_RUN_GET_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1, isReviewRecordWriteActionIdV1, isReviewScmPreparationEffectV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -1730,6 +1730,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         deploymentRead: isDeploymentReadPreparation(binding, effectActionId),
         spawnTeamCredentialCatalog: isSpawnTeamCredentialCatalogRead(binding, effectActionId, proof),
         projectPrepareReview: isProjectPrepareReviewEffect(binding.actionId, effectActionId),
+        reviewScmPreparation: isReviewScmPreparationEffectV1(binding.actionId, effectActionId),
         reviewWorkflowAction: binding.actionId === REVIEW_START_ACTION_ID_V1 && effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1
             || binding.actionId === REVIEW_NEW_ROUND_ACTION_ID_V1
                 && (effectActionId === WORKFLOW_RUN_GET_ACTION_ID_V1 || effectActionId === WORKFLOW_RUN_START_ACTION_ID_V1),
@@ -1760,7 +1761,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
     const crossesEffectFamily = managedExecWake !== undefined || deploymentReferenceServices || configureBindings || telemetryBindings || databaseReadAccessBindings
         || setupPreparationRead || createPreparationEffect || movePreparationEffect || Boolean(targetRetentionPurpose)
         || reviewedMachineSetupChild || reviewedSessionAgentReadinessChild || reviewedSetupRead || reviewedDomainEffect
-        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowAction || machineGrantSetRead;
+        || teardownDomainContinuation || membershipDomainContinuation || prepareSession !== null || deploymentWorkspaceRead || reviewedManagedAcquirePurpose || sibling.projectPrepareReview || sibling.machineSetupPlanRead || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || machineGrantSetRead;
     const effectFamilyAdmitted = (hasMatchingExecutionEffectFamily(binding.actionId, effectActionId) || crossesEffectFamily)
         && (binding.actionId === effectActionId || !binding.handoffContinuation && !binding.handoffPreflight
             && (isContributedActionRoot(binding.actionId)
@@ -1768,7 +1769,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = managedExecWake !== undefined || deploymentReferenceServices || databaseReadAccessBindings || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowAction || machineGrantSetRead;
+        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || machineGrantSetRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead, managedExecWake, databaseReadAccessBindings,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,
@@ -4358,6 +4359,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         && (verified.effectActionId === verified.binding.actionId
             || isContributedActionRoot(verified.binding.actionId)
             || verified.signedChildPurpose.sibling.archiveStop
+            || verified.signedChildPurpose.sibling.reviewScmPreparation
             || verified.signedChildPurpose.sibling.projectPrepareReview);
     const managedRoot = ManagedMachineActionIdV1Schema.safeParse(verified.binding.actionId);
     const admittedReadRootRequesterGet = isAdmittedReadRootRequesterGet(verified, proof);
@@ -5839,9 +5841,12 @@ export async function verifyExternalActionMachineRpcExecution(
         && execution.target.kind === 'machine' && execution.target.machineId === binding.machineId
         && request.method === `${binding.machineId}:${ACTION_OPERATION_RPC_METHODS_V2.get}`;
     const effect = parseExternalActionEffectAction(binding, execution.effectActionId);
+    const reviewScmPreparationPurpose = effect.success && isReviewScmPreparationEffectV1(binding.actionId, effect.data)
+        && request.method === `${binding.machineId}:${getActionSpec(effect.data).bindings?.rpcMethod}`
+        && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL);
     if (!effect.success
         || binding.actionId === PROJECT_PREPARE_ACTION_ID_V1 && binding.actionId !== execution.effectActionId && !projectPrepareReviewPurpose
-        || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose && !prepareInputPurpose && !projectPrepareReviewPurpose
+        || !hasMatchingExecutionEffectFamily(binding.actionId, execution.effectActionId) && !readinessPurpose && !prepareInputPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose
         || (binding.handoffContinuation || binding.handoffPreflight) && binding.actionId !== execution.effectActionId) return null;
     if (binding.managedAdmission?.actionId === 'action.operations.get' && typeof request.params !== 'string') {
         // Encrypted input is compared at the reached daemon. Visible ordinary
@@ -5888,7 +5893,7 @@ export async function verifyExternalActionMachineRpcExecution(
                     machineId: request.method.slice(0, Math.max(separator, 0)), installationId: execution.installationId,
                 }, execution.reviewedChild)
                 : resolveMachineRpcExternalActionEffectV1(method, binding);
-        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && !projectPrepareReviewPurpose && (binding.actionId !== execution.effectActionId
+        if (!transitionPurpose && !refineInputPurpose && !readinessPurpose && !prepareInputPurpose && !scmRunStartPurpose && !projectPrepareReviewPurpose && !reviewScmPreparationPurpose && (binding.actionId !== execution.effectActionId
                 && !isContributedActionRoot(binding.actionId)
                 && !isSessionArchiveStopEffect(binding.actionId, execution.effectActionId)
             || effectActionId !== execution.effectActionId)) return null;
@@ -5936,7 +5941,7 @@ export async function verifyExternalActionMachineRpcExecution(
     const currentPrincipal = await verifyCurrentExternalActionPrincipal(binding);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return null;
-    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose || projectPrepareReviewPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
+    const credentialAction = isTransitionRoot || refineInputPurpose || prepareInputPurpose || scmRunStartPurpose || projectPrepareReviewPurpose || reviewScmPreparationPurpose ? parseExternalActionEffectAction(binding, binding.actionId) : binding.handoffContinuation
         ? PublicActionIdSchema.safeParse(readExternalActionCredentialActionId(binding)) : effect;
     if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),

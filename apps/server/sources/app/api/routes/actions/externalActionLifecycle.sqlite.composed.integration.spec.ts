@@ -20,6 +20,8 @@ import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing
 import { auth } from '@/app/auth/auth';
 import { verifyExternalActionDomainExecutionRequest, verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { db } from '@/storage/db';
@@ -33,7 +35,7 @@ describe('installed Session signed lifecycle scope', () => {
     }, 300_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'review.start' | 'review.new_round' | 'review.prepare_round' | 'review.settle_round' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true, sessionTarget = false) {
+    async function fixture(actionId: 'session.stop' | 'session.archive' | 'session.unarchive' | 'session.open' | 'discussion.second_opinion.start' | 'review.start' | 'review.new_round' | 'review.prepare_round' | 'review.settle_round' | 'usage.recap.compose' | 'usage.recap.export' | 'usage.recap.deliver' | 'usage.coach.dismiss' | 'usage.coach.snooze' | 'usage.coach.apply' | 'usage.coach.undo' | 'artifact.get' | 'action.operations.cancel', installed = true, sessionTarget = false, projectDirectory?: string) {
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
@@ -57,7 +59,8 @@ describe('installed Session signed lifecycle scope', () => {
         const resolveCurrentSessionMachine = async () => publisherCurrent ? machine.id : null;
         const requestId = crypto.randomUUID();
         const target = sessionTarget ? { kind: 'session' as const, sessionId: root.id }
-            : { kind: 'machine' as const, machineId: machine.id };
+            : { kind: 'machine' as const, machineId: machine.id,
+                ...(projectDirectory ? { project: { machineId: machine.id, directory: projectDirectory } } : {}) };
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
             target,
             input: actionId === 'discussion.second_opinion.start' ? {
@@ -226,6 +229,59 @@ describe('installed Session signed lifecycle scope', () => {
         expect(await f.verifyRequest('POST', `${path}/revisions/0/restore`, update)).toBeNull();
         expect(await f.verifyRequest('POST', path, update, undefined,
             actionId === 'review.start' ? 'review.new_round' : 'review.start')).toBeNull();
+    });
+
+    it.each([
+        { rootAction: 'review.start', childAction: 'scm.diffSummary.capture', sessionTarget: false },
+        { rootAction: 'review.prepare_round', childAction: 'scm.diffSummary.capture', sessionTarget: true },
+        { rootAction: 'review.new_round', childAction: 'scm.diffSummary.capture', sessionTarget: false },
+        { rootAction: 'review.start', childAction: 'scm.status.snapshot', sessionTarget: false },
+    ] as const)('admits $rootAction SCM preparation $childAction under its signed workspace', async ({ rootAction, childAction, sessionTarget }) => {
+        const f = await fixture(rootAction, false, sessionTarget, '/repo');
+        const target = f.authorization.binding.target;
+        const prepared = await f.verifyRequest('GET', `/v1/machines/${f.machine.id}`, undefined, undefined, childAction);
+        expect.soft(prepared).toMatchObject({ effectActionId: childAction, target,
+            principal: { accountId: f.account.id } });
+        expect(await f.verifyRequest('GET', `/v1/machines/${crypto.randomUUID()}`, undefined, undefined, childAction)).toBeNull();
+        expect(await f.verifyRequest('DELETE', `/v1/machines/${f.machine.id}`, undefined, undefined, childAction)).toBeNull();
+        expect(await f.verifyRequest('GET', '/v1/features/authenticated', undefined, undefined, childAction)).toBeNull();
+        expect(await f.verifyRequest('GET', `/v1/machines/${f.machine.id}`, undefined, undefined, 'scm.remote.push')).toBeNull();
+
+        const nativeMethod = getActionSpec(childAction).bindings?.rpcMethod;
+        if (!nativeMethod) throw new Error('Expected addressed SCM preparation');
+        const method = `${f.machine.id}:${nativeMethod}`;
+        const requestId = crypto.randomUUID();
+        const input = childAction === 'scm.diffSummary.capture'
+            ? { cwd: '/repo', source: { kind: 'branch', base: 'main', head: 'HEAD' }, projection: { kind: 'index' } }
+            : { cwd: '/repo', detail: 'facts', operationStateVersion: 1, outcomeVersion: 1 };
+        const params = createTargetedActionRpcRequestV1(input, target);
+        const signature = signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token,
+            effectActionId: childAction, target, installationId: f.machine.installationId!, method, requestId, params,
+            privateKey: f.keys.secretKey });
+        const execution = { v: 1 as const, authorization: f.authorization, effectActionId: childAction, target,
+            installationId: f.machine.installationId!, machineSignature: signature };
+        expect.soft(await verifyExternalActionMachineRpcExecution(execution, { method, requestId, params }))
+            .toMatchObject({ effectActionId: childAction, target, principal: { accountId: f.account.id } });
+        // The admitted target owns workspace identity; the signature owns the child bytes.
+        if (target.kind === 'machine' && target.project) {
+            const changedTarget = { ...target, project: { ...target.project, directory: '/other-repo' } };
+            const changedParams = createTargetedActionRpcRequestV1({ ...input, cwd: '/other-repo' }, changedTarget);
+            const changedSignature = signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token,
+                effectActionId: childAction, target: changedTarget, installationId: f.machine.installationId!, method,
+                requestId, params: changedParams, privateKey: f.keys.secretKey });
+            expect(await verifyExternalActionMachineRpcExecution({ ...execution, target: changedTarget, machineSignature: changedSignature },
+                { method, requestId, params: changedParams })).toBeNull();
+        }
+        expect(await verifyExternalActionMachineRpcExecution(execution, { method, requestId,
+            params: createTargetedActionRpcRequestV1({ ...input, cwd: '/other-repo', source: { kind: 'branch', base: 'private', head: 'HEAD' } }, target) })).toBeNull();
+        const wrongMethod = `${f.machine.id}:${getActionSpec('scm.remote.push').bindings?.rpcMethod}`;
+        const wrongMethodSignature = signExternalActionMachineRpcRequestV1({ authorizationToken: f.authorization.token,
+            effectActionId: childAction, target, installationId: f.machine.installationId!, method: wrongMethod,
+            requestId, params, privateKey: f.keys.secretKey });
+        expect(await verifyExternalActionMachineRpcExecution({ ...execution, machineSignature: wrongMethodSignature },
+            { method: wrongMethod, requestId, params })).toBeNull();
+        const unrelated = await fixture('review.settle_round', false, false, '/repo');
+        expect(await unrelated.verifyRequest('GET', `/v1/machines/${unrelated.machine.id}`, undefined, undefined, childAction)).toBeNull();
     });
 
     it.each([
