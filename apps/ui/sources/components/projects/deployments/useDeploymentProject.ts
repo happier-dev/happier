@@ -65,12 +65,12 @@ export function readDeploymentProjectOwner(lifetime: ServerAccountScopeLifetime,
         });
         controller.invalidate(changes);
     };
-    let stopChanges = subscribeHomeAccountChange(onChange, { reconnect: 'refresh' });
+    // The focused Home's changes feed carries Deploy revisions and grant changes.
+    // Runtime health has its own Machine watch and recovery.
+    let stopChanges = subscribeHomeAccountChange(onChange);
     function replaceChangeSubscription(demanded: boolean) {
         stopChanges();
-        stopChanges = subscribeHomeAccountChange(onChange, {
-            ...(demanded ? { serverIds: [lifetime.scope.serverId] } : {}), reconnect: 'refresh',
-        });
+        stopChanges = subscribeHomeAccountChange(onChange, demanded ? { serverIds: [lifetime.scope.serverId] } : undefined);
     }
     sources.set(projectSourceId, owner);
     lifetime.onRetire(retire);

@@ -68,12 +68,19 @@ describe('deployment ProjectSource scope', () => {
             expect(requestsTo(receiptPath)).toHaveLength(serving ? 1 : 0);
             expect(requestsTo('/v1/deployments/environments')).toHaveLength(0);
 
+            await act(async () => publishHomeAccountChange(serverId, undefined, {
+                source: 'connected', changesCatchUp: true,
+            }));
+            expect(requestsTo(path)).toHaveLength(1);
+
             revision++;
             const change = buildDeploymentAccountChangeV1({ projectSourceId: environment.projectSourceId,
                 environmentId: environment.id, revision });
             await act(async () => publishHomeAccountChange(serverId, [change.entityId], { changeKinds: ['account'] }));
             await vi.waitFor(() => expect(hook.getCurrent().environment.snapshot.value?.environment.revision).toBe(revision));
             expect(requestsTo(path)).toHaveLength(2);
+            await act(async () => publishHomeAccountChange(serverId, undefined, { source: 'connected' }));
+            await vi.waitFor(() => expect(requestsTo(path)).toHaveLength(3));
         } finally { await hook.unmount(); account.dispose(); }
     });
 
