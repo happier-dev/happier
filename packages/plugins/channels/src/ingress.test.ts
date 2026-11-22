@@ -180,6 +180,7 @@ import {
 } from './testkit/currentConnectionFixture.js';
 
 import { assertChannelsTestCollectionQueryLimit } from './testkit/collectionQueryBound.js';
+import { createIngressNoticeFixture } from './testkit/ingressNoticeFixture.js';
 const telegramProviderPluginId = 'happier.channel.telegram';
 const telegramPollAction = Object.freeze({
   identity: Object.freeze({
@@ -955,7 +956,8 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
       ?? options.sessionSendResult
       ?? ({ status: 'accepted' as const, localId: 'pending-1' })
   ));
-  const notify = vi.fn<PluginServices['notifications']['send']>(options.notificationSend ?? (async () => ({ deliveries: [], replayed: false })));
+  const noticeServices = createIngressNoticeFixture(options.notificationSend);
+  const notify = noticeServices.notifications.send;
   const executeAdmittedTargetedOperationWithExecutionOrigin = vi.fn(async (
     operation: unknown,
     input: JsonValue,
@@ -1219,9 +1221,8 @@ function createIngressHarness(options: IngressHarnessOptions = {}) {
 
   // The fixture supplies only genuine host boundaries: Account collection and Session admission.
   const services = {
-    logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    ...noticeServices,
     settings: { forScope: () => ({ snapshot: async () => ({ values: options.settingsValues ?? {} }) }) },
-    notifications: { send: notify },
     events: {
       host: { subscribe: () => ({ dispose() {} }) },
       plugin: {

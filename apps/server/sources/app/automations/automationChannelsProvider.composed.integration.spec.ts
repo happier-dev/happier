@@ -55,6 +55,7 @@ import {
     createLightSqliteHarness,
     type LightSqliteHarness,
 } from "@/testkit/lightSqliteHarness";
+import { createIngressNoticeFixture } from "../../../../../packages/plugins/channels/src/testkit/ingressNoticeFixture";
 
 const ACCOUNT_ID = "account-channels-provider-composed";
 const MACHINE_ID = "machine-channels-provider-composed";
@@ -113,6 +114,23 @@ function isRecord(value: unknown): value is JsonRecord {
 function requiredString(value: unknown, name: string): string {
     if (typeof value !== "string" || value.length === 0) throw new Error(`missing ${name}`);
     return value;
+}
+
+async function acquireComposedChannelsRuntimeLease() {
+    const resolveCurrentPluginMaterializationRef = (pluginId: string) => (
+        pluginId === CHANNELS_PLUGIN_ID
+            ? { pluginId, machineId: MACHINE_ID, materializationId: CHANNELS_MATERIALIZATION_ID }
+            : null
+    );
+    return {
+        registry: {
+            // The fixture invokes the already-loaded Channels Action handler.
+            activateContributionsOnDemand: async () => [],
+            resolveCurrentPluginMaterializationRef,
+        },
+        resolveCurrentPluginMaterializationRef,
+        release: async () => {},
+    };
 }
 
 function createSignedPublisherHeader(params: Readonly<{
@@ -983,6 +1001,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                     },
                     signal: new AbortController().signal,
                     services: {
+                        ...createIngressNoticeFixture(),
                         storage: { account: { collection: () => channels.collection } },
                         sessions: { get: async () => null },
                         targetedContributions: {
@@ -1510,6 +1529,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 },
                 signal: new AbortController().signal,
                 services: {
+                    ...createIngressNoticeFixture(),
                     storage: { account: { collection: () => channels.collection } },
                     sessions: { get: async () => null },
                     targetedContributions: {
@@ -2068,11 +2088,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 resolveInstallationId: async () => MACHINE_INSTALLATION_ID,
                 resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
                 resolveAccountEncryptionMaterial: async () => null,
-                resolveCurrentTargetMaterializationId: async () => CHANNELS_MATERIALIZATION_ID,
-                acquireRuntimeLease: async () => ({
-                    registry: null,
-                    release: async () => {},
-                }) as never,
+                acquireRuntimeLease: acquireComposedChannelsRuntimeLease,
                 executeContributedAction: async (invocation: Readonly<{
                     input: unknown;
                     context: Record<string, unknown>;
@@ -2291,6 +2307,7 @@ describe("Channels first-party provider Automation Event composition", () => {
             })();
             const channels = createChannelsCollection(connection);
             let currentScenario = selfScenario;
+            const noticeServices = createIngressNoticeFixture();
             const channelsContext = {
                 invokedAtMs: Date.now(),
                 plugin: { id: CHANNELS_PLUGIN_ID, version: VERSION },
@@ -2311,6 +2328,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 },
                 signal: new AbortController().signal,
                 services: {
+                    ...noticeServices,
                     storage: { account: { collection: () => channels.collection } },
                     sessions: { get: async () => null },
                     targetedContributions: {
@@ -2413,10 +2431,12 @@ describe("Channels first-party provider Automation Event composition", () => {
             // The adjacent human occurrence in the same channel admits exactly
             // one Run through the same census and the provider's admit Action.
             currentScenario = humanScenario;
+            noticeServices.notifications.send.mockClear();
             await expect(ingressModule.ingestConversationProviderObservationForInvocation(
                 { connectionId, authorityEpoch, entry: humanScenario.observation },
                 channelsContext,
             )).resolves.toBeUndefined();
+            expect(noticeServices.notifications.send).toHaveBeenCalledOnce();
             expect(await db.automationRun.count({ where: { accountId: ACCOUNT_ID } })).toBe(1);
             const admittedRun = await db.automationRun.findFirstOrThrow({
                 where: { accountId: ACCOUNT_ID },
@@ -2663,11 +2683,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 resolveInstallationId: async () => MACHINE_INSTALLATION_ID,
                 resolveAccountEncryptionCurrentness: readComposedAccountCurrentness,
                 resolveAccountEncryptionMaterial: async () => null,
-                resolveCurrentTargetMaterializationId: async () => CHANNELS_MATERIALIZATION_ID,
-                acquireRuntimeLease: async () => ({
-                    registry: null,
-                    release: async () => {},
-                }) as never,
+                acquireRuntimeLease: acquireComposedChannelsRuntimeLease,
                 executeContributedAction: async (invocation: Readonly<{
                     input: unknown;
                     context: Record<string, unknown>;
@@ -2703,6 +2719,7 @@ describe("Channels first-party provider Automation Event composition", () => {
                 signal: new AbortController().signal,
             }) as AutomationReplyHandoffDispatchResultV1;
             if (dispatchCalls <= 2) {
+                expect(result).toMatchObject({ kind: "settled", settlement: { kind: "accepted" } });
                 return { kind: "unavailable", code: "contractInvalid" } as const;
             }
             return result;
