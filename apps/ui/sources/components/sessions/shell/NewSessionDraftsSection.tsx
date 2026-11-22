@@ -136,21 +136,26 @@ const NewSessionDraftRow = React.memo(function NewSessionDraftRow(props: Readonl
     // A launch the Action-operation owner still holds cannot be deleted, so the row shows what it is
     // doing in the control's place: the spinner and the failure mark stay visible at every density,
     // including the minimal row that has no status line.
+    // The indicator keeps the delete control's box, so a row does not shift as its launch settles.
     const launchIndicator = props.launchState === 'launching' ? (
-        <ActivitySpinner
-            testID={`session-draft-launching:new-session:${draftId}`}
-            size={iconMatchedSpinnerSize(ICON_SIZE.xs)}
-            color={theme.colors.text.secondary}
-            accessibilityLabel={t('sessionDrafts.status.starting')}
-        />
+        <View style={styles.deleteButton}>
+            <ActivitySpinner
+                testID={`session-draft-launching:new-session:${draftId}`}
+                size={iconMatchedSpinnerSize(ICON_SIZE.xs)}
+                color={theme.colors.text.secondary}
+                accessibilityLabel={t('sessionDrafts.status.starting')}
+            />
+        </View>
     ) : props.launchState === 'failed' ? (
-        <Icon
-            testID={`session-draft-start-failed:new-session:${draftId}`}
-            name="warning-circle"
-            size={ICON_SIZE.xs}
-            color={theme.colors.state.danger.foreground}
-            accessibilityLabel={t('sessionDrafts.status.startFailed')}
-        />
+        <View style={styles.deleteButton}>
+            <Icon
+                testID={`session-draft-start-failed:new-session:${draftId}`}
+                name="warning-circle"
+                size={ICON_SIZE.xs}
+                color={theme.colors.state.danger.foreground}
+                accessibilityLabel={t('sessionDrafts.status.startFailed')}
+            />
+        </View>
     ) : null;
     const accessibleSummary = [
         presentation.title,
