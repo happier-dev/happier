@@ -1,3 +1,4 @@
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { configuration } from '@/configuration';
 import { prepareProjectSetup, readProjectSetupNamespaceRefusal, type ProjectSetupPreparationInput, type ProjectSetupPreparationOutcome, type ProjectSetupReviewPresentation } from './projectSetupPreparation';
@@ -28,10 +29,10 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     resolveSecretInputs?: (projectBindings?: ProjectSetupPreparationInput['environmentBindings']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
     /** One native invocation shares its private selected file family across review and launch. */
-    readDotenvPreparation?: (root: string) => NonNullable<ProjectSetupPreparationInput['dotenvPreparation']>;
+    readDotenvPreparation?: (workspace: WorkspaceRefV1) => NonNullable<ProjectSetupPreparationInput['dotenvPreparation']>;
     originalEnvironment?: ProjectSetupPreparationInput['originalEnvironment'];
     /** Active native preparation supplies B's placed-worktree defaults before value validation. */
-    readRuntimeEnvironment?: (workspace: import('@happier-dev/protocol/workspaces/workspaceRefV1').WorkspaceRefV1,
+    readRuntimeEnvironment?: (workspace: WorkspaceRefV1,
         manifest: import('@happier-dev/protocol/workspaces/projectSetup/projectManifestV1').ProjectManifestV1 | null) => Promise<Readonly<Record<string, string>>>;
     approvalContext?: ProjectSetupPreparationInput['approvalContext'];
     successHomeDir?: string;
@@ -101,7 +102,7 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
             originalEnvironment: input.originalEnvironment ?? process.env,
             ...(input.readRuntimeEnvironment ? { runtimeEnvironment: await input.readRuntimeEnvironment(association.workspace,
                 definition.effectiveDefinition.effectiveManifest) } : {}),
-            ...(input.readDotenvPreparation ? { dotenvPreparation: input.readDotenvPreparation(association.workspace.rootPath) } : {}),
+            ...(input.readDotenvPreparation ? { dotenvPreparation: input.readDotenvPreparation(association.workspace) } : {}),
             workspace: association.workspace, projectAssociation: association,
             requesterIdentity: input.requesterIdentity,
             requester: { ...input.account, serverHttpBaseUrl: input.serverHttpBaseUrl },

@@ -57,6 +57,8 @@ describe('Project finite Actions through exact Machine transport', () => {
     const machine = ExternalActionMachineBootstrapV1Schema.parse({ id: checkout.machineId, installationId: 'ports-installation',
       kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
       access: { custodian: { accountId: 'ports-owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+    const { installationId } = machine;
+    if (installationId === null) throw new Error('Expected the ports Machine fixture to have an installation');
     const reply = (data: unknown) => ({ status: 200, data, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } });
     vi.spyOn(axios, 'request').mockImplementation(async config => {
       expect(config.url).toBe(`https://home.test${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`);
@@ -90,7 +92,7 @@ describe('Project finite Actions through exact Machine transport', () => {
         portsRequestId = envelope.requestId;
         portsRequesterContext = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization!,
           installationPrivateKey: installation.secretKey, purpose: { kind: 'external_action' }, machineId: machine.id,
-          installationId: machine.installationId, serverIdentityId: 'srv_finite_home', includeInvocation: true });
+          installationId, serverIdentityId: 'srv_finite_home', includeInvocation: true });
       }
       return reply(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
         execution: { ok: true, result: actionId === 'projects.inspect' ? {

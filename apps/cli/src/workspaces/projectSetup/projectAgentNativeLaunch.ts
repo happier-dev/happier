@@ -87,13 +87,12 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                     }
                     return selected;
                 },
-                readDotenvPreparation(root) {
-                    let selected = dotenvPreparations.get(root);
+                readDotenvPreparation(workspace) {
+                    let selected = dotenvPreparations.get(workspace.rootPath);
                     if (!selected) {
-                        selected = createProjectRuntimeDotenvPreparation({ runtime, ingress,
-                            workspace: { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: root },
+                        selected = createProjectRuntimeDotenvPreparation({ runtime, ingress, workspace,
                             context: { signal }, originalEnvironment });
-                        dotenvPreparations.set(root, selected);
+                        dotenvPreparations.set(workspace.rootPath, selected);
                     }
                     return selected;
                 },

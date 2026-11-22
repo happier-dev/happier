@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import axios from 'axios';
-import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupReportInputV1Schema, machineSetupApplyTargetFromPlanV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupReportInputV1Schema, machineSetupApplyTargetFromPlanV1,
+  type MachineSetupOpaquePresetSourceV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { accountSettingsParse, formatSavedSecretCatalogReferenceV1, sealSavedSecretResourceStoredContentV1, machineSetupItemKeyV1 } from '@happier-dev/protocol';
 import { commitActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -79,7 +80,7 @@ describe('admitted Machine setup snapshot lifetime', () => {
     const sealed = mode === 'plain' ? { content, recipients: [] } : publicKey && transitionManagedMachinePresetContentEncryptionModeV1({ presetId, fromMode: 'plain', toMode: 'e2ee',
       source: { content, recipientEnvelope: null }, accountId, targetContentPublicKey: publicKey, randomBytes });
     if (!sealed) throw new Error('Expected encrypted Team preset');
-    const source = { kind: 'accountPresetOpaque' as const, presetId, presetRevision: 2, setupRevision: 1, contentEncryptionMode: mode };
+    const source = { kind: 'accountPresetOpaque', presetId, presetRevision: 2, setupRevision: 1, contentEncryptionMode: mode } satisfies MachineSetupOpaquePresetSourceV1;
     const direct = { kind: 'direct' as const, setup: {} };
     const projection = projectManagedMachinePresetForRecipientV1({ ...sealed,
       recipientAccountId: principal === 'wrong-recipient' ? 'alice' : accountId });
