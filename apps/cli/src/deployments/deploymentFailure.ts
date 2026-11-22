@@ -82,7 +82,7 @@ export function readProviderTeardownAbsenceFailure(
 export function projectDeploymentFailure(errorCode: string, error?: unknown, phase = 'deployment.failure'): ActionExecuteFailure {
     const failure = readAuthoredDeploymentFailure(errorCode, error, phase);
     const projected = failure.details === undefined
-        ? { ...failure, details: projectDeploymentFailureRecoveryV1({}) } : failure;
+        ? { ...failure, details: projectDeploymentFailureRecoveryV1({}, failure.errorCode) } : failure;
     // Terminal Actions promote a hidden cause into public output. Authored refusals
     // without that public member keep their shape and record closed facts locally.
     if (error !== undefined && projected.failureCause === undefined) {

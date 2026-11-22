@@ -146,8 +146,18 @@ describe('deployment failure diagnostics', () => {
         });
         expect(JSON.stringify(result)).not.toContain('private-export');
     });
+    it('keeps the fresh-review remedy on a stale deployment refusal', () => {
+        const code = 'deployment_conflict';
+        const error = createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
+        const result = settleActionOutput('deployments.deploy', projectDeploymentException(error));
+        expect(result).toMatchObject({
+            ok: false, errorCode: code,
+            details: { remedy: readDeploymentFailureRecoveryV1(code).remedy },
+        });
+    });
+
     it.each(['deployment_content_unavailable', 'deployment_unavailable', 'unsupported', 'unclassified_provider_refusal'])(
-        'supplies recovery for %s without a refusal-code classification', errorCode => {
+        'supplies recovery for %s without authored refusal details', errorCode => {
             const result = projectDeploymentFailure(errorCode);
             expect(ActionExecuteFailureSchema.parse(result)).toMatchObject({ ok: false, errorCode,
                 details: { requiredFact: 'deploymentActionResult', remedy: expect.stringMatching(/\S/) } });

@@ -10,6 +10,7 @@ import type { WorkspaceManifestEntry } from '@happier-dev/protocol/workspaces/ma
 import type { Ignore } from 'ignore';
 import createGitIgnore from 'ignore';
 import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
+import { isIgnorableWorkspaceExportAccessError, listWorkspaceExportFallbackEntries } from '@/scm/workspace/workspaceExportFallbackEntries';
 import { resolveWorkspaceReplicationSourceInputsWithScmWorkspace } from '@/scm/workspace/workspaceTransferResolution';
 import {
     buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries,
@@ -42,6 +43,28 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
         workspaceTransfer: { contentOnly: true, includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] },
     });
     const unsupported = new Set(unsupportedFilePaths);
+    if (selectionSource === 'scm') {
+        // Git does not enumerate untracked special files. List only diagnostic
+        // candidates here; the SCM selection still owns the files we send.
+        const { unsupportedFilePaths: candidates } = await listWorkspaceExportFallbackEntries({
+            root,
+            readDirectory: async directory => {
+                input.signal?.throwIfAborted();
+                if (relative(directory, await source.realpath(directory)) !== '') return [];
+                return (await source.readdir(directory)).filter(entry => entry.name.toLowerCase() !== '.git'
+                    && !entry.isFile() && !entry.isSymbolicLink());
+            },
+        });
+        for (const relativePath of candidates) {
+            input.signal?.throwIfAborted();
+            const candidate = join(root, relativePath);
+            try {
+                if (relative(candidate, await source.realpath(candidate)) === '') unsupported.add(relativePath);
+            } catch (error) {
+                if (!isIgnorableWorkspaceExportAccessError(error)) throw error;
+            }
+        }
+    }
     const reasons = new Map<string, ExclusionReason>((excludedPaths ?? []).map(path => [path, 'gitIgnore']));
     const captureDirectory = createHappierTempDir({ purpose: 'deployment-folder-source' });
     const dispose = () => removeHappierTempDirAsync(captureDirectory);

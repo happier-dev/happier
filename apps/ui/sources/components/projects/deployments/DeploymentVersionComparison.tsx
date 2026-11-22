@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from '@happier-dev/deployments/contracts/v1';
-import type { DeploymentReadDemandV1 } from '@happier-dev/deployments';
+import { deploymentRevisionLabelV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
@@ -33,6 +33,9 @@ type Props = Readonly<{
 export function DeploymentVersionComparison(props: Props) {
   if (props.source.kind === 'stored') return <StoredDefinitionHistory source={props.source}
     current={props.current?.kind === 'stored' ? props.current : null} summary={props.presentation === 'summary'} />;
+  if (props.source.kind === 'folder') return <ItemGroup title={t('projects.deployments.review.version')}>
+    <Item title={deploymentRevisionLabelV1(props.source)} showChevron={false} />
+  </ItemGroup>;
   return <RepositoryComparison key={`${props.serverId}:${props.accountId}:${props.source.projectSourceId}:${props.source.sourceRevision}:${props.source.sha}:${props.workspaceRef?.id}:${props.workspaceRef?.source?.sourceId}:${props.workspaceRef?.source?.revision}:${props.current?.kind === 'repository' ? props.current.ref : ''}`}
     {...props} source={props.source} />;
 }

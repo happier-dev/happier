@@ -49,23 +49,31 @@ describe('folder deployment review from the Machine filesystem', () => {
         }
     });
 
-    it.skipIf(process.platform === 'win32')('explains excluded pipes and sockets without staging them', async () => {
+    it.skipIf(process.platform === 'win32').each(['plain', 'git'])('explains excluded pipes and sockets in a %s folder without staging them', async kind => {
         const root = await mkdtemp(join(tmpdir(), 'deploy-folder-'));
         const socket = createServer();
         try {
             await writeFile(join(root, 'compose.yaml'), 'services: {}');
-            execFileSync('mkfifo', [join(root, 'build.pipe')]);
+            // The tracked ignored file distinguishes Git selection from the fallback.
+            if (kind === 'git') {
+                execFileSync('git', ['init', '--quiet'], { cwd: root });
+                await writeFile(join(root, '.gitignore'), 'compose.yaml\n');
+                execFileSync('git', ['add', '-f', 'compose.yaml'], { cwd: root });
+            }
+            await mkdir(join(root, 'non-ordinary'));
+            execFileSync('mkfifo', [join(root, 'non-ordinary', 'build.pipe')]);
             await new Promise<void>((resolve, reject) => {
                 socket.once('error', reject);
                 socket.listen(join(root, 'build.sock'), resolve);
             });
             const { sourceIntent, paths } = await reviewFolder(root);
+            const retained = kind === 'git' ? ['.gitignore', 'compose.yaml'] : ['compose.yaml'];
+            expect(paths).toEqual(retained);
             expect(projectDeploymentReviewRevisionV1(sourceIntent)).toMatchObject({
-                fileCount: 1,
-                excludedPaths: ['build.pipe', 'build.sock'],
-                unsupportedFilePaths: ['build.pipe', 'build.sock'],
+                fileCount: retained.length,
+                excludedPaths: ['build.sock', 'non-ordinary/build.pipe'],
+                unsupportedFilePaths: ['build.sock', 'non-ordinary/build.pipe'],
             });
-            expect(paths).toEqual(['compose.yaml']);
         } finally {
             try {
                 if (socket.listening) await new Promise<void>(resolve => socket.close(() => resolve()));
