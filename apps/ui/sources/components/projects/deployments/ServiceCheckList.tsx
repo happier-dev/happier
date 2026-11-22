@@ -577,7 +577,10 @@ const CheckByline = React.memo(function CheckByline(
               latency: formatServiceCheckLatency(facts.latencyMs!),
               usual: formatServiceCheckLatency(facts.usualMs!),
             })
-          : [facts.kind, every].filter(Boolean).join(' · ') || null;
+          // What it reaches is meta beside how often (R12-D5); a title that is the address, or already says the kind, is
+          // not repeated.
+          : [facts.kind && !facts.title.startsWith(facts.kind) ? facts.kind : null,
+            facts.titleIdentifier ? null : facts.targetLabel, every].filter(Boolean).join(' · ') || null;
   const meta = {
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,

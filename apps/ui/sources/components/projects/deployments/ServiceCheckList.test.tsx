@@ -166,3 +166,19 @@ it('names a failing Key flow by its flow and says its measurement, as Failing ra
   expect(text).toMatch(/p95 1\.42/);
   expect(text).not.toContain('usually');
 });
+
+// PAGE-ACCEPT-176 R12-D5: a loopback check leads with its kind and the service it watches; the address it reaches is
+// meta on its second line, never the lead and never dropped.
+it('leads a loopback check with what it watches and keeps its endpoint as meta', async () => {
+  const loopback = { ...(row('web', '127.0.0.1:8080/health', results('up', 12)) as unknown as Record<string, unknown>),
+    definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'web', name: 'HTTP', targetLabel: '127.0.0.1:8080/health',
+      titleTarget: { kind: 'service', label: 'web' }, periodMs: 60_000, domainId: null }] } } as never;
+  const screen = await renderScreen(
+    <ServiceCheckList testID="monitoring.checks" rows={[loopback]} scope={{ serverId: 'server-1', accountId: 'account-1' } as never}
+      selection={SELECTION} accessibilityLabel="Checks" />,
+  );
+  const text = screen.getTextContent();
+  expect(text).toContain('HTTP · web');
+  expect(text).toContain('127.0.0.1:8080/health');
+  expect(text.indexOf('HTTP · web')).toBeLessThan(text.indexOf('127.0.0.1:8080/health'));
+});
