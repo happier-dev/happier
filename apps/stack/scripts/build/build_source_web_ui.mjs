@@ -523,6 +523,12 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
         captured.revision = { revision: tree.revision.revision, overlayDigest: tree.revision.overlayDigest ?? null,
           key: sourceRevisionKey(tree.revision) };
       }
+      const uiPackage = JSON.parse(await readFile(join(captured.uiProjectDir, 'package.json'), 'utf8'));
+      if (Object.hasOwn(uiPackage.dependencies ?? {}, '@pierre/diffs')) {
+        // Revision captures can reuse the installation without running UI postinstall.
+        const { buildPierreWorkerAssets } = await import('../../../ui/tools/diffs/buildPierreWorker.mjs');
+        buildPierreWorkerAssets({ repoRootDir: captured.repoDir, expoAppDir: captured.uiProjectDir });
+      }
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
         outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });
       return await consume({ captured, inventoryPath: join(contextDir, 'inputs/inventory.js'), uiProjectDir: captured.uiProjectDir });

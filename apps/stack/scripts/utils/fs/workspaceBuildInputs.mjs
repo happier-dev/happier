@@ -5,7 +5,7 @@ import { packageNameOfSpecifier, readWorkspacePackages, workspaceSourcePackageCl
 import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs';
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
-import { SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
+import { isPierreWorkerAssetFile, SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceExportSourceInputs } from '../../../../../scripts/workspaces/workspaceExportSourceInputs.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_inputs.mjs';
@@ -27,8 +27,7 @@ const UI_VENDORED_PUBLIC_ROOTS = ['apps/ui/public/monaco', 'apps/ui/public/pdfjs
  * forks, temporary configs) are neither inputs nor part of the build identity. */
 export function isSourceGeneratedInput(path) {
   return isSourceServerGeneratedInput(path) || path === EMBEDDED_FEATURE_POLICIES_OUTPUT
-    || UI_VENDORED_PUBLIC_ROOTS.some(root => path.startsWith(`${root}/`))
-    || /^apps\/ui\/public\/pierre-diff-worker[^/]*\.js$/.test(path);
+    || UI_VENDORED_PUBLIC_ROOTS.some(root => path.startsWith(`${root}/`));
 }
 
 export function isSourceServerGeneratedInput(path) {
@@ -253,7 +252,8 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
       path !== 'packages/iroh-native' || !/^native(?:-test)?\//.test(input));
     for (const input of inputs) {
       if (path === 'apps/ui' && (Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).includes(input)
-        || basename(input) === SOURCE_UI_ASSET_RECORD_FILENAME)) continue;
+        || basename(input) === SOURCE_UI_ASSET_RECORD_FILENAME
+        || (dirname(input) === 'public' && isPierreWorkerAssetFile(basename(input))))) continue;
       // Retained checkout databases are data, never compiler inputs.
       if (path === 'apps/server' && input.startsWith('prisma/')
         && !/\.(?:prisma|sql)$/.test(input) && !input.endsWith('/migration_lock.toml')) continue;

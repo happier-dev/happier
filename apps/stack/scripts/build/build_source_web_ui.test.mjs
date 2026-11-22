@@ -56,6 +56,43 @@ for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
   });
 }
 
+test('a clean source tree provides the installed Pierre worker and WASM to Expo public export', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-web-pierre-worker-' });
+  const repoDir = fixture.path('repo');
+  await prepareFiniteSourceWebFixture({ sourceRepo: fileURLToPath(new URL('../../../../', import.meta.url)), repoDir });
+  const uiDir = join(repoDir, 'apps/ui');
+  const uiPackagePath = join(uiDir, 'package.json');
+  const uiPackage = JSON.parse(await readFile(uiPackagePath, 'utf8'));
+  const version = '7.8.9';
+  uiPackage.dependencies['@pierre/diffs'] = version;
+  await writeFile(uiPackagePath, JSON.stringify(uiPackage));
+
+  // The installed package is the external boundary. The tree has no postinstall outputs.
+  const scope = join(uiDir, 'node_modules/@pierre');
+  await rm(scope, { recursive: true, force: true });
+  const dist = join(scope, 'diffs/dist/worker');
+  await mkdir(dist, { recursive: true });
+  await writeFile(join(scope, 'diffs/package.json'), JSON.stringify({ name: '@pierre/diffs', version,
+    main: 'dist/worker/worker-portable.js' }));
+  await writeFile(join(dist, 'worker-portable.js'), 'import("./wasm-package.js");\n');
+  const wasmContents = 'export const packageWasm = true;\n';
+  await writeFile(join(dist, 'wasm-package.js'), wasmContents);
+  const publicDir = join(uiDir, 'public');
+  for (const name of await readdir(publicDir)) {
+    if (name.startsWith('pierre-diff-worker')) await rm(join(publicDir, name));
+  }
+
+  const worker = `pierre-diff-worker.${version}.js`;
+  const wasm = `pierre-diff-worker-wasm.${version}.js`;
+  await withSourceWebUiInputs({ repoDir, baseDir: fixture.path('state'),
+    tree: { dir: repoDir, revision: { revision: 'a'.repeat(40) } } }, async ({ uiProjectDir }) => {
+    const expoPublicDir = join(uiProjectDir, 'public');
+    assert.ok((await readFile(join(expoPublicDir, worker), 'utf8')).includes(`import("./${wasm}")`));
+    assert.equal(await readFile(join(expoPublicDir, wasm), 'utf8'), wasmContents);
+  });
+  await assert.rejects(access(join(publicDir, worker)), { code: 'ENOENT' });
+});
+
 test('dependency publication web export discards a spanned candidate and returns only the rebuild', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-dependency-publication-' });
   const repoDir = fixture.path('repo');

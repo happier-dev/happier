@@ -1,1 +1,3 @@
-export const PIERRE_DIFFS_VERSION = '1.5.2';
+import uiPackage from '../../../../../../package.json';
+
+export const PIERRE_DIFFS_VERSION = uiPackage.dependencies['@pierre/diffs'];

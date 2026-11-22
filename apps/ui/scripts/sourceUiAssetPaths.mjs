@@ -11,3 +11,7 @@ export const SOURCE_UI_ASSET_OUTPUT_PATHS = Object.freeze({
 });
 
 export const SOURCE_UI_ASSET_RECORD_FILENAME = 'source-assets.json';
+
+export function isPierreWorkerAssetFile(name) {
+    return /^pierre-diff-worker(?:-wasm)?(?:\.\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?)?\.js$/.test(name);
+}

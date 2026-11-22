@@ -16,10 +16,11 @@ describe('createPierreDiffWorker', () => {
         });
 
         const { createPierreDiffWorker } = await import('./pierreWorkerFactory.web');
+        const { PIERRE_DIFFS_VERSION } = await import('./pierreVersion');
         createPierreDiffWorker();
 
         expect(workers[0]?.url.origin).toBe('https://good.example');
-        expect(workers[0]?.url.pathname).toBe('/pierre-diff-worker.1.5.2.js');
+        expect(workers[0]?.url.pathname).toBe(`/pierre-diff-worker.${PIERRE_DIFFS_VERSION}.js`);
         expect(workers[0]?.options).toEqual(expect.objectContaining({ type: 'module' }));
     });
 
@@ -30,7 +31,6 @@ describe('createPierreDiffWorker', () => {
         const installed = JSON.parse(readFileSync(installedPackageJson, 'utf8'));
         const app = JSON.parse(readFileSync(new URL('../../../../../../package.json', import.meta.url), 'utf8'));
 
-        expect(PIERRE_DIFFS_VERSION).toBe('1.5.2');
         expect(PIERRE_DIFFS_VERSION).toBe(app.dependencies['@pierre/diffs']);
         expect(PIERRE_DIFFS_VERSION).toBe(installed.version);
     });

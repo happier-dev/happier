@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
+import { isPierreWorkerAssetFile } from '../../scripts/sourceUiAssetPaths.mjs';
 
 function readUtf8(filePath) {
     return fs.readFileSync(filePath, 'utf8');
@@ -67,7 +68,7 @@ export function buildPierreWorkerAssets({ repoRootDir, expoAppDir }) {
     copyFile(wasmSourcePath, outWasmPath);
     for (const entry of fs.readdirSync(publicDir, { withFileTypes: true })) {
         if (!entry.isFile() || entry.name === workerFileName || entry.name === wasmFileName) continue;
-        if (/^pierre-diff-worker(?:-wasm)?(?:\.\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?)?\.js$/.test(entry.name)) {
+        if (isPierreWorkerAssetFile(entry.name)) {
             fs.unlinkSync(path.resolve(publicDir, entry.name));
         }
     }
@@ -81,7 +82,7 @@ export function buildPierreWorkerAssets({ repoRootDir, expoAppDir }) {
     };
 }
 
-if (import.meta.url === url.pathToFileURL(process.argv[1]).href) {
+if (process.argv[1] && import.meta.url === url.pathToFileURL(process.argv[1]).href) {
     const toolsDir = path.dirname(fs.realpathSync(url.fileURLToPath(import.meta.url)));
     const expoAppDir = path.resolve(toolsDir, '..', '..');
 
