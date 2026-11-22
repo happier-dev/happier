@@ -371,6 +371,7 @@ export function resolveUsageWidgetQuery(
 export function useUsageWidgetModel(
   input: Readonly<Record<string, JsonValue>>,
   widgetId: UsageQueryWidgetId,
+  options?: Readonly<{ exactQuotaHistory?: boolean }>,
 ): Readonly<{
   model: UsageWidgetBodyModel;
   query: UsageQuery | null;
@@ -389,7 +390,7 @@ export function useUsageWidgetModel(
     setExactReaders(value => value + 1);
     return () => setExactReaders(value => value - 1);
   }, []);
-  const includeQuotaExactHistory = exactReaders > 0;
+  const includeQuotaExactHistory = options?.exactQuotaHistory === true || exactReaders > 0;
   const registration = React.useMemo(
     () => resolveUsageWidgetQuery(clauses, input, widgetId, includeQuotaExactHistory),
     [clauses, inputKey, widgetId, includeQuotaExactHistory],

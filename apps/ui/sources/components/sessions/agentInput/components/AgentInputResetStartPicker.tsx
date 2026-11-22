@@ -19,7 +19,9 @@ type Props = Readonly<{
 
 /** Mounted only after explicit composer intent; the shared Usage Resource owns quota demand. */
 export default function AgentInputResetStartPicker(props: Props) {
-    const { model } = useUsageWidgetModel({ session: props.sessionId, includeQuotaHistory: true }, 'usage_capacity');
+    // Binding a pending reset needs the accepted observation ID, which daily history omits.
+    const { model } = useUsageWidgetModel({ session: props.sessionId, includeQuotaHistory: true },
+        'usage_capacity', { exactQuotaHistory: true });
     const slice = model.shownQuery?.authority.serverId === props.serverId ? model.slice : null;
     return <View testID="agent-input-reset-start-picker">
         {slice ? <ResetStartOptions {...props} slice={slice} resource={model} />
