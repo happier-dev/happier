@@ -2,7 +2,7 @@ import { readSessionAgentReadinessChildActionV1, resolveMachineRpcExternalAction
 import { readHostAdmittedReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { readSessionActionChildCreationRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationActionIdsV1';
 import type { CliActionDepsParams } from './types';
-import { ACTION_ID_FAMILIES_V1, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, isWorkspaceSyncRelationshipWriteActionId, isLocalServiceStopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { isProjectWorkspaceSyncOpenActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { HandoffTargetReplacementPreflightV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
@@ -300,12 +300,20 @@ export function createCliMachineActionTransport(
         || input.effectActionId === ACTION_OPERATION_CANCEL_ACTION_ID_V1 && input.method === ACTION_OPERATION_RPC_METHODS_V1.cancel)
       && readRetainedVerifiedExternalActionRequester(executionAuthorization) !== undefined;
     const reviewedChild = readHostAdmittedReviewedChildV1(input.context) ?? undefined;
+    // Guard Undo's way back is a host child on this same Machine: the Activity
+    // owner selected it from its own receipt (or its installation-signed Ask
+    // replays it). It spends the receiving Manage admission of the Undo on the
+    // child's own native method; a self-RPC through Home would carry an Undo
+    // root that does not imply the child's family.
+    const effectSpec = input.effectActionId ? ActionIdSchema.safeParse(input.effectActionId) : undefined;
+    const guardUndoWayBack = managedBinding?.actionId === 'machines.guard.activity.undo' && effectSpec?.success === true
+      && effectSpec.data !== managedBinding.actionId && getActionSpec(effectSpec.data).bindings?.rpcMethod === input.method;
     const admittedLocalAction = Boolean(boundToThisMachine && managedBinding
       && managedBinding.installationId === params.externalActionMachineInstallationId
-      && (managedBinding.actionId === input.effectActionId
+      && (guardUndoWayBack || (managedBinding.actionId === input.effectActionId
         || readSessionAgentReadinessChildActionV1(managedBinding, reviewedChild) === input.effectActionId)
       && (managedBinding.requesterOperationRead ? admittedRequesterOperation
-        : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding, undefined, reviewedChild) === input.effectActionId));
+        : admittedMoveStatusRead || resolveMachineRpcExternalActionEffectV1(input.method, managedBinding, undefined, reviewedChild) === input.effectActionId)));
     // This in-process admission was installed only after opening the exact
     // controller codec at Home. Reuse it for the two scoped reads; serializing
     // a self-RPC would lose that private receiver authority. A foreign requester

@@ -108,6 +108,49 @@ describe('isolation and admin-access Machine admission', () => {
     expect(result).toMatchObject({ ok: true, result: { status: 'applied', policy: { version: 1, mode: 'preauthorized' } } });
     expect(readMachineAdminAccessV1(metadata)).toMatchObject({ status: 'ready', source: 'stored', policy: { mode: 'preauthorized' } });
   });
+  describe('signed Guard Undo way back on its own Machine', () => {
+    const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+      installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const externalTarget = { kind: 'machine' as const, machineId: 'machine' };
+    const authorizationFor = (actionId: string) => ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'receiving-admission',
+      binding: { accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'terminal', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId, requestId: 'guard-undo',
+        machineId: 'machine', installationId: 'installation', target: externalTarget, requestEnvelopeDigest: 'a'.repeat(43) } });
+    const run = async (rootActionId: string, effectActionId: string, method: string) => {
+      const local = vi.fn<MachineActionDirectTargetTransport['invoke']>().mockResolvedValue({ ok: true });
+      // Home is the boundary this host child must not re-enter: its signed root admits Undo, not the child's family.
+      const home = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new Error('home_signed_authorization_rejected:effect_family'));
+      const transport = createCliMachineActionTransport({
+        credentials: { token: 'fixture', encryption: null, credentialProvenance: 'stored_session' },
+        serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'https://home.example.test',
+        externalActionMachineInstallationId: 'installation', externalActionMachineRequestPrivateKey: new Uint8Array(64),
+        machineActionDirectTargetTransport: { machineId: 'machine', invoke: local },
+      });
+      const context = { surface: 'rpc', authority: 'present_user', serverId: 'home', actionRequestId: 'guard-undo-child',
+        machineAdmission, externalActionExecutionAuthorization: authorizationFor(rootActionId),
+        externalActionTarget: externalTarget } satisfies RpcActionExecutorContext;
+      const result = await transport.callMachineAction({ machineId: 'machine', serverId: 'home', method, effectActionId,
+        request: { machineId: 'machine', terminalKey: 'idle' }, context, exactMachine: true }).catch((error: Error) => error.message);
+      return { result, local, home };
+    };
+    it.each(['machines.terminal.open', 'machines.processes.startAgain', 'machines.storage.trash.restore'])(
+      'runs the %s child on this Machine with the receiving Undo admission', async effectActionId => {
+        const { result, local, home } = await run('machines.guard.activity.undo', effectActionId, getActionSpec(effectActionId).bindings!.rpcMethod!);
+        expect(result).toEqual({ ok: true });
+        expect(home).not.toHaveBeenCalled();
+        expect(local).toHaveBeenCalledOnce();
+        expect(local.mock.calls[0]![2]).toMatchObject({ admissionResult: { ok: true },
+          localActionContext: { externalActionExecutionAuthorization: { binding: { actionId: 'machines.guard.activity.undo' } } } });
+      });
+    it('keeps a child on another method, or under another root, on Home admission', async () => {
+      const wrongMethod = await run('machines.guard.activity.undo', 'machines.terminal.open', 'bash');
+      expect(wrongMethod.local).not.toHaveBeenCalled();
+      expect(wrongMethod.home).toHaveBeenCalledOnce();
+      const otherRoot = await run('machines.terminal.list', 'machines.terminal.open', getActionSpec('machines.terminal.open').bindings!.rpcMethod!);
+      expect(otherRoot.local).not.toHaveBeenCalled();
+      expect(otherRoot.home).toHaveBeenCalledOnce();
+    });
+  });
   it.each([...ACTION_ID_FAMILIES_V1.machine_agent_isolation, ...ACTION_ID_FAMILIES_V1.machine_admin_access]
     .flatMap(actionId => { const method = getActionSpec(actionId).bindings?.rpcMethod; return method ? [method] : []; }))('keeps protected native %s on authenticated Machine ingress', async method => {
       const local = vi.fn<MachineActionDirectTargetTransport['invoke']>();
