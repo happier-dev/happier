@@ -7746,9 +7746,14 @@ Account-placed creation and control use those protected Home admissions without
 inventing a controller. The unsigned mutation arm requires a nonlegacy Account
 token with present-user authority; later row mutations require that row's
 custodian and active request. A terminal token alone is not that authority.
-Signed controller-free operations bind the signer to the row's own enrolled
-guest or an unshared custodian daemon, with the row's custodian preserved. The
-same route owner protects cancellation and setup decisions on paired rows.
+The owning Account can admit Delete and re-attach its controller on a
+controller-free row. The Home checks the new controller's exact installation.
+An immediate Stop on a controller-free row returns `controller_unavailable` and
+asks the owner to re-attach a controller. The owner's original Account proof
+can carry the exact Delete through cleanup on the Account's own daemon. Other
+signed native follow-ups bind the signer to the row's enrolled guest or an
+unshared custodian daemon. The same route owner protects cancellation and setup
+decisions on paired rows.
 
 For implicit paired-terminal immediate power and resize, the CLI reuses its own
 daemon's existing signed-root ingress and the daemon's Account authority. An

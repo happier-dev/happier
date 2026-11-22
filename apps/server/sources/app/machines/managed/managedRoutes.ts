@@ -4,7 +4,7 @@ import { isSessionSpawnNewActionIdV1, getManagedBoundSetupReportActionIdsV1, WOR
 import { ExternalActionRetainedWorkflowRootV1Schema, projectExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ManagedControllerResizeReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { reportManagedResize } from './managedMutations';
-import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MANAGED_EXEC_ACTION_ID_V1, MANAGED_DELETE_ACTION_ID_V1, MANAGED_POWER_SET_ACTION_ID_V1, isManagedEnrollmentRecoveryChildV1, MANAGED_ACQUIRE_ACTION_ID_V1, MANAGED_RESIZE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -60,12 +60,22 @@ function requireManagedPresentUser(request: FastifyRequest): void {
 /** Intent admission uses Account roles; native execution keeps row-bound proof or present-user custody. */
 async function requireManagedOperationRequest(request: FastifyRequest, input: Readonly<{
     homeId: string; managedId: string; requestId?: string; controller?: { machineId: string; installationId: string };
-}>, allowedEffects: readonly string[], options: Readonly<{ admission?: boolean; submittedReport?: boolean;
+}>, allowedEffects: readonly string[], options: Readonly<{ admission?: z.infer<typeof ManagedControlAdmissionInputV1Schema>; submittedReport?: boolean;
     controllerDestination?: { machineId: string; installationId: string } | null; creationMutation?: boolean;
     retainedContext?: boolean }> = {}) {
     return inReadSnapshot(async tx => {
         const row = await readManagedMachineInTx(tx, input);
         if (request.externalActionExecutionAuthorized === true) {
+            const stopAdmission = options.admission?.action === MANAGED_POWER_SET_ACTION_ID_V1
+                && options.admission.input.when === 'now' && options.admission.input.intent === 'stop';
+            const ownerDelete = request.externalActionEffectActionId === MANAGED_DELETE_ACTION_ID_V1
+                && input.requestId !== undefined && request.externalActionExecutionRequestId === input.requestId;
+            // An original Account proof can carry the owner's exact Delete; the mutation owns
+            // admission and later consumes its active request or submitted outcome.
+            const ownerControlWithoutController = row.controllerMachineId === null && request.userId === row.custodianAccountId
+                && (isManagedPresentUser(request) && (stopAdmission || ownerDelete)
+                    || options.controllerDestination != null
+                        && options.controllerDestination.machineId === request.externalActionExecutionMachineId);
             // Reviewed deployment retention runs on the enrolled guest, not its provisioner controller.
             const retentionGuest = options.admission
                 && request.externalActionReviewedChildAdmission?.actionId === 'machines.managed.retention.update'
@@ -84,7 +94,7 @@ async function requireManagedOperationRequest(request: FastifyRequest, input: Re
                     select: { id: true, accountId: true, kind: true, managedResource: { select: { id: true } } },
                 }) : null;
                 const executor = await resolveSignedManagedAccountExecutorInTx(tx, machine, { custodianAccountId: row.custodianAccountId,
-                    managedId: row.id, enrolledMachineId: row.enrolledMachineId });
+                    managedId: row.id, enrolledMachineId: row.enrolledMachineId, ownerControlProof: ownerControlWithoutController });
                 if (!executor) throw new ManagedMachineError('permission_denied');
                 executionMachineId ??= executor.id;
             }
@@ -362,7 +372,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
         const input = request.body.input;
         const proof = await requireManagedOperationRequest(request, { homeId: input.homeId,
             managedId: 'managedMachineId' in input ? input.managedMachineId : input.managedId,
-            requestId: request.body.requestId }, [request.body.action], { admission: true,
+            requestId: request.body.requestId }, [request.body.action], { admission: request.body,
                 ...(request.body.action === 'machines.managed.controller.update' ? { controllerDestination: request.body.input.controller } : {}) });
         if (proof.requestId !== request.body.requestId) throw new ManagedMachineError("request_conflict");
         return admitManagedControl({ actorAccountId: request.userId, custodianAccountId: proof.custodianAccountId,

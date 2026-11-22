@@ -9,6 +9,7 @@ import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/cr
 import { isPluginErrorData } from '@happier-dev/protocol/plugins/errors';
 import { PluginDiagnosticRemediationV1Schema } from '@happier-dev/protocol/daemon/pluginContributionIntrospection';
 import { readMachineProvisionerOptionsRefusalV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { MANAGED_POWER_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PluginError } from '../../plugins/errors.js';
 
 export class ManagedMachineControllerError extends Error {
@@ -27,6 +28,8 @@ export class ManagedMachineControllerError extends Error {
         const normalized = normalizeActionExecutorThrownError(this, phase);
         if (publicChild) return { ok: false, ...normalized };
         return { ok: false, ...normalized, errorCode: this.code,
+            ...(phase === MANAGED_POWER_SET_ACTION_ID_V1 && this.code === 'controller_unavailable' && this.status === 409
+                ? { error: 'Power control needs an available controller. Re-attach a controller to this managed Machine and retry.' } : {}),
             failureCause: this.failureCause === undefined
                 ? readActionFailureCauseV1({ ...normalized.failureCause, errorCode: this.code })
                 : normalized.failureCause };

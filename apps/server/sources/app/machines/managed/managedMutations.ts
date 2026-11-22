@@ -291,6 +291,10 @@ export async function admitManagedControl(params: Readonly<{
                 ...(!isStoredOpaquePresetMachine(row) && admitted.currentAdmission.resizeProvisioner
                     ? { resizeProvisioner: admitted.currentAdmission.resizeProvisioner } : {}) };
         }
+        if (!controller && request.action === MANAGED_POWER_SET_ACTION_ID_V1
+            && request.input.when === 'now' && request.input.intent === 'stop') {
+            throw new ManagedMachineError('controller_unavailable');
+        }
         await requireManagedControllerInTx(tx, { homeId: row.homeId, custodianAccountId: row.custodianAccountId, controller });
         // Resize executes the approved size even when another intent advanced
         // during review. This revision is only the atomic row-write operand.

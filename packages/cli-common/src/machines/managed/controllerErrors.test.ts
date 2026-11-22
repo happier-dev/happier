@@ -3,6 +3,14 @@ import { completeSpawnActionResult, normalizeActionExecutorThrownError } from '@
 
 import { ManagedMachineControllerError } from './controllerErrors.js';
 
+describe('ManagedMachineControllerError public projection', () => {
+    it('includes the controller remedy in a typed power admission refusal', () => {
+        const failure = new ManagedMachineControllerError('controller_unavailable', 409).toActionFailure('machines.managed.power.set');
+        expect(failure).toMatchObject({ ok: false, errorCode: 'controller_unavailable',
+            error: expect.stringMatching(/re-attach a controller/i) });
+    });
+});
+
 describe('ManagedMachineControllerError.fromActionFailure', () => {
     it('retains the ordinary Session spawn refusal and launch cause through a managed continuation', () => {
         const refusal = { type: 'error' as const, code: 'spawn_failed' as const, retryable: false,

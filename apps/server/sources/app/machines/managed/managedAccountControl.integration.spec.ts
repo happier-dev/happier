@@ -556,6 +556,124 @@ describe('Account-owned managed control without a controller', () => {
         'x-user': accountId, 'x-custodian': accountId, 'x-machine': machineId, 'x-effect': action, 'x-request': requestId,
     });
 
+    it.each(['stop', 'delete', 'retire'] as const)('settles owner %s without a controller or enrolled guest and denies another Account', async intent => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await securityMachine(owner.id);
+        const row = await securityRow(owner.id);
+        const requestId = randomUUID();
+        const action = intent === 'stop' ? 'machines.managed.power.set' as const
+            : intent === 'delete' ? 'machines.managed.delete' as const : 'machines.managed.retire' as const;
+        const input = intent === 'retire'
+            ? { homeId, managedId: row.id, expectedIntentRevision: 0, manualResponsibility: true }
+            : { homeId, managedId: row.id, when: 'now', intent, expectedRevision: 0,
+                ...(intent === 'delete' ? { reviewedDependencies: true } : {}) };
+        const app = await securityServer();
+        const post = (path: string, payload: InjectOptions['payload'], accountId = owner.id) => app.inject({ method: 'POST',
+            url: `/v1/machines/managed/controller/${path}`, payload, headers: { 'x-user': accountId, 'x-kind': 'account' } });
+        try {
+            const denied = await post('admit-control', { action, input, requestId }, stranger.id);
+            expect(denied.statusCode, denied.body).toBe(403);
+            expect(denied.json()).toEqual({ code: 'permission_denied' });
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ intentRevision: 0 });
+            const admitted = await post('admit-control', { action, input, requestId });
+            if (intent === 'stop') {
+                expect(admitted.statusCode, admitted.body).toBe(409);
+                expect(admitted.json()).toEqual({ code: 'controller_unavailable' });
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }))
+                    .toMatchObject({ intentRevision: 0, desired: row.desired });
+                return;
+            }
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json().machine).toMatchObject({ id: row.id, intentRevision: 1 });
+            expect(admitted.json().machine.controller).toBeUndefined();
+            expect(admitted.json().machine.enrolledMachineId).toBeUndefined();
+            if (intent === 'retire') {
+                expect(admitted.json().machine).toMatchObject({ cleanup: { disposition: 'unavailable', reason: 'manual_responsibility' } });
+                expect(admitted.json().machine.archivedAt).toBeTypeOf('number');
+            } else {
+                const correlation = { homeId, managedId: row.id, expectedIntentRevision: 1, requestId };
+                expect((await post('submit-intent', correlation, stranger.id)).statusCode).toBe(403);
+                const submitted = await post('submit-intent', correlation);
+                expect(submitted.statusCode, submitted.body).toBe(200);
+                expect(submitted.json()).toMatchObject({ submitted: true, machine: { desired: intent } });
+                const observation = { observedAt: 1, availability: 'absent' };
+                expect((await post('report-intent', { ...correlation, result: { kind: 'confirmed' }, observation }, stranger.id)).statusCode).toBe(403);
+                const reported = await post('report-intent', { ...correlation, result: { kind: 'confirmed' }, observation });
+                expect(reported.statusCode, reported.body).toBe(200);
+                expect(reported.json().machine).toMatchObject({ desired: intent, observation,
+                    allocation: 'confirmed-absent' });
+                expect(reported.json().machine.submittedNativeEffect).toBeUndefined();
+            }
+        } finally { await app.close(); }
+    });
+
+    it.each(['machines.managed.power.set', 'machines.managed.delete'] as const)('admits the signed owning Account independently of controller custody for %s', async action => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const host = await securityMachine(owner.id);
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: host.id,
+            principal: { kind: 'account', accountId: other.id }, level: 'admin' }));
+        const row = await securityRow(owner.id);
+        const requestId = randomUUID();
+        const input = action === 'machines.managed.delete' ? { intent: 'delete', reviewedDependencies: true } : { intent: 'stop' };
+        const app = await securityServer();
+        const control = (actor: string) => app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control',
+            headers: { ...signedHeaders(actor, host.id, action, requestId), 'x-custodian': owner.id, 'x-kind': 'account' },
+            payload: { action, requestId, input: { ...input, homeId, managedId: row.id, when: 'now', expectedRevision: 0 } } });
+        try {
+            expect((await control(other.id)).statusCode).toBe(403);
+            const response = await control(owner.id);
+            if (action === 'machines.managed.power.set') {
+                expect(response.statusCode, response.body).toBe(409);
+                expect(response.json()).toEqual({ code: 'controller_unavailable' });
+                expect(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+            } else {
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().machine).toMatchObject({ id: row.id, allocation: 'bound', desired: 'delete',
+                    intentRevision: 1, cleanup: { disposition: 'pending' } });
+                const correlation = { homeId, managedId: row.id, requestId, expectedIntentRevision: 1 };
+                const settle = (actor: string, path: string, payload: InjectOptions['payload']) => app.inject({ method: 'POST',
+                    url: `/v1/machines/managed/controller/${path}`, payload,
+                    headers: { ...signedHeaders(actor, host.id, action, requestId), 'x-custodian': owner.id, 'x-kind': 'account' } });
+                expect((await settle(other.id, 'submit-intent', correlation)).statusCode).toBe(403);
+                const submitted = await settle(owner.id, 'submit-intent', correlation);
+                expect(submitted.statusCode, submitted.body).toBe(200);
+                expect(submitted.json()).toMatchObject({ submitted: true });
+                const reported = await settle(owner.id, 'report-intent', { ...correlation, result: { kind: 'confirmed' },
+                    observation: { observedAt: 1, availability: 'absent' } });
+                expect(reported.statusCode, reported.body).toBe(200);
+                expect(reported.json().machine).toMatchObject({ allocation: 'confirmed-absent' });
+            }
+        } finally { await app.close(); }
+    });
+
+    it('reattaches the custodian’s exact shared controller after clearing it', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const host = await securityMachine(owner.id);
+        const row = await securityRow(owner.id, host);
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id, machineId: host.id,
+            principal: { kind: 'account', accountId: other.id }, level: 'admin' }));
+        const app = await securityServer();
+        const action = 'machines.managed.controller.update';
+        const update = (actor: string, expectedIntentRevision: number, controller: { machineId: string; installationId: string } | null) => {
+            const requestId = randomUUID();
+            return app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit-control',
+                headers: { ...signedHeaders(actor, host.id, action, requestId), 'x-custodian': owner.id },
+                payload: { action, requestId, input: { homeId, managedId: row.id, expectedIntentRevision, controller, reviewedPendingEffects: true } } });
+        };
+        try {
+            const cleared = await update(owner.id, 0, null);
+            expect(cleared.statusCode, cleared.body).toBe(200);
+            const controller = { machineId: host.id, installationId: host.installationId! };
+            expect((await update(other.id, 1, controller)).statusCode).toBe(403);
+            const restored = await update(owner.id, 1, controller);
+            expect(restored.statusCode, restored.body).toBe(200);
+            expect(restored.json().machine).toMatchObject({ controller, intentRevision: 2 });
+        } finally { await app.close(); }
+    });
+
     it.each(['submit-intent', 'submit', 'report', 'create-bootstrap-credential'])('refuses stranger-signed %s without changing the row or creating a credential', async path => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
