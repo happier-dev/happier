@@ -17,7 +17,8 @@ import {
   type ApprovalExecutionOriginV1,
   type ApprovalRequestV2,
 } from '@happier-dev/protocol';
-import { buildApprovalExecutionOriginV1, createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildApprovalExecutionOriginV1, createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import { projectApprovalExecutionForObservation } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createActionAutomationHttpPortV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
@@ -69,8 +70,11 @@ describe('daemon approval execution-origin currentness', () => {
     { source: 'receiver', locallyTracked: true, homeCurrent: true, staleReason: null },
     { source: 'receiver', locallyTracked: false, homeCurrent: true, staleReason: 'session_changed' },
     { source: 'controller', locallyTracked: false, homeCurrent: false, staleReason: 'credential_changed' },
-  ])('replays an approved terminal list from $source (local=$locallyTracked, Home=$homeCurrent)', async ({
-    source, locallyTracked, homeCurrent, staleReason,
+    { source: 'controller', locallyTracked: false, homeCurrent: false, staleReason: 'session_changed', authorizationRefusal: 'source_before_principal' },
+    { source: 'controller', locallyTracked: false, homeCurrent: false, staleReason: 'session_changed', authorizationRefusal: 'source_after_principal' },
+    { source: 'controller', locallyTracked: false, homeCurrent: false, staleReason: null, authorizationRefusal: 'authorization_token' },
+  ])('replays an approved terminal list from $source (local=$locallyTracked, Home=$homeCurrent, refusal=$authorizationRefusal)', async ({
+    source, locallyTracked, homeCurrent, staleReason, authorizationRefusal,
   }) => {
     const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(91));
     const actionId = 'machines.terminal.list';
@@ -109,30 +113,45 @@ describe('daemon approval execution-origin currentness', () => {
     });
     const terminalList = { ok: true, terminals: [] };
     const terminalRead = vi.fn(async () => terminalList);
-    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), approvalsGet: async () => request,
-      approvalsUpdate: async ({ request: value }) => {
+    const shared = { approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }: Parameters<NonNullable<ActionExecutorDeps['approvalsUpdate']>>[0]) => {
         const transition = decideApprovalRequestTransition(request, value);
         if (!transition.ok) return transition;
         request = ApprovalRequestV2Schema.parse(value);
-        return { ok: true };
+        return { ok: true as const };
       },
+      sessionSendMessage: async ({ localId }: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) =>
+        SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId }),
+    };
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...shared,
       isApprovalExecutionOriginCurrent: currentness,
       machineTerminalAction: terminalRead,
-      sessionSendMessage: async ({ localId }) => SessionInputAdmissionResultV1Schema.parse({ status: 'accepted', localId }),
     });
-    // Only Home HTTP, the daemon's live Session and terminal reads, and Artifact storage are substituted.
+    const decider = createActionExecutor({ ...shared,
+      approvalRequestApprovedReplay: async ({ artifactId, onReplayDispatched }) => {
+        onReplayDispatched?.();
+        return executor.replayApprovedApprovalRequest({ artifactId, callerAuthority: 'present_user' });
+      },
+    });
+    // Home HTTP, Machine transport, live Session and terminal reads, and Artifact storage are boundaries.
     const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
       expect(url).toBe(`https://home.example/v1/actions/${actionId}/execution-authorization/verify`);
       expect(body).toMatchObject({ binding: authorization.binding });
+      if (authorizationRefusal) return { status: 401, data: { error: 'invalid_token', authorizationRefusal } };
       return { status: homeCurrent ? 200 : 403, data: homeCurrent ? { ok: true } : {} };
     });
     try {
-      const result = await executor.execute('approval.request.decide', { artifactId: 'terminal-list-approval', decision: 'approve' },
+      const result = await decider.execute('approval.request.decide', { artifactId: 'terminal-list-approval', decision: 'approve' },
         { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, runtimeAccountId: 'account-1',
           serverId: 'profile', serverIdentityId: 'home-1' });
-      if (staleReason) {
-        expect(result).toMatchObject({ ok: false, errorCode: 'approval_stale', details: { reason: staleReason },
-          effectAttempted: false });
+      if (staleReason || authorizationRefusal) {
+        const failure = staleReason ? { errorCode: 'approval_stale', details: { reason: staleReason } }
+          : { errorCode: 'invalid_token' };
+        expect(request, JSON.stringify(result)).toMatchObject({ status: 'failed',
+          execution: { ok: false, effectAttempted: false, ...failure } });
+        expect(projectApprovalExecutionForObservation(request)).toMatchObject({
+          ok: false, effectAttempted: false, ...failure,
+        });
         expect(terminalRead).not.toHaveBeenCalled();
       } else {
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed' } });

@@ -2979,6 +2979,8 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
   serverHttpBaseUrl: string;
   managedFiniteWakeTarget?: ManagedWakeTargetV1;
   retainedDiscussionSource?: SessionInputSourceSessionV1;
+  /** Approval replay can report Home's verified Session source refusal as stale. */
+  onSessionSourceNotCurrent?: () => void;
   signal?: AbortSignal;
 }>): Promise<boolean> {
   const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(
@@ -3016,6 +3018,12 @@ export async function verifyExternalActionExecutionAuthorizationCurrent(input: R
       refuseExternalActionPhase('signed_root_http_status', input.authorization.binding.machineId, failure, {
         ...readSessionInputAdmissionDiagnostic(input.authorization.binding), httpStatus: response.status,
       });
+      if (input.onSessionSourceNotCurrent && response.status === 401 && refusal.success
+        && refusal.data.error === 'invalid_token' && (refusal.data.authorizationRefusal === 'source_before_principal'
+          || refusal.data.authorizationRefusal === 'source_after_principal')) {
+        input.onSessionSourceNotCurrent();
+        return false;
+      }
       rethrowRequesterHomeReadFailure(failure);
       return false;
     }

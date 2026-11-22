@@ -107,6 +107,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
     effectActionId: string;
     target: NonNullable<ApprovalExecutionOriginV1['target']>;
     retainedDiscussionSource?: SessionInputSourceSessionV1;
+    onSessionSourceNotCurrent?: () => void;
     signal?: AbortSignal;
   }>) => Promise<boolean>;
   /** Whether the plugin is still installed here (runtime slot); defaults to the authoritative slot. */
@@ -212,6 +213,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           })
         ) return stale('credential_changed');
         const target = origin.target;
+        let authorizationStaleReason: DaemonApprovalExecutionOriginStaleReason = 'credential_changed';
         if (!retainedWorkflow && !await phase('external_authorization', () => input.verifyExternalExecutionAuthorization!({
           authorization: externalAuthorization,
           // Account currentness verifies the retained root; the installation
@@ -223,8 +225,9 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           // exemption. Only an addressed original can prove this Home purpose.
           ...(retainedDiscussionSource?.discussionAddressing
             ? { retainedDiscussionSource } : {}),
+          ...(acceptedSession ? { onSessionSourceNotCurrent: () => { authorizationStaleReason = 'session_changed'; } } : {}),
           ...(signal ? { signal } : {}),
-        }))) return stale('credential_changed');
+        }))) return stale(authorizationStaleReason);
         // The verified Home binding owns the remote Session source for an
         // exact same-Account Machine relay or a retained managed creation.
         hasVerifiedRemoteSessionSource = acceptedSession
@@ -486,7 +489,9 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
     ...(installationIdentity
       ? {
           externalActionMachinePublicKey: installationIdentity.publicKey,
-          verifyExternalExecutionAuthorization: async ({ authorization, effectActionId, target, retainedDiscussionSource, signal }) =>
+          verifyExternalExecutionAuthorization: async ({
+            authorization, effectActionId, target, retainedDiscussionSource, onSessionSourceNotCurrent, signal,
+          }) =>
             await verifyExternalActionExecutionAuthorizationCurrent({
               authorization,
               effectActionId,
@@ -495,6 +500,7 @@ export function createDaemonApprovalExecutionOriginCurrentnessFromCredentials(in
               installationId: installationIdentity.installationId,
               serverHttpBaseUrl: input.serverApiUrl,
               ...(retainedDiscussionSource ? { retainedDiscussionSource } : {}),
+              ...(onSessionSourceNotCurrent ? { onSessionSourceNotCurrent } : {}),
               ...(signal ? { signal } : {}),
             }),
         }
