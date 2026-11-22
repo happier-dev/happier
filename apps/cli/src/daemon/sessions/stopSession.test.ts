@@ -223,7 +223,7 @@ describe('createStopSession', () => {
     const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
 
     const pidToTrackedSession = new Map<number, any>([
-      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { kill: killDaemonChild }, processCommandHash: 'h1' }],
+      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { pid: 111, kill: killDaemonChild }, processCommandHash: 'h1' }],
       [222, { startedBy: 'terminal', pid: 222, happySessionId: 'sess-1', processCommandHash: 'h2' }],
     ]);
 
@@ -231,7 +231,7 @@ describe('createStopSession', () => {
       pidToTrackedSession,
       waitForTrackedRunnersExit: vi.fn(async () => true),
     });
-    const ok = await stop('sess-1');
+    const ok = await stop('sess-1').finally(() => nowSpy.mockRestore());
 
     expect(ok).toEqual({ status: 'stopped' });
     expect(killDaemonChild).not.toHaveBeenCalled();
@@ -242,7 +242,6 @@ describe('createStopSession', () => {
     expect(pidToTrackedSession.has(222)).toBe(true);
     expect(pidToTrackedSession.get(111)?.stopRequestedAtMs).toBe(123456789);
     expect(pidToTrackedSession.get(222)?.stopRequestedAtMs).toBe(123456789);
-    nowSpy.mockRestore();
   });
 
   it('keeps tracked daemon sessions when falling back to child-process SIGTERM', async () => {
@@ -261,7 +260,7 @@ describe('createStopSession', () => {
     });
 
     const pidToTrackedSession = new Map<number, any>([
-      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { kill: killDaemonChild }, processCommandHash: 'h1' }],
+      [111, { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1', childProcess: { pid: 111, kill: killDaemonChild }, processCommandHash: 'h1' }],
       [222, { startedBy: 'terminal', pid: 222, happySessionId: 'sess-1', processCommandHash: 'h2' }],
     ]);
 
@@ -301,7 +300,7 @@ describe('createStopSession', () => {
       startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
-      childProcess: { kill: killDaemonChild },
+      childProcess: { pid: 111, kill: killDaemonChild },
       processCommandHash: 'h1',
     };
     const pidToTrackedSession = new Map<number, any>([
