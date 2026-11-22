@@ -164,6 +164,7 @@ import {
 import { useEnvironmentNavigation, selectEnvironmentNavigationItem } from './environmentNavigation';
 import { EnvironmentPageNavigation } from './EnvironmentNavigationViews';
 import { PageLoadingRows } from '@/components/ui/layout/PageLoadingRows';
+import { deploymentOverviewArrival } from './deploymentOverviewArrival';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useMachineServicesList } from '@/components/machines/services/useMachineServicesList';
 import { Collection, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
@@ -550,6 +551,11 @@ export const DeploymentEnvironmentDetail = React.memo(
     } : null;
     const availability = deploymentDeployAvailability(detail);
     const ready = availability.kind === 'ready' && props.deploy !== null;
+    // Overview slots are fixed from the first paint; later reads only append below (R12-D3).
+    // A held value stays painted while its read refreshes: only a first read holds a slot.
+    const arrival = deploymentOverviewArrival({ deployed: activeId !== null,
+      receipt: active.snapshot.value !== null ? 'ready' : active.snapshot.status,
+      history: history.snapshot.value !== null ? 'ready' : history.snapshot.status });
     const offline = ready && machineOnline === false;
     const environmentAgentActions = (
       <DeploymentEnvironmentAgentActions serverId={props.serverId} environmentId={detail.environment.id}
@@ -1096,7 +1102,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 </ItemGroupDefaultSurfaceProvider>
               )}
               {/* Before anything serves, the Environment's agent actions are the next step under the facts. */}
-              {ready ? null : environmentAgentActions}
+              {arrival.agentActions === 'primary' ? environmentAgentActions : null}
               {/* The kept order (pfc-redesign r4 dEnvOv KEEP item 3, owner-approved 11-13): Definition and Needs a
                   repository, Deployed definition, Data, Previews; what runs, triggers, push setup and CI follow. */}
               {detail.content.definition.kind === 'stored' ? <StoredDefinitionOverview
@@ -1105,6 +1111,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                 onOpen={() => openTab('settings')}
                 onMove={environmentEditing?.actions.moveToRepository && detail.environment.capabilities.role === 'manager'
                   ? () => openTab('settings') : null} /> : null}
+              {/* What the latest Receipt decides is appended once it settles, never inserted above (R12-D3). */}
+              {arrival.body === 'held' ? <PageLoadingRows testID="project-deployments.environment.body.loading" /> : <>
               {active.snapshot.value?.content?.sourceIntent ? <DeploymentVersionComparison
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
@@ -1211,6 +1219,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   onManage={openFleet ?? (() => openTab('settings', 'servers-build'))}
                 />
               ) : null}
+              {arrival.tail === 'held' ? null : <>
               {/* Recent activity (lab `envOv`): the receipts before the serving one, as the shared Timeline. */}
               {recentReceipts.length > 0 ? (
                 <ItemGroup
@@ -1232,8 +1241,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                   </SectionContentRow>
                 </ItemGroup>
               ) : null}
-              {/* Once Deploy leads, they are a titled section of their own beside the Environment's other agent work. */}
-              {ready ? environmentAgentActions : null}
+              {/* Once something serves, they are a titled section of their own beside the Environment's other agent work. */}
+              {arrival.agentActions === 'secondary' ? environmentAgentActions : null}
               {/* Triggers (with push setup) and Deploy from CI close the Overview (dEnvOv KEEP lede). */}
               {triggerSubject ? (
                 <View ref={automationsReveal.hostRef} collapsable={false}>
@@ -1268,6 +1277,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                       onPress={() => showDeploymentCiTokenSheet(ciInput)} />} />
                 </ItemGroup>
               ) : null}
+              </>}
+              </>}
             </>
           ) : tab === 'history' ? (
             <DeploymentHistoryPage
