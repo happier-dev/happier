@@ -71,11 +71,12 @@ it.each([
         resolveManagedCandidate: async () => ({ source: 'managedBrowserPackage', executablePath: '/managed/chrome',
             discoveryKind: 'managedRuntime', available: true, provenance: { origin: 'managed_package',
                 pinnedVersion: '127.0.6533.88', channel: 'stable', integrityDigest: `sha256:${'a'.repeat(64)}`, license: 'BSD-3-Clause' } }),
-        createLaunchOwnerFactory: input => createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
+        createLaunchOwnerFactory: input => {
+            const child = new EventEmitter();
+            return createBrowserSidecarLaunchOwnerControlAdapterFactory({ ...input,
             // Only the native process and CDP transport boundaries are substituted.
             spawnProcess: (_executable, args) => {
                 launches.push([...args]);
-                const child = new EventEmitter();
                 const stderr = new PassThrough();
                 return Object.assign(child, { pid: 84, stderr,
                     stdio: [null, null, stderr, new PassThrough(), new PassThrough()],
@@ -93,8 +94,15 @@ it.each([
                         layout: { nodeIndex: [], styles: [] },
                     }] };
                     return input.method === 'Runtime.evaluate' ? { result: { type: 'number', value: 42 } } : {}; },
-                dispatchBrowserCommand: async input => { cdpCommands.push(input.method); return { success: true }; } } }),
-        }),
+                dispatchBrowserCommand: async input => {
+                    cdpCommands.push(input.method);
+                    // A successful native Browser.close exits this engine; retained
+                    // profile disposal waits for that OS event before cutting CDP.
+                    if (input.method === 'Browser.close') child.emit('exit', 0, null);
+                    return { success: true };
+                } } }),
+            });
+        },
     })({ machineId: 'machine', readMachineMemory: () => ({ reported: true, totalBytes: 8 * 1024 ** 3,
         availableBytes: 8 * 1024 ** 3, usedBytes: 0, pressure: { level: 'calm', source: 'none' } }) });
     if (!runtime.ok) throw new Error(runtime.errorCode);
