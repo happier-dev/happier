@@ -3951,6 +3951,62 @@ describe('workspace sync target bootstrap authority', () => {
     }
   });
 
+  it('lets the signed Sync writer Replace its own live link at that link\'s root, never another link\'s', async () => {
+    const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-authority-writer-replace-'));
+    const alphaRoot = join(fixture, 'alpha');
+    const betaRoot = join(fixture, 'beta');
+    await mkdir(alphaRoot, { recursive: true });
+    await writeFile(join(alphaRoot, 'source.txt'), 'source');
+    const daemonRows = snapshot(alphaRoot, betaRoot);
+    let requesterRows = daemonRows;
+    const harness = createAuthorityHarness({ getProjectSnapshot: () => daemonRows, refreshProjectSnapshot: async () => requesterRows });
+    const replacementOperationId = 'replacement-op';
+    const sourceAdmission = { actorAccountId: 'account-1', custodianAccountId: 'account-1', machineId: 'machine-a',
+      installationId: 'machine-a-installation', role: 'manage' as const, encryptionMode: 'plain' as const };
+    const admission = { ...sourceAdmission, machineId: 'machine-b', installationId: 'machine-b-installation' };
+    const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: replacementOperationId,
+      accountServerId: 'server-1', sourceMachineId: 'machine-a', sourceRootPath: alphaRoot,
+      sourceContext: { machineAdmission: sourceAdmission, callerAuthority: 'present_user', workspaceWrites: 'allow',
+        callerInputConstraints: { models: null, permissionModes: null } } });
+    const writerRouting = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse({ v: 1, source,
+      sourceWriter: { machineId: 'machine-a', installationId: 'machine-a-installation' },
+      target: { v: 1, phase: 'preflight', operationId: replacementOperationId, accountServerId: 'server-1',
+        targetMachineId: 'machine-b', targetRootPath: betaRoot } });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'replace-proof', binding: {
+      accountId: 'account-1', authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home-identity',
+      machineId: 'machine-a', custodianAccountId: 'account-1', installationId: 'machine-a-installation',
+      actionId: 'workspace.sync.relationship.replace', requestId: replacementOperationId, requestEnvelopeDigest: 'A'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine-a' }, accountEncryptionMode: 'plain',
+    } });
+    const writerContext: RpcHandlerContext = { callerAuthority: 'present_user', callerInputAuthorization: authorization,
+      machineAdmission: admission, verifyMachineAdmissionCurrent: async () => true,
+      workspaceSyncSourceWriterTargetRouting: writerRouting };
+    const replace = (replaceRelationshipId: string) => harness.authority.preflightHandoffTargetReplacementHere({
+      v: 1, serverId: 'server-1', machineId: 'machine-b', operationId: replacementOperationId, targetPath: betaRoot,
+      replaceRelationshipId, destinationIntent: 'use_existing',
+    }, undefined, writerContext);
+    try {
+      // The live link holds its target root under the receiving daemon's retained custody.
+      await expect(harness.authority.prepareBootstrapHere(prepareRequest())).resolves.toMatchObject({ state: 'ready' });
+
+      // Replace of the person's own link inspects under that link's own loan and reaches destination approval.
+      await expect(replace(relationshipId)).resolves.toEqual({ type: 'not_required' });
+      // Another link id never lends this root.
+      await expect(replace('another-link')).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+      // A requester whose own rows do not hold the live link cannot borrow it from this daemon's catalog.
+      requesterRows = snapshot(alphaRoot, betaRoot, { includeRelationship: false });
+      await expect(replace(relationshipId)).rejects.toMatchObject({ code: 'workspace_root_in_use' });
+      // The selected link keeps its root: no refusal released or stole the retained claim.
+      expect(await harness.rootOwnershipManager.tryAcquire({
+        ownerId: 'probe', canonicalRoot: await realpath(betaRoot), operation: 'handoff', deferRootIdentityBinding: true,
+      })).toMatchObject({ kind: 'overlap' });
+    } finally {
+      await harness.authority.releaseAllRetainedBootstraps();
+      await harness.cleanup();
+      await rm(fixture, { recursive: true, force: true });
+    }
+  });
+
   it('drops retained ownership when reconciliation detects root identity loss', async () => {
     const fixture = await mkdtemp(join(tmpdir(), 'workspace-sync-authority-bind-'));
     const alphaRoot = join(fixture, 'alpha');

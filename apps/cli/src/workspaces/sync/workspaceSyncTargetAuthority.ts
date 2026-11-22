@@ -2837,7 +2837,10 @@ export function createWorkspaceSyncTargetAuthority(
         throw authorityError('workspace_root_unsafe', 'Handoff target parent is unavailable');
       }
       if (!bootstrap) throw authorityError('workspace_sync_unavailable', 'Workspace sync bootstrap authority is unavailable');
-      const snapshot = normalWriter ? null : getSnapshot(request.operationId);
+      // A signed writer's Replace looks up the requester's own admitted rows,
+      // never this custodian's catalog, so it can lend only that person's link.
+      const snapshot = !normalWriter ? getSnapshot(request.operationId)
+        : request.replaceRelationshipId ? await readInvocationSnapshot(signal, context, request.operationId) : null;
       const preflightTarget = await resolveEnabledRelationshipPreflightTarget({
         snapshot,
         operationId: request.operationId,
