@@ -12,6 +12,7 @@ import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePre
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
 const { SourceControlUnavailableState } = await import('./SourceControlUnavailableState');
+const { SourceControlStaleSnapshotNotice } = await import('./SourceControlStaleSnapshotNotice');
 const { t } = await import('@/text');
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 await import('@/sync/ops/actions/defaultActionExecutor');
@@ -77,5 +78,69 @@ describe('SourceControlUnavailableState for a stopped attached workspace (remote
         } finally {
             held.resolve();
         }
+    });
+
+    it('over the changes it kept, says the workspace is stopped with Start instead of a stale refresh (lab project-stopped)', async () => {
+        const homeId = 'srv_stopped_git_warm';
+        const serverId = await home.addHome({ name: 'Compute', serverUrl: 'https://stopped-git-warm.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
+            managedId: 'attached', controller, rootPath: '/home/coder/api' } as const;
+        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const machine = ManagedMachinePublicFullV1Schema.parse({
+            id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 3,
+            launch: { provider, schemaVersion: 1, name: 'api-dev', choices: { existingWorkspaceId: 'native-id' } },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { workspaceId: 'native-id' } },
+            workspaceAttachment: { os: 'linux', arch: 'x64', home: '/home/coder' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped' },
+        });
+        home.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        const accepted = await answerExternalActionAccountForHome(home, serverId, { ...controller,
+            actionId: 'machines.managed.power.set', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute: async () => ({ kind: 'accepted', managedId: machine.id, intentRevision: 4 }) });
+        home.answer(serverId, '/v1/machines', { body: [accepted.machine] });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+            [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
+        const screen = await renderScreen(<SourceControlStaleSnapshotNotice testID="git-stale" onRetry={vi.fn()}
+            error={{ errorCode: 'managed_power_required' }}
+            workspaceScope={{ serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace }} />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('files.pane.managedStoppedTitle', { workspace: 'api-dev' })));
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.actions.start')));
+        expect(screen.getTextContent()).not.toContain(t('files.sourceControlStale.body'));
+    });
+
+    it('reads Starting from Home while a submitted wake has not reached running, in every pane and without Start', async () => {
+        const homeId = 'srv_starting_git';
+        const serverId = await home.addHome({ name: 'Compute', serverUrl: 'https://starting-git.test',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+        const controller = { machineId: 'host', installationId: 'installation' };
+        const workspace = { v: 2, kind: 'managed', serverId: homeId, workspaceId: 'project-checkout',
+            managedId: 'attached', controller, rootPath: '/home/coder/api' } as const;
+        const provider = { pluginId: 'happier.machine.coder', localId: 'coder' };
+        const machine = ManagedMachinePublicFullV1Schema.parse({
+            id: workspace.managedId, homeId, custodianAccountId: 'owner', controller, allocation: 'bound',
+            creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 4,
+            submittedNativeEffect: { intent: 'start', requestId: 'wake', intentRevision: 4 },
+            launch: { provider, schemaVersion: 1, name: 'api-dev', choices: { existingWorkspaceId: 'native-id' } },
+            resource: { contributionRef: provider, schemaVersion: 1, value: { workspaceId: 'native-id' } },
+            workspaceAttachment: { os: 'linux', arch: 'x64', home: '/home/coder' },
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+            observation: { availability: 'present', observedAt: 1, power: 'stopped' },
+        });
+        home.answer(serverId, '/v1/machines/managed/actions/get', { body: machine });
+        const accepted = await answerExternalActionAccountForHome(home, serverId, { ...controller,
+            actionId: 'machines.managed.power.set', tokenEpoch: 0, requesterInvocation: 'optional',
+            execute: async () => ({ kind: 'accepted', managedId: machine.id, intentRevision: 5 }) });
+        home.answer(serverId, '/v1/machines', { body: [accepted.machine] });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+            [createManagedControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId })]);
+        const screen = await renderScreen(<SourceControlUnavailableState testID="git" errorCode="managed_power_required"
+            onRetry={vi.fn()} workspaceScope={{ serverId, machineId: controller.machineId, rootPath: workspace.rootPath, workspace }} />);
+        await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('files.pane.managedStartingTitle', { workspace: 'api-dev' })));
+        expect(screen.findAllByTestId('git-stopped-action')).toHaveLength(0);
+        expect(home.requestsFor('/v1/actions/machines.managed.power.set')).toHaveLength(0);
     });
 });

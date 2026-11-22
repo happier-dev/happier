@@ -226,6 +226,34 @@ describe('Code consumes the qualified browser and real entry-history batch', () 
         await screen.pressByTestIdAsync('workspace-code-bar-goto');
         expect(searchRuntime.open).toHaveBeenCalledWith(undefined, expect.objectContaining({ ...fixture.scope, sessionId: null }), { source: 'files' });
         await screen.update(fixture.wrap(renderPage({ path: 'LICENSE', kind: 'file' })));
+    it('keeps the latest commit it knew above the retained rows while its Machine is offline (lab project-offline)', async () => {
+        const rootPath = '/code-offline-commit';
+        const headOid = 'b'.repeat(40);
+        fixture = await createSessionFilesViewFixture({ rootPath, rpc: request => {
+            if (request.method === RPC_METHODS.LIST_DIRECTORY) return { success: true, truncated: false,
+                entries: [{ name: 'LICENSE', type: 'file' }] };
+            if (request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT) {
+                const snapshot = fileViewSnapshot({ rootPath });
+                return { success: true, snapshot: { ...snapshot, branch: { ...snapshot.branch, headOid } } };
+            }
+            if (request.method === RPC_METHODS.SCM_HISTORY_ENTRIES) return { success: true, headOid,
+                entries: (request.payload as { paths: string[] }).paths.map(path => ({ path, kind: 'commit',
+                    commit: { oid: headOid, subject: 'Refresh tokens before they expire', authorName: 'Ana Ruiz', committedAt: 1000 } })) };
+            return { success: false, errorCode: 'FEATURE_UNSUPPORTED', error: 'Unavailable boundary operation' };
+        } });
+        const screen = await fixture.render(<WorkspaceCodeBrowserView paneScopeId="code-offline-commit" scope={fixture.scope}
+            rootLabel="Code" location={{ path: '', kind: 'folder' }} onNavigate={() => {}} onOpenFile={() => {}} />);
+        await vi.waitFor(() => expect(screen.findHostByTestId('workspace-code-strip')).toBeTruthy());
+        await act(async () => {
+            fixture!.storage.getState().applyMachineActivityUpdates([
+                { id: fixture!.scope.machineId, active: false, activeAt: Date.now() },
+            ], { sourceServerId: fixture!.scope.serverId });
+        });
+        expect(screen.findHostByTestId('workspace-code-offline')).toBeTruthy();
+        expect(screen.findByTestId('repository-tree-row-LICENSE')).toBeTruthy();
+        expect(screen.findHostByTestId('workspace-code-strip')).toBeTruthy();
+    });
+
         const reader = screen.root.findByType(WorkspaceFileDetailsView);
         expect(reader.props).toMatchObject({ scope: fixture.scope, filePath: 'LICENSE', presentation: 'screen' });
         expect(screen.findByTestId('workspace-code-bar-goto')).toBeTruthy();

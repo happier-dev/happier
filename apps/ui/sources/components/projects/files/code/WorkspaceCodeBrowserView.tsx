@@ -206,7 +206,9 @@ export const WorkspaceCodeBrowserView = React.memo(function WorkspaceCodeBrowser
         onVisibleNodesChange,
     } : null), [historyColumns, location.kind, location.path, onNodesChange, onVisibleNodesChange, openFolder, renderRowMetadata, renderRowSubtitle]);
 
-    const strip = history && !reachability.unreachable ? (
+    // While the Machine isn't answering, the commit it last named stays above the rows it kept (lab project-offline);
+    // a strip that would only wait or say "unavailable" gives way to the page's one offline line.
+    const strip = history && (!reachability.unreachable || history.current.kind === 'commit') ? (
         <CodeCommitStrip
             testID={`${testID}-strip`}
             state={history.current ?? CODE_ENTRY_HISTORY_PENDING}

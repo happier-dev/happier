@@ -6182,6 +6182,7 @@ const fileViewerTranslations = { ru: {
             freehand: "Рисование",
             highlighter: "Маркер",
             text: "Текст",
+        reconnectingTo: ({ workspace }) => `Переподключение к ${workspace}…`,
             step: "Нумерованный шаг",
             blur: "Размытие",
             crop: "Обрезка",

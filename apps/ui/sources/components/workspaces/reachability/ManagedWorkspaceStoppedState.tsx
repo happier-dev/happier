@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceStateCard, type SurfaceStateSize } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useManagedWorkspaceStart } from '@/components/settings/machines/managed/useManagedWorkspaceStart';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
@@ -20,6 +20,8 @@ export function ManagedWorkspaceStoppedState(
     reason: string;
     workspaceScope: WorkspaceScopeBase | null;
     onStarted?: () => void;
+    /** `line` over rows a surface kept (lab project-stopped): the name and Start, without the reason. */
+    size?: SurfaceStateSize;
     testID: string;
   }>,
 ) {
@@ -39,6 +41,7 @@ function StartableWorkspaceStoppedState(
     reason: string;
     workspaceScope: WorkspaceScopeBase;
     onStarted?: () => void;
+    size?: SurfaceStateSize;
     testID: string;
   }>,
 ) {
@@ -57,6 +60,7 @@ function StartableWorkspaceStoppedState(
       <SurfaceStateCard
         testID={props.testID}
         kind="loading"
+        size={props.size}
         title={t('files.pane.managedStartingTitle', {
           workspace: props.workspaceName,
         })}
@@ -67,6 +71,7 @@ function StartableWorkspaceStoppedState(
     <WorkspaceStoppedState
       workspaceName={props.workspaceName}
       reason={props.reason}
+      size={props.size}
       testID={props.testID}
       action={
         start?.reviewApproval
@@ -86,6 +91,7 @@ function WorkspaceStoppedState(
   props: Readonly<{
     workspaceName: string | null;
     reason: string;
+    size?: SurfaceStateSize;
     testID: string;
     action: Readonly<{ label: string; onPress: () => void }> | null;
   }>,
@@ -102,7 +108,8 @@ function WorkspaceStoppedState(
             })
           : t('files.pane.rootErrorTitleUnnamed')
       }
-      reason={props.reason}
+      reason={props.size === 'line' ? undefined : props.reason}
+      size={props.size}
       action={props.action ?? undefined}
     />
   );

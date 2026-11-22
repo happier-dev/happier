@@ -6054,6 +6054,7 @@ const fileViewerTranslations = { 'zh-Hans': {
             freehand: "绘制",
             highlighter: "荧光笔",
             text: "文字",
+        reconnectingTo: ({ workspace }) => `正在重新连接 ${workspace}…`,
             step: "编号步骤",
             blur: "模糊",
             crop: "裁剪",

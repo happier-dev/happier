@@ -6174,6 +6174,7 @@ const fileViewerTranslations = { fr: {
             freehand: "Dessiner",
             highlighter: "Surligneur",
             text: "Texte",
+        reconnectingTo: ({ workspace }) => `Reconnexion à ${workspace}…`,
             step: "Étape numérotée",
             blur: "Flouter",
             crop: "Rogner",

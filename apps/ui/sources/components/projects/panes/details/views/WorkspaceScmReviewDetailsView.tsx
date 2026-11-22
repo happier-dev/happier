@@ -404,7 +404,7 @@ const WorkspaceReviewBody = React.memo((props: WorkspaceScmReviewDetailsViewProp
                 testID="workspace-review-authoring-approval" onOpenApproval={() => router.push(
                     buildApprovalHref(authoringApproval.approvalId!, props.serverId),
                 )} /> : null}
-            {snapshot ? <SourceControlStaleSnapshotNotice error={error} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
+            {snapshot ? <SourceControlStaleSnapshotNotice error={error} workspaceScope={scope} onRetry={() => { void refresh(); }} testID="workspace-review-stale" /> : null}
             <InputTypePickerHostProvider enabled={presented} requiresPluginTypes={false} machineId={props.machineId} serverId={props.serverId}
                 contextKey={JSON.stringify([props.serverId, props.machineId, props.rootPath])}>
             <WorkspaceScmReviewBody onVisibleFileRowCountChange={setIndexPageSize} activeReviewFile={activeReviewFile} comparison={comparison} view={view} scopeLabel={scopeLabel} scopeDetail={scopeDetail}

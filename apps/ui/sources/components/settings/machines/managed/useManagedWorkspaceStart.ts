@@ -6,6 +6,7 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 
+import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { canPresentManagedMachineControl, managedReceiptPowerIntents } from './managedCreationPresentation';
 import { createManagedProvisionerClient } from './managedProvisionerClient';
 import { useManagedMachineInventory } from './useManagedMachineInventory';
@@ -38,6 +39,10 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
     const supported = target?.reviewedFacts?.retentionCapabilities.supportedIntents
         ?? presentation.descriptor?.retention.supportedIntents ?? [];
     const intent = target && managedReceiptPowerIntents(target, supported).find(value => value === 'start' || value === 'resume');
+    // A wake Home already submitted reads as Starting in every pane until native power reports running, whoever pressed
+    // Start: the request settling is not the workspace starting.
+    const submittedWake = target ? resolveManagedMachinePendingPowerIntentV1(target) : null;
+    const wakeSubmitted = submittedWake === 'start' || submittedWake === 'resume';
     const scopeKey = JSON.stringify([profileId, binding?.accountId, workspace?.serverId, workspace?.managedId,
         workspace?.controller.machineId, workspace?.controller.installationId]);
     const approval = useActionApprovalContinuation({ serverId, scopeKey, onExecuted() {} });
@@ -53,13 +58,13 @@ export function useManagedWorkspaceStart(scope: WorkspaceScopeBase): Readonly<{
         inFlight.current = null;
     }, [binding, scopeKey]);
 
-    if (!target || !intent || !binding) return null;
+    if (!target || !binding || (!intent && !wakeSubmitted)) return null;
     return {
-        pending: pending?.scopeKey === scopeKey && !pending.request.signal.aborted,
+        pending: wakeSubmitted || (pending?.scopeKey === scopeKey && !pending.request.signal.aborted),
         reviewApproval: approval.approvalPending ? approval.openApproval : null,
         start() {
             const current = currentTarget.current;
-            if (inFlight.current || !binding.isCurrent() || current?.scopeKey !== scopeKey
+            if (!intent || inFlight.current || !binding.isCurrent() || current?.scopeKey !== scopeKey
                 || current.target !== target || current.intent !== intent) return;
             const request = new AbortController();
             inFlight.current = request;

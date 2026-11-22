@@ -75,6 +75,8 @@ export type FilesPaneTranslations = Readonly<{
     serverFolderUnsupportedTitle: string;
     serverFolderUnsupportedBody: (params: Readonly<{ workspace: string }>) => string;
     managedStartingTitle: (params: Readonly<{ workspace: string }>) => string;
+    /** The listing is read again after its controller came back (lab project-reconnecting). */
+    reconnectingTo: (params: Readonly<{ workspace: string }>) => string;
     page: Readonly<{
         view: string;
         preview: string;
@@ -304,6 +306,7 @@ export const filesPaneTranslationsEnglish = { en: {
         serverFolderUnsupportedTitle: 'This server isn’t supported yet',
         serverFolderUnsupportedBody: ({ workspace }: { workspace: string }) => `Happier can only open folders on Linux and macOS servers this way. Set ${workspace} up as a machine instead: Happier then runs there on its own.`,
         managedStartingTitle: ({ workspace }) => `Starting ${workspace}…`,
+        reconnectingTo: ({ workspace }) => `Reconnecting to ${workspace}…`,
         page: {
             view: "View",
             preview: "Preview",

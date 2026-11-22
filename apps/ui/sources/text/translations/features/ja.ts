@@ -6114,6 +6114,7 @@ const fileViewerTranslations = { ja: {
             freehand: "描画",
             highlighter: "蛍光ペン",
             text: "テキスト",
+        reconnectingTo: ({ workspace }) => `${workspace} に再接続しています…`,
             step: "番号付きステップ",
             blur: "ぼかし",
             crop: "切り抜き",

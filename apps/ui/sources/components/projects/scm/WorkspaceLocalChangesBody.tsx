@@ -95,7 +95,7 @@ export const WorkspaceLocalChangesBody = React.memo(function WorkspaceLocalChang
         );
     }
     const staleSnapshotNotice = <SourceControlStaleSnapshotNotice testID={`${testID}-stale`}
-        error={offline ? null : controls.error} onRetry={() => { void controls.refresh(); }} />;
+        error={offline ? null : controls.error} workspaceScope={props.scope} onRetry={() => { void controls.refresh(); }} />;
     if (snapshot.repo.isRepo === false) {
         return <View style={styles.body}>
             {staleSnapshotNotice}

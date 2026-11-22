@@ -46,6 +46,7 @@ const repositoryTreeBrowserState = vi.hoisted(() => ({
     liveFileWrites: new Map(),
     arrivedPaths: new Set<string>(),
     rootError: null as string | null,
+    recoveryInFlight: false,
     nodes: [
         { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
         { path: 'README.md', name: 'README.md', type: 'file', depth: 0 },
@@ -59,6 +60,7 @@ vi.mock('@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser', () => ({
         rootLoading: repositoryTreeBrowserState.rootLoading,
         rootLoaded: repositoryTreeBrowserState.rootLoaded,
         rootError: repositoryTreeBrowserState.rootError,
+        recoveryInFlight: repositoryTreeBrowserState.recoveryInFlight,
         nodes: repositoryTreeBrowserState.nodes,
         liveFileWrites: repositoryTreeBrowserState.liveFileWrites,
         arrivedPaths: repositoryTreeBrowserState.arrivedPaths,
@@ -82,6 +84,7 @@ vi.mock('@/components/ui/filesystemBrowser/FilesystemBrowser', () => ({
         return React.createElement(
             'View',
             { testID: 'workspace-repository-tree-list' },
+            props.listHeader ?? null,
             ...(props.nodes ?? []).map((node: any, index: number) => React.createElement(
                 React.Fragment,
                 { key: node.path },
@@ -128,12 +131,14 @@ describe('WorkspaceRepositoryTreeList', () => {
                 neutral: { foreground: '#333' },
                 success: { foreground: '#0f0' },
                 danger: { foreground: '#f00' },
+                active: { foreground: '#09f', textForeground: '#09f' },
             },
         },
     } as any;
 
     beforeEach(() => {
         repositoryTreeBrowserState.rootLoading = false;
+        repositoryTreeBrowserState.recoveryInFlight = false;
         repositoryTreeBrowserState.rootError = null;
         repositoryTreeBrowserState.nodes = [
             { path: 'src', name: 'src', type: 'directory', depth: 0, isExpanded: false, isLoadingChildren: false },
@@ -160,6 +165,65 @@ describe('WorkspaceRepositoryTreeList', () => {
         expect(state?.props.reason).toBe('errors.daemonUnavailableBody');
         expect(state?.props.diagnosticCode).toBe('RPC method not available');
         expect(state?.props.action?.label).toBe('common.retry');
+    });
+
+    it('lets a failed first listing be the whole body: the summary header above it does not render', async () => {
+        repositoryTreeBrowserState.rootError = 'RPC method not available';
+        repositoryTreeBrowserState.nodes = [];
+        await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                listHeader={React.createElement('View', { testID: 'history-strip' })}
+            />,
+        );
+
+        expect(latestFilesystemBrowserProps.current?.listEmpty).toBeTruthy();
+        expect(latestFilesystemBrowserProps.current?.listHeader ?? null).toBeNull();
+    });
+
+    it('while the controller comes back, keeps the rows and says it is reconnecting instead of naming a failure', async () => {
+        repositoryTreeBrowserState.rootError = 'admission_unavailable';
+        repositoryTreeBrowserState.recoveryInFlight = true;
+        await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                machineName="api-dev"
+            />,
+        );
+
+        const browser = latestFilesystemBrowserProps.current;
+        expect(browser?.nodes).toHaveLength(2);
+        expect(browser?.rootError ?? null).toBeNull();
+        expect(browser?.rootLoading).toBe(true);
+        expect(browser?.loadingLabel).toBe('files.pane.reconnectingTo');
+    });
+
+    it('over the rows it kept, says a stopped workspace is stopped instead of a listing failure (lab project-stopped)', async () => {
+        repositoryTreeBrowserState.rootError = 'managed_power_required';
+        const screen = await renderScreen(
+            <WorkspaceRepositoryTreeList
+                theme={theme}
+                scope={{ serverId: 'server', machineId: 'm1', rootPath: '/repo' }}
+                expandedPaths={[]}
+                onExpandedPathsChange={() => {}}
+                onOpenFile={() => {}}
+                machineName="api-dev"
+            />,
+        );
+
+        expect(latestFilesystemBrowserProps.current?.rootError ?? null).toBeNull();
+        expect(latestFilesystemBrowserProps.current?.nodes).toHaveLength(2);
+        const stopped = screen.findByTestId('repository-tree-stopped');
+        expect(stopped?.props.title).toBe('files.pane.managedStoppedTitle');
+        expect(stopped?.props.size).toBe('line');
     });
 
     it('assigns one repository-tree row testID per shared workspace tree row on web', async () => {

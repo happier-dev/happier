@@ -6053,6 +6053,7 @@ const fileViewerTranslations = { es: {
             freehand: "Dibujar",
             highlighter: "Resaltador",
             text: "Texto",
+        reconnectingTo: ({ workspace }) => `Reconectando con ${workspace}…`,
             step: "Paso numerado",
             blur: "Difuminar",
             crop: "Recortar",

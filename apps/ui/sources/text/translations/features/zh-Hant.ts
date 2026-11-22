@@ -6054,6 +6054,7 @@ const fileViewerTranslations = { 'zh-Hant': {
             freehand: "繪製",
             highlighter: "螢光筆",
             text: "文字",
+        reconnectingTo: ({ workspace }) => `正在重新連線 ${workspace}…`,
             step: "編號步驟",
             blur: "模糊",
             crop: "裁切",

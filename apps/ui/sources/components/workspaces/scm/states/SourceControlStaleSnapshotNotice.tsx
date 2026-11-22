@@ -4,6 +4,9 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useAnnouncedCheckoutMachine, useCheckoutReachability } from '@/components/workspaces/reachability/checkoutReachability';
+import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
+import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
+import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
 
 /**
@@ -45,6 +48,8 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
      * one (the ambiguity L1 removed from the unavailable card).
      */
     testID: string;
+    /** The checkout this snapshot reads: a stopped attached workspace says so over the kept changes, with Start. */
+    workspaceScope?: WorkspaceScopeBase | null;
 }>): React.ReactElement | null {
     // Under a page that announces its checkout machine, an unreachable machine is already said once with
     // its Retry ("As of 10:42 · devbox isn't answering"); the refresh that failed because of it is the
@@ -55,6 +60,11 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
     const errorCode = typeof props.error.errorCode === 'string' && props.error.errorCode.length > 0
         ? props.error.errorCode
         : null;
+    // A stopped workspace is not a refresh that fell behind: one line names it and offers Start (lab project-stopped).
+    if (errorCode === MANAGED_POWER_REQUIRED) {
+        // Recovery after Start is the SCM owner's settled republish (07ec0b22fd4), not a per-pane refresh.
+        return <StoppedWorkspaceLine testID={`${props.testID}-stopped`} workspaceScope={props.workspaceScope ?? null} />;
+    }
 
     // Pane-states lab 0 "Stale": the retained content stays at full strength under ONE freshness line
     // that says it is behind and offers the retry — the shared line, not a SCM-local banner.
@@ -78,4 +88,11 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
             ) : null}
         </>
     );
+}
+
+function StoppedWorkspaceLine(props: Readonly<{ testID: string; workspaceScope: WorkspaceScopeBase | null }>) {
+    const workspace = props.workspaceScope?.workspace;
+    const workspaceName = useManagedMachineName(workspace ? props.workspaceScope!.serverId : null, workspace?.managedId ?? null);
+    return <ManagedWorkspaceStoppedState testID={props.testID} size="line" workspaceName={workspaceName}
+        reason={t('files.pane.managedStoppedChangesReason')} workspaceScope={props.workspaceScope} />;
 }

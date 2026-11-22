@@ -431,6 +431,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
         <SourceControlStaleSnapshotNotice
             testID="workspace-rightpanel-git-stale"
             error={error}
+            workspaceScope={scope}
             onRetry={() => {
                 void refresh();
             }}

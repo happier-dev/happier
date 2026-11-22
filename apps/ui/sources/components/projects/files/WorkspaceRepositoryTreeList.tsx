@@ -16,6 +16,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { useWorkspaceRepositoryTreeBrowser } from '@/hooks/workspaces/files/useWorkspaceRepositoryTreeBrowser';
 import { RepositoryTreeRootErrorState } from '@/components/workspaces/files/repositoryTree/RepositoryTreeRootErrorState';
+import { MANAGED_POWER_REQUIRED, ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { t } from '@/text';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import { useScmTreeBadgeIndex } from '@/components/workspaces/files/repositoryTree/useScmTreeBadgeIndex';
@@ -260,7 +261,7 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
         ...(props.revealedPaths ?? []),
         ...(props.scmSnapshot?.entries.flatMap(entry => entry.previousPath ? [entry.path, entry.previousPath] : [entry.path]) ?? []),
     ], [props.revealedPaths, props.scmSnapshot]);
-    const { rootLoading: treeRootLoading, rootError: treeRootError, rootLoaded, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable, liveFileWrites, arrivedPaths } = useWorkspaceRepositoryTreeBrowser({
+    const { rootLoading: treeRootLoading, rootError: treeRootError, rootLoaded, nodes: treeNodes, toggleDirectory: toggleTreeDirectory, retryRoot, retryDirectory, gitIgnoreAvailable, liveFileWrites, arrivedPaths, recoveryInFlight } = useWorkspaceRepositoryTreeBrowser({
         scope: props.scope,
         enabled: props.directoryListing !== false,
         expandedPaths,
@@ -294,8 +295,14 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
     const maxRows = props.maxRows ?? null;
     const shownNodes = React.useMemo(() => (maxRows != null && nodes.length > maxRows ? nodes.slice(0, maxRows) : nodes), [maxRows, nodes]);
     const toggleDirectory = changedOnly ? toggleChangedDirectory : toggleTreeDirectory;
-    const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading;
-    const rootError = changedOnly ? null : treeRootError;
+    // The controller came back and the listing is being read again: the rows it had stay, and the table says it is
+    // reconnecting rather than naming the refusal that read is replacing (lab project-reconnecting).
+    const reconnecting = !changedOnly && recoveryInFlight === true && treeNodes.length > 0;
+    const rootLoading = changedOnly ? props.scmSnapshot == null : treeRootLoading || reconnecting;
+    // A stopped workspace over rows the tree kept is said once above them, with Start (lab project-stopped), not as a
+    // listing failure; with nothing kept, the root state below owns it.
+    const stoppedOverRows = !changedOnly && !reconnecting && treeRootError === MANAGED_POWER_REQUIRED && treeNodes.length > 0;
+    const rootError = changedOnly || reconnecting || stoppedOverRows ? null : treeRootError;
 
     const rootRefreshing = rootLoading && rootLoaded;
     React.useEffect(() => {
@@ -753,14 +760,23 @@ export const WorkspaceRepositoryTreeList = React.memo(function WorkspaceReposito
             rootLoading={rootLoading}
             showInlineLoadingHeader={props.showInlineLoadingHeader}
             listFooter={props.listFooter}
-            listHeader={props.listHeader}
+            // A first listing that failed is the whole body: its state names the cause, with nothing summarized above it.
+            listHeader={emptyRootState ? null : stoppedOverRows ? (
+                <>
+                    <ManagedWorkspaceStoppedState testID="repository-tree-stopped" size="line" workspaceName={props.machineName ?? null}
+                        reason={t('files.pane.managedStoppedReason')} workspaceScope={props.scope} />
+                    {props.listHeader}
+                </>
+            ) : props.listHeader}
             listEmpty={emptyRootState ?? props.listEmpty}
             onVisibleNodesChange={onVisibleNodesChange}
             rootError={rootError}
             retryRoot={retryRoot}
             emptyLabel={props.emptyLabel ?? t('files.noFilesInProject')}
             emptyIconName="folder"
-            loadingLabel={t('common.loading')}
+            loadingLabel={reconnecting
+                ? t('files.pane.reconnectingTo', { workspace: props.machineName || t('common.machine') })
+                : t('common.loading')}
             inlineRetryLabel={t('common.retry')}
             renderRow={renderRow}
             extraData={rowVisualExtraData}
