@@ -133,10 +133,10 @@ export function createProjectAccountRowsSync(options: Readonly<{
             throw error;
         } finally { if (refreshInFlight === task) refreshInFlight = null; }
     }
-    /** The held admitted rows; only the first read is a census. A long-lived owner stays current through `refreshKeys`. */
-    async function read(signal?: AbortSignal): Promise<ProjectAccountRowsSnapshot> {
+    /** Read the hint-maintained rows, or take one census if the caller needs to confirm a cached miss. */
+    async function read(signal?: AbortSignal, acceptHeld?: (snapshot: ProjectAccountRowsSnapshot) => boolean): Promise<ProjectAccountRowsSnapshot> {
         signal?.throwIfAborted(); assertCurrent();
-        return censused && held ? held : await refresh(signal);
+        return censused && held && (!acceptHeld || acceptHeld(held)) ? held : await refresh(signal);
     }
     /** An Open ACK commits a ref; its existing change hint completes the app's materialization. */
     async function waitForWorkspaceRef(address: WorkspaceAddressV2, signal?: AbortSignal): Promise<WorkspaceRefV1> {

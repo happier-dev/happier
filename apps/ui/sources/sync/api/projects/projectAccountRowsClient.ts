@@ -7,7 +7,7 @@ import { createProjectAccountRowsSync } from '@/sync/engine/projects/projectAcco
 import { createApiProjectAccountRowsTransport } from '@/sync/api/account/apiProjectAccountRows';
 import { storage } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
-import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccountRows';
+import { readCurrentProjectAccountRows, type ProjectAccountRowsSnapshot } from '@/sync/store/domains/projectAccountRows';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -63,9 +63,9 @@ export function createUiProjectAccountRowsClient(account: Account) {
   // stream and therefore lists on every read.
   const appOwner = () => { account.assertCurrent(); return sync?.projectAccountRowsOwnerFor?.({ serverId: account.serverId, accountId: account.accountId }) ?? null; };
   const getOwner = () => appOwner() ?? (owner ??= createOwner());
-  const read = async (signal?: AbortSignal) => {
+  const read = async (signal?: AbortSignal, acceptHeld?: (snapshot: ProjectAccountRowsSnapshot) => boolean) => {
     const app = appOwner();
-    return app ? (await app).read(signal) : (await (owner ??= createOwner())).refresh(signal);
+    return app ? (await app).read(signal, acceptHeld) : (await (owner ??= createOwner())).refresh(signal);
   };
   return {
     read,

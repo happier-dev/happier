@@ -2,6 +2,7 @@ import type { DeploymentEnvironmentDetailV1, DeploymentSourceMethodV1 } from '@h
 import { resolveDeploymentSourceMethodV1 } from '@happier-dev/deployments/contracts/v1';
 import { OpenProjectRefusalV1Schema, OpenProjectResultV1Schema, projectOpenProjectRefusalV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { createUiProjectAccountRowsClient } from '@/sync/api/projects/projectAccountRowsClient';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -28,11 +29,14 @@ export async function prepareDeploymentSourceCheckout(
   if (!lifetime.isCurrent()) throw new HappyError('action_account_scope_changed', false, { code: 'action_account_scope_changed' });
   const account = await captureLazyActionAccountContext(lifetime.scope.serverId);
   try {
-    const rows = await createUiProjectAccountRowsClient(account).read();
     const machineId = detail.environment.controllerMachineId;
-    const checkouts = rows.workspaceRefs;
-    if (source && selectSourceCheckoutWorkspaceRefs(checkouts, source.id, lifetime.scope.serverId)
-      .some(ref => ref.machineId === machineId && ref.source?.revision === source.revision)) return;
+    const hasMatchingCheckout = (checkouts: readonly WorkspaceRefV1[]) => source !== null
+      && selectSourceCheckoutWorkspaceRefs(checkouts, source.id, lifetime.scope.serverId)
+        .some(ref => ref.machineId === machineId && ref.source?.revision === source.revision);
+    // A CLI Open can register the exact checkout before its update reaches this app's held rows.
+    const { workspaceRefs: checkouts } = await createUiProjectAccountRowsClient(account).read(undefined,
+      rows => source === null || hasMatchingCheckout(rows.workspaceRefs));
+    if (hasMatchingCheckout(checkouts)) return;
     if (!source?.repository) throw new HappyError('deployment_source_unavailable', false, { code: 'deployment_source_unavailable' });
     const machineHomeDir = resolveServerScopedMachine(storage.getState(), lifetime.scope.serverId, machineId)?.metadata?.homeDir ?? null;
     const choice: ProjectOpenChoiceState = {

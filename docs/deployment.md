@@ -47,6 +47,10 @@ outside spans, then inspect the selected occurrence and its release.
 
 ## First repository deploy (0.3 development)
 
+Before proposing a new checkout, Deploy confirms an apparent absence with the
+Home. This lets it reuse a matching checkout registered by the CLI or another
+client while the app is still waiting for that row's update.
+
 The app's Environment Deploy gesture joins the pending read of its exact Source
 before preparing a local checkout. When the controller has no matching checkout,
 the gesture runs the existing `projects.open` Action before dispatching

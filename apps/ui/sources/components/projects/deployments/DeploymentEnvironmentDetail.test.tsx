@@ -234,6 +234,60 @@ async function answerExistingDeploymentCheckout(detail: ReturnType<typeof enviro
   }) });
 }
 
+it('reuses a checkout registered on another client before its row hint reaches this UI', async () => {
+  const { sync } = await import('@/sync/sync');
+  const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+  const { storage } = await import('@/sync/domains/state/storage');
+  const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+  const { createPlainProjectAccountRowListFixture } = await import('@/dev/testkit/fixtures/projectAccountRows');
+  const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+  const { prepareDeploymentSourceCheckout } = await import('./prepareDeploymentSourceCheckout');
+  const detail = environmentDetailForHome();
+  const machineId = detail.environment.controllerMachineId;
+  const installationId = detail.targetLinks[0]!.targetLink.members[0]!.installationId;
+  const source = {
+    id: detail.environment.projectSourceId, revision: 1, name: 'My app', audience: [], createdByAccountId: scope.accountId,
+    repository: { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'owner/app' }, protocol: 'https' as const },
+  };
+  const checkout = { id: 'externally-opened', serverId: scope.serverId, machineId,
+    rootPath: '/home/me/src/app', label: null, createdAtMs: 1, lastOpenedAtMs: null, source: { sourceId: source.id, revision: source.revision } };
+  let registered = false;
+  homes.answer(scope.serverId, '/v2/cursor', { body: { cursor: '0' } });
+  homes.answer(scope.serverId, 'POST /v1/account/project-rows/list', {
+    select: () => ({ body: createPlainProjectAccountRowListFixture({ workspaceRefs: registered ? [checkout] : [] }) }),
+  });
+  try {
+    await restoreConnectionToActiveServer({ token: homes.findByServerUrl('https://environment-navigation.test')!.token! });
+    storage.getState().activateProjectAccountRowsScope(scope);
+    await publishMachineInventoryForTest(scope, [createMachineFixture({ id: machineId, installationId, activeAt: Date.now(),
+      metadata: { host: 'devbox', platform: 'linux', homeDir: '/home/me', happyHomeDir: '/home/me/.happier', happyCliVersion: '0.0.0' } })]);
+    let openRequests = 0;
+    await answerExternalActionAccountForHome(homes, scope.serverId, { machineId, installationId, actionId: 'projects.open',
+      tokenEpoch: 0, requesterInvocation: 'optional',
+      execute: () => {
+        openRequests++;
+        return { kind: 'refused', code: 'destination_exists', effectAttempted: false };
+      } });
+    const owner = await sync.projectAccountRowsOwnerFor(scope);
+    expect((await owner?.read())?.workspaceRefs).toEqual([]);
+    registered = true;  // The CLI Open committed this row, but no socket hint was delivered.
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    try {
+      const listsBefore = homes.requests.length;
+      await prepareDeploymentSourceCheckout(account.accountLifetime, detail, async () => source, 'upload');
+      expect((await owner?.read())?.workspaceRefs).toEqual([expect.objectContaining({ id: checkout.id })]);
+      await prepareDeploymentSourceCheckout(account.accountLifetime, detail, async () => source, 'upload');
+      expect(homes.requests.slice(listsBefore).filter(request => request.path === '/v1/account/project-rows/list')).toHaveLength(1);
+      expect(openRequests).toBe(0);
+    } finally { account.dispose(); }
+  } finally {
+    await disconnectActiveServerConnection();
+  }
+});
+
 it.each(['opened', 'refused', 'unsupported-forge', 'declined'] as const)('prepares a fresh first deploy through reviewed Open checkout (%s)', async openResult => {
   const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
   const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
