@@ -6740,7 +6740,8 @@ For a plain Session:
 
 An encrypted metadata compare-and-swap seals the complete snapshot. The
 publication owner validates authored fields and carries untouched fields
-forward from the admitted snapshot at the same revision. A reconnect can
+forward from the admitted snapshot at the same revision. The connected daemon
+and exact-target field writes use this rule. A reconnect can
 publish its installation key even when a retained Setup source predates
 explicit preset encryption mode. The Setup owner writes that mode on the next
 Setup save using the saved preset's author-owned mode.

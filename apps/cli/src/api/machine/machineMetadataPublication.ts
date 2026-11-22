@@ -42,6 +42,17 @@ export function readOpenedMachineMetadataSnapshot(machine: Machine, contentReady
   return { status: 'ready', metadata: machine.metadata, metadataVersion: machine.metadataVersion };
 }
 
+/** Only an admitted snapshot at the written revision can carry encrypted metadata fields. */
+export function encodeMachineMetadataPublication(
+  codec: MachineContentCodec,
+  input: Parameters<MachineMetadataFieldPortV1['compareAndSwap']>[0],
+  incumbent: Pick<Machine, 'metadata' | 'metadataVersion'>,
+): string {
+  return codec.encodeStored(parseMachinePublishedMetadataV1(input.metadata,
+    codec.mode === 'e2ee' && incumbent.metadataVersion === input.expectedMetadataVersion
+      ? incumbent.metadata ?? undefined : undefined));
+}
+
 /** Keep uncertain writes on their original CAS basis. Only a newer foreign
  * conflict rebases the reducer; equal committed content settles our demand. */
 export async function publishMachineMetadataUpdate(context: Readonly<{
@@ -85,10 +96,9 @@ export async function publishMachineMetadataOnce(context: MachineMetadataPublica
     const snapshot = readOpenedMachineMetadataSnapshot(machine, true);
     return snapshot.status === 'ready' ? { ...snapshot, status: 'conflict' } : snapshot;
   }
-  const updated = parseMachinePublishedMetadataV1(input.metadata, codec.mode === 'e2ee' ? machine.metadata ?? undefined : undefined);
   const answer = MachineUpdateMetadataResponseSchema.parse(await emitSocketWithAck({
     socket: context.socket, event: 'machine-update-metadata', timeoutMs: null, payload: {
-      machineId: machine.id, metadata: codec.encodeStored(updated), expectedVersion: input.expectedMetadataVersion,
+      machineId: machine.id, metadata: encodeMachineMetadataPublication(codec, input, machine), expectedVersion: input.expectedMetadataVersion,
       expectedDataEncryptionKey: context.expectedDataEncryptionKey,
     },
   }));
