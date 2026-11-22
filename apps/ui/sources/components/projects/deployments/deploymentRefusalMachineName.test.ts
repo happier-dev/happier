@@ -2,7 +2,7 @@ import { afterEach, expect, it } from 'vitest';
 import { createMachineFixture, standardCleanup } from '@/dev/testkit';
 
 afterEach(() => standardCleanup());
-const { readDeploymentRefusalRecovery } =
+const { readDeploymentRefusalRecovery, readDeploymentFailureRecovery } =
   await import('./deploymentPresentation');
 const { storage } = await import('@/sync/domains/state/storage');
 
@@ -37,4 +37,9 @@ it('names the Machine a refusal points at by its display name', () => {
   expect(recovery?.remedy).toContain('NLDW3-5-36-33');
   expect(recovery?.remedy).not.toContain(machineId);
   expect(recovery?.nextAction.machineId).toBe(machineId);
+  // QA-SWEEP-172 #203: Add Domain's Cloudflare banner read the failure recovery directly and showed the raw id.
+  // Every deployment refusal surface reads through the same naming reader.
+  const failure = readDeploymentFailureRecovery('machine_admin_access_required', { step: 'native_execution', machineId });
+  expect(failure.remedy).toContain('NLDW3-5-36-33');
+  expect(failure.remedy).not.toContain(machineId);
 });

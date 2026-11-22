@@ -8,7 +8,7 @@ import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilt
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useUnistyles } from 'react-native-unistyles';
 import type { DeploymentTemplateV1 } from '@happier-dev/protocol/registries';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecovery } from '@/components/projects/deployments/deploymentPresentation';
 
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
@@ -521,7 +521,7 @@ export function StoreAppPreparationReview(
           title={created ? t('projects.deployments.openEnvironment') : refusal.step === 'create'
             ? t('projects.deployments.createFailedTitle')
             : t('capabilities.store.appPage.refused', { name })}
-          reason={readDeploymentFailureRecoveryV1(refusal.code, refusal.failure?.details).remedy}
+          reason={readDeploymentFailureRecovery(refusal.code, refusal.failure?.details).remedy}
           diagnosticCode={refusal.code}
         />
       ) : null}

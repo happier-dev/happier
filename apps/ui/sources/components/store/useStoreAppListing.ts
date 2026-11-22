@@ -19,13 +19,13 @@ import { buildDeploymentEnvironmentHref } from '@/components/projects/deployment
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { randomUUID } from '@/platform/randomUUID';
 import type { StoreDemand } from './catalog/storeKinds';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecovery } from '@/components/projects/deployments/deploymentPresentation';
 import { readStoreAppTemplateRef } from './presets/storePresetDoor';
 import { appListingImageTag } from './catalog/storeAppListingFacts';
 
 function recoveryForPartial(progress: DeploymentPartialResult): DeploymentEnvironmentTabV1 | 'deploy' {
     return progress.phase === 'deploy'
-        && readDeploymentFailureRecoveryV1(progress.errorCode, progress).nextAction.destination !== 'history'
+        && readDeploymentFailureRecovery(progress.errorCode, progress).nextAction.destination !== 'history'
         ? 'deploy' : deploymentPartialRecoveryTab(progress);
 }
 

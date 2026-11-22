@@ -15,7 +15,6 @@ import type {
 } from '@happier-dev/deployments';
 import type { DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import type { DeploymentBackupConfigurationV1 } from '@happier-dev/deployments/contracts/v1';
-import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import {
   DropdownMenu,
@@ -68,7 +67,7 @@ import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { PreviewTemplateRows } from './DeploymentPreviewTemplateRows';
-import { deploymentPreviewAvailability } from './deploymentPresentation';
+import { deploymentPreviewAvailability, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { DeploymentPreviewVariables } from './DeploymentPreviewVariables';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
@@ -525,7 +524,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             {change.followup || previewEnrollmentUnavailable ? (
               <SurfaceStateCard testID="project-deployments.environment.settings.preview-enrollment" kind="warning" size="line"
                 title={t('projects.deployments.settingsSections.previewsEnrollmentUnavailable')}
-                reason={change.followup ? readDeploymentRefusalRecoveryV1(change.followup.errorCode)?.remedy : undefined}
+                reason={change.followup ? readDeploymentRefusalRecovery(change.followup.errorCode)?.remedy : undefined}
                 diagnosticCode={change.followup?.errorCode}
                 action={previewEnrollment.status === 'failed'
                   ? { label: t('common.retry'), onPress: previewEnrollment.retry } : undefined} />

@@ -4,7 +4,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { relayAccessProviderDescriptorsById } from '@happier-dev/cli-common/relayAccess/catalog';
 import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import { AccessProviderSelectionV1Schema } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
@@ -135,7 +135,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const diagnosticDetail = [failureDetail, requestId ? `${t('approvals.failureTechnicalLabels.requestId')}: ${requestId}` : undefined]
         .filter(Boolean).join('\n');
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: readDeploymentFailureRecoveryV1(reason, result.ok ? value : result.details).remedy,
+        remedy: readDeploymentFailureRecovery(reason, result.ok ? value : result.details).remedy,
         ...(diagnosticDetail ? { diagnosticDetail } : {}) };
       if (kind === 'zones') {
         const rows = isRecord(value) && value.kind === 'ready' && Array.isArray(value.zones) ? value.zones : null;
@@ -188,7 +188,7 @@ export function useDeploymentDomainIngressFields(props: Readonly<{
       const failure = readDeploymentActionError(error);
       const reason = failure.kind === 'refused' ? failure.code : 'unknown_error';
       const unavailable = { kind: 'unavailable' as const, reason,
-        remedy: readDeploymentFailureRecoveryV1(reason, failure.kind === 'refused' ? failure.failure?.details : undefined).remedy };
+        remedy: readDeploymentFailureRecovery(reason, failure.kind === 'refused' ? failure.failure?.details : undefined).remedy };
       if (kind === 'zones') {
         setZones({ key: zoneKey, credentialKey, ...unavailable });
         setZoneChoice(null);

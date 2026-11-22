@@ -20,10 +20,10 @@ import { Text } from '@/components/ui/text/Text';
 import { RegistrySourcesView } from '@/registries/RegistrySourcesView';
 import { randomUUID } from '@/platform/randomUUID';
 import { t } from '@/text';
-import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import type { DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
-import { deploymentActionRefusalRemedy } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { deploymentPartialRecoveryTab, readDeploymentActionError, useDeploymentChangePress } from './deploymentActionOutcome';
 import { DeploymentPartialProgress } from './DeploymentPartialProgress';
 import { createDeploymentActions } from './deploymentActions';
@@ -240,7 +240,7 @@ export function DeploymentAddRefusal(props: Readonly<{
   code: string;
   onOpenRecovery?: (destination: DeploymentFailureRecoveryDestinationV1) => void;
 }>) {
-  const recovery = readDeploymentRefusalRecoveryV1(props.code);
+  const recovery = readDeploymentRefusalRecovery(props.code);
   const { onOpenRecovery } = props;
   if (!recovery) {
     return <SurfaceStateCard testID={props.testID} size="line" kind="error" title={t('projects.deployments.addRefused')}

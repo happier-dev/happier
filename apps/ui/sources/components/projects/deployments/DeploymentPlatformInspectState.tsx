@@ -4,7 +4,8 @@ import { isRecord } from '@happier-dev/protocol/common/records';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 import { requestOpenExternalUrl as openExternalUrl } from '@/utils/url/requestOpenExternalUrl';
-import { readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { type DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentRefusalRecovery } from './deploymentPresentation';
 
 import type { PlatformInspectOutcome } from './platformTargetLink';
 
@@ -34,7 +35,7 @@ export function DeploymentPlatformInspectState({ outcome, refusal, onOpenRecover
       } } : {})} />
   );
   // A refusal the shared recovery owner knows says its remedy and offers its next step.
-  const recovery = outcome?.kind === 'refused' ? readDeploymentRefusalRecoveryV1(outcome.code) : null;
+  const recovery = outcome?.kind === 'refused' ? readDeploymentRefusalRecovery(outcome.code) : null;
   if (outcome?.kind === 'refused' && recovery) return (
     <SurfaceStateCard testID="project-deployments.platform.refused" size="line"
       kind={outcome.reason === 'repository' ? 'warning' : 'error'}

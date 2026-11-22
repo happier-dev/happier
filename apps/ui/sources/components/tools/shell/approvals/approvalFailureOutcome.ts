@@ -1,6 +1,6 @@
 import type { ActionExecuteFailure} from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
+import { readDeploymentFailureRecovery, readDeploymentRefusalRecovery } from '@/components/projects/deployments/deploymentPresentation';
 import { readActionFailurePresentationV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { listActionSpecs } from '@happier-dev/protocol/actions';
@@ -15,7 +15,7 @@ import { DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentBackupFa
     readDeploymentBackupMaintenanceFailureEvidenceV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import { DeploymentFailureRecoveryV1Schema, DeploymentImageResolutionFailureV1Schema, describeDeploymentImageResolutionFailureV1,
-    projectDeploymentFailureRecoveryV1, readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+    projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentMissingRequiredSecretsV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { FiniteCommandFailureDetailsV1Schema, MachineSetupFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
@@ -173,7 +173,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
                 // The recovery owner reads the stored remedy: a sentence stays, a remedy code becomes its sentence.
-                : deploymentRecovery ? (remedy ? readDeploymentFailureRecoveryV1(failure.errorCode, failure.details).remedy : deploymentRecovery.remedy)
+                : deploymentRecovery ? (remedy ? readDeploymentFailureRecovery(failure.errorCode, failure.details).remedy : deploymentRecovery.remedy)
                 : presented.reason || remedy || null;
     return {
         reason,

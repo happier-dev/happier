@@ -58,7 +58,7 @@ import { getMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { describeMachinePresenceLine } from '@/utils/sessions/machinePresenceLine';
 import { presentSavedSecretReferencePicker } from '@/components/ui/forms/valueRefs/presentSavedSecretReferencePicker';
-import { deploymentActionRefusalRemedy, deploymentDefinitionLabel } from './deploymentPresentation';
+import { deploymentActionRefusalRemedy, deploymentDefinitionLabel, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { DeploymentMachinesEmpty } from './DeploymentMachinesEmpty';
 import type { DeploymentNewDefinitionKind } from './deploymentNavigation';
 import { openDeploymentFolderWorkspace } from './prepareDeploymentSourceCheckout';
@@ -74,7 +74,6 @@ import { useDeployHostReadiness } from './EnvironmentMachineChoice';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { MachineSetupPlanReview, describeMachineSetupPlanFailure, describeMachineSetupReviewUnavailable } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
-import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
@@ -675,7 +674,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     ) : null;
     // The recovery owner names where a refusal is fixed: a Machine cause, or the unavailable target, is that Machine.
     const machineCausedRefusal = awayMachine !== null && refusal?.kind === 'refused' && (refusal.code === 'target_unavailable'
-      || readDeploymentRefusalRecoveryV1(refusal.code)?.nextAction.destination === 'machines');
+      || readDeploymentRefusalRecovery(refusal.code)?.nextAction.destination === 'machines');
     const refusalBanner = machineCausedRefusal ? null
       : refusal && refusal.kind === 'approval' ? (
             <AttentionBanner
@@ -698,7 +697,7 @@ export const DeploymentEnvironmentDraft = React.memo(
               testID="project-deployments.draft.refused"
               tone="danger"
               title={t('projects.deployments.createFailedTitle')}
-              description={readDeploymentRefusalRecoveryV1(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
+              description={readDeploymentRefusalRecovery(refusal.code)?.remedy ?? deploymentActionRefusalRemedy(refusal.code)}
               details={[refusal.code]}
             />
           ) : null;

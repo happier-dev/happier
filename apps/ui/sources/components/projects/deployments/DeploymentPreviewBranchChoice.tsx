@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { isRecord } from '@happier-dev/protocol/common/records';
-import { readDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecovery } from './deploymentPresentation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -107,7 +107,7 @@ export function DeploymentPreviewBranchChoice(props: Readonly<{
     {failure ? (
       <SurfaceStateCard testID={`${props.testID}.failed`} size="line" kind="error"
         title={t('projects.deployments.platformLink.refused')}
-        reason={readDeploymentFailureRecoveryV1(failure.code, failureDetails).remedy}
+        reason={readDeploymentFailureRecovery(failure.code, failureDetails).remedy}
         diagnosticCode={failure.code}
         action={{ label: t('common.retry'), onPress: () => {
           if (state.status === 'failed') retry();

@@ -8,7 +8,7 @@ import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestA
 import { t } from '@/text';
 import type { DeploymentActorPresentation } from './useDeploymentActorPresentations';
 import { readDeploymentRefusal } from './deploymentActionOutcome';
-import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { readDeploymentFailureRecoveryV1, readDeploymentRefusalRecoveryV1, type DeploymentFailureRecoveryPresentationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
@@ -489,8 +489,17 @@ export function deploymentActorIsViewer(actor: ActionActorV1 | null | undefined,
  */
 export function readDeploymentRefusalRecovery(...args: Parameters<typeof readDeploymentRefusalRecoveryV1>) {
   const recovery = readDeploymentRefusalRecoveryV1(...args);
-  const machineId = recovery?.nextAction.kind === 'navigate' ? recovery.nextAction.machineId : undefined;
-  if (!recovery || !machineId || !recovery.remedy.includes(machineId)) return recovery;
+  return recovery ? nameRecoveryMachine(recovery) : recovery;
+}
+
+/** The same for a failure's recovery (every refused code has one); every deployment refusal surface reads one of these two. */
+export function readDeploymentFailureRecovery(...args: Parameters<typeof readDeploymentFailureRecoveryV1>) {
+  return nameRecoveryMachine(readDeploymentFailureRecoveryV1(...args));
+}
+
+function nameRecoveryMachine<T extends DeploymentFailureRecoveryPresentationV1>(recovery: T): T {
+  const machineId = recovery.nextAction.kind === 'navigate' ? recovery.nextAction.machineId : undefined;
+  if (!machineId || !recovery.remedy.includes(machineId)) return recovery;
   const state = getStorage().getState();
   // The refusal belongs to the Account in view; its Machine resolves in that Home's inventory.
   const name = getSettledMachineDisplayName(resolveServerScopedMachine(state, state.profileScope?.serverId ?? null, machineId));
