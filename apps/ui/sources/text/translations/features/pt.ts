@@ -3586,6 +3586,17 @@ const artifactsBrowserTranslations = { pt: {
                     avatars: 'Avatares',
                     teamLogos: 'Logos de equipe',
                 },
+                itemNames: {
+                    artifacts: 'Artefato',
+                    artifactOldVersions: 'Versões antigas',
+                    pluginArtifacts: 'Artefato de plugin',
+                    discussionAttachments: 'Anexo',
+                    accountPets: 'Pet',
+                    pluginCollections: 'Dados de plugins',
+                    profilePictures: 'Foto',
+                    avatars: 'Avatar',
+                    teamLogos: 'Logo de equipe',
+                },
                 facts: {
                     artifacts: 'Documentos, quadros e arquivos',
                     artifactOldVersions: 'Histórico guardado dos seus artefatos',

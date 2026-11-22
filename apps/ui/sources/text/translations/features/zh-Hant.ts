@@ -3496,6 +3496,17 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
                     avatars: '頭像',
                     teamLogos: '團隊標誌',
                 },
+                itemNames: {
+                    artifacts: '成品',
+                    artifactOldVersions: '舊版本',
+                    pluginArtifacts: '外掛成品',
+                    discussionAttachments: '附件',
+                    accountPets: '寵物',
+                    pluginCollections: '外掛資料',
+                    profilePictures: '照片',
+                    avatars: '頭像',
+                    teamLogos: '團隊標誌',
+                },
                 facts: {
                     artifacts: '文件、看板和檔案',
                     artifactOldVersions: '為你的成品保留的歷史',

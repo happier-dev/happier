@@ -3550,6 +3550,17 @@ const artifactsBrowserTranslations = { ja: {
                     avatars: 'アバター',
                     teamLogos: 'チームのロゴ',
                 },
+                itemNames: {
+                    artifacts: 'アーティファクト',
+                    artifactOldVersions: '古いバージョン',
+                    pluginArtifacts: 'プラグインのアーティファクト',
+                    discussionAttachments: '添付ファイル',
+                    accountPets: 'ペット',
+                    pluginCollections: 'プラグインのデータ',
+                    profilePictures: '写真',
+                    avatars: 'アバター',
+                    teamLogos: 'チームのロゴ',
+                },
                 facts: {
                     artifacts: 'ドキュメント、ボード、ファイル',
                     artifactOldVersions: 'アーティファクトの保存された履歴',

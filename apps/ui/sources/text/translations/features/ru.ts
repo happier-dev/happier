@@ -3596,6 +3596,17 @@ const artifactsBrowserTranslations = { ru: {
                     avatars: 'Аватары',
                     teamLogos: 'Логотипы команд',
                 },
+                itemNames: {
+                    artifacts: 'Артефакт',
+                    artifactOldVersions: 'Старые версии',
+                    pluginArtifacts: 'Артефакт плагина',
+                    discussionAttachments: 'Вложение',
+                    accountPets: 'Питомец',
+                    pluginCollections: 'Данные плагинов',
+                    profilePictures: 'Фото',
+                    avatars: 'Аватар',
+                    teamLogos: 'Логотип команды',
+                },
                 facts: {
                     artifacts: 'Документы, доски и файлы',
                     artifactOldVersions: 'История ваших артефактов',

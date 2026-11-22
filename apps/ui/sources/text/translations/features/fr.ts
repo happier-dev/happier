@@ -3610,6 +3610,17 @@ const artifactsBrowserTranslations = { fr: {
                     avatars: 'Avatars',
                     teamLogos: 'Logos d’équipe',
                 },
+                itemNames: {
+                    artifacts: 'Artefact',
+                    artifactOldVersions: 'Anciennes versions',
+                    pluginArtifacts: 'Artefact de plugin',
+                    discussionAttachments: 'Pièce jointe',
+                    accountPets: 'Pet',
+                    pluginCollections: 'Données de plugins',
+                    profilePictures: 'Photo',
+                    avatars: 'Avatar',
+                    teamLogos: 'Logo d’équipe',
+                },
                 facts: {
                     artifacts: 'Documents, tableaux et fichiers',
                     artifactOldVersions: 'Historique conservé pour tes artefacts',

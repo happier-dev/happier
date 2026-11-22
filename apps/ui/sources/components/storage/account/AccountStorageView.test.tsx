@@ -386,6 +386,11 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         expect(textOf(screen.findHostByTestId(`storage:item:${LARGE}:size`))).toBe(storage(192_000_000));
         expect(textOf(screen.findHostByTestId(`storage:item:discussionAttachments-${BLOB}:size`))).toBe(storage(50_000_000));
         await vi.waitFor(() => expect(textOf(screen.findHostByTestId(`storage:item:${LARGE}`))).toContain('Q4 launch plan'));
+        // The wide row says where an unfiled Artifact lives, as its phone row does (ACCEPT-1120 final, nit 2).
+        expect(textOf(screen.findHostByTestId(`storage:item:${LARGE}`))).toContain('artifacts.browser.storageView.items.where');
+        // One file is one Attachment: the Kind column names the item, not the kind's plural (nit 1).
+        expect(textOf(screen.findHostByTestId(`storage:item:discussionAttachments-${BLOB}`)))
+          .toContain('artifacts.browser.storageView.kinds.itemNames.discussionAttachments');
         // One inventory read per page, however many Artifacts the Account owns; no whole-library list read.
         expect(inventoryReads).toHaveLength(1);
         expect(artifactListReads).toBe(0);
@@ -567,13 +572,13 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         const line = (key: string) => textOf(screen.findHostByTestId(`storage:item:${key}:line`));
         await vi.waitFor(() => expect(line(`artifactOldVersions-${SMALL}`)).not.toBe(''));
         expect(line(`artifactOldVersions-${SMALL}`)).toBe(
-          'artifacts.browser.storageView.kinds.shortNames.artifactOldVersions · artifacts.browser.storageView.items.where');
+          'artifacts.browser.storageView.kinds.itemNames.artifactOldVersions · artifacts.browser.storageView.items.where');
         // A Discussion file's line names its kind once, then its Discussion and who sent it (lab "Checkout bug triage · from Mika Tanaka").
         await vi.waitFor(() => expect(line(`discussionAttachments-${BLOB}`)).toBe(
-          'artifacts.browser.storageView.kinds.shortNames.discussionAttachments · Checkout bug triage · '
+          'artifacts.browser.storageView.kinds.itemNames.discussionAttachments · Checkout bug triage · '
           + 'artifacts.browser.storageView.items.fromAuthor(author=Mika Tanaka)'));
         // A file the Home does not let this viewer read says only its kind.
-        expect(line(`discussionAttachments-${OTHER_BLOB}`)).toBe('artifacts.browser.storageView.kinds.shortNames.discussionAttachments');
+        expect(line(`discussionAttachments-${OTHER_BLOB}`)).toBe('artifacts.browser.storageView.kinds.itemNames.discussionAttachments');
       } finally {
         await screen.unmount();
       }

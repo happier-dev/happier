@@ -3592,6 +3592,17 @@ const artifactsBrowserTranslations = { ca: {
                     avatars: 'Avatars',
                     teamLogos: 'Logotips d’equip',
                 },
+                itemNames: {
+                    artifacts: 'Artefacte',
+                    artifactOldVersions: 'Versions antigues',
+                    pluginArtifacts: 'Artefacte de connector',
+                    discussionAttachments: 'Adjunt',
+                    accountPets: 'Pet',
+                    pluginCollections: 'Dades de connectors',
+                    profilePictures: 'Foto',
+                    avatars: 'Avatar',
+                    teamLogos: 'Logotip d’equip',
+                },
                 facts: {
                     artifacts: 'Documents, taulers i fitxers',
                     artifactOldVersions: 'Historial desat dels teus artefactes',

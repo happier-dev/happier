@@ -755,10 +755,9 @@ function AccountStorageItems(
       titlePending: (item) => item.pending,
       // An item's name stays on one line, cut at its end, on a phone row as in the table (lab scene 1, 390).
       titleTruncates: true,
-      // Where it lives reads quiet after the name in the table (Machines' rows do the same); a phone row's line 2 says it.
-      // Only a filed item or a named Discussion file says more than its kind, which every row would repeat; the Kind
-      // column says the kind.
-      titleSuffix: (item) => (item.folderName || item.discussionFile ? itemLocation(item) : null),
+      // Where it lives reads quiet after the name in the table (Machines' rows do the same), as a phone row's line 2
+      // says it: every item at both widths ("Artifacts", "Artifacts › Marketing", "Checkout bug triage · from Mika").
+      titleSuffix: (item) => itemLocation(item),
       // Line 2 is where it lives; on a phone, which has no Kind column, "Kind · where", the kind said once (lab scene 1).
       byline: (item) => props.compact ? (
         <View style={stylesheet.phoneLine}>
@@ -1133,7 +1132,8 @@ function itemTitle(item: AccountStorageItem): string {
 function itemKindLabel(item: AccountStorageItem): string {
   const row = item.row;
   if (item.kind === 'artifacts' && row && row.artifact.isDecrypted !== false) return artifactKindFact(row.kind, readArtifactCodeLanguage(row.artifact)).label;
-  return t(`artifacts.browser.storageView.kinds.shortNames.${item.kind}`);
+  // One item is one of its kind: "Attachment", not the kind's plural name the chips use.
+  return t(`artifacts.browser.storageView.kinds.itemNames.${item.kind}`);
 }
 
 function itemIcon(item: AccountStorageItem): IconName {

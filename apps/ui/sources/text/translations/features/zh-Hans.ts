@@ -3495,6 +3495,17 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
                     avatars: '头像',
                     teamLogos: '团队标志',
                 },
+                itemNames: {
+                    artifacts: '工件',
+                    artifactOldVersions: '旧版本',
+                    pluginArtifacts: '插件工件',
+                    discussionAttachments: '附件',
+                    accountPets: '宠物',
+                    pluginCollections: '插件数据',
+                    profilePictures: '照片',
+                    avatars: '头像',
+                    teamLogos: '团队标志',
+                },
                 facts: {
                     artifacts: '文档、看板和文件',
                     artifactOldVersions: '为你的工件保留的历史',

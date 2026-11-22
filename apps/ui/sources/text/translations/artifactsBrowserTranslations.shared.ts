@@ -213,6 +213,18 @@ export type ArtifactsBrowserTranslations = Readonly<{
                 avatars: string;
                 teamLogos: string;
             }>;
+            /** One stored item's kind, singular where the kind's own name is a plural (one file is an Attachment). */
+            itemNames: Readonly<{
+                artifacts: string;
+                artifactOldVersions: string;
+                pluginArtifacts: string;
+                discussionAttachments: string;
+                accountPets: string;
+                pluginCollections: string;
+                profilePictures: string;
+                avatars: string;
+                teamLogos: string;
+            }>;
             facts: Readonly<{
                 artifacts: string;
                 artifactOldVersions: string;
@@ -600,6 +612,17 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                     profilePictures: 'Picture',
                     avatars: 'Avatars',
                     teamLogos: 'Team logos',
+                },
+                itemNames: {
+                    artifacts: 'Artifact',
+                    artifactOldVersions: 'Old versions',
+                    pluginArtifacts: 'Plugin Artifact',
+                    discussionAttachments: 'Attachment',
+                    accountPets: 'Pet',
+                    pluginCollections: 'Plugin data',
+                    profilePictures: 'Picture',
+                    avatars: 'Avatar',
+                    teamLogos: 'Team logo',
                 },
                 facts: {
                     artifacts: 'Documents, boards and files',
