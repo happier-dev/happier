@@ -143,31 +143,24 @@ The setting works for bundled and external plugins.
 
 ### Vercel deployment connections in development
 
-The shared Vercel connection in 0.3 development source accepts a
-personal access token for a selected team and, optionally, one project. Create
-the token on [Vercel's token page](https://vercel.com/account/tokens), select its
-scope and expiration, then supply the matching team and project IDs. Project
-tokens are checked against that exact project without requiring access to
-broader user or team endpoints.
+The Vercel Connected Account in unreleased 0.3 source supports browser sign-in
+and personal access tokens. Browser sign-in requires a
+[public OAuth client configured on your Home](/self-hosting/env#vercel-public-oauth-client).
+Choose **Sign in with Vercel**, complete consent, then finish setup in Happier.
+Choose a team from the grant and select a project if you plan to create
+Sandboxes. You can connect at team scope for Deploy or AI Gateway.
 
-Deployments and sandboxes use this same connection. Sandboxes require a project
-and a token that can read the selected team's plan; deployment project tokens do
-not need that broader access. An older development-only deployment connection
-must be reconnected and selected again. Its stored data is preserved.
+To use a token, create a [Vercel personal access token](https://vercel.com/account/tokens)
+with access to the team or project you need. Connect it to the matching scope.
+The connection check probes the selected scope. Vercel checks write permission
+when you perform the operation.
 
-The runtime stages the token only after the selected scope responds successfully.
-That read confirms authentication and scope identity. Setup does not prove write
-rights: Vercel enforces each operation's permissions, and a denied operation
-returns the existing typed missing-permission refusal. No role name or guessed
-permission query supplies that decision. Refresh checks the retained token again;
-expired or revoked credentials require reconnecting. When a scoped token cannot
-revoke itself, use the token page to revoke it. An uncertain revocation result
-requires checking Vercel before retrying.
+#### Choose a project for Vercel Sandboxes
 
-Vercel OAuth remains unavailable without deployment-permission, selected-tenant
-entitlement and token-lifecycle proof. Supported private-beta access is eligible;
-launch status adds no restriction, and an identity token never substitutes for
-deployment authority. The generic callback alone does not establish that proof.
+A team-only account returns `vercel_project_required` during Sandbox setup.
+Follow the account link in the check result and update the Vercel connection
+with a project in that team. Then run the Sandbox check again.
+End-to-end Sandbox creation with this sign-in flow still needs live validation.
 
 ### Cloudflare deployment connections in development
 

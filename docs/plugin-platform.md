@@ -8046,9 +8046,10 @@ fields and array entries survive composition, while later scalar values win.
   Action family names to the DTO producer. The inventory resolves those names
   to their canonical leaf declarations; runtime wildcard publication remains
   forbidden. Adding a family does not require a second handwritten export list.
-- In unreleased 0.3 development source, Machine Railway and Deploy Railway
-  share the public `@happier-dev/railway-api` package for Railway GraphQL and
-  project operations. A plugin passes an authenticated request function from
+- In unreleased 0.3 development source, Machine Railway, Deploy Railway and Railway
+  databases share the public `@happier-dev/railway-api` package for GraphQL
+  transport and project operations, including deletion of a service in an
+  exact environment. A plugin passes an authenticated request function from
   its Connected Account host binding. Machine Railway owns the Railway Account
   and credential lifecycle.
 - Host services bind the invocation's admitted plugin, generation, scope and authority. Caller identity, selected credentials, Session ownership and machine routing cannot be supplied as renderer or Action input. In unreleased 0.3 development source, the service descriptor constructor creates each service and derives public availability from that result; a missing host binding returns `plugin_service_unavailable`. There is no separate binding availability bitmap or manifest-scope service veto. HostAccess fields remain accepted installation-consent metadata; Connected Account purpose references still select compatible services and the host-owned binding.

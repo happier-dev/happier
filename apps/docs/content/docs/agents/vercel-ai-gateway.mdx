@@ -3,28 +3,36 @@ title: Vercel AI Gateway
 description: Route compatible coding Agents through one Vercel AI Gateway connection.
 ---
 
-Use Vercel AI Gateway as a model source for Claude Code, Codex and OpenCode, with
-your Gateway API key held in Happier's Saved Secrets.
+Use Vercel AI Gateway as a model source for Claude Code, Codex and OpenCode.
+Connect by signing in to Vercel or by saving a Gateway API key.
 
 <Callout>
-  This integration is unreleased 0.3 development source and awaits integration
-  validation. Real Vercel tenant validation has not yet been
-  completed; compatible pairings retain Happier's experimental confirmation.
+  This integration is unreleased 0.3 development source. End-to-end validation
+  with a real Vercel tenant remains pending. Compatible pairings retain
+  Happier's experimental confirmation.
 </Callout>
 
 ## What you need
 
-You need a Vercel AI Gateway API key, a development build that includes the
-Provider plugin, and an online machine with your chosen Agent installed.
-Create your key in the [Vercel AI Gateway dashboard](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway).
+Use a 0.3 development build with the Gateway plugin, the Providers feature
+enabled, and an online Machine with your chosen Agent installed.
 
-## Connect the Gateway
+## Choose how to connect
 
-1. Open **Settings → Providers**, select **Vercel AI Gateway** and add a connection.
-2. Bind your Gateway API key through Saved Secrets.
-3. Select the machine that will run your Agent and test the connection to fetch models.
-4. Enable **Show in model picker** for this connection. Aggregators are hidden by default.
-5. Start a Claude Code, Codex or OpenCode session, choose a Gateway model and confirm the experimental pairing when prompted.
+- **Sign in to Vercel** for personal models, credits for the selected Vercel team,
+  or brokered model sharing for your Happier Team. Open **Connected services**,
+  connect Vercel and select the team. In **New session**, choose a model from
+  that Connected Account. The Agent uses a local Session credential while the
+  broker sends requests under the selected Vercel team.
+- **Use a Gateway API key** if a Sandbox needs native credential delivery or
+  your Team needs direct sharing. Create a Gateway-only key in the
+  [Vercel AI Gateway dashboard](https://vercel.com/d?to=%2F%5Bteam%5D%2F%7E%2Fai-gateway).
+  Open **Settings → Providers**, add a **Vercel AI Gateway** connection and bind
+  the key from Saved Secrets. Select your Machine and test the connection to
+  fetch models. Enable **Show in model picker** for this connection, since
+  aggregators are hidden by default.
+
+Choose a Gateway model and confirm the experimental pairing when prompted.
 
 The catalog includes language models only. Models with documented reasoning
 effort choices expose the tiers Happier can represent; a reasoning tag alone
@@ -47,19 +55,9 @@ Vercel owns Gateway billing, budgets, routing and upstream availability.
 In 0.3 development, the connection detail's **Usage** section shows eligible
 remaining USD credits and lifetime spend, with the observation date and a
 Refresh control. The balance is an observation for the selected Gateway source.
-Tenant-backed validation remains outstanding.
-
-### Connected Account source in development
-
-The 0.3 development source also integrates Vercel sign-in with Gateway model
-selection. Connect Vercel from **Connected services** and select the Vercel team
-for that account. With the Providers feature enabled, open **New session** and
-choose a model from that connected source. The Agent receives a local Session
-credential, and the machine running the broker sends requests under the
-connected Vercel team. Open **Usage** for the Connected Account to see that
+For sign-in, open **Usage** for the Connected Account to see the selected
 team's lifetime spend and eligible remaining balance. Enterprise and Flex plans
-show spend only. This flow is unreleased and awaits validation on the carrying
-development runtime.
+show spend only.
 
 These account observations do not establish an actual charge for each Agent
 request. This integration does not record reported per-request charges for
@@ -92,9 +90,9 @@ Team guide for shared-user placeholder exposure and installation/removal states.
 
 ## If setup fails
 
-If testing is unavailable, check that the selected machine is online and allowed
-to use the connection. For an authentication failure, verify or replace the
-Saved Secret with a current Gateway API key. If a model is absent, refresh the
+If testing is unavailable, check that the selected Machine is online and allowed
+to use the connection. For an authentication failure, reconnect the Vercel
+account or update the saved Gateway API key, depending on your source. If a model is absent, refresh the
 catalog and check its availability in Vercel. If the connection is healthy but
 models are hidden, enable **Show in model picker** and use a compatible Agent.
 

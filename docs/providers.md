@@ -393,9 +393,10 @@ Anthropic Messages at `/claude-code`, Responses at `/codex/v1` (shared by Codex
 and OpenCode), and Chat Completions at `/coding-agent/v1`. It uses the ordinary
 API-key connection/Saved Secret flow and remains hidden in the model picker by
 default under the shared aggregator policy. The Provider also declares a
-model-inference purpose for a Vercel OAuth Account. In that path, the selected team
-is used for catalog observation and subsequent requests, and the Agent receives
-only the local broker endpoint and Session credential.
+model-inference purpose for personal use with a Vercel OAuth Account. The Agent
+receives the local broker endpoint and Session credential. The broker supplies
+the configured team for catalog observation and sends both the `teamId` query
+parameter and the `x-vercel-ai-gateway-team` header on inference requests.
 
 Its public `/v1/models` parser is plugin-supplied through `catalogParsers`, not a
 host Provider-id branch. Only language models enter the chat catalog; context
@@ -1471,7 +1472,8 @@ replacement path; their plugins do not own a separate restart controller.
 
 A Provider contribution declares its Connected Account purpose,
 eligible endpoint templates and the HTTP request-auth materialization it can
-consume. The registry qualifies the declaration once. The model picker offers
+consume. The registry qualifies the declaration once, replacing the interim per-Agent
+`managedProviderEndpoint` route. The model picker offers
 a Provider-purpose selection that names the purpose, endpoint and catalog model.
 The Session's qualified purpose binding supplies the selected Account or Pool.
 The same catalog owns membership for browsing and launch. A required but
@@ -3712,7 +3714,7 @@ the exact native UUID without acquiring or resuming a conversation.
 3. Keep an ordinary Provider descriptor-only. For a local descriptor-only Provider, add only bounded declarative detection facts and a provider-specific availability probe. A command-output catalog fallback names its own output format the same way an HTTP catalog probe does, and the declaring plugin implements it with the same registered parser.
 4. When the Provider owns a supervised local runtime, declare its single cold `managedRuntime` facet and register exactly one matching runtime with `api.providers.register(localId, runtime)`.
    In 0.3 development source, a runtime that always supplies its declared client credential may set `managedRuntime.credentialRequired: true`, derived from the same canonical client-access declaration used by its runtime. The shared source-fact owner then marks the existing credential slot and transports as required for `managedLocal` compatibility. External connections retain the contribution's ordinary credential requirement. Omit the managed field when the runtime has no such guarantee; `false` is not a declaration value.
-   In 0.3 development source, a managed Connected Account purpose may declare `endpointTemplateIds` for its supported downstream broker routes. Each endpoint must belong to that managed runtime and be unique within its purpose; different upstream services may support the same endpoint. The broker validates the signed implementation, exact endpoint/protocol and source service against the current Provider registry, requiring exactly one matching purpose before selecting the declared account. Missing or ambiguous declarations make the route unavailable. CLIProxyAPI projects its proven downstream translations from the same upstream-family contract used by ordinary managed serving; an endpoint alone never selects a vendor or authorizes an unbound account.
+   In 0.3 development source, a Provider Connected Account purpose may declare `endpointTemplateIds` for its supported broker routes. Each endpoint must belong to that Provider and be unique within its purpose; different upstream services may support the same endpoint. The broker validates the signed implementation, exact endpoint/protocol and source service against the current Provider registry, requiring exactly one matching purpose before selecting the declared account. Missing or ambiguous declarations make the route unavailable. CLIProxyAPI projects its proven downstream translations from the same upstream-family contract used by ordinary managed serving; an endpoint alone never selects a vendor or authorizes an unbound account.
    In 0.3 development source, `managedRuntime.unavailableConnectedAccounts` declares passive family identities, titles and localized reasons for the gateway's family presentation. The family projection reads these alongside executable `connectedAccounts`; gateway selection, request-auth uses and endpoint admission consume only executable purposes. Derive both projections from the plugin's one family declaration so displaying an unavailable family cannot activate its adapter.
 5. When the Provider's catalog endpoint answers in a wire format Happier does not bundle, name that format in the catalog probe's `parser` and register its implementation with `api.providers.registerCatalogParser(localId, format, parse)`. Happier bundles `openai-models`, `anthropic-models`, `ollama-tags`, and `lmstudio-native-models`; every other declared format is implemented by the declaring plugin, and a format with no reachable implementation fails the probe with `provider_contribution_unavailable` rather than being read by another Provider's parser. Set the probe's `reportsModelLoadState` when the format carries per-model load state, which is what makes model loading available — not whether the host bundles the format.
 6. Register every arm the contribution declares. Activation validates the complete declared-vs-registered composite: a Provider that declares a managed runtime and a contributed catalog format must register both, and registering a managed runtime or catalog format the contribution does not declare is refused. A partial registration fails activation instead of silently publishing the half that registered.

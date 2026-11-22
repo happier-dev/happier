@@ -57,7 +57,19 @@ connected or the provider's plan cannot be matched, the dated declared facts sta
 visible without a personal plan line. These are reference facts for choosing a
 setup, not a live quote.
 
-In unreleased 0.3, choose Railway in **Where it runs** to create a service from a
+## Connect Vercel for deployments
+
+In unreleased 0.3 development source, connect Vercel by signing in through a
+configured Home or by supplying a personal access token. Select the Vercel team
+in Happier. When you choose an existing target, select the project to link.
+For Sandbox creation, also select a project on the Connected Account. A
+team-only Sandbox check returns `vercel_project_required` with an account link
+to [choose a project](/plugins/services/auth-connected-services#choose-a-project-for-vercel-sandboxes).
+Fresh sign-in and existing-project deployment still need live validation.
+
+## Deploy a GitHub app to Railway
+
+In unreleased 0.3 development source, choose Railway in **Where it runs** to create a service from a
 GitHub repository and branch or link an existing Railway service. When you create
 a service, Railway builds the latest commit on the selected branch and
 automatically deploys later pushes to that branch. On a linked service,
@@ -72,6 +84,16 @@ If a Railway-assigned address stays pending after you add it, copy the assigned
 hostname from the linked service and environment in Railway. Open **Domains**,
 choose **Check again** on the pending address, and enter that hostname. Happier
 checks the address and saves it when it finds a match.
+
+### Link a Railway managed database
+
+Choose a Railway project and environment for a PostgreSQL or MySQL template.
+After creation, inspect the exact service and confirm adoption before Happier
+links it to the Environment. You can also adopt an existing database from
+that environment. Workbench can list the linked database. Reads return
+`database_transport_unavailable` in this development flow and require a
+limited database login. Live validation of the Railway deployment and database
+journeys remains pending.
 
 ## What you need
 

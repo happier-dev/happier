@@ -1050,8 +1050,9 @@ a private service reference using the linked database. Review the variable
 name and any replacement before saving. Apply the app's Railway changes to
 use the new value.
 
-Workbench can list the linked database. Reads remain unavailable until
-Workbench supports binding a limited Railway database login. For writes, bind
+Workbench can list the linked database. Its read path returns
+`database_transport_unavailable` until Workbench can open a limited Railway
+database login. For writes, bind
 a separately reviewed login and an address the controller Machine can reach,
 such as a Railway TCP proxy. Removing an adopted Link defaults
 to unlinking. Explicit service deletion targets the selected Railway

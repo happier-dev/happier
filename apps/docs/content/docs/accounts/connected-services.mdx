@@ -1031,24 +1031,25 @@ See:
 
 Most users should not need these. They are mainly for self-hosted deployments and drift reduction.
 
+For public browser sign-in by a plugin, [configure the public OAuth client on
+your Home](/self-hosting/env#public-oauth-clients). Native Codex and Claude
+subscription client ID overrides have their own Home settings.
+
 Global server exchange timeout:
 
 - `HAPPIER_CONNECTED_SERVICES_OAUTH_EXCHANGE_TIMEOUT_MS`
 
 OpenAI Codex OAuth:
 
-- `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL`
 
 Gemini OAuth:
 
-- `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_CLIENT_SECRET`
 - `HAPPIER_CONNECTED_SERVICES_GEMINI_OAUTH_TOKEN_URL`
 
 Claude subscription OAuth:
 
-- `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_CLIENT_ID`
 - `HAPPIER_CONNECTED_SERVICES_CLAUDE_SUBSCRIPTION_OAUTH_TOKEN_URL`
 
 Quota fetchers:

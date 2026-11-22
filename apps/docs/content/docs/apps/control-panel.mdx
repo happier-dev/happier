@@ -217,11 +217,13 @@ promise compatibility with every future native release.
 
 ##### Vercel Sandbox
 
-The Vercel integration is in progress for 0.3 and is not available for managed
-creation yet. The planned flow uses a named persistent sandbox and a Vercel
-access token with team access, plus its team and project IDs, through Connected
-Accounts. The guest must reach your Home outbound over the public internet; a
-private or loopback-only Home may fail enrollment. See [Vercel authentication](https://vercel.com/docs/sandbox/concepts/authentication).
+Managed Vercel Sandbox creation is in unreleased 0.3 development source.
+End-to-end Sandbox creation with Vercel sign-in still needs live validation.
+Connect Vercel by signing in or using a personal access token, and select the
+team and project that will host the Sandbox. A team-only account returns
+`vercel_project_required`. Use the account link shown with that reason to
+[choose a project](/plugins/services/auth-connected-services#choose-a-project-for-vercel-sandboxes).
+The guest must reach your Home outbound over the public internet.
 
 The planned creation review includes the image, region, CPU, run timeout and
 snapshot retention. Vercel's default image is `vercel/sandbox/universal:latest`;

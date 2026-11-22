@@ -11224,33 +11224,24 @@ need reconnect to record the new contract. The inspected `../0.2` frontier
 `57cd3db058af7767335d6d5a4ed44904460c50bb` has neither affected Connected Account
 schema path and no scoped working changes; no predecessor adapter is added.
 
-Unreleased 0.3 Connected Account purpose declarations add optional
-`managedProviderEndpoint`, a closed pair of exact Provider contribution identity
-and upstream purpose, with an optional native `modelIdPrefix` mapping checked
-against the exact Provider catalog. Omission retains native delivery. The field is routing
-authority, not an ignorable hint: shared Provider launch admission resolves the
-selected binding through the declared managed endpoint before native launch.
-The live Agent Provider binding source also accepts a closed `connected_account`
-variant identifying the admitted Agent purpose and exact selected Account;
-resolved Pool intent and credential acquisition remain with their existing owners.
-The SDK projects the canonical purpose type rather than duplicating its schema.
-Matching Protocol, SDK, CLI host and declaring plugins reload together; earlier
-strict development readers reject these additions. This unpublished direct cut
-adds no wire epoch, capability, saved connection or persistence migration. The
-inspected `../0.2` frontier `b825a99dfedcb68e223155a1ba0be84babe9e2d0`
-has no Connected Account purpose declaration module at this path, so no
-predecessor adapter is introduced.
+Unreleased 0.3 moves model-source routing to the Provider contribution.
+`connectedAccounts` declares the qualified purposes and eligible endpoints.
+`requestAuthUses` declares the per-request HTTP material the Provider can
+consume. This replaces the interim Agent-side `managedProviderEndpoint` route.
+Agent declarations still own native Connected Account delivery.
 
-The unreleased 0.3 `DaemonProviderModelProjectionRequestV1` also accepts optional
-`connectedServices` using the existing closed qualified V2 binding schema. It
-selects only the Agent declaration's managed-purpose catalogs and is mutually
-exclusive with explicit source and Team catalog selectors. Omission preserves
-saved Provider projection. This is routing and credential-selection input, so
-older strict readers reject it; it must not be ignored. Matching UI, Protocol
-and CLI hosts reload together under the same direct development cut, with no
-new wire epoch, capability or persistence migration. The inspected `../0.2`
-frontier `7b0f74960b1393886b994dbda71dcb3439c1ab57` has no affected Provider RPC
-module or scoped working changes; no predecessor adapter is needed.
+`DaemonProviderModelProjectionRequestV1.connectedServices` carries qualified
+Session bindings to the Provider catalog owner. Projection resolves those
+bindings against Provider declarations, with a qualified purpose selector when
+supplied. The `connected_account` Provider selection carries the purpose, endpoint
+and model. A brokered Team source persists its qualified purpose in the existing
+source binding. Team sources with no model purpose retain their existing scope.
+
+These shapes have no released 0.2 predecessor. Reload matching Protocol, SDK,
+UI, Home, CLI and declaring plugins together. Under the 2026-11-15 owner ruling
+on intermediate 0.3 states, this direct cut has no dual read, migration or
+backfill for the earlier development shapes. Re-select an affected development
+model source if its old selection no longer resolves.
 
 Unreleased 0.3 plugin Session input sources and durable `pluginSession`
 provenance accept optional `displayNameSnapshot`, a descriptive source label
