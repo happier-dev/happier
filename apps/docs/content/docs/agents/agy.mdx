@@ -84,7 +84,9 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 ## Troubleshooting
 
 - Run `agy --version` on the agent machine to confirm the CLI is installed. If launch reports `unexpected argument "acp"`, run `agy update`.
-- For `Authentication required` in a native-login session, run `happier agy auth login` on that machine and wait for it to finish.
+- For `Authentication required` in a native-login session on `agy acp`, run `happier agy auth login` on that machine
+  and wait for it to finish. Native-login sessions created before Happier used `agy acp` keep the pinned server's
+  earlier login, which this command does not refresh; start a new session instead.
 - For `Authentication required` with a connected account, sign in to that account again in
   **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
   `happier agy auth login` refreshes only the native CLI login.
