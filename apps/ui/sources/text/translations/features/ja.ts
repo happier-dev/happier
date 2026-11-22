@@ -16175,7 +16175,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { ja: {
-        publicLink: { workflowDescription: "リンクを持つ人は、アカウントなしでこのワークフローを閲覧できます。", workflowGrants: "閲覧専用のワークフロー。", description: "リンクを持つ人は、アカウントなしでこの文書を閲覧できます。", grants: "閲覧専用の文書。", linkLabel: "このドキュメントへのリンク", audit: "アクセス履歴", auditEmpty: "アクセスはまだ記録されていません。", ownerUpdateRequired: "所有者がこのリンクを更新しています", ownerUpdateRequiredDescription: "所有者にHappierを開くよう依頼してから、このリンクをもう一度お試しください。" },
+        publicLink: { workflowDescription: "リンクを持つ人は、アカウントなしでこのワークフローを閲覧できます。", workflowGrants: "閲覧専用のワークフロー。", description: "リンクを持つ人は、アカウントなしでこの文書を閲覧できます。", grants: "閲覧専用の文書。", linkLabel: "このドキュメントへのリンク", gone: "このリンクはすでにオフにされたか、置き換えられています。", audit: "アクセス履歴", auditEmpty: "アクセスはまだ記録されていません。", ownerUpdateRequired: "所有者がこのリンクを更新しています", ownerUpdateRequiredDescription: "所有者にHappierを開くよう依頼してから、このリンクをもう一度お試しください。" },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `候補: ${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `ほか${count}件`,
         whoHasAccess: 'アクセスできるユーザー',

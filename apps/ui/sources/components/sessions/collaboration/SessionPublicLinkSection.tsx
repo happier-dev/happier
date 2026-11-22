@@ -215,6 +215,8 @@ export function SessionPublicLinkCard(props: Readonly<{
     onDelete: () => Promise<void>;
     /** Another operation on the issued link, drawn in the card's action row. */
     linkControl?: React.ReactNode;
+    /** What the owner of this link learned about it, drawn first among the card's notices. */
+    notice?: React.ReactNode;
 }>): React.ReactElement {
     const { theme } = useUnistyles();
     const { publicShare } = props;
@@ -328,7 +330,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             Text={Text}
             linkMark={<Icon name="link" size={15} color={theme.colors.text.secondary} />}
             statusMark={<StatusDot color={theme.colors.state.success.foreground} size={6} />}
-            notices={<>{mutationFailure ? <PublicLinkFailureNotice
+            notices={<>{props.notice}{mutationFailure ? <PublicLinkFailureNotice
                 scope={mutationFailure.code === 'public_share_isolation_unavailable' ? props.configurationScope : undefined}
                 failure={mutationFailure}
             /> : null}{props.failed ? (

@@ -229,6 +229,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     }
     if (code === 'version_mismatch' || code === 'version-mismatch') return t('artifacts.browser.conflict.title');
     if (code === 'artifact_not_found' || code === 'not_found') return t('artifacts.notFound');
+    if (code === 'public_share_not_found') return t('shareSheet.publicLink.gone');
     if (typeof code === 'string' && code.startsWith('project_account_')) return t('widgetAdd.refusals.areaUnavailable');
     if (code === 'server_unreachable' || code === 'home_unreachable') return t('settingsPlugins.targetSelection.unreachableThisHome');
     if (code === 'unreachable' || (code == null && record.kind === 'unreachable')) return t('errors.networkError');

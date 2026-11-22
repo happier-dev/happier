@@ -60,13 +60,15 @@ export function DocumentPublicLinkSection(props: Readonly<{
             pendingApproval={link.pendingApproval} onRetry={link.reload} onOpenPendingApproval={link.openPendingApproval}
             networkPolicyLabel={networkPolicyLabel} networkConsequenceStatus={networkConsequenceStatus}
             onCreate={link.create} onDelete={link.remove}
+            notice={link.publicationGone ? <SurfaceStateCard testID={`${idPrefix}document-share-public-link-gone`} size="line"
+                kind="unavailable" title={t('shareSheet.publicLink.gone')} /> : undefined}
             linkControl={<ToolbarButton testID={`${idPrefix}document-share-public-link-audit`}
                 label={t('shareSheet.publicLink.audit')} disabled={link.readOnly || audit.loading} busy={audit.loading}
                 onPress={() => { void readAudit(); }} />} />
         {link.publication && (audit.failed || audit.rows) ? <View style={styles.audit}>
-            {audit.failed ? <SurfaceStateCard size="line" kind="error" title={t('session.collaboration.pane.linkLoadFailed')}
-                reason={auditIssue?.message} diagnosticCode={auditIssue?.code}
-                action={{ label: t('common.retry'), onPress: readAudit }} /> : null}
+            {audit.failed ? <SurfaceStateCard size="line" kind="error" title={auditIssue?.message ?? t('session.collaboration.pane.linkLoadFailed')}
+                diagnosticCode={auditIssue?.code}
+                action={auditIssue?.retryable === false ? undefined : { label: t('common.retry'), onPress: readAudit }} /> : null}
             {audit.rows?.length === 0 ? <SurfaceStateCard size="line" kind="empty" title={t('shareSheet.publicLink.auditEmpty')} /> : null}
             {audit.rows?.map(row => <Text key={row.id} testID={`${idPrefix}document-share-public-link-visit:${row.id}`} style={styles.visit}>
                 {[new Date(row.accessedAt).toLocaleString(), row.ipAddress, row.userAgent].filter(Boolean).join(' · ')}

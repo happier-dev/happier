@@ -20,6 +20,11 @@ import { readArtifactPublicNetworkResource, type ArtifactPublicNetworkOpenedV1 }
 import { hasSamePublicLinkNetworkPolicy } from '../PublicLinkNetworkConfirmation';
 
 type PublicLinkAction = 'artifact.public_link.create' | 'artifact.public_link.list' | 'artifact.public_link.revoke' | 'artifact.public_link.audit' | 'artifact.get' | 'artifact.update';
+/** The owner's link was turned off or replaced elsewhere: asking about it again cannot succeed, the current list can. */
+function isPublicLinkGone(error: unknown): boolean {
+    return parseActionExecuteFailure(error)?.errorCode === 'public_share_not_found';
+}
+
 type State = Readonly<{ publication: StoredContentPublicShareV1 | null; loaded: boolean; loading: boolean; error: boolean; failure?: unknown }>;
 
 /** One document's local bearer custody. Publication authority stays with the Action/server owner. */
@@ -39,6 +44,8 @@ export function useDocumentPublicLinkController(input: Readonly<{
     const issued = React.useRef<ArtifactPublicLinkIssuedV1 | null>(null);
     const publication = React.useRef<StoredContentPublicShareV1 | null>(null);
     const [state, setState] = React.useState<State>({ publication: null, loaded: false, loading: false, error: false });
+    // The link this sheet showed was found turned off or replaced elsewhere; it outlives the row's remount and ends with a new link.
+    const [gone, setGone] = React.useState(false);
     const [networkPolicy, setNetworkPolicy] = React.useState<ReturnType<typeof readArtifactPublicNetworkPolicyV1> | null>(null);
     const visual = input.kind === 'html' || input.kind === 'widget-definition.v1';
     const [execute] = React.useState(() => createFrontDoorActionExecute(undefined, {
@@ -141,6 +148,7 @@ export function useDocumentPublicLinkController(input: Readonly<{
         const result = ArtifactActionOutputSchemasV1['artifact.public_link.create'].parse(value);
         // Creation rotates the one-current share; the exact issued callback owns its new bearer.
         publication.current = null;
+        setGone(false);
         apply(result.publicShare);
         return result.publicShare;
     }, [apply, artifactId, audience, isCurrent, request, visual, openNetworkResource, networkPolicy]);
@@ -148,7 +156,16 @@ export function useDocumentPublicLinkController(input: Readonly<{
         const current = publication.current;
         if (!current) return;
         ++revision.current;
-        const value = await request('artifact.public_link.revoke', { artifactId, shareId: current.id, ...(audience === 'signed_in' ? { audience } : {}) });
+        let value: unknown;
+        try {
+            value = await request('artifact.public_link.revoke', { artifactId, shareId: current.id, ...(audience === 'signed_in' ? { audience } : {}) });
+        } catch (error) {
+            // Already off: what the person asked for holds, so show what is current instead of an error.
+            if (!isPublicLinkGone(error)) throw error;
+            setGone(true);
+            await refreshRef.current();
+            return;
+        }
         if (value === null || !isCurrent()) return;
         ArtifactActionOutputSchemasV1['artifact.public_link.revoke'].parse(value);
         apply(null);
@@ -156,7 +173,13 @@ export function useDocumentPublicLinkController(input: Readonly<{
     const listAccessLog = React.useCallback(async () => {
         const current = publication.current;
         if (!current || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
-        const result = await request('artifact.public_link.audit', { artifactId, shareId: current.id });
+        const result = await request('artifact.public_link.audit', { artifactId, shareId: current.id }).catch(async (error: unknown) => {
+            if (isPublicLinkGone(error)) {
+                setGone(true);
+                await refreshRef.current();
+            }
+            throw error;
+        });
         if (result === null || !isCurrent()) throw new HappyError(t('errors.permissionDenied'), false);
         return ArtifactActionOutputSchemasV1['artifact.public_link.audit'].parse(result);
     }, [artifactId, isCurrent, request]);
@@ -164,11 +187,11 @@ export function useDocumentPublicLinkController(input: Readonly<{
         const failure = parseActionExecuteFailure(error);
         if (!failure) return presentSessionAccessFailure(error);
         const presentation = presentActionExecutionFailure(failure, t('session.collaboration.pane.linkLoadFailed'));
-        return { code: failure.errorCode, message: presentation.reason, retryable: true,
+        return { code: failure.errorCode, message: presentation.reason, retryable: !isPublicLinkGone(error),
             diagnosticDetail: presentation.technicalDetails.filter(detail => detail.key !== 'code')
                 .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined };
     }, []);
-    return { ...state, issue: state.error ? presentFailure(state.failure) : null, presentFailure, networkPolicy, scopeKey, configurationScope: scope, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
+    return { ...state, publicationGone: gone && isCurrent(), issue: state.error ? presentFailure(state.failure) : null, presentFailure, networkPolicy, scopeKey, configurationScope: scope, shareUrl: canManage && issued.current?.shareId === state.publication?.id ? issued.current?.url ?? null : null,
         readOnly: !canManage, pendingApproval: approval.approvalPending, reload, create, remove, listAccessLog,
         openPendingApproval: () => { if (approval.approvalId) router.push(`/inbox/approvals/${encodeURIComponent(approval.approvalId)}?serverId=${encodeURIComponent(scope.serverId)}`); } };
 }

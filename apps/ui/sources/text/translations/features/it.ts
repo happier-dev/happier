@@ -16239,7 +16239,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { it: {
-        publicLink: { workflowDescription: "Chiunque abbia il link può leggere questo workflow senza un account.", workflowGrants: "Workflow di sola lettura.", description: "Chiunque abbia il link può leggere questo documento senza un account.", grants: "Documento di sola lettura.", linkLabel: "Link a questo documento", audit: "Registro degli accessi", auditEmpty: "Nessuna visita registrata.", ownerUpdateRequired: "Il proprietario sta aggiornando questo link", ownerUpdateRequiredDescription: "Chiedi al proprietario di aprire Happier, poi riprova questo link." },
+        publicLink: { workflowDescription: "Chiunque abbia il link può leggere questo workflow senza un account.", workflowGrants: "Workflow di sola lettura.", description: "Chiunque abbia il link può leggere questo documento senza un account.", grants: "Documento di sola lettura.", linkLabel: "Link a questo documento", gone: "Questo link è già stato disattivato o sostituito.", audit: "Registro degli accessi", auditEmpty: "Nessuna visita registrata.", ownerUpdateRequired: "Il proprietario sta aggiornando questo link", ownerUpdateRequiredDescription: "Chiedi al proprietario di aprire Happier, poi riprova questo link." },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `Suggerimenti: ${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `+${count} altri`,
         whoHasAccess: 'Chi ha accesso',

@@ -16264,7 +16264,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { ru: {
-        publicLink: { workflowDescription: "Любой, у кого есть ссылка, может читать этот рабочий процесс без аккаунта.", workflowGrants: "Рабочий процесс только для чтения.", description: "Любой, у кого есть ссылка, может читать этот документ без аккаунта.", grants: "Документ только для чтения.", linkLabel: "Ссылка на этот документ", audit: "Журнал доступа", auditEmpty: "Посещений пока нет.", ownerUpdateRequired: "Владелец обновляет эту ссылку", ownerUpdateRequiredDescription: "Попросите владельца открыть Happier, затем попробуйте эту ссылку снова." },
+        publicLink: { workflowDescription: "Любой, у кого есть ссылка, может читать этот рабочий процесс без аккаунта.", workflowGrants: "Рабочий процесс только для чтения.", description: "Любой, у кого есть ссылка, может читать этот документ без аккаунта.", grants: "Документ только для чтения.", linkLabel: "Ссылка на этот документ", gone: "Эта ссылка уже отключена или заменена.", audit: "Журнал доступа", auditEmpty: "Посещений пока нет.", ownerUpdateRequired: "Владелец обновляет эту ссылку", ownerUpdateRequiredDescription: "Попросите владельца открыть Happier, затем попробуйте эту ссылку снова." },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `Предложения: ${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `ещё ${count}`,
         whoHasAccess: 'У кого есть доступ',

@@ -1442,6 +1442,41 @@ describe('DocumentShareSheet', () => {
         expect(host.publicShare?.id).toBe('existing-share');
     });
 
+    it('says a link turned off elsewhere is gone when its access log is asked for, shows it off, and offers no Retry', async () => {
+        host.publicShare = { id: 'existing-share', subject: { kind: 'artifact', id: 'wf-1' },
+            expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false,
+            createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        await settle();
+        host.publicShare = null; // turned off on another device while this sheet stays open
+        await screen.pressByTestIdAsync('document-share-public-link-audit');
+        await settle();
+        const text = screen.getTextContent();
+        expect(text).toContain(t('shareSheet.publicLink.gone'));
+        expect(text).not.toContain(t('session.collaboration.pane.linkLoadFailed'));
+        expect(screen.findByTestId('session-public-link-create')).not.toBeNull();
+        expect(screen.findByTestId('session-public-link-turn-off')).toBeNull();
+        expect(text).not.toContain(t('common.retry'));
+    });
+
+    it('turning off a link that is already gone leaves it off without an error', async () => {
+        host.publicShare = { id: 'existing-share', subject: { kind: 'artifact', id: 'wf-1' },
+            expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false,
+            createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+        const screen = await renderScreen(<DocumentShareSheet artifactId="wf-1" kind="workflow-definition.v1" />);
+        await settle();
+        await screen.pressByTestIdAsync('document-share-public-link');
+        await settle();
+        host.publicShare = null;
+        await screen.pressByTestIdAsync('session-public-link-turn-off');
+        await answerNativeReview();
+        await settle();
+        expect(screen.findByTestId('session-public-link-mutation-error')).toBeNull();
+        expect(screen.findByTestId('session-public-link-create')).not.toBeNull();
+    });
+
     it('keeps publication off and reports missing Home isolation without suggesting a blind retry', async () => {
         host.publicCreateError = 'public_share_isolation_unavailable';
         const hook = await renderHook(() => useDocumentPublicLinkController({ artifactId: 'wf-1',
