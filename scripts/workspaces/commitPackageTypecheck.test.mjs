@@ -38,10 +38,10 @@ async function workspace(t) {
   await pkg('apps/cli', '@x/cli', { '@x/protocol': 'workspace:*' });
   git('add', '-A');
   git('commit', '--quiet', '-m', 'base');
-  const commit = async (path, content) => {
+  const commit = async (path, content, message = `change ${path}`) => {
     await write(path, content);
     git('add', '-A');
-    git('commit', '--quiet', '-m', `change ${path}`);
+    git('commit', '--quiet', '-m', message);
     return git('rev-parse', 'HEAD');
   };
   return { repo, commit };
@@ -116,7 +116,7 @@ test('the rolling HEAD typecheck coalesces commits, bisects only when red, and a
     for (const [path, content] of Object.entries(files)) await writeFile(join(repo, path), content);
     await writeFile(join(repo, '.tree-marker'), `${label}\n`);
     git('add', '-A');
-    git('commit', '--quiet', '-m', label);
+    git('commit', '--quiet', '-m', label === 'c2' ? 'c2\n\nLane: LANE-TRAILER' : label);
     return git('rev-parse', 'HEAD');
   };
   const c0 = await step('c0', { 'packages/leaf/src/index.ts': 'export const value = 0;\n' });
@@ -140,8 +140,9 @@ test('the rolling HEAD typecheck coalesces commits, bisects only when red, and a
   assert.deepEqual(red.attributions.map(entry => [entry.commit, entry.rows.map(row => `${row.file}:${row.line}:TS${row.code}`)]),
     [[c2, ['packages/leaf/src/index.ts:3:TS2322']]]);
   assert.equal(posts.length, 1, 'one URGENT for the introducing commit');
-  assert.match(posts[0], /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → LANE-TWO, P03 ORCH — URGENT — /mu);
+  assert.match(posts[0], /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → LANE-TRAILER — URGENT — /mu);
   assert.match(posts[0], new RegExp(c2.slice(0, 11)));
+  assert.match(posts[0], /Rolling typecheck.*packages\/leaf\/src\/index\.ts/u);
   assert.match(posts[0], /TS2322 Type number is not assignable to type string\./u);
   // Coalesced: c0 (cached from the first pass) is not recompiled; c4 once; the bisect probes c2 (and c1 or c3), never every commit.
   assert.ok(!compiled.includes('c0'), `baseline recompiled: ${compiled}`);
@@ -481,7 +482,7 @@ test('report mode checks a landed commit against its parent and posts one URGENT
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
   const rowsByTree = new Map();
   const remote = (treeIds, dirs) => new Map(treeIds.map(treeId => [treeId, new Map(dirs.map(dir => [dir, rowsByTree.get(treeId) ?? []]))]));
-  const broken = await commit('packages/plugins/codex/src/index.ts', 'export const broken: string = 1;\n');
+  const broken = await commit('packages/plugins/codex/src/index.ts', 'export const broken: string = 1;\n', 'Introduce type error\n\nLane: OWNER-LANE');
   rowsByTree.set(git('rev-parse', `${broken}^{tree}`), [{ file: 'packages/plugins/codex/src/index.ts', line: 1, column: 14, code: 2322, text: "Type 'number' is not assignable to type 'string'." }]);
   const board = join(state, 'board.md');
   await writeFile(board, `### 2026-11-18 20:00 UTC — LANE-PLUGIN → P03 ORCH — RESULT — x\n- committed ${broken.slice(0, 11)}\n`);
@@ -490,8 +491,9 @@ test('report mode checks a landed commit against its parent and posts one URGENT
   const red = await reportCommitGateTypecheck({ ...options, commit: broken });
   assert.equal(red.fresh.length, 1);
   assert.equal(posts.length, 1);
-  assert.match(posts[0], /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → LANE-PLUGIN, P03 ORCH — URGENT — new type errors from /mu);
+  assert.match(posts[0], /^### \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC — P03-COMMIT-CHECKS → OWNER-LANE — URGENT — new type errors from /mu);
   assert.match(posts[0], new RegExp(broken.slice(0, 11)));
+  assert.match(posts[0], /Package typecheck.*packages\/plugins\/codex\/src\/index\.ts/u);
   assert.match(posts[0], /index\.ts\(1,14\): TS2322/u);
   const clean = await commit('packages/plugins/codex/src/index.ts', 'export const fixed = 1;\n');
   await reportCommitGateTypecheck({ ...options, commit: clean });
@@ -1134,7 +1136,7 @@ test('a failed broader check reports the exact landed SHA for a fix forward', { 
   const runner = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
   await mkdir(dirname(runner), { recursive: true });
   // The shell check is a process boundary. Exercise the real post-commit queue and reporter.
-  await writeFile(runner, 'printf "%s\\n" "$1" "$2" > replayed\nexit 10\n');
+  await writeFile(runner, 'printf "%s\\n" "$1" "$2" > replayed\nprintf "HAPPIER_POST_COMMIT_FAILURE\\tExport scan\\tpackages/leaf/src/index.ts\\n"\nexit 10\n');
   const sha = await commit('packages/leaf/src/index.ts', 'export const value = 42;\n');
   const base = execFileSync('git', ['rev-parse', `${sha}^`], { cwd: repo, encoding: 'utf8' }).trim();
   const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: join(repo, '.git/typecheck-state') };
@@ -1147,7 +1149,9 @@ test('a failed broader check reports the exact landed SHA for a fix forward', { 
   assert.deepEqual(drained, [sha]);
   assert.equal(readFileSync(join(repo, 'replayed'), 'utf8'), `${base}\n${sha}\n`);
   assert.equal(posts.length, 1);
+  assert.match(posts[0], /→ P03 ORCH — URGENT/u);
   assert.match(posts[0], /Package Typecheck Test for a fix forward/u);
+  assert.match(posts[0], /Export scan.*packages\/leaf\/src\/index\.ts/u);
   assert.ok(posts[0].includes(sha));
   assert.equal(execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), sha);
 });

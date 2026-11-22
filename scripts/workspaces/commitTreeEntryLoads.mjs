@@ -542,6 +542,10 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
     try {
       const result = await commitTreeEntryLoads({ repo, base, tree, phase: args.includes('--post-commit') ? 'deferred' : 'report', installDir: resolve(option('install-dir') ?? repo), signal: stop.signal });
       for (const finding of result.findings) console.error(`tree entry load: ${finding}`);
+      if (args.includes('--post-commit') && result.findings.length) {
+        const [, graph, path] = /^([^:]+): (.*?): /u.exec(result.findings[0]) ?? [];
+        console.log(`HAPPIER_POST_COMMIT_FAILURE\tEntry load (${graph})\t${path ?? ''}`);
+      }
       for (const finding of result.preexisting) console.error(`tree entry load (also fails at the base): ${finding}`);
       console.log(`commit tree entry loads: ${result.selected.length}/${result.graphs} graph(s), ${result.findings.length} failure(s), ${JSON.stringify(result.timings)}`);
       record({ verdict: result.findings.length ? 'would-refuse' : 'pass', selected: result.selected, findings: result.findings, preexisting: result.preexisting, results: result.results, timings: result.timings });

@@ -37,12 +37,13 @@ import { appendFileSync, closeSync, existsSync, mkdirSync, mkdtempSync, openSync
 import { createRequire } from 'node:module';
 import { homedir, tmpdir } from 'node:os';
 import { basename, join, posix, relative, resolve } from 'node:path';
+import { createInterface } from 'node:readline';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { compilerDiagnosticFromLine } from '../testing/lib/compilerBaseline.mjs';
 import { diagnosticHunks, newDiagnostics } from './commitTypeCoherenceDiagnostics.mjs';
 import { WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE, withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
-import { ARCHIVED_BOARD_PATH, BOARD_PATH } from '../board/postBoardEntry.mjs';
+import { BOARD_PATH } from '../board/postBoardEntry.mjs';
 import packageExportMatch from '../../packages/cli-common/packageExportMatch.cjs';
 import { packageNameOfSpecifier, resolveWorkspaceSource, workspaceSourcePackageClosure } from '../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { readCommitTreeWorkspacePackages } from './commitTreeEntryLoads.mjs';
@@ -708,12 +709,11 @@ function recordGateReport(path, sha, result, verdict) {
 
 /**
  * Report-and-URGENT mode of the gate check (P03 ORCH 2026-11-18, before it blocks): a landed commit's touched
- * packages/* and packages/plugins/* workspaces against its parent; new errors go to the lane that posted the commit's
- * SHA as one board URGENT. `GATE-REPORT-*` lines in verdicts.log carry the check's wall time, the gate wait it would add
+ * packages/* and packages/plugins/* workspaces against its parent; new errors go to the commit's author lane as one board URGENT. `GATE-REPORT-*` lines in verdicts.log carry the check's wall time, the gate wait it would add
  * at most, which decides when it blocks. Returns null when the commit touches none of those workspaces.
  */
 export async function reportCommitGateTypecheck({ repo, commit, env = process.env, log = message => process.stderr.write(`${message}\n`), remote, workers,
-  post = entry => postBoardEntry(repo, entry), boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(board => join(repo, board)) }) {
+  post = entry => postBoardEntry(repo, entry) }) {
   const git = gitAt(repo);
   const sha = git(['rev-parse', `${commit}^{commit}`]).trim();
   const base = git(['rev-parse', `${sha}^`]).trim();
@@ -735,7 +735,7 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
   const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
   if (result.fresh.length) {
     const [subject, author] = git(['log', '-1', '--format=%s%n%an', sha]).trim().split('\n');
-    try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(sha, boardPaths), rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
+    try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(git, sha), check: EXACT_DECLARATION_DIRS.has(result.fresh[0].package) ? 'Declaration comparison' : 'Package typecheck', rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
     catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
   }
   const verdict = result.fresh.length ? 'RED' : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
@@ -749,7 +749,6 @@ function hasBroadCommitReplay(repo, commit) {
 }
 
 async function reportBroadCommitReplay({ repo, commit, env, post = entry => postBoardEntry(repo, entry),
-  boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(path => join(repo, path)),
   log = message => process.stderr.write(`${message}\n`) }) {
   const script = join(repo, 'scripts/workspaces/runCommitPostChecks.sh');
   if (!existsSync(script) || !hasBroadCommitReplay(repo, commit) || process.platform === 'win32') return;
@@ -757,7 +756,14 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
   const base = git(['rev-parse', `${commit}^`]).trim();
   // The existing report consumer runs each exact replay outside the commit lock.
   // Its entry and bundle phases acquire and release their own grants in sequence.
-  const child = spawn('bash', [script, base, commit], { cwd: repo, env, stdio: ['ignore', 'inherit', 'inherit'] });
+  const child = spawn('bash', [script, base, commit], { cwd: repo, env, stdio: ['ignore', 'pipe', 'inherit'] });
+  let failure;
+  const output = createInterface({ input: child.stdout, crlfDelay: Infinity });
+  output.on('line', line => {
+    const match = /^HAPPIER_POST_COMMIT_FAILURE\t([^\t]+)\t(.*)$/u.exec(line);
+    if (match) failure ??= { check: match[1], path: match[2] };
+    else process.stdout.write(line + '\n');
+  });
   const [status] = await once(child, 'close').catch(error => {
     log(`[commit-checks] broad replay could not start for ${commit}: ${error.message}`);
     return [75];
@@ -766,14 +772,14 @@ async function reportBroadCommitReplay({ repo, commit, env, post = entry => post
   const state = commitPackageTypecheckStateDir(repo, env);
   appendFileSync(join(state, 'verdicts.log'), `${new Date().toISOString()} BROAD-REPORT-${verdict} commit=${commit} exit=${status}\n`);
   if (status !== 10) return;
-  const lane = commitLane(commit, boardPaths);
+  const lane = commitLane(git, commit);
   const author = git(['log', '-1', '--format=%an', commit]).trim();
-  const addressees = lane && lane !== 'P03 ORCH' ? `${lane}, P03 ORCH` : 'P03 ORCH';
+  const addressees = lane ?? 'P03 ORCH';
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
   const entry = [
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — Broad post-commit checks failed for ${commit.slice(0, 11)}`,
     `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to author ${author} for a fix forward`}. The exact commit ${commit} adds an entry, bundle or export failure over its parent ${base}.`,
-    '- The compilation report lists the failing check and affected paths in runs/gate-report.log under the commit typecheck state directory.',
+    `- ${failure?.check ?? 'Broad post-commit replay'} failed at ${failure?.path ? inlineCode(failure.path) : 'an unreported path'}. Details in \`runs/gate-report.log\`.`,
     '',
   ].join('\n');
   try { post(entry); }
@@ -842,32 +848,22 @@ export async function drainCommitGateReports({ repo, env = process.env, worker, 
 const ROLLING_HEAD = 'rolling-head';
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-/** The lane that posted the commit's SHA on the board (its oldest mention); otherwise P03 ORCH. */
-export function commitLane(commit, boardPaths) {
-  const short = commit.slice(0, 10);
-  let lane;
-  for (const path of boardPaths) {
-    let text;
-    try { text = readFileSync(path, 'utf8'); } catch { continue; }
-    let sender;
-    for (const line of text.split('\n')) {
-      const heading = /^### .*? UTC — (.+?) → /u.exec(line);
-      if (heading) sender = heading[1].replace(/\s*\(.*\)$/u, '').trim();
-      // The board is newest first: the last mention is the earliest, normally the committing lane's.
-      if (sender && line.includes(short)) lane = sender;
-    }
-    if (lane) return lane;
-  }
-  return undefined;
+function commitLane(git, commit) {
+  const lane = git(['show', '-s', '--format=%(trailers:key=Lane,valueonly,unfold,separator=%x00)', commit])
+    .split('\0').at(-1).trim();
+  return lane || undefined;
 }
 
-function urgentEntry({ commit, subject, author, lane, rows, base, head, how }) {
+const inlineCode = value => `\`${value.replaceAll('`', '\\`')}\``;
+
+function urgentEntry({ commit, subject, author, lane, check = 'Rolling typecheck', rows, base, head, how }) {
   const stamp = new Date().toISOString().replace('T', ' ').slice(0, 16);
-  const addressees = lane && lane !== 'P03 ORCH' ? `${lane}, P03 ORCH` : 'P03 ORCH';
+  const addressees = lane ?? 'P03 ORCH';
   return [
     `### ${stamp} UTC — P03-COMMIT-CHECKS → ${addressees} — URGENT — new type errors from ${commit.slice(0, 11)}`,
     `- ${lane ? `${lane}: fix forward` : `P03 ORCH: route to ${author ?? 'the author'} for a fix forward`}: ${how ? `${how} ${rows.length} new error(s) in \`${commit.slice(0, 11)}\` ("${subject}") against its parent ${base.slice(0, 11)}.`
       : `the rolling HEAD typecheck attributes ${rows.length} new error(s) to \`${commit.slice(0, 11)}\` ("${subject}") by bisecting ${base.slice(0, 11)}..${head.slice(0, 11)}.`}`,
+    `- ${check} failed at ${rows[0].file === '<global>' ? 'an unreported path' : inlineCode(rows[0].file)}.`,
     ...rows.slice(0, 8).map(row => `  - ${row.file}(${row.line},${row.column}): TS${row.code} ${row.text.replace(/\s+/gu, ' ').slice(0, 200)}`),
     ...(rows.length > 8 ? [`  - … ${rows.length - 8} more: \`node scripts/workspaces/commitPackageTypecheck.mjs ${commit.slice(0, 11)}\``] : []),
     '',
@@ -910,7 +906,7 @@ function rollingBase(repo, recorded, head) {
  * The caller holds the worktree lock and, when anything compiles, compiler admission.
  */
 export async function rollingHeadTypecheckPass({ repo, env = process.env, log = message => process.stderr.write(`${message}\n`),
-  compile, bootstrap, remote, post = entry => postBoardEntry(repo, entry), boardPaths = [BOARD_PATH, ARCHIVED_BOARD_PATH].map(board => join(repo, board)), scope = 'packages',
+  compile, bootstrap, remote, post = entry => postBoardEntry(repo, entry), scope = 'packages',
   attribute = true, pending = null }) {
   const started = Date.now();
   const git = gitAt(repo);
@@ -994,8 +990,8 @@ export async function rollingHeadTypecheckPass({ repo, env = process.env, log = 
     low = a + 1;
   }
   for (const entry of result.attributions) {
-    const subject = git(['log', '-1', '--format=%s', entry.commit]).trim();
-    try { post(urgentEntry({ ...entry, subject, lane: commitLane(entry.commit, boardPaths), base, head })); }
+    const [subject, author] = git(['log', '-1', '--format=%s%n%an', entry.commit]).trim().split('\n');
+    try { post(urgentEntry({ ...entry, subject, author, lane: commitLane(git, entry.commit), base, head })); }
     catch (error) { log(`[rolling-head-typecheck] board post failed for ${entry.commit.slice(0, 11)}: ${error?.message ?? error}`); }
   }
   record(pending ? 'ATTRIBUTED' : 'RED');

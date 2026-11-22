@@ -17,7 +17,15 @@ if [ "${1:-}" != "--bundle" ]; then
 fi
 shift
 unset P03_SCAN_CHEAP_ONLY P03_GATE_PRIOR SCAN_FROM
-refuse() { echo "POST-COMMIT RED: $*"; exit 10; }
+refuse() {
+  local check=$1 path=$2
+  printf 'HAPPIER_POST_COMMIT_FAILURE\t%s\t%s\n' "$check" "$path"
+  echo "POST-COMMIT RED: $check"
+  exit 10
+}
+first_path() {
+  awk -F '\t' '$1 ~ /[^[:space:]]/ { sub(/^ +/, "", $1); sub(/:[0-9]+$/, "", $1); print $1; exit }'
+}
 # bundlegate.mjs runs headbuild.mjs only for the targets (cli, scripts, server) whose recorded inputs the change
 # since the nearest cached ancestor touches, and reuses the ancestor's errors for the rest: a docs/test/UI-only
 # commit bundles nothing (P03-GATE-COST 2026-11-17: ~160-180 CPU-s and ~5 GB per candidate bundle before).
@@ -40,7 +48,7 @@ printf '%s\n' "$c" | cut -c1-220
 # apps/stack, scripts/ and packages/*/scripts) fails: a missing module is kept external and recorded, so
 # missing-export link errors are never hidden behind it.
 bad=$(new_build_errors <(printf '%s\n' "$b") <(printf '%s\n' "$c") | grep . || true)
-[ -z "$bad" ] || { echo "NEW BUILD/IMPORT ERRORS:"; echo "$bad" | cut -c1-250; refuse "new build/import errors"; }
+[ -z "$bad" ] || { echo "NEW BUILD/IMPORT ERRORS:"; echo "$bad" | cut -c1-250; refuse "Bundle and import check" "$(printf '%s\n' "$bad" | first_path)"; }
 # Type-level and re-export check, whole repository (esbuild bundles a missing TS re-export as undefined,
 # and drops type-only imports entirely, so a consumer reading a type its producer never committed slips
 # through the bundle). The base result is cached per commit; only findings the candidate adds fail.
@@ -53,5 +61,5 @@ src=0; bs=$(fullscan "$1") || src=$?
 src=0; cs=$(fullscan "$2") || src=$?
 [ $src -eq 0 ] || { echo "gate unavailable: candidate scan failed"; exit 75; }
 miss=$(lines_added <(printf '%s\n' "$bs") <(printf '%s\n' "$cs"))
-[ -z "$miss" ] || { echo "MISSING EXPORTS (new, whole repo):"; echo "$miss" | cut -c1-250; refuse "new missing exports"; }
+[ -z "$miss" ] || { echo "MISSING EXPORTS (new, whole repo):"; echo "$miss" | cut -c1-250; refuse "Export scan" "$(printf '%s\n' "$miss" | first_path)"; }
 echo "scan: no new missing exports anywhere in apps/ or packages/"
