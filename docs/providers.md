@@ -2720,16 +2720,21 @@ lookup, and treat upstream 401s as request-scoped failures so a later daemon lea
 is usable. The SDK key-value store is disabled; no SDK credential store is enabled.
 The catalog is compatibility evidence, not Account entitlement.
 
-For a broker-admitted Claude replay in 0.3 development, set
+For a broker-admitted gateway replay in 0.3 development, set
 `HAPPIER_CLIPROXYAPI_WIRE_PROJECTION_CONNECTION_ID` in the QA daemon's launch
 configuration to the exact saved gateway connection ID. Start the gateway from
 that configuration with the matching wrapper build. Its private, per-instance
 runtime directory contains `managed-wire-projection.jsonl` after the first
-admitted `POST /v1/messages`. Each record pairs the upstream status, event types
-and block metadata with the equivalent Anthropic response fields. Text lengths
-count UTF-8 bytes. The wrapper keeps CommercialMode enabled and the projection
-contains only structural fields. Capture the file while the instance is live
-and clear the selector after the replay.
+admitted `POST /v1/messages` or `POST /v1/responses`. Messages records pair the
+upstream status, event types and block metadata with the Anthropic response
+fields. Text lengths count UTF-8 bytes. For Responses, compare
+`upstream[].argumentNumbers` with `downstream.argumentNumbers` using the event
+and output index. Each observation lists argument paths as JSON Pointers and
+classifies numeric spellings as `integer`, `decimal-with-fraction`, or
+`exponent` for exponent notation without a fractional part. Streamed argument
+deltas and completion snapshots have separate observations. The projection
+omits argument values and keeps CommercialMode enabled. Capture the file while
+the instance is live and clear the selector after the replay.
 
 For native Codex Responses clients, the development managed codec presents MCP
 namespace children, including deferred tool-search catalogs, as ordinary

@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -13,13 +16,20 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 	for _, fixture := range []struct {
 		name, arguments string
 		terminalOnly    bool
+		nonStreaming    bool
+		numbers         []projectedNumber
 	}{
-		{"integer", `{"session_id":44069,"yield_time_ms":30000}`, false},
-		{"upstream decimal", `{"session_id":44069.0,"yield_time_ms":30000.0}`, false},
-		{"integer in terminal response", `{"session_id":44069,"yield_time_ms":30000}`, true},
+		{"integer with projection off", `{"session_id":44069,"yield_time_ms":30000}`, false, false, nil},
+		{"fragmented mixed spellings", `{"session_id":44069,"yield_time_ms":30000.0,"text":"PRIVATE_STRING_ARGUMENT","numeric_string":"123456","empty":null}`, false, false,
+			[]projectedNumber{{"/session_id", "integer"}, {"/yield_time_ms", "decimal-with-fraction"}}},
+		{"nested numbers in terminal response", `{"session_id":44069,"yield_time_ms":30000,"nested":[true,{"a/b~c":-1.25e2},5e-2]}`, true, false,
+			[]projectedNumber{{"/nested/1/a~1b~0c", "decimal-with-fraction"}, {"/nested/2", "exponent"}, {"/session_id", "integer"}, {"/yield_time_ms", "integer"}}},
+		{"non-streaming downstream response", `{"session_id":44069,"yield_time_ms":30000.0}`, true, true,
+			[]projectedNumber{{"/session_id", "integer"}, {"/yield_time_ms", "decimal-with-fraction"}}},
 	} {
 		t.Run(fixture.name, func(t *testing.T) {
 			cfg := crossProtocolConfig(t, metaProtocolCases()[1])
+			cfg.WireProjection = fixture.numbers != nil
 			broker := &sequenceBroker{leases: []RequestAuthHeaders{validLease("meta-fixture", map[string]string{"x-api-version": "1.0.0"})}}
 			upstream := wireTransport(func(request *http.Request) (*http.Response, error) {
 				if request.URL.Host != "api.meta.ai" || request.URL.Path != "/v1/responses" {
@@ -52,7 +62,7 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 			defer stopGateway(t, cancel, result)
 			_ = awaitManagedHealthIdentity(t, cfg)
 
-			body := strings.NewReader(`{"model":"muse-spark-1.3","stream":true,"input":"poll the command","tools":[{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"}}}}]}`)
+			body := strings.NewReader(fmt.Sprintf(`{"model":"muse-spark-1.3","stream":%t,"input":"poll the command","tools":[{"type":"function","name":"write_stdin","parameters":{"type":"object","properties":{"session_id":{"type":"number"},"yield_time_ms":{"type":"number"}}}}]}`, !fixture.nonStreaming))
 			request, err := http.NewRequest(http.MethodPost, fmt.Sprintf("http://%s:%d/v1/responses", cfg.Host, cfg.Port), body)
 			if err != nil {
 				t.Fatal(err)
@@ -68,8 +78,79 @@ func TestManagedMetaResponsesPreservesNativeToolArguments(t *testing.T) {
 			if response.StatusCode != http.StatusOK {
 				t.Fatalf("native Responses stream status = %d", response.StatusCode)
 			}
-			assertNativeToolArguments(t, readResponse(t, response), fixture.arguments, fixture.terminalOnly)
+			payload := readResponse(t, response)
+			if fixture.nonStreaming {
+				var completed struct{ Output []struct{ Arguments string } }
+				if json.Unmarshal([]byte(payload), &completed) != nil || len(completed.Output) != 1 || completed.Output[0].Arguments != fixture.arguments {
+					t.Fatal("arguments changed in the non-streaming Responses body")
+				}
+			} else {
+				assertNativeToolArguments(t, payload, fixture.arguments, fixture.terminalOnly)
+			}
+			assertResponsesNumberProjection(t, cfg, fixture.numbers, fixture.terminalOnly, fixture.nonStreaming)
 		})
+	}
+}
+
+type projectedNumber struct{ Path, Class string }
+
+func assertResponsesNumberProjection(t *testing.T, cfg Config, numbers []projectedNumber, terminalOnly, nonStreaming bool) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(cfg.RuntimeDir, wireProjectionFile))
+	if numbers == nil {
+		if !os.IsNotExist(err) {
+			t.Fatal("projection emitted on the default Responses instance")
+		}
+		return
+	}
+	if err != nil {
+		t.Fatal("enabled Responses request did not write a projection")
+	}
+	for _, forbidden := range []string{"PRIVATE_STRING_ARGUMENT", "123456", "44069", "30000", "poll the command", "meta-fixture", cfg.DownstreamBearer} {
+		if strings.Contains(string(data), forbidden) {
+			t.Fatal("Responses projection disclosed a value or credential")
+		}
+	}
+	type observation struct {
+		Event       string
+		OutputIndex int
+		Numbers     []projectedNumber
+	}
+	type stream struct {
+		ArgumentNumbers []observation
+		Incomplete      bool
+	}
+	var record struct {
+		Method, Path string
+		Upstream     []stream
+		Downstream   stream
+	}
+	if json.Unmarshal(data, &record) != nil || record.Method != http.MethodPost || record.Path != "/v1/responses" || len(record.Upstream) != 1 {
+		t.Fatal("missing a Responses record with an upstream attempt and downstream response")
+	}
+	want := []observation{{"response.completed", 0, numbers}}
+	if !terminalOnly {
+		want = append([]observation{
+			{"response.function_call_arguments.delta", 0, numbers},
+			{"response.function_call_arguments.done", 0, numbers},
+			{"response.output_item.done", 0, numbers},
+		}, want...)
+	}
+	egress := want
+	if nonStreaming {
+		egress = []observation{{"response", 0, numbers}}
+	}
+	for _, side := range []struct {
+		name string
+		got  stream
+		want []observation
+	}{
+		{"ingress", record.Upstream[0], want},
+		{"egress", record.Downstream, egress},
+	} {
+		if side.got.Incomplete || !reflect.DeepEqual(side.got.ArgumentNumbers, side.want) {
+			t.Errorf("%s number spelling projection = %+v, want %v", side.name, side.got, side.want)
+		}
 	}
 }
 

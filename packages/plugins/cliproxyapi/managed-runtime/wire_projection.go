@@ -32,16 +32,18 @@ type wireRequest struct {
 	Model      string        `json:"model,omitempty"`
 	Upstream   []*wireStream `json:"upstream"`
 	Downstream wireStream    `json:"downstream"`
+	responses  bool
 	mu         sync.Mutex
 }
 
 type wireStream struct {
-	Status     int         `json:"status,omitempty"`
-	EventTypes []string    `json:"eventTypes"`
-	StopReason string      `json:"stopReason,omitempty"`
-	Blocks     []wireBlock `json:"blocks"`
-	Incomplete bool        `json:"incomplete,omitempty"`
-	positions  map[[2]int]int
+	Status          int                   `json:"status,omitempty"`
+	EventTypes      []string              `json:"eventTypes"`
+	StopReason      string                `json:"stopReason,omitempty"`
+	Blocks          []wireBlock           `json:"blocks"`
+	ArgumentNumbers []wireArgumentNumbers `json:"argumentNumbers,omitempty"`
+	Incomplete      bool                  `json:"incomplete,omitempty"`
+	positions       map[[2]int]int
 }
 
 type wireBlock struct {
@@ -54,17 +56,19 @@ type wireBlock struct {
 func managedWireProjection(runtimeDir string) gin.HandlerFunc {
 	path := filepath.Join(runtimeDir, wireProjectionFile)
 	messages := surfaceRoutes[SurfaceAnthropicMessages][0]
+	responses := surfaceRoutes[SurfaceOpenAIResponses][0]
 	return func(c *gin.Context) {
-		if c.Request.Method != messages.Method || c.FullPath() != messages.Path {
+		route := Route{Method: c.Request.Method, Path: c.FullPath()}
+		if route != messages && route != responses {
 			c.Next()
 			return
 		}
-		record := wireRequest{Method: messages.Method, Path: messages.Path, Upstream: []*wireStream{}}
+		record := wireRequest{Method: route.Method, Path: route.Path, Upstream: []*wireStream{}, responses: route == responses}
 		ctx := httptransport.WithDecorator(c.Request.Context(), record.observeTransport)
 		c.Request = c.Request.WithContext(ctx)
 		writer := &wireResponseWriter{
 			ResponseWriter: c.Writer,
-			frames:         wireFrames{stream: &record.Downstream},
+			frames:         wireFrames{stream: &record.Downstream, responses: record.responses},
 		}
 		func() {
 			defer writer.finish()
@@ -120,7 +124,7 @@ func (r *wireRequest) observeTransport(next http.RoundTripper) http.RoundTripper
 			response.Body = &wireResponseBody{
 				ReadCloser: response.Body,
 				mu:         &r.mu,
-				frames:     wireFrames{stream: stream, sse: isWireSSE(response.Header)},
+				frames:     wireFrames{stream: stream, sse: isWireSSE(response.Header), responses: r.responses},
 			}
 		}
 		return response, err
@@ -273,12 +277,14 @@ func (w wireFrameWriter) Write(p []byte) (int, error) {
 }
 
 type wireFrames struct {
-	stream     *wireStream
-	pending    []byte
-	sse        bool
-	skipping   bool
-	terminal   bool
-	incomplete bool
+	stream         *wireStream
+	pending        []byte
+	sse            bool
+	skipping       bool
+	terminal       bool
+	incomplete     bool
+	responses      bool
+	argumentDeltas map[int][]byte
 }
 
 func (f *wireFrames) observe(p []byte) {
@@ -333,6 +339,7 @@ func (f *wireFrames) flush() {
 
 func (f *wireFrames) finish() {
 	f.flush()
+	f.finishArgumentDeltas()
 	f.stream.Incomplete = f.incomplete
 	if f.stream.EventTypes == nil {
 		f.stream.EventTypes = []string{}
@@ -350,6 +357,7 @@ type wirePart struct {
 	Content              []wirePart
 	Output               []wirePart
 	StopReason           string `json:"stop_reason"`
+	Arguments            json.RawMessage
 }
 
 type wireFrame struct {
@@ -381,6 +389,14 @@ func (f *wireFrames) project(frame wireFrame) {
 		if f.sse {
 			s.EventTypes = append(s.EventTypes, "unknown")
 		}
+	}
+	switch frame.Type {
+	case "message_stop", "response.completed", "response.incomplete", "response.failed":
+		f.terminal = true
+	}
+	if f.responses {
+		f.projectResponseArguments(frame)
+		return
 	}
 	switch frame.Type {
 	case "message":
@@ -416,13 +432,10 @@ func (f *wireFrames) project(frame wireFrame) {
 			s.output(index, item)
 		}
 		s.stop(frame.Response.StopReason)
-		f.terminal = true
 	case "response":
 		for index, item := range frame.Output {
 			s.output(index, item)
 		}
-	case "message_stop":
-		f.terminal = true
 	}
 }
 
