@@ -319,6 +319,16 @@ describe('resolveTriageListShellState', () => {
     }
   });
 
+  it('says a paced source as one sentence with its subject and reset, beside rows or not (N12)', () => {
+    const retryNotBeforeMs = Date.now() + 60_000;
+    const source = { sourceInstanceId: 'a', displayName: 'Sentry · Example Org', reason: 'Asked us to slow down.', retryNotBeforeMs };
+    for (const retainedRows of [false, true]) {
+      const { label } = readTriageListFailureLine({ kind: 'sources', sources: [source],
+        ...(retainedRows ? { retainedRows: true as const } : {}) }, undefined, 'en-US');
+      expect(label).toMatch(/^Sentry · Example Org asked us to slow down until [^.]+\.$/u);
+    }
+  });
+
   it('preserves the provider refusal code as well as its readable failure class', () => {
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
       sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,

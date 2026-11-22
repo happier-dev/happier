@@ -457,10 +457,11 @@ export function readTriageListFailureLine(
     // A read can help as soon as any source is eligible.
     const pacedUntilMs = Math.min(...deadlines);
     const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
-    const retained = failure.retainedRows === true
-      ? `${text('plugins.triage.surface.lastKnown', 'Showing the last known list')}. ` : '';
+    // Pacing is the source asking us to wait, not a failed read: one sentence with its subject and its reset (N12).
+    // Retained rows stay on screen, and the list's own age line says how old they are.
     return Object.freeze({
-      label: `${retained}${names} · ${readRetryAtSentence(text, locale ?? 'en', pacedUntilMs)}`,
+      label: text('plugins.triage.surface.failure.pacedUntil', '{names} asked us to slow down until {time}.')
+        .replace('{names}', names).replace('{time}', formatHappierAsOfTime(pacedUntilMs, Date.now(), locale ?? 'en')),
       pacedUntilMs,
       recovery: evaluateRefreshEligibility({ nowMs: Date.now(), retryNotBeforeMs: pacedUntilMs }).kind === 'blocked'
         ? null : 'retry',
