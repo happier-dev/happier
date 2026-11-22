@@ -13,6 +13,7 @@ import {
 } from '@happier-dev/protocol';
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { renderScreen } from '@/dev/testkit';
+import { installPersistenceModuleMock } from '@/dev/testkit/mocks/persistence';
 import { createTextModuleMock } from '@/dev/testkit/mocks/text';
 
 import { installNewSessionScreenModelCommonModuleMocks } from './newSessionScreenModelTestHelpers';
@@ -228,52 +229,9 @@ async function setupUseCreateNewSessionHarness() {
             json: async () => ({ mode: 'e2ee', updatedAt: 1 }),
         })),
     }));
-    vi.doMock('@/sync/domains/state/persistence', () => ({
-        getPersistenceStorage: () => ({
-            getString: () => undefined,
-            set: vi.fn(),
-            delete: vi.fn(),
-            getAllKeys: () => [],
-        }),
+    vi.doMock('@/sync/domains/state/persistence', installPersistenceModuleMock({
         clearNewSessionDraft: clearNewSessionDraftSpy,
-        loadChangesCursor: () => null,
-        loadDeviceAnalyticsId: () => null,
-        loadLastChangesCursorByAccountId: () => ({}),
-        loadNewSessionDraft: () => null,
-        loadPendingSettings: () => ({}),
-        loadProfile: () => ({}),
-        loadSessionActionDrafts: () => ({}),
-        loadSessionDrafts: () => ({}),
-        loadSessionLastViewed: () => ({}),
-        loadSessionMaterializedMaxSeqById: () => ({}),
-        loadSessionModelModes: () => ({}),
-        loadSessionModelModeUpdatedAts: () => ({}),
-        loadSessionPermissionModes: () => ({}),
-        loadSessionPermissionModeUpdatedAts: () => ({}),
-        loadSessionReviewCommentsDrafts: () => ({}),
-        loadSettings: () => ({ settings: {}, version: null }),
-        loadThemePreference: () => 'adaptive',
-        saveChangesCursor: vi.fn(),
-        saveDeviceAnalyticsId: vi.fn(),
-        saveLastChangesCursorByAccountId: vi.fn(),
-        saveSettings: vi.fn(),
-        saveNewSessionDraft: vi.fn(),
-        loadLocalSettings: () => ({}),
-        saveLocalSettings: vi.fn(),
-        loadPurchases: () => ({}),
-        savePurchases: vi.fn(),
-        savePendingSettings: vi.fn(),
-        saveProfile: vi.fn(),
-        saveSessionActionDrafts: vi.fn(),
         saveSessionDrafts: saveSessionDraftsSpy,
-        saveSessionLastViewed: vi.fn(),
-        saveSessionMaterializedMaxSeqById: vi.fn(),
-        saveSessionModelModes: vi.fn(),
-        saveSessionModelModeUpdatedAts: vi.fn(),
-        saveSessionPermissionModes: vi.fn(),
-        saveSessionPermissionModeUpdatedAts: vi.fn(),
-        saveSessionReviewCommentsDrafts: vi.fn(),
-        clearPersistence: vi.fn(),
     }));
     vi.doMock('@/sync/domains/server/serverRuntime', () => ({
         getActiveServerSnapshot: vi.fn(() => ({
