@@ -68,7 +68,12 @@ import { registerApiTokenIntrospectionRoute } from '../../../../server/sources/a
 import { registerAccountApiTokenManagementRoutes } from '../../../../server/sources/app/api/routes/auth/registerAccountApiTokenManagementRoutes';
 import { registerPromptLibraryRoutes } from '../../../../server/sources/app/account/prompts/registerPromptLibraryRoutes';
 import { registerProjectAccountRowRoutes } from '../../../../server/sources/app/api/routes/projects/registerProjectAccountRowRoutes';
+import { changesRoutes } from '../../../../server/sources/app/api/routes/changes/changesRoutes';
+import { registerConfiguredAgentRowsRoutes } from '../../../../server/sources/app/account/agents/registerConfiguredAgentRowsRoutes';
+import { registerNotificationChannelRoutes } from '../../../../server/sources/app/account/notifications/registerNotificationChannelRoutes';
+import { registerAccountSettingsHistoryRoutes } from '../../../../server/sources/app/api/routes/account/registerAccountSettingsHistoryRoutes';
 import { registerAccountProfileRoute } from '../../../../server/sources/app/api/routes/account/registerAccountProfileRoute';
+import { homeGovernanceRoutes } from '../../../../server/sources/app/api/routes/home/homeGovernanceRoutes';
 import { registerExternalActionRoutes } from '../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes';
 import { machinesRoutes } from '../../../../server/sources/app/api/routes/machines/machinesRoutes';
 import { artifactsRoutes } from '../../../../server/sources/app/api/routes/artifacts/artifactsRoutes';
@@ -78,6 +83,7 @@ import { createReleaseLessDeclarationV1 } from '../../../../server/sources/app/p
 import { createExternalActionDaemonDispatcher } from '../../../../server/sources/app/api/socket/externalActionDispatcher';
 import { db } from '../../../../server/sources/storage/db';
 import { registerWorkflowRunStorageRoutes } from '../../../../server/sources/app/api/routes/automations/registerWorkflowRunStorageRoutes';
+import { registerAutomationActionIndexRoutes } from '../../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { registerAutomationV3Routes } from '../../../../server/sources/app/api/routes/automations/registerAutomationV3Routes';
 import { AutomationV3WorkerClaimResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { startAutomationWorker } from '@/daemon/automation/automationWorker';
@@ -196,6 +202,9 @@ import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { eventRouter, type UserScopedConnection } from '../../../../server/sources/app/events/eventRouter';
 import { sessionUpdateHandler } from '../../../../server/sources/app/api/socket/sessionUpdateHandler';
+import { registerSocketRpcHandlers } from '../../../../server/sources/app/api/socket/rpc/registerSocketRpcHandlers';
+import { buildRpcMethodRoom } from '../../../../server/sources/app/api/socket/rpc/rpcMethodRoom';
+import { createSocketRoomDiscoveryHarness } from '../../../../server/sources/app/api/testkit/socketHarness';
 import { createSessionPublisherPresence } from '../../../../server/sources/app/presence/sessionPublisherPresence';
 import { resolveSessionProtocolCapabilitiesFeature } from '../../../../server/sources/app/features/sessionProtocolCapabilitiesFeature';
 import { resolveMachineRpcFeature } from '../../../../server/sources/app/features/machineRpcFeature';
@@ -248,6 +257,7 @@ describe('managed catalog original Account transport', () => {
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy', launchRefusal: 'agent-missing' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy' },
     { mode: 'e2ee', installFails: false, surface: 'agent', kind: 'copy' },
+    { mode: 'e2ee', installFails: false, surface: 'agent', kind: 'copy', ownCopy: true },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'plan' },
     { mode: 'plain', installFails: false, surface: 'UI', kind: 'copy-software' },
     { mode: 'plain', installFails: false, surface: 'agent', kind: 'copy-software' },
@@ -301,18 +311,20 @@ describe('managed catalog original Account transport', () => {
     const sharedSpawn = kind === 'spawn-use' || 'sharedAccess' in scenario;
     const sharedAccess = kind === 'spawn-use' ? 'view' : 'sharedAccess' in scenario ? scenario.sharedAccess : undefined;
     const realRunner = 'realRunner' in scenario;
+    const useHomeRpc = 'ownCopy' in scenario;
     let restoreForegroundAgentCli: (() => void) | undefined;
     let foregroundRunnerBootstrap: Parameters<typeof startMcpRequesterParent>[0]['foregroundRunnerBootstrap'];
     const launchRefusal = 'launchRefusal' in scenario ? scenario.launchRefusal : null;
     let refusedSessionId: string | undefined;
     const phaseFailures: Array<{ phase?: string; errorClass?: string; errorCode?: string | null;
-      refusalBranch?: string; stackFrames?: readonly { file: string; line: number; column: number }[] }> = [];
+      refusalBranch?: string; actionId?: string; requestId?: string; stackFrames?: readonly { file: string; line: number; column: number }[] }> = [];
     const originalWarnLocalFile = logger.warnLocalFile.bind(logger);
     vi.spyOn(logger, 'warnLocalFile').mockImplementation((message, ...args) => {
       if (message === '[external-action-phase]' && args[0] && typeof args[0] === 'object') {
         const diagnostic = args[0] as typeof phaseFailures[number];
         phaseFailures.push({ phase: diagnostic.phase, errorClass: diagnostic.errorClass,
           errorCode: diagnostic.errorCode, refusalBranch: diagnostic.refusalBranch,
+          actionId: diagnostic.actionId, requestId: diagnostic.requestId,
           stackFrames: diagnostic.stackFrames });
       }
       originalWarnLocalFile(message, ...args);
@@ -334,6 +346,7 @@ describe('managed catalog original Account transport', () => {
     let installerStarts = 0;
     let assertSoftwareInstalled: (() => Promise<void>) | undefined;
     let launchFixtureAgent: DirectSpawnedSessionTransport['spawn'] | undefined;
+    let readInstalledMachineMetadata: import('@/api/apiMachine').ApiMachineClient['getMachineMetadataSnapshot'];
     let markInstallerStarted = () => {};
     let markRetryInstallerStarted = () => {};
     const installerGate = new Promise<void>(resolve => { releaseInstaller = resolve; });
@@ -369,6 +382,9 @@ describe('managed catalog original Account transport', () => {
     let resolveRequesterRuntime: ResolveRequesterSessionRuntimeContext;
     let credentialCustody: Awaited<ReturnType<typeof createRequesterSessionCredentialCustody>> | undefined;
     const software = await createNativeSoftwareInstallFixture({ scenario: 'native-confirm', packageName: 'hello', accountEncryptionMode: mode,
+      ...(useHomeRpc ? { runtimeOptions: { pluginIds: [
+        'com.example.public-package', 'acme.template-update-agent', 'happier.agent.codex',
+      ] } } : {}),
       ...('adminAccessDisabled' in scenario ? { adminAccessMode: 'none' } : {}),
       accountId: machineCustodian.id, machineId, homeId, token: userToken, installedToken, serverHttpBaseUrl: serverUrl,
       sessionStartup: { trackedSessions,
@@ -387,6 +403,7 @@ describe('managed catalog original Account transport', () => {
           ...(realRunner || kind === 'spawn' || kind === 'spawn-use' || kind === 'copy' || kind === 'copy-software'
             || kind === 'pat-setup' && 'reviewedSetupChild' in scenario ? {
           resolveSessionSpawnDirectTargetTransport: () => ({ machineId,
+            ...(useHomeRpc ? { readMachineMetadataSnapshot: () => readInstalledMachineMetadata() } : {}),
             prepare: (request, options) => prepareSessionCreationTarget({ request, signal: options?.signal }),
             spawnedSession: {
               spawn: async (request, options) => { agentStarts++;
@@ -422,6 +439,11 @@ describe('managed catalog original Account transport', () => {
         if (installerStarts === 1) { markInstallerStarted(); await installerGate; }
         else if (retryInstallerGate) { markRetryInstallerStarted(); await retryInstallerGate; }
       } });
+    if (useHomeRpc) {
+      readInstalledMachineMetadata = () => software.client.getMachineMetadataSnapshot();
+      restoreForegroundAgentCli = await installForegroundAgentCliFixture(software.runtime.registry, configuration.happyHomeDir);
+    }
+    const observeLocalMachineRpc = useHomeRpc ? vi.spyOn(software.client, 'invokeLocalMachineAction') : undefined;
     assertSoftwareInstalled = async () => { expect(await software.readInstalled()).toMatchObject({ installed: true }); };
     launchFixtureAgent = async (request, options) => {
       // Keep native managed-directory materialization real before substituting
@@ -592,6 +614,18 @@ describe('managed catalog original Account transport', () => {
     app.get('/v1/features', async () => featurePayload);
     app.get('/v1/features/authenticated', { preHandler: app.authenticate }, async () => featurePayload);
     registerWorkflowRunStorageRoutes(app);
+    registerAutomationActionIndexRoutes(app);
+    if (useHomeRpc) {
+      homeGovernanceRoutes(app);
+      changesRoutes(app);
+      registerConfiguredAgentRowsRoutes(app);
+      registerNotificationChannelRoutes(app);
+      registerAccountSettingsHistoryRoutes(app);
+      const { registerSavedSecretResourceRoutes } = await import('../../../../server/sources/app/api/routes/account/registerSavedSecretResourceRoutes');
+      registerSavedSecretResourceRoutes(app);
+      const { registerMcpServerCatalogRoutes } = await import('../../../../server/sources/app/account/mcp/registerMcpServerCatalogRoutes');
+      registerMcpServerCatalogRoutes(app);
+    }
     registerAutomationV3Routes(app);
     // The loopback network substitutes Home's socket endpoint. Register its
     // genuinely authenticated peers with the real DB event publisher so Run
@@ -620,6 +654,38 @@ describe('managed catalog original Account transport', () => {
     const rpcDeliveryFailures: Array<{ method: string; errorClass: string; message: string; code?: string | number;
       reason?: string; signedExecution?: boolean; rootActionId?: string; originKind?: string;
       machineAdmission?: boolean }> = [];
+    const copyRpcOutcomes: Array<{ method: string; status: string; root?: string; effect?: string; role?: string }> = [];
+    const { socketRpcCodec } = await import('@happier-dev/sync-client');
+    const { resolvePublishedMachineContentCodec } = await import('@/api/machine/machineDataEncryptionKey');
+    const { SessionCreationTargetPreparationRequestV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1');
+    const targetRpcPeer = {
+      id: 'installed-machine-rpc',
+      connected: true,
+      data: { ...machinePeer.data, clientType: 'machine-scoped', userId: machineCustodian.id, machineId },
+      timeout: () => ({ emitWithAck: async (_event: string, packet: SocketRpcRequestPayload) => {
+        if (packet.method === `${machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
+          const codec = resolvePublishedMachineContentCodec({ credentials: software.credentials, machineId,
+            publishedDataEncryptionKey: software.readHomeMachine().dataEncryptionKey, expectedAccountMode: mode });
+          const content = codec.mode === 'plain' ? { mode: 'plain' as const } : { mode: 'e2ee' as const,
+            cipher: { encryptRaw: async (value: unknown) => codec.encodeRpc(value),
+              decryptRaw: async (value: string) => codec.decodeRpc(value) } };
+          const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+          const request = SessionCreationTargetPreparationRequestV1Schema.parse(decoded.params);
+          // Use the real directory owner across the loopback worker transport.
+          const result = await prepareSessionCreationTarget({ request });
+          return socketRpcCodec.encodeResponse(content, result, decoded.callId);
+        }
+        const manager: unknown = Reflect.get(software.client, 'rpcHandlerManager');
+        if (!(manager instanceof RpcHandlerManager)) throw new Error('Installed daemon RPC handler unavailable');
+        return manager.handleRequest(packet, undefined, 'authenticated_home_socket');
+      } }),
+    };
+    const copyRpcHome = createSocketRoomDiscoveryHarness(async room => {
+      if (room === targetRpcPeer.id || room.startsWith(buildRpcMethodRoom({ userId: machineCustodian.id, method: `${machineId}:` }))) {
+        return [targetRpcPeer];
+      }
+      return channel.server.in(room).fetchSockets();
+    });
     const registerAccountPeer = async (peer: import('socket.io').Socket) => {
       const token: unknown = peer.handshake.auth.token;
       const verified = typeof token === 'string' ? await auth.verifyTokenForRoute(token) : null;
@@ -629,6 +695,13 @@ describe('managed catalog original Account transport', () => {
       peer.data.authTokenAuthenticationEvidence = verified.authenticationEvidence;
       writeAccountStoredContentCompatibilityForSocket(peer,
         evaluateAccountStoredContentSocketCompatibility(peer.handshake.auth));
+      const homeCall = useHomeRpc ? (() => {
+        registerSocketRpcHandlers({ userId: verified.userId, socket: peer, io: copyRpcHome, sessionPublisherPresence: publisherPresence });
+        const handler = peer.listeners(SOCKET_RPC_EVENTS.CALL).at(-1);
+        if (!handler) throw new Error('Home RPC handler unavailable');
+        peer.off(SOCKET_RPC_EVENTS.CALL, handler);
+        return handler;
+      })() : undefined;
       peer.on(SOCKET_RPC_EVENTS.CALL, (packet: SocketRpcRequestPayload, acknowledge: (response: unknown) => void) => {
         // The loopback Home sends Session RPCs to the admitted original host
         // socket; its registered RpcHandlerManager performs the real read.
@@ -636,6 +709,17 @@ describe('managed catalog original Account transport', () => {
         const sessionTarget = methodSeparator > 0 ? sessionRpcPeers.get(packet.method.slice(0, methodSeparator)) : undefined;
         if (sessionTarget) {
           sessionTarget.emit(SOCKET_RPC_EVENTS.REQUEST, packet, result => acknowledge({ ok: true, result }));
+          return;
+        }
+        if (homeCall) {
+          const execution = packet.externalActionExecution;
+          void homeCall(packet, (response: { ok: boolean; errorCode?: string; failureCause?: { phase?: string } }) => {
+            copyRpcOutcomes.push({ method: packet.method,
+              status: response.ok ? 'admitted' : response.failureCause?.phase ?? response.errorCode ?? 'refused',
+              root: execution?.authorization.binding.actionId, effect: execution?.effectActionId,
+              role: execution?.reviewedChild?.role });
+            acknowledge(response);
+          });
           return;
         }
         let deliveryAdmissionPresent = false;
@@ -889,6 +973,7 @@ describe('managed catalog original Account transport', () => {
       const source = await createRelease(authorStore, upstream);
       const accepted = await createRelease(recipientStore, base);
       const foreignCopySource = realRunner ? await createRelease(authorStore, base) : null;
+      const ownedCopySource = useHomeRpc ? await createRelease(recipientStore, upstream) : null;
       if (foreignCopySource) {
         await runWithServerHttpBaseUrl(serverUrl, () => authorStore.accessGrants.set({ artifactId: foreignCopySource.artifactId,
           principal: { kind: 'account', accountId: recipient.id }, accessLevel: 'view' }));
@@ -1313,7 +1398,7 @@ describe('managed catalog original Account transport', () => {
       }
       const { ensureSessionDisplayProjectionsForRead } = await import('../../../../ui/sources/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority');
       expect(await ensureSessionDisplayProjectionsForRead({ serverId: uiServerId, credentials: captured.credentials,
-        request: captured.request, sessionIds: [session.id], isCurrent: captured.accountLifetime.isCurrent })).toBe(true);
+        request: captured.request, sessionIds: [session.id], isCurrent: captured.accountLifetime.isCurrent })).toBe('satisfied');
       const invokeAgent = async (actionId: 'template.instantiate' | 'template.updates.apply' | typeof SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.plan.action, input: unknown) => {
         const tracked = trackedSessionForSingleSessionProcess(trackedSessions, process.pid);
         if (!tracked?.agentRuntimeDaemonServiceAuthorityFilePath) throw new Error('Original Agent runner authority missing');
@@ -1447,7 +1532,7 @@ describe('managed catalog original Account transport', () => {
       if (kind === 'copy' || kind === 'copy-software' || realRunner) {
         const actionServerId = surface === 'agent' || surface === 'pat' ? homeId : uiServerId;
         const r18Pat = 'r18Pat' in scenario ? scenario.r18Pat : undefined;
-        const copiedArtifact = foreignCopySource ?? source;
+        const copiedArtifact = ownedCopySource ?? foreignCopySource ?? source;
         const copiedRelease = realRunner ? base : upstream;
         const copyInput = {
           source: { kind: 'artifact', serverId: actionServerId, artifactId: copiedArtifact.artifactId },
@@ -1456,10 +1541,13 @@ describe('managed catalog original Account transport', () => {
           setup: { software: kind === 'copy-software'
             ? [{ key: 'hello', selection: { action: 'install' as const, inputs: {} } }] : [], accounts: [], mcpServers: [] },
           creation: { creationKey: crypto.randomUUID(), executionTarget: { serverId: actionServerId, machineId },
-            directory: { kind: 'managed' },
-            ...(surface === 'agent' || r18Pat ? { manager: { sessionId: session.id } } : {}),
+            directory: useHomeRpc ? { kind: 'path', path: configuration.happyHomeDir } : { kind: 'managed' },
+            ...(!useHomeRpc && (surface === 'agent' || r18Pat) ? { manager: { sessionId: session.id } } : {}),
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
             memoryEnabled: false,
+            ...(useHomeRpc ? { configuration: { mode: { value: null, updatedAtMs: 1 },
+              model: { value: null, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 },
+              options: { reasoning_effort: { value: 'minimal', updatedAtMs: 1 } } } } : {}),
             ...(r18Pat || surface === 'agent' && kind === 'copy-software' ? { modelSelection: { v: 1 as const,
               ref: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null,
                 modelId: 'gpt-6-luna' }, updatedAt: Date.now() } } : {}),
@@ -1749,7 +1837,7 @@ describe('managed catalog original Account transport', () => {
         }
         expect(replayed, JSON.stringify(replayed)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true,
           result: { type: 'success', sessionId: expect.any(String) } } } });
-        if (kind === 'copy') {
+        if (kind === 'copy' && !useHomeRpc) {
           const machineRead = httpOutcomes.slice(homeRequestsBeforeCopyApproval).find(value => value.method === 'GET'
             && value.url === `/v1/machines/${machineId}`);
           expect(machineRead).toMatchObject({ status: 200, signedEffectAdmitted: false,
@@ -1775,6 +1863,26 @@ describe('managed catalog original Account transport', () => {
               source: { kind: 'artifact', artifactId: copiedArtifact.artifactId } } } });
         const ownerMetadata = tryDecryptSessionOwnerMetadataView({ credentials: software.credentials, accountEncryptionMode: mode, rawSession: created });
         expect((await stat(String(ownerMetadata?.path))).isDirectory()).toBe(true);
+        if (useHomeRpc) {
+          expect(copyRpcOutcomes).toContainEqual(expect.objectContaining({
+            method: `${machineId}:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`, status: 'admitted',
+          }));
+          const detectionUsedHome = copyRpcOutcomes.some(({ method, status }) =>
+            method === `${machineId}:${RPC_METHODS.CAPABILITIES_DETECT}` && status === 'admitted');
+          const detectionUsedLocalDaemon = observeLocalMachineRpc?.mock.calls.some(([method]) =>
+            method === RPC_METHODS.CAPABILITIES_DETECT);
+          expect(detectionUsedHome || detectionUsedLocalDaemon).toBe(true);
+          expect(replayed.result).toMatchObject({ delivery: { status: 'accepted', localId: `approval-result:${proposed.artifactId}` } });
+          const copyHomeCalls = httpOutcomes.slice(homeRequestsBeforeCopyApproval);
+          expect(copyHomeCalls).toEqual(expect.arrayContaining([
+            expect.objectContaining({ method: 'POST', url: '/v1/sessions', status: 200 }),
+            expect.objectContaining({ method: 'PATCH', url: `/v2/sessions/${creation.sessionId}`, status: 200 }),
+            expect.objectContaining({ method: 'POST', url: `/v2/sessions/${creation.sessionId}/pending/template-onboarding`, status: 200 }),
+          ]));
+          expect(ownerMetadata).toMatchObject({ sessionConfigOptionOverridesV1: {
+            overrides: { reasoning_effort: { value: 'minimal' } },
+          } });
+        }
         expect(agentStarts, 'Accepted Copy must reach the daemon runner launch before returning success').toBe(1);
         if (!realRunner) return;
         // The approved Copy returns as a real host input. Finish that delivered
