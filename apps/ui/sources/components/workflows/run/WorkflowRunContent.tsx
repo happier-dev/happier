@@ -114,7 +114,7 @@ import {
 import { workflowRunStyles as styles } from './workflowRunStyles';
 import { WorkflowRunNeedsYouDock } from './WorkflowRunNeedsYouDock';
 import { WorkflowRunReview, type WorkflowRunResultReview } from './WorkflowRunReview';
-import { workflowRunStartsReview, workflowStepResultShownByRunReview } from './workflowRunReviewResult';
+import { workflowStepResultShownByRunReview } from './workflowRunReviewResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -594,8 +594,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const detailsPaneAvailable = sidePanesAvailable && props.embedded !== true;
     const phone = useDeviceType() === 'phone';
     const navigationScope = useActiveServerAccountScope(props.serverId ?? null);
-    // Only a run whose steps start a Review reads for the Review it produced.
-    const producesReview = React.useMemo(() => workflowRunStartsReview(props.materializedLeaves), [props.materializedLeaves]);
     // The Review the embedded summary shows: when the Run's final output names it, that Review is the Run's result,
     // opened from the header, and no step pane prints its raw record (U8 R4 R1, R2).
     const producedReviewId = props.resultReview?.reviewId ?? null;
@@ -1620,7 +1618,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
 
             {/* A run that starts a Review (a Hunt) shows that Review itself: its findings so far (lab `hunts-running`). */}
             {/* A phone page without its view switch row gives the summary the page's section gap before the Map (U8 R4 R3). */}
-            {producesReview ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
+            {producedReviewId ? <WorkflowRunReview runId={props.run.id} scope={navigationScope} enabled={props.active !== false}
                 openedFromHeader={resultIsReview}
                 testID={`${testIDPrefix}-review`} style={[styles.section, styles.pageSection, phone ? null : styles.onTitleEdge,
                     phone && !navigationShown && sourceFolded && isTerminalWorkflowRunState(props.run.state) ? styles.sectionBeforeView : null]} /> : null}

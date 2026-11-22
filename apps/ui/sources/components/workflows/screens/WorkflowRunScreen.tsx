@@ -1012,7 +1012,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
     const visibleFinalOutputInvocationId = contentBelongsToActiveScope ? finalOutputInvocationId : null;
     // The Review this Run produced and whether it is the Run's result (a Hunt): the page shows that Review in place.
     const resultReview = useWorkflowRunResultReview({ runId, scope: activeAccountScope,
-        leaves: visibleAcceptedContext?.materializedLeaves, result: visibleResult, enabled: activelyViewed });
+        result: visibleResult, enabled: activelyViewed });
     const visibleFirstFailedInvocation = selectWorkflowRunFirstFailedInvocation(visibleInvocations);
     const visibleUsageLabel = contentBelongsToActiveScope ? usageLabel : null;
     const visibleProgressByInvocationId = contentBelongsToActiveScope

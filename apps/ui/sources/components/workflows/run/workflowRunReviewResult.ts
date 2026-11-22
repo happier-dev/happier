@@ -1,6 +1,4 @@
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 /**
  * Whether a Run's final output is the Review that Run produced: the output value names that Review (a Hunt's final
@@ -42,9 +40,4 @@ export function workflowStepResultShownByRunReview(
     params.finalOutputIsReview &&
     params.selectedInvocationId === params.finalOutputInvocationId
   );
-}
-
-/** Whether the Run's steps start a Review: only such a Run reads for the Review it produced. */
-export function workflowRunStartsReview(leaves: readonly WorkflowMaterializedLeafV1[] | undefined): boolean {
-    return leaves?.some((leaf) => leaf.kind === 'action' && leaf.actionId === REVIEW_START_ACTION_ID_V1) === true;
 }

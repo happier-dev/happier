@@ -19,8 +19,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { t } from '@/text';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import type { WorkflowMaterializedLeafV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
-import { workflowResultNamesReview, workflowRunStartsReview } from './workflowRunReviewResult';
+import { workflowResultNamesReview } from './workflowRunReviewResult';
 
 /** A finding's engine by name: the Review engine option's target through the backend label owner. */
 function reviewEngineLabel(engineId: string): string {
@@ -46,14 +45,12 @@ export type WorkflowRunResultReview = Readonly<{ reviewId: string; isResult: boo
 export function useWorkflowRunResultReview(params: Readonly<{
     runId: string | null;
     scope: ServerAccountScope | null;
-    leaves: readonly WorkflowMaterializedLeafV1[] | undefined;
     result: JsonValue | undefined;
     enabled: boolean;
 }>): WorkflowRunResultReview | null {
-    const startsReview = workflowRunStartsReview(params.leaves);
     const review = useWorkflowRunProducedReview(params.runId ?? '', params.scope,
-        params.enabled && startsReview && params.runId !== null);
-    const reviewId = startsReview && params.runId !== null ? review?.reviewId ?? null : null;
+        params.enabled && params.runId !== null);
+    const reviewId = params.runId !== null ? review?.reviewId ?? null : null;
     return React.useMemo(() => reviewId === null ? null
         : { reviewId, isResult: workflowResultNamesReview(params.result, reviewId) }, [reviewId, params.result]);
 }

@@ -15,7 +15,7 @@ import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactSt
 import { storage } from '@/sync/domains/state/storage';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { t } from '@/text';
-import { WorkflowRunReview } from './WorkflowRunReview';
+import { WorkflowRunReview, useWorkflowRunResultReview } from './WorkflowRunReview';
 
 const effects = vi.hoisted(() => ({ push: vi.fn() }));
 // Navigation and authenticated HTTP are the boundaries; the Review list, comments, history and summary owners stay real.
@@ -222,4 +222,16 @@ it('shows nothing for a run that produced no Review of its own', async () => {
   } finally {
     await screen.unmount();
   }
+});
+
+it('finds a Review by its workflowRunId when a contributed PR action produced it', async () => {
+  function Result() {
+    const result = useWorkflowRunResultReview({ runId: 'hunt-run', scope: { serverId, accountId: 'alice' },
+      result: { reviewId }, enabled: true });
+    return <span>{result?.reviewId ?? 'missing'}</span>;
+  }
+  const screen = await renderScreen(<Result />);
+  try {
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(reviewId));
+  } finally { await screen.unmount(); }
 });
