@@ -137,7 +137,8 @@ describe('schema-derived Action input hints', () => {
     ] });
     expect(hints?.fields).toEqual([
       { path: 'query', title: 'Search for', widget: 'text', required: true },
-      { path: 'connectionId', title: 'Connection Id', widget: 'text', required: true },
+      // An undeclared key reads in sentence case ("Connection id"), never a Title Case of its schema name.
+      { path: 'connectionId', title: 'Connection id', widget: 'text', required: true },
     ]);
   });
 

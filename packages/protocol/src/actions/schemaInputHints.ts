@@ -14,8 +14,9 @@ function objectAlternatives(schema: JsonSchemaObject): readonly JsonSchemaObject
   return alternatives.flatMap(arm => isSchema(arm) ? objectAlternatives(arm) : []);
 }
 
+/** An undeclared key reads in sentence case ("expiresAt" → "Expires at"); a declared schema title always wins. */
 function fieldTitle(path: string): string {
-  const words = path.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ');
+  const words = path.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/[_-]/g, ' ').toLowerCase();
   return words.charAt(0).toUpperCase() + words.slice(1);
 }
 
