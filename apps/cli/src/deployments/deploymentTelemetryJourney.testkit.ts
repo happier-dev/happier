@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { promisify } from 'node:util';
 import { createHash, randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Session } from 'node:inspector/promises';
@@ -27,6 +28,7 @@ import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFAC
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createDeploymentSocketHome } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
+import { repoRootDir } from '../../../../packages/tests/src/testkit/paths';
 import { sessionRoutes } from '../../../server/sources/app/api/routes/session/sessionRoutes';
 import { createAccountTokenForTests } from '../../../server/sources/testkit/lightSqliteHarness';
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
@@ -161,6 +163,31 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
     // Accounts exercise that Home rather than inventing a second process identity.
     const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
     describe.skipIf(process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 !== '1')('F14 native production telemetry setup and deploy', () => {
+        let sourceRuntimeDir: string | undefined;
+        let guestCliPayloadRoot: string;
+        let guestCliPayloadMetadata: string;
+        beforeAll(async () => {
+            sourceRuntimeDir = await mkdtemp(join(tmpdir(), 'happier-f14-source-runtime-'));
+            // Use the same source runtime producer as serverLight. This Home
+            // runs in-process so the journey applies the launch environment.
+            const { buildSourceRuntimeBundle } = await import(/* @vite-ignore */
+                new URL('../../../stack/scripts/build/build_source_runtime.mjs', import.meta.url).href);
+            const launch: Readonly<{ env: NodeJS.ProcessEnv }> = await buildSourceRuntimeBundle({
+                repoDir: repoRootDir(), outputDir: sourceRuntimeDir, component: 'server',
+                serverComponent: 'happier-server', dbProvider: 'postgres',
+                env: { ...process.env, HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
+                    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: undefined,
+                    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: undefined },
+            });
+            const { HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT: root,
+                HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: metadata } = launch.env;
+            if (!root || !metadata) throw new Error('F14 requires the prepared source guest CLI payload');
+            guestCliPayloadRoot = root;
+            guestCliPayloadMetadata = metadata;
+        }, 0);
+        afterAll(async () => {
+            if (sourceRuntimeDir) await rm(sourceRuntimeDir, { recursive: true, force: true });
+        }, 0);
         // The disposable DB-contract runner owns this native journey's deadline.
         it.each(['plain', 'e2ee'] as const)('reads deployed SDK queries and traces through admitted Actions in %s mode', async encryptionMode => {
             expect(process.platform, 'F14 requires native Linux Docker').toBe('linux');
@@ -186,6 +213,9 @@ export function registerProductionTelemetrySetupJourney(support: Readonly<{
             const cleanup: Array<() => Promise<void>> = [() => home.close()];
             const lifetime = new AbortController();
             try {
+                vi.stubEnv('HAPPIER_DEV_GUEST_CLI_EXPORT', '1');
+                vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', guestCliPayloadRoot);
+                vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA', guestCliPayloadMetadata);
                 // The background collector signs through the async identity store, outside the RPC fixture context.
                 const originalInstallationFile = configuration.installationIdentityFile;
                 const installationFile = join(home.baseDir, 'installation-identity.json');
