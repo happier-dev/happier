@@ -241,6 +241,13 @@ it.skipIf(process.env.HAPPIER_E2E_MANAGED_LIMA !== '1')('MR-R6 native Lima guest
     const account = await fixture.createAccount('native-lima-owner');
     assert.equal((await fixture.claimHomeOwner(account)).result.status, 'claimed');
     const controller = await fixture.enrollDaemon(account);
+    // A fresh controller has no managed Lima and checking never installs it.
+    // The person approves the provider's own repair Action in the Inbox, as the picker offers.
+    const installed = await account.executeReviewed('action.invoke',
+      { action: { pluginId: 'happier.machine.lima', localId: 'install' }, input: {} },
+      { externalActionTarget: { kind: 'machine', machineId: controller.target.machineId },
+        presentUserConfirmation: { actionId: 'action.invoke' } });
+    assert.equal(installed.ok, true, JSON.stringify(installed));
     ui = await connectUiPersonActionClient({ serverUrl: fixture.server.baseUrl, accountSecret: account.auth.accountSigningSeed });
     await runManagedMachineJourney({ fixture, account, controller, ui, testDir,
       provider: { pluginId: 'happier.machine.lima', localId: 'lima' },
