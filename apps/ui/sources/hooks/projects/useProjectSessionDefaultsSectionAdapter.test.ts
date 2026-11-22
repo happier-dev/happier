@@ -94,7 +94,7 @@ describe('project defaults whole-editor adapter', () => {
         expect(writes.at(-1)).toEqual({ placement });
     });
 
-    it('clears an empty scope to inheritance and settles a failed pick so another deliberate pick can save', async () => {
+    it('retains a failed clear and retries it without asking the person to pick it again', async () => {
         const writes: (ProjectSessionDefaultsV1 | null)[] = [];
         let refuse = true;
         const failure = new Error('revision_conflict');
@@ -104,10 +104,21 @@ describe('project defaults whole-editor adapter', () => {
         };
         const hook = await renderHook(() => useProjectSessionDefaultsSectionAdapter({ defaults: { defaultAgentTarget: agent }, save, scope: 'project', context: undefined }));
         await act(async () => { hook.getCurrent().selectAgent(undefined); });
-        expect(hook.getCurrent().error).toEqual({ cause: failure });
+        expect(hook.getCurrent().error).toMatchObject({ cause: failure });
         refuse = false;
-        await act(async () => { hook.getCurrent().selectAgent(undefined); });
+        await act(async () => { hook.getCurrent().retry(); });
         expect(writes).toEqual([null]);
+        expect(hook.getCurrent().error).toBeNull();
+    });
+
+    it('retires a failed pick when the same scope receives newer saved defaults', async () => {
+        const failure = new Error('revision_conflict');
+        const input: ProjectSessionDefaultsSectionInput = { defaults: { defaultAgentTarget: agent },
+            save: async () => { throw failure; }, scope: 'project', context: undefined };
+        const hook = await renderHook(useProjectSessionDefaultsSectionAdapter, { initialProps: input });
+        await act(async () => { hook.getCurrent().selectAgent(undefined); });
+        expect(hook.getCurrent().error).toMatchObject({ cause: failure });
+        await hook.rerender({ ...input, defaults: { ...input.defaults, placement } });
         expect(hook.getCurrent().error).toBeNull();
     });
 });

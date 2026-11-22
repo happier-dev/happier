@@ -58,6 +58,7 @@ export const ProjectSessionDefaultsBody = React.memo(
         hasSource={selection?.sourceRef !== undefined}
         scope={scope}
         onScopeChange={setScope}
+        addressKey={JSON.stringify([read.scope?.serverId, read.scope?.accountId, selection])}
         status={read.status}
         data={read.data}
         onRetry={read.refresh}
@@ -83,6 +84,7 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
     hasSource: boolean;
     scope: DefaultsScope;
     onScopeChange: (scope: DefaultsScope) => void;
+    addressKey?: string;
     status: SessionDefaultsRead['status'];
     data: SessionDefaultsRead['data'];
     onRetry: SessionDefaultsRead['refresh'];
@@ -205,6 +207,7 @@ export const ProjectSessionDefaultsView = React.memo(function ProjectSessionDefa
             testID={`${testID}.editor`}
             serverId={props.serverId}
             teamId={teamId}
+            addressKey={props.addressKey}
             defaults={defaults}
             scope={scope === 'me' ? 'personal-project' : 'project'}
             context={props.data?.context}

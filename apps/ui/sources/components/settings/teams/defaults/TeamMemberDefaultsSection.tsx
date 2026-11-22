@@ -27,6 +27,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useProjectSessionDefaultsSectionAdapter, type ProjectSessionDefaultsInheritance, type ProjectSessionDefaultsSectionInput } from '@/hooks/projects/useProjectSessionDefaultsSectionAdapter';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { useHomeTeamCredentialModelCatalog } from '@/hooks/teams/useHomeTeamCredentialModelCatalog';
 import { getPermissionModeOptionsForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import { setTeamPolicy } from '@/sync/ops/teams/teamOperations';
@@ -862,7 +863,7 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
   testID: string;
 }>) {
   const { defaults } = props;
-  const { save, selectAgent, selectApprovalProfile, error, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
+  const { save, selectAgent, selectApprovalProfile, error, retry, inheritance } = useProjectSessionDefaultsSectionAdapter(props);
   // A project default reaches everyone admitted to it (owner 2026-11-16 ~19:15Z); "For me" reaches only me.
   const shared = props.scope === 'project';
   const audience = React.useMemo<readonly PrincipalRefV1[] | undefined>(
@@ -889,7 +890,10 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
     <>
       {error ? (
         <AttentionBanner testID={`${props.testID}-attention`} title={t('homeGovernance.changeFailedTitle')}
-          description={t('teams.errors.generic')} accessibilityLiveRegion="assertive" />
+          description={resolveActionExecutionErrorMessage(error.cause, t('teams.errors.generic'), { safeToRetry: true })}
+          action={props.editable ? { label: t('common.retry'), onPress: retry,
+            testID: `${props.testID}-retry`, disabled: props.busy } : undefined}
+          accessibilityLiveRegion="assertive" />
       ) : null}
       <ItemGroup testID={props.testID}>
         <TeamMemberMachineDefaultRow state={row} conflict={false} testID={`${props.testID}-machine`} />

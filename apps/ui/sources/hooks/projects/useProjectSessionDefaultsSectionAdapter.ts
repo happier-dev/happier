@@ -5,12 +5,14 @@ import { resolveInheritedManagedSessionDefaults, type ManagedDefaultSourceNamesV
     type ManagedSessionDefaultsContext, type ResolvedInheritedManagedSessionDefaults } from '@happier-dev/protocol/teams/managedDefaults';
 import type { ProjectSourceIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceIdentityV1';
 import { withApprovalProfile } from '@/components/settings/teams/defaults/memberDefaults';
+import { isProjectSessionDefaultsEditUnchanged } from '@/sync/ops/actions/projectSessionDefaultsActions';
 
 /** The whole shared editor writes through its selected scope; every pick is one edit. */
 export type ProjectSessionDefaultsSectionInput = Readonly<{
     defaults: ProjectSessionDefaultsV1;
     save: (next: ProjectSessionDefaultsV1 | null) => Promise<void>;
     scope: 'personal-project' | 'project';
+    addressKey?: string;
     context: ManagedSessionDefaultsContext | undefined;
     source?: ProjectSourceIdentityV1 | null;
     teamName?: string;
@@ -26,8 +28,16 @@ export type ProjectSessionDefaultsInheritance = Readonly<{
 
 /** Project-only Agent selection and empty-layer clearing stay out of the page and row renderers. */
 export function useProjectSessionDefaultsSectionAdapter(input: ProjectSessionDefaultsSectionInput) {
-    const [error, setError] = React.useState<Readonly<{ cause: unknown }> | null>(null);
+    const [failedPick, setFailedPick] = React.useState<Readonly<{
+        cause: unknown;
+        base: ProjectSessionDefaultsV1;
+        next: ProjectSessionDefaultsV1;
+        scope: ProjectSessionDefaultsSectionInput['scope'];
+        addressKey: string | undefined;
+    }> | null>(null);
     const { defaults, save: hostSave } = input;
+    const error = failedPick && failedPick.scope === input.scope && failedPick.addressKey === input.addressKey
+        && isProjectSessionDefaultsEditUnchanged(defaults, failedPick.base) ? failedPick : null;
     const names = React.useMemo<ManagedDefaultSourceNamesV1>(() => ({
         teamName: input.teamName,
         projectName: input.source?.name ?? input.projectName,
@@ -43,9 +53,14 @@ export function useProjectSessionDefaultsSectionAdapter(input: ProjectSessionDef
         };
     }, [input.context, input.scope, names]);
     const save = React.useCallback((next: ProjectSessionDefaultsV1) => {
-        setError(null);
-        void hostSave(Object.keys(next).length === 0 ? null : next).catch(cause => setError({ cause }));
-    }, [hostSave]);
+        setFailedPick(null);
+        void hostSave(Object.keys(next).length === 0 ? null : next).catch(cause => setFailedPick({
+            cause, base: defaults, next, scope: input.scope, addressKey: input.addressKey,
+        }));
+    }, [defaults, hostSave, input.addressKey, input.scope]);
+    const retry = React.useCallback(() => {
+        if (error) save(error.next);
+    }, [error, save]);
     const selectAgent = React.useCallback((target: AgentExecutionTargetV1 | undefined) => {
         const { defaultAgentTarget: _previous, ...rest } = defaults;
         save(target ? { ...rest, defaultAgentTarget: target } : rest);
@@ -53,5 +68,5 @@ export function useProjectSessionDefaultsSectionAdapter(input: ProjectSessionDef
     const selectApprovalProfile = React.useCallback((id: string | null | undefined) => {
         save(withApprovalProfile(defaults, id));
     }, [defaults, save]);
-    return { save, selectAgent, selectApprovalProfile, error, inheritance };
+    return { save, selectAgent, selectApprovalProfile, error, retry, inheritance };
 }
