@@ -3342,11 +3342,11 @@ describe("external Action execution authorization", () => {
         } finally { registration.dispose(); restoreHttp(); await app.close(); }
     });
 
-    it('confines signed checkout teardown Trust to the attested Project on the requester’s installation', async () => {
+    it('reads checkout teardown Trust for the Account and Project signed by the requester’s installation', async () => {
         const { SCM_WORKTREE_REMOVE_ACTION_ID_V1: actionId } = await import('@happier-dev/protocol/actions/scmActionIdsV1');
         const { SCM_WORKTREE_REMOVE_AUTHORIZATION_TOKEN } = await import('@happier-dev/protocol/scm/worktrees');
-        const { PROJECT_TRUST_ROUTE_V1, PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
-            computeProjectCheckoutTeardownTrustReadDigestV1 } = await import('@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1');
+        const { PROJECT_TRUST_ROUTE_V1, PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1 } =
+            await import('@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1');
         const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const other = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const keyPair = tweetnacl.sign.keyPair();
@@ -3392,7 +3392,7 @@ describe("external Action execution authorization", () => {
             const requesterContent = await seed(token, 'requester-reviewed-effect');
             await seed(otherToken, 'other-reviewed-effect');
             const child = { actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
-                inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project) };
+                inputDigest: authorization.binding.requestEnvelopeDigest };
             const sign = (path: string, payload: unknown,
                 overrides: Partial<Parameters<typeof createExternalActionAuthorizedRequestHeaders>[0]> = {}) =>
                 createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
@@ -3413,10 +3413,13 @@ describe("external Action execution authorization", () => {
                 if (read.statusCode === 200) expect(ProjectTrustReadResponseV1Schema.parse(read.json()))
                     .toMatchObject({ status: 'present', content: requesterContent });
             }
-            const wrongProject = { project: { ...project, projectId: 'different-project' } };
+            const otherProject = { project: { ...project, projectId: 'different-project' } };
+            const otherProjectRead = await send(readPath, otherProject);
+            expect.soft(otherProjectRead.statusCode, otherProjectRead.body).toBe(200);
+            if (otherProjectRead.statusCode === 200) expect(otherProjectRead.json()).toEqual({ status: 'absent' });
             const revoke = { ...body, expectedRevision: 1, content: null };
             for (const [label, url, payload, headers] of [
-                ['different signed Project', readPath, wrongProject, sign(readPath, wrongProject)],
+                ['body changed after signing', readPath, otherProject, exactHeaders],
                 ['Trust write', writePath, revoke, sign(writePath, revoke)],
                 ['Trust list', `${PROJECT_TRUST_ROUTE_V1}/list`, body, sign(`${PROJECT_TRUST_ROUTE_V1}/list`, body)],
                 ['wrong role', readPath, body, sign(readPath, body, { reviewedChild: { ...child, role: 'other' } })],

@@ -10191,6 +10191,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 checkout teardown Trust reads keep the existing signed request
+shape. Home verifies the installation signature over the request body and the
+read purpose. The daemon fills the shared child proof's required digest field
+with the admitted root envelope digest. A newer Home also accepts the older
+daemon's Project digest. Load the newer Home before the newer daemon on
+development stacks whose previous Home expected the Project digest. The 0.2
+frontier at `24731ff73c` has no teardown Trust read.
+
 In unreleased 0.3, a Project native read that confirms a stopped guest can
 publish that power fact through the Home's private managed-controller route.
 The current controller installation signs the exact row, intent revision and

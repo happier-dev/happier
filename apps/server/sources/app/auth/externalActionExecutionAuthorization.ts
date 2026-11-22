@@ -184,7 +184,7 @@ import { ProjectSourcesCreateInputV1Schema, ProjectSourcesUpdateInputV1Schema, P
     ProjectSourcesDeleteInputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { PROJECT_SOURCE_CREATE_ACTION_ID_V1, PROJECT_SOURCE_LIST_ACTION_ID_V1, PROJECT_SOURCE_READ_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectSourcesActionIdsV1';
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
-import { PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, PROJECT_TRUST_ROUTE_V1, computeProjectCheckoutTeardownTrustReadDigestV1,
+import { PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, PROJECT_TRUST_ROUTE_V1,
     ProjectTrustMutationRequestV1Schema, ProjectTrustReadRequestV1Schema, ProjectTrustListRequestV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1, WorkspaceExecutionConfigReadRequestV1Schema,
     WorkspaceExecutionConfigMutationRequestV1Schema } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
@@ -4370,16 +4370,12 @@ export async function verifyExternalActionDomainExecutionRequest(
     let accountHttpRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
     if (domainPreparation === false) return refuse('deployment_domain_preparation');
     if (proof.reviewedChild?.role === PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1) {
-        // The requester's installation attests the Project selected by the accepted checkout.
-        // The Trust route reads only that requester's Account row.
+        // The requester's installation signs the body. The Trust route validates
+        // its Project and reads the authenticated requester's Account row.
         if (!isProjectCheckoutRemovalActionIdV1(verified.binding.actionId)
             || proof.reviewedChild.actionId !== verified.binding.actionId || verified.effectActionId !== verified.binding.actionId
             || !isRequesterOwnMachineRequest(verified) || proof.method !== 'POST'
             || proof.path !== `${PROJECT_TRUST_ROUTE_V1}/read`) return refuse('verification_purpose');
-        const read = ProjectTrustReadRequestV1Schema.safeParse(proof.body);
-        if (!read.success || computeProjectCheckoutTeardownTrustReadDigestV1(read.data.project) !== proof.reviewedChild.inputDigest) {
-            return refuse('verification_purpose');
-        }
     } else if (isExternalActionApprovalArtifactPurpose({ binding: verified.binding, effectActionId: verified.effectActionId,
         method: proof.method, path: proof.path, body: proof.body })) {
         // The Action's deterministic Ask is its own output. Artifact ownership,

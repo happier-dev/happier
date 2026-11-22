@@ -8,7 +8,7 @@ import {
     ProjectTrustReadResponseV1Schema, ProjectTrustValueV1Schema, QualifiedProjectTrustProjectV1Schema,
     StoredProjectTrustValueV1Schema,
     assertProjectTrustValueForProjectV1,
-    PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1, computeProjectCheckoutTeardownTrustReadDigestV1,
+    PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
     type ProjectTrustContentV1, type ProjectTrustMutationResponseV1, type ProjectTrustValueV1, type QualifiedProjectTrustProjectV1,
 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
@@ -156,10 +156,10 @@ export function createProjectSetupTrustClient(input: ProjectSetupTrustClientInpu
         return row.status === 'present' ? { status: 'present', revision: row.revision, value: open(project, row.content, context) } : row;
     }
     async function readCheckoutTeardownTrust(project: QualifiedProjectTrustProjectV1): Promise<ProjectTrustValueV1 | null> {
-        const actionId = input.authorization?.binding.actionId;
-        const proof = actionId && isProjectCheckoutRemovalActionIdV1(actionId) ? {
-            actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
-            inputDigest: computeProjectCheckoutTeardownTrustReadDigestV1(project),
+        const binding = input.authorization?.binding;
+        const proof = binding && isProjectCheckoutRemovalActionIdV1(binding.actionId) ? {
+            actionId: binding.actionId, role: PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1,
+            inputDigest: binding.requestEnvelopeDigest,
         } : undefined;
         const row = await read(project, proof);
         return row.status === 'present' ? row.value : null;
