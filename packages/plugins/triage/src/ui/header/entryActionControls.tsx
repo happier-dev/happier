@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { readPluginErrorRequestIdV1, type PluginError } from '@happier-dev/plugin-sdk';
+import type { PluginUiActionBinding, PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-sources/runtime';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
   AgentActionButton,
@@ -66,9 +68,6 @@ export type TriageEntryActionRequestV1 = Readonly<{
    * opens the prefilled composer. Absent, the action's own configured delivery decides.
    */
   launchMode?: TriageActionLaunchModeV1;
-  /** The split's other destination: send to a running Session the host's picker selects. */
-  destinationChoice?: 'existingSession';
-  existingSession?: ActionSessionAddressV1;
 }>;
 
 /**
@@ -165,6 +164,12 @@ export type TriageEntryActionControlsPropsV1 = Readonly<{
   repository?: Parameters<typeof useTriageEntrySessionStartChoices>[0]['repository'];
   /** Starts the action; resolves to a refusal when the press could start nothing. */
   onAction: (request: TriageEntryActionRequestV1) => void | Promise<TriageEntryActionRefusalV1 | null | void>;
+  /** Prepares the exact Send operand for a host press and receives its settlement. */
+  sendControl?: Readonly<{
+    prepare(request: TriageEntryActionRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0],
+      session?: ActionSessionAddressV1): Promise<Awaited<ReturnType<PluginUiActionControlController['prepare']>> | TriageEntryActionRefusalV1>;
+    onSettled: PluginUiActionControlController['onSettled'];
+  }>;
   /** Opens the one actions editor on this action (the chevron's "Edit action…"); absent where no editor is mounted. */
   onEditAction?: (actionId: string) => void;
 }>;
@@ -316,7 +321,7 @@ function TriageEntryActionButton(props: Readonly<{
 export function TriageEntryActionControls(
   props: TriageEntryActionControlsPropsV1,
 ): React.ReactElement {
-  const { target, actions, workflowSubject, reviewPreparation, viewerIsAuthor, onAction } = props;
+  const { target, actions, workflowSubject, reviewPreparation, viewerIsAuthor, onAction, sendControl } = props;
   const text = usePluginTranslation();
   const [moreOpen, setMoreOpen] = React.useState(false);
   const [startOpen, setStartOpen] = React.useState(false);
@@ -359,13 +364,27 @@ export function TriageEntryActionControls(
     ...(props.repository === undefined ? {} : { repository: props.repository }),
     menuOpen: startOpen,
   });
-  const latestAgent = React.useRef({ request: agentRequest, press });
-  latestAgent.current = { request: agentRequest, press };
+  const prepareSend = React.useCallback(async (request: TriageEntryActionRequestV1,
+    options: Parameters<PluginUiActionControlController['prepare']>[0], session?: ActionSessionAddressV1) => {
+    if (sendControl === undefined) return null;
+    setRefusal(null);
+    const outcome = await sendControl.prepare(request, options, session);
+    if (outcome !== null && 'kind' in outcome) {
+      if (!options.signal.aborted) setRefusal(outcome);
+      return null;
+    }
+    return outcome;
+  }, [sendControl]);
+  const latestAgent = React.useRef({ request: agentRequest, press, prepareSend, sendControl });
+  latestAgent.current = { request: agentRequest, press, prepareSend, sendControl };
   const agentHandle = React.useMemo<TriageAgentEntryV1>(() => ({
     start: () => { const { request, press: run } = latestAgent.current; if (request !== null) run(request); },
-    send: () => {
-      const { request, press: run } = latestAgent.current;
-      if (request !== null) run({ ...request, destinationChoice: 'existingSession' });
+    sendControl: {
+      prepare(options) {
+        const { request, prepareSend: prepare } = latestAgent.current;
+        return request === null ? null : prepare(request, options);
+      },
+      onSettled(execution) { latestAgent.current.sendControl?.onSettled(execution); },
     },
   }), []);
   const onAgentEntry = props.onAgentEntry;
@@ -506,9 +525,15 @@ export function TriageEntryActionControls(
   const startWithLabel = agentLabel === undefined ? undefined
     : text('plugins.triage.surface.actions.withAgent', '{action} with {agent}', { action: primaryWords, agent: agentLabel });
   const recentRows = startChoices.recentSessions.status !== 'ready' ? []
-    : startChoices.recentSessions.items.filter((row) => row.serverId !== undefined).slice(0, START_MENU_RECENT_ROWS);
+    : startChoices.recentSessions.items.flatMap(row => row.serverId === undefined ? [] : [{ ...row, serverId: row.serverId }]).slice(0, START_MENU_RECENT_ROWS);
   // Lab t1: recent Sessions under their own label, then the way to every Session; with none, only that way.
-  const startGroups = [{
+  const sendMenuAction = (session?: ActionSessionAddressV1): PluginUiActionBinding<string> | undefined =>
+    primary === null || sendControl === undefined ? undefined : {
+      action: TRIAGE_SESSION_HANDOFF_ACTION_REF_V1,
+      prepare: (_id, options) => prepareSend({ action: primary, entryRef, sourceInstanceId }, options, session),
+      onSettled: sendControl.onSettled,
+    };
+  const startGroups = sendControl === undefined ? [] : [{
     id: 'triage-start:recent',
     accessibilityLabel: text('plugins.triage.surface.actions.sendToSessionGroup', 'Send to a Session'),
     // A few recent rows, then the way to every Session (lab t1 start): the menu never runs past the screen.
@@ -529,22 +554,14 @@ export function TriageEntryActionControls(
           id: `${RECENT_SESSION_ITEM_PREFIX}${String(row.serverId)}\u001f${row.id}`,
           label: row.title ?? text('plugins.triage.surface.actions.untitledSession', 'Untitled Session'),
           ...(where === '' ? {} : { subtitle: where }),
+          action: sendMenuAction({ serverId: row.serverId, sessionId: row.id }),
         };
       }),
-      recentRows.length === 0
-        ? { id: EXISTING_SESSION_ITEM_ID, label: text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…') }
-        : { id: EXISTING_SESSION_ITEM_ID, label: text('plugins.triage.surface.actions.findSession', 'Find a Session…') },
+      { id: EXISTING_SESSION_ITEM_ID, action: sendMenuAction(), label: recentRows.length === 0
+        ? text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…')
+        : text('plugins.triage.surface.actions.findSession', 'Find a Session…') },
     ],
   }];
-  const selectStartItem = (id: string) => {
-    if (primary === null) return;
-    const recent = recentRows.find((row) => `${RECENT_SESSION_ITEM_PREFIX}${String(row.serverId)}\u001f${row.id}` === id);
-    if (recent?.serverId !== undefined) {
-      press({ action: primary, entryRef, sourceInstanceId, existingSession: { serverId: recent.serverId, sessionId: recent.id } });
-      return;
-    }
-    if (id === EXISTING_SESSION_ITEM_ID) press({ action: primary, entryRef, sourceInstanceId, destinationChoice: 'existingSession' });
-  };
   const launchPrimary = (launchMode: TriageActionLaunchModeV1) => {
     if (primary !== null) press({ action: primary, entryRef, sourceInstanceId, launchMode });
   };
@@ -644,7 +661,6 @@ export function TriageEntryActionControls(
           onMenuOpenChange={setStartOpen}
           onLaunch={launchPrimary}
           {...(props.onEditAction === undefined ? {} : { onEdit: () => { props.onEditAction?.(primary.actionId); } })}
-          onSelectDestination={selectStartItem}
         />
       )}
       {beside === null ? null : compact ? <Stack style={COMPACT_KEEP_STYLE_V1}>{button(beside, press, undefined, 'conversations')}</Stack> : button(beside, press)}

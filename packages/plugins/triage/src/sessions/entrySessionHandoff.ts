@@ -13,7 +13,8 @@ export function buildTriageEntrySessionHandoffV1(
         configuredActionId: request.action.actionId,
         context: session === undefined ? { kind: 'entries', entries: [entry], destination: 'single' } : { kind: 'entry', entry },
         evidence: [{ kind: 'entry', entry }],
-        sessionChoice: session === undefined ? { kind: 'configured' } : { kind: 'existing', session: session.sessionId },
+        sessionChoice: session === undefined ? { kind: 'configured' }
+            : { kind: 'existing', session: { selector: 'sessions', addresses: [session] } },
         agentChoice: { kind: 'configured' }, delivery: session === undefined ? 'configured' : 'send',
     };
 }

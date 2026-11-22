@@ -5832,13 +5832,14 @@ describe('client Action declared SessionTarget admission', () => {
     it.each([{ ask: false, foreignHome: false, compose: false, health: false }, { ask: true, foreignHome: false, compose: false, health: false },
         { ask: false, foreignHome: true, compose: false, health: false }, { ask: false, foreignHome: false, compose: true, health: false },
         { ask: false, foreignHome: false, compose: true, health: true },
-        ...(['owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained',
+        ...(['hostControl', 'owner', 'participant', 'nonparticipant', 'otherAccount', 'unissued', 'wrongCaller', 'crossHomeConstrained', 'sameHomeConstrained',
             'recent', 'recentFabricated', 'recentWrongCaller', 'recentOtherLifetime', 'recentUnqualified'] as const).map(picked => ({
             ask: false, foreignHome: false, compose: false, health: false, picked,
         }))])(
         'runs the actual configured handoff from an external plugin with Ask=$ask and foreign Home=$foreignHome and compose=$compose and health=$health and picked=$picked', async scenario => {
         const { ask, foreignHome, compose, health } = scenario;
         const picked = 'picked' in scenario ? scenario.picked : undefined;
+        const hostControl = picked === 'hostControl';
         const recent = picked?.startsWith('recent') === true;
         const deniedSelection = picked === 'nonparticipant' || picked === 'otherAccount' || picked === 'unissued' || picked === 'wrongCaller' || picked === 'crossHomeConstrained'
             || picked === 'recentFabricated' || picked === 'recentWrongCaller' || picked === 'recentOtherLifetime' || picked === 'recentUnqualified';
@@ -6049,7 +6050,7 @@ describe('client Action declared SessionTarget admission', () => {
                     input: { view: 'summary', resumableOnly: true } }))).toMatchObject({ sessions: [{
                     id: picked === 'recentFabricated' ? 'another-session' : 'reviewed-session',
                 }] });
-            } else if (picked && picked !== 'unissued') {
+            } else if (picked && picked !== 'unissued' && !hostControl) {
                 const { createPluginActionInputSelector } = await import('./pluginActionInputSelectionHostApi');
                 const { Modal } = await import('@/modal');
                 const show = vi.spyOn(Modal, 'show').mockImplementation(config => {
@@ -6065,23 +6066,44 @@ describe('client Action declared SessionTarget admission', () => {
                         .toEqual({ kind: 'sessionAddress', session: { serverId: targetHome, sessionId: 'reviewed-session' } });
                 } finally { show.mockRestore(); hide.mockRestore(); }
             }
-            const request = executeActionRequest({ action: { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id },
-                ...(picked ? { sessionAddress: { serverId: targetHome, sessionId: 'reviewed-session' } } : {}),
-                input: { v: 1, handoff: { task: 'draftReleaseNotes', configuredActionId: 'fix',
+            const actionInput = { v: 1, handoff: { task: 'draftReleaseNotes', configuredActionId: 'fix',
                     context: { kind: 'repository', repository, ...(compose ? { workspace: {
                         workspaceId: project.id, serverId: project.serverId, machineId: project.machineId, rootPath: project.rootPath,
                     } } : {}) }, evidence: [{ kind: 'releaseNotes', repository,
                         selector: { kind: 'proposed', tagName: 'v1', targetCommitish: 'main' }, contextText: 'The original release context' }],
-                    sessionChoice: compose ? { kind: 'configured' } : { kind: 'existing', session: picked ? 'reviewed-session' : { selector: 'manager' } },
+                    sessionChoice: compose ? { kind: 'configured' } : { kind: 'existing', session: hostControl
+                        ? { selector: 'sessions', addresses: [{ serverId: targetHome, sessionId: 'reviewed-session' }] }
+                        : picked ? 'reviewed-session' : { selector: 'manager' } },
                     agentChoice: { kind: 'configured' }, delivery: compose ? 'compose' : 'send',
-                } },
+                } } satisfies PluginUiJsonValueV1;
+            const actionIdentity = { pluginId: PLUGIN_MANIFEST.id, localId: declaration.id };
+            const request = executeActionRequest({ action: actionIdentity,
+                ...(picked ? { sessionAddress: { serverId: targetHome, sessionId: 'reviewed-session' } } : {}),
+                input: actionInput,
             });
             const result = health ? await createAccountNoticeInvestigation({ scope: accountLifetime.scope,
                 isCurrent: accountLifetime.isCurrent, execute: createFrontDoorActionExecute(executor),
             }).run({ artifact: notice, header: noticeHeader }, {
                 configuredActionId: 'investigate', sessionChoice: { kind: 'new' },
                 agentChoice: { kind: 'profile', profileId: 'profile-investigate' }, delivery: 'compose',
-            }) : await api.handleRequest({ ...request, surface });
+            }) : hostControl ? await (async () => {
+                const { createPluginSurfaceActionControls } = await import('./pluginSurfaceActionControls');
+                const control = createPluginSurfaceActionControls({
+                    pluginId: PLUGIN_MANIFEST.id, surfaceId: 'surfacePlacement:triage-entry',
+                    hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                        serverId: accountLifetime.scope.serverId, runtimeAccountId: accountLifetime.scope.accountId,
+                    } },
+                    signal: new AbortController().signal, isCurrent: accountLifetime.isCurrent,
+                    captureCurrentBinding: () => accountLifetime.isCurrent,
+                });
+                try {
+                    return PluginUiJsonValueV1Schema.parse(await control.commit({
+                        action: actionIdentity,
+                        prepare: () => ({ input: actionInput }),
+                        onSettled: execution => execution.ok ? execution.result : execution,
+                    }, undefined));
+                } finally { control.dispose(); }
+            })() : await api.handleRequest({ ...request, surface });
             const handoffResult = health && result && 'ok' in result && result.ok ? result.result : result;
             expect(confirmationSnapshots, JSON.stringify({ result, confirmations })).toEqual(expectConfirmation ? [{ sentCount: 0, resolutions: picked ? 0 : 1, catalogueReads: 0 }] : []);
             expect(resolutions, JSON.stringify({ result, sent })).toBe(compose || picked ? 0 : 1);

@@ -22,6 +22,7 @@ import {
   TriageEntryActionControls,
   type TriageEntryActionRequestV1,
 } from './entryActionControls.js';
+import type { TriageAgentEntryV1 } from '../detail/storyRail.js';
 import type { TriageDetailPrimaryWriteV1 } from '@happier-dev/triage-sources/ui';
 import { TriageSourceWriteCluster } from './sourceWriteCluster.js';
 import { operationOffers } from '../../sessions/testkit/sessionPullRequestOperations.test-support.js';
@@ -140,7 +141,8 @@ describe('the mounted configured entry action controls', () => {
 
   it('lends its primary agent Start and Send to a Session to the story, through the same press', async () => {
     const requests: TriageEntryActionRequestV1[] = [];
-    let entry: { start(): void; send(): void } | null = null;
+    const sends: TriageEntryActionRequestV1[] = [];
+    let entry: TriageAgentEntryV1 | null = null;
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
         target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 't1', kindId: 'task' }),
@@ -151,6 +153,8 @@ describe('the mounted configured entry action controls', () => {
         reviewPreparation="unsupported"
         withoutRepository
         onAction={(request) => { requests.push(request); }}
+        sendControl={{ prepare: async request => { sends.push(request); return { input: { v: 1 } }; },
+          onSettled: () => undefined }}
         onAgentEntry={(next) => { entry = next; }}
       />
     ));
@@ -164,11 +168,11 @@ describe('the mounted configured entry action controls', () => {
     mounted.push(fixture);
     expect(entry).not.toBeNull();
     entry!.start();
-    entry!.send();
-    await vi.waitFor(() => expect(requests).toHaveLength(2));
+    await entry!.sendControl.prepare({ signal: new AbortController().signal });
+    await vi.waitFor(() => expect(requests).toHaveLength(1));
     expect(requests[0]?.action.target.kind).toBe('agent');
     expect(requests[0]).not.toHaveProperty('destinationChoice');
-    expect(requests[1]).toMatchObject({ action: requests[0]!.action, destinationChoice: 'existingSession' });
+    expect(sends).toEqual(requests);
   });
 
   it('lends its Review action\'s own press to the frame, and withdraws it while the workspace cannot be prepared', async () => {
@@ -396,7 +400,11 @@ describe('the mounted configured entry action controls', () => {
   });
 
   it('sends to a recent Session by its qualified address, and lists only Sessions it can address', async () => {
-    const requests: TriageEntryActionRequestV1[] = [];
+    const committed: unknown[] = [];
+    const controls = createPluginUiActionControlTestHost(async ({ input }) => {
+      committed.push(input);
+      return { ok: true, result: null };
+    });
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
         target={{
@@ -410,7 +418,9 @@ describe('the mounted configured entry action controls', () => {
         viewerIsAuthor
         reviewPreparation="unsupported"
         withoutRepository
-        onAction={(request) => { requests.push(request); }}
+        onAction={() => { throw new Error('A recent Send is a host commit'); }}
+        sendControl={{ prepare: async (_request, _options, session) => ({ input: session }),
+          onSettled: () => undefined }}
       />
     ));
     const fixture = await createPluginUiTestkit({
@@ -418,7 +428,7 @@ describe('the mounted configured entry action controls', () => {
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
       surface,
       surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, actionBindings: controls }),
       handlers: { readSession: async ({ sessionId }) => ({
         sessionId, serverId: 'home-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
         workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
@@ -451,15 +461,13 @@ describe('the mounted configured entry action controls', () => {
     // A workspace already named by the title is not said twice.
     await expect(fixture.getByText('build-box')).resolves.toBeDefined();
     await fixture.press(await fixture.getByRole('menuitem', { name: 'Investigate sign in' }));
-    expect(requests[0]?.existingSession).toEqual({ serverId: 'home-a', sessionId: 'session-a' });
-    expect(requests[0]?.destinationChoice).toBeUndefined();
+    expect(committed).toEqual([{ serverId: 'home-a', sessionId: 'session-a' }]);
 
     await fixture.press(await fixture.getByRole('button', { name: 'Start options' }));
     await expect(fixture.queryByRole('menuitem', { name: 'No known Home' })).resolves.toBeUndefined();
   });
 
   it('shows the three most recent Sessions, then the way to find the rest (lab t1 start)', async () => {
-    const requests: TriageEntryActionRequestV1[] = [];
     const surface = defineUiSurface(() => (
       <TriageEntryActionControls
         target={{
@@ -473,7 +481,8 @@ describe('the mounted configured entry action controls', () => {
         viewerIsAuthor
         reviewPreparation="unsupported"
         withoutRepository
-        onAction={(request) => { requests.push(request); }}
+        onAction={() => undefined}
+        sendControl={{ prepare: async () => null, onSettled: () => undefined }}
       />
     ));
     const fixture = await createPluginUiTestkit({

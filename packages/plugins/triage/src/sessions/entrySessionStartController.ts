@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
-import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
@@ -81,7 +81,7 @@ import {
     submitTriageEntrySessionStart,
     type TriageSessionStartHostV1,
 } from '../ui/header/startEntrySessionCommand.js';
-import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionResultV1Schema,
+import { TriageRunConfiguredActionResultV1Schema,
     TriageRunConfiguredActionInputV1Schema, type TriageRunConfiguredActionInputV1, type TriageConfiguredStartRecoveryV1, type TriageRunConfiguredActionResultV1 } from '../actions/configuredActionRunProtocol.js';
 
 type TriageSingleStartRecoveryV1 = Extract<TriageConfiguredStartRecoveryV1['state'], { kind: 'single' }>;
@@ -307,7 +307,6 @@ export type TriageEntrySessionStartControllerV1 = Readonly<{
     start: (request: TriageEntrySessionStartRequestV1) => void;
     prepareAction: (request: TriageEntrySessionStartRequestV1, options: Parameters<PluginUiActionControlController['prepare']>[0], session?: ActionSessionAddressV1) => ReturnType<PluginUiActionControlController['prepare']>;
     settleAction: (execution: PluginActionExecution) => void;
-    startInSession: (request: TriageEntrySessionStartRequestV1, session: ActionSessionAddressV1) => Promise<TriageRunConfiguredActionResultV1 | null>;
     /** Returns to `idle` — for dismissing a settled outcome, never for retrying one. */
     reset: () => void;
 }>;
@@ -730,7 +729,7 @@ export function createTriageEntrySessionStartController(
         }
     };
 
-    const start = (initialRequest: TriageEntrySessionStartRequestV1, existingSession?: ActionSessionAddressV1) => {
+    const start = (initialRequest: TriageEntrySessionStartRequestV1) => {
         let request = initialRequest;
         if (inFlight.current || retired.current) return;
         releasePreparation?.();
@@ -763,51 +762,6 @@ export function createTriageEntrySessionStartController(
             return;
         }
         inFlight.current = true;
-
-        if (existingSession !== undefined || request.destinationChoice === 'existingSession') {
-            const previous = phase.kind === 'handoffSettled' ? phase.result.recovery : undefined;
-            setReview(null);
-            setPhase(RESOLVING);
-            void (async () => {
-                let submitted = false;
-                try {
-                    let session = existingSession;
-                    if (session === undefined) {
-                        setPhase(CHOOSING);
-                        const choice = await selectTriageSendRecipientV1(host,
-                            { action: request.action, ...(request.repository === undefined ? {} : { repository: request.repository }) },
-                            { signal: selectionLifetime.signal },
-                        );
-                        if (retired.current) return;
-                        if (choice.kind === 'cancelled') { setPhase(IDLE); return; }
-                        if (choice.kind !== 'sessionAddress') {
-                            setPhase(choice.kind === 'unavailable' ? unavailable(choice.reason, choice.failure) : unavailable('dispatch'));
-                            return;
-                        }
-                        session = choice.session;
-                    }
-                    const handoff = buildTriageEntrySessionHandoffV1(request, session);
-                    const resumeStart = previous?.state.kind === 'handoff'
-                        && previous.state.serverId === session.serverId
-                        && JSON.stringify(previous.state.handoff) === JSON.stringify(handoff) ? previous : undefined;
-                    setPhase(STARTING);
-                    submitted = true;
-                    const result = TriageRunConfiguredActionResultV1Schema.parse(await host.executeAction(
-                        { pluginId: 'happier.triage', localId: TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1 },
-                        { v: 1, handoff, ...(resumeStart === undefined ? {} : { resumeStart }) },
-                        { signal: selectionLifetime.signal, sessionAddress: session },
-                    ));
-                    if (!retired.current) setPhase(Object.freeze({ kind: 'handoffSettled', result }));
-                } catch (error) {
-                    if (!retired.current) setPhase(unavailable(submitted && !isPluginActionHandlerInvocationNotStartedAdvisory(error)
-                        ? 'handoffOutcomeUnknown' : 'dispatch', projectTriageNewSessionFailureV1(error)));
-                } finally {
-                    inFlight.current = false;
-                    notify();
-                }
-            })();
-            return;
-        }
 
         // A retry of the SAME press on the SAME entry. Everything the first
         // press resolved — its references, its placement, the destination the
@@ -1189,13 +1143,6 @@ export function createTriageEntrySessionStartController(
         listeners.add(listener);
     }) : Promise.resolve(snapshot);
 
-    const startInSession: TriageEntrySessionStartControllerV1['startInSession'] = async (request, session) => {
-        if (inFlight.current || retired.current) return null;
-        start(request, session);
-        const settled = await waitForSettled();
-        return settled.phase.kind === 'handoffSettled' ? settled.phase.result : null;
-    };
-
     let preparedAction: TriageRunConfiguredActionInputV1 | null = null;
     let preparedComparison: ScmComparisonSource | undefined;
     let configuredResult: TriageRunConfiguredActionResultV1 | null = null;
@@ -1266,6 +1213,7 @@ export function createTriageEntrySessionStartController(
         inFlight.current = false;
         if (retired.current) return;
         if (execution.status === 'idle' || execution.status === 'pending') return;
+        if (isPluginActionConfirmationDeclined(execution)) { setPhase(IDLE); return; }
         if (execution.status === 'error') {
             setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(new PluginError({ code: execution.code,
                 message: execution.message, ...(execution.diagnostics === undefined ? {} : { diagnostics: [...execution.diagnostics] }),
@@ -1288,7 +1236,7 @@ export function createTriageEntrySessionStartController(
     };
 
     const readSnapshot = (): TriageEntrySessionStartControllerV1 => Object.freeze({
-        phase, review, start, startInSession, prepareAction, settleAction, configuredResult, reset, ...(authoringResult === undefined ? {} : { authoringResult }),
+        phase, review, start, prepareAction, settleAction, configuredResult, reset, ...(authoringResult === undefined ? {} : { authoringResult }),
         pendingOrchestrationPrompt: preparedAction?.singleIntent?.kind === 'orchestrate' && (configuredResult?.recovery !== undefined || configuredOutcomeUnknown)
             ? preparedAction.singleIntent.prompt : custody.current?.input.orchestrate === true
                 ? custody.current.input.delivery?.text ?? null : null,

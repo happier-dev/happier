@@ -78,6 +78,7 @@ import {
   readTriageActionIntentV1,
   resolveTriageReviewPreparationV1,
   type TriageEntryActionRequestV1,
+  type TriageEntryActionControlsPropsV1,
   type TriageReviewPreparationV1,
 } from '../header/entryActionControls.js';
 import { describeTriageEntrySessionPhaseV1, type TriageEntrySessionNoticeV1 } from '../header/sessionStartOutcome.js';
@@ -412,69 +413,75 @@ function TriageEntryScopedActionRegion(props: Readonly<{
     return readTriageComparisonSource({ host, read, entryRef: props.target.entryRef,
       ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }) });
   }, [host, props.comparisonRead, props.lastKnownLocator, props.target]);
-  const onAction = React.useCallback((request: TriageEntryActionRequestV1) => {
+  const resolveStartRequest = React.useCallback(async (request: TriageEntryActionRequestV1) => {
     // The pressed action travels WHOLE: its mode, its profile, its prompt, its
     // delivery and its arm are all read by the one controller below. This is
     // the last place a press could have re-decided any of them, and it does
     // not — it only adds the facts this screen holds and the record cannot.
-    return (async () => {
-      const workflowSubject = props.workflowSubject;
-      if (workflowSubject === null) return { kind: 'unavailable' as const };
-      const executable = await props.actions.resolveForExecution(
-        request.action.actionId,
-        [workflowSubject],
-      );
-      // Said beside the control that was pressed, never swallowed.
-      if (executable.status === 'missing') return { kind: 'missing' as const };
-      if (executable.status === 'unavailable') {
-        return { kind: 'unavailable' as const, failure: executable.failure };
-      }
-      // The person's launch for this press (the split's Start now / Add instructions…) over the record's own delivery.
-      const action = request.launchMode === undefined ? executable.action
-        : applyTriageActionLaunchModeV1(executable.action, request.launchMode);
-      if (action === null) return { kind: 'missing' as const };
-      // The link index's order carries no Session recency. Follow the reader's
-      // selected Session, or the most recently active linked Session.
-      const teamModelFromSessionId = action.profileId === null && readTriageActionIntentV1(action) === 'fix'
-        ? props.taskSessionId ?? props.linkedSessions.reduce<TriageLinkedSessionProjectionV1 | undefined>(
-            (latest, session) => !latest || (session.updatedAtMs ?? -1) > (latest.updatedAtMs ?? -1) ? session : latest,
-            undefined,
-          )?.sessionId
-        : undefined;
-      let comparisonSource;
-      if (action.target.kind === 'reviewStart') {
-        try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
-        if (!mounted.current) return null;
-      }
-      const startRequest = {
-        action,
-        savedAction: executable.action,
-        entryRef: request.entryRef,
-        display: props.display,
-        // The entry attachment's two halves. Identity is the connection this
-        // entry was read through; the presentation is the bounded immutable
-        // fallback the host freezes, built by the one composer-side owner so an
-        // entry a delivery attaches and an entry the picker attaches are the
-        // same record.
-        sourceInstance: { source: request.entryRef.source, sourceInstanceId: request.sourceInstanceId },
-        presentation: props.presentation,
-        ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
-        // The entry's own forge repository, exactly as its source declared it.
-        // It travels from the observation the reader is looking at, so launch
-        // placement joins on the same answer the screen is showing rather than
-        // re-reading the entry.
-        ...(props.repository === undefined ? {} : { repository: props.repository }),
-        ...(props.reviewWorkspace === undefined ? {} : { reviewWorkspace: props.reviewWorkspace }),
-        ...(props.sourceContributions === undefined ? {} : { sourceContributions: props.sourceContributions }),
-        ...(comparisonSource === undefined ? {} : { comparisonSource }),
-        ...(request.destinationChoice === undefined ? {} : { destinationChoice: request.destinationChoice }),
-        ...(teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId }),
-      };
-      if (request.existingSession !== undefined) await controller.startInSession(startRequest, request.existingSession);
-      else controller.start(startRequest);
-      return null;
-    })();
-  }, [controller, props, readComparison]);
+    const workflowSubject = props.workflowSubject;
+    if (workflowSubject === null) return { kind: 'unavailable' as const };
+    const executable = await props.actions.resolveForExecution(
+      request.action.actionId,
+      [workflowSubject],
+    );
+    // Said beside the control that was pressed, never swallowed.
+    if (executable.status === 'missing') return { kind: 'missing' as const };
+    if (executable.status === 'unavailable') {
+      return { kind: 'unavailable' as const, failure: executable.failure };
+    }
+    // The person's launch for this press (the split's Start now / Add instructions…) over the record's own delivery.
+    const action = request.launchMode === undefined ? executable.action
+      : applyTriageActionLaunchModeV1(executable.action, request.launchMode);
+    if (action === null) return { kind: 'missing' as const };
+    // The link index's order carries no Session recency. Follow the reader's
+    // selected Session, or the most recently active linked Session.
+    const teamModelFromSessionId = action.profileId === null && readTriageActionIntentV1(action) === 'fix'
+      ? props.taskSessionId ?? props.linkedSessions.reduce<TriageLinkedSessionProjectionV1 | undefined>(
+          (latest, session) => !latest || (session.updatedAtMs ?? -1) > (latest.updatedAtMs ?? -1) ? session : latest,
+          undefined,
+        )?.sessionId
+      : undefined;
+    let comparisonSource;
+    if (action.target.kind === 'reviewStart') {
+      try { comparisonSource = await readComparison(); } catch { /* Findings-only review remains available. */ }
+      if (!mounted.current) return null;
+    }
+    const startRequest = {
+      action,
+      savedAction: executable.action,
+      entryRef: request.entryRef,
+      display: props.display,
+      // The entry attachment's two halves. Identity is the connection this
+      // entry was read through; the presentation is the bounded immutable
+      // fallback the host freezes, built by the one composer-side owner so an
+      // entry a delivery attaches and an entry the picker attaches are the
+      // same record.
+      sourceInstance: { source: request.entryRef.source, sourceInstanceId: request.sourceInstanceId },
+      presentation: props.presentation,
+      ...(props.lastKnownLocator === undefined ? {} : { lastKnownLocator: props.lastKnownLocator }),
+      // The entry's own forge repository, exactly as its source declared it.
+      // It travels from the observation the reader is looking at, so launch
+      // placement joins on the same answer the screen is showing rather than
+      // re-reading the entry.
+      ...(props.repository === undefined ? {} : { repository: props.repository }),
+      ...(props.reviewWorkspace === undefined ? {} : { reviewWorkspace: props.reviewWorkspace }),
+      ...(props.sourceContributions === undefined ? {} : { sourceContributions: props.sourceContributions }),
+      ...(comparisonSource === undefined ? {} : { comparisonSource }),
+      ...(teamModelFromSessionId === undefined ? {} : { teamModelFromSessionId }),
+    };
+    return { kind: 'ready' as const, request: startRequest };
+  }, [props, readComparison]);
+  const onAction = React.useCallback(async (request: TriageEntryActionRequestV1) => {
+    const resolved = await resolveStartRequest(request);
+    if (resolved?.kind !== 'ready') return resolved;
+    controller.start(resolved.request);
+    return null;
+  }, [controller, resolveStartRequest]);
+  const prepareSend: NonNullable<TriageEntryActionControlsPropsV1['sendControl']>['prepare'] = async (request, options, session) => {
+    const resolved = await resolveStartRequest(request);
+    if (resolved?.kind !== 'ready') return resolved;
+    return controller.prepareAction({ ...resolved.request, destinationChoice: 'existingSession' }, options, session);
+  };
   const walk = React.useCallback(() => {
     if (reading.current || props.target.kind !== 'entry') return;
     const target = props.target;
@@ -534,6 +541,7 @@ function TriageEntryScopedActionRegion(props: Readonly<{
             ...(props.taskSessionId === undefined ? {} : { linkSession: props.taskSessionId }) },
         })}
         onAction={onAction}
+        sendControl={{ prepare: prepareSend, onSettled: controller.settleAction }}
         {...(props.onEditAction === undefined ? {} : { onEditAction: props.onEditAction })}
         trailing={props.attention}
         {...(props.repository === undefined ? {} : { repository: props.repository })}

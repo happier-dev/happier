@@ -107,7 +107,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         surfaces: ['ui', 'plugin', 'agent', 'mcp', 'cli'],
         placementBindings: [],
         dangerLevel: 'writesLocal',
-        confirmationWhen: { presentUserUi: false },
+        confirmationWhen: { presentUserUi: { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' } },
         sessionTarget: { field: 'handoff.sessionChoice.session', cardinality: 'one' },
         confirmation: {
           title: 'Run this configured action?',

@@ -72,16 +72,19 @@ describe('Session start host-control preparation', () => {
     });
     it('settles cancelled destination selection without invoking or retaining a busy phase', async () => {
         const executeAction = vi.fn(async (id: unknown) => {
-            if (id === 'session.list') return { sessions: [], hasNext: false };
+            if (id === 'session.list') return { sessions: [{ id: 'session-a', serverId: 'home-a', updatedAt: 1 }], hasNext: false };
             throw Error('Cancelled preparation cannot invoke');
         });
+        const selectActionInput = vi.fn(async () => ({ kind: 'cancelled' }));
         const owner = createTriageEntrySessionStartController({ executeAction,
-            readSession: async () => null,
-            selectActionInput: async () => ({ kind: 'cancelled' }),
+            readSession: async () => ({ sessionId: 'session-a', serverId: 'home-a' }),
+            selectActionInput,
         } as unknown as TriageStartHostV1);
         try {
-            expect(await owner.getSnapshot().prepareAction({ ...request, destinationChoice: 'existingSession' },
+            expect(await owner.getSnapshot().prepareAction({ ...request, destinationChoice: 'existingSession',
+                action: { ...request.action, workspaceMode: 'reference_only' } },
                 { signal: new AbortController().signal })).toBeNull();
+            expect(selectActionInput).toHaveBeenCalledTimes(1);
             expect(owner.getSnapshot().phase.kind).toBe('idle');
             expect(executeAction.mock.calls.every(([id]) => id === 'session.list')).toBe(true);
         } finally { owner.dispose(); }

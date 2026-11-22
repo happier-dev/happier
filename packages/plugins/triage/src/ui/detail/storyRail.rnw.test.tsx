@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiActionControlTestHost, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { RenderContext, SessionPermissionResponseV1, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { ReviewCommentV1 } from '@happier-dev/plugin-sdk/reviews';
@@ -122,7 +122,10 @@ const renderEmptyRail = defineUiSurface(function EmptyRail(_context: RenderConte
       live={live}
       reviewEntry={{ kind: 'pullRequest', url: 'https://example.test/pull/1' }}
       number={4}
-      entry={{ start: () => { entryPresses.push('start'); }, send: () => { entryPresses.push('send'); } }}
+      entry={{ start: () => { entryPresses.push('start'); }, sendControl: {
+        prepare: () => ({ input: { v: 1 } }),
+        onSettled: () => undefined,
+      } }}
     />
   );
 });
@@ -130,6 +133,10 @@ const renderEmptyRail = defineUiSurface(function EmptyRail(_context: RenderConte
 describe('the story rail\'s agent chapter before any Session', () => {
   it('offers the entry\'s own Start and Send to a Session where the agent\'s work will appear', async () => {
     entryPresses.length = 0;
+    const controls = createPluginUiActionControlTestHost(async () => {
+      entryPresses.push('send');
+      return { ok: true, result: null };
+    });
     let fixture!: PluginUiTestkit;
     await act(async () => {
       fixture = await createPluginUiTestkit({
@@ -138,14 +145,15 @@ describe('the story rail\'s agent chapter before any Session', () => {
         surface: renderEmptyRail,
         surfaceContext: createSurfaceContextFixture(),
         adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-        handlers: { readSession: () => SESSION, watchSession: () => undefined,
+        handlers: { readSession: () => SESSION, watchSession: () => undefined, actionControl: controls.handler,
           executeAction: async () => ({ items: [], cursor: null }) },
       });
     });
     mounted.push(fixture);
     await expect(fixture.getByRole('heading', { name: 'The agent\u2019s work' })).resolves.toBeDefined();
     await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Start a Session' })); });
-    await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Send to a Session…' })); });
+    expect(controls.presentation('Send to a Session…')).toBeDefined();
+    await act(async () => { await controls.press('Send to a Session…'); });
     expect(entryPresses).toEqual(['start', 'send']);
   });
 });

@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import {
+  Action,
   ApprovalPrompt,
   BrandMark,
   Button,
@@ -19,7 +20,8 @@ import {
   type ReviewCommentProposalQueryV1,
   type SessionStateReadV1,
 } from '@happier-dev/plugin-ui';
-import type { SessionPendingPermissionV1, SessionPermissionAnswerV1, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
+import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-sources/runtime';
+import type { PluginUiActionControlController, SessionPendingPermissionV1, SessionPermissionAnswerV1, SessionStateV1 } from '@happier-dev/plugin-sdk/ui';
 import type { TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
 
 import { TriageStoryLoadingLines } from '@happier-dev/triage-sources/ui';
@@ -30,7 +32,7 @@ import { TriageLinkedSessions } from './linkedSessions.js';
 import { useLinkedSessionOpen } from './useLinkedSessionOpen.js';
 
 /** The entry's agent entry points, published by its action row (one start controller) for the story to offer. */
-export type TriageAgentEntryV1 = Readonly<{ start(): void; send(): void }>;
+export type TriageAgentEntryV1 = Readonly<{ start(): void; sendControl: PluginUiActionControlController }>;
 
 type TriageFindingV1 = ReturnType<typeof useReviewCommentProposalsForEntry>['proposals'][number];
 
@@ -105,8 +107,9 @@ export function TriageAgentStep(props: Readonly<{
         <Row gap="small" align="center" wrap>
           <Button title={text('plugins.triage.surface.detail.agent.start', 'Start a Session')} variant="secondary"
             size="small" onPress={entry.start} />
-          <Button title={text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…')} variant="plain"
-            size="small" onPress={entry.send} />
+          <Action.Control action={TRIAGE_SESSION_HANDOFF_ACTION_REF_V1}
+            title={text('plugins.triage.surface.actions.sendToSession', 'Send to a Session…')} variant="plain"
+            controller={entry.sendControl} />
         </Row>
       </Step>
     );

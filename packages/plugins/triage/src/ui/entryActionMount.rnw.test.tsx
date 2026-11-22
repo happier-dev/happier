@@ -460,14 +460,14 @@ function createHarness(options: Readonly<{
             return typeof scripted === 'function' ? scripted(startInput) : scripted;
         }
         if (action === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
-            // The host Action transport is the boundary; the mounted UI and
-            // controller must hand it the canonical Session selector. Home
-            // routing is execution metadata, covered by the controller suite;
-            // this testkit handler exposes only the Action and its input.
+            // The host Action transport is the boundary. The mounted UI prepares
+            // the selected Session and Home as the exact reviewed operand.
             const input = TriageRunConfiguredActionInputV1Schema.parse(request.input);
             configuredRequests.push(input);
-            if (input.handoff.sessionChoice.kind !== 'existing'
-                || input.handoff.sessionChoice.session !== pickedSession?.sessionId) throw new Error('Expected picked Session handoff');
+            const selection = input.handoff.sessionChoice;
+            if (selection.kind !== 'existing' || typeof selection.session === 'string' || selection.session.selector !== 'sessions'
+                || selection.session.addresses.length !== 1 || selection.session.addresses[0]?.sessionId !== pickedSession?.sessionId
+                || selection.session.addresses[0]?.serverId !== pickedSession?.serverId) throw new Error('Expected picked Session handoff');
             return TriageRunConfiguredActionResultV1Schema.parse({
                 v: 1,
                 handoff: { kind: 'sendResult', session: pickedSession,
@@ -526,6 +526,7 @@ function createHarness(options: Readonly<{
 }
 
 const mounted: PluginUiTestkit[] = [];
+const presentedSessionHandoffs = new WeakMap<PluginUiTestkit, TriageRunConfiguredActionInputV1[]>();
 const mountedActionControls = new WeakMap<PluginUiTestkit, ReturnType<typeof createPluginUiActionControlTestHost>>();
 const refreshMountedShell = new WeakMap<PluginUiTestkit, (trigger?: 'view' | 'manual') => Promise<unknown>>();
 
@@ -540,9 +541,16 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
     page?: Readonly<{ launchInput?: Parameters<typeof createPluginUiTestkit>[0]['launchInput']; opens?: PluginUiTestkitOpenSurfaceInput[] }>): Promise<PluginUiTestkit> {
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
+    const presented: TriageRunConfiguredActionInputV1[] = [];
     const controls = createPluginUiActionControlTestHost(async ({ action, input, signal }) => {
         const id = testkitTriageActionId(action);
         if (id === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
+            const configured = TriageRunConfiguredActionInputV1Schema.parse(input);
+            if (configured.handoff.sessionChoice.kind === 'existing') {
+                presented.push(configured);
+                const result = await harness.executeAction({ action, input });
+                return { ok: true, result: TriageRunConfiguredActionResultV1Schema.parse(result) };
+            }
             // This replaces the external host executor only; the configured Action and its inner owners stay real.
             const result = await createTriageRunConfiguredActionHandler()(input, {
                 plugin: { id: 'happier.triage', version: '0.0.0' },
@@ -688,6 +696,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
     });
     mounted.push(fixture);
     mountedActionControls.set(fixture, controls);
+    presentedSessionHandoffs.set(fixture, presented);
     refreshMountedShell.set(fixture, (trigger = 'view') => refreshTriageListWindow(trigger, fixture.context.hostApi, ephemeralSharedScope));
     await act(async () => {
         await refreshTriageListWindow('view', fixture.context.hostApi, ephemeralSharedScope);
@@ -1587,11 +1596,12 @@ describe('the entry action controls on the mounted detail header', () => {
         expect(draftsOpened).toBe(0);
         expect(harness.startRequests).toHaveLength(0);
         await vi.waitFor(() => expect(harness.configuredRequests).toHaveLength(1));
+        expect(presentedSessionHandoffs.get(shell)).toEqual(harness.configuredRequests);
         expect(harness.configuredRequests[0]?.handoff).toMatchObject({
             task: 'fix',
             configuredActionId: 'fix',
             context: { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
-            sessionChoice: { kind: 'existing', session: 'session-picked' },
+            sessionChoice: { kind: 'existing', session: { selector: 'sessions', addresses: [pickedSession] } },
             agentChoice: { kind: 'configured' },
             delivery: 'send',
         });
@@ -1599,6 +1609,7 @@ describe('the entry action controls on the mounted detail header', () => {
             { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
         ]);
         await expect(shell.getByText(notice)).resolves.toBeDefined();
+        expect(document.body.textContent?.split(notice)).toHaveLength(2);
         if (details !== undefined) {
             expect(document.body.textContent).not.toMatch(details);
             await pressAction(shell, 'Details');

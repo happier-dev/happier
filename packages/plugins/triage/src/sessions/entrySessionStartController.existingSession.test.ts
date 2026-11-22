@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import type { ActionSessionAddressV1 } from '@happier-dev/plugin-sdk/sessions';
-import type { ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionControlExecution, ComposerTransactionV1 } from '@happier-dev/plugin-sdk/ui';
 import { PLUGIN_ACTION_INPUT_SCHEMAS, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { resolveActionSessionTargets } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { TRIAGE_ACCOUNT_ACTIONS } from '../accountDefinition.js';
@@ -20,7 +21,7 @@ import { createTriageEntrySessionStartController, type TriageEntrySessionStartRe
     type TriageStartHostV1 } from './entrySessionStartController.js';
 import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
 
-function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncertainOnce = false, dispatchFailure?: PluginError) {
+function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncertainOnce = false, dispatchFailure?: Extract<PluginUiActionControlExecution, { ok: false }>) {
     const entryRef = testkitEntryRef({ kindId: 'issue' });
     const request: TriageEntrySessionStartRequestV1 = {
         action: { actionId: 'ask', label: 'Ask', enabled: true, appliesTo: ['issue'], profileId: null,
@@ -56,36 +57,6 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
         executeAction: async (id: unknown, input: JsonValue, options?: unknown): Promise<unknown> => {
             const localId = testkitTriageActionId(id);
             if (localId === 'session.list') return { sessions: [{ id: address.sessionId, serverId: address.serverId, updatedAt: 1 }], hasNext: false };
-            if (localId === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
-                if (dispatchFailure) throw dispatchFailure;
-                const operand = TriageRunConfiguredActionInputV1Schema.parse(input);
-                operands.push(operand);
-                const sessionChoice = operand.handoff.sessionChoice;
-                if (sessionChoice.kind !== 'existing' || typeof sessionChoice.session !== 'string') throw new Error('Exact Session required');
-                const selectedAddress = ActionSessionAddressV1Schema.parse(options && typeof options === 'object' && 'sessionAddress' in options ? options.sessionAddress : undefined);
-                const declaration = TRIAGE_ACCOUNT_ACTIONS[TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1].sessionTarget;
-                if (!declaration) throw new Error('Configured Action must declare its Session operand');
-                // The authorized Home reference read is the only replaced admission boundary.
-                const transport = { resolveSessionReference: async ({ sessionId, context }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) => {
-                    const authorized = [{ serverId: 'home-a', sessionId: 'same-session' }, { serverId: 'home-b', sessionId: 'same-session' }]
-                        .find(candidate => candidate.serverId === context.serverId && candidate.sessionId === sessionId);
-                    return authorized ? { kind: 'unique' as const, address: authorized } : { kind: 'none' as const };
-                } } satisfies Pick<ActionExecutorDeps, 'resolveSessionReference'>;
-                const sessionTargetsV1 = await resolveActionSessionTargets(transport, {
-                    actionId: 'action.invoke', declaration, input: operand,
-                    context: { surface: 'ui', authority: 'account_automation', serverId: selectedAddress.serverId,
-                        expectedSessionAddress: selectedAddress },
-                });
-                if (!sessionTargetsV1 || 'ok' in sessionTargetsV1) throw new PluginError({
-                    code: sessionTargetsV1 && 'ok' in sessionTargetsV1 ? sessionTargetsV1.errorCode : 'session_target_unavailable',
-                });
-                address = selectedAddress;
-                addresses.push(address);
-                const context = { ui: host, signal: new AbortController().signal,
-                    sessionTargetsV1 } as unknown as PluginAccountActionContext;
-                try { return await createTriageRunConfiguredActionHandler()(input, context); }
-                catch (error) { boundaryErrors.push(error); throw error; }
-            }
             if (localId === 'actions/read-v1') return { v: 1, availability: 'parsed', revision: '1', actions: [request.action] };
             if (localId === 'entries/reobserve-v1') return { kind: 'observed', entryRef, observation: {
                 sourceInstanceId: request.sourceInstance.sourceInstanceId, observedAtMs: 1,
@@ -104,31 +75,79 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
     };
     // Host UI/Action RPCs are the system boundary, not the internal configured handoff.
     const controller = createTriageEntrySessionStartController(host as unknown as TriageStartHostV1);
-    return { controller, request, operands, addresses, sends, edits, unexpected, boundaryErrors, setAddress: (value: ActionSessionAddressV1) => { address = value; } };
+    const dispatch = async (input: JsonValue) => {
+        const operand = TriageRunConfiguredActionInputV1Schema.parse(input);
+        operands.push(operand);
+        const declaration = TRIAGE_ACCOUNT_ACTIONS[TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1].sessionTarget;
+        if (!declaration) throw new Error('Configured Action must declare its Session operand');
+        // The authorized Home reference read is the only replaced admission boundary.
+        const transport = { resolveSessionReference: async ({ sessionId, context }: Parameters<NonNullable<ActionExecutorDeps['resolveSessionReference']>>[0]) => {
+            const authorized = [{ serverId: 'home-a', sessionId: 'same-session' }, { serverId: 'home-b', sessionId: 'same-session' }]
+                .find(candidate => candidate.serverId === context.serverId && candidate.sessionId === sessionId);
+            return authorized ? { kind: 'unique' as const, address: authorized } : { kind: 'none' as const };
+        } } satisfies Pick<ActionExecutorDeps, 'resolveSessionReference'>;
+        const sessionTargetsV1 = await resolveActionSessionTargets(transport, {
+            actionId: 'action.invoke', declaration, input: operand,
+            context: { surface: 'ui', authority: 'present_user', serverId: 'home-a' },
+        });
+        if (!sessionTargetsV1 || 'ok' in sessionTargetsV1) throw new PluginError({
+            code: sessionTargetsV1 && 'ok' in sessionTargetsV1 ? sessionTargetsV1.errorCode : 'session_target_unavailable',
+        });
+        address = ActionSessionAddressV1Schema.parse(sessionTargetsV1.targets[0]);
+        addresses.push(address);
+        const context = { ui: host, signal: new AbortController().signal,
+            sessionTargetsV1 } as unknown as PluginAccountActionContext;
+        try { return await createTriageRunConfiguredActionHandler()(input, context); }
+        catch (error) { boundaryErrors.push(error); throw error; }
+    };
+    const send = async (session?: ActionSessionAddressV1) => {
+        const prepared = await controller.getSnapshot().prepareAction({ ...request, destinationChoice: 'existingSession' },
+            { signal: new AbortController().signal }, session);
+        if (prepared?.input === undefined) return null;
+        const execution: PluginUiActionControlExecution = dispatchFailure ?? await dispatch(prepared.input)
+            .then(result => ({ ok: true as const, result }))
+            .catch((error: unknown) => {
+                if (!(error instanceof PluginError)) throw error;
+                return { ok: false as const, errorCode: error.code, error: error.message };
+            });
+        controller.getSnapshot().settleAction(projectPluginActionControlExecutionV1(execution, (_key, fallback) => fallback ?? 'Action failed'));
+        return execution.ok ? controller.getSnapshot().configuredResult : null;
+    };
+    return { controller, request, send, operands, addresses, sends, edits, unexpected, boundaryErrors, setAddress: (value: ActionSessionAddressV1) => { address = value; } };
 }
 
 describe('entry existing Session handoff', () => {
     it('does not describe a known pre-handler refusal as an uncertain handoff', async () => {
-        const f = fixture('send', false, false, createPluginActionHandlerUnavailableFixture());
-        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-a', sessionId: 'same-session' });
+        const missing = createPluginActionHandlerUnavailableFixture();
+        const f = fixture('send', false, false, { ok: false, errorCode: missing.code, error: missing.message, effectAttempted: false });
+        await f.send({ serverId: 'home-a', sessionId: 'same-session' });
         expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable', reason: 'dispatch',
             failure: { codes: ['plugin_action_handler_missing'] } });
         expect(f.sends).toEqual([]);
     });
     it('retains the dispatch refusal and request identity for the existing failure presenter', async () => {
-        const f = fixture('send', false, false, new PluginError({ code: 'target_unavailable',
-            diagnostics: [{ code: 'daemon_forward_not_ok' }], details: { requestId: 'send-request' } }));
-        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-a', sessionId: 'same-session' });
+        const f = fixture('send', false, false, { ok: false, errorCode: 'target_unavailable',
+            error: 'Recipient unavailable', requestId: 'send-request', effectAttempted: false });
+        await f.send({ serverId: 'home-a', sessionId: 'same-session' });
         expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable',
-            failure: { codes: ['target_unavailable', 'daemon_forward_not_ok'], requestId: 'send-request' } });
+            failure: { codes: ['target_unavailable'], requestId: 'send-request' } });
         expect(f.sends).toEqual([]);
+    });
+
+    it('leaves the Session untouched when the host confirmation is declined', async () => {
+        const f = fixture('send', false, false, { ok: false, errorCode: 'plugin_action_current_intent_rejected',
+            error: 'Declined', effectAttempted: false });
+        await f.send({ serverId: 'home-a', sessionId: 'same-session' });
+        expect(f.controller.getSnapshot().phase).toEqual({ kind: 'idle' });
+        expect(f.sends).toEqual([]);
+        expect(f.edits).toEqual([]);
     });
 
     it('keeps equal Session ids on two Homes distinct and returns native receipts', async () => {
         const f = fixture();
         for (const serverId of ['home-a', 'home-b']) {
             const session = { serverId, sessionId: 'same-session' };
-            const result = await f.controller.getSnapshot().startInSession(f.request, session);
+            const result = await f.send(session);
             expect(f.boundaryErrors).toEqual([]);
             expect(result).toMatchObject({
                 handoff: { kind: 'sendResult', session, result: { status: 'accepted', localId: 'native-receipt' } },
@@ -143,7 +162,7 @@ describe('entry existing Session handoff', () => {
 
     it('refuses an existing Session outside the authorized corpus before the configured handler sends', async () => {
         const f = fixture();
-        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'unavailable-home', sessionId: 'same-session' });
+        await f.send({ serverId: 'unavailable-home', sessionId: 'same-session' });
         expect(f.controller.getSnapshot().phase).toMatchObject({ kind: 'unavailable',
             failure: { codes: ['session_target_unavailable'] } });
         expect(f.sends).toEqual([]);
@@ -154,13 +173,13 @@ describe('entry existing Session handoff', () => {
         const f = fixture('compose');
         const session = { serverId: 'home-b', sessionId: 'same-session' };
         f.setAddress(session);
-        f.controller.getSnapshot().start({ ...f.request, destinationChoice: 'existingSession' });
-        const settled = await f.controller.waitForSettled();
+        await f.send();
+        const settled = f.controller.getSnapshot();
         expect(settled.phase).toMatchObject({ kind: 'handoffSettled', result: {
             handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' },
         } });
         expect(f.operands[0]?.handoff).toMatchObject({ task: 'investigate', delivery: 'send',
-            agentChoice: { kind: 'configured' }, sessionChoice: { kind: 'existing', session: session.sessionId } });
+            agentChoice: { kind: 'configured' }, sessionChoice: { kind: 'existing', session: { selector: 'sessions', addresses: [session] } } });
         expect(f.addresses).toEqual([session]);
         expect(f.edits).toEqual([]);
         expect(f.sends).toEqual([]);
@@ -169,7 +188,7 @@ describe('entry existing Session handoff', () => {
 
     it('retains a configured Send refusal code for the host presenter', async () => {
         const f = fixture('send', true);
-        const result = await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-b', sessionId: 'same-session' });
+        const result = await f.send({ serverId: 'home-b', sessionId: 'same-session' });
         expect(result?.handoff).toMatchObject({ kind: 'sendResult', result: { status: 'rejected', code: 'session_input_target_update_required' } });
         expect(describeTriageEntrySessionPhaseV1(f.controller.getSnapshot().phase))
             .toMatchObject({ tone: 'warning', failureCode: 'session_input_target_update_required' });
@@ -185,13 +204,26 @@ describe('entry existing Session handoff', () => {
         expect(notice).not.toHaveProperty('failureCode');
     });
 
+    it('says it is sending to the picked Session, never that it starts one (N13)', async () => {
+        const f = fixture();
+        const session = { serverId: 'home-b', sessionId: 'same-session' };
+        await f.controller.getSnapshot().prepareAction({ ...f.request, destinationChoice: 'existingSession' },
+            { signal: new AbortController().signal }, session);
+        const phase = f.controller.getSnapshot().phase;
+        expect(phase).toMatchObject({ kind: 'starting', session });
+        expect(describeTriageEntrySessionPhaseV1(phase, { sessionName: 'Checkout fix' })?.label).toBe('Sending to Checkout fix…');
+        expect(describeTriageEntrySessionPhaseV1(phase)?.label).toBe('Sending to the selected Session…');
+        // A new Session's start keeps its own words.
+        expect(describeTriageEntrySessionPhaseV1({ kind: 'starting' })?.label).toBe('Starting a session for this entry…');
+    });
+
     it('echoes canonical recovery after an uncertain send instead of minting a second delivery', async () => {
         const f = fixture('send', false, true);
         const session = { serverId: 'home-b', sessionId: 'same-session' };
-        const first = await f.controller.getSnapshot().startInSession(f.request, session);
+        const first = await f.send(session);
         expect(first?.handoff).toMatchObject({ kind: 'uncertain', phase: 'send', session });
         expect(describeTriageEntrySessionPhaseV1(f.controller.getSnapshot().phase)?.tone).toBe('warning');
-        expect((await f.controller.getSnapshot().startInSession(f.request, session))?.handoff)
+        expect((await f.send(session))?.handoff)
             .toMatchObject({ kind: 'sendResult', result: { status: 'accepted' } });
         expect(f.operands[1]?.resumeStart).toEqual(first?.recovery);
         expect(f.sends[1]?.input).toEqual(f.sends[0]?.input);
@@ -199,9 +231,9 @@ describe('entry existing Session handoff', () => {
 
     it('does not reuse uncertain recovery for an equal Session id on another Home', async () => {
         const f = fixture('send', false, true);
-        await f.controller.getSnapshot().startInSession(f.request, { serverId: 'home-a', sessionId: 'same-session' });
+        await f.send({ serverId: 'home-a', sessionId: 'same-session' });
         const session = { serverId: 'home-b', sessionId: 'same-session' };
-        expect((await f.controller.getSnapshot().startInSession(f.request, session))?.handoff)
+        expect((await f.send(session))?.handoff)
             .toMatchObject({ kind: 'sendResult', session, result: { status: 'accepted' } });
         expect(f.operands[1]?.resumeStart).toBeUndefined();
     });
