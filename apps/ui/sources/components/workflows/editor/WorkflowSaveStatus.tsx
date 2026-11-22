@@ -34,6 +34,7 @@ export type WorkflowSaveStatusState =
     | Readonly<{ kind: 'notSaved' }>
     | Readonly<{ kind: 'unsaved' }>
     | Readonly<{ kind: 'saving' }>
+    | Readonly<{ kind: 'checkingAutomations'; onCancel: () => void }>
     /** `savedAtMs` is when this editor saved it; `null` when the time is not known (an opened revision). */
     /** `discarded`: the saved version is back because edits were just discarded, and Undo can restore them. */
     | Readonly<{ kind: 'saved'; savedAtMs: number | null; byAgent?: boolean; discarded?: boolean }>
@@ -317,6 +318,7 @@ export function WorkflowSaveStatus(props: Readonly<{
     switch (state.kind) {
         case 'notSaved': statusText = t('workflows.page.saveStatus.notSaved'); break;
         case 'unsaved': statusText = t('workflows.page.saveStatus.unsaved'); break;
+        case 'checkingAutomations': statusText = t('workflows.triggers.checks.checking'); break;
         case 'saving': statusText = t('workflows.page.saveStatus.saving'); break;
         case 'failed': statusText = t('workflows.page.saveStatus.failed'); break;
         case 'saved':
@@ -339,10 +341,17 @@ export function WorkflowSaveStatus(props: Readonly<{
                     testID={`${testIDPrefix}-save-status-text`}
                     style={styles.status}
                     accessibilityLiveRegion="polite"
-                    {...(state.kind === 'saving' ? { accessibilityState: { busy: true } } : {})}
+                    {...(state.kind === 'saving' || state.kind === 'checkingAutomations' ? { accessibilityState: { busy: true } } : {})}
                 >
                     {statusText}
                 </Text>
+                {state.kind === 'checkingAutomations' ? (
+                    <StatusAction
+                        testID={`${testIDPrefix}-save-cancel`}
+                        label={t('common.cancel')}
+                        onPress={state.onCancel}
+                    />
+                ) : null}
                 {state.kind === 'unsaved' && props.onSave !== undefined ? (
                     <StatusAction
                         testID={`${testIDPrefix}-save`}

@@ -28,6 +28,9 @@ import { WorkflowActionError } from './workflowActionError';
  * remain owned there.
  */
 
+/** Progress and cancellation owned by an in-process Workflow operation. */
+export type WorkflowActionOperation = Pick<ActionExecutorContext, 'signal' | 'operationProgress'>;
+
 export type WorkflowActionExecute = ReturnType<typeof createFrontDoorActionExecute>;
 type WorkflowChildActionExecute = (...args: Parameters<WorkflowActionExecute>) => ReturnType<WorkflowActionExecute>;
 /** Caller facts retained across a mounted operation's child Actions, without parent consent. */
@@ -57,7 +60,6 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     input: unknown;
     /** The canonical result schema's parse, so a malformed reply fails closed. */
     parseResult: (value: unknown) => TResult;
-    signal?: AbortSignal;
     /** Host-owned target facts; never merged into caller-authored Action input. */
     context?: Omit<ActionExecutorContext, 'signal'> & Pick<WorkflowActionCallerContext, 'executeChildAction'>;
     /** Routed fields use their captured Home binding; undefined preserves incumbent workflow scope. */
@@ -66,7 +68,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
     execute?: WorkflowActionExecute;
     /** Used only for the fallback message when the owner returned none. */
     fallbackMessage?: string;
-}>): Promise<TResult> {
+}> & WorkflowActionOperation): Promise<TResult> {
     const activeLifetime = params.accountLifetime === undefined
         ? params.execute ? null : captureActiveServerAccountScopeLifetime() : params.accountLifetime;
     if (params.accountLifetime !== undefined && !activeLifetime?.isCurrent()) {
@@ -91,6 +93,7 @@ export async function callWorkflowAction<TResult>(params: Readonly<{
         // identity or consent. Native UI callers retain the front door's id owner.
         ...(params.context && 'surface' in params.context ? { actionRequestId: randomUUID() } : {}),
         ...(params.signal === undefined ? {} : { signal: params.signal }),
+        ...(params.operationProgress === undefined ? {} : { operationProgress: params.operationProgress }),
     });
     if (activeLifetime && !activeLifetime.isCurrent()) {
         throw new WorkflowActionError({ message: 'action_account_scope_changed', rawCode: 'action_account_scope_changed' });

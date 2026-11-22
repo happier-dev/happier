@@ -851,6 +851,8 @@ export type ActionExecutorContext = Readonly<{
   }>) => void;
   /** Existing operation-owner sinks, strictly in-process and never Action input. */
   operationProgress?: Readonly<{
+    /** The invocation is waiting on the shared Action automation index seed. */
+    automationIndexPending?(pending: boolean): void;
     update(progress: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;
       approval?: ActionApprovalRequestCreatedResult; steps?: readonly ActionOperationProgressStepV1[] }>): void;
   }>;

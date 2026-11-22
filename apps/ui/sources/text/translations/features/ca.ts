@@ -20075,6 +20075,7 @@ const ca: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} superat`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} omès · es tornarà a preguntar`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} omès`,
+        checking: "S’estan comprovant les automatitzacions…",
         notChecked: "No s’han pogut comprovar les automatitzacions.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `S’ha omès ${workflow} · necessita una màquina per executar-se`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `S’ha omès ${workflow} · ${name} no ho ha permès en aquesta màquina`,

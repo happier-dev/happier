@@ -885,7 +885,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
 } }), includeSavedArtifact = true, serverIdentityId?: string, settings?: Readonly<Record<string, unknown>>, accountMode: 'plain' | 'e2ee' = 'plain',
     triggerEvents: readonly Readonly<{ event: { pluginId: string; localId: string }; payloadSchema: PluginJsonSchemaV2 }>[] = [],
     sourceRuns: readonly ReturnType<typeof createWorkflowRunSummaryFixture>[] = [],
-    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable') {
+    actionIndex?: ReturnType<typeof ActionAutomationIndexV1Schema.parse> | 'unavailable' | (() => Promise<Response>)) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
@@ -943,7 +943,10 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
         if (memoryResponse) return memoryResponse;
         const sessionResponse = await sessionBoundary.handle(request);
         if (sessionResponse) return sessionResponse;
-        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && actionIndex) {
+        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && typeof actionIndex === 'function' && request.method === 'GET') {
+            return await actionIndex();
+        }
+        if (request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 && actionIndex && typeof actionIndex !== 'function') {
             return actionIndex === 'unavailable'
                 ? Response.json({ error: 'temporarily_unavailable' }, { status: 503 })
                 : Response.json(actionIndex);
@@ -1295,6 +1298,49 @@ describe('WorkflowEditorHostScreen composition', () => {
         await saveDirectlyFromUi();
         expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
         expect(boundary.automationCreates).toMatchObject([{ triggers: [{ trigger: { eventRef, sourceInstanceId: 'machine-online' } }] }]);
+    });
+
+    it('shows Checking and lets the person cancel a mounted Save while its automation index seed is held', async () => {
+        const seed = createDeferred<Response>();
+        const boundary = await serveMountedDraftActionHome(undefined, true, 'srv_workflow-index-held', undefined, 'plain', [], [], () => seed.promise);
+        const screen = await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
+        await act(async () => { readBodyProps()!.onChange({ ...readBodyProps()!.draftStore.get(), name: 'Keep this draft after Cancel' }); });
+        const seedRequests = () => boundary.requests.filter(request => request.method === 'GET' && request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1);
+        try {
+            await screen.pressByTestIdAsync('workflow-editor-save');
+            await vi.waitFor(() => expect(seedRequests()).toHaveLength(1));
+            expect(boundary.updates).toHaveLength(0);
+            expect(screen.findByTestId('workflow-editor-save-cancel')).not.toBeNull();
+            expect(screen.findByTestId('workflow-editor-save-status-text')?.props.children).toBe(t('workflows.triggers.checks.checking'));
+
+            await screen.pressByTestIdAsync('workflow-editor-save-cancel');
+            await vi.waitFor(() => expect(readBodyProps()!.savePending).toBe(false));
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'unsaved' });
+            expect(readBodyProps()!.draftStore.get().name).toBe('Keep this draft after Cancel');
+            expect(boundary.updates).toHaveLength(0);
+            expect(screen.findByTestId('workflow-editor-save-cancel')).toBeNull();
+            expect(readAlert()).toBeUndefined();
+
+            const update = boundary.holdNextUpdate();
+            try {
+                await screen.pressByTestIdAsync('workflow-editor-save');
+                expect(screen.findByTestId('workflow-editor-save-cancel')).not.toBeNull();
+                await act(async () => {
+                    seed.resolve(Response.json({ v: 1, rows: [] }));
+                });
+                await vi.waitFor(() => expect(boundary.updates).toHaveLength(1));
+                expect(screen.findByTestId('workflow-editor-save-cancel')).toBeNull();
+                expect(readBodyProps()!.savePending).toBe(true);
+                expect(seedRequests()).toHaveLength(1);
+            } finally {
+                update.resolve();
+            }
+            await vi.waitFor(() => expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' }));
+            expect(boundary.updates).toHaveLength(1);
+            expect(readAlert()).toBeUndefined();
+        } finally {
+            seed.resolve(Response.json({ v: 1, rows: [] }));
+        }
     });
 
     it('shows the Action warning after a mounted Save proceeds with a failed automation index', async () => {

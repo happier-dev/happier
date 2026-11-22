@@ -68,7 +68,7 @@ import type { WorkflowStarterSessionTarget } from '@happier-dev/protocol/workflo
 import { applyWorkflowDefinitionEditsV1, countWorkflowStepsV1, setWorkflowDefaultField, setWorkflowStepExecutionField, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { WorkflowDraftEditInputV1Schema, WorkflowMountedDraftV1Schema, type WorkflowDraftEditInputV1, type WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import type { WorkflowMountedDraftActions } from '@/sync/ops/actions/workflowAuthoringAction';
-import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import { resolveWorkflowStarter } from '@/sync/domains/workflows/resolveWorkflowStarter';
 import { EMPTY_WORKFLOW_ANNOUNCEMENT_STATE, selectWorkflowAnnouncement } from '../accessibility/workflowAnnouncementSelection';
 import { formatWorkflowAnnouncement } from '../accessibility/useWorkflowAnnouncements';
@@ -555,6 +555,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const [planPending, setPlanPending] = React.useState(false);
     const planPendingRef = React.useRef(false);
     const [savePending, setSavePending] = React.useState(false);
+    const [cancelAutomationCheck, setCancelAutomationCheck] = React.useState<(() => void) | null>(null);
     // A failed create may already be committed. Save and a deliberate Copy are
     // distinct intents; each retries its original id and content until readback.
     const pendingDefinitionCreatesRef = React.useRef<{ save: PendingWorkflowDefinitionCreate | null; copy: PendingWorkflowDefinitionCreate | null }>({ save: null, copy: null });
@@ -717,6 +718,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         setDescription(nextDescription);
         savedDescriptionRef.current = nextDescription;
         setSavePending(false);
+        setCancelAutomationCheck(null);
         pendingDefinitionCreatesRef.current = { save: null, copy: null };
         setDeletePending(false);
         deleteAbortRef.current?.abort();
@@ -1188,6 +1190,21 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // editor moved to another source must not stamp that source's revision.
         let sourceIsCurrent = captureSourceGeneration();
         const isCurrent = () => lifetime.isCurrent() && sourceIsCurrent();
+        // Agent saves retain their admitted caller. A native Save owns Cancel only
+        // while its Action is waiting on the shared seed, before any current effect.
+        const abort = caller === undefined ? new AbortController() : null;
+        let checking = false;
+        const cancel = () => { if (checking && isCurrent()) abort?.abort(); };
+        const operation: WorkflowActionOperation | undefined = abort === null ? undefined : {
+            signal: abort.signal,
+            operationProgress: {
+                update() {},
+                automationIndexPending(pending) {
+                    checking = pending;
+                    if (isCurrent()) setCancelAutomationCheck(pending ? () => cancel : null);
+                },
+            },
+        };
         setSavePending(true);
         setSaveFailure(undefined);
         return (async (): Promise<WorkflowDraftMutationResultV1> => {
@@ -1200,7 +1217,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                         saved: persisted, baseline: { draft: savedDraftRef.current ?? initialDraftBaselineRef.current, description: savedDescriptionRef.current },
                         pendingCreate: pendingDefinitionCreatesRef.current[createIntent],
                         retainCreate: (pending) => { pendingDefinitionCreatesRef.current[createIntent] = pending; },
-                        copying, accountLifetime: lifetime, ...(caller === undefined ? {} : { caller }), isCurrent,
+                        copying, accountLifetime: lifetime, ...(caller === undefined ? {} : { caller }),
+                        ...(operation === undefined ? {} : { operation }), isCurrent,
                         acknowledge: (result, acceptedDraft, acceptedDescription, kind) => {
                             savedDraftRef.current = acceptedDraft;
                             savedDescriptionRef.current = acceptedDescription;
@@ -1243,20 +1261,22 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 if (copying) return { status: 'applied' };
                 // Then the trigger delta; a failure here reads "Workflow saved · Triggers not
                 // updated" and keeps the pending trigger edits for Try again (07 S4).
-                const triggerOutcome = await triggers.save(persisted.definitionId, isCurrent, caller);
+                const triggerOutcome = await triggers.save(persisted.definitionId, isCurrent, caller, operation);
                 if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                if (abort?.signal.aborted) return { status: 'refused', reason: 'cancelled' };
                 if (typeof triggerOutcome === 'object') setSaveFailure(triggerOutcome.message);
                 // Save as workflow: point the originating trigger at this workflow (04 §5.4). Until
                 // that write lands the trigger keeps its own steps and the status says so.
                 const retarget = pendingRetargetRef.current;
                 if (retarget !== null && isCurrent()) {
                     try {
-                        await retargetTriggerToWorkflow(retarget, persisted.definitionId, caller, accountLifetime);
+                        await retargetTriggerToWorkflow(retarget, persisted.definitionId, caller, accountLifetime, operation);
                         if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
                         pendingRetargetRef.current = null;
                         setRetargetFailed(false);
                     } catch {
                         if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                        if (abort?.signal.aborted) return { status: 'refused', reason: 'cancelled' };
                         setRetargetFailed(true);
                         setSaveFailure(t('workflows.triggers.editor.retargetFailed'));
                         return { status: 'refused', reason: 'trigger_retarget_failed' };
@@ -1268,6 +1288,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 return typeof triggerOutcome === 'object' ? { status: 'refused', reason: 'trigger_save_failed' } : { status: 'applied' };
             } catch (error) {
                 if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                if (abort?.signal.aborted) return { status: 'refused', reason: 'cancelled' };
                 // A concurrent save keeps the local document and says so; it is
                 // never resolved by last-writer-wins or a silent merge.
                 if (isWorkflowDefinitionConflictError(error) && persisted !== null && pendingDefinitionCreatesRef.current.copy === null) {
@@ -1298,7 +1319,10 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 if (asCopy) await Modal.alert(t('workflows.save.failedTitle'), failure);
                 return { status: 'refused', reason: error instanceof WorkflowActionError && error.code ? error.code : 'save_failed' };
             } finally {
-                if (isCurrent()) setSavePending(false);
+                if (isCurrent()) {
+                    setCancelAutomationCheck(null);
+                    setSavePending(false);
+                }
             }
         })();
     }, [accountLifetime, canEditDefinition, canManagePersonalTriggers, captureSourceGeneration, definitionDraftDirty, descriptionDraftDirty, description, saved, savePending, sourceKind, triggers, rememberAuthoringMemory, rememberedProject]);
@@ -1584,6 +1608,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
     const draftIsEmpty = useWorkflowEditorSelector(draftStore, (value) => value === null || (description.trim().length === 0
         && workflowEditorSnapshotsEqual(value, createWorkflowEditorDraft({ draftId: value.draftId, defaults: value.defaults }))));
     const saveStatus = React.useMemo((): WorkflowSaveStatusState => {
+        if (cancelAutomationCheck !== null) return { kind: 'checkingAutomations', onCancel: cancelAutomationCheck };
         if (savePending) return { kind: 'saving' };
         if (saveFailure !== undefined && routeDraftDirty) return { kind: 'failed', reason: saveFailure };
         if (routeDraftDirty) return { kind: 'unsaved' };
@@ -1592,7 +1617,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         // status says the edits went (DESIGN-9 N44) so the Undo beside it is plainly the way back.
         const discarded = discardUndoLabel !== null && discardUndoLabel === t('common.discardChanges');
         return { kind: 'saved', savedAtMs, ...(savedByAgent ? { byAgent: true } : {}), ...(discarded ? { discarded: true } : {}) };
-    }, [discardUndoLabel, draftIsEmpty, routeDraftDirty, saveFailure, savePending, saved, savedAtMs, savedByAgent]);
+    }, [cancelAutomationCheck, discardUndoLabel, draftIsEmpty, routeDraftDirty, saveFailure, savePending, saved, savedAtMs, savedByAgent]);
 
     const requestPageSave = React.useCallback(async (): Promise<boolean> => {
         editorCommandsRef.current?.save();

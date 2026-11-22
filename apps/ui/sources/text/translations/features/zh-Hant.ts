@@ -19936,6 +19936,7 @@ const zhHant: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} 已通過`,
         skipped: ({ workflow }: { workflow: string }) => `已略過 ${workflow} · 下次會再詢問`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `已略過 ${workflow}`,
+        checking: "正在檢查自動化…",
         notChecked: "無法檢查自動化。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `已略過 ${workflow} · 需要一台機器才能執行`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `已略過 ${workflow} · ${name} 尚未在這台機器上允許它`,

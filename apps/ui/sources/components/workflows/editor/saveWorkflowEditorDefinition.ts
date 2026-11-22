@@ -2,7 +2,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import { createWorkflowDefinition, updateWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import type { WorkflowEditorDraft } from '@/sync/domains/workflows/workflowEditorDraft';
 import { workflowEditorSnapshotsEqual } from './useWorkflowEditorHistory';
@@ -27,6 +27,7 @@ export async function saveWorkflowEditorDefinition(params: Readonly<{
     copying?: boolean;
     accountLifetime: ServerAccountScopeLifetime;
     caller?: WorkflowActionCallerContext;
+    operation?: WorkflowActionOperation;
     isCurrent: () => boolean;
     acknowledge: (result: Awaited<ReturnType<typeof createWorkflowDefinition>>, draft: WorkflowEditorDraft,
         description: string, kind: 'created' | 'updated') => void;
@@ -37,7 +38,7 @@ export async function saveWorkflowEditorDefinition(params: Readonly<{
         ...(trimmedDescription.length === 0 ? {} : { description: trimmedDescription }),
         ...(draft.captureProvenance === undefined ? {} : { captureProvenance: draft.captureProvenance }) };
     const intended = params.intendedTriggers === undefined ? {} : { intendedTriggers: params.intendedTriggers };
-    const options = { accountLifetime, ...(caller === undefined ? {} : { context: caller, signal: caller.signal }) };
+    const options = { accountLifetime, ...(caller === undefined ? {} : { context: caller, signal: caller.signal }), ...params.operation };
     let saved = params.saved;
     let baseline = params.baseline;
     if (params.copying || saved === null || params.pendingCreate !== null) {

@@ -294,15 +294,20 @@ export function createActionAutomationPortV1(options: Readonly<{
     let refusal = state === 'unavailable' ? failureReason : undefined;
     if (state === 'unloaded' || state === 'loading') {
       progress?.update({ label: 'Checking automations…' });
-      const pending = load();
-      if (signal) {
-        refusal = await new Promise<string | undefined>((resolve, reject) => {
-          const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
-          signal.addEventListener('abort', abort, { once: true });
-          pending.then(reason => { signal.removeEventListener('abort', abort); resolve(reason); }, reject);
-          if (signal.aborted) abort();
-        });
-      } else refusal = await pending;
+      progress?.automationIndexPending?.(true);
+      try {
+        const pending = load();
+        if (signal) {
+          refusal = await new Promise<string | undefined>((resolve, reject) => {
+            const abort = () => { signal.removeEventListener('abort', abort); reject(signal.reason); };
+            signal.addEventListener('abort', abort, { once: true });
+            pending.then(reason => { signal.removeEventListener('abort', abort); resolve(reason); }, reject);
+            if (signal.aborted) abort();
+          });
+        } else refusal = await pending;
+      } finally {
+        progress?.automationIndexPending?.(false);
+      }
     }
     signal?.throwIfAborted();
     return refusal;

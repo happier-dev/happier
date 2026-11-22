@@ -20085,6 +20085,7 @@ const pl: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} zaliczony`,
         skipped: ({ workflow }: { workflow: string }) => `Pominięto ${workflow} · zapytamy następnym razem`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `Pominięto ${workflow}`,
+        checking: "Sprawdzanie automatyzacji…",
         notChecked: "Nie udało się sprawdzić automatyzacji.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `Pominięto ${workflow} · do uruchomienia potrzebna jest maszyna`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `Pominięto ${workflow} · ${name} nie zezwolił(a) na to na tej maszynie`,

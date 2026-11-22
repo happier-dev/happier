@@ -4,7 +4,7 @@ import type { WorkflowIntendedTriggerV1 } from '@happier-dev/protocol/workflows/
 import type { WorkflowArtifactRevisionV1, WorkflowDefinitionMetadataV1 } from '@happier-dev/protocol/workflows/workflowDefinitionV1';
 
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
-import { callWorkflowAction, type WorkflowActionCallerContext } from './callWorkflowAction';
+import { callWorkflowAction, type WorkflowActionCallerContext, type WorkflowActionOperation } from './callWorkflowAction';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { WorkflowDefinitionExportResultV1Schema, type WorkflowDefinitionExportResultV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -54,12 +54,11 @@ async function callDefinitionAction<TResult>(params: Readonly<{
     actionId: ActionId;
     input: unknown;
     parseResult: (value: unknown) => TResult;
-    signal?: AbortSignal;
     deletedArtifactId?: string;
     deletedArtifactTitle?: string;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
-}>): Promise<TResult> {
+}> & WorkflowActionOperation): Promise<TResult> {
     const lifetime = params.accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : params.accountLifetime;
     const result = await callWorkflowAction({
         ...params,
@@ -135,10 +134,9 @@ export async function createWorkflowDefinition(params: Readonly<{
     definition: unknown;
     metadata: WorkflowDefinitionMetadataV1;
     intendedTriggers?: readonly WorkflowIntendedTriggerV1[];
-    signal?: AbortSignal;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
-}>): Promise<WorkflowDefinitionCreateResultV1> {
+}> & WorkflowActionOperation): Promise<WorkflowDefinitionCreateResultV1> {
     const input = WorkflowDefinitionCreateRequestV1Schema.parse({
         definitionId: params.definitionId,
         definition: params.definition,
@@ -152,6 +150,7 @@ export async function createWorkflowDefinition(params: Readonly<{
         ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...(params.context === undefined ? {} : { context: params.context }),
         ...signalOption(params.signal),
+        ...(params.operationProgress === undefined ? {} : { operationProgress: params.operationProgress }),
     });
 }
 
@@ -168,10 +167,9 @@ export async function updateWorkflowDefinition(params: Readonly<{
     definition: unknown;
     metadata: WorkflowDefinitionMetadataV1;
     intendedTriggers?: readonly WorkflowIntendedTriggerV1[];
-    signal?: AbortSignal;
     context?: WorkflowActionCallerContext;
     accountLifetime?: ServerAccountScopeLifetime | null;
-}>): Promise<WorkflowDefinitionUpdateResultV1> {
+}> & WorkflowActionOperation): Promise<WorkflowDefinitionUpdateResultV1> {
     const input = WorkflowDefinitionUpdateRequestV1Schema.parse({
         definitionId: params.definitionId,
         expectedRevision: params.expectedRevision,
@@ -186,6 +184,7 @@ export async function updateWorkflowDefinition(params: Readonly<{
         ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }),
         ...(params.context === undefined ? {} : { context: params.context }),
         ...signalOption(params.signal),
+        ...(params.operationProgress === undefined ? {} : { operationProgress: params.operationProgress }),
     });
 }
 

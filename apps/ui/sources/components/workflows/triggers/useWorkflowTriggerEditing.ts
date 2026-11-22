@@ -35,7 +35,7 @@ import {
     type WorkflowTriggerWriter,
 } from './workflowTriggerDraft';
 import { useWorkflowTriggerSets } from './useWorkflowTriggerSets';
-import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { matchesWorkflowTriggerQuery, workflowTriggerQueryKey } from '@/sync/domains/workflows/workflowTriggerQuery';
 
@@ -76,7 +76,7 @@ export type WorkflowTriggerEditing = Readonly<{
      * `failed` keeps exactly the edits that were not applied.
      */
     /** A failed Save says why (F11): its message names the cause through the workflow problem owner. */
-    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext) => Promise<'saved' | 'stale' | WorkflowTriggerSaveFailure>;
+    save: (workflow: string, isCurrent: () => boolean, caller?: WorkflowActionCallerContext, operation?: WorkflowActionOperation) => Promise<'saved' | 'stale' | WorkflowTriggerSaveFailure>;
 }>;
 
 /**
@@ -183,7 +183,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
     const identitiesRef = React.useRef({ rowIdentities, identify });
     identitiesRef.current = { rowIdentities, identify };
 
-    const save = React.useCallback<WorkflowTriggerEditing['save']>(async (workflow, isCurrent, caller) => {
+    const save = React.useCallback<WorkflowTriggerEditing['save']>(async (workflow, isCurrent, caller, operation) => {
         const captured = stateRef.current;
         const capturedIdentities = identitiesRef.current;
         const lifetime = params.accountLifetime === undefined ? captureActiveServerAccountScopeCurrentness() : params.accountLifetime;
@@ -195,7 +195,7 @@ export function useWorkflowTriggerEditing(params: Readonly<{
         pendingSave.current = pending;
         // Bind this invocation's admitted caller to the existing trigger writer.
         // Parent approval/confirmation is absent; each child Action owns its policy.
-        const options = { ...(caller === undefined ? {} : { context: caller, signal: caller.signal }),
+        const options = { ...(caller === undefined ? {} : { context: caller, signal: caller.signal }), ...operation,
             ...(params.accountLifetime === undefined ? {} : { accountLifetime: params.accountLifetime }) };
         const writer: WorkflowTriggerWriter = {
             add: (request) => addWorkflowTrigger(request, options),

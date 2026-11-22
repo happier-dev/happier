@@ -19936,6 +19936,7 @@ const zhHans: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} 已通过`,
         skipped: ({ workflow }: { workflow: string }) => `已跳过 ${workflow} · 下次会再询问`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `已跳过 ${workflow}`,
+        checking: "正在检查自动化…",
         notChecked: "无法检查自动化。",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `已跳过 ${workflow} · 需要一台机器来运行`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `已跳过 ${workflow} · ${name} 尚未在这台机器上允许它`,

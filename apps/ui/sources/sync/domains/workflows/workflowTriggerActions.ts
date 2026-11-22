@@ -3,7 +3,7 @@ import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerListRequestV1Schema, 
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
-import { callWorkflowAction, type WorkflowActionExecute } from './callWorkflowAction';
+import { callWorkflowAction, type WorkflowActionExecute, type WorkflowActionOperation } from './callWorkflowAction';
 import { getStorage } from '@/sync/domains/state/storage';
 import { captureActiveServerAccountScopeCurrentness, captureActiveServerAccountScopeLifetime, getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
 import { WorkflowActionError } from './workflowActionError';
@@ -26,7 +26,6 @@ import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/e
 export type WorkflowTriggerWriteResult = Readonly<z.output<typeof WorkflowTriggerWriteResultV1Schema>>;
 
 type CallOptions = Readonly<{
-    signal?: AbortSignal;
     /** Routed details consume their addressed credential binding, independent of focused Home. */
     accountLifetime?: ServerAccountScopeLifetime | null;
     execute?: WorkflowActionExecute;
@@ -35,7 +34,7 @@ type CallOptions = Readonly<{
     /** The captured list observation still owns publication after awaiting its transport. */
     isTriggerListCurrent?: () => boolean;
     focusedAccountRead?: ReturnType<AutomationsDomain['beginFocusedAccountTriggerRead']>;
-}>;
+}> & WorkflowActionOperation;
 
 type TriggerListPublication = { current: boolean };
 /** Publication fences only; each Action is admitted independently and the HTTP owner shares bytes. */
@@ -89,6 +88,7 @@ async function callTriggerAction<TResult>(
         fallbackMessage: 'Workflow trigger request failed',
         ...(options.accountLifetime === undefined ? {} : { accountLifetime: options.accountLifetime }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.operationProgress === undefined ? {} : { operationProgress: options.operationProgress }),
         ...(options.execute === undefined ? {} : { execute: options.execute }),
         ...(options.context === undefined ? {} : { context: options.context }),
     });

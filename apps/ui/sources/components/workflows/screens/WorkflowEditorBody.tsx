@@ -1418,7 +1418,8 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
         <WorkflowEditorSaveStatus
             draftStore={draftStore}
             readout={readinessNode}
-            state={props.saveConflict ? { kind: 'conflict', conflict: props.saveConflict } : (props.saveStatus ?? { kind: 'notSaved' })}
+            state={props.saveConflict && props.saveStatus?.kind !== 'checkingAutomations'
+                ? { kind: 'conflict', conflict: props.saveConflict } : (props.saveStatus ?? { kind: 'notSaved' })}
             {...(onSave === undefined ? {} : { onSave: submitSave })}
             {...(props.history === undefined ? {} : { onUndo: props.history.undo })}
             onSaveAsCopy={props.onSaveAsCopy ?? (() => {})}

@@ -20061,6 +20061,7 @@ const it: WorkflowTriggersCopy = {
         passed: ({ workflow }: { workflow: string }) => `${workflow} superato`,
         skipped: ({ workflow }: { workflow: string }) => `${workflow} saltato · verrà richiesto di nuovo`,
         skippedUnavailable: ({ workflow }: { workflow: string }) => `${workflow} saltato`,
+        checking: "Verifica delle automazioni…",
         notChecked: "Non è stato possibile verificare le automazioni.",
         skippedNeedsMachine: ({ workflow }: { workflow: string }) => `${workflow} saltato · serve una macchina per eseguirlo`,
         skippedNotAllowedBy: ({ workflow, name }: { workflow: string; name: string }) => `${workflow} saltato · ${name} non l’ha consentito su questa macchina`,

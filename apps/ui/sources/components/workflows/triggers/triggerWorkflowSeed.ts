@@ -6,7 +6,7 @@ import {
 } from '@/sync/domains/workflows/workflowTriggerActions';
 import { readMachineControlTargetForSession } from '@/sync/ops/sessionMachineTarget';
 import { readWorkflowEditorDraftSeed, storeWorkflowEditorDraftSeed } from '@/sync/domains/workflows/workflowEditorDraftSeed';
-import type { WorkflowActionCallerContext } from '@/sync/domains/workflows/callWorkflowAction';
+import type { WorkflowActionCallerContext, WorkflowActionOperation } from '@/sync/domains/workflows/callWorkflowAction';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 /**
@@ -43,7 +43,7 @@ export function readTriggerWorkflowSeed(id: string, scope?: ServerAccountScope |
 
 /** Points the originating trigger at the saved workflow, through that trigger's own Action. */
 export async function retargetTriggerToWorkflow(retarget: TriggerRetarget, workflowRef: string,
-    caller?: WorkflowActionCallerContext, accountLifetime?: ServerAccountScopeLifetime | null): Promise<void> {
+    caller?: WorkflowActionCallerContext, accountLifetime?: ServerAccountScopeLifetime | null, operation?: WorkflowActionOperation): Promise<void> {
     const target = { kind: 'workflow', ref: workflowRef } as const;
     const machineId = retarget.scope === 'session' ? readMachineControlTargetForSession(retarget.sessionId)?.machineId : undefined;
     await updateWorkflowTrigger({
@@ -53,6 +53,7 @@ export async function retargetTriggerToWorkflow(retarget: TriggerRetarget, workf
         patch: { target },
     }, {
         ...(caller === undefined ? {} : { signal: caller.signal }),
+        ...operation,
         context: { ...caller, ...(machineId ? { externalActionTarget: { kind: 'machine', machineId } as const } : {}) },
         ...(accountLifetime === undefined ? {} : { accountLifetime }),
     });
