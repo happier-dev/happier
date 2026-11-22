@@ -362,7 +362,7 @@ import { basename, dirname } from 'node:path';
 import { syncBuiltinESMExports } from 'node:module';
 const readdirSync = fs.readdirSync;
 fs.readdirSync = function(path, ...args) {
-  if (basename(String(path)).startsWith('tsx-')) fs.writeFileSync(${JSON.stringify(indexed)}, 'indexed');
+  if (basename(String(path)).startsWith('tsx-')) fs.writeFileSync(${JSON.stringify(indexed)}, String(path));
   return readdirSync.call(this, path, ...args);
 };
 const readFileSync = fs.readFileSync;
@@ -375,13 +375,16 @@ syncBuiltinESMExports();
       const entry = join(cli, 'index.mjs');
       const value = join(cli, 'value.mts');
       await writeFile(entry, `await import(${JSON.stringify(pathToFileURL(join(common, 'registerSourceRuntime.mjs')).href)});
-console.log((await import('./value.mts')).Value.answer);`);
+const { tmpdir } = await import('node:os');
+console.log(JSON.stringify({ value: (await import('./value.mts')).Value.answer, temp: tmpdir() }));`);
       await writeFile(value, 'export enum Value { answer = 42 }');
       const run = async (args = ['actions', 'invoke', 'inbox.get']) => {
         const { stdout } = await promisify(execFile)(process.execPath, ['--import', observer, entry, ...args], {
           env: { ...process.env, NODE_OPTIONS: '', TSX_DISABLE_CACHE: '1', TMPDIR: fixture, TEMP: fixture, TMP: fixture },
         });
-        return stdout.trim();
+        const result = JSON.parse(stdout);
+        expect(result.temp).toBe(fixture);
+        return String(result.value);
       };
       expect(await run()).toBe('42');
       expect(existsSync(indexed), 'finite CLI must reuse tsx-owned disk transforms').toBe(true);
@@ -396,6 +399,18 @@ console.log((await import('./value.mts')).Value.answer);`);
         expect(await run(args)).toBe('43');
         expect(existsSync(indexed), 'daemon-hosted roles must not retain the shared index').toBe(false);
       }
+
+      await writeFile(join(fixture, '.happier-revision-tree-ref.json'), JSON.stringify({ revision: 'a'.repeat(40) }));
+      await rm(indexed, { force: true });
+      await rm(reused, { force: true });
+      expect(await run(['daemon', 'start-sync'])).toBe('43');
+      expect(existsSync(indexed), 'an immutable revision host must index its own cache').toBe(true);
+      const scopedTempDir = join(fixture, '.happier-tsx-cache');
+      expect(dirname(await readFile(indexed, 'utf8'))).toBe(scopedTempDir);
+      expect(existsSync(reused), 'a cold revision must not reuse the ambient cache').toBe(false);
+      expect(await run(['session-host'])).toBe('43');
+      expect(dirname(await readFile(indexed, 'utf8'))).toBe(scopedTempDir);
+      expect(existsSync(reused), 'the second host must read the revision transform').toBe(true);
     } finally {
       await rm(fixture, { recursive: true, force: true });
     }

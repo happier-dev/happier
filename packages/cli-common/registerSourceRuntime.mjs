@@ -1,5 +1,5 @@
 import * as nodeModule from 'node:module';
-import { existsSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,12 +18,24 @@ const entrypoint = process.argv[1] && existsSync(process.argv[1]) ? realpathSync
 const cliDir = join(repoDir, 'apps', 'cli');
 const isCliEntrypoint = ['src/index.ts', 'src/index.mjs', 'bin/happier.mjs', 'bin/happier-dev.mjs']
   .some(entry => entrypoint === join(cliDir, entry));
-const cacheTransforms = isCliEntrypoint && !(await import(
-  new URL('../../apps/cli/src/cli/readStartedByArg.mjs', import.meta.url)
-)).isDaemonHostedCliInvocation(process.argv.slice(2));
-// Controllers retain tsx's entire shared disk index for their lifetime. Keep
-// them process-local; finite CLI invocations reuse tsx's content-keyed transforms
-// under the same lifetime decision as the CLI's V8 compile cache.
+const isRevisionCli = isCliEntrypoint && existsSync(join(repoDir, '.happier-revision-tree-ref.json'));
+let revisionCacheRoot;
+if (isRevisionCli) {
+  const cacheRoot = join(repoDir, '.happier-tsx-cache');
+  try {
+    mkdirSync(cacheRoot, { mode: 0o700, recursive: true });
+    revisionCacheRoot = cacheRoot;
+  } catch (error) {
+    console.error(`[source-runtime] revision tsx cache unavailable (${error?.code ?? 'mkdir_failed'})`);
+  }
+}
+// tsx retains the index of its whole cache directory. Source revision trees
+// own their directory and its cleanup. Other hosts keep the CLI lifetime policy.
+const cacheTransforms = isRevisionCli
+  ? revisionCacheRoot !== undefined
+  : isCliEntrypoint && !(await import(
+      new URL('../../apps/cli/src/cli/readStartedByArg.mjs', import.meta.url)
+    )).isDaemonHostedCliInvocation(process.argv.slice(2));
 if (cacheTransforms) delete process.env.TSX_DISABLE_CACHE;
 else process.env.TSX_DISABLE_CACHE = '1';
 let tsconfig = process.env.TSX_TSCONFIG_PATH || undefined;
@@ -37,15 +49,25 @@ if (!tsconfig && process.argv[1] && existsSync(process.argv[1])) {
     directory = dirname(directory);
   }
 }
-// tsx snapshots this configuration for its ESM and CommonJS hooks. Do not
-// export an inferred default to children with a different entry and package.
-const inheritedTsconfig = process.env.TSX_TSCONFIG_PATH;
+// tsx snapshots its config and os.tmpdir() when the hooks load. Limit the
+// temporary directory override to that registration, keeping app temp IO local.
+const overrides = new Map();
+if (tsconfig) overrides.set('TSX_TSCONFIG_PATH', tsconfig);
+if (revisionCacheRoot) {
+  for (const key of ['TMPDIR', 'TMP', 'TEMP']) overrides.set(key, revisionCacheRoot);
+}
+const inheritedEnvironment = new Map();
 try {
-  if (tsconfig) process.env.TSX_TSCONFIG_PATH = tsconfig;
+  for (const [key, value] of overrides) {
+    inheritedEnvironment.set(key, process.env[key]);
+    process.env[key] = value;
+  }
   await import('tsx');
 } finally {
-  if (inheritedTsconfig === undefined) delete process.env.TSX_TSCONFIG_PATH;
-  else process.env.TSX_TSCONFIG_PATH = inheritedTsconfig;
+  for (const [key, value] of inheritedEnvironment) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
 }
 
 // Synchronous hooks run before asynchronous loaders. Register after tsx so

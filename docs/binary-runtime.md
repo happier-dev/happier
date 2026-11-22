@@ -1717,12 +1717,15 @@ Repository source tools run with the source condition and shared registration le
 
 The registration leaf loads the TypeScript adapter and registers the canonical
 workspace source resolver before the tool entry is linked. In current 0.3
-development it selects the cache before loading the adapter. Source tools and
-daemon-hosted CLI roles use tsx's in-process transforms, so long-lived controllers
-do not each enumerate and retain the shared disk-cache index. CLI entrypoints
-reuse tsx's content-keyed disk transforms under the CLI compile-cache lifetime
-policy; edits to source produce fresh transforms. This preserves ESM and CommonJS
-source loading without cache deletion or changes to installed runtime artifacts. Public/npm preparation
+development it selects the cache before loading the adapter. CLI entrypoints in
+Stack's immutable source revision trees reuse tsx's content-keyed transforms from
+a private directory inside that tree. The tree's existing retirement removes its
+cache, and only tsx registration uses the private temp directory. When that
+directory cannot be created, the CLI logs the failure and uses in-process
+transforms. In ordinary checkouts, the existing CLI lifetime policy controls
+shared disk reuse. Source tools and the daemon-hosted roles detected by that
+policy use in-process transforms. Installed runtime artifacts use built
+JavaScript. Public/npm preparation
 explicitly requests `--package-artifacts` when installed plugin manifests and
 runtime bytes must be materialized. Its workspace compilation and strict declaration
 checks remain owned by `buildSharedDeps.mjs` and the package-build owner, not by the
