@@ -5,11 +5,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { storage } from '@/sync/domains/state/storage';
 import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
-import type { PluginPage } from '@/components/plugins/pages/pluginPages';
+import { resolvePluginPages, selectPluginPagePlacements, type PluginPage } from '@/components/plugins/pages/pluginPages';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { createPluginPagePlacementFixture } from '@/dev/testkit/fixtures/pluginPageProjectionFixture';
 import type { RightSidebarPluginTabDefinition } from '@/components/appShell/rightSidebar/rightSidebarBuiltinTabs';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
+    normalizePluginInstalledUiDeclarations,
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 
@@ -31,6 +33,9 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { act } from 'react-test-renderer';
 import { buildTriageEntryRouteSegmentV1 } from '@happier-dev/triage-protocol/v1';
 import { buildPluginAppPageRoutePath } from '@/components/plugins/pages/pluginPageRoute';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
+import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
+import triageManifest from '../../../../../../packages/plugins/triage/.happier-plugin/plugin.json';
 
 import {
     resolveAppRailBand,
@@ -357,9 +362,11 @@ describe('retained Zen links', () => {
     // A link the workspace cannot resolve withdraws the whole workspace shell for one render (every retained tab
     // layer unmounts, then remounts after the redirect: P03-UI-B measured 1,051 layers on one /zen open). The retired
     // Zen paths therefore resolve to the Tasks page they redirect to, so the workspace keeps hosting through them.
-    const tasks = { ...page, id: 'plugin:happier.triage:tasks', pluginId: 'happier.triage', descriptorId: 'tasks',
-        localId: 'tasks', label: 'Tasks', routePath: '/plugins/happier.triage/tasks' } satisfies PluginPage;
-    const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [tasks] });
+    const declarations = projectPluginPortableUiDeclarationsV1(PluginPortableReleaseManifestV1Schema.parse(triageManifest));
+    const projection = normalizePluginInstalledUiDeclarations(declarations, 'web');
+    const target = { kind: 'app' } as const;
+    const pages = resolvePluginPages({ target, placements: selectPluginPagePlacements(projection, { container: 'appPage', targetKind: target.kind }) });
+    const catalog = resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages });
 
     const taskPage = buildPluginAppPageRoutePath({ pluginId: 'happier.triage', localId: 'tasks',
         subPath: buildTriageEntryRouteSegmentV1({ source: { pluginId: 'happier.triage', localId: 'internal' },
@@ -370,12 +377,27 @@ describe('retained Zen links', () => {
         ['/zen/task-1', taskPage],
         ['/zen/view?id=task-1', taskPage],
     ])('resolves %s to the Tasks destination it redirects to', (legacy, canonical) => {
-        const expected = resolveDestinationRefFromHref(catalog, canonical);
-        expect(expected).not.toBeNull();
-        expect(resolveDestinationRefFromHref(catalog, legacy)).toEqual(expected);
+        const scope = { serverId: 'zen-home', accountId: 'zen-account' };
+        const previousScope = storage.getState().profileScope;
+        const previousRuntime = getAppliedActiveServerSnapshot();
+        const previousAvailability = isAppliedActiveServerRuntimeAvailable();
+        storage.setState({ profileScope: scope });
+        publishAppliedActiveServerSnapshot({ serverId: scope.serverId, serverUrl: 'https://zen.test', generation: 1 });
+        const dispose = publishCommittedAppShellPluginUiProjection(input => input?.declarationsOnly
+            && input.scope.serverId === scope.serverId && input.scope.accountId === scope.accountId ? projection : null);
+        try {
+            expect(catalog.some(destination => destination.id === 'plugin:happier.triage:tasks')).toBe(true);
+            const expected = resolveDestinationRefFromHref(catalog, canonical);
+            expect(expected).not.toBeNull();
+            expect(resolveDestinationRefFromHref(catalog, legacy)).toEqual(expected);
+        } finally {
+            dispose();
+            storage.setState({ profileScope: previousScope });
+            publishAppliedActiveServerSnapshot(previousRuntime, previousAvailability);
+        }
     });
 
-    it('stays unresolved when the Tasks page is not in the catalog', () => {
+    it('stays unresolved without a published Tasks declaration', () => {
         expect(resolveDestinationRefFromHref(resolveCompactAppDestinations({ builtins: ALL_BUILTINS, pages: [] }), '/zen')).toBeNull();
     });
 });
