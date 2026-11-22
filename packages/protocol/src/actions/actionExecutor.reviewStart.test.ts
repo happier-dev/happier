@@ -73,6 +73,25 @@ const workflowStartContext: AgentStartContextV1 = {
 };
 
 describe('createActionExecutor (review.start)', () => {
+  it('retains host role custody for native review starts without a child-depth stamp', async () => {
+    const context: AgentStartContextV1 = { ...workflowStartContext, caller: { kind: 'host' }, roles: {} };
+    const executor = createActionExecutor({
+      executionRunCheckProtocolV2: async () => ({ ok: true }),
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      executionRunStart: async (_sessionId, _input, options) => {
+        // The receiving runtime requires the admitted private context, rather
+        // than trusting a role identifier carried by the public request.
+        if (options?.agentStartContext !== context) return { ok: false, errorCode: 'target_unavailable', error: 'Missing role custody' };
+        return { runId: 'native-review-run', callId: 'call', sidechainId: 'call' };
+      },
+    });
+    expect(await executor.execute('review.start', { target: { kind: 'detached' }, cwd: '/repo',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Inspect the change.',
+      permissionMode: 'read_only', then: 'report', childSelection: 'agentDefault',
+    }, { surface: 'cli', authority: 'present_user', executionRunTargetMachineId: 'machine-1', agentStartContext: context }))
+      .toMatchObject({ ok: true, result: { results: [{ ok: true, runId: 'native-review-run' }] } });
+  });
+
   it('retains saved Workflow lineage in durable native Review admission', async () => {
     const records = createInMemoryReviewRecordPortV1();
     let binding: unknown;
@@ -178,6 +197,30 @@ describe('createActionExecutor (review.start)', () => {
     expect((await records.read(reviewId))?.rounds).toEqual([
       expect.objectContaining({ state: 'cancelled', finishedAt: expect.any(Number), runs: [] }),
     ]);
+  });
+  it.each(['direct', 'workflow', 'plugin'] as const)('links a composed Review to its creating run through %s admission', async caller => {
+    const records = createInMemoryReviewRecordPortV1();
+    const starts = vi.spyOn(records, 'start');
+    let childRunId: unknown;
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      workflowAction: async invocation => {
+        childRunId = (invocation.input as { runId?: string }).runId;
+        return { ok: false, errorCode: 'content_unavailable', error: 'content_unavailable' };
+      },
+    } as ActionExecutorDeps);
+    await executor.execute('review.start', { sessionId: 's1', scope: 'repository', instructions: 'Review.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] }, {
+      surface: caller === 'plugin' ? 'plugin' : 'ui',
+      ...(caller === 'workflow' ? { actionCaller: { kind: 'workflowRun' as const, runId: 'visible-run' } } : {}),
+      ...(caller === 'plugin' ? { executionRunWorkflowRunId: 'visible-run',
+        actionCaller: { kind: 'plugin' as const, pluginId: 'happier.triage', occurrenceId: 'triage-occurrence' } } : {}),
+    });
+    const admission = starts.mock.calls[0]?.[0];
+    if (!admission) throw new Error('Expected Review admission');
+    const review = records.readMetadata(admission.reviewId);
+    expect(review?.workflowRunId).toBe(caller === 'direct' ? childRunId : 'visible-run');
+    expect(review?.sourceKind).toBe(caller === 'direct' ? 'direct' : 'workflow');
+    if (caller !== 'direct') expect(childRunId).not.toBe('visible-run');
   });
   it('admits an ordered mixed engine roster once through the canonical Workflow start', async () => {
     const records = createInMemoryReviewRecordPortV1();

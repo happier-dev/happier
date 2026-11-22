@@ -287,6 +287,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const opts = workflowScope ? { ...baseOptions, workflowScope } : baseOptions;
 
         let reviewInput = data as ReviewStartInput;
+        // Plugin-mediated starts retain the creating Workflow in host context;
+        // their immediate Action caller remains the plugin for authorization.
+        const creatingWorkflowRunId = ctx.actionCaller?.kind === 'workflowRun'
+          ? ctx.actionCaller.runId : ctx.executionRunWorkflowRunId;
         const workflowComposition = requiresReviewWorkflowCompositionV1(reviewInput);
         const needsWorkflowProject = workflowComposition && reviewReviewerIdsForStartV1(reviewInput).length > 0;
         let initialComparison: ScmComparison | undefined;
@@ -365,10 +369,10 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           const composedRunId = globalThis.crypto.randomUUID();
           const reviewRound = await records.start({ reviewId: globalThis.crypto.randomUUID(), title: 'Code review',
             subjectKind,
-            sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
+            sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
             ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
             // The Workflow run a person watches: the calling run, else the run composed below.
-            workflowRunId: ctx.actionCaller?.kind === 'workflowRun' ? ctx.actionCaller.runId : composedRunId,
+            workflowRunId: creatingWorkflowRunId ?? composedRunId,
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
             ...(comparisonCapture ? { comparisonCapture } : {}),
             reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
@@ -545,8 +549,9 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         if (!reviewInput.reviewRound && !reviewRecords) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:review.start' };
         const reviewRound = reviewInput.reviewRound ?? await reviewRecords!.start({ reviewId, title: 'Code review',
           subjectKind,
-          sourceKind: ctx.actionCaller?.kind === 'workflowRun' ? 'workflow' : 'direct',
-          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId, workflowRunId: ctx.actionCaller.runId } : {}),
+          sourceKind: creatingWorkflowRunId ? 'workflow' : 'direct',
+          ...(ctx.actionCaller?.kind === 'workflowRun' ? { workflowId: ctx.actionCaller.workflowId } : {}),
+          ...(creatingWorkflowRunId ? { workflowRunId: creatingWorkflowRunId } : {}),
           ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
           ...(comparisonCapture ? { comparisonCapture } : {}),
           reviewerIds: reviewReviewerIdsForStartV1(reviewInput),
