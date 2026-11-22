@@ -68,6 +68,7 @@ import { useNewSessionConnectedServices } from '@/components/sessions/new/module
 import {
     buildNewSessionAuthoringDraftFromPersistedDraft,
     buildNewSessionAuthoringDraftFromTempData,
+    readSessionAuthoringBackendOptionState,
 } from '@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters';
 import {
     readNonBlankSessionControlIdentifier,
@@ -764,16 +765,16 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const composerWorkspace = React.useMemo(() => resolveNewSessionFileSuggestionScope({
         targetServerId, selectedMachineId, selectedMachineHomeDir, selectedPath,
     }), [selectedMachineId, selectedMachineHomeDir, selectedPath, targetServerId]);
-    const agentOptionState = agentNewSessionOptionStateByAgentId[selectedBackendTargetKey] ?? null;
+    const agentOptionState = readSessionAuthoringBackendOptionState(backendTarget, agentNewSessionOptionStateByAgentId);
     const agentCore = React.useMemo(() => getAgentCore(agentType), [agentType]);
 
     const setAgentOptionStateForCurrentAgent = React.useCallback((key: string, value: unknown) => {
         setAgentNewSessionOptionStateByAgentId((prev) => {
-            const current = prev[selectedBackendTargetKey] ?? {};
+            const current = readSessionAuthoringBackendOptionState(backendTarget, prev);
             const nextForTarget = { ...current, [key]: value };
             return { ...prev, [selectedBackendTargetKey]: nextForTarget };
         });
-    }, [selectedBackendTargetKey]);
+    }, [backendTarget, selectedBackendTargetKey]);
 
     const { connectedServicesBindingsPayload, connectedServicesAuthChip } = useNewSessionConnectedServices({
         agentCore,
@@ -789,7 +790,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         resolveNewSessionConnectedServicesBindingsForAgent({
             agentId: id,
             agentCore: getAgentCore(id),
-            agentOptionState: agentNewSessionOptionStateByAgentId[id],
+            agentOptionState: readSessionAuthoringBackendOptionState({ kind: 'builtInAgent', agentId: id }, agentNewSessionOptionStateByAgentId),
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
             settings,
             connectedServicesFeatureEnabled,

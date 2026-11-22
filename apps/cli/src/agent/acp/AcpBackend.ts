@@ -3370,9 +3370,7 @@ export class AcpBackend implements AgentBackend {
     this.waitingForResponse = false;
     this.providerTurn = null;
 
-    if (outcome.kind !== 'timed_out') {
-      this.emit({ type: 'status', status: 'idle', turnFinished: true });
-    }
+    this.emit({ type: 'status', status: 'idle', turnFinished: true });
 
     if (this.idleResolver) {
       const resolve = this.idleResolver;

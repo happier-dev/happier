@@ -174,6 +174,23 @@ async function approve(session: FakePermissionSession): Promise<void> {
 }
 
 describe('ACP provider continuation ownership', () => {
+    it('announces a provider continuation as idle and preserves its timeout outcome', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+            expect(host().registerContinuation({ id: 'task', parentToolCallId: '0:background' })).toBe(true);
+            events.length = 0;
+            const sink = host().beginContinuation({ id: 'task', turnId: 'native-timeout' });
+            expect(sink).not.toBeNull();
+
+            await sink!.finish({ kind: 'timed_out', capMs: 100 });
+
+            expect(events).toContainEqual({ type: 'status', status: 'running' });
+            expect(events.at(-1)).toEqual({ type: 'status', status: 'idle', turnFinished: true });
+            await expect(backend.waitForResponseComplete()).resolves.toEqual({ kind: 'timed_out', capMs: 100 });
+        });
+    });
+
     it('preserves independent usage report identities across continuations and repeated step updates', async () => {
         await fixture(async ({ backend, host, events }) => {
             for (let turn = 0; turn < 2; turn += 1) {

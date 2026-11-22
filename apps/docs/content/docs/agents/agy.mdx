@@ -28,7 +28,7 @@ You can also open this login flow from **Settings → AI & Agents → AI backend
 
 ## Connected accounts and the pinned ACP server
 
-Connected Antigravity accounts run on the official pinned `agy_acp_server` v1.3.0, because it reads the per-account credential home Happier prepares for each account. When you select a connected account in New Session, development builds background-install the platform archive; otherwise the first connected launch installs it. Launch reuses that same install instead of downloading twice.
+Connected Antigravity accounts run on the official pinned `agy_acp_server` v1.3.0, because it reads the per-account credential home Happier prepares for each account. When automatic installation is enabled, development builds can install the platform archive as soon as you select a connected account in New Session. If the server is still missing, the first connected launch installs it. If you disabled automatic installation for your machine, install the pinned server from the New Session dependency prompt before launching.
 Integrity is verified by SHA-256 on every download, extraction reuses the shared
 archive helpers, and the executable bit is set on Unix. A corrupt or missing artifact
 fails visibly, and the next launch re-runs the authoritative ensure to recover.
