@@ -412,8 +412,10 @@ export function createActionOperationSelectors(): ActionOperationSelectors {
             const { snapshot } = operation;
             if (operation.serverId !== serverId || snapshot.scope.accountId !== query.accountId
                 || snapshot.scope.machineId !== query.machineId || snapshot.actionId !== 'projects.open'
-                || (query.requestId !== undefined && snapshot.requestId !== query.requestId)
-                || snapshot.domainRef?.kind !== 'projectOpen' || snapshot.domainRef.sourceId !== query.sourceId) continue;
+                || (query.requestId !== undefined && snapshot.requestId !== query.requestId)) continue;
+            // Native Open on an adopted folder has no Source reference. Its admitted request still identifies it.
+            const matchesSource = snapshot.domainRef?.kind === 'projectOpen' && snapshot.domainRef.sourceId === query.sourceId;
+            if (!matchesSource && (query.requestId === undefined || snapshot.domainRef !== undefined)) continue;
             const projection = readProjection(state, key, operation);
             const order = selected ? compareOperations(projection, selected) : -1;
             if (!selected || order < 0 || (order === 0 && key < actionOperationAddressKey({ serverId: selected.serverId, operationId: selected.snapshot.operationId }))) selected = projection;

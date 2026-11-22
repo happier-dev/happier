@@ -84,8 +84,10 @@ function setupOperation(overrides: Partial<ActionOperationSnapshotV1> = {}): Act
         ...overrides });
 }
 describe('selected Team batch progress', () => {
-    it('opens the exact editable draft from the ready notice after leaving Joined Setup', async () => {
+    it.each(['source', 'folder'] as const)('opens the exact %s draft from the ready notice after leaving Joined Setup', async kind => {
         const openProject = createDeferred<typeof preparedResult>();
+        const domainRef = kind === 'source' ? { kind: 'projectOpen', sourceId: query.sourceId } as const : undefined;
+        const result = kind === 'source' ? preparedResult : { ...preparedResult, setup: 'approvalRequired' as const };
         const openDraft = vi.fn(async () => ({ kind: 'opened', draftId: 'new-draft', destination: 'newSession' } as const));
         let nativeRequestId: string | undefined;
         const executor = createActionExecutor({ projectsOpen: (_input, context) => {
@@ -116,7 +118,11 @@ describe('selected Team batch progress', () => {
         const screen = await renderScreen(<App />);
         const source = { id: query.sourceId, name: 'Shared repository', revision: 2 };
         const plan = await controller.prepare({ target: { serverId: query.serverId, homeId: 'team-home', machineId: query.machineId },
-            repositories: [{ id: source.id, input: { source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } }],
+            repositories: [{ id: source.id, input: { source: kind === 'source' ? { kind, id: source.id, revision: source.revision,
+                selector: { provider: { id: 'github', kind: 'github', baseUrl: 'https://github.com', displayName: 'GitHub' },
+                    repository: { nameWithOwner: 'example/repo', cloneUrl: 'https://github.com/example/repo.git' }, protocol: 'https' },
+            } : { kind, path: '/repo' },
+                materialization: { kind: 'attach' } } }],
             isCurrent: () => true });
         if (!plan?.ok) throw new Error('Could not review the selected repository');
         let run!: ReturnType<typeof controller.run>;
@@ -128,12 +134,14 @@ describe('selected Team batch progress', () => {
         if (!requestId) throw new Error('No native request from the selected batch');
         expect(nativeRequestId).toBe(requestId);
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
-            snapshots: [opening({ requestId, createdAt: 3 }),
+            snapshots: [opening({ requestId, domainRef, createdAt: 3 }),
                 setupOperation({ operationId: 'previous-setup', createdAt: 1, startedAt: 1, state: 'succeeded', settledAt: 2 })] }));
         act(() => leaveReview());
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
-            snapshots: [opening({ requestId, revision: 2, state: 'succeeded', createdAt: 3, settledAt: 4, result: preparedResult })] }));
-        await act(async () => { openProject.resolve(preparedResult); await run; });
+            snapshots: [opening({ requestId, domainRef, revision: 2, state: 'succeeded', createdAt: 3, settledAt: 4, result }),
+                opening({ operationId: 'unrelated-open', requestId: 'unrelated-request', domainRef,
+                    state: 'succeeded', createdAt: 4, settledAt: 5, result: { ...result, setup: 'notRequired' } })] }));
+        await act(async () => { openProject.resolve(result); await run; });
         expect(readPresentationNotice()).toBeNull();
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId,
             snapshots: [setupOperation({ createdAt: 5, startedAt: 5 })] }));
