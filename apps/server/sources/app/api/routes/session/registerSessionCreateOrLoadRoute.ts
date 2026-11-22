@@ -14,6 +14,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { z } from "zod";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import {
+    DIRECT_SESSION_LINK_TAG_PREFIX,
     isSessionEncryptionModeAllowedByStoragePolicy,
     resolveEffectiveDefaultAccountEncryptionMode,
 } from "@happier-dev/protocol";
@@ -159,10 +160,14 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             // Importing a historical conversation is not new conversation activity.
             // Apply source dates only on creation; loading/resuming an existing row
             // still records current intent and never rewinds its publisher fence.
-            const meaningfulActivityAtMs = Math.min(now, request.body.sourceUpdatedAtMs ?? now);
+            const historicalLink = tag.startsWith(DIRECT_SESSION_LINK_TAG_PREFIX)
+                && /^[a-f0-9]{64}$/.test(tag.slice(DIRECT_SESSION_LINK_TAG_PREFIX.length));
+            const sourceCreatedAtMs = historicalLink ? request.body.sourceCreatedAtMs : undefined;
+            const sourceUpdatedAtMs = historicalLink ? request.body.sourceUpdatedAtMs : undefined;
+            const meaningfulActivityAtMs = Math.min(now, sourceUpdatedAtMs ?? now);
             const createdAt = new Date(Math.min(
                 meaningfulActivityAtMs,
-                request.body.sourceCreatedAtMs ?? meaningfulActivityAtMs,
+                sourceCreatedAtMs ?? meaningfulActivityAtMs,
             ));
             const created = await tx.session.create({
                 data: {

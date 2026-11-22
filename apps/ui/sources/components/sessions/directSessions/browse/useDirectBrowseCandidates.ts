@@ -35,6 +35,7 @@ function mergeDirectBrowseCandidate(current: DirectBrowseCandidate, next: Direct
         remoteSessionId: current.remoteSessionId,
         title: hasCandidateTitle(next) ? next.title : current.title,
         updatedAtMs: Math.max(current.updatedAtMs, next.updatedAtMs),
+        createdAtMs: next.createdAtMs ?? current.createdAtMs,
         activity: next.activity ?? current.activity,
         details: mergeCandidateDetails(current.details, next.details),
     };

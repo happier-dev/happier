@@ -2687,6 +2687,7 @@ export {
   type DirectSessionTakeoverPersistRequest,
   type DirectSessionTakeoverPersistResponse,
   type DirectSessionTakeoverPersistStartResponse,
+    DIRECT_SESSION_LINK_TAG_PREFIX,
 } from './directSessions/daemonRpcV1.js';
 
 export {

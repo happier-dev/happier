@@ -366,6 +366,7 @@ describe('DirectSessionsBrowseScreen', () => {
                     {
                         remoteSessionId: 'codex-hidden-session-9',
                         title: 'Fast filesystem result',
+                        createdAtMs: 1_600_000_000_000,
                         updatedAtMs: 1_700_000_000_000,
                         activity: 'idle',
                         details: { path: '/tmp/deep-result', codexBackendMode: 'appServer', source: { kind: 'codexHome', home: 'user', homePath: '/tmp/custom-home' } },
@@ -444,6 +445,11 @@ describe('DirectSessionsBrowseScreen', () => {
             expect(candidateItem).toBeTruthy();
             expect(candidateItem?.props.testID).toBe('direct-session-candidate:codex-hidden-session-9');
             expect(candidateItem?.props.title).toBe('Augmented app-server result');
+            await screen.pressByTestIdAsync('direct-session-candidate:codex-hidden-session-9');
+            expect(linkEnsureSpy).toHaveBeenCalledWith(expect.objectContaining({
+                sourceCreatedAtMs: 1_600_000_000_000,
+                sourceUpdatedAtMs: 1_700_000_000_000,
+            }));
             expect(screen.findByTestId('direct-session-candidate:codex-fast-only-session-8')).toBeTruthy();
             expect(screen.findByTestId('direct-session-candidate:codex-augmented-only-session-7')).toBeTruthy();
         } finally {

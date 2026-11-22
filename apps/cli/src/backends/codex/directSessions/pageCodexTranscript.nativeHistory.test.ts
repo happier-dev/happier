@@ -104,9 +104,14 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     expect(items.map(item => item.id)).toEqual(page.items.map(item => item.id));
   });
 
-  it('reports unavailable dates instead of inventing epoch dates or creating a native index', async () => {
-    const f = await fixture([{ ...message('u1', 'question', 'user'), startedAtMs: null, completedAtMs: null }]);
-    await expect(pageCodexTranscript({ ...f.params, direction: 'older' })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
+  it('keeps readable content when the optional timestamp index is missing', async () => {
+    const f = await fixture([{ ...message('u1', 'question', 'user'), startedAtMs: null, completedAtMs: null },
+      message('a1', 'answer', 'agent')]);
+    const page = await pageCodexTranscript({ ...f.params, direction: 'older' });
+    expect(page.items).toMatchObject([
+      { createdAtMs: 0, raw: { role: 'user', content: { text: 'question' } } },
+      { createdAtMs: 1000, raw: { role: 'agent' } },
+    ]);
     await expect(readFile(join(f.codexHome, 'thread_history_1.sqlite'))).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

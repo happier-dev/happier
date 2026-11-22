@@ -9,6 +9,8 @@ import { AgentProviderIdV1Schema } from '../providers/agentProviderIdsV1.js';
 import { SessionMessageRoleSchema } from '../sessionMessages/sessionMessageRole.js';
 import { lazySchema } from '../lazySchema.js';
 
+export const DIRECT_SESSION_LINK_TAG_PREFIX = 'direct:v1:';
+
 export const DirectSessionsProviderIdSchema = AgentProviderIdV1Schema;
 export type DirectSessionsProviderId = z.infer<typeof DirectSessionsProviderIdSchema>;
 

@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import Fastify from "fastify";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -12,6 +12,8 @@ import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lig
 
 import { createAppCloseTracker } from "../../testkit/appLifecycle";
 import { sessionRoutes } from "./sessionRoutes";
+
+const historicalLinkTag = () => `direct:v1:${createHash("sha256").update(randomUUID()).digest("hex")}`;
 
 const { trackApp, closeTrackedApps } = createAppCloseTracker();
 
@@ -58,7 +60,7 @@ describe("session create/load before publisher registration (SQLite integration)
         const sourceCreatedAtMs = Date.parse("2025-01-02T12:00:00.000Z");
         const sourceUpdatedAtMs = Date.parse("2025-02-03T12:00:00.000Z");
         const payload = {
-            tag: `history-${randomUUID()}`, metadata: "{}", encryptionMode: "e2ee",
+            tag: historicalLinkTag(), metadata: "{}", encryptionMode: "e2ee",
             sourceCreatedAtMs, sourceUpdatedAtMs,
         };
         const response = await app.inject({ method: "POST", url: "/v1/sessions", headers, payload });
@@ -95,15 +97,32 @@ describe("session create/load before publisher registration (SQLite integration)
         const response = await app.inject({
             method: "POST", url: "/v1/sessions",
             headers: { authorization: `Bearer ${token}` },
-            payload: { tag: `history-${randomUUID()}`, metadata: "{}", ...dates },
+            payload: { tag: historicalLinkTag(), metadata: "{}", ...dates },
         });
         expect(response.statusCode).toBe(200);
-        const session = response.json().session;
+        const session = await db.session.findUniqueOrThrow({ where: { id: response.json().session.id } });
+        const activityMs = session.meaningfulActivityAt?.getTime();
         const expected = Math.min(dates.sourceUpdatedAtMs, Date.now());
-        expect(session.meaningfulActivityAt).toBeLessThanOrEqual(expected);
-        expect(session.meaningfulActivityAt).toBeGreaterThanOrEqual(Math.min(dates.sourceUpdatedAtMs, before));
-        expect(session.createdAt).toBe(session.meaningfulActivityAt);
+        expect(activityMs).toBeLessThanOrEqual(expected);
+        expect(activityMs).toBeGreaterThanOrEqual(Math.min(dates.sourceUpdatedAtMs, before));
+        expect(session.createdAt.getTime()).toBe(activityMs);
         expect(session.active).toBe(false);
+    });
+
+    it("keeps wall-clock dates for ordinary births even when source dates are sent", async () => {
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+        const token = await auth.createToken(account.id);
+        const before = Date.now();
+        const response = await app.inject({
+            method: "POST", url: "/v1/sessions",
+            headers: { authorization: `Bearer ${token}` },
+            payload: { tag: randomUUID(), metadata: "{}", sourceCreatedAtMs: 1000, sourceUpdatedAtMs: 2000 },
+        });
+        expect(response.statusCode).toBe(200);
+        expect(response.json().session.createdAt).toBeGreaterThanOrEqual(before);
+        const stored = await db.session.findUniqueOrThrow({ where: { id: response.json().session.id } });
+        expect(stored.meaningfulActivityAt?.getTime()).toBeGreaterThanOrEqual(before);
     });
 
     it("keeps a created row inactive through a rejected socket and makes exact registration the sole positive transition", async () => {

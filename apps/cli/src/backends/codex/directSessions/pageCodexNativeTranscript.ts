@@ -112,8 +112,9 @@ export async function pageCodexNativeTranscript(params: Readonly<{
             .filter(candidate => candidate.startedAtMs === null && candidate.completedAtMs === null)
             .map(candidate => ({ turnId: candidate.turnId, itemId: candidate.item.id as string })) });
         const createdAtMs = indexedDates.get(key);
-        if (createdAtMs === undefined) throw new Error('Codex native history omitted the original message timestamp');
-        for (const message of messages) message.createdAtMs = createdAtMs;
+        if (createdAtMs !== undefined) {
+          for (const message of messages) message.createdAtMs = createdAtMs;
+        }
       }
       if (params.direction === 'older') messages.reverse();
       if (offset > messages.length) throw new Error('Codex native history changed its partial item');
