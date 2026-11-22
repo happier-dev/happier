@@ -499,10 +499,30 @@ describe('Source catalog real SQLite owner', () => {
             expectedRevision: attached.source.revision,
             patch: { audience: [{ principal: { kind: 'account', accountId: reader.id }, level: 'view' }] } }));
         expect(shared).toMatchObject({ ok: true });
-        const { readArtifactHeaderForCallerInTx } = await import('@/app/artifacts/artifactAccessService');
+        const { readArtifactForCallerInTx, readArtifactHeaderForCallerInTx } = await import('@/app/artifacts/artifactAccessService');
         const selected = { actorAccountId: reader.id, artifactId: artifact.id, projectSourceId: ownSource.id };
-        expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, selected)))
-            .toMatchObject({ ok: true, artifact: { access: 'view' } });
+        const bodyReads: unknown[] = [];
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model !== 'Artifact' || !request.action.startsWith('find')) return;
+            const args = request.args as { where?: { id?: string }; select?: { body?: boolean } };
+            if (!args.select || args.select.body === true) bodyReads.push(args.where?.id);
+        } });
+        try {
+            expect(await inTx(tx => listProjectSourcesInTx(tx, reader.id, { serverId })))
+                .toMatchObject({ ok: true, sources: expect.arrayContaining([
+                    expect.objectContaining({ id: ownSource.id, attachments: [attachment] }),
+                ]) });
+            expect(await inTx(tx => readProjectSourceInTx(tx, reader.id, { serverId, sourceId: ownSource.id })))
+                .toMatchObject({ ok: true, source: { attachments: [attachment] } });
+            expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, selected)))
+                .toMatchObject({ ok: true, artifact: { access: 'view' } });
+            expect(bodyReads).toEqual([]);
+            expect(await inTx(tx => readArtifactForCallerInTx(tx, selected)))
+                .toMatchObject({ ok: true, artifact: { id: artifact.id, body: artifact.body } });
+            expect(bodyReads).toEqual([artifact.id]);
+        } finally {
+            stop();
+        }
         expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { ...selected, projectSourceId: row.id })))
             .toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { actorAccountId: reader.id, artifactId: artifact.id })))

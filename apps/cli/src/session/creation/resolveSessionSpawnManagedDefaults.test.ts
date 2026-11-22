@@ -550,6 +550,10 @@ describe('Session spawn defaults at admission', () => {
     // One settings acquisition plus the existing Connected Account purpose
     // cutover's source read; preparation must not add a second acquisition.
     if ('cold' in testCase) expect(settingsReads).toBe(2);
+    if ('project' in testCase) {
+      expect(reads.filter(path => path.startsWith('/v1/projects/sources')))
+        .toEqual(['/v1/projects/sources/selected']);
+    }
     expect(launched[0]).not.toHaveProperty('accountSettingsContext');
     if (testCase.layer === 'recovery') {
       expect(launched[0]).toMatchObject({ approvalProfileId: 'custom:team-profile', approvalProfileTeamOrGroupDerived: true,

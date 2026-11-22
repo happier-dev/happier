@@ -43,7 +43,9 @@ describe('local capture SDK launch contribution', () => {
    async requestListenerPorts(keys) { demands.push([...keys]); return { kind: 'ready', assignment: { ports: [], listenerPorts: Object.fromEntries(keys.map(key => [key, slot.port])) } }; } });
   try {
    expect(result.kind).toBe('replace'); if (result.kind !== 'replace') throw new Error('Expected local capture binding');
-   expect(reads).toBe(1); expect(demands[0]).toHaveLength(1); expect(JSON.stringify(demands)).not.toMatch(/p%40ss|encoded|other/);
+   expect(reads).toBe(1);
+   expect(demands).toEqual([[expect.any(String)]]);
+   expect(JSON.stringify(demands)).not.toMatch(/p%40ss|encoded|other/);
    expect(partitions).toEqual([JSON.stringify(['account', 'server', 'machine', 'project', 'worktree'])]);
    expect(result.replacements).toEqual({ DATABASE_URL: first.replace(`127.0.0.1:${upstream.port}`, `127.0.0.1:${slot.port}`), READ_URL: second.replace(`127.0.0.1:${upstream.port}`, `127.0.0.1:${slot.port}`) });
    expect(result.defaults).toEqual({});
