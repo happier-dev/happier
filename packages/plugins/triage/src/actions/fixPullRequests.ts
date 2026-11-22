@@ -42,7 +42,7 @@ export async function readTriageFixPullRequests(
     input: TriageReadFixPullRequestsInputV1,
     deps: TriageFixPullRequestsDepsV1 & Readonly<{
         projection: TriageFixPullRequestProjectionV1;
-        sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read'>;
+        sourceRelations: Pick<ReturnType<typeof createTriageSourceSessionRelations>, 'read' | 'readExactSessions'>;
     }>,
 ): Promise<TriageReadFixPullRequestsResultV1> {
     const resolved = await readResolvedFixPullRequests({

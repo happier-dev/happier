@@ -75,11 +75,21 @@ function createTestkitCorpusCollections(options: Parameters<typeof createBaseCor
         };
     });
     let configurationReads = 0;
-    let roleReads = 0;
+    const roleSelections: Array<string | undefined> = [];
+    const linkQueries: unknown[] = [];
+    let taskReads = 0;
+    let linkedSession: string | undefined = 'session-a';
+    let refuseSetQuery = false;
     const internalRead = { role: 'internalRead' };
     const collections = { ...fixture.collections, sourceInstances: { ...fixture.collections.sourceInstances,
         query: async (...args: Parameters<typeof fixture.collections.sourceInstances.query>) => {
             configurationReads++; return await fixture.collections.sourceInstances.query(...args);
+        },
+    }, sessionLinks: { ...fixture.collections.sessionLinks,
+        query: async (...args: Parameters<typeof fixture.collections.sessionLinks.query>) => {
+            linkQueries.push(args[0]);
+            if (refuseSetQuery && args[0].prefixes !== undefined) throw new Error('Session set unavailable');
+            return await fixture.collections.sessionLinks.query(...args);
         },
     } };
     // Host targeted-operation RPC and Account Collection I/O are the boundaries.
@@ -93,19 +103,24 @@ function createTestkitCorpusCollections(options: Parameters<typeof createBaseCor
             // Built-in task relations read the canonical Account Action rather than a source RPC.
             execute: async (action: string) => {
                 if (action !== 'tasks.internal.list') throw new Error(`Unexpected host Action ${action}`);
+                taskReads++;
                 return getActionSpec(action).outputSchema.parse({ status: 'ok',
                     scope: { serverId: 'home', accountId: 'account-1' }, todos: [], undoneOrder: [], completedOrder: [] });
             },
             executeAdmittedTargetedOperation: async (_operation: unknown, input: { sessionId?: string }) => {
-                roleReads++;
+                roleSelections.push(input.sessionId);
                 if (role === 'failed') throw new Error('PR relation unavailable');
-                return { kind: 'complete', links: input.sessionId === 'session-a' ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
-                    sessionId: 'session-a', linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
+                return { kind: 'complete', links: linkedSession !== undefined && input.sessionId === linkedSession
+                    ? [{ localRef: { kindId: 'pull-request', collisionScope: 'acme/web', entryId: 'canonical' },
+                        sessionId: linkedSession, linkedAtMs: 2_000, displayPath: 'Canonical PR' }] : [] };
             },
         },
     } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
     return { ...fixture, collections, relations: createTriageSourceSessionRelations(context, collections),
-        counts: () => ({ configurationReads, roleReads }) };
+        counts: () => ({ configurationReads, roleReads: roleSelections.length }),
+        readCosts: () => ({ taskReads, roleSelections: [...roleSelections], linkQueries: [...linkQueries] }),
+        setLinkedSession: (sessionId: string | undefined) => { linkedSession = sessionId; },
+        refuseSetQuery: () => { refuseSetQuery = true; } };
 }
 
 async function link(fixture: TestkitCorpusCollections, entryRef: TriageEntryRefV1, sessionId: string, nowMs: number) {
@@ -169,6 +184,44 @@ describe('fix pull request links', () => {
         expect(fixture.counts()).toEqual({ configurationReads: 1, roleReads: 1 });
         expect((await readTriageSessionLinksPageV1(fixture.collections.sessionLinks, { relation: { sessionId: 'session-a' } })).links)
             .toContainEqual(expect.objectContaining({ entryRef: githubPr('stale') }));
+    });
+    it('derives fix PRs for 14 Sessions with one task Action and two link queries', async () => {
+        const fixture = createTestkitCorpusCollections({}, 'ready');
+        const sessionIds = ['session-a', ...Array.from({ length: 13 }, (_, index) => `session-${index}`)];
+        for (const sessionId of sessionIds) await link(fixture, ERROR_REF, sessionId, 1_000);
+        const setupQueries = fixture.readCosts().linkQueries.length;
+        const read = () => readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections, sourceRelations: fixture.relations, nowMs: () => 5_000,
+            projection: { workflowSubjectOf, presentationOf: () => 'active' },
+        });
+        const first = await read();
+        expect(first.incomplete).toBe(false);
+        expect(first.primary).toMatchObject({ entryRef: githubPr('canonical'), origins: ['session'], status: 'open' });
+        const { taskReads, roleSelections, linkQueries: allQueries } = fixture.readCosts();
+        const linkQueries = allQueries.slice(setupQueries);
+        // 14 Sessions and three sources: 28 → 15 nested reads, 15 → 2 Collection queries.
+        // Each GitHub read retains its exact Session selector.
+        expect([...roleSelections].sort()).toEqual([...sessionIds].sort());
+        expect({ taskReads, queries: linkQueries.length, uniqueQueries: new Set(linkQueries.map(query => JSON.stringify(query))).size })
+            .toEqual({ taskReads: 1, queries: 2, uniqueQueries: 2 });
+        fixture.setLinkedSession('unrelated-session');
+        expect(await read()).toMatchObject({ incomplete: false, candidates: [], primary: null });
+    });
+    it('retains exact Session coverage if the Collection refuses the combined read', async () => {
+        const fixture = createTestkitCorpusCollections();
+        await link(fixture, ERROR_REF, 'session-a', 1_000);
+        await link(fixture, ERROR_REF, 'session-b', 1_000);
+        await link(fixture, githubPr('corpus-fix'), 'session-b', 2_000);
+        const setupQueries = fixture.readCosts().linkQueries.length;
+        fixture.refuseSetQuery();
+        const result = await readTriageFixPullRequests({ v: 1, entryRef: ERROR_REF }, {
+            collections: fixture.collections, sourceRelations: fixture.relations, nowMs: () => 5_000,
+            projection: { workflowSubjectOf, presentationOf: () => 'active' },
+        });
+        expect(result).toMatchObject({ incomplete: false, primary: { entryRef: githubPr('corpus-fix'), origins: ['session'] } });
+        expect(fixture.readCosts().linkQueries.slice(setupQueries)).toContainEqual(expect.objectContaining({
+            prefixes: expect.arrayContaining([['session-a'], ['session-b']]),
+        }));
     });
     it('retains a fix PR after more than one relation page of distinct non-PR siblings', async () => {
         const fixture = createTestkitCorpusCollections();

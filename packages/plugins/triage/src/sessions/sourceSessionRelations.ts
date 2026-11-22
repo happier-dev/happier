@@ -25,7 +25,7 @@ import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readT
 import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import { isInternalTaskReferenceV1 } from '../internalTasks/identity.js';
 import { INTERNAL_TASK_DESCRIPTOR_V1 } from '../internalTasks/contribution.js';
-import { readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
+import { readInternalTaskList, readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
 
 export type TriageSourceSessionLinkV1 = Readonly<{
     entryRef: TriageEntryRefV1; sessionId: string; linkedAtMs: number; displayPath: string;
@@ -252,7 +252,10 @@ export function createTriageSourceSessionRelations(
         async read(input: Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; sessionIds?: readonly string[]; kindId?: string;
             paged?: boolean; cursor?: string;
             /** Detail preparation requires an authoritative page and preserves the original transport refusal. */
-            readFailure?: 'throw' }>, corpusRead?: () => Promise<readonly CorpusSessionLinkRowV1[]>): Promise<TriageReadSourceSessionLinksResultV1> {
+            readFailure?: 'throw' }>, reads?: Readonly<{
+                corpus?: () => Promise<readonly CorpusSessionLinkRowV1[] | undefined>;
+                tasks?: () => Promise<TaskList | null>;
+            }>): Promise<TriageReadSourceSessionLinksResultV1> {
             const { sources, configured } = await readView(input);
             const sessionIds = input.sessionIds === undefined ? undefined : new Set(input.sessionIds);
             const links: TriageSourceSessionLinkV1[] = [];
@@ -309,7 +312,7 @@ export function createTriageSourceSessionRelations(
                         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
                     } as const;
                     const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(nativeAccountRead
-                        ? await readInternalTaskSessionLinks(sourceInput, context, await readTaskList?.())
+                        ? await readInternalTaskSessionLinks(sourceInput, context, await (reads?.tasks ?? readTaskList)?.())
                         : await context.services.actions.executeAdmittedTargetedOperation(operation!, sourceInput, options));
                     if (!parsed.success) {
                         lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
@@ -362,12 +365,13 @@ export function createTriageSourceSessionRelations(
                     // admit only corpus-owned kinds, never a scan per kind.
                     const relation = input.entryRef !== undefined ? { entryRef: input.entryRef }
                         : input.sessionId !== undefined ? { sessionId: input.sessionId } : undefined;
+                    const selectedLinks = await reads?.corpus?.();
                     let cursor = input.cursor;
                     const seen = new Set<string>();
                     do {
-                        const page = corpusRead === undefined
+                        const page = selectedLinks === undefined
                             ? await readTriageSessionLinksPageV1(collections.sessionLinks, { relation, cursor }, options)
-                            : { links: await corpusRead(), nextCursor: undefined };
+                            : { links: selectedLinks, nextCursor: undefined };
                         for (const link of page.links) {
                             if (input.entryRef !== undefined && !sameTriageEntryReference(input.entryRef, link.entryRef)) continue;
                             if (input.sessionId !== undefined && link.sessionId !== input.sessionId) continue;
@@ -461,7 +465,43 @@ export function createTriageSourceSessionRelations(
     };
     return { ...relations,
         readSessions(sessionIds: readonly string[]) {
-            return relations.read({ sessionIds }, () => readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options));
+            return relations.read({ sessionIds }, { corpus: () => readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options) });
+        },
+        /** Preserve exact contributor selectors while sharing the Account-owned reads for this Session set. */
+        async readExactSessions(sessionIds: readonly string[]) {
+            let taskList: Promise<TaskList | null> | undefined;
+            let corpusBySession: Promise<ReadonlyMap<string, readonly CorpusSessionLinkRowV1[]> | undefined> | undefined;
+            const readCorpus = () => corpusBySession ??= readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options)
+                .then(links => {
+                    const bySession = new Map<string, CorpusSessionLinkRowV1[]>();
+                    for (const link of links) {
+                        const rows = bySession.get(link.sessionId);
+                        if (rows === undefined) bySession.set(link.sessionId, [link]);
+                        else rows.push(link);
+                    }
+                    return bySession;
+                }, () => {
+                    context.signal.throwIfAborted();
+                    // A set failure cannot erase healthy individual Sessions.
+                    // Let the same reader settle each exact query on its own.
+                    return undefined;
+                });
+            const results: TriageReadSourceSessionLinksResultV1[] = [];
+            for (const sessionId of sessionIds) {
+                context.signal.throwIfAborted();
+                const result = await relations.read({ sessionId }, sessionIds.length < 2 ? undefined : {
+                    corpus: async () => {
+                        const selected = await readCorpus();
+                        return selected === undefined ? undefined : selected.get(sessionId) ?? [];
+                    },
+                    tasks: () => taskList ??= readTaskList === undefined ? readInternalTaskList(context) : readTaskList(),
+                }).catch((): TriageReadSourceSessionLinksResultV1 => {
+                    context.signal.throwIfAborted();
+                    return { kind: 'failed', links: [] };
+                });
+                results.push(result);
+            }
+            return results;
         },
         async readEntries(entries: readonly Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId?: string }>[]) {
             const { sources } = await readView();
@@ -511,7 +551,7 @@ export function createTriageSourceSessionRelations(
                     return { ...selection, result };
                 }
                 let result: TriageReadSourceSessionLinksResultV1;
-                try { result = await relations.read(selection, async () => (await readCorpus()).get(entryKey(selection.entryRef)) ?? []); }
+                try { result = await relations.read(selection, { corpus: async () => (await readCorpus()).get(entryKey(selection.entryRef)) ?? [] }); }
                 catch { result = { kind: 'failed', links: [] }; }
                 return { ...selection, result };
             }));
