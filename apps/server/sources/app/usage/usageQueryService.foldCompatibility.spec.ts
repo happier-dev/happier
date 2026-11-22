@@ -246,15 +246,15 @@ async function codexNativeRows(): Promise<Row[]> {
 function runtimeCounters(provider: 'pi' | 'codex'): Row[] {
     return [100, 110].map((total, day) => {
         const observedAt = start + day * dayMs + 1;
+        const observationId = `fixture-${provider}-${day}`;
         const event = provider === 'pi'
-            ? projectPiSessionStatsUsage({ sessionId: 'session', observationId: `fixture-pi-${day}`, observedAtMs: observedAt,
+            ? projectPiSessionStatsUsage({ sessionId: 'session', observationId, observedAtMs: observedAt,
                 stats: { sessionId: 'fixture-pi-thread', tokens: { input: total - 10, output: 10, total }, cost: total / 10000 } })
             : buildCodexAppServerTokenCountObservationInput({ observedAtMs: observedAt, modelId: 'gpt-5.4',
                 notificationParams: { tokenUsage: { total: { inputTokens: total - 10, outputTokens: 10, totalTokens: total } } } })
                 ?.runtimeObservation;
-        const observed = event && ('observationId' in event ? event : { ...event, observationId: `fixture-codex-${day}` });
-        if (!observed) throw new Error(`Expected ${provider} runtime counters`);
-        return runtimeRow(day + 1, observedAt, provider, observed);
+        if (!event) throw new Error(`Expected ${provider} runtime counters`);
+        return runtimeRow(day + 1, observedAt, provider, { ...event, observationId });
     });
 }
 
