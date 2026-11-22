@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { es } from './translations/es';
 import { en } from './translations/en';
@@ -6,6 +6,23 @@ import { fr } from './translations/fr';
 import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 import * as i18n from './i18n';
+
+describe('device language startup', () => {
+    it('uses the first supported browser locale without constructing the Intl fallback', async () => {
+        vi.resetModules();
+        vi.stubGlobal('navigator', { languages: ['qaa', 'fr-CA'], language: 'en-US' });
+        const fallback = vi.spyOn(Intl, 'DateTimeFormat');
+        try {
+            const language = await import('./preferredLanguage');
+            expect(language.resolveLanguageFromDeviceLocales()).toBe('fr');
+            expect(language.getPreferredLanguage()).toBe('fr');
+            expect(fallback).not.toHaveBeenCalled();
+        } finally {
+            fallback.mockRestore();
+            vi.unstubAllGlobals();
+        }
+    });
+});
 
 describe('text/i18n language state', () => {
     it('uses German copy for unnamed Run map forks and lanes', async () => {

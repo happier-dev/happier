@@ -26,24 +26,23 @@ function parseLocaleTag(tag: string): DeviceLocale | null {
  * Expo-native builds should use `deviceLocales.native.ts` (Metro will prefer `.native`).
  * In unit tests (Vitest/node), this file avoids importing Expo/React Native packages.
  */
-export function getDeviceLocales(): readonly DeviceLocale[] {
-    const tags: string[] = [];
-
+export function* getDeviceLocales(): Generator<DeviceLocale> {
     if (typeof navigator !== 'undefined') {
         const nav = navigator as unknown as { languages?: string[]; language?: string };
-        if (Array.isArray(nav.languages)) tags.push(...nav.languages);
-        if (typeof nav.language === 'string') tags.push(nav.language);
+        for (const tag of Array.isArray(nav.languages) ? nav.languages : []) {
+            const parsed = parseLocaleTag(tag);
+            if (parsed) yield parsed;
+        }
+        if (typeof nav.language === 'string') {
+            const parsed = parseLocaleTag(nav.language);
+            if (parsed) yield parsed;
+        }
     }
 
+    // The browser's locale preferences usually settle this before Intl is needed.
     const intlTag = Intl?.DateTimeFormat?.()?.resolvedOptions?.()?.locale;
-    if (typeof intlTag === 'string') tags.push(intlTag);
-
-    const out: DeviceLocale[] = [];
-    for (const tag of tags) {
-        const parsed = parseLocaleTag(tag);
-        if (parsed) out.push(parsed);
+    if (typeof intlTag === 'string') {
+        const parsed = parseLocaleTag(intlTag);
+        if (parsed) yield parsed;
     }
-
-    return out;
 }
-
