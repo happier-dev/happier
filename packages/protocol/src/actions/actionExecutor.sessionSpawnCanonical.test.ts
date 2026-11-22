@@ -85,6 +85,38 @@ function createExternalSpawnApprovalContext(requestId: string) {
 }
 
 describe('session.spawn_new canonical execution', () => {
+  it.each([
+    { name: 'selected Project', selection: {
+      projectContext: { projectRef: { serverId: 'server-1', projectKey: 'other-project' } },
+    }, profile: undefined },
+    { name: 'selected Source', selection: {
+      projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'other-source' } },
+    }, profile: undefined },
+    { name: 'empty context', selection: { projectContext: {} }, profile: 'parent-profile' },
+    { name: 'ordinary attached child', selection: {}, profile: 'parent-profile' },
+    { name: 'retained replay', selection: {
+      projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'other-source' } },
+      sourceContext: { v: 1, kind: 'session_replay', sourceSessionId: 'parent-session', forkPoint: { type: 'latest' } },
+    }, profile: 'parent-profile' },
+  ] as const)('sends the $name approval selection to the native Session owner', async ({ selection, profile }) => {
+    const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
+      type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
+    }));
+    const executor = createActionExecutor({ sessionSpawnNew });
+    const result = await executor.execute('session.spawn_new', { ...canonicalInput, ...selection }, {
+      surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
+      defaultSessionId: 'parent-session', actionCaller: agentStartContext.caller, agentStartContext,
+      approvalProfileId: 'parent-profile', callerPermissionMode: 'default',
+      causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+      sessionInputSource: { sourceSessionId: 'parent-session', sourceTurnId: 'parent-turn-1', via: 'action' },
+      sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } }),
+    });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'pending' } });
+    expect(sessionSpawnNew).toHaveBeenCalledOnce();
+    expect(sessionSpawnNew.mock.calls[0]?.[0].approvalProfileId).toBe(profile);
+  });
+
   it.each([true, false])('uses native confirmation for a saved UI profile-change Ask without an Inbox request (accept=%s)', async accept => {
     const confirmations: unknown[] = [];
     const requests: unknown[] = [];
@@ -97,7 +129,9 @@ describe('session.spawn_new canonical execution', () => {
         return { type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted' }; },
       approvalsCreate: async ({ request }) => { requests.push(request); return { artifactId: 'unexpected-self-approval' }; },
     }, { confirmUiDefault: true });
-    const result = await executor.execute('session.spawn_new', { ...canonicalInput, approvalProfileId: null }, {
+    const result = await executor.execute('session.spawn_new', { ...canonicalInput,
+      projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'selected-source' } }, approvalProfileId: null,
+    }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       serverId: 'server-1', runtimeAccountId: 'account-1', approvalProfileId: 'builtin:apply-safe',
       actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
@@ -108,6 +142,7 @@ describe('session.spawn_new canonical execution', () => {
       : { ok: false, errorCode: 'approval_canceled' });
     expect(confirmations).toMatchObject([{ actionId: 'session.spawn_new', input: { approvalProfileId: null } }]);
     expect(births).toHaveLength(accept ? 1 : 0);
+    if (accept) expect(births[0]).toMatchObject({ approvalProfileId: null });
     expect(requests).toHaveLength(0);
   });
 
@@ -1740,7 +1775,11 @@ describe('session.spawn_new canonical execution', () => {
     expect(confirmations).toHaveLength(0);
   });
 
-  it('retains the inherited profile and exact target-owned directory approval through Session spawn replay', async () => {
+  it.each([
+    { destination: 'attached', projectContext: undefined, approvalProfileId: 'builtin:apply-safe' },
+    { destination: 'selected Source',
+      projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'selected-source' } }, approvalProfileId: undefined },
+  ])('preserves the $destination profile intent and exact directory approval through Session spawn replay', async ({ projectContext, approvalProfileId }) => {
     const directoryApproval = {
       v: 1 as const,
       executionTarget: canonicalInput.executionTarget,
@@ -1774,7 +1813,7 @@ describe('session.spawn_new canonical execution', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     } as unknown as ActionExecutorDeps);
 
-    await expect(executor.execute('session.spawn_new', canonicalInput, {
+    await expect(executor.execute('session.spawn_new', { ...canonicalInput, ...(projectContext ? { projectContext } : {}) }, {
       surface: 'cli',
       authority: 'present_user',
       approvalProfileId: 'builtin:apply-safe',
@@ -1804,7 +1843,7 @@ describe('session.spawn_new canonical execution', () => {
     expect(sessionSpawnNewDirectoryApprovalPreflight).toHaveBeenCalledTimes(2);
     expect(sessionSpawnNew).toHaveBeenCalledWith(expect.objectContaining({
       sessionCreationDirectoryApproval: directoryApproval,
-      approvalProfileId: 'builtin:apply-safe',
+      approvalProfileId,
     }));
   });
 

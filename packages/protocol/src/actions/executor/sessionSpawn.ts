@@ -1,7 +1,7 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { deriveSessionCreationTagV1, deriveWorkflowSessionCreationTag, SessionCreationKeyV1Schema, type SessionCreationKeyV1 } from '../../sessions/creation/sessionCreationIdentityV1.js';
 import { readNonEmptyString, readRecord } from '../../inputs/inputRecords.js';
-import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
+import { SessionSpawnNewInputV2Schema, SessionSpawnNewActionInputV2Schema, type SessionSpawnNewActionInputV2 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { projectDiscussionModelParticipantLaunchV1, type DiscussionModelParticipantLaunchV1 } from '../../discussions/modelParticipantLaunch.js';
 import { SessionDiscussionParticipantV1Schema } from '../../sessions/creation/sessionDiscussionParticipantV1.js';
 import { normalizeId, assignIfDefined } from './inputReading.js';
@@ -58,7 +58,8 @@ export function materializeSessionCreationActionInput(
 }
 
 export function buildSessionSpawnNewArgs(
-  data: Readonly<Record<string, unknown>> & Readonly<{ approvalProfileId?: string | null }>,
+  data: Readonly<Record<string, unknown>> & Pick<SessionSpawnNewActionInputV2,
+    'approvalProfileId' | 'configuration' | 'projectContext' | 'sourceContext'>,
   ctx: ActionExecutorContext,
   legacyMetadataLabel?: string,
   discussionParticipantLaunch?: DiscussionModelParticipantLaunchV1,
@@ -115,12 +116,14 @@ export function buildSessionSpawnNewArgs(
   const sessionCreationTag = ctx.managedContinuationSessionCreationTag ?? prepareIdentity?.sessionCreationTag ?? workflowCreationTag ?? (callerCreationNamespace
     ? deriveSessionCreationTagV1({ callerCreationNamespace, creationKey }) : null);
   if (!sessionCreationTag) return null;
+  const selectsNewProject = (data.projectContext?.projectRef !== undefined || data.projectContext?.sourceRef !== undefined)
+    && data.sourceContext === undefined && data.configuration?.providerSessionResume === undefined;
   const args: Record<string, unknown> = {
     ...data,
-    // Preserve a new root's omission for creation defaults. An attached Session
-    // retains its stored choice; authored null remains an explicit opt-out.
-    approvalProfileId: !normalizeId(ctx.defaultSessionId) && data.approvalProfileId === undefined
-        && ctx.approvalProfileId == null
+    // A new Project launch selects its own defaults. Ordinary attached or
+    // retained launches inherit their Session's choice, including no profile.
+    approvalProfileId: data.approvalProfileId === undefined
+        && (selectsNewProject || (!normalizeId(ctx.defaultSessionId) && ctx.approvalProfileId == null))
       ? undefined
       : resolveInheritedApprovalProfileIdV1(data.approvalProfileId, ctx.approvalProfileId),
     ...(!discussionParticipant && isAgentCaller(ctx) && data.manager === undefined && ctx.defaultSessionId
