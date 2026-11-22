@@ -6,8 +6,8 @@ import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/worksp
 
 import { parseBackendTargetKeyV2, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { projectSessionModelRefToExecutionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
-import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1, type LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
-import { type LlmTaskRunnerUnavailableAgentV1, type LlmTaskIdV1, LLM_TASK_DECLARATIONS_V1, LlmTaskRunnerResolutionWireV1Schema, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
+import type { LlmTaskRunnerChoiceV1, LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import { type LlmTaskRunnerUnavailableAgentV1, type LlmTaskIdV1, LLM_TASK_DECLARATIONS_V1, LlmTaskRunnerResolutionWireV1Schema, needsLlmTaskRunnerCandidatesV1, resolveLlmTaskRunnerV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerSelection';
 
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
@@ -65,14 +65,12 @@ function waitObservationFailure(code: string, runId: string): LlmTaskRunResult {
 }
 
 /**
- * The runner owner decides: an explicit choice resolves without a machine read
- * (the owner applies the task's permission levels); Auto resolves on the executing
- * machine, preferring the Session's own Agent on a cost tie.
- * Nothing ready ⇒ a typed failure.
+ * Auto and no-tools choices resolve on the executing Machine. Explicit choices
+ * that allow tools use the same resolver without a Machine read.
  */
 export async function resolveWorkspaceLlmTaskRunner(host: LlmTaskHostV1, choice: LlmTaskRunnerChoiceV1 | null, task: LlmTaskIdV1):
     Promise<Readonly<{ ok: true; runner: LlmTaskRunnerConfigV1; title?: string }> | Extract<LlmTaskRunResult, { ok: false }>> {
-    if (!isLlmTaskRunnerAutoV1(choice)) {
+    if (!needsLlmTaskRunnerCandidatesV1(task, choice)) {
         const explicit = resolveLlmTaskRunnerV1({ task, choice, candidates: [] });
         if (explicit.ok) return { ok: true, runner: explicit.runner };
     }

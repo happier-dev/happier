@@ -8,6 +8,7 @@ import { resolveWorkspaceLlmTaskRunner, runLlmTaskInWorkspace } from './runLlmTa
 
 const host = { kind: 'workspace', workspace: { serverId: 'home_a', machineId: 'machine_a', rootPath: '/projects' } } as const;
 const runner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } as const;
+const resolvedRunner = { ...runner, permissionMode: 'no_tools' } as const;
 beforeEach(() => { execute.mockReset(); });
 it('reports the accepted task run before waiting so Stop can reach it, without a Session or another start', async () => {
     const events: string[] = [];
@@ -16,6 +17,7 @@ it('reports the accepted task run before waiting so Stop can reach it, without a
         runClass: 'bounded', ioMode: 'request_response', status: 'succeeded', startedAtMs: 1, finishedAtMs: 2 },
         latestToolResult: { recommendations: [] } };
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        agentsModelsList: async () => ({ items: [], llmTaskRunner: { ok: true, source: 'explicit', runner: resolvedRunner } }),
         executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'machine_a' }),
         executionRunStart: async () => { events.push('start'); return { runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }; },
         executionRunWait: async () => { events.push('wait'); return { ok: true, status: 'succeeded', result: terminal }; },
@@ -23,13 +25,13 @@ it('reports the accepted task run before waiting so Stop can reach it, without a
     execute.mockImplementation(executor.execute);
     const result = await runLlmTaskInWorkspace({
         host,
-        choice: { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } },
+        choice: runner,
         task: 'deploy_suggestion', intent: 'task', instructions: 'Suggest a setup', intentInput: { input: { description: 'Bakery' } },
         onStarted: runId => { events.push(runId); },
     });
     expect(result).toMatchObject({ ok: true, terminal });
     expect(events).toEqual(['start', 'run_1', 'wait']);
-    expect(execute.mock.calls.map(row => row[0])).toEqual(['execution.run.start']);
+    expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list', 'execution.run.start']);
 });
 
 it.each(['beforeAcceptance', 'onStarted', 'wait'] as const)('stops an accepted task exactly once when aborted during %s', async phase => {
@@ -48,7 +50,7 @@ it.each(['beforeAcceptance', 'onStarted', 'wait'] as const)('stops an accepted t
         executionRunStop: stop,
     }));
     execute.mockImplementation(executor.execute);
-    const result = await runLlmTaskInWorkspace({ host, choice: runner, task: 'deploy_suggestion', intent: 'task',
+    const result = await runLlmTaskInWorkspace({ host, choice: runner, resolvedRunner, task: 'deploy_suggestion', intent: 'task',
         instructions: 'Suggest a setup', intentInput: { input: { description: 'Bakery' } }, signal: controller.signal,
         onStarted: () => { if (phase === 'onStarted') controller.abort(); },
     });
@@ -69,7 +71,7 @@ it('preserves a failed Stop instead of reporting cancellation', async () => {
         executionRunStop: async () => ({ ok: false, errorCode: 'machine_offline', error: 'The Machine is offline' }),
     }));
     execute.mockImplementation(executor.execute);
-    expect(await runLlmTaskInWorkspace({ host, choice: runner, task: 'deploy_suggestion', intent: 'task',
+    expect(await runLlmTaskInWorkspace({ host, choice: runner, resolvedRunner, task: 'deploy_suggestion', intent: 'task',
         instructions: 'Suggest a setup', intentInput: { input: { description: 'Bakery' } }, signal: controller.signal,
         onStarted: () => controller.abort(),
     })).toMatchObject({ ok: false, errorCode: 'machine_offline', error: 'The Machine is offline', runId: 'run_1', outcome: 'unknown' });

@@ -1,7 +1,8 @@
 import { accountSettingsParse, type AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
 import { projectLlmTaskRunnerCandidatesFromCatalog } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
-import { isLlmTaskRunnerAutoV1, type LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
+import type { LlmTaskRunnerChoiceV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import {
+  needsLlmTaskRunnerCandidatesV1,
   resolveLlmTaskRunnerV1,
   type LlmTaskIdV1,
   type LlmTaskRunnerCandidateV1,
@@ -46,7 +47,7 @@ export async function readLlmTaskRunnerCandidatesOnThisMachine(
   return projectLlmTaskRunnerCandidatesFromCatalog(catalog?.isCurrent(current) ? catalog : { profiles: [] });
 }
 
-/** Resolves a task's runner on this machine. Explicit choices need no machine read. */
+/** Resolves a task's runner using this Machine's candidates when the task needs them. */
 export async function resolveLlmTaskRunnerOnThisMachine(params: Readonly<{
   task: LlmTaskIdV1;
   choice: LlmTaskRunnerChoiceV1 | null | undefined;
@@ -55,7 +56,7 @@ export async function resolveLlmTaskRunnerOnThisMachine(params: Readonly<{
   signal?: AbortSignal;
   readCandidates?: () => Promise<LlmTaskRunnerMachineCandidates>;
 }>): Promise<LlmTaskRunnerResolutionV1> {
-  const machine = isLlmTaskRunnerAutoV1(params.choice)
+  const machine = needsLlmTaskRunnerCandidatesV1(params.task, params.choice)
     ? await (params.readCandidates ?? (() => readLlmTaskRunnerCandidatesOnThisMachine({
       ...(params.credentials ? { credentials: params.credentials } : {}),
       ...(params.signal ? { signal: params.signal } : {}),

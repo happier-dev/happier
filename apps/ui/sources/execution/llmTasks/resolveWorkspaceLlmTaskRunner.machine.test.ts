@@ -64,7 +64,7 @@ const runner = {
   permissionMode: 'no_tools',
 } as const;
 
-async function setup() {
+async function setup(refuseRunner = false) {
   const serverUrl = 'https://workspace-runner.example.test';
   const serverIdentityId = 'srv_workspace_runner';
   const accountId = 'workspace-runner-account';
@@ -98,7 +98,7 @@ async function setup() {
     activeAt: Date.now(),
   });
   const inputs: Record<string, unknown>[] = [];
-  // The Machine's runner owner answers what Auto picks there.
+  // The Machine answers runner resolution for this workspace.
   const boundary = await createExternalActionAccountHttpBoundary({
     serverUrl,
     serverIdentityId,
@@ -110,7 +110,12 @@ async function setup() {
       inputs.push(input as Record<string, unknown>);
       return {
         items: [],
-        llmTaskRunner: {
+        llmTaskRunner: refuseRunner ? {
+          ok: false,
+          errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE',
+          reason: 'no_matching_model',
+          unavailableAgents: [],
+        } : {
           ok: true,
           source: 'auto',
           title: 'GPT-6-Luna',
@@ -182,4 +187,23 @@ it('a workspace task reads its Auto runner from the Machine it runs on, never th
   });
   // The Machine admits only the Action's own input contract.
   expect(getActionSpec('agents.models.list').inputSchema.safeParse(env.inputs[0]).error?.issues).toBeUndefined();
+});
+
+it('presents the Machine refusal for an explicit no-tools runner', async () => {
+  const env = await setup(true);
+  const host = { kind: 'workspace', workspace: { serverId: env.homeId, machineId: env.machine.id, rootPath: '/projects' } } as const;
+  const choice = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.muse/muse', providerConnectionId: null,
+    modelId: 'meta/muse-spark-1.3-contributor' } } as const;
+  expect(await resolveWorkspaceLlmTaskRunner(host, choice, 'deploy_suggestion')).toMatchObject({
+    ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: 'no_matching_model', error: expect.any(String),
+  });
+  expect(env.inputs).toEqual([expect.objectContaining({ task: 'deploy_suggestion', choice, machineId: env.machine.id })]);
+});
+
+it('keeps an explicit read-only runner without a Machine lookup', async () => {
+  const env = await setup(true);
+  const host = { kind: 'session', sessionId: 'summary-session', serverId: env.homeId, machineId: env.machine.id } as const;
+  const choice = { ...runner, permissionMode: 'read_only' } as const;
+  expect(await resolveWorkspaceLlmTaskRunner(host, choice, 'session_replay_summary')).toEqual({ ok: true, runner: choice });
+  expect(env.inputs).toHaveLength(0);
 });

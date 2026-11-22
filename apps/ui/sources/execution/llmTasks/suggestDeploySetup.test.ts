@@ -128,10 +128,25 @@ it('returns per-Machine repair reasons without starting a run when no Agent is r
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });
 
+it('surfaces an explicit no-tools refusal through the existing per-Machine repair result', async () => {
+    const executor = createActionExecutor(createActionExecutorBoundaryFixture({ agentsModelsList: async () => ({ llmTaskRunner: {
+        ok: false, errorCode: 'LLM_TASK_RUNNER_UNAVAILABLE', reason: 'no_matching_model', unavailableAgents: [],
+    } }) }));
+    execute.mockImplementation(executor.execute);
+    const choice = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.muse/muse', providerConnectionId: null,
+        modelId: 'meta/muse-spark-1.3-contributor' } } as const;
+    expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery', choice,
+        catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') },
+    })).toMatchObject({ kind: 'noAgent', machines: [{ machineId: 'ready', reason: 'no_matching_model' }] });
+    expect(execute.mock.calls.map(row => row[0])).toEqual(['agents.models.list']);
+});
+
 it.each([false, true])('stops the accepted run once without hiding Stop failure (refused: %s)', async (refused) => {
     const abort = new AbortController();
     let stops = 0;
+    const resolvedRunner = { ...runner, permissionMode: 'no_tools' } as const;
     const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        agentsModelsList: async () => ({ llmTaskRunner: { ok: true, source: 'explicit', runner: resolvedRunner } }),
         executionRunCheckProtocolV2: async () => ({ ok: true, exactMachineId: 'ready' }),
         executionRunStart: async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }),
         executionRunStop: async () => { stops++; return refused
@@ -142,7 +157,7 @@ it.each([false, true])('stops the accepted run once without hiding Stop failure 
     expect(await suggestDeploySetup({ serverId: 'home', description: 'Bakery',
         catalog: { ...catalog, machines: catalog.machines.filter(machine => machine.machineId === 'ready') }, choice: runner, signal: abort.signal,
         onProgress: event => { if (event.kind === 'run') abort.abort(); } })).toEqual(refused
-            ? { kind: 'failed', code: 'stop_refused', stage: 'run' } : { kind: 'stopped' });
+            ? { kind: 'failed', code: 'stop_refused', stage: 'run', runner: resolvedRunner } : { kind: 'stopped' });
     expect(stops).toBe(1);
     expect(execute.mock.calls.filter(row => row[0] === 'deployments.suggestions.check')).toHaveLength(0);
 });

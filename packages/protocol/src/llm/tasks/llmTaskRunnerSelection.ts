@@ -85,6 +85,11 @@ export function readLlmTaskPermissionModeV1(task: LlmTaskIdV1, requested?: LlmTa
   return readPermissionMode(LLM_TASK_DECLARATIONS_V1[task], requested);
 }
 
+/** Whether runner selection needs the executing Machine's candidate inventory. */
+export function needsLlmTaskRunnerCandidatesV1(task: LlmTaskIdV1, choice: LlmTaskRunnerChoiceV1 | null | undefined): boolean {
+  return isLlmTaskRunnerAutoV1(choice) || readLlmTaskPermissionModeV1(task, choice.permissionMode) === 'no_tools';
+}
+
 /** Whether the Agent can enforce the task's effective permission mode. */
 export function supportsLlmTaskRunnerPermissionV1(
   permissionMode: LlmTaskPermissionMode,

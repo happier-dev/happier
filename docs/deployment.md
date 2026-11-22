@@ -138,8 +138,10 @@ registry, connected-account, Machine inventory or setup-plan reads run. A failed
 publisher read retains its typed code in the `forges` issue. The default `{}`
 input continues to compose the full catalog.
 
-The dialog uses a read-only `task` run on the first eligible Machine whose Agent
-can run the `deploy_suggestion` task. The run's working folder is that Machine's
+The dialog uses a `no_tools` run on the first eligible Machine whose Agent can
+run the `deploy_suggestion` task. An explicit Agent that the Machine catalog
+knows cannot enforce `no_tools` produces the existing runner-unavailable result.
+The run's working folder is that Machine's
 home folder, which always exists; nothing is created on the Machine for it. An
 online Machine whose record is still opening (no name or home folder yet) is not
 called unavailable: the suggestion waits on the Machine owner's update

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
+import type { LlmTaskRunnerConfigV1 } from '@happier-dev/protocol/llm/tasks/llmTaskRunnerConfigV1';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 
 const { actionExecuteMock, createFrontDoorActionExecuteMock } = vi.hoisted(() => {
@@ -52,10 +53,20 @@ function successfulTerminalResult(runId = 'run_1') {
 const CLAUDE_RUNNER = { v: 1 as const, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } };
 const CODEX_KEY = 'agent:happier.agent.codex/codex';
 
+function explicitRunnerResult(choice: LlmTaskRunnerConfigV1) {
+    return { items: [], llmTaskRunner: { ok: true, source: 'explicit', runner: { ...choice, permissionMode: 'no_tools' } } };
+}
+
+function mockSessionRunResult(result: unknown) {
+    actionExecuteMock.mockImplementation(async actionId => actionId === 'agents.models.list'
+        ? { ok: true, result: explicitRunnerResult(CLAUDE_RUNNER) }
+        : result);
+}
+
 async function generate() {
     const { generateScmCommitMessage } = await import('./commitMessageGenerator');
     return await generateScmCommitMessage({
-        host: { kind: 'session', sessionId: 'sess_1' },
+        host: { kind: 'session', sessionId: 'sess_1', machineId: 'machine_s' },
         choice: CLAUDE_RUNNER,
         instructions: 'use conventional commits',
         scopePaths: ['a.txt', 'b.txt'],
@@ -73,6 +84,7 @@ describe('commitMessageGenerator', () => {
         const executionRunGet = vi.fn(async () => successfulTerminalResult().result);
         const executionRunWait = vi.fn(async () => ({ ok: true as const, status: 'succeeded' as const, result: successfulTerminalResult().result }));
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            agentsModelsList: async () => explicitRunnerResult(CLAUDE_RUNNER),
             executionRunCheckProtocolV2: async (_sessionId, _requirements, opts) => ({ ok: true, exactMachineId: opts?.targetMachineId ?? undefined }),
             executionRunStart,
             executionRunGet,
@@ -99,21 +111,23 @@ describe('commitMessageGenerator', () => {
     it('starts the explicit runner as chosen: its model, connected route and effort, never tool-capable', async () => {
         const executionRunStart = vi.fn(async () => ({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
         const executionRunWait = vi.fn(async () => ({ ok: true as const, status: 'succeeded' as const, result: successfulTerminalResult().result }));
-        const agentsModelsList = vi.fn(async () => ({ items: [] }));
+        const choice = { v: 1 as const, modelSelection: { agentTargetKey: CODEX_KEY, providerConnectionId: null, modelId: 'gpt-6-luna' },
+            connectedServices: null, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1, overrides: { reasoning_effort: { value: 'low', updatedAt: 1 } } },
+            permissionMode: 'full' as const };
+        const agentsModelsList = vi.fn(async () => explicitRunnerResult(choice));
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({
             executionRunCheckProtocolV2: async (_sessionId, _requirements, opts) => ({ ok: true, exactMachineId: opts?.targetMachineId ?? undefined }),
             executionRunStart, executionRunWait, agentsModelsList,
         }));
         actionExecuteMock.mockImplementation(executor.execute);
         const { generateScmCommitMessage } = await import('./commitMessageGenerator');
-        const choice = { v: 1 as const, modelSelection: { agentTargetKey: CODEX_KEY, providerConnectionId: null, modelId: 'gpt-6-luna' },
-            connectedServices: null, sessionConfigOptionOverrides: { v: 1 as const, updatedAt: 1, overrides: { reasoning_effort: { value: 'low', updatedAt: 1 } } },
-            permissionMode: 'full' as const };
         expect(await generateScmCommitMessage({
             host: { kind: 'workspace', workspace: { serverId: 'home_a', workspaceId: 'workspace_a', machineId: 'machine_a', rootPath: '/repo' } },
             choice, scopePaths: ['a.txt'],
         })).toMatchObject({ ok: true, message: 'feat: update stuff' });
-        expect(agentsModelsList).not.toHaveBeenCalled();
+        expect(agentsModelsList).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+            purpose: 'llm_task_runner', task: 'scm_commit_message', machineId: 'machine_a', choice,
+        }), expect.anything());
         expect(executionRunStart).toHaveBeenCalledWith(null, expect.objectContaining({
             modelSelection: choice.modelSelection, connectedServices: null,
             sessionConfigOptionOverrides: choice.sessionConfigOptionOverrides, permissionMode: 'no_tools',
@@ -189,8 +203,7 @@ describe('commitMessageGenerator', () => {
     });
 
     it('starts scm_commit_message.v1 through the Action front door and reads one canonical terminal result', async () => {
-        actionExecuteMock
-            .mockResolvedValueOnce(startResult({
+        mockSessionRunResult(startResult({
                 ok: true,
                 status: 'succeeded',
                 result: successfulTerminalResult().result,
@@ -204,7 +217,7 @@ describe('commitMessageGenerator', () => {
         }
 
         expect(actionExecuteMock).toHaveBeenNthCalledWith(
-            1,
+            2,
             'execution.run.start',
             expect.objectContaining({
                 sessionId: 'sess_1',
@@ -228,9 +241,9 @@ describe('commitMessageGenerator', () => {
             },
         );
 
-        const startInput = actionExecuteMock.mock.calls[0]?.[1];
+        const startInput = actionExecuteMock.mock.calls[1]?.[1];
         expect(startInput?.intentInput?.patches).toBeUndefined();
-        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['execution.run.start']);
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['agents.models.list', 'execution.run.start']);
         expect(startInput).not.toHaveProperty('waitTimeoutSeconds');
     });
 
@@ -246,11 +259,11 @@ describe('commitMessageGenerator', () => {
         }, 'pending'],
         ['cancelled', { ok: false, code: 'cancelled' }, 'unknown'],
     ] as const)('returns the canonical %s observation result without redispatching or stopping', async (errorCode, wait, outcome) => {
-        actionExecuteMock.mockResolvedValueOnce(startResult(wait));
+        mockSessionRunResult(startResult(wait));
 
         await expect(generate()).resolves.toMatchObject({ ok: false, errorCode, runId: 'run_1', outcome });
 
-        expect(actionExecuteMock).toHaveBeenCalledTimes(1);
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['agents.models.list', 'execution.run.start']);
         expect(actionExecuteMock).toHaveBeenCalledWith(
             'execution.run.start',
             expect.objectContaining({ waitForCompletion: true }),
@@ -263,28 +276,28 @@ describe('commitMessageGenerator', () => {
         ['execution_run_protocol_unsupported', 'protocol unavailable'],
         ['execution_run_target_unavailable', 'target unavailable'],
     ] as const)('preserves the %s Action failure without another dispatch', async (errorCode, error) => {
-        actionExecuteMock.mockResolvedValueOnce({ ok: false, errorCode, error });
+        mockSessionRunResult({ ok: false, errorCode, error });
 
         await expect(generate()).resolves.toEqual({ ok: false, error, errorCode });
 
-        expect(actionExecuteMock).toHaveBeenCalledTimes(1);
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['agents.models.list', 'execution.run.start']);
     });
 
     it.each([
         ['missing', startResult(undefined)],
         ['malformed', startResult({ ok: false, code: 'not_a_wait_result' })],
     ] as const)('fails closed for a %s wait result without reading or redispatching the run', async (name, result) => {
-        actionExecuteMock.mockResolvedValueOnce(result);
+        mockSessionRunResult(result);
 
         await expect(generate()).resolves.toMatchObject(name === 'missing'
             ? { ok: false, runId: 'run_1', outcome: 'unknown' }
             : { ok: false });
 
-        expect(actionExecuteMock).toHaveBeenCalledTimes(1);
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['agents.models.list', 'execution.run.start']);
     });
 
     it('fails closed when the waited terminal run is not the run it started', async () => {
-        actionExecuteMock.mockResolvedValueOnce(startResult({
+        mockSessionRunResult(startResult({
             ok: true,
             status: 'succeeded',
             result: successfulTerminalResult('run_other').result,
@@ -292,7 +305,7 @@ describe('commitMessageGenerator', () => {
 
         await expect(generate()).resolves.toMatchObject({ ok: false, runId: 'run_1', outcome: 'unknown' });
 
-        expect(actionExecuteMock).toHaveBeenCalledTimes(1);
+        expect(actionExecuteMock.mock.calls.map(([id]) => id)).toEqual(['agents.models.list', 'execution.run.start']);
     });
 
 });

@@ -8,6 +8,7 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+    bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionRequestEnvelopeSchema,
     ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -25,6 +26,9 @@ function pendingStart(runId: string) {
         wait: { ok: true, status: 'running', disposition: 'observation_timeout', runId,
             timeoutMs: 12_000, observedAtMs: 13_000, deadlineAtMs: 13_000 } });
 }
+
+const selectedRunner = { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude',
+    providerConnectionId: null, modelId: 'default' } } as const;
 
 /** Home HTTP and daemon RPC are the boundaries; requester sealing/admission stays real. */
 async function createSuggestionFixture(input: Readonly<{
@@ -46,14 +50,26 @@ async function createSuggestionFixture(input: Readonly<{
             }
             return Response.json(path === '/v1/machines' ? [machine] : { machine });
         }
-        if (path === '/v1/actions/execution.run.start/execution-authorization' && accountId) {
+        const actionId = (['execution.run.start', 'agents.models.list'] as const)
+            .find(id => path === bindExternalActionExecutionAuthorizationHttpPathV1(id));
+        if (actionId && accountId) {
             const mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
             return Response.json(ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-authorization', binding: {
                 accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 0 },
                 accountEncryptionMode: 'plain', serverIdentityId, machineId: 'm1', installationId: 'suggestion-installation',
-                actionId: 'execution.run.start', requestId: mint.envelope.requestId, target: mint.envelope.target,
+                actionId, requestId: mint.envelope.requestId, target: mint.envelope.target,
                 requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(mint.envelope),
             } }));
+        }
+        if (path === '/v1/actions/agents.models.list') {
+            const body: unknown = JSON.parse(String(init?.body));
+            const wrapped = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(body);
+            const envelope = wrapped.success ? wrapped.data.envelope : ExternalActionRequestEnvelopeSchema.parse(body);
+            return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1,
+                actionId: 'agents.models.list', requestId: envelope.requestId,
+                execution: { ok: true, result: { items: [], llmTaskRunner: { ok: true, source: 'explicit',
+                    runner: { ...selectedRunner, permissionMode: 'no_tools' } } } },
+            }));
         }
         if (path === '/v1/actions/execution.run.start') {
             const mint = ExternalActionExecutionAuthorizationRequestV1Schema.parse(JSON.parse(String(init?.body)));
@@ -92,7 +108,7 @@ describe('shared commit suggestion Run custody', () => {
             if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) return (request.payload as { runId: string }).runId === 'old' ? held.promise : output('new');
             return undefined;
         } });
-        const settings = { scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: { v: 1 as const, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } };
+        const settings = { scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: selectedRunner };
         fixture.storage.getState().applySettingsLocal(settings);
         const { useScmCommitMessageSuggestion } = await import('./useScmCommitMessageSuggestion');
         let suggestion: ReturnType<typeof useScmCommitMessageSuggestion> | null = null;
@@ -147,7 +163,7 @@ describe('shared commit suggestion Run custody', () => {
             }, ...(terminal ? { latestToolResult: { message: 'feat: retained suggestion' } } : {}) };
             return undefined;
         } });
-        fixture.storage.getState().applySettingsLocal({ scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: { v: 1, modelSelection: { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' } } });
+        fixture.storage.getState().applySettingsLocal({ scmCommitMessageGeneratorEnabled: true, scmCommitMessageGeneratorRunnerV1: selectedRunner });
         const { useScmCommitMessageSuggestion } = await import('./useScmCommitMessageSuggestion');
         let suggestion: ReturnType<typeof useScmCommitMessageSuggestion> | null = null;
         function Host() {

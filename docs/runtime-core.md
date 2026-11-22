@@ -4860,9 +4860,9 @@ Tasks only declare their needs in `LLM_TASK_DECLARATIONS_V1`: structured output,
 allowed permission levels (the first is the default), whether the prompt carries
 Session text, and the cost tiers Auto may use.
 
-- An explicit choice always wins and is never swapped for another Agent. Its
-  permission level is kept to the task's allowed levels; the commit message is
-  always `no_tools`.
+- An explicit choice keeps the selected Agent and model when accepted. The
+  resolver limits its permission to the task's allowed levels. The commit
+  message and deploy suggestions always use `no_tools`.
 - Auto reads what is ready on the executing machine: enabled Agents that are
   signed in or connected through a service, with their offered models. Task
   runs and the pickers' "Auto — currently" read use the same reader
@@ -4889,9 +4889,11 @@ Session text, and the cost tiers Auto may use.
 Pickers show what Auto would pick through `agents.models.list` with purpose
 `llm_task_runner`, which runs the same owner on the executing machine.
 For a `no_tools` task, Auto and the picker require the Agent's positive
-`capabilities.tools.noTools` declaration on that Machine. A missing or false
-declaration excludes the Agent. Native launch still enforces the chosen policy
-for retained explicit choices. Replay reports an unsupported summary runner
+`capabilities.tools.noTools` declaration on that Machine. Explicit no-tools
+resolution uses the same Machine candidate reader and returns `no_matching_model`
+when the chosen Agent is a known candidate without that support. Explicit
+choices whose effective permission allows tools skip the candidate read. Native
+launch still enforces the chosen policy. Replay reports an unsupported summary runner
 through the existing failure result so the person can choose a compatible
 runner or replay recent messages. Pi declares no-tools support as false and
 refuses an exclusive empty tool allowlist before native launch.
@@ -4905,7 +4907,7 @@ Writers no longer write the old key. The UI generator
 ([`commitMessageGenerator.ts`](../apps/ui/sources/scm/operations/commitMessageGenerator.ts))
 uses the shared UI lifecycle owner
 [`runLlmTaskInWorkspace.ts`](../apps/ui/sources/execution/llmTasks/runLlmTaskInWorkspace.ts).
-It resolves Auto on the executing Machine (the workspace's, or the Session's),
+It resolves the no-tools runner on the executing Machine (the workspace's, or the Session's),
 then starts the existing `execution.run.start` with that runner.
 
 Deploy suggestions store the same runner choice in `deploySuggestionRunnerV1`
