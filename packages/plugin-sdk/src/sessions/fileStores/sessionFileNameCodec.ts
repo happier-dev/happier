@@ -39,7 +39,10 @@ export function parseSessionIdFromFileName(fileNameOrPath: string): string | nul
   return stem || null;
 }
 
-export async function readSessionIdFromFileHead(filePath: string): Promise<string | null> {
+export async function readSessionIdFromFileHead(
+  filePath: string,
+  options?: Readonly<{ throwOnReadError?: boolean }>,
+): Promise<string | null> {
   let handle: Awaited<ReturnType<typeof open>> | null = null;
   try {
     handle = await open(filePath, 'r');
@@ -49,7 +52,8 @@ export async function readSessionIdFromFileHead(filePath: string): Promise<strin
     const record = parseJsonLine(firstLine);
     return parseDefaultSessionHeader(record)?.sessionId
       ?? (isRecord(record) ? readString(record.sessionId) : null);
-  } catch {
+  } catch (error) {
+    if (options?.throwOnReadError) throw error;
     return null;
   } finally {
     await handle?.close().catch(() => undefined);

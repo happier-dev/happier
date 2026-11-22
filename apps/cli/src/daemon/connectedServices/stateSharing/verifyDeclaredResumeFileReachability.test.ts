@@ -9,6 +9,7 @@ import { sessionFileNameMatchesSessionId } from '@happier-dev/plugin-sdk/session
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { GROK_CONNECTED_ACCOUNT_LAUNCH } from '../../../../../../packages/plugins/grok/src/agent/connectedAccount';
 import { verifyResumeReachableCodex } from '../../../../../../packages/plugins/codex/src/agent/auth/services/runtime/control/verifyResumeReachable';
+import { verifyResumeReachableClaude } from '../../../../../../packages/plugins/claude/src/agent/auth/services/runtime/verifyResumeReachable';
 import { antigravityConnectedAccountLaunch } from '../../../../../../packages/plugins/antigravity/src/agent/connectedServices/continuity';
 import { FX_STATE_SHARING, verifyFxResumeReachable } from '../../../../../../packages/plugins/fx/src/agent/auth/connectedAccount';
 
@@ -35,6 +36,49 @@ const descriptor = {
 } as const;
 
 describe('verifyDeclaredResumeFileReachability', () => {
+  it('reports permanent Claude conversation loss after a complete lookup misses the native identity', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-claude-miss-'));
+    try {
+      const sessions = join(root, 'sessions');
+      await mkdir(sessions);
+      await writeFile(join(sessions, 'sibling.jsonl'), '{"sessionId":"sibling"}\n');
+      await expect(verifyDeclaredResumeFileReachability({
+        targetMaterializedRoot: root, stateSharingDescriptor: descriptor,
+        vendorResumeId: 'selected-claude-session', verifyResumeReachable: verifyResumeReachableClaude,
+      })).resolves.toEqual({ ok: false, reason: 'codex_continuation_unreachable' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('reports an unavailable Claude lookup when the declared root cannot be enumerated', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-claude-enumeration-'));
+    try {
+      await writeFile(join(root, 'sessions'), 'not a directory');
+      await expect(verifyDeclaredResumeFileReachability({
+        targetMaterializedRoot: root, stateSharingDescriptor: descriptor,
+        vendorResumeId: 'selected-claude-session', verifyResumeReachable: verifyResumeReachableClaude,
+      })).resolves.toEqual({ ok: false, reason: 'resume_reachability_check_failed' });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
+  it('preserves a failed Claude transcript header read and can recover on a later lookup', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-resume-claude-header-'));
+    const candidate = join(root, 'sessions', 'transcript.jsonl');
+    try {
+      await mkdir(join(root, 'sessions'));
+      await writeFile(candidate, '{"sessionId":"selected-claude-session"}\n');
+      const verify = () => verifyDeclaredResumeFileReachability({
+        targetMaterializedRoot: root, stateSharingDescriptor: descriptor,
+        vendorResumeId: 'selected-claude-session', verifyResumeReachable: verifyResumeReachableClaude,
+      });
+      const open = vi.spyOn(fileSystem, 'open').mockRejectedValueOnce(Object.assign(new Error('Read denied'), { code: 'EACCES' }));
+      syncBuiltinESMExports();
+      try {
+        await expect(verify()).resolves.toEqual({ ok: false, reason: 'resume_reachability_check_failed' });
+      } finally { open.mockRestore(); syncBuiltinESMExports(); }
+      await expect(verify()).resolves.toEqual({ ok: true, resolvedPath: candidate });
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
   it('resolves Grok fixed native history filenames and requires the selected session summary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-resume-grok-'));
     const id = 'fake-native-grok';

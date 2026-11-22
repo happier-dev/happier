@@ -28,6 +28,15 @@ function isWithinRoot(root: string, candidate: string): boolean {
   return pathFromRoot === '' || (!pathFromRoot.startsWith('..') && !isAbsolute(pathFromRoot));
 }
 
+async function realpathIfPresent(path: string): Promise<string | null> {
+  try {
+    return await realpath(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw error;
+  }
+}
+
 async function readCandidate(path: string, root: string, stateEntryPath: string, includeNativeSessionId: boolean): Promise<AgentConnectedAccountResumeFileCandidateV1> {
   const fileName = basename(path);
   return Object.freeze({
@@ -35,7 +44,7 @@ async function readCandidate(path: string, root: string, stateEntryPath: string,
     stateEntryPath,
     relativePath: relative(root, path).split(sep).join('/'),
     nativeSessionId: includeNativeSessionId
-      ? await readSessionIdFromFileHead(path) ?? parseSessionIdFromFileName(fileName)
+      ? await readSessionIdFromFileHead(path, { throwOnReadError: true }) ?? parseSessionIdFromFileName(fileName)
       : null,
   });
 }
@@ -47,19 +56,17 @@ async function findDeclaredCandidateInRoot(input: Readonly<{
   matchesCandidate(candidate: AgentConnectedAccountResumeFileCandidateV1): boolean;
 }>): Promise<string | null> {
   const walk = async (directory: string): Promise<string | null> => {
-    const entries = await readdir(directory, { withFileTypes: true }).catch(() => null);
-    if (!entries) return null;
+    const entries = await readdir(directory, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isSymbolicLink()) continue;
+      if (!entry.isDirectory() && !entry.isFile()) continue;
       const joinedPath = join(directory, entry.name);
-      const canonicalPath = await realpath(joinedPath).catch(() => null);
-      if (!canonicalPath || !isWithinRoot(input.root, canonicalPath)) continue;
+      const canonicalPath = await realpath(joinedPath);
+      if (!isWithinRoot(input.root, canonicalPath)) continue;
       if (entry.isDirectory()) {
         const nested = await walk(canonicalPath);
         if (nested) return nested;
         continue;
       }
-      if (!entry.isFile()) continue;
       const candidate = await readCandidate(canonicalPath, input.root, input.stateEntryPath, input.includeNativeSessionId);
       if (input.matchesCandidate(candidate)) {
         return canonicalPath;
@@ -142,18 +149,23 @@ export async function verifyDeclaredResumeReachability(input: DeclaredResumeReac
     >[0]) => {
       const includeNativeSessionId = request.includeNativeSessionId !== false;
       const hint = input.candidatePersistedSessionFile?.trim();
-      const hintedPath = hint && isAbsolute(hint) ? await realpath(hint).catch(() => null) : null;
+      const hintedPath = hint && isAbsolute(hint) ? await realpathIfPresent(hint) : null;
       for (const entry of stateEntries) {
         if (!isSafeConnectedServiceStateSharingEntry(entry.path)) continue;
-        const declaredRoot = await realpath(resolve(targetMaterializedRoot, entry.path)).catch(() => null);
+        const entryPath = resolve(targetMaterializedRoot, entry.path);
+        // A directory promised by materialization must be reachable to prove a miss.
+        const declaredRoot = entry.createIfMissing === 'directory'
+          ? await realpath(entryPath)
+          : await realpathIfPresent(entryPath);
         if (!declaredRoot) continue;
         if (hintedPath && isWithinRoot(declaredRoot, hintedPath)) {
-          const hintedStat = await stat(hintedPath).catch(() => null);
-          if (hintedStat?.isFile() && request.matchesCandidate(await readCandidate(hintedPath, declaredRoot, entry.path, includeNativeSessionId))) {
+          const hintedStat = await stat(hintedPath);
+          if (hintedStat.isFile() && request.matchesCandidate(await readCandidate(hintedPath, declaredRoot, entry.path, includeNativeSessionId))) {
             matchedPath = hintedPath;
             return Object.freeze({ found: true });
           }
         }
+        if (entry.createIfMissing === 'file') continue;
         const found = await findDeclaredCandidateInRoot({
           root: declaredRoot,
           stateEntryPath: entry.path,

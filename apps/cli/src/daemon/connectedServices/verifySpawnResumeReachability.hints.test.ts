@@ -44,9 +44,13 @@ describe('spawn resume hints through every installed reachability hook', () => {
       await writeFile(candidate, `{"type":"session","id":"${id}"}\n`);
       await writeFile(outside, `{"type":"session","id":"${id}"}\n`);
       await writeFile(wrong, '{"type":"session","id":"different-session"}\n');
+      const expected: { ok: true; resolvedPath: string; requiredPaths?: string[] } = { ok: true, resolvedPath: candidate };
       if (agentId === 'antigravity') {
-        await writeFile(join(dirname(candidate), `${id}.meta`), '{}');
-        await mkdir(join(target, 'antigravity-acp', 'brain', id), { recursive: true });
+        const metadata = join(dirname(candidate), `${id}.meta`);
+        const brain = join(target, 'antigravity-acp', 'brain', id);
+        await writeFile(metadata, '{}');
+        await mkdir(brain, { recursive: true });
+        expected.requiredPaths = [candidate, metadata, brain];
       }
       const verify = (hint: string) => verifySpawnResumeReachability({ agentId, vendorResumeId: id,
         materializedEnv: { [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: target },
@@ -55,16 +59,22 @@ describe('spawn resume hints through every installed reachability hook', () => {
       const traversal = vi.spyOn(fileSystem, 'readdir');
       syncBuiltinESMExports();
       try {
-        await expect(verify(candidate)).resolves.toEqual({ ok: true, resolvedPath: candidate });
+        await expect(verify(candidate)).resolves.toEqual(expected);
         expect(traversal.mock.calls).toHaveLength(0);
         for (const hint of [join(root, 'stale.jsonl'), outside, wrong]) {
           traversal.mockClear();
-          await expect(verify(hint)).resolves.toEqual({ ok: true, resolvedPath: candidate });
+          await expect(verify(hint)).resolves.toEqual(expected);
           expect(traversal.mock.calls.length).toBeGreaterThan(0);
         }
         await rm(candidate);
         // A correct-looking source file must never prove target reachability.
-        await expect(verify(outside)).resolves.toMatchObject({ ok: false });
+        if (agentId === 'claude') {
+          await expect(verify(outside)).resolves.toEqual({ ok: false, reason: 'codex_continuation_unreachable' });
+          traversal.mockRejectedValueOnce(Object.assign(new Error('Read denied'), { code: 'EACCES' }));
+          await expect(verify(outside)).resolves.toEqual({ ok: false, reason: 'resume_reachability_check_failed' });
+        } else {
+          await expect(verify(outside)).resolves.toMatchObject({ ok: false });
+        }
       } finally { traversal.mockRestore(); syncBuiltinESMExports(); }
     } finally { await rm(root, { recursive: true, force: true }); }
   });

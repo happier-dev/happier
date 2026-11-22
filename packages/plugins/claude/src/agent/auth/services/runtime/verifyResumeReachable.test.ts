@@ -38,7 +38,7 @@ describe('verifyResumeReachableClaude', () => {
     await expect(verifyResumeReachableClaude({
       vendorResumeId: 'claude-session-sibling',
       sessionFiles,
-    })).resolves.toEqual({ ok: false, reason: 'claude_session_file_not_found' });
+    })).resolves.toEqual({ ok: false, reason: 'codex_continuation_unreachable' });
     await expect(verifyResumeReachableClaude({
       vendorResumeId: '  ',
       sessionFiles,

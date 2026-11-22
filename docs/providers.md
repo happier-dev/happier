@@ -3710,6 +3710,12 @@ launches, even when the Agent declares a native home. A temporary credential
 directory is not a relocated Session store. Missing catalog facts continue to
 fail the existing reachability check.
 
+In development 0.3, Claude reports `codex_continuation_unreachable` in the
+existing `connected_service_resume_unreachable` detail's `reason` when a
+completed lookup of the selected native home finds no matching conversation.
+A filesystem lookup failure reports `resume_reachability_check_failed` in that
+field. The daemon and Claude plugin load together for this change.
+
 In development 0.3, that continuity hook can also inspect a native Session through
 `nativeInspection.withDeclaredJsonRpcClient`, using the already-prepared launch
 environment and existing probe lifetime. Returning `{ ok: true, proof: 'native_session' }`
