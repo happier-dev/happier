@@ -479,8 +479,8 @@ async function accountSettingsService(params: Readonly<{
     ...(params.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
   });
   assertCurrent(params.signal);
-  const target = registry.activationTargets.find((candidate) => candidate.pluginId === params.pluginId);
-  if (!target) {
+  const declaration = registry.pluginDeclarations?.find((candidate) => candidate.pluginId === params.pluginId);
+  if (!declaration) {
     administrationError('plugin_settings_unavailable', 'The requested plugin is not installed.');
   }
   const admission = admitLocalSettingsDeclarations({ settings: [
@@ -509,7 +509,7 @@ async function accountSettingsService(params: Readonly<{
   });
   const signal = signalFor(params.signal);
   const service = host.bind({
-    plugin: { id: params.pluginId, version: target.manifest.version },
+    plugin: { id: params.pluginId, version: declaration.manifest.version },
     contribution: { id: 'settings-administration', qualifiedId: `${params.pluginId}/settings-administration` },
     occurrenceId: randomUUID(),
     correlationId: randomUUID(),

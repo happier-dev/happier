@@ -511,6 +511,35 @@ describe('Plugin Settings administration declaration defaults', () => {
   });
 });
 
+it('reads a required Account setting from a committed plugin with no executable entrypoint', async () => {
+  const happyHomeDir = await installDeclaredPlugin({ entrypoints: {}, contributes: { settings: [{
+    id: 'general', version: 1, title: 'General', scope: 'account', target: { kind: 'plugin' },
+    fields: [{ id: 'workspaceName', title: 'QA Workspace Name', schema: { type: 'string' }, required: true }],
+  }] } });
+  readStoredCredentials.mockResolvedValue({ token: 'plain-settings-token', encryption: null });
+  axiosGet.mockImplementation(async (url: string) => {
+    const path = new URL(url).pathname;
+    if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+    if (path === '/v1/account/plugin-settings/acme.settings') return { status: 200,
+      data: { status: 'present', revision: 7, content: { t: 'plain', v: { v: 1, values: { workspaceName: 'QA workspace' } } } } };
+    const capture = emptyAccountSettingsHistoryCaptureResponse(path);
+    if (capture) return capture;
+    throw new Error(`Unexpected Account request ${path}`);
+  });
+  const originalActiveServerDir = configuration.activeServerDir;
+  Object.assign(configuration, { activeServerDir: happyHomeDir });
+  resetInMemoryAccountSettingsContextForTests();
+  try {
+    await expect(executePluginSettingsAdministrationAction({ actionId: 'plugins.settings.get', happyHomeDir, input: {
+      pluginId: 'acme.settings', scope: { kind: 'account' }, target: { kind: 'account' }, localId: 'workspaceName',
+    } })).resolves.toMatchObject({ ok: true, data: { localId: 'workspaceName', revision: '7', value: 'QA workspace' } });
+  } finally {
+    Object.assign(configuration, { activeServerDir: originalActiveServerDir });
+    resetInMemoryAccountSettingsContextForTests();
+  }
+});
+
 describe('Plugin Settings Account administration explicit binding', () => {
   const originalActiveServerDir = configuration.activeServerDir;
   let happyHomeDir: string;
