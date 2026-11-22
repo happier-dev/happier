@@ -36,6 +36,8 @@ const LAST_DEFAULT_TARGETS = new Map<string, TriageEntrySessionStartTargetV1>();
  * its settled width from first paint ("Review with Claude", F10) instead of growing under the row.
  */
 const LAST_DEFAULT_AGENT_LABELS = new Map<string, string>();
+/** The agent is the profile's (`readTriageEntrySessionStartTargetV1`), so one key per profile; the default has none. */
+const agentLabelKey = (profileId: string | null | undefined): string => profileId ?? '';
 
 export function useTriageEntrySessionStartChoices(
     input: TriageEntrySessionStartChoiceInputV1 & Readonly<{ menuOpen: boolean }>,
@@ -64,7 +66,7 @@ export function useTriageEntrySessionStartChoices(
         }, { signal: lifetime.signal }).then((result) => {
             if (lifetime.signal.aborted) return;
             if (result.status === 'ready') LAST_DEFAULT_TARGETS.set(targetKey, result);
-            if (result.status === 'ready' && result.agent != null) LAST_DEFAULT_AGENT_LABELS.set(`${profileId}\u001f${workspaceMode}`, result.agent.label);
+            if (result.status === 'ready' && result.agent != null) LAST_DEFAULT_AGENT_LABELS.set(agentLabelKey(profileId), result.agent.label);
             setDefaultTarget(result);
         });
         return () => lifetime.abort();
@@ -79,7 +81,8 @@ export function useTriageEntrySessionStartChoices(
             .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
         return () => lifetime.abort();
     }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
-    const settlingAgentLabel = defaultTarget.status === 'loading'
-        ? LAST_DEFAULT_AGENT_LABELS.get(`${String(profileId ?? '')}\u001f${String(workspaceMode ?? '')}`) : undefined;
+    // Not read yet (idle on the first frame, then loading): the settled agent for this action's profile holds the label.
+    const settlingAgentLabel = defaultTarget.status === 'loading' || (defaultTarget.status === 'idle' && profileId !== undefined)
+        ? LAST_DEFAULT_AGENT_LABELS.get(agentLabelKey(profileId)) : undefined;
     return { defaultTarget, recentSessions, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
 }
