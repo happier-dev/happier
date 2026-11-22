@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
     PluginAvailabilityActionHttpPathsV1,
@@ -35,6 +35,7 @@ function jsonResponse(body: unknown): Response {
  */
 function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) {
     let cursor = 10;
+    let failedCensusPluginId: string | undefined;
     const pluginIds = Array.from({ length: input.plugins }, (_, index) => `com.acme.p${String(index).padStart(2, '0')}`);
     const machineIds = Array.from({ length: input.machines }, (_, index) => `machine-${String(index).padStart(2, '0')}`);
     const rows = new Map<string, PluginMachineMaterializationV1[]>(machineIds.map(machineId => [machineId, pluginIds.map(pluginId => ({
@@ -79,8 +80,10 @@ function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) 
             }
             served.intentListReads += 1;
             const ids = [...new Set([...pluginIds, ...(parsed.knownPluginIds ?? [])])].sort();
-            return respond({ availabilityCursor: cursor, pluginIds: ids, nextCursor: null, failedPluginIds: [],
-                intentReads: ids.map(pluginId => ({ pluginId, response: intentResponse(pluginId) })) });
+            return respond({ availabilityCursor: cursor, pluginIds: ids, nextCursor: null,
+                failedPluginIds: failedCensusPluginId ? [failedCensusPluginId] : [],
+                intentReads: ids.filter(pluginId => pluginId !== failedCensusPluginId)
+                    .map(pluginId => ({ pluginId, response: intentResponse(pluginId) })) });
         }
         if (path === paths.intentRead) {
             const parsed = PluginAvailabilityIntentReadActionInputV1Schema.parse(body);
@@ -94,6 +97,7 @@ function createFakeHome(input: Readonly<{ machines: number; plugins: number }>) 
         machineIds,
         served,
         request,
+        failCensusFor: (pluginId: string) => { failedCensusPluginId = pluginId; },
         resetCounts: () => Object.assign(served, { fullMaterializationReads: 0, materializationRows: 0, intentListReads: 0, intentReads: 0, bytes: 0 }),
         /** One Machine report that reinstalls `pluginId` on one Machine and removes it from another. */
         changePlugin: (pluginId: string, reinstalledOn: string, removedFrom: string) => {
@@ -138,6 +142,22 @@ afterEach(() => {
 });
 
 describe('row-level Account Availability refresh', () => {
+    it('does not detach identical materializations again on a full refresh', async () => {
+        const home = createFakeHome({ machines: 3, plugins: 4 });
+        const hydrator = createHydrator(home);
+        await refreshPluginAccountAvailabilityProjection(hydrator);
+        const reader = readPluginAccountAvailability(scope);
+        const before = reader.readMaterializations();
+        const freeze = vi.spyOn(Object, 'freeze');
+        try {
+            await refreshPluginAccountAvailabilityProjection(hydrator);
+            const detachedRows = freeze.mock.calls.filter(([value]) => value && typeof value === 'object'
+                && 'materializationId' in value && 'observedAt' in value);
+            expect(detachedRows).toHaveLength(0);
+            expect(reader.readMaterializations()).toBe(before);
+        } finally { freeze.mockRestore(); }
+    });
+
     it('reads only the named plugin for a one-plugin change and publishes the same facts as a fresh full read', async () => {
         // Workload: 20 Machines × 30 plugins = 600 materializations; one plugin changes on two Machines.
         const home = createFakeHome({ machines: 20, plugins: 30 });
@@ -219,11 +239,24 @@ describe('row-level Account Availability refresh', () => {
         hydrator.invalidate([home.changePlugin(home.pluginIds[1]!, home.machineIds[0]!, home.machineIds[2]!)]);
         hydrator.requireFullRefresh();
         await refreshPluginAccountAvailabilityProjection(hydrator);
-        expect(home.served).toMatchObject({ fullMaterializationReads: 1, materializationRows: 11, intentListReads: 1, intentReads: 1 });
+        expect(home.served).toMatchObject({ fullMaterializationReads: 1, materializationRows: 11, intentListReads: 1, intentReads: 0 });
 
-        // The full census and exact declaration satisfied the structural request and named change.
+        // The full census satisfied both the structural request and named change.
         home.resetCounts();
         await refreshPluginAccountAvailabilityProjection(hydrator);
         expect(home.served).toMatchObject({ fullMaterializationReads: 1 });
+    });
+
+    it('falls back to an exact read when the full census fails to admit a demanded intent', async () => {
+        const home = createFakeHome({ machines: 3, plugins: 4 });
+        const hydrator = createHydrator(home);
+        const pluginId = home.pluginIds[1]!;
+        hydrator.requestPlugins([pluginId]);
+        home.failCensusFor(pluginId);
+
+        await refreshPluginAccountAvailabilityProjection(hydrator);
+
+        expect(home.served).toMatchObject({ fullMaterializationReads: 1, intentListReads: 1, intentReads: 1 });
+        expect(publishedFacts().intentReads.find(entry => entry.pluginId === pluginId)?.response.intent?.pluginId).toBe(pluginId);
     });
 });

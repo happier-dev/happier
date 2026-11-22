@@ -214,8 +214,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
                 const baseline = await refresh();
                 materialization = { ...initialMaterialization, ...changedFacts };
                 const changed = await refresh();
-                expect(changed.uiModel).not.toBe(baseline.uiModel);
                 expect(changed.materialization).toMatchObject(changedFacts);
+                // The verified release owns display metadata and an artifact
+                // inventory change alone leaves declarative placement intact.
+                expect(changed.uiModel).toBe(baseline.uiModel);
             }
         } finally { normalize.mockRestore(); owner.dispose(); }
     });
@@ -331,7 +333,7 @@ describe('active Plugin Account Availability projection hydrator', () => {
         await expect(refresh).resolves.toBeNull();
     });
 
-    it('hydrates uncatalogued intents from one list and reads only the hint-named intent exactly', async () => {
+    it('hydrates uncatalogued and hint-named intents from one complete list', async () => {
         const removedPluginId = 'com.acme.removed';
         const ids = Array.from({ length: 38 }, (_, index) => `com.acme.plugin${index}`);
         const reads = [pluginId, ...ids, removedPluginId].map((id) => ({
@@ -365,12 +367,10 @@ describe('active Plugin Account Availability projection hydrator', () => {
 
         const result = await hydrator.refresh();
         expect(request.mock.calls.map(([path]) => path)).toEqual([
-            PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
             PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'],
         ]);
-        expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ pluginIds: [removedPluginId] });
-        expect(JSON.parse(String(request.mock.calls[2]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
+        expect(JSON.parse(String(request.mock.calls[1]?.[1]?.body))).toEqual({ knownPluginIds: [pluginId, removedPluginId].sort() });
         expect(result).toMatchObject({
             failedPluginIds: [], snapshot: { intentReads: expect.arrayContaining(reads),
                 materializations: [expect.objectContaining({ pluginId })] },

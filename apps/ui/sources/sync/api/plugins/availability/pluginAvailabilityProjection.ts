@@ -370,9 +370,9 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
             authority = await dependencies.captureRequestAuthority(lifetime.scope);
             const capturedAuthority = authority;
             if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
-            // Start each named intent once. If a row-level materialization read
-            // discovers an unreadable Machine, the full census reuses it.
-            const namedIntentOutcomes = takenPluginIds.length > 0
+            // The row-level path needs exact intents and can read them in
+            // parallel. A full census already includes the named plugins.
+            const namedIntentOutcomes = rowLevel
                 ? readNamedIntents(capturedAuthority, takenPluginIds, lifetime.scope, controller.signal)
                 : undefined;
 
@@ -455,18 +455,23 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                 }
                 cursor = page.nextCursor ?? undefined;
             } while (cursor);
-            // Structural recovery may require a full census even for an exact
-            // demand. The named exact read started before the census settles
-            // those plugins even when a census page fails: healthy Machine
-            // Event setup must still work when another Machine is unreadable.
-            if (namedIntentOutcomes) {
-                const outcomes = await namedIntentOutcomes;
+            // A failed census page can leave a named demand unanswered. Recover
+            // only those intents and reuse the exact reads already made if a
+            // row-level inventory fell back to a full census.
+            const recoveryIds = takenPluginIds.filter(pluginId => !intentReadsByPluginId.has(pluginId) || failedPluginIds.has(pluginId));
+            if (recoveryIds.length > 0) {
+                const requestedIds = namedIntentOutcomes ? takenPluginIds : recoveryIds;
+                const outcomes = await (namedIntentOutcomes
+                    ?? readNamedIntents(capturedAuthority, recoveryIds, lifetime.scope, controller.signal));
                 if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
+                const recovery = new Set(recoveryIds);
                 outcomes.forEach((outcome, index) => {
-                    const pluginId = takenPluginIds[index]!;
+                    const pluginId = requestedIds[index]!;
+                    if (!recovery.has(pluginId)) return;
                     if (outcome.status === 'fulfilled') {
                         intentReadsByPluginId.set(pluginId, outcome.value);
                         failedPluginIds.delete(pluginId);
+                        accountedPluginIds.add(pluginId);
                     } else {
                         failedPluginIds.add(pluginId);
                         pendingPluginIds.add(pluginId);

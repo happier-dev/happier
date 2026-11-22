@@ -661,7 +661,7 @@ function cloneMaterialization(
         uiArtifactSets: Map<PluginMachineMaterializationV1['uiArtifacts'], PluginMachineMaterializationV1['uiArtifacts']>;
     }>,
 ): PluginMachineMaterializationV1 {
-    if (materialization === previous) return previous;
+    if (previous && retainIfEqual(previous, materialization) === previous) return previous;
     // A decoded list is admitted once, immutable and shared by every Machine row
     // that reported it: retain it once per replacement, never copy it per row.
     const admittedUiArtifacts = isAdmittedPluginMachineUiArtifactSetV1(materialization.uiArtifacts)
@@ -771,6 +771,7 @@ function snapshotPluginAccountAvailabilitySnapshot(
     previous?: PluginAccountAvailabilitySnapshot,
 ): PluginAccountAvailabilitySnapshot {
     const previousMaterializations = new Map(previous?.materializations.map(row => [materializationLookupKey(row), row] as const));
+    const previousIntents = new Map(previous?.intentReads.map(row => [row.pluginId, row] as const));
     // HTTP admission has validated each declaration. Share its detached,
     // immutable snapshot across inventory views and Machine rows.
     // These maps live only for this replacement; they retain no retired roots.
@@ -794,13 +795,18 @@ function snapshotPluginAccountAvailabilitySnapshot(
     return freezeAvailabilitySnapshotValue({
         availabilityCursor: snapshot.availabilityCursor,
         inventoryComplete: snapshot.inventoryComplete !== false,
-        releases: Object.freeze((snapshot.releases ?? []).map(snapshotPluginReleaseFactsV1)),
-        intentReads: freezeAvailabilitySnapshotValue(snapshot.intentReads.map((projection) => (
-            freezeAvailabilitySnapshotValue({
+        releases: Object.freeze((snapshot.releases ?? []).map((release, index) => {
+            const held = previous?.releases?.[index];
+            return held && retainIfEqual(held, release) === held ? held : snapshotPluginReleaseFactsV1(release);
+        })),
+        intentReads: freezeAvailabilitySnapshotValue(snapshot.intentReads.map((projection) => {
+            const held = previousIntents.get(projection.pluginId);
+            if (held && retainIfEqual(held, projection) === held) return held;
+            return freezeAvailabilitySnapshotValue({
                 pluginId: projection.pluginId,
                 response: snapshotIntentReadResponse(projection.response),
-            })
-        ))),
+            });
+        })),
         materializations: freezeAvailabilitySnapshotValue(snapshot.materializations.map(clone)),
         snapshots: freezeAvailabilitySnapshotValue(snapshot.snapshots.map((machineSnapshot) => (
             freezeAvailabilitySnapshotValue({
@@ -2787,9 +2793,13 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
             const previousIntentReads = new Map(canMerge ? previous.snapshot.intentReads.map(entry => [entry.pluginId, entry]) : []);
             const intentReads = retainAvailabilityRows(canMerge ? previous.snapshot.intentReads : undefined,
                 Object.freeze([...retainedIntentReads, ...incoming.intentReads]
-                .map(entry => Object.freeze({ ...entry, response: Object.freeze({ ...entry.response,
-                    release: retainIfEqual(previousIntentReads.get(entry.pluginId)?.response.release, entry.response.release),
-                }) }))
+                .map(entry => {
+                    const held = previousIntentReads.get(entry.pluginId);
+                    if (held === entry) return held;
+                    const release = retainIfEqual(held?.response.release, entry.response.release);
+                    return release === entry.response.release ? entry : Object.freeze({ ...entry,
+                        response: Object.freeze({ ...entry.response, release }) });
+                })
                 .sort((left, right) => compareCodeUnits(left.pluginId, right.pluginId))));
             const retainedPluginIds = new Set(intentReads.map((entry) => entry.pluginId));
             const stalePluginIds = new Set(canMerge ? previous.stalePluginIds : []);
