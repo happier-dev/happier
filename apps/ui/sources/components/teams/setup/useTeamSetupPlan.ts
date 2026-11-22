@@ -66,7 +66,10 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             const { selection: selected, ...run } = input;
             if (!selected) return runTeamSetupPlan({ ...run, executeAction, context });
             const sourcesById = new Map(selected.sources.map(source => [source.id, source]));
+            const repositoryRequestIds = new Map<string, string>();
             const repositories = run.plan.repositories.flatMap(repository => {
+                const requestId = randomUUID();
+                repositoryRequestIds.set(repository.id, requestId);
                 const inputSource = repository.input.source;
                 // An adopted existing clone opens as a Folder attach; its row still belongs to the Team Source.
                 const source = sourcesById.get(inputSource.kind === 'source' ? inputSource.id : repository.id);
@@ -75,14 +78,14 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                     throw new Error('Selected Team repository is missing its Source identity');
                 }
                 const revision = inputSource.kind === 'source' ? inputSource.revision : source.revision;
-                return [{ repositoryId: repository.id, source: { id: source.id, revision, name: source.name, ...(source.owner ? { owner: source.owner } : {}) }, requestId: randomUUID() }];
+                return [{ repositoryId: repository.id, source: { id: source.id, revision, name: source.name, ...(source.owner ? { owner: source.owner } : {}) }, requestId }];
             });
             const selection: TeamSetupBatch['selection'] = {
                 team: selected.team, lifetime: selected.lifetime, target: run.plan.target, repositories,
             };
             completion.current = {
                 selection,
-                pending: new Set(repositories.map(repository => repository.requestId)),
+                pending: new Set(repositoryRequestIds.values()),
                 retireOffer: selected.retireOffer !== false && repositories.length === selected.sources.length,
                 submitted: false,
             };
@@ -90,7 +93,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             let settlement: TeamSetupRunResult | null = null;
             try {
                 settlement = await runTeamSetupPlan({ ...run, executeAction, context,
-                    repositoryRequestIds: new Map(repositories.map(repository => [repository.repositoryId, repository.requestId])),
+                    repositoryRequestIds,
                     onRepositoryOpening: id => {
                         setBatch(current => current?.selection === selection ? {
                             ...current, dispatched: new Set([...current.dispatched, id]),
@@ -98,7 +101,16 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                         run.onRepositoryOpening?.(id);
                     },
                 });
-                if (settlement.completed) complete(selection);
+                if (settlement.completed) {
+                    complete(selection);
+                } else {
+                    for (const { id, result } of settlement.repositories) {
+                        const requestId = repositoryRequestIds.get(id);
+                        if (requestId && result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired') {
+                            complete(selection, requestId);
+                        }
+                    }
+                }
                 return settlement;
             } finally {
                 setBatch(current => current?.selection === selection ? { ...current, running: false, settlement } : current);

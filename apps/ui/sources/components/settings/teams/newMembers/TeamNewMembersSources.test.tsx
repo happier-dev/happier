@@ -123,10 +123,12 @@ async function renderNewMembers(
   manageSettings: boolean,
   credentials?: readonly unknown[],
   answerHome?: (serverId: string) => void,
+  placementHomeId?: string,
 ) {
   const { serverId } = await account.restore({
     accountId: 'admin',
     currentAccount: true,
+    ...(placementHomeId ? { serverIdentityId: placementHomeId } : {}),
     waivedActions: ['providers.models.refresh'],
     machines: [
       createMachineFixture({
@@ -136,6 +138,7 @@ async function renderNewMembers(
       }),
     ],
     features: createRootLayoutFeaturesResponse({
+      ...(placementHomeId ? { capabilities: { serverIdentity: { serverIdentityId: placementHomeId } } } : {}),
       features: { teams: credentials
         ? { enabled: true, credentialResources: { enabled: true, externalApi: { enabled: false } } }
         : { enabled: true } },
@@ -145,7 +148,8 @@ async function renderNewMembers(
     capabilities: teamCapabilitiesFixture({ manageSettings }),
     policy: teamPolicyFixture({
       managedDefaultsStatus: 'available',
-      managedDefaults: { team: {}, groups: {} },
+      managedDefaults: { team: placementHomeId ? { placement: { kind: 'preset', homeId: placementHomeId,
+        presetId: 'preset-for-agents' } } : {}, groups: {} },
     }),
   });
   account.home.answer(serverId, '/v1/teams/get', { body: team });
@@ -168,6 +172,14 @@ async function renderNewMembers(
   );
   return { screen, team, serverId };
 }
+
+it('opens Declared Agents at the authored preset on this Home', async () => {
+  const homeId = 'srv_team_preset_home';
+  const { screen } = await renderNewMembers([web], true, undefined, undefined, homeId);
+  await waitForHomeGovernance(() => expect(screen.findByTestId('team-new-members-declared-agents')).not.toBeNull());
+  await screen.pressByTestIdAsync('team-new-members-declared-agents');
+  expect(router.push).toHaveBeenCalledWith(`/settings/machines/presets/preset-for-agents?serverId=${homeId}`);
+});
 
 it.each([true, false])(
   "lists the Team's Sources and the attached first task by reference (manage settings: %s)",

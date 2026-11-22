@@ -94,7 +94,9 @@ it('offers the latest eligible join per Home and retires it after an Action dism
     const workspace = { serverId, machineId: 'machine', workspaceId: 'workspace', rootPath: '/repo' };
     const executor = createActionExecutor({
         // The selected Machine returns its actual Open receipt shape at the RPC boundary.
-        projectsOpen: async () => ({ kind: 'opened', workspace, directory: '/repo', setup }),
+        projectsOpen: async input => input.source.kind === 'folder' && input.source.path === '/missing'
+            ? { kind: 'refused', code: 'invalid_directory' }
+            : { kind: 'opened', workspace, directory: '/repo', setup },
         homeHubArtifacts: createHomeHubArtifactPortV1(account.homeHubArtifactTransport, { accountId: 'member' }),
     });
     const execute = createFrontDoorActionExecute({ ...executor,
@@ -132,6 +134,21 @@ it('offers the latest eligible join per Home and retires it after an Action dism
         await act(async () => { await agent.execute('home.hub.layout.update', {
             intent: { kind: 'setup_visibility', stepId: a.stepId, hidden: false },
         }, agentContext); });
+        await act(async () => {
+            const result = await plan.getCurrent().run({ ...run, plan: { ...run.plan, repositories: [...run.plan.repositories, {
+                id: 'missing', input: { serverId, machineId: 'machine', source: { kind: 'folder', path: '/missing' },
+                    materialization: { kind: 'attach' } },
+            }] } });
+            expect(result.completed).toBe(false);
+        });
+        const partial = plan.getCurrent().batch;
+        if (!partial) throw new Error('Partial setup has no selected batch');
+        await act(async () => {
+            expect(plan.getCurrent().complete(partial.selection, partial.selection.repositories[0].requestId)).toBe(false);
+        });
+        expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({
+            ok: true, result: { hiddenSetupStepIds: [b.stepId] },
+        });
         setup = 'notRequired';
         await act(async () => {
             const result = await plan.getCurrent().run(run);
