@@ -150,8 +150,11 @@ their narrower contracts.
 The exact-tree commit gate selects affected runtime entry graphs from the
 packet's workspace dependency closure. It reserves entry-load capacity
 before the commit lock, runs the selected graphs on the tree formed under
-the lock and updates the ref only after they pass. Broad entry probes run
-in the rolling post-commit report.
+the lock and updates the ref only after they pass. When two packets conflict
+only in generated CLI Action projections, the gate runs the bundled-plugin
+generator on the combined source tree before checking it. A conflict in
+authored source still requires the author to reconcile it. Broad entry probes
+run in the rolling post-commit report.
 
 ### Primary workload standby preparation (0.3 development)
 

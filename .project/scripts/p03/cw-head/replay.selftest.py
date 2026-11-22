@@ -8,23 +8,35 @@ import tempfile
 WRAPPER = Path(__file__).resolve().with_name("commit-partial.sh")
 
 
+def capture_index_paths(repo, env):
+    fixture_bin = repo / "bin"
+    fixture_bin.mkdir()
+    index_path_log = repo / "indexes"
+    git_shim = fixture_bin / "git"
+    git_shim.write_text(
+        '#!/bin/sh\n'
+        '[ -z "${GIT_INDEX_FILE:-}" ] || printf "%s\\n" "$GIT_INDEX_FILE" >> "$FIXTURE_INDEX_LOG"\n'
+        'exec "$FIXTURE_GIT" "$@"\n'
+    )
+    git_shim.chmod(0o700)
+    env.update(PATH=f"{fixture_bin}:{env['PATH']}", FIXTURE_GIT=shutil.which("git"),
+               FIXTURE_INDEX_LOG=str(index_path_log))
+
+    return index_path_log
+
+
+def assert_packet_cleanup(repo, index_path_log, details):
+    index_paths = [Path(line) for line in index_path_log.read_text().splitlines()]
+    assert index_paths and all(path.is_relative_to(repo / "cache") for path in index_paths), index_paths
+    assert not list((repo / "cache").glob("packet.*")), details
+
+
 def run_case(kind):
     with tempfile.TemporaryDirectory(prefix="p03-writer-fixture-") as temp:
         repo = Path(temp)
         env = {**os.environ, "P03_GATE_CACHE": str(repo / "cache"), "P03_COMMIT_KICK": "true"}
 
-        fixture_bin = repo / "bin"
-        fixture_bin.mkdir()
-        index_path_log = repo / "indexes"
-        git_shim = fixture_bin / "git"
-        git_shim.write_text(
-            '#!/bin/sh\n'
-            '[ -z "${GIT_INDEX_FILE:-}" ] || printf "%s\\n" "$GIT_INDEX_FILE" >> "$FIXTURE_INDEX_LOG"\n'
-            'exec "$FIXTURE_GIT" "$@"\n'
-        )
-        git_shim.chmod(0o700)
-        env.update(PATH=f"{fixture_bin}:{env['PATH']}", FIXTURE_GIT=shutil.which("git"),
-                   FIXTURE_INDEX_LOG=str(index_path_log))
+        index_path_log = capture_index_paths(repo, env)
 
         def git(*args, **kwargs):
             return subprocess.run(["git", *args], cwd=repo, env=env, text=True,
@@ -54,9 +66,7 @@ def run_case(kind):
         details = result.stdout + result.stderr
         assert result.returncode == 0, details
         assert details.count("commit gate: lock held ") == 1, details
-        index_paths = [Path(line) for line in index_path_log.read_text().splitlines()]
-        assert index_paths and all(path.is_relative_to(repo / "cache") for path in index_paths), index_paths
-        assert not list((repo / "cache").glob("packet.*")), details
+        assert_packet_cleanup(repo, index_path_log, details)
         if kind == "dry":
             assert "DRY candidate " in details and git("rev-parse", "HEAD").strip() == base, details
         else:
@@ -68,3 +78,60 @@ def run_case(kind):
 
 for case in ("foreign", "materialized", "dry"):
     run_case(case)
+
+def test_old_action_packet():
+    with tempfile.TemporaryDirectory(prefix="p03-action-writer-") as temp:
+        repo = Path(temp)
+        git = lambda *args: subprocess.check_output(["git", *args], cwd=repo, text=True)
+        git("init", "-qb", "main")
+        git("config", "user.name", "Fixture")
+        git("config", "user.email", "fixture@example.invalid")
+        asset = "apps/cli/assets/bundled-plugin-manifests/declarations/test.summary.json"
+        generator = repo / "apps/cli/scripts/build-owned/generateBundledPluginEntries.ts"
+        generator.parent.mkdir(parents=True)
+        (repo / asset).parent.mkdir(parents=True)
+        generator.write_text(rf"""
+import {{ mkdirSync, readFileSync, writeFileSync }} from 'node:fs';
+import {{ dirname, join }} from 'node:path';
+const out = join(process.argv.at(-1), {asset!r});
+mkdirSync(dirname(out), {{ recursive: true }});
+writeFileSync(out, JSON.stringify(['first', 'second'].map(file => readFileSync(file, 'utf8'))) + '\n');
+""")
+
+        def write(path, text):
+            (repo / path).write_text(text)
+
+        write("first", "old")
+        write("second", "old")
+        write(asset, '["old","old"]\n')
+        git("add", "--", "first", "second", asset, str(generator))
+        git("commit", "-qm", "fixture base")
+        base = git("rev-parse", "HEAD").strip()
+        write("second", "new")
+        write(asset, '["old","new"]\n')
+        patch = repo / "old.patch"
+        patch.write_text(git("diff", "--binary", "--full-index", base, "--", "second", asset))
+        write("second", "old")
+        write("first", "new")
+        write(asset, '["new","old"]\n')
+        git("add", "--", "first", asset)
+        git("commit", "-qm", "first Action packet")
+        winner = git("rev-parse", "HEAD").strip()
+        msg = repo / "message"
+        msg.write_text("fix: second Action packet\n")
+        env = {**os.environ, "P03_CP_PACKET_BASE": base, "P03_GATE_CACHE": str(repo / "cache"),
+               "P03_COMMIT_KICK": "true"}
+        index_path_log = capture_index_paths(repo, env)
+        result = subprocess.run(["bash", str(WRAPPER), str(msg), "-", str(patch)],
+                                cwd=repo, env=env, capture_output=True, text=True)
+        details = result.stdout + result.stderr
+        assert result.returncode == 0, details
+        assert_packet_cleanup(repo, index_path_log, details)
+        assert git("rev-parse", "HEAD^").strip() == winner, details
+        assert git("show", f"HEAD:{asset}") == '["new","new"]\n', details
+        assert git("show", "HEAD:second") == "new", details
+        assert "HSTACK_COMMITTED_CHECKOUT_DRIFT " + asset in details, details
+        print("PASS old Action packet")
+
+
+test_old_action_packet()

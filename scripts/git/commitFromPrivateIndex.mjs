@@ -85,17 +85,8 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     if (committed.some((name) => name === '.project' || name.startsWith('.project/'))) throw new Error('Never stage .project paths');
 
     const packet = { base, tree: git('write-tree') };
-    // Replay the accepted bytes, even if the worktree or the input patch changes while queued.
-    const frozen = path.join(temp, 'packet.patch');
-    git('diff', '--cached', '--binary', '--full-index', '--no-renames', `--output=${frozen}`, base);
-    const { commit, gate } = await finalizeGatedCommit({
+    const { commit, gate, head } = await finalizeGatedCommit({
       repo: cwd, packet, label: 'commitFromPrivateIndex',
-      replay: (head) => {
-        git('read-tree', head);
-        git('apply', '--cached', frozen);
-        git('diff', '--cached', '--check', head);
-        return { base: head, tree: git('write-tree') };
-      },
       createCommit: ({ base, tree }) => git('commit-tree', tree, '-p', base, '-F', messageFile),
     });
     if (gate?.verdict === 'incomplete') {
@@ -106,7 +97,8 @@ export async function commitFromPrivateIndex({ cwd = process.cwd(), paths = [], 
     // HEAD moved: the rolling HEAD typecheck (owner ruling 2026-11-15) covers this commit; it never waits.
     const { kickRollingHeadTypecheck } = await import('../workspaces/commitPackageTypecheck.mjs');
     console.error(kickRollingHeadTypecheck({ repo: cwd, commit }));
-    await syncSharedIndex(cwd, commit, committed);
+    const landedPaths = gitAt(cwd, env)('diff', '--name-only', '--no-renames', '-z', head, commit).split('\0').filter(Boolean);
+    await syncSharedIndex(cwd, commit, landedPaths);
     return commit;
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });

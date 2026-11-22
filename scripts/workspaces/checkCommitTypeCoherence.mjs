@@ -656,21 +656,6 @@ export function checkCommitTypeCoherence({ repo, base, tree, onlyGroups, beforeC
   }
 }
 
-// Replays only the reviewed packet into a temporary index; neither the worktree nor the shared
-// staging state is changed. A conflicting concurrent edit is left for the packet owner to merge.
-function replayPacket(git, base, tree, head) {
-  const directory = mkdtempSync(resolve(tmpdir(), 'happier-coherence-index-'));
-  const env = { ...process.env, GIT_INDEX_FILE: resolve(directory, 'index') };
-  try {
-    git.git(['read-tree', head], { env });
-    const patch = git.git(['diff-tree', '-p', '--binary', '--full-index', '--no-renames', base, tree]);
-    git.git(['apply', '--cached', '--3way'], { env, input: patch });
-    return git.git(['write-tree'], { env, encoding: 'utf8' }).trim();
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-}
-
 /** Publish the frozen packet through the same exact-tree gate as every other writer. */
 export async function finalizeCommitTypeCoherence({ repo, checked, message, ref = 'HEAD' }) {
   const git = repository(repo);
@@ -679,12 +664,6 @@ export async function finalizeCommitTypeCoherence({ repo, checked, message, ref 
   const { finalizeGatedCommit } = await import('./commitGate.mjs');
   const result = await finalizeGatedCommit({
     repo, ref, label: 'checkCommitTypeCoherence', packet: original,
-    replay: (head) => {
-      git.git(['merge-base', '--is-ancestor', original.base, head]);
-      const tree = replayPacket(git, original.base, original.tree, head);
-      if (tree === git.gitText(['rev-parse', `${head}^{tree}`]).trim()) throw new Error('Packet is already present at HEAD');
-      return { base: head, tree };
-    },
     createCommit: ({ base, tree }) => {
       const sign = git.gitText(['config', '--bool', '--default=false', '--get', 'commit.gpgsign']).trim() === 'true';
       return git.git(['commit-tree', ...(sign ? ['-S'] : []), tree, '-p', base], { input: message, encoding: 'utf8' }).trim();

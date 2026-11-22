@@ -108,6 +108,13 @@ warn_checkout_drift() {
 }
 
 head=$(git rev-parse --verify "$ref")
+# A detached packet carries the commit it was authored against. Freeze it
+# there; the locked gate composes it over the current ref.
+if [ -n "${P03_CP_PACKET_BASE:-}" ]; then
+  base=$(git rev-parse --verify --end-of-options "${P03_CP_PACKET_BASE}^{commit}")
+  git merge-base --is-ancestor "$base" "$head" || { echo "packet base must be an ancestor of $ref"; exit 1; }
+  head=$base
+fi
 if [ -n "${P03_CP_FROZEN:-}" ] && [ -s "$P03_CP_FROZEN" ]; then
   [ "$P03_CP_FROZEN" = "$packet" ] || cp -- "$P03_CP_FROZEN" "$packet"
   # A frozen patch supplies its own exact paths, including rename pairs as add/delete.
@@ -135,6 +142,7 @@ esac
 read -r verdict commit _ head < "$packetDir/verdict"
 [ "$verdict" = COMMITTED ]
 { git show --stat --format="%h %s" "$commit" | head -40 || true; }
+expected=$(git diff --no-renames --name-only "$head" "$commit")
 register_new_paths
 warn_checkout_drift
 if [ -n "${P03_COMMIT_KICK:-}" ]; then

@@ -233,7 +233,8 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
       throw new Error('HEAD changed the reachable entry points during admission; retry against current HEAD');
     }
   };
-  if (!projects.length) return await run(assertCovered);
+  if (!projects.length) return await run(assertCovered, (combined, output) =>
+    regenerateCommitProjections({ repo, tree: combined, output }, env));
   const child = await spawnEntryLoadCommand({ repo, projects, env, stdio: ['pipe', 'pipe', 'inherit'],
     payload: [process.execPath, self, '--entry-load-commit-session'] });
   const terminal = waitForTreeChild(child);
@@ -254,13 +255,18 @@ export async function withAdmittedCommitEntryPhase({ repo, base, tree, phase, en
       const status = await terminal.catch(error => error.code ?? error.name);
       throw new EntryLoadAdmissionUnavailable(status);
     }
-    return await run(async request => {
-      assertCovered(request);
+    const send = async request => {
       child.stdin.write(JSON.stringify(request) + '\n');
       const line = await readLine(line => line.startsWith(ENTRY_LOAD_RESULT));
       if (!line) throw new Error(`admitted entry loads did not return a verdict (exit ${await terminal})`);
-      return JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
-    });
+      const result = JSON.parse(line.slice(ENTRY_LOAD_RESULT.length));
+      if (result.error) throw new Error(result.error);
+      return result;
+    };
+    return await run(request => {
+      assertCovered(request);
+      return send(request);
+    }, (combined, output) => send({ repo, tree: combined, projectionOutput: output }));
   } finally {
     child.stdin.end();
     output.close();
@@ -310,9 +316,8 @@ async function compareSelectedEntryLoads({ repo, base, tree, installDir, root, s
   return finish({ findings, preexisting, results: candidate.results });
 }
 
-/** One tree: extract, derive its generated inputs, mount the installation, load the graphs. */
-async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings, waitForDependencies }) {
-  const git = gitAt(repo);
+/** Mount the exact tree and hold the existing dependency reader during its use. */
+async function withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies }, run) {
   const trees = env.P03_COMMIT_TREE_WORK_DIR || join(root, 'trees');
   await mkdir(trees, { recursive: true });
   const dir = await mkdtemp(join(trees, 'tree-'));
@@ -326,40 +331,67 @@ async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, 
     await extractRevision({ repoDir: repo, revision: tree, outputDir: dir });
     signal?.throwIfAborted();
     at = mark('extractMs', at);
-    // The shared installation stays published while the tree consumes it.
-    const results = await withDependencyConsumption({ installDir, env, signal, wait: waitForDependencies }, async () => {
+    return await withDependencyConsumption({ installDir, env, signal, wait: waitForDependencies }, async () => {
       const workspaceDirs = [...(await readWorkspacePackages(dir)).values()].map(workspace => relative(dir, workspace.root)).filter(Boolean);
       const mount = () => mountCapturedWorkspaceDependencies({ sourceDir: installDir, captureDir: dir, workspaceDirs, capturedOnly: true });
       await mount();
       at = mark('mountMs', at);
-      const generatedKey = await prepareGeneratedInputs({ git, tree, dir, installDir, root, env, signal });
-      timings.generatedKey = generatedKey.slice(0, 12);
-      // Prisma generation releases the borrowed tools in the root and server
-      // modules. Rebind those tool links before running the entry graphs.
-      await mount();
-      at = mark('generatedMs', at);
-      const harnessIds = ids.filter(id => id !== SERVER_ROUTES_GRAPH);
-      const output = harnessIds.length ? await runTreeHarness({ dir, selected: harnessIds, env, signal }) : [];
-      if (ids.includes(SERVER_ROUTES_GRAPH)) output.push(await runServerRoutes({ dir, env, signal }));
-      mark('loadsMs', at);
-      return output;
+      return await run({ dir, mount, report: name => { at = mark(name, at); } });
     });
-    const reported = new Set(results.map(result => result?.graph));
-    if (results.length !== ids.length || ids.some(id => !reported.has(id))
-      || results.some(result => !['passed', 'failed'].includes(result?.status) || !Number.isFinite(result.elapsedMs))) {
-      throw new Error(`entry-load harness did not return one valid result for each selected graph: ${ids.join(', ')}`);
-    }
-    const failures = results.filter(result => result.status === 'failed').map(result => {
-      const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
-      const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
-      const phase = /(?:^|\s)phase=([a-z][\w-]*)\b/u.exec(message)?.[1] ?? null;
-      return { graph: result.graph, key: JSON.stringify([result.graph, module, phase]),
-        finding: `${result.graph}: ${module}: ${message}` };
-    });
-    return { failures, results: results.map(({ graph, status, elapsedMs }) => ({ graph, status, elapsedMs: Math.round(elapsedMs) })) };
   } finally {
     await rm(dir, { recursive: true, force: true });
   }
+}
+
+/** Derive only the daemon's Action projections, using the combined tree's canonical generator. */
+async function regenerateCommitProjections({ repo, tree, output }, env, signal) {
+  return await withMountedCommitTree({ repo, tree, installDir: repo, root: defaultRoot(), env, signal,
+    timings: {}, waitForDependencies: false }, async ({ dir }) => {
+    const { sourceBuildNodeArgs } = await import(new URL('apps/stack/scripts/utils/proc/sourceBuildNodeArgs.mjs', tooling).href);
+    const featurePolicy = join(dir, 'packages/protocol/scripts/generate-embedded-feature-policies.mjs');
+    const generator = join(dir, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts');
+    const run = async args => {
+      const child = spawn(process.execPath, args, { cwd: dir, env: treeEnvironment(dir, env),
+        signal, stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', chunk => { stderr = (stderr + chunk).slice(-1200); });
+      const status = await waitForTreeChild(child);
+      if (status !== 0) throw new Error(`Action projection generation exited ${status}: ${stderr.trim()}`);
+    };
+    if (existsSync(featurePolicy)) await run([featurePolicy]);
+    await run(sourceBuildNodeArgs({ repoDir: dir, scriptPath: generator,
+      args: ['--daemon-projections', '--daemon-output-root', output] }));
+    return {};
+  });
+}
+
+/** One tree: derive its generated inputs, then load the graphs. */
+async function loadTreeGraphs({ repo, tree, ids, installDir, root, env, signal, timings, waitForDependencies }) {
+  return await withMountedCommitTree({ repo, tree, installDir, root, env, signal, timings, waitForDependencies },
+    async ({ dir, mount, report }) => {
+      const generatedKey = await prepareGeneratedInputs({ git: gitAt(repo), tree, dir, installDir, root, env, signal });
+      timings.generatedKey = generatedKey.slice(0, 12);
+      // Prisma generation releases borrowed tool links; rebind them before loading entries.
+      await mount();
+      report('generatedMs');
+      const harnessIds = ids.filter(id => id !== SERVER_ROUTES_GRAPH);
+      const results = harnessIds.length ? await runTreeHarness({ dir, selected: harnessIds, env, signal }) : [];
+      if (ids.includes(SERVER_ROUTES_GRAPH)) results.push(await runServerRoutes({ dir, env, signal }));
+      report('loadsMs');
+      const reported = new Set(results.map(result => result?.graph));
+      if (results.length !== ids.length || ids.some(id => !reported.has(id))
+        || results.some(result => !['passed', 'failed'].includes(result?.status) || !Number.isFinite(result.elapsedMs))) {
+        throw new Error(`entry-load harness did not return one valid result for each selected graph: ${ids.join(', ')}`);
+      }
+      const failures = results.filter(result => result.status === 'failed').map(result => {
+        const module = result.firstFailingModule ? relative(dir, resolve(dir, result.firstFailingModule)) : result.entry;
+        const message = String(result.loadError?.message ?? 'failed').split('\n')[0].replaceAll(`${dir}/`, '').slice(0, 300);
+        const phase = /(?:^|\s)phase=([a-z][\w-]*)\b/u.exec(message)?.[1] ?? null;
+        return { graph: result.graph, key: JSON.stringify([result.graph, module, phase]),
+          finding: `${result.graph}: ${module}: ${message}` };
+      });
+      return { failures, results: results.map(({ graph, status, elapsedMs }) => ({ graph, status, elapsedMs: Math.round(elapsedMs) })) };
+    });
 }
 
 // AbortSignal emits an error before the subprocess exits. The tree stays until its reader closes.
@@ -507,7 +539,11 @@ if (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[
     process.stdout.write(`${ENTRY_LOAD_READY}\n`);
     try {
       for await (const line of requests) {
-        const result = await compareSelectedEntryLoads(JSON.parse(line), process.env, stop.signal);
+        const { projectionOutput, ...request } = JSON.parse(line);
+        const result = projectionOutput
+          ? await regenerateCommitProjections({ ...request, output: projectionOutput }, process.env, stop.signal)
+            .catch(error => ({ error: error.message }))
+          : await compareSelectedEntryLoads(request, process.env, stop.signal);
         process.stdout.write(`${ENTRY_LOAD_RESULT}${JSON.stringify(result)}\n`);
       }
     } catch (error) {
