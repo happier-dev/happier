@@ -13,7 +13,7 @@ import { useOptionalCurrentUiContextReader } from '@/components/appShell/current
 import { useUsageWork } from './useUsageWork';
 import { router } from 'expo-router';
 import { getPreferredLanguage, preloadTranslations, setPreferredLanguageFromSettings, t } from '@/text';
-import { ChartDatum, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, HappierDataTable, HappierDataMetric, HappierDataRows, IntervalTimeline, OutcomeFunnel, OutcomeScatter, RankedRows } from '@happier-dev/plugin-ui/presentation';
 import { DEFAULT_USAGE_COACH_PREFERENCES_V1 } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
 import {
   getUsageQueryKey,
@@ -40,6 +40,7 @@ import { UsageSessionValueWidget } from './UsageSessionValueWidget';
 import { UsageHumanLoopWidget } from './UsageHumanLoopWidget';
 import { UsageParallelWidget } from './UsageParallelWidget';
 import { UsageOutcomesWidget } from './UsageOutcomesWidget';
+import { UsageChartInteractions } from '../usageChartInteractions';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
 import { UsageCoachWidget } from './UsageCoachWidget';
 import { storage } from '@/sync/domains/state/storage';
@@ -1291,10 +1292,53 @@ describe('Work and Coach widget bodies', () => {
     expect(perMerge()).toMatchObject({ value: '—', caption: t('usage.board.page.notMeasuredYet') });
     await efficiency.update(<UsageEfficiencyWidget {...props} slice={measured} id="usage_efficiency" testID="efficiency" />);
     expect(perMerge()?.caption).toBe(t(state === 'merged' ? 'usage.board.page.linkedByEvidence' : 'usage.board.page.noneLinkedByEvidence'));
+    const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} slice={unread} id="usage_project_ledger" testID="ledger" />);
+    await ledger.pressByTestIdAsync('ledger.project.p1.toggle');
+    expect(ledger.getTextContent()).toContain(witness.pullRequest.title);
     const failed = { ...unread, work: allocateUsageOutcomes({ contributions, evidence: [] }) };
-    const ledger = await renderScreen(<UsageProjectLedgerWidget {...props} slice={failed} id="usage_project_ledger" testID="ledger" />);
+    await ledger.update(<UsageProjectLedgerWidget {...props} slice={failed} id="usage_project_ledger" testID="ledger" />);
     expect(ledger.getTextContent()).not.toContain(t('usage.board.work.noneLinked'));
     expect(ledger.findByTestId('ledger.conservation')?.props.accessibilityLabel).toContain(t('usage.board.work.workUnavailableTitle'));
+  });
+
+  it('keeps the admitted merge week and Values when a sibling Session read fails', async () => {
+    const witness = evidence('s1', 't1', 2493);
+    const witnessedWork = allocateUsageOutcomes({ contributions, evidence: [
+      { ...witness, pullRequest: { ...witness.pullRequest, mergedAtMs: 500 } },
+    ] });
+    const renderShipped = (pullRequestsRead: boolean) => {
+      const shippedSlice = {
+        ...slice,
+        work: witnessedWork,
+        workSummary: projectUsageWorkSummary(witnessedWork.outcomes, pullRequestsRead, witnessedWork),
+        mergedOutcomes: summarizeUsageMergedOutcomes({
+          work: witnessedWork, period: { startMs: 0, endMs: 1000 },
+          timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead,
+        }),
+        sources: pullRequestsRead ? slice.sources : [{ source: 'work', status: 'partial', unreadSessions: { failed: 1 } }],
+      } satisfies UsageQueryResultSlice;
+      return <WidgetPresentationProvider value={{ size: 'large',
+        footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'tall' }, geometry: { width: 520, height: 260 } }}>
+        <UsageChartInteractions>
+          <UsageOutcomesWidget {...props} slice={shippedSlice} presentation={{ style: 'shipped' }} id="usage_outcomes" testID="shipped" />
+        </UsageChartInteractions>
+      </WidgetPresentationProvider>;
+    };
+
+    const screen = await renderScreen(renderShipped(false));
+    expect(screen.findByTestId('shipped.shipped')).toBeTruthy();
+    expect(screen.findByTestId('shipped.shippedChart.spine.0.0')).toBeTruthy();
+    await screen.pressByTestIdAsync('shipped.shippedChart-values-toggle');
+    const values = () => screen.findByType(HappierDataTable).props;
+    const knownRows = values().rows;
+    expect(knownRows).toEqual([[expect.any(String), t('usage.board.charts.shippedCount', { count: 1 })]]);
+    expect(values().label).toContain(t('usage.board.page.notMeasuredYet'));
+    expect(values().label).not.toContain(t('usage.board.charts.shippedA11y', { count: 1 }));
+
+    await screen.update(renderShipped(true));
+    expect(screen.findByTestId('shipped.shippedChart.spine.0.0')).toBeTruthy();
+    expect(values().rows).toEqual(knownRows);
+    expect(values().label).toBe(t('usage.board.charts.shippedA11y', { count: 1 }));
   });
 
   it('keeps ambiguous witnesses without known PR rows unavailable after an incomplete read', async () => {

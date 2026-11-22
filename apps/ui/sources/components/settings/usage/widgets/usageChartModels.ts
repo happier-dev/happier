@@ -311,11 +311,14 @@ export function projectUsagePortraitModel(calendar: UsageAgentCalendar, referenc
 
 export function projectUsageShippedModel(slice: UsageQueryResultSlice): UsageShippedModel | null {
   const merged = slice.mergedOutcomes;
-  if (merged?.mergedInPeriodCount === undefined) return null;
+  if (!merged) return null;
+  const { mergedInPeriodCount, undatedMergedCount } = merged;
+  if (mergedInPeriodCount === undefined && merged.mergeWeeks.length === 0 && undatedMergedCount === 0) return null;
   const weeks = merged.mergeWeeks.map((week) => ({ start: resolveUsageCalendarInstant(week.bucketStartMs, merged.timeZoneOffsetMinutes).date,
     spines: merged.outcomes.filter((outcome) => outcome.mergedAtMs !== null && outcome.mergedAtMs >= week.bucketStartMs && outcome.mergedAtMs < week.bucketEndMs)
       .map((outcome) => outcome.attribution === 'single' && outcome.leadingAgentIds[0] ? outcome.leadingAgentIds[0] : 'mixed' as const) }));
-  return { mode: 'weeks', weeks, undated: merged.undatedMergedCount, total: merged.mergedInPeriodCount + merged.undatedMergedCount };
+  return { mode: 'weeks', weeks, undated: undatedMergedCount,
+    total: mergedInPeriodCount === undefined ? null : mergedInPeriodCount + undatedMergedCount };
 }
 
 const COLLABORATION_KIND = { spawn: 'session', run: 'run', review: 'run', plan: 'run', native: 'native' } as const;

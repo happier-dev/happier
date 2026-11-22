@@ -285,12 +285,13 @@ export function UsageRiverStyleBody(props: UsageChartStyleBodyProps) {
 
 export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   const host = useUsageChartHost(props.serverId);
-  useStyleCaption(t('usage.board.charts.inputShipped'));
-  const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
-  const model = React.useMemo(() => evidence === 'observed' ? projectUsageShippedModel(props.slice) : null, [evidence, props.slice]);
+  const title = t('usage.board.charts.inputShipped');
+  useStyleCaption(title);
+  const model = React.useMemo(() => projectUsageShippedModel(props.slice), [props.slice]);
   const agents = React.useMemo(() => [...new Set(model?.mode === 'weeks' ? model.weeks.flatMap((week) => week.spines.filter((spine) => spine !== 'mixed')) : [])].map(host.agent),
     [model, host.agent]);
   if (!model || model.total === 0) {
+    const evidence = readUsageWorkOutcomesEvidence(props.slice, 'mergedOutcomes');
     if (evidence === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} waitingOn={{ slice: props.slice, sources: ['work'] }} />;
     if (evidence === 'unavailable')
       return <UsageBodyInsufficient testID={`${props.testID}.unavailable`} title={t('usage.board.charts.shippedUnavailableTitle')} />;
@@ -298,7 +299,9 @@ export function UsageShippedStyleBody(props: UsageChartStyleBodyProps) {
   }
   return <View style={{ gap: 12 }} testID={`${props.testID}.shipped`}>
     <UsageShipped theme={host.theme} paint={host.paint} agents={agents} model={model} testID={`${props.testID}.shippedChart`}
-      label={t('usage.board.charts.shippedA11y', { count: model.total })}
+      label={model.total === null
+        ? `${title} · ${t('usage.board.page.mergedPrs')} · ${t('usage.board.page.notMeasuredYet')}`
+        : t('usage.board.charts.shippedA11y', { count: model.total })}
       labels={usageShippedLabels(props.query, 'agent')} />
     <UsageChartFooter slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />
   </View>;

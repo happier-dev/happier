@@ -355,8 +355,8 @@ export function UsageAgentRiver(props: AgentsProps & Readonly<{ model: UsageRive
 /* ═════ Shipped (Outcomes · Style Shipped): merged pull requests on a shelf ═════ */
 
 export type UsageShippedModel =
-  /** Private: one spine per merged PR in its merge week, coloured by its leading Agent (`mixed` below the lead share). */
-  | Readonly<{ mode: 'weeks'; weeks: readonly Readonly<{ start: string; spines: readonly (string | 'mixed')[] }>[]; undated: number; total: number }>
+  /** Private: one spine per linked merge, coloured by its leading Agent. The exact period total can be unknown. */
+  | Readonly<{ mode: 'weeks'; weeks: readonly Readonly<{ start: string; spines: readonly (string | 'mixed')[] }>[]; undated: number; total: number | null }>
   /** Public or no merge dates: the count only, one anonymous shelf. */
   | Readonly<{ mode: 'count'; total: number }>;
 export type UsageShippedLabels = Readonly<{ week: (start: string) => string; noDate: string; countLine: (total: number) => string; mixed: string; noMergeDate: string;
