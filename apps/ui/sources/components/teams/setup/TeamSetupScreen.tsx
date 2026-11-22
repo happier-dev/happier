@@ -8,6 +8,7 @@ import type { ProjectSourceOnboardingTaskSelectionV1 } from '@happier-dev/protoc
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { suggestProjectOpenDestination } from '@/components/projects/activation/projectOpenChoices';
 import { buildProjectRouteHref } from '@/components/projects/detail/projectRouteState';
+import { PROJECT_USE_SHARED_SETUP_PARAM } from '@/components/projects/projectSetup/sharedSetupRoute';
 import { useMachinePresetUpdates } from '@/components/machines/setup/useMachinePresetUpdates';
 import { MachineSignInsSection } from '@/components/machines/setup/MachineSignInsSection';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -985,6 +986,8 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
     ? projectResult.workspace : null;
   const bindingsProject = workspace ?? (checkout && (!props.adoptedPath || checkout.rootPath === props.adoptedPath)
     ? { serverId: checkout.serverId, workspaceId: checkout.id, rootPath: checkout.rootPath } : null);
+  const bindingsSourceId = projectResult?.facts?.source?.sourceId
+    ?? (bindingsProject?.workspaceId === checkout?.id ? checkout?.source?.sourceId : undefined);
   const destination = existingPath ? null : props.machineId
     ? suggestProjectOpenDestination({
         machineId: props.machineId,
@@ -1044,6 +1047,9 @@ const TeamSetupRepositoryRow = React.memo(function TeamSetupRepositoryRow(
           segment: 'scripts',
           activeRootPath: bindingsProject.rootPath,
           defaultRootPath: bindingsProject.rootPath,
+          // Folder Open keeps the checkout as it is. The Project owner reviews its Source setup before use.
+          ...(bindingsSourceId !== props.source.id
+            ? { routeParams: { [PROJECT_USE_SHARED_SETUP_PARAM]: props.source.id } } : {}),
         })) : undefined}
         showChevron={!!bindingsProject}
       />

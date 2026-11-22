@@ -2849,6 +2849,22 @@ describe('Project setup layers on the Scripts page (plan A L6)', () => {
       props: expect.objectContaining({ sourceId: 'src-acme-web', sourceName: 'Acme web', pending: true }),
       chrome: expect.objectContaining({ title: 'projects.scripts.sharedUpdate.titlePending' }) }));
   });
+  it('offers the accepted shared setup’s credential binding even without a repository project file', async () => {
+    shared.inspection = {
+      definition: { basis: { kind: 'absent' }, document: null }, detection, importCandidates: [],
+      effectiveDefinition: resolveProjectDefinitionV1({
+        repositoryManifest: null,
+        acceptedSharedSetup: {
+          sourceId: 'src-acme-web',
+          contentRevision: { headerVersion: 1, bodyVersion: 3 },
+          digest: hash,
+          manifest: { version: 1, environmentVariables: [{ name: 'ACME_TOKEN', kind: 'secret', required: true }] },
+        },
+      }),
+    };
+    const screen = await render('page', 'scripts.environment.ACME_TOKEN.choose');
+    expect(screen.findByTestId('scripts.noProjectFile')).toBeNull();
+  });
   it('keeps a pending shared setup review actionable when personal setup masks its effective edits', async () => {
     isolateManifestDrafts();
     const selection = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: hash };

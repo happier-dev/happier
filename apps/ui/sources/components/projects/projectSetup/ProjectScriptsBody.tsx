@@ -392,6 +392,7 @@ export function ProjectScriptsContent(
   const { definition, detection } = props.inspection;
   const document = definition.document;
   const effective = readProjectEffectiveDefinition(props.inspection);
+  const effectiveManifest = effective.kind === 'available' ? effective.value.effectiveManifest : null;
   // Nix/devenv definitions are read once the environment is evaluated; that is a fact about the
   // environment, not a failed read, and Retry cannot change it.
   const unreadable = detection.diagnostics.filter((diagnostic) => diagnostic.code !== 'unevaluated_nix');
@@ -424,15 +425,7 @@ export function ProjectScriptsContent(
     <PendingSharedSetupRow workspace={props.workspace} binding={props.binding ?? null} pending={pendingShared}
       decide={props.controller.decideSharedSetupUpdate} testID={`${props.testID}.pendingShared`} />
   ) : null;
-  if (document === null) {
-    return (
-      <>
-        <FirstRun {...props} pendingShared={pendingSharedRow} />
-        {partial}
-      </>
-    );
-  }
-  if (document.status === 'invalid') {
+  if (document?.status === 'invalid') {
     const diagnostic = document.diagnostics[0];
     return (
       <>
@@ -458,13 +451,21 @@ export function ProjectScriptsContent(
       </>
     );
   }
+  const manifest = effectiveManifest ?? document?.manifest;
+  if (!manifest) {
+    return (
+      <>
+        <FirstRun {...props} pendingShared={pendingSharedRow} />
+        {partial}
+      </>
+    );
+  }
   return (
     <>
       {/* Found scripts and services continue the list; Workers and Agents (settings) follow them. */}
       {/* The Machine runs the composed definition (repository, shared setup, changes just for you), so the
           page lists that; the repository's own bytes belong to the editor. */}
-      <DeclaredScripts {...props} manifest={effective.kind === 'available' && effective.value.effectiveManifest
-        ? effective.value.effectiveManifest : document.manifest}
+      <DeclaredScripts {...props} manifest={manifest}
         layersDefinition={effective.kind === 'available' ? effective.value : null}
         pendingShared={pendingSharedRow}>
         {partial}
@@ -544,8 +545,9 @@ function DeclaredScripts(
   const sharedName = sharedSource.source?.source.name ?? null;
   const layers = React.useMemo(() => readProjectSetupLayers(props.layersDefinition ?? null, sharedName),
     [props.layersDefinition, sharedName]);
+  const hasProjectFile = props.inspection.definition.document !== null;
   const meta = React.useMemo(() => [
-    { key: 'file', text: '.happier/project.json', icon: <Icon name="file-text" size={14} color={theme.colors.text.secondary} /> },
+    ...(hasProjectFile ? [{ key: 'file', text: '.happier/project.json', icon: <Icon name="file-text" size={14} color={theme.colors.text.secondary} /> }] : []),
     ...(managed || versions ? [{ key: 'toolchain',
       text: [toolchain.title, versions || toolchain.config].filter(Boolean).join(' · '),
       icon: <Icon name="wrench" size={14} color={theme.colors.text.secondary} /> }] : []),
@@ -556,16 +558,16 @@ function DeclaredScripts(
     ...(layers.personalChanges > 0 ? [{ key: 'personal',
       text: t('projects.scripts.layers.personal', { count: layers.personalChanges }),
       icon: <Icon name="user-circle" size={14} color={theme.colors.text.secondary} /> }] : []),
-  ], [toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary, layers, sharedName]);
+  ], [hasProjectFile, toolchain.config, toolchain.title, managed, versions, theme.colors.text.secondary, layers, sharedName]);
   const phone = useDeviceType() === 'phone';
   const editButton = props.onEdit ? (
     <RoundButton
       size="normal"
       display="secondary"
-      title={t('projects.scripts.editProjectFile')}
-      testID={`${props.testID}.edit`}
+      title={t(hasProjectFile ? 'projects.scripts.editProjectFile' : 'projects.scripts.createProjectFile')}
+      testID={`${props.testID}.${hasProjectFile ? 'edit' : 'create'}`}
       leading={<Icon name="file-text" size={14} />}
-      onPress={() => props.onEdit?.(false)}
+      onPress={() => props.onEdit?.(!hasProjectFile)}
     />
   ) : undefined;
   const binding = props.binding ?? null;
@@ -665,7 +667,7 @@ function DeclaredScripts(
           compact={!props.page}
           phoneReview={props.phoneReview ?? null}
           testID={`${props.testID}.setup`}
-          onViewFile={props.onEdit ? () => props.onEdit?.(false, 'raw') : null}
+          onViewFile={hasProjectFile && props.onEdit ? () => props.onEdit?.(false, 'raw') : null}
           layerOf={layers.sharedSourceId || layers.personalChanges > 0 ? layers.layerOf : null}
           sharedSetupName={layers.sharedSourceId ? sharedName ?? t('projects.scripts.layers.sharedUnnamed') : null}
         />

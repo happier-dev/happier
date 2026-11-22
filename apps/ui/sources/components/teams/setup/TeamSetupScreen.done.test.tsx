@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { teamProjectSourceFixture } from '@/dev/testkit/fixtures/teamFixtures';
 import { createMachineAdministrationTargetSelectionFixture } from '@/dev/testkit/fixtures/machineAdministrationTargetSelectionFixtures';
+import { PROJECT_USE_SHARED_SETUP_PARAM } from '@/components/projects/projectSetup/sharedSetupRoute';
 
 vi.mock('react-native', async () =>
   (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock(),
@@ -10,11 +11,12 @@ vi.mock('react-native', async () =>
 vi.mock('react-native-unistyles', async () =>
   (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock(),
 );
-vi.mock(
-  'expo-router',
-  async () =>
-    (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
-);
+const navigation = vi.hoisted(() => ({ lastHref: null as string | null }));
+vi.mock('expo-router', async () => {
+  const mock = (await import('@/dev/testkit/mocks/router')).createExpoRouterMock();
+  mock.spies.push.mockImplementation((href) => { navigation.lastHref = String(href); });
+  return mock.module;
+});
 
 const { TeamSetupPageView } = await import('./TeamSetupScreen');
 // The page draws inside its ItemList, as TeamSection does, so section actions take the page anatomy.
@@ -22,6 +24,7 @@ const { ItemList } = await import('@/components/ui/lists/ItemList');
 type ViewProps = React.ComponentProps<typeof TeamSetupPageView>;
 
 afterEach(() => {
+  navigation.lastHref = null;
   standardCleanup();
 });
 
@@ -95,6 +98,46 @@ it('uses the member’s existing checkout instead of offering a fresh clone', as
   const screen = await renderScreen(view({ checkouts: new Map([['acme-web', checkout]]) }));
   expect(screen.getTextContent()).toContain('/home/mara/code/acme-web');
   expect(screen.getTextContent()).not.toContain('/home/mara/src/acme-web');
+});
+
+it('opens the Source setup review on the exact adopted checkout before binding its keys', async () => {
+  const rootPath = '/home/mara/code/acme-web-adopted';
+  const scope = { serverId: 'home', accountId: 'member' };
+  const screen = await renderScreen(view({
+    repositories: [web],
+    requirements: {
+      entries: new Map([[web.id, { revision: web.revision, read: { status: 'ready', names: ['DATABASE_URL'] } }]]),
+      retry: vi.fn(),
+    },
+    clones: {
+      onFind: vi.fn(), searching: false, folder: '/home/mara/code',
+      adopted: new Map([[web.id, rootPath]]), failure: null, noneFound: false,
+    },
+    batch: {
+      selection: {
+        team: { serverId: scope.serverId, teamId: 'acme' },
+        target: { serverId: scope.serverId, homeId: 'home', machineId: 'devbox' },
+        lifetime: { scope, isCurrent: () => true, onRetire: () => ({ dispose() {} }) },
+        repositories: [{ repositoryId: web.id, source: web, requestId: 'open-adopted' }],
+      },
+      dispatched: new Set([web.id]),
+      running: false,
+      completed: true,
+      settlement: {
+        completed: true, machine: null, repositories: [{
+          id: web.id, result: { ok: true, result: {
+            kind: 'opened', setup: 'notRequired', directory: rootPath,
+            workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'adopted-web', rootPath },
+          } },
+        }],
+      },
+    },
+  }));
+  await screen.pressByTestIdAsync(`team-setup-repository-keys:${web.id}`);
+  const href = new URL(navigation.lastHref ?? '/', 'https://app.example.test');
+  expect(href.pathname).toBe('/projects/adopted-web/scripts');
+  expect(href.searchParams.get('serverId')).toBe(scope.serverId);
+  expect(href.searchParams.get(PROJECT_USE_SHARED_SETUP_PARAM)).toBe(web.id);
 });
 
 it('says so when a clone search finds nothing', async () => {
