@@ -2448,7 +2448,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByText('This connection is no longer configured')).resolves.toBeUndefined();
         await expect(shell.queryByRole('button', { name: 'Retry' })).resolves.toBeUndefined();
         // No retry control, so no invitation to try again either (UI4 D8): the words and the controls agree.
-        expect(document.body.textContent).not.toMatch(/try again/i);
+        expect(document.body.textContent).not.toMatch(/try again|Reading…/i);
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         expect(document.body.textContent).toContain('machine_not_found');
         expect(document.body.textContent).toContain('target_machine_required');
@@ -3300,7 +3300,7 @@ describe('opening a row into the source detail', () => {
             .resolves.toBeUndefined();
         await expect(shell.getByRole('button', { name: 'Replace the duplicated normalizer after mutation' }))
             .resolves.toBeDefined();
-        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request' })).resolves.toBeDefined();
+        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request from Example forge' })).resolves.toBeDefined();
         releaseB();
         await act(async () => { await Promise.resolve(); });
 
@@ -3315,7 +3315,7 @@ describe('opening a row into the source detail', () => {
             .resolves.toBeDefined();
         await expect(shell.queryByText('Replace the duplicated normalizer after mutation'))
             .resolves.toBeUndefined();
-        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request' })).resolves.toBeDefined();
+        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request from Example forge' })).resolves.toBeDefined();
         releaseA();
         await act(async () => { await Promise.resolve(); });
 
@@ -3366,7 +3366,7 @@ describe('opening a row into the source detail', () => {
         await expect(shell.queryByRole('heading', { name: 'Replace the duplicated normalizer after mutation' }))
             .resolves.toBeUndefined();
         expect(queryDetailBodyNode()).toBeNull();
-        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request' })).resolves.toBeDefined();
+        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request from Another source' })).resolves.toBeDefined();
         releaseOther();
     });
 
@@ -3458,9 +3458,8 @@ describe('opening a row into the source detail', () => {
         const release = currentHarness!.blockNextReobservation('1');
         await act(async () => { await shell.updatePageLocation(alertPath('1')); });
         await expect(shell.queryByText('This entry is outside the current filter')).resolves.toBeUndefined();
-        expect(document.body.textContent).toContain('Reading this entry');
-        await expect(shell.getByRole('heading', { name: '1' })).resolves.toBeDefined();
-        await expect(shell.getByText('example/repository')).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('Reading this dependabot alert from Example forge');
+        await expect(shell.getByRole('heading', { name: 'Dependabot alert' })).resolves.toBeDefined();
         await act(async () => { await refreshMountedShell(shell, published); });
         expect(requestedLocations).not.toContain('');
         await act(async () => { release(); });
@@ -3475,10 +3474,10 @@ describe('opening a row into the source detail', () => {
         const shell = await mountShell({ subPath, securityAlert: true, activeSurface: true, partialScan: true,
             hostedDetail: true, refusedHostReads: refused, publishCurrentUiContext: context => { published = context; } });
         await expect(shell.queryByText('This entry is outside the current filter')).resolves.toBeUndefined();
-        await expect(shell.getByRole('heading', { name: '1' })).resolves.toBeDefined();
+        await expect(shell.getByRole('heading', { name: 'Dependabot alert' })).resolves.toBeDefined();
         const detail = document.querySelector<HTMLElement>('[role="group"][aria-label="Details pane"]');
         await vi.waitFor(() => expect(detail?.textContent).toContain('These details could not be read'));
-        expect(detail?.textContent).toContain('example/repository');
+        expect(detail?.textContent).toContain('Example forge');
         expect(detail?.textContent?.split('These details could not be read')).toHaveLength(2);
         await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
@@ -3551,6 +3550,26 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.exactReads.every(read => read.sourceInstanceId === SECOND_INSTANCE)).toBe(true);
     });
 
+    it('keeps a readable route identity through a terminal exact-read failure', async () => {
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'github:1424792902', entryId: '54' } });
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const shell = await mountShell({ subPath, activeSurface: true, hostedDetail: true, automaticDemandOnly: true,
+            secondInstance: true, secondInitialScan, exactReadFailure: { class: 'transient', code: 'provider-busy' } });
+        try {
+            await expect(shell.getByRole('heading', { name: 'Pull request #54' })).resolves.toBeDefined();
+            await expect(shell.getByText('Reading this pull request from Example forge')).resolves.toBeDefined();
+        } finally {
+            await act(async () => { release(); });
+        }
+        await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
+        const detail = document.querySelector('[role="group"][aria-label="Details pane"]');
+        expect(detail?.textContent).toContain('Pull request #54');
+        expect(detail?.textContent).not.toMatch(/github:1424792902|Reading/);
+        expect(detail?.textContent?.split('These details could not be read')).toHaveLength(2);
+    });
+
     it('shows reading feedback on a cold deep link before selecting the entry', async () => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
@@ -3562,7 +3581,7 @@ describe('opening a row into the source detail', () => {
             await act(async () => {
                 await vi.waitFor(() => { expect(currentHarness?.initialScanInstanceIds).toContain(SECOND_INSTANCE); });
             });
-            await expect(shell.getByText('Reading this entry')).resolves.toBeDefined();
+            await expect(shell.getByText('Reading this pull request from Example forge')).resolves.toBeDefined();
             await expect(shell.queryByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeUndefined();
         } finally {
             await act(async () => { release(); });
@@ -3570,7 +3589,7 @@ describe('opening a row into the source detail', () => {
         await vi.waitFor(async () => {
             await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         });
-        await expect(shell.queryByText('Reading this entry')).resolves.toBeUndefined();
+        await expect(shell.queryByText('Reading this pull request from Example forge')).resolves.toBeUndefined();
     });
 
     it('keeps the wide routed detail region mounted through the first list pass', async () => {
@@ -3588,8 +3607,8 @@ describe('opening a row into the source detail', () => {
         try {
             initialRegion = findRegion();
             expect(initialRegion).not.toBeNull();
-            expect(initialRegion?.textContent).toContain('Reading this entry');
-            expect(initialRegion?.querySelector('[role="heading"]')?.textContent).toBe('17');
+            expect(initialRegion?.textContent).toContain('Reading this pull request from Example forge');
+            expect(initialRegion?.querySelector('[role="heading"]')?.textContent).toBe('Pull request #17');
         } finally {
             await act(async () => { release(); });
         }
@@ -3741,7 +3760,7 @@ describe('opening a row into the source detail', () => {
 
     it.each([true, false])('shows source absence after one exact read of an identity-only link (explicit: %s)', async (explicitOpen) => {
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
-            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '532' } });
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'github:1424792902', entryId: '532' } });
         const shell = await mountShell({ subPath, explicitOpen, absentEntryIds: ['532'], activeSurface: true, secondInstance: true });
         await act(async () => {
             await vi.waitFor(async () => {
@@ -3752,6 +3771,8 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
         expect(lastPageLocation).toBeNull();
+        await expect(shell.getByRole('heading', { name: 'Pull request #532' })).resolves.toBeDefined();
+        expect(document.body.textContent).not.toMatch(/github:1424792902|Reading…/);
         await expect(shell.queryByText(DETAIL_BODY_TEXT)).resolves.toBeUndefined();
         await expect(shell.queryByText('No connection to open this through')).resolves.toBeUndefined();
     });

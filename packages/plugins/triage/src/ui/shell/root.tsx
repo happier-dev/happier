@@ -76,7 +76,7 @@ import { triageSourcePanelActionIdV1 } from '@happier-dev/triage-sources/ui';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../../actions/mountedUiProtocol.js';
 import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import type { TriageDetailAvailableTabV1 } from '../detail/body.js';
-import { projectTriageDetailHeaderV1 } from '../detail/header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailReadingLineV1, readTriageDetailRouteIdentityV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
 import { readTriageEntryGlyphV1 } from '../window/entryDisplay.js';
 import {
@@ -2444,17 +2444,20 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * like", and they would diverge the first time either changed. The Collection
    * tells it when the host already supplies the identity band and Close.
    */
+  const detailRow = selectedRow ?? lastKnown?.row ?? null;
+  const routedIdentity = openEntry === null || detailRow !== null ? null
+    : readTriageDetailRouteIdentityV1(openEntry, readSourceDescriptor(openEntry.source), text);
   const routeDetailHeader = (entryRef: TriageEntryRefV1) => {
-    const pin = pinsByEntry.get(triageEntryRowKey(entryRef));
-    const kind = readSourceDescriptor(entryRef.source)?.kinds.find(candidate => candidate.id === entryRef.kindId);
+    const pin = pinsByEntry.get(triageEntryRowKey(entryRef))?.displayAtMark;
+    const { kind, sourceLabel, title } = routedIdentity
+      ?? readTriageDetailRouteIdentityV1(entryRef, readSourceDescriptor(entryRef.source), text);
     return {
-      title: pin?.displayAtMark.title ?? entryRef.entryId,
-      subtitle: pin?.displayAtMark.scopeLabel ?? entryRef.collisionScope,
+      title: pin?.title === entryRef.entryId ? title : pin?.title ?? title,
+      subtitle: sourceLabel ?? text('plugins.triage.surface.detail.source', 'Source'),
       subtitleLeading: <TriageSourceMark source={entryRef.source} />,
       leading: <Icon name={readTriageEntryGlyphV1(null, kind?.workflowSubject ?? null, kind?.glyph ?? null)} />,
     };
   };
-  const detailRow = selectedRow ?? lastKnown?.row ?? null;
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => openEntry === null ? null : (
     detailRow !== null ? (
       <TriagePublishedDetail
@@ -2508,7 +2511,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
             detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
         </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure} retry={completePostMutation} />
-          : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />}
+          : <LoadingState title={readTriageDetailReadingLineV1(text, routedIdentity?.kind?.displayName ?? null, routedIdentity?.sourceLabel ?? null)} />}
       </Stack>
     )
   );

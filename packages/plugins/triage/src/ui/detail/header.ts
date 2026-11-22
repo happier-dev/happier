@@ -1,6 +1,7 @@
 import {
   formatTriageTimestampV1,
   isReviewTriageEntryRefV1,
+  type TriageEntryRefV1,
   type TriageLinkedSessionProjectionV1,
   type TriagePullRequestStatusV1,
   type TriageSourceKindGlyphV1,
@@ -175,9 +176,42 @@ export type TriageDetailHeaderInputV1 = Readonly<{
   pullRequestStatus?: TriagePullRequestStatusV1 | null;
   /** That status has not arrived yet because the source is still reading it: the cells say "Reading…". */
   pullRequestStatusReading?: boolean;
+  /** The terminal detail outcome owns the status line. */
+  pullRequestDetailFailed?: boolean;
   /** The reader's words, for the author line ("You"); English fallbacks when absent. */
   text?: TriageEntryDisplayTextV1;
 }>;
+
+type DetailText = (key: string, fallback: string, values?: Record<string, string>) => string;
+const fallbackText: DetailText = (_key, fallback) => fallback;
+
+export function readTriageDetailRouteIdentityV1(
+  entryRef: TriageEntryRefV1,
+  descriptor: TriageSourceDescriptorV1 | null | undefined,
+  text: DetailText = fallbackText,
+) {
+  const kind = descriptor?.kinds.find(candidate => candidate.id === entryRef.kindId);
+  const label = kind?.displayName ?? text('plugins.triage.surface.detail.entryIdentity', 'Entry details');
+  // Only issue/change subjects use number designations. Other identifiers
+  // (including a numeric monitoring id) are source routing operands.
+  const numbered = (kind?.workflowSubject === 'pullRequest' || kind?.workflowSubject === 'issue')
+    && /^[0-9]+$/u.test(entryRef.entryId);
+  return {
+    kind,
+    title: numbered ? text('plugins.triage.surface.detail.numberedIdentity', '{kind} #{number}',
+      { kind: label, number: entryRef.entryId }).replace('{kind}', label).replace('{number}', entryRef.entryId) : label,
+    sourceLabel: descriptor?.displayName ?? null,
+  };
+}
+
+export function readTriageDetailReadingLineV1(text: DetailText, kindLabel: string | null, sourceLabel: string | null): string {
+  const reading = kindLabel === null
+    ? text('plugins.triage.surface.detail.reading', 'Reading this entry')
+    : text('plugins.triage.surface.detail.readingKind', 'Reading this {kind}', { kind: kindLabel.toLowerCase() })
+      .replace('{kind}', kindLabel.toLowerCase());
+  return sourceLabel === null ? reading : text('plugins.triage.surface.detail.readingFromSource',
+    '{reading} from {source}', { reading, source: sourceLabel }).replace('{reading}', reading).replace('{source}', sourceLabel);
+}
 
 export function projectTriageDetailHeaderV1(
   input: TriageDetailHeaderInputV1,
@@ -186,28 +220,26 @@ export function projectTriageDetailHeaderV1(
   const observation = selectedObservation(row);
   const present = observation?.outcome.kind === 'present' ? observation.outcome : null;
 
-  const descriptor = input.sourceDescriptor;
-  const kind = descriptor?.kinds.find((candidate) => candidate.id === row.entryRef.kindId);
+  const identity = readTriageDetailRouteIdentityV1(row.entryRef, input.sourceDescriptor, input.text);
+  const { kind } = identity;
   // The row's own display owner: the "You" rule and the mark's facts are read there, never re-derived here.
   const display = projectTriageEntryDisplay(row, input.text);
 
   return Object.freeze({
-    // An entry with no present answer anywhere still has an identity, and its
-    // own provider id is the only truthful thing left to name it by.
-    title: present?.snapshot.title ?? row.entryRef.entryId,
-    sourceLabel: descriptor?.displayName ?? null,
+    title: present?.snapshot.title ?? identity.title,
+    sourceLabel: identity.sourceLabel,
     kindLabel: kind?.displayName ?? null,
     workflowSubject: kind?.workflowSubject ?? null,
     kindGlyph: kind?.glyph ?? null,
     lastReadAtMs: observation?.observedAtMs ?? null,
-    scopeLabel: present?.snapshot.scopeLabel ?? row.entryRef.collisionScope,
+    scopeLabel: present?.snapshot.scopeLabel ?? identity.sourceLabel,
     stateLabel: present?.snapshot.state.nativeLabel ?? null,
     lifecyclePresentation: present?.snapshot.state.presentation ?? null,
     connectionLabel: input.connectionLabel,
     sourcePluginId: row.entryRef.source.pluginId,
     // A source may address an entry by its own title (a personal task): saying it twice is not an address.
     addressLabel: (present?.locator.displayPath !== undefined && present.locator.displayPath !== present.snapshot.title
-      ? present.locator.displayPath : undefined) ?? present?.snapshot.scopeLabel ?? row.entryRef.collisionScope,
+      ? present.locator.displayPath : undefined) ?? present?.snapshot.scopeLabel ?? identity.sourceLabel,
     breadcrumb: present === null ? null : Object.freeze([
       present.snapshot.scopeLabel,
       ...(present.snapshot.designation === undefined ? [] : [present.snapshot.designation]),
@@ -236,7 +268,7 @@ export function projectTriageDetailHeaderV1(
     webUrl: present?.locator.webUrl ?? null,
     linkedSessions: input.linkedSessions,
     linkedSessionsHasMore: input.linkedSessionsHasMore,
-    pullRequestFacts: kind?.workflowSubject !== 'pullRequest' ? null
+    pullRequestFacts: kind?.workflowSubject !== 'pullRequest' || input.pullRequestDetailFailed === true || row.presence.kind === 'absent' ? null
       : projectPullRequestStatusFactsV1(input.pullRequestStatus ?? null, readPullRequestLinkState(present?.snapshot.state.presentation),
         { reading: input.pullRequestStatusReading === true }),
     review: isReviewTriageEntryRefV1(row.entryRef),

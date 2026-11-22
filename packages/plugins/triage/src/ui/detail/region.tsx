@@ -89,7 +89,7 @@ import { TriagePullRequestReviewChooser } from '../header/PullRequestReviewChoos
 import type { TriageActionTargetV1 } from '../state/actionTarget.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
-import { projectTriageDetailHeaderV1, readTriageDetailAttentionBadgeV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
+import { projectTriageDetailHeaderV1, readTriageDetailReadingLineV1, readTriageDetailAttentionBadgeV1, readTriageDetailContextSegmentsV1, type TriageDetailHeaderV1 } from './header.js';
 import { TriageDetailHeaderFacts } from './headerFacts.js';
 import {
   readTriageSourceDetailContributionV1,
@@ -871,6 +871,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const pullRequestStatus = sourceStatus === null || sourceStatus.kind === 'unavailable' ? null : sourceStatus.value;
   // No status offered yet: the source's read is under way (a failed read arrives as `unavailable`).
   const statusReading = sourceStatus === null;
+  const detailFailed = readFailure !== undefined || detail?.kind === 'unreachable'
+    || detail?.kind === 'refused' || detail?.kind === 'unavailable';
   const header = React.useMemo(() => projectTriageDetailHeaderV1({
     row,
     lanes: props.lanes,
@@ -880,8 +882,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     linkedSessionsHasMore,
     pullRequestStatus,
     pullRequestStatusReading: statusReading,
+    pullRequestDetailFailed: detailFailed,
     text,
-  }), [linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, statusReading, text]);
+  }), [detailFailed, linkedSessions, linkedSessionsHasMore, props.connectionLabel, props.lanes, pullRequestStatus, row, sourceDescriptor, statusReading, text]);
 
   const completePostMutation = props.completePostMutation;
   const refreshLinkedSessions = detail?.kind === 'ready' ? detail.refreshLinkedSessions : undefined;
@@ -1125,9 +1128,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         )}
       />
     );
-    const reading = header.kindLabel === null
-      ? text('plugins.triage.surface.detail.reading', 'Reading this entry')
-      : text('plugins.triage.surface.detail.readingKind', 'Reading this {kind}', { kind: header.kindLabel.toLowerCase() });
+    const reading = readTriageDetailReadingLineV1(text, header.kindLabel, header.sourceLabel);
     return <Stack style={DETAIL_FILL_STYLE_V1}>
       {readFailure !== undefined ? (
         <TriageDetailReadFailure sourceFailure={readFailure} lastReadAtMs={header.lastReadAtMs} retry={completePostMutation} />
@@ -1145,10 +1146,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         </Stack>
       ) : detail === null || detail.kind === 'reading' ? (
         <Stack gap="small">
-          <Text variant="micro" tone="neutral">{sourceDescriptor === null ? reading
-            : text('plugins.triage.surface.detail.readingFromSource', '{reading} from {source}', {
-                reading, source: sourceDescriptor.displayName,
-              })}</Text>
+          <Text variant="micro" tone="neutral" value={reading} />
           <TriageStoryLoadingLines label={reading} />
         </Stack>
       ) : detail.kind === 'unavailable' ? (
