@@ -15,6 +15,7 @@ import {
 import { projectManagedOpaqueSetupSourcesV1 } from '@happier-dev/cli-common/machines/managed';
 import type { StoredAppPresetInputV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { readMachineSetupAppIdentityV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { DeploymentReceiptResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import {
@@ -27,11 +28,13 @@ import { readWorkflowInvocationRootV1, readWorkflowInvocationMembersV1,
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { prepareActionCompletionV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
-import { readMachineSetupAcceptedRunId } from './composeMachineSetup';
+import { readMachineSetupAcceptedRunId, readMachineSetupWorkflowRetry } from './composeMachineSetup';
 
 type App = Readonly<{ intent: StoredAppPresetInputV1; authoredKey?: string; reference?: MachineSetupAcceptedAppRunV1 }>;
 type Outcome = Readonly<{ kind: 'completed' | 'not_completed' | 'failed' | 'unknown' }>;
-export type MachineSetupAcceptedAppRunObservation = App & Readonly<{ outcome: Outcome; environmentId?: string }>;
+export type MachineSetupAcceptedAppRunObservation = App & Readonly<{
+  outcome: Outcome; environmentId?: string; retry?: MachineSetupRetryV1;
+}>;
 type AcceptedBinding = Readonly<{ reference: MachineSetupAcceptedAppRunV1; environmentId?: string }>;
 type ReadRuntime = Readonly<{
   homeId: string;
@@ -328,7 +331,12 @@ export async function readMachineSetupAcceptedAppRuns(params: ReadRuntime & Read
         return unknown();
       if (current.index.lifecycle === 'completed' && !execution) return unknown();
       if (!await params.isCurrent() || params.signal?.aborted) return unknown();
-      return { ...app, ...settledOutcome(current, reference, binding.environmentId) };
+      const result = settledOutcome(current, reference, binding.environmentId);
+      if (result.outcome.kind !== 'failed') return { ...app, ...result };
+      const target = { runId: reference.runId, invocationId: current.index.id };
+      const detail = await params.execute('workflow.run.invocations.get', target, accountReadContext(params)).catch(() => null);
+      const retry = detail?.ok ? readMachineSetupWorkflowRetry(target, detail.result) : undefined;
+      return { ...app, ...result, ...(retry ? { retry } : {}) };
     } catch {
       return unknown();
     }

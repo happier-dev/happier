@@ -45,6 +45,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
+import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { useServerScopedMachine } from '@/sync/store/hooks';
 import { t } from '@/text';
 
@@ -200,6 +201,8 @@ function MachineSetupRoot(
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
   const apps = readMachineSetupApps(openedSources);
+  const appRetries = new Map(setup.plan?.review?.apps?.flatMap(app =>
+    app.kind === 'failed' && app.retry ? [[`${app.sourceIndex}.${app.itemIndex}`, app.retry] as const] : []));
   const allSourcesOpened = setup.plan !== null
     && setup.sourcePresentations !== null
     && setup.sourcePresentations.length === setup.plan.sources.length
@@ -458,6 +461,7 @@ function MachineSetupRoot(
             >
               {apps.map((app) => {
                 const read = machineSetupItemReadRow(app.item, machineSetupItemPresentation(app.item, null));
+                const retry = editable ? appRetries.get(app.key) : undefined;
                 return (
                   <Item
                     key={app.key}
@@ -475,6 +479,16 @@ function MachineSetupRoot(
                     subtitleLines={0}
                     mode="info"
                     showChevron={false}
+                    accessoryLayout="adaptive"
+                    rightElement={retry ? (
+                      <RoundButton
+                        testID={`machine-setup-app-retry:${app.key}`}
+                        size="small"
+                        display="secondary"
+                        title={t('common.retry')}
+                        onPress={() => router.push(createWorkflowInvocationRoute(retry.runId, retry.invocationId, props.serverId) as never)}
+                      />
+                    ) : undefined}
                   />
                 );
               })}

@@ -36,7 +36,7 @@ import { MachineSetupObservationStatusV1Schema, MachineSetupObservationReasonV1S
 import { MachineSetupEffectPlanV1Schema, MachineRecipeSelectionV1Schema } from '../setup/machineRecipeV1.js';
 import { MachineRecipeReferenceV1Schema } from '../setup/machineRecipeReferenceV1.js';
 import { MachineSetupBackupReceiverResultV1Schema } from '../setup/backupReceiverV1.js';
-import { MachineSetupApplyResultV1Schema, MachineSetupReviewedStepV1Schema } from '../setup/machineSetupOperationV1.js';
+import { MachineSetupApplyResultV1Schema, MachineSetupReviewedStepV1Schema, MachineSetupRetryV1Schema } from '../setup/machineSetupOperationV1.js';
 export { MachineSetupApplyResultV1Schema } from '../setup/machineSetupOperationV1.js';
 import { ManagedMachineEnrollmentIdentityV1Schema } from './enrollmentIdentityV1.js';
 import * as workflowDefinitions from '../../workflows/workflowV1.js';
@@ -241,6 +241,7 @@ export const MachineSetupPlanReviewV1Schema = lazyZodSchema(() => z.strictObject
   requiresSessionRefresh: z.optional(MachineSetupSessionRefreshV1Schema),
   apps: z.optional(z.array(z.strictObject({ sourceIndex: revision(), itemIndex: revision(),
     kind: z.enum(['new', 'completed', 'not_completed', 'failed', 'unknown']), environmentId: z.optional(id()),
+    retry: z.optional(MachineSetupRetryV1Schema),
   }))),
   host: z.optional(WorkflowCombinedActionHostReviewV1Schema),
 }));

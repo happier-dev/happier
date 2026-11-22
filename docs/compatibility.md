@@ -20,6 +20,12 @@ field, and a prior Setup proof that omits it cannot admit a Template child.
 Re-plan and approve Setup to obtain a current proof. This uses the existing
 signed envelope and requires no storage migration.
 
+Machine Setup Plan can include an existing Workflow Run and invocation reference
+for a retained App failure when Workflow offers Retry. Match the CLI, Protocol
+and UI in 0.3 development because earlier strict Plan readers can refuse the
+optional `retry` field. Updated readers accept earlier Plan results, and the
+stored Setup and Workflow records keep their existing shapes.
+
 ## Exact original input publication refusal (unreleased 0.3)
 
 The exact committed message read by local ID can include optional

@@ -183,6 +183,43 @@ it('leads a missing App address to the attached preset\'s setup editor instead o
   expect(harness.requests.filter(request => request.path === '/v1/actions/machines.setup.plan')).toHaveLength(plansBefore);
 });
 
+it('opens the exact retained App invocation when Workflow offers Retry', async () => {
+  const home = await harness.addHome({ name: 'Build', serverUrl: 'https://preset-app-retry.example',
+    serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
+  const serverId = resolveServerProfileScopeIdForIdentifier(home);
+  const templateRef = { sourceId: 'apps', itemId: 'redis', version: '1',
+    ref: { kind: 'content' as const, digest: `sha256:${'a'.repeat(64)}` } };
+  const saved = { ...preset('redis-tools', 'Redis tools'), setup: {
+    items: ['Redis', 'Another Redis'].map(name => ({ kind: 'app' as const, definition: {
+      name, project: { kind: 'create' as const }, definition: { from: 'catalogApp' as const, templateRef }, bindings: [],
+    } })),
+  } };
+  await publishManagedDevbox(serverId, undefined, { setup: { version: 1, desiredRevision: 3, status: 'drifted',
+    recipes: [], attachedPresets: [{ kind: 'accountPreset', presetId: saved.id, presetRevision: saved.revision }] } });
+  harness.answer(home, '/v1/machines/devbox', { body: { machine: createPlainMachineRowFixture({ id: 'devbox', accountId: 'owner' }) } });
+  harness.answer(home, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [presetWire(saved)] } });
+  const plan = setupPlanFromOpened({ desiredRevision: 3, exclusions: [], support: [],
+    sources: [{ kind: 'accountPreset', presetId: saved.id, presetRevision: saved.revision, setup: saved.setup },
+      { kind: 'direct', setup: {} }],
+    review: { target: { homeId: 'srv_build', machineId: 'devbox' }, administratorRequired: null, downtime: 'none',
+      apps: [{ sourceIndex: 0, itemIndex: 0, kind: 'failed', retry: { runId: 'run-app', invocationId: 'failed-app' } },
+        { sourceIndex: 0, itemIndex: 1, kind: 'failed' }] } });
+  harness.answer(home, '/v1/actions/machines.setup.plan', { select: input => {
+    const envelope = ExternalActionRequestEnvelopeV1Schema.parse(input);
+    return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.setup.plan',
+      requestId: envelope.requestId, execution: { ok: true, result: plan } }) };
+  } });
+  const { MachineSetupTab } = await import('./MachineSetupTab');
+  const screen = await renderScreen(<MachineSetupTab serverId={serverId} machineId="devbox" machineName="devbox" online
+    params={{ id: 'setup' }} setParams={vi.fn()} />);
+  onTestFinished(() => screen.unmount());
+  await waitForHomeGovernance(() => expect(screen.findByTestId('machine-setup-app-retry:0.0')).not.toBeNull());
+  expect(screen.findByTestId('machine-setup-app-retry:0.1')).toBeNull();
+  await screen.pressByTestIdAsync('machine-setup-app-retry:0.0');
+  expect(routerHandle.current?.spies.push.mock.calls.at(-1)?.[0])
+    .toBe(`/workflows/runs/run-app?invocationId=failed-app&serverId=${encodeURIComponent(serverId)}`);
+});
+
 it('opens an opaque saved setup source from the exact plan projection without fetching a current preset', async () => {
   const home = await harness.addHome({ name: 'Opaque setup', serverUrl: 'https://opaque-setup.example',
     serverIdentityId: 'srv_opaque_setup', accountId: 'owner', currentAccount: true });

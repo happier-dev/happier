@@ -22,6 +22,7 @@ const receipt = { ok: true, environmentId, revision: 2, deploymentId: 'deploymen
 async function fixture(options: Readonly<{
   create?: boolean; deploy?: boolean; result?: unknown; lifecycle?: 'completed' | 'failed' | 'cancelled' | 'outcome_uncertain';
   opaquePreset?: boolean;
+  retryAvailable?: boolean;
 }>) {
   const intent = StoredAppPresetInputV1Schema.parse({ name: 'App', project: { kind: 'existing', projectSourceId: 'project' },
     definition: { from: 'catalogApp', templateRef }, bindings: [] });
@@ -78,6 +79,14 @@ async function fixture(options: Readonly<{
   // invocation ancestry, schemas and completion interpretation remain real.
   const execute: Parameters<typeof readMachineSetupAcceptedAppRuns>[0]['execute'] = async (actionId, request) => {
     if (actionId === 'workflow.run.get') return { ok: true, result: run };
+    if (actionId === 'workflow.run.invocations.get') {
+      expect(request).toEqual({ runId: run.run.id, invocationId: row.index.id });
+      const unavailable = { kind: 'unavailable', reason: 'invocation_not_recoverable' };
+      return { ok: true, result: { invocation: { ...row, recoveryAvailability: {
+        retry: options.retryAvailable ? { kind: 'available', causalInvocationIds: [row.index.id] } : unavailable,
+        reattach: unavailable, continueSameConversation: unavailable, continueFreshAgent: unavailable, restoreWorkspace: unavailable,
+      } } } };
+    }
     if (actionId !== 'workflow.run.invocations.list') throw new Error('Unexpected Account operation');
     const selection = request as { invocationId?: string; parentRecordId?: string | null };
     const rows = selection.invocationId ? [root, row].filter(value => value.index.id === selection.invocationId)
@@ -92,6 +101,14 @@ async function fixture(options: Readonly<{
 }
 
 describe('accepted template app outcomes', () => {
+  it.each([true, false])('projects Retry for the retained preset App only when Workflow offers it (%s)', async retryAvailable => {
+    const f = await fixture({ opaquePreset: true, create: true, lifecycle: 'failed', retryAvailable });
+    f.row.progress.result = undefined;
+    const [app] = await f.read();
+    expect(app?.outcome).toEqual({ kind: 'failed' });
+    expect(app?.retry).toEqual(retryAvailable ? { runId: f.row.index.runId, invocationId: f.row.index.id } : undefined);
+  });
+
   it('binds an opaque accepted preset to its opened revision before reading app completion', async () => {
     const f = await fixture({ opaquePreset: true });
     expect(await f.read()).toMatchObject([{ outcome: { kind: 'completed' }, environmentId }]);

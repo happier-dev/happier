@@ -66,7 +66,8 @@ async function observeApps(input: MachineSetupLocalPlanInputV1, plan: MachineSet
     const selected = completed.length === 1 ? completed[0]
       : completed.length === 0 && candidates.length === 1 ? candidates[0] : undefined;
     return { ...address, kind: selected?.outcome.kind ?? 'unknown',
-      ...(selected?.environmentId === undefined ? {} : { environmentId: selected.environmentId }) };
+      ...(selected?.environmentId === undefined ? {} : { environmentId: selected.environmentId }),
+      ...(selected?.retry === undefined ? {} : { retry: selected.retry }) };
   });
 }
 

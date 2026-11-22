@@ -7,8 +7,7 @@ import { deriveMachineSetupCombinedRunIdV1 } from '@happier-dev/protocol/workflo
 import type { ActionExecutorContext, ActionExecutorDeps, WorkflowActionExecuteArgs } from '@happier-dev/protocol/actions/executor/types';
 import { selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { MachineSetupPlanResultV1, MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
-import type { MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import { MachineSetupApplyResultV1Schema, type MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { ActionOperationCompletionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
@@ -28,6 +27,14 @@ const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, error
 export type CombinedMachineSetupInvocationRead =
   | Omit<WorkflowActionExecuteArgs<'workflow.run.invocations.list'>, 'context'>
   | Omit<WorkflowActionExecuteArgs<'workflow.run.invocations.get'>, 'context'>;
+
+export function readMachineSetupWorkflowRetry(input: MachineSetupRetryV1, result: unknown): MachineSetupRetryV1 | undefined {
+  const opened = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].safeParse(result);
+  if (!opened.success) return undefined;
+  const { index, recoveryAvailability } = opened.data.invocation;
+  return index.runId === input.runId && index.id === input.invocationId
+    && recoveryAvailability?.retry.kind === 'available' ? input : undefined;
+}
 
 export { buildMachineSetupTargetApplyInput } from '@happier-dev/protocol/machines/managed/actionsV1';
 
@@ -371,8 +378,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
             const input = { runId, invocationId: index.id };
             // Only the exact Workflow detail owns Retry availability.
             const detail = await host.readInvocations(request, { actionId: 'workflow.run.invocations.get', input }).catch(() => null);
-            const opened = WorkflowActionOutputSchemasV1['workflow.run.invocations.get'].safeParse(detail);
-            if (opened.success && opened.data.invocation.recoveryAvailability?.retry.kind === 'available') setupRetry = input;
+            setupRetry = readMachineSetupWorkflowRetry(input, detail);
           }
           return withRecovery({ ok: false, errorCode: progress.reason.code, error: progress.reason.message ?? progress.reason.code,
             ...(progress.reason.failureCause ? { failureCause: progress.reason.failureCause } : {}),
