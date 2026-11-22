@@ -2333,8 +2333,9 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         };
 
         const handleFocusOut = (event: FocusEvent) => {
-            if (closeRequested.current || !(event.target instanceof Node) || !isWithinWebPopoverFocus(openEntry, event.target)) return;
-            if (event.relatedTarget instanceof Node && isWithinWebPopoverFocus(openEntry, event.relatedTarget)) return;
+            // Removing focused content can blur it without moving focus outside the popover.
+            if (closeRequested.current || !(event.target instanceof Node) || !(event.relatedTarget instanceof Node)) return;
+            if (!isWithinWebPopoverFocus(openEntry, event.target) || isWithinWebPopoverFocus(openEntry, event.relatedTarget)) return;
             requestClose('dismiss');
         };
 

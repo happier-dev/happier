@@ -303,3 +303,54 @@ it('dismisses a desktop anchored popover only on focus departure, including from
         viewport.width = 390;
     }
 });
+
+it('keeps a desktop anchored popover open when an inside label blurs Search', async () => {
+    viewport.width = 1440;
+    const container = document.createElement('div');
+    document.body.append(container);
+    const root = createRoot(container);
+    function Harness() {
+        const [open, setOpen] = React.useState(true);
+        const trigger = React.useRef<HTMLButtonElement>(null);
+        return <>
+            <button ref={trigger} aria-expanded={open}>Actions</button>
+            <Popover open={open} anchor={{ kind: 'view', ref: trigger }} portal={{ web: true }}
+                onRequestClose={() => setOpen(false)}>
+                {() => <>
+                    <TextInput accessibilityLabel="Search actions" />
+                    <span data-testid="action-group-label">More actions</span>
+                </>}
+            </Popover>
+        </>;
+    }
+    try {
+        await act(async () => root.render(<Harness />));
+        const search = document.querySelector<HTMLInputElement>('[aria-label="Search actions"]')!;
+        const label = document.querySelector<HTMLElement>('[data-testid="action-group-label"]')!;
+        const trigger = container.querySelector('button')!;
+        const blurTarget = vi.fn();
+        search.addEventListener('focusout', event => blurTarget(event.relatedTarget), { once: true });
+        search.focus();
+        expect(document.activeElement).toBe(search);
+        await act(async () => {
+            label.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, cancelable: true }));
+            // JSDOM leaves the default pointer focus transition to the caller.
+            search.blur();
+            label.click();
+        });
+        expect(document.activeElement).toBe(document.body);
+        expect(blurTarget).toHaveBeenCalledWith(null);
+        expect(trigger.getAttribute('aria-expanded')).toBe('true');
+        expect(label.isConnected).toBe(true);
+        await act(async () => {
+            search.focus();
+            search.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+        });
+        expect(trigger.getAttribute('aria-expanded')).toBe('false');
+        expect(document.activeElement).toBe(trigger);
+    } finally {
+        await act(async () => root.unmount());
+        container.remove();
+        viewport.width = 390;
+    }
+});
