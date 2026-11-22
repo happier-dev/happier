@@ -57,7 +57,8 @@ describe('received video frame annotation', () => {
         vi.unstubAllEnvs();
     });
 
-    it('marks a received video frame with numbered steps through the same Action and copies it with its time and notes', async () => {
+    it.each(['session_media.v1', 'attachments.v1'] as const)(
+        'copies a video frame from %s with its time and numbered notes', async (envelopeKind) => {
         harness = await createWorkspaceFileDownloadHarness({ name: 'clip.mp4', bytes: new Uint8Array([0, 0, 0, 24]) });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = await TokenStorage.getCredentialsForServerUrl('https://workspace-download.example.test', { serverId: harness.scope.serverId });
@@ -85,9 +86,12 @@ describe('received video frame annotation', () => {
         storage.getState().activateSessionLocalStateScope(scope);
         const media = SessionMediaItemV1Schema.parse({ id: 'source-video', mediaKind: 'video', name: 'checkout-1440.mp4',
             path: '.happier/media/clip.mp4', mimeType: 'video/mp4', sizeBytes: 4, category: 'attachment', role: 'input', origin: { source: 'user-upload' } });
+        const envelope = envelopeKind === 'session_media.v1'
+            ? { kind: envelopeKind, payload: { media: [media] } }
+            : { kind: envelopeKind, payload: { attachments: [{ id: media.id, name: media.name, path: media.path, sizeBytes: media.sizeBytes }] } };
         const transcript = createSessionMessagesFixture({ isLoaded: true, messageIdsOldestFirst: ['message'], messagesById: {
             message: { kind: 'user-text', id: 'message', localId: null, createdAt: 1, text: 'Original message',
-                meta: { happier: { kind: 'session_media.v1', payload: { media: [media] } } } },
+                meta: { happier: envelope } },
         } });
         storage.setState(state => ({ ...state, sessions: { ...state.sessions,
             'annotation-source': createSessionFixture({ id: 'annotation-source', serverId: scope.serverId, metadata: { path: '/repo', host: 'test.local', machineId: harness!.scope.machineId } }),
@@ -127,8 +131,12 @@ describe('received video frame annotation', () => {
         try {
             expect(storage.getState().profileScope).toEqual(scope);
             expect(storage.getState().sessions['annotation-source']?.access?.capabilities.readTranscript).toBe(true);
-            const { readTranscriptSessionMediaMeta } = await import('@/components/sessions/transcript/structured/happierMetaEnvelope');
-            expect(readTranscriptSessionMediaMeta(transcript.messagesById.message!.meta)?.inlineMedia[0]?.id).toBe('source-video');
+            const { readTranscriptAttachmentsMeta, readTranscriptSessionMediaMeta } = await import('@/components/sessions/transcript/structured/happierMetaEnvelope');
+            const messageMeta = transcript.messagesById.message!.meta;
+            const fixtureId = envelopeKind === 'session_media.v1'
+                ? readTranscriptSessionMediaMeta(messageMeta)?.inlineMedia[0]?.id
+                : readTranscriptAttachmentsMeta(messageMeta)?.attachments[0]?.id;
+            expect(fixtureId).toBe('source-video');
             const { resolveWorkspaceTargetForSession } = await import('@/sync/domains/session/resolveWorkspaceTargetForSession');
             expect(resolveWorkspaceTargetForSession({ ...scope, sessionId: 'annotation-source' })).toMatchObject(harness.scope);
             const executor = createDefaultActionExecutor();
@@ -142,10 +150,10 @@ describe('received video frame annotation', () => {
             }, { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId });
             expect(storage.getState().profileScope).toEqual(scope);
             expect(storage.getState().sessionMessages['annotation-source']).toBe(transcript);
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { status: 'appended', imageNumber: 1 } });
             expect(harness.rpcRequests.length, 'The admitted source must reach the real download boundary').toBeGreaterThan(0);
             expect(seeks, 'The frame is read at the addressed time').toContain(18);
             expect(revoke, 'The temporary original is disposed after copy').toHaveBeenCalledWith('blob:annotation-source');
-            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { status: 'appended', imageNumber: 1 } });
             expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(destination))).toHaveLength(1);
             const { readComposerPresentationSnapshot } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
             expect(readComposerPresentationSnapshot({ kind: 'session', sessionId: destination.sessionId })?.text)

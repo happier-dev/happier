@@ -7,7 +7,8 @@ import { commitComposerPicture, readComposerPicture, readComposerPictureSource }
 import { areServerAccountScopesEqual, createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { storage } from '@/sync/domains/state/storage';
-import { readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { readTranscriptAttachmentsMeta, readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import type { SessionMediaInlineImageAvailableSummary } from '@/sync/domains/session/media/sessionMediaMessageMeta';
 import { resolveWorkspaceTargetForSession } from '@/sync/domains/session/resolveWorkspaceTargetForSession';
 import { createSessionAttachmentPreviewSource, createSessionFilePreviewSource } from '@/sync/domains/sessionFilePreviews/createSessionFilePreviewSource';
@@ -41,11 +42,18 @@ async function readSessionPicture(input: Readonly<{ scope: ServerAccountScope; s
     const video = input.timeMs !== undefined;
     let media: Readonly<{ name: string; path: string; mimeType: string; sizeBytes: number; attachmentHandle?: SessionMediaInlineImageAvailableSummary['attachmentHandle'] }> | null = null;
     for (const message of Object.values(transcript.messagesById)) {
-        const meta = readTranscriptSessionMediaMeta('meta' in message ? message.meta : null);
+        const messageMeta = 'meta' in message ? message.meta : null;
+        const meta = readTranscriptSessionMediaMeta(messageMeta);
         const candidate = video
             ? meta?.inlineMedia.find(item => item.id === input.mediaId && item.mediaKind === 'video')
             : meta?.inlineImages.find(image => image.id === input.mediaId);
         if (candidate && candidate.status !== 'unavailable') { media = candidate; break; }
+        const attachment = readTranscriptAttachmentsMeta(messageMeta)?.attachments.find(item => item.id === input.mediaId);
+        if (!attachment) continue;
+        const viewer = resolveFileViewerKind(attachment);
+        if (viewer.kind !== (video ? 'video' : 'image')) continue;
+        media = { ...attachment, mimeType: viewer.mimeType };
+        break;
     }
     if (!media) return null;
     const options = { mimeType: media.mimeType, maxBytes: null, expectedSizeBytes: media.sizeBytes, signal: input.signal };
