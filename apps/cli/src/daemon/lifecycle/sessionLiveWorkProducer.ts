@@ -30,8 +30,11 @@ export function createSessionLiveWorkProducer(params: Readonly<{
   // pushes invalidate, and a passive refresh rereads only those runners; failed/unknown
   // observations are never retained.
   const retained = new WeakMap<TrackedSession, Readonly<{ sessionId: string; activity: SessionInputLiveWork; pushed?: true }>>();
-  // Not cleared by reads: a delayed older push never replaces a newer one from the same process.
-  const pushedRevisions = new WeakMap<TrackedSession, Readonly<{ runnerPid: number; revision: number }>>();
+  // Not cleared by reads: a delayed older push never replaces a newer one from the same process,
+  // and a read reply never replaces a push accepted after that read was issued.
+  const pushedRevisions = new WeakMap<TrackedSession, Readonly<{
+    runnerPid: number; revision: number; sessionId: string; activity: SessionInputLiveWork;
+  }>>();
   const invalidatedSessionIds = new Set<string>();
   let invalidatedAll = true;
   const notifyListeners = (sessionId: string | null) => {
@@ -62,13 +65,18 @@ export function createSessionLiveWorkProducer(params: Readonly<{
           if (!rereadAll && previous?.sessionId === sessionId && !invalidated.has(sessionId)) {
             return { tracked, sessionId, activity: previous.activity };
           }
+          const pushedBeforeRead = pushedRevisions.get(tracked);
           retained.delete(tracked);
           try {
             const read = await params.readActivity(tracked);
-            // A push that arrived during the read is at least as new as the reply.
-            const pushed = retained.get(tracked);
-            if (pushed?.pushed && pushed.sessionId === sessionId) activity = pushed.activity;
-            else {
+            // A push accepted after this read was issued is at least as new as the reply, even
+            // when a concurrent read has since dropped it from `retained`. The runner pushes only
+            // its own changes, so a stale reply kept here would never be corrected.
+            const pushed = pushedRevisions.get(tracked);
+            if (pushed && pushed !== pushedBeforeRead && pushed.sessionId === sessionId) {
+              activity = pushed.activity;
+              retained.set(tracked, { sessionId, activity, pushed: true });
+            } else {
               activity = read;
               retained.set(tracked, { sessionId, activity });
             }
@@ -134,7 +142,7 @@ export function createSessionLiveWorkProducer(params: Readonly<{
       }
       const previous = pushedRevisions.get(tracked);
       if (previous?.runnerPid === pushed.runnerPid && previous.revision >= pushed.revision) return;
-      pushedRevisions.set(tracked, { runnerPid: pushed.runnerPid, revision: pushed.revision });
+      pushedRevisions.set(tracked, { runnerPid: pushed.runnerPid, revision: pushed.revision, sessionId, activity: pushed.activity });
       retained.set(tracked, { sessionId, activity: pushed.activity, pushed: true });
       logger.infoFile('[LIVE WORK] Daemon report accepted', { sessionId, runnerPid: pushed.runnerPid, revision: pushed.revision,
         session: pushed.activity.session, input: pushed.activity.input, agents: pushed.activity.agents ?? 'absent' });

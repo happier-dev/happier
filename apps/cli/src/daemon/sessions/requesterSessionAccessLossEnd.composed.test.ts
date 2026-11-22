@@ -52,16 +52,25 @@ function fixture() {
   const accessRestored = new Set<string>();
   // Withdrawal retires the requester authority a daemon read of that runner needs.
   const authorityWithdrawn = new Set<string>();
+  // A runner's reply that reaches the daemon only later (the RPC returns, the daemon resumes after other work).
+  let holdNextReply = false;
+  const heldReplies: Array<() => void> = [];
   const producer = createSessionLiveWorkProducer({
     readSessions: () => [...tracked.values()],
     readActivity: async (session) => {
       if (authorityWithdrawn.has(session.requesterWorkAttributionV1?.accountId ?? '')) {
         throw new Error('requester_session_not_current');
       }
-      return activity.get(session.happySessionId!) ?? {
-        session: 'unknown',
-        input: 'unknown',
+      // The runner answers with its live work at the moment it receives the read.
+      const reply = activity.get(session.happySessionId!) ?? {
+        session: 'unknown' as const,
+        input: 'unknown' as const,
       };
+      if (!holdNextReply) return reply;
+      holdNextReply = false;
+      return await new Promise<SessionInputLiveWork>((resolve) => {
+        heldReplies.push(() => resolve(reply));
+      });
     },
   });
   let pushRevision = 0;
@@ -192,6 +201,14 @@ function fixture() {
     confirmLiveWork: () => producer.read(),
     /** An unattributed process-set change, such as a Browser engine's renderer starting or exiting. */
     processSetChanged: () => producer.notifyChanged(),
+    /** A content-free `/session-activity-changed` (a follow occurrence) and the passive reread it causes. */
+    contentFreeChangeReread: async (sessionId: string, opts?: Readonly<{ replyLater: true }>) => {
+      producer.notifySessionChanged(sessionId);
+      if (opts?.replyLater) holdNextReply = true;
+      return await producer.read('changed');
+    },
+    releaseHeldReplies: () => { for (const release of heldReplies.splice(0)) release(); },
+    activity,
     authorityWithdrawn,
     running,
     events,
@@ -302,6 +319,44 @@ describe('withdrawn guest Sessions end at their natural boundary', () => {
     await f.confirmLiveWork();
     f.authorityWithdrawn.add('guest');
     f.processSetChanged();
+    const outcome = f.withdraw('guest');
+    for (let i = 0; i < 5; i += 1) await f.flush();
+    expect(f.running()).toEqual(['guest-session']);
+    f.pushLiveWork(guest, idle);
+    expect(await outcome).toEqual({ kind: 'settled' });
+    expect(f.events).toEqual(['end:guest-session']);
+  });
+
+  it('ends an idle Session whose mid-turn read reply reached the daemon after the runner pushed its settled turn end (#139 idle arms)', async () => {
+    const f = (current = fixture());
+    const guest = f.host('guest-session', 'guest');
+    // Turn start: input accepted; the Agent publishes no runtime activity, so `session` stays settled.
+    const turnInProgress: SessionInputLiveWork = { ...idle, input: 'active' };
+    f.pushLiveWork(guest, turnInProgress);
+    // First follow occurrence: the reread reaches the runner mid-turn; its reply resumes in the daemon later.
+    const midTurnRead = f.contentFreeChangeReread('guest-session', { replyLater: true });
+    await f.flush();
+    // Turn end: the runner pushes settled, then a second follow occurrence rereads the idle runner.
+    f.pushLiveWork(guest, idle);
+    await f.contentFreeChangeReread('guest-session');
+    f.releaseHeldReplies();
+    await midTurnRead;
+    const outcome = f.withdraw('guest');
+    for (let i = 0; i < 5; i += 1) await f.flush();
+    expect(f.events).toEqual(['end:guest-session']);
+    expect(await outcome).toEqual({ kind: 'settled' });
+  });
+
+  it('still waits when a turn starts after the settled push and the runner reports it', async () => {
+    const f = (current = fixture());
+    const guest = f.host('guest-session', 'guest');
+    f.pushLiveWork(guest, idle);
+    // The same late-resuming read, but the runner is really mid-turn again when it answers.
+    f.activity.set('guest-session', working);
+    const read = f.contentFreeChangeReread('guest-session', { replyLater: true });
+    await f.flush();
+    f.releaseHeldReplies();
+    await read;
     const outcome = f.withdraw('guest');
     for (let i = 0; i < 5; i += 1) await f.flush();
     expect(f.running()).toEqual(['guest-session']);
