@@ -47,6 +47,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
 import { deriveWorkspaceSyncRelationshipId, projectWorkspaceSyncAdmissionInputV1 } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createExternalActionAccountHttpBoundary, type ExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { readNewSessionDraftFromRepository } from '@/components/sessions/composer/newSessionDraftRepositoryAdapter';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2,
@@ -396,6 +397,7 @@ async function render(
     onOpenScripts?: () => void;
     onOpenServices?: () => void;
     workspaceRefs?: readonly WorkspaceRefV1[];
+    worker?: ExternalActionAccountHttpBoundary;
   }> = {},
 ) {
   const workspaceRefs = host.workspaceRefs ?? [{ id: workspace.workspaceId, serverId: workspace.serverId,
@@ -411,21 +413,29 @@ async function render(
     accountId: 'account-1',
     credentials: { token: createAccountTokenForTests('account-1', { currentAccount: true }) },
     request: async (url, init) => {
-      const path = new URL(String(url)).pathname;
+      const requestUrl = new URL(String(url));
+      const path = requestUrl.pathname;
       if (path === '/v1/features' || path === '/v1/features/authenticated')
         return Response.json(createRootLayoutFeaturesResponse({ features: {
           terminal: { embeddedPty: { enabled: true } },
         } }));
       // Confirmed Setup carries its private requester invocation to the enrolled Machine.
       if (path === '/v1/machines/read-batch' && init?.method === 'POST') {
-        return createMachineReadBatchResponseFixture(init.body, id => ({
+        return createMachineReadBatchResponseFixture(init.body, id => host.worker?.machine.id === id ? host.worker.machine : ({
           ...createPlainMachineRowFixture({ id, accountId: 'account-1' }), installationPublicKey,
         }));
       }
+      if (path === '/v1/machines') return Response.json([
+        createPlainMachineRowFixture({ id: 'm1', accountId: 'account-1' }), ...(host.worker ? [host.worker.machine] : []),
+      ]);
+      const workerResponse = await host.worker?.handle(requestUrl, init);
+      if (workerResponse) return workerResponse;
       const machineRead = createPlainMachineReadHttpResponseFixture(path, init, 'account-1');
       if (machineRead) return machineRead;
-      if (path === '/v1/machines') return Response.json([createPlainMachineRowFixture({ id: 'm1', accountId: 'account-1' })]);
-      if (path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) return Response.json({ status: 'absent' });
+      if (path === `${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`) return Response.json(host.worker
+        ? { status: 'present', revision: 1, content: { t: 'plain', v: { enabled: true, unavailable: 'fail',
+          allowAdHoc: false, scriptOverrides: {}, services: {}, destination: { kind: 'machine', machineId: host.worker.machine.id } } } }
+        : { status: 'absent' });
       const authorization = /^\/v1\/actions\/([^/]+)\/execution-authorization$/.exec(path);
       if (authorization) {
         const actionId = ActionIdSchema.parse(decodeURIComponent(authorization[1]!));
@@ -1555,25 +1565,34 @@ describe('ProjectScriptsBody runs', () => {
     },
   );
 
-  it('offers to set up the missing worker copy through Sync and never retries the Run by itself', async () => {
+  it('offers to set up the shared Worker’s missing copy through Sync and never dispatches the Run', async () => {
     shared.inspection = {
       definition: presentDefinition({ version: 1, scripts: { test: { source: nativeRef('test'), execution: 'portable' } } }),
       detection,
       importCandidates: [],
     };
-    shared.failures['projects.script.run'] = {
-      ok: false, errorCode: 'worker_copy_missing', error: 'worker_copy_missing',
-      details: { kind: 'no_worker_can_accept', unavailable: 'fail', reason: 'worker_copy_missing',
-        workerCopy: { serverId: workspace.serverId, sourceWorkspaceRefId: workspace.workspaceId,
-          sourceMachineId: workspace.machineId, targetMachineId: 'm2' } },
-    };
-    const screen = await render('page', 'scripts.script:test');
+    const receiveStatus = vi.fn().mockReturnValue({
+      eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'worker_copy_missing',
+      workerCopy: { serverId: workspace.serverId, sourceWorkspaceRefId: workspace.workspaceId,
+        sourceMachineId: workspace.machineId, targetMachineId: 'm2' },
+    });
+    const worker = await createExternalActionAccountHttpBoundary({
+      serverUrl: workspaceServerUrl, serverIdentityId: workspace.serverId, accountId: 'account-1',
+      actionId: 'projects.worker.status', machineId: 'm2', tokenEpoch: 0, sharedMachineRole: 'manage',
+      custodian: { accountId: 'worker-owner', displayName: 'Worker owner' }, execute: receiveStatus,
+    });
+    const screen = await render('page', 'scripts.script:test', { worker });
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.run'); });
     await vi.waitFor(() => expect(screen.findByTestId('scripts.script:test.noWorker.setUpCopy')).toBeTruthy());
     await act(async () => { await screen.pressByTestIdAsync('scripts.script:test.noWorker.setUpCopy'); });
     expect(showModal).toHaveBeenCalledTimes(1);
     expect(showModal.mock.calls[0]?.[0]).toMatchObject({ props: { options: { targetMachineId: 'm2', purpose: 'worker_clean_copy' } } });
-    expect(shared.calls.filter((call) => call.actionId === 'projects.script.run')).toHaveLength(1);
+    expect(receiveStatus).toHaveBeenCalledWith({
+      workspace: { serverId: workspace.serverId, refId: workspace.workspaceId },
+      destination: { kind: 'machine', machineId: 'm2' }, purpose: 'finite',
+    }, expect.anything());
+    expect(receiveStatus).toHaveBeenCalledTimes(1);
+    expect(shared.calls.some((call) => call.actionId === 'projects.script.run')).toBe(false);
   });
 
   it('reads what agents are told only once its disclosure is opened', async () => {

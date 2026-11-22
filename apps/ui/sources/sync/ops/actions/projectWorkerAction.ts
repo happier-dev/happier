@@ -2,6 +2,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } 
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
+import { PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
@@ -15,15 +16,16 @@ import { readCurrentProjectAccountRows } from '@/sync/store/domains/projectAccou
 import { fetchLocalServiceLauncherSnapshotViaMachineRpc } from '@/sync/domains/local/services/launch/machineRpc';
 import { machineWorkerPolicyGet, machineWorkerPolicySet } from '@/sync/ops/machineFinitePolicy';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
-import type { LazyActionAccountContext } from './actionAccountContext';
+import { withActionAccountRequestSignal, type LazyActionAccountContext } from './actionAccountContext';
+import { createUiAccountAction } from './accountActionDeps';
 import { readUiWorkspaceSyncChildMachineFacts } from '../workspaceSyncChildMachineFacts';
-import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
 /** Account Action port; row content is never published into a consumer-owned settings cache. */
 export function createUiProjectWorkerActionV1(account: LazyActionAccountContext): NonNullable<ActionExecutorDeps['projectWorkerAction']> {
+    const executeAccountAction = createUiAccountAction({ account });
     return async ({ actionId, input, signal, context }) => {
         account.assertCurrent();
-        if (actionId === 'projects.worker.status' || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire') {
+        if (actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1 || actionId === 'projects.worker.copy.inspect' || actionId === 'projects.worker.copy.retire') {
             const request = ProjectWorkerActionInputSchemasV1[actionId].parse(input);
             const machineId = 'destination' in request ? request.destination.machineId : request.machineId;
             if (!areServerProfileIdentifiersEquivalent(request.workspace.serverId, account.serverId)) {
@@ -33,24 +35,23 @@ export function createUiProjectWorkerActionV1(account: LazyActionAccountContext)
                 || context.externalActionTarget.machineId !== machineId)) {
                 return { ok: false, errorCode: 'target_not_local', error: 'target_not_local' };
             }
-            const spec = getActionSpec(actionId);
-            const method = spec.bindings?.rpcMethod;
-            if (!method) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-            const retired = new AbortController();
-            const retirement = account.accountLifetime.onRetire(() => retired.abort());
-            const cancellation = mergeAbortSignals([retired.signal, signal]);
             let raw: unknown;
-            try {
-                raw = await machineRpcWithServerScope({
+            if (actionId === PROJECT_WORKER_STATUS_ACTION_ID_V1) {
+                // Home admits the Account's shared Worker read and the daemon opens its requester custody.
+                raw = await executeAccountAction({ actionId, input: request, signal, context: {
+                    ...context, externalActionTarget: context.externalActionTarget ?? { kind: 'machine', machineId },
+                } });
+            } else {
+                const spec = getActionSpec(actionId);
+                const method = spec.bindings?.rpcMethod;
+                if (!method) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+                const result = await withActionAccountRequestSignal(account, signal, ownedSignal => machineRpcWithServerScope({
                     serverId: account.serverId, machineId, accountId: account.accountId, method, payload: request,
-                    operationTimeoutMs: null, signal: cancellation.signal,
-                });
-            } finally {
-                cancellation.dispose();
-                retirement.dispose();
+                    operationTimeoutMs: null, signal: ownedSignal,
+                }));
+                account.assertResultCurrent(spec.sideEffectClass);
+                raw = readMachineActionRpcResult(result);
             }
-            account.assertResultCurrent(spec.sideEffectClass);
-            raw = readMachineActionRpcResult(raw);
             const failure = ActionExecuteFailureSchema.safeParse(raw);
             if (failure.success) return failure.data;
             const approval = ActionApprovalRequestCreatedResultSchema.safeParse(raw);

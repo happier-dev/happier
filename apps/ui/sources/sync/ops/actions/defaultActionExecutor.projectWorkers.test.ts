@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -321,32 +322,52 @@ describe('worker Actions through the captured UI Home', () => {
     expect(rpc.machine.mock.calls[0]?.[0]).toMatchObject({ payload: request });
   });
 
-  it('queries the exact Machine without waking, preserves unknown load and receiving refusal', async () => {
-    const input = { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: 'worker' }, purpose: 'finite' };
-    const status = { eligible: true, candidate: { serverId, machineId: 'worker' }, load: { kind: 'unknown' }, explanation: 'load_unknown' };
-    rpc.machine.mockResolvedValueOnce(status);
+  it('reads copy-missing status through the Account Action on an exact shared Worker', async () => {
+    const input = { workspace: { serverId: 'srv_worker_actions', refId: 'checkout' },
+      destination: { kind: 'machine', machineId: 'worker' }, purpose: 'finite' };
+    const status = { eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'worker_copy_missing',
+      workerCopy: { serverId: input.workspace.serverId, sourceWorkspaceRefId: 'checkout',
+        sourceMachineId: 'source', targetMachineId: 'worker' } };
+    const receiver = vi.fn().mockReturnValue(status);
+    const denied = { errorCode: 'project_worker_access_denied', error: 'project_worker_access_denied' };
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'projects.worker.status', machineId: 'worker', tokenEpoch: 0, sharedMachineRole: 'manage',
+      custodian: { accountId: 'worker-owner', displayName: 'Worker owner' },
+      execute: receiver,
+      failure: result => result === denied ? denied : null,
+    });
+    rpc.machine.mockResolvedValue({ ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden' });
     const owner = createDefaultActionExecutor();
-    const context = { serverId, expectedAccountId: 'owner', surface: 'ui' as const };
+    const context = { serverId, expectedAccountId: 'owner', surface: 'ui' as const, authority: 'present_user' as const };
     expect(await owner.execute('projects.worker.status', input, context)).toEqual({ ok: true, result: status });
-    expect(rpc.machine).toHaveBeenCalledWith(expect.objectContaining({ serverId: 'srv_worker_actions', machineId: 'worker', accountId: 'owner',
-      method: 'projects.worker.status', payload: input }));
-    const denied = { ok: false, errorCode: 'project_worker_access_denied', error: 'project_worker_access_denied' };
-    rpc.machine.mockResolvedValueOnce(denied);
-    expect(await owner.execute('projects.worker.status', input, context)).toMatchObject(denied);
-    rpc.machine.mockResolvedValueOnce({ ...status, candidate: { serverId, machineId: 'other' } });
+    expect(receiver).toHaveBeenCalledWith(input, expect.objectContaining({
+      authorization: expect.objectContaining({ binding: expect.objectContaining({
+        accountId: 'owner', custodianAccountId: 'worker-owner', machineId: 'worker',
+      }) }),
+    }));
+    receiver.mockReturnValueOnce(denied);
+    expect(await owner.execute('projects.worker.status', input, context)).toMatchObject({ ok: false, ...denied });
+    receiver.mockReturnValueOnce({ eligible: true, candidate: { serverId, machineId: 'other' },
+      load: { kind: 'unknown' }, explanation: 'load_unknown' });
     expect(await owner.execute('projects.worker.status', input, context)).toMatchObject({ ok: false, errorCode: 'invalid_action_output' });
+    expect(rpc.machine).not.toHaveBeenCalled();
   });
 
   it('withdraws a late status response when the captured Account credential retires', async () => {
-    const input = { workspace: { serverId, refId: 'checkout' }, destination: { kind: 'machine', machineId: 'worker' }, purpose: 'finite' };
-    rpc.machine.mockImplementationOnce(async () => {
-      await homes.switchAccount(serverId, 'replacement');
-      return { eligible: true, candidate: { serverId, machineId: 'worker' }, load: { kind: 'known', running: 0, queued: 0,
-        accepting: true, runAtMost: null }, explanation: 'eligible' };
+    const input = { workspace: { serverId: 'srv_worker_actions', refId: 'checkout' },
+      destination: { kind: 'machine', machineId: 'worker' }, purpose: 'finite' };
+    await answerExternalActionAccountForHome(homes, serverId, {
+      actionId: 'projects.worker.status', machineId: 'worker', tokenEpoch: 0,
+      execute: async () => {
+        await homes.switchAccount(serverId, 'replacement');
+        return { eligible: true, candidate: { serverId: input.workspace.serverId, machineId: 'worker' },
+          load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible' };
+      },
     });
     expect(await createDefaultActionExecutor().execute('projects.worker.status', input, {
       serverId, expectedAccountId: 'owner', surface: 'ui',
     })).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    expect(homes.findByServerUrl('https://worker-actions.test')?.accountId).toBe('replacement');
   });
 
   it('returns the public helper retirement receipt to its invoker without borrowing the replacement Account', async () => {
