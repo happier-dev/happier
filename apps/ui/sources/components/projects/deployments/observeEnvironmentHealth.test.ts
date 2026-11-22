@@ -7,7 +7,8 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import type { DeploymentEnvironmentHealthAggregateV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type HomeDomainAnswer } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { getStorage } from '@/sync/domains/state/storage';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
 import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import * as machineServiceResource from '@/components/machines/resources/useMachineServiceResource';
@@ -33,19 +34,30 @@ it.each([
     { refusal: 'credential_scope_denied', recovery: 'none' },
 ] as const)(
     'settles Machine Services $refusal with zero idle requests and recovery via $recovery', async ({ refusal, recovery }) => {
-    const machineId = 'machine-a';
+    const machineId = `machine-${recovery}`;
     const installationId = 'installation';
     const row = { ...createPlainMachineRowFixture({ id: machineId, accountId: 'account' }), installationId };
+    const offlineId = `offline-${recovery}`;
+    const idleId = `unserved-${recovery}`;
+    const distinctMachines = [machineId, offlineId, idleId].map(id => createHydratedPlainMachineFixture({
+        id, accountId: 'account', machine: { installationId, active: id !== offlineId, activeAt: Date.now(), presenceProtocolVersion: 1 },
+    }));
+    getStorage().getState().applyMachines(distinctMachines, false, { sourceServerId: serverId, sourceAccountId: 'account',
+        activityUpdates: distinctMachines.map(({ id, active, activeAt }) => ({ id, active, activeAt })) });
     homes.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
-        body: await createMachineReadBatchResponseFixture(body, () => row).json(),
+        body: await createMachineReadBatchResponseFixture(body, id => ({ ...row, id, active: id !== offlineId })).json(),
     }) });
     const actionId = 'machines.services.list';
     const path = `/v1/actions/${actionId}`;
+    const admissions: { machineId: string; method: string | undefined }[] = [];
     homes.answer(serverId, `${path}/execution-authorization`, { select: body => {
         const envelope = ExternalActionRequestEnvelopeV1Schema.parse((body as { envelope: unknown }).envelope);
+        if (envelope.target?.kind !== 'machine') throw new Error('Expected a Machine Services target');
+        const targetId = envelope.target.machineId;
+        admissions.push({ machineId: targetId, method: envelope.resourceContinuation?.method });
         return { body: { v: 1, token: 'machine-services-proof', binding: {
             serverIdentityId: 'srv_current_edge', accountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
-            actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId }, machineId, installationId,
+            actionId, requestId: envelope.requestId, target: { kind: 'machine', machineId: targetId }, machineId: targetId, installationId,
             custodianAccountId: 'account', accountEncryptionMode: 'plain',
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         } } };
@@ -89,9 +101,11 @@ it.each([
     const resource = machineServiceResource.createMachineServiceResourceBinding({ accountLifetime: lifetime, reference: {
         hostRead: actionId, input: { serverId, machineId },
     }, projection: machineServicesListProjection });
-    const rows = ['apps-a', 'apps-b'].map(id => {
-        const link = createDeploymentTargetLinkHeaderV1({ environmentId: id, machines: [machineId],
-            members: [{ machineId, installationId, state: 'active' }] });
+    const rows = [...Array.from({ length: 500 }, (_, index) => ({ id: `apps-${index}`, target: machineId })),
+        { id: 'offline-app', target: offlineId }, { id: 'unserved-app', target: idleId }].map(({ id, target }) => {
+        const link = createDeploymentTargetLinkHeaderV1({ environmentId: id, machines: [target],
+            activeDeploymentId: target === idleId ? undefined : `serving-${id}`,
+            members: [{ machineId: target, installationId, state: 'active' }] });
         return { title: id, environment: createDeploymentEnvironmentHeaderV1({ serverId, id, runtimeTargetLinkId: link.id }),
             runtimeTargetLink: link };
     });
@@ -116,6 +130,8 @@ it.each([
     const stop = transport.observeEnvironmentCollectionHealth!(scope, rows, () => {}, { signal: abort.signal });
     try {
         await vi.waitFor(() => expect(requests).toContain(next));
+        expect(admissions.filter(admission => admission.method === read).map(admission => admission.machineId)).toEqual([machineId]);
+        expect(new Set(admissions.map(admission => admission.machineId))).toEqual(new Set([machineId]));
         expect(attachments).toEqual([machineId]);
         expect(requests.filter(method => method === read)).toHaveLength(1);
         expect(requests.filter(method => method === open)).toHaveLength(1);
@@ -152,6 +168,13 @@ it.each([
             pending: 'idle', subscription: 'live', freshness: 'fresh', value: { kind: 'snapshot', services: [] },
         }));
         expect(requests.filter(method => method === read)).toHaveLength(2);
+        if (recovery === 'registry') {
+            getStorage().getState().applyMachineActivityUpdates([{ id: offlineId, active: true, activeAt: Date.now() }],
+                { sourceServerId: serverId, sourceAccountId: 'account' });
+            await vi.waitFor(() => expect(admissions.filter(admission => admission.machineId === offlineId && admission.method === read))
+                .toHaveLength(1));
+            expect(admissions.some(admission => admission.machineId === idleId)).toBe(false);
+        }
     } finally {
         abort.abort();
         stop();

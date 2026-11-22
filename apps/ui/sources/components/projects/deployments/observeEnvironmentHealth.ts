@@ -6,6 +6,10 @@ import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/dep
 import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { resolveMachinePresence } from '@/sync/domains/machines/reachability/machinePresence';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { readRegisteredStorageState, subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { createMachineServiceResourceBinding } from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
@@ -111,13 +115,27 @@ function createMachineHealthWatch(lifetime: ServerAccountScopeLifetime, machineI
     }, projection: machineServicesListProjection });
     const listeners = new Set<() => void>();
     let stop: (() => void) | undefined;
+    let stopPresence: (() => void) | null = null;
+    let live = environmentId !== undefined;
     let indexedRows: NativeServiceRows | undefined;
     let byEnvironment = new Map<string, NativeServiceRows[number][]>();
+
+    function notify() { for (const listener of listeners) listener(); }
+    function reconcilePresence() {
+        const state = readRegisteredStorageState();
+        const machine = state && resolveServerScopedMachine(state, lifetime.scope.serverId, machineId);
+        const next = lifetime.isCurrent() && !!machine && resolveMachinePresence(machine) === 'online';
+        if (next === live) return;
+        live = next;
+        if (next) stop = selection.subscribe(notify, true);
+        else { stop?.(); stop = undefined; }
+        notify();
+    }
 
     return {
         read(id: string) {
             const snapshot = selection.getSnapshot();
-            const rows = snapshot.value?.kind === 'snapshot' ? snapshot.value.services : NO_NATIVE_ROWS;
+            const rows = live && snapshot.value?.kind === 'snapshot' ? snapshot.value.services : NO_NATIVE_ROWS;
             if (rows !== indexedRows) {
                 indexedRows = rows;
                 byEnvironment = new Map();
@@ -128,17 +146,27 @@ function createMachineHealthWatch(lifetime: ServerAccountScopeLifetime, machineI
                     else byEnvironment.set(row.environmentId, [row]);
                 }
             }
-            return { snapshot, rows: byEnvironment.get(id) ?? NO_NATIVE_ROWS };
+            return { snapshot, rows: byEnvironment.get(id) ?? NO_NATIVE_ROWS, live };
         },
         subscribe(listener: () => void) {
             listeners.add(listener);
-            stop ??= selection.subscribe(() => { for (const notify of listeners) notify(); }, true);
+            if (listeners.size > 1) return;
+            if (environmentId !== undefined) stop = selection.subscribe(notify, true);
+            else {
+                stopPresence = subscribeRegisteredStorageMachineUpdates((serverId, changedIds) => {
+                    if (changedIds.includes(machineId)
+                        && areServerProfileIdentifiersEquivalent(serverId, lifetime.scope.serverId)) reconcilePresence();
+                });
+                reconcilePresence();
+            }
         },
         unsubscribe(listener: () => void) {
             listeners.delete(listener);
             if (listeners.size > 0) return false;
             stop?.();
             stop = undefined;
+            stopPresence?.();
+            stopPresence = null;
             return true;
         },
     };
@@ -184,7 +212,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         if (borrowers.size === 0) return;
         const observations: DeploymentHealthServicesObservationV1[] = [];
         const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
-            const { snapshot, rows } = owner.read(environment.id);
+            const { snapshot, rows, live } = owner.read(environment.id);
             const value = snapshot.value;
             // A currently reachable Machine may have replaced the installation the Environment names.
             const services = rows.flatMap(row => row.deployment?.installationId !== member.installationId ? [] : [{ serviceId: row.serviceId,
@@ -192,7 +220,8 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
                 reason: row.health?.reason ?? (row.health ? null : 'coverage_unavailable'),
                 ...(row.health?.expectedDown ? { expectedDown: row.health.expectedDown } : {}),
             }]);
-            const failure = snapshot.error ? { code: snapshot.error.code ?? 'deployment_read_failed', retryable: snapshot.error.retryable ?? false }
+            const failure = !live ? { code: 'machine_unavailable', retryable: false }
+                : snapshot.error ? { code: snapshot.error.code ?? 'deployment_read_failed', retryable: snapshot.error.retryable ?? false }
                 : value?.kind === 'unavailable' ? { code: value.reason, retryable: false }
                 : services.length !== rows.length ? { code: 'target_mismatch', retryable: false } : undefined;
             const status = failure ? 'unavailable' : value?.kind === 'snapshot' ? 'ready' : 'loading';
@@ -324,9 +353,15 @@ export function environmentHealthObserver(lifetime: ServerAccountScopeLifetime):
 
 export function environmentCollectionHealthObserver(lifetime: ServerAccountScopeLifetime): NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']> {
     return (_scope, items, publish, { signal }) => observeWhileDemanded(signal, () => {
-        const stops = items.map(item => subscribeEnvironmentHealth(lifetime, item, {
-            collection: true, publish: (feed, aggregate) => publish(feed.environmentId, aggregate),
-        }));
+        const stops = items.flatMap(item => {
+            if (!item.runtimeTargetLink?.activeDeploymentId) {
+                publish(item.environment.id);
+                return [];
+            }
+            return [subscribeEnvironmentHealth(lifetime, item, {
+                collection: true, publish: (feed, aggregate) => publish(feed.environmentId, aggregate),
+            })];
+        });
         return () => { for (const stop of stops) stop(); };
     });
 }

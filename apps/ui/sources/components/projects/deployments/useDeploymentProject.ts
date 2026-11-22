@@ -108,11 +108,11 @@ export function useDeploymentAccountController(lifetime: ServerAccountScopeLifet
 
 /** Store Installed consumes one admitted page, with native coverage and explicit continuation. */
 export function useDeploymentInventory(lifetime: ServerAccountScopeLifetime | null, demand: DeploymentReadDemandV1,
-    query: DeploymentCollectionQueryV1 & Readonly<{ projectSourceId?: string }> = {}) {
+    query: DeploymentCollectionQueryV1 & Readonly<{ projectSourceId?: string }> = {}, visibleHealthOnly = false) {
     const { controller } = useDeploymentOwner(lifetime, query.projectSourceId, true, demand);
     const read = useDeploymentCollection(controller, demand, { machineId: query.machineId, cursor: query.cursor, environmentIds: query.environmentIds,
         previewRepositoryId: query.previewRepositoryId, previewPullRequestIds: query.previewPullRequestIds,
-        previewTemplateEnvironmentId: query.previewTemplateEnvironmentId });
+        previewTemplateEnvironmentId: query.previewTemplateEnvironmentId }, visibleHealthOnly);
     return { ...read, controller };
 }
 

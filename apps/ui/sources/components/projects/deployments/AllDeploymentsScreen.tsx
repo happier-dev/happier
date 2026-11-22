@@ -55,7 +55,7 @@ export type AllDeploymentsRead = Pick<
   | 'hasPreviousPage'
   | 'nextPage'
   | 'previousPage'
->;
+> & Partial<Pick<ReturnType<typeof useDeploymentInventory>, 'setHealthEnvironmentIds'>>;
 
 /**
  * Services (pfc-redesign; formerly Projects → All deployments, owner ruling Q9): everything this Account runs, as
@@ -65,7 +65,7 @@ export type AllDeploymentsRead = Pick<
 export const AllDeploymentsScreen = React.memo(function AllDeploymentsScreen() {
   const lifetime = useActiveServerAccountScopeLifetime();
   const demand = useDeploymentPresentationDemand(useIsFocused());
-  const read = useDeploymentInventory(lifetime, demand);
+  const read = useDeploymentInventory(lifetime, demand, {}, true);
   const router = useRouter();
   const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
   const view = readServicesView(typeof params.view === 'string' ? params.view : null);
@@ -151,6 +151,11 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     .filter(row => row.status === 'uncovered').map(row => row.environment.id)), [backups.coverage]);
   const shownItems = React.useMemo(() => filtering ? matchingItems.filter(item => uncovered.has(item.environment.id))
     : matchingItems, [filtering, matchingItems, uncovered]);
+  const { setHealthEnvironmentIds } = read;
+  React.useEffect(() => {
+    if (setHealthEnvironmentIds) setHealthEnvironmentIds(view === 'apps' && props.presented !== false
+      ? shownItems.map(item => item.environment.id) : []);
+  }, [setHealthEnvironmentIds, shownItems, view, props.presented]);
   const hasViewControls = Boolean(props.controller && props.demand && props.onSelectView);
   const localCommands = React.useMemo(() => props.presented === false ? [] : [
     ...(hasViewControls ? SERVICES_VIEWS.map(({ id, labelKey }) => ({

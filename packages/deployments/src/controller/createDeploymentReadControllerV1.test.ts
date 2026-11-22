@@ -667,6 +667,35 @@ describe('deployment demand read controller', () => {
         } finally { collection.release(); controller.retire(); }
         expect(observations.at(-1)?.aborted).toBe(true);
     });
+    it('starts collection health only for disclosed rows across visible borrowers', async () => {
+        const base = networkBoundary();
+        const rows = ['shown', 'folded'].map(id => ({
+            environment: createDeploymentEnvironmentHeaderV1({ id }), title: id,
+        }));
+        base.transport.listEnvironments.mockResolvedValue({
+            ok: true, value: createDeploymentEnvironmentCollectionV1({ items: rows }),
+        });
+        const observe = vi.fn<NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']>>(() => () => {});
+        const controller = createDeploymentReadControllerV1({ scope, transport: { ...base.transport,
+            observeEnvironmentCollectionHealth: observe } });
+        const noRows = { ...active, healthEnvironmentIds: [] };
+        const shown = { ...active, healthEnvironmentIds: ['shown'] };
+        const folded = { ...active, healthEnvironmentIds: ['folded'] };
+        const column = controller.acquireCollection({}, noRows);
+        const page = controller.acquireCollection({}, noRows);
+        try {
+            await page.refresh();
+            expect(page.getSnapshot().value?.items).toHaveLength(2);
+            expect(observe).not.toHaveBeenCalled();
+            page.setDemand(shown);
+            expect(observe.mock.lastCall?.[1].map(row => row.environment.id)).toEqual(['shown']);
+            column.setDemand(folded);
+            expect(observe.mock.lastCall?.[1].map(row => row.environment.id)).toEqual(['shown', 'folded']);
+            page.setDemand(noRows);
+            expect(observe.mock.lastCall?.[1].map(row => row.environment.id)).toEqual(['folded']);
+            expect(base.transport.listEnvironments).toHaveBeenCalledTimes(1);
+        } finally { column.release(); page.release(); controller.retire(); }
+    });
     it('withdraws the edge Resource when its controller or admitted link revision changes', async () => {
         const base = networkBoundary();
         let detail = { ...base.environmentDetail, environment: { ...base.environmentDetail.environment,

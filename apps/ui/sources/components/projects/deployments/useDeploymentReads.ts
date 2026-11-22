@@ -65,10 +65,10 @@ function useDeploymentLeaseBinding<L extends DeploymentReadLeaseV1<unknown>>(acq
 
 /** React owns presentation demand; the shared controller owns all records and reads. */
 function useDeploymentSnapshot<T>(lease: DeploymentReadLeaseV1<T> | null, demand: DeploymentReadDemandV1) {
+    const { mounted, visible, focused, healthEnvironmentIds } = demand;
     React.useEffect(() => {
-        lease?.setDemand({ mounted: demand.mounted, visible: demand.visible, focused: demand.focused });
-        return () => { lease?.setDemand(INACTIVE); };
-    }, [lease, demand.mounted, demand.visible, demand.focused]);
+        lease?.setDemand({ mounted, visible, focused, healthEnvironmentIds });
+    }, [lease, mounted, visible, focused, healthEnvironmentIds]);
     const subscribe = React.useCallback((listener: () => void) => lease?.subscribe(listener) ?? (() => {}), [lease]);
     const getSnapshot = React.useCallback((): DeploymentReadSnapshotV1<T> => lease?.getSnapshot() ?? IDLE, [lease]);
     const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
@@ -81,7 +81,12 @@ function useDeploymentLease<T>(acquire: (() => DeploymentReadLeaseV1<T>) | null,
 }
 
 export function useDeploymentCollection(controller: DeploymentReadControllerV1 | null, demand: DeploymentReadDemandV1,
-    query: DeploymentCollectionQueryV1 = {}) {
+    query: DeploymentCollectionQueryV1 = {}, visibleHealthOnly = false) {
+    const [healthIdsKey, setHealthIdsKey] = React.useState('[]');
+    const healthEnvironmentIds = React.useMemo(() => JSON.parse(healthIdsKey) as string[], [healthIdsKey]);
+    const setHealthEnvironmentIds = React.useCallback((ids: readonly string[]) => {
+        setHealthIdsKey(JSON.stringify([...new Set(ids)].sort()));
+    }, []);
     const environmentIds = query.environmentIds === undefined ? undefined : [...new Set(query.environmentIds)].sort();
     const environmentIdsKey = JSON.stringify(environmentIds);
     const previewPullRequestIds = query.previewPullRequestIds === undefined ? undefined : [...new Set(query.previewPullRequestIds)].sort();
@@ -95,7 +100,8 @@ export function useDeploymentCollection(controller: DeploymentReadControllerV1 |
         // eslint-disable-next-line react-hooks/exhaustive-deps
         [controller, query.cursor, query.machineId, query.includeTotal, environmentIdsKey, query.previewRepositoryId, previewPullRequestIdsKey,
             query.previewTemplateEnvironmentId]);
-    return useDeploymentPage(acquire, demand);
+    const page = useDeploymentPage(acquire, visibleHealthOnly ? { ...demand, healthEnvironmentIds } : demand);
+    return { ...page, setHealthEnvironmentIds };
 }
 
 export function useDeploymentDomainPage(controller: DeploymentReadControllerV1 | null, demand: DeploymentReadDemandV1,

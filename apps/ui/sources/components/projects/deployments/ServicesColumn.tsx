@@ -106,7 +106,7 @@ type ServicesTreeRow = CollectionTreeRow & Readonly<{ href: string | null; group
  */
 export const ServicesColumn = React.memo(function ServicesColumn() {
   const lifetime = useActiveServerAccountScopeLifetime();
-  const read = useDeploymentInventory(lifetime, COLUMN_DEMAND);
+  const read = useDeploymentInventory(lifetime, COLUMN_DEMAND, {}, true);
   const pathname = usePathname();
   const { deploymentEnvironment, selectedServerId } = useCurrentRouteParamsSelector(selectDeploymentColumnParams);
   const selection = React.useMemo(
@@ -351,6 +351,12 @@ export const ServicesColumnView = React.memo(function ServicesColumnView(
     // isOpen, environmentHref and projectHref read exactly these inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [groups, expanded, collapsed, routeProject, needle, serverId, openEnvironments, children, itemById, pinnedRows, props.grouping]);
+  const { setHealthEnvironmentIds } = read;
+  React.useEffect(() => {
+    if (!setHealthEnvironmentIds) return;
+    setHealthEnvironmentIds([...pinnedRows.map(row => row.environmentId),
+      ...tree.rows.flatMap(row => row.environmentId ? [row.environmentId] : [])]);
+  }, [setHealthEnvironmentIds, pinnedRows, tree.rows]);
   const keyboard = useCollectionTreeKeyboard(tree.rows, {
     onToggle: (key) => {
       const row = tree.byKey.get(key);

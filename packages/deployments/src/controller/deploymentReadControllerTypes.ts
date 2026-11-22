@@ -48,7 +48,11 @@ export type DeploymentReadScopeV1 = Readonly<{
 }>;
 
 /** All three facts come from the mounted host surface, never a package timer. */
-export type DeploymentReadDemandV1 = Readonly<{ mounted: boolean; visible: boolean; focused: boolean }>;
+export type DeploymentReadDemandV1 = Readonly<{
+    mounted: boolean; visible: boolean; focused: boolean;
+    /** Collection presentations that narrow a page declare the rows whose live health they display. */
+    healthEnvironmentIds?: readonly string[];
+}>;
 export type DeploymentReadFailureV1 = Readonly<{ code: string; retryable: boolean }>;
 export type DeploymentReadResultV1<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; failure: DeploymentReadFailureV1 }>;
 export type DeploymentReadSnapshotV1<T> = Readonly<{
