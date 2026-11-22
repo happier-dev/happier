@@ -127,6 +127,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     urlEntry: {
         marginHorizontal: theme.space.s16,
         marginTop: theme.space.s12,
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s8,
+    },
+    urlEntryField: {
+        flex: 1,
+        minWidth: 0,
     },
     banner: {
         marginHorizontal: theme.space.s16,
@@ -289,6 +296,8 @@ export function BrowserLaunchpad(props: Readonly<{
      * where it stands alone (the phone page, the Session viewer).
      */
     urlEntry?: boolean;
+    /** The host's own controls at the end of the address row (a phone Browser's one `⋯`). */
+    urlEntryTrailing?: React.ReactNode;
     testID?: string;
 }>): React.ReactElement {
     const testID = props.testID ?? 'browser-launchpad';
@@ -407,6 +416,7 @@ export function BrowserLaunchpad(props: Readonly<{
               */}
             <ConstrainedScreenContent>
                 {props.urlEntry === false ? null : <View style={stylesheet.urlEntry}>
+                    <View style={stylesheet.urlEntryField}>
                     <BrowserUrlField
                         testID={`${testID}-url-entry`}
                         density="panel"
@@ -420,6 +430,8 @@ export function BrowserLaunchpad(props: Readonly<{
                         accessibilityLabel={t('browserLaunchpad.urlEntry.label')}
                         onSubmitUrl={handleSubmitUrl}
                     />
+                    </View>
+                    {props.urlEntryTrailing}
                 </View>}
 
                 {props.agentBrowser && hasRows ? (

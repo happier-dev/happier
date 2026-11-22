@@ -82,6 +82,7 @@ import {
 import { BrowserPluginSurfacePlacements } from './BrowserPluginSurfacePlacements';
 import { BrowserSurfaceFallback, type BrowserSurfaceUnavailableReason } from './BrowserSurfaceFallback';
 import { RetainedPresentationSlotBinder, useRetainedPresentationSlotVisible } from '@/components/ui/presentation/retainedPresentationSlots';
+import { HeaderActionsScope, useEnclosingHeaderActionsScope } from '@/components/navigation/stackHeaderActions';
 import { useRetainedPresentationSlotGeometry } from '@/components/ui/presentation/retainedPresentationSlotGeometry';
 import { useHostActivelyViewed } from '@/utils/runtime/useHostActivelyViewed';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
@@ -286,7 +287,11 @@ export function BrowserSurfaceHost(props: BrowserSurfaceHostProps): React.ReactE
     const viewerController = useOptionalSessionViewerController();
     // A page that already says its Machine is out of reach (a Project pane's line) keeps saying it once.
     const announcedMachine = useAnnouncedCheckoutMachine();
-    const runtime = <BrowserSurfaceRuntime {...props} />;
+    // The Details group this page stands in lends its strip's controls through this scope; the page's chrome above
+    // the router claims them (one tab bar on a phone), so the scope travels with the retained body.
+    const headerActionsScope = useEnclosingHeaderActionsScope();
+    const runtime = headerActionsScope === undefined ? <BrowserSurfaceRuntime {...props} />
+        : <HeaderActionsScope scopeKey={headerActionsScope}><BrowserSurfaceRuntime {...props} /></HeaderActionsScope>;
     // Retain the runtime owner with its page, not only the picture. These scopes borrow the
     // incumbent ports across portal reparenting; they create no new Account or viewer authority.
     return (

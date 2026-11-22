@@ -20,6 +20,7 @@ import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v
 import { isProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 
 import { BrowserLaunchpad } from '@/components/browser/launchpad';
+import { useClaimedStackHeaderActions, useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
 import { resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
 import { useBrowserStreamedChrome } from '@/components/browser/streamed/BrowserStreamedSurfaceScope';
 import type {
@@ -601,6 +602,12 @@ export function BrowserShell(props: Readonly<{
     // N4: under a pane header (the Session side pane) the page's tools fold into that header's one ⋯,
     // so the band never carries two. A phone keeps its ⋯ in the bottom bar, where the thumb is.
     const paneHeaderOwnsMenu = usePaneHeaderSlotBinding() !== null && chromeDensity.density !== 'phone' && !inViewer;
+    // One tab bar on a phone (owner ruling 2026-10-30): a Details group showing this Browser as its one page lends
+    // what its strip offered (its controls; pin, close and its other pages as rows). The Browser's own chrome takes
+    // them, so the strip folds on the launchpad and over a page alike, and the rows join the Browser's one `⋯`.
+    const phoneChrome = chromeDensity.density === 'phone' && !inViewer;
+    const lentControls = useClaimedStackHeaderActions({ scopeOnly: true, drawsMenuRows: true, release: !phoneChrome });
+    const lentRows = useLentHeaderMenuRows();
     const onFloatView = useSessionViewerFloatFromDock('browser', !inViewer);
     // A managed profile the Machine runs can take imported sign-ins; an embedded or preview page cannot.
     const importProfileId = activeView && isDaemonAuthoritativeBrowserView(activeView) ? activeSession?.profileId ?? null : null;
@@ -647,7 +654,7 @@ export function BrowserShell(props: Readonly<{
             emulation,
         });
     }, [props.onCommand, viewportView]);
-    const menuItems = React.useMemo((): readonly BrowserToolbarOverflowItem[] => {
+    const pageMenuItems = React.useMemo((): readonly BrowserToolbarOverflowItem[] => {
         if (!viewportInMenu) return overflowItems;
         const selectedId = selectedBrowserViewportChoiceId(viewportEmulation ?? { kind: 'fitViewer' });
         const group = { id: 'browser-viewport', title: t('browserShell.viewport.title') };
@@ -661,6 +668,15 @@ export function BrowserShell(props: Readonly<{
             onPress: () => selectViewport(choice.emulation),
         }))];
     }, [overflowItems, selectViewport, viewportEmulation, viewportInMenu]);
+    const menuItems = React.useMemo((): readonly BrowserToolbarOverflowItem[] => {
+        const rows = phoneChrome ? lentRows : null;
+        if (!rows || rows.length === 0) return pageMenuItems;
+        // A lending group always lends a close (its own row, or the pane's close among its controls), and that
+        // close also ends the pane with its last page: it stands in for the page's own Close tab.
+        return [...pageMenuItems.filter(item => item.id !== 'close-tab'), ...rows.map((row): BrowserToolbarOverflowItem => ({
+            id: row.id, iconName: row.iconName, label: row.title, disabled: row.disabled, onPress: row.onSelect,
+        }))];
+    }, [lentRows, pageMenuItems, phoneChrome]);
     // While the agent drives its own (daemon) browser the page is moving under it: the page tools
     // step out of the chrome until the person has the page (lab `browser` A/H). The controller is the
     // daemon's, already in the view state.
@@ -894,6 +910,7 @@ export function BrowserShell(props: Readonly<{
                     <View style={stylesheet.phoneAddressSlot}>{addressField}</View>
                     {recordingCapsule}
                     {privacyControl}
+                    {lentControls}
                 </View>
             ) : null) : (
                 <View style={[stylesheet.toolbarRow, { paddingVertical: controlMetrics.rowPaddingVerticalPx }]}>
@@ -944,6 +961,8 @@ export function BrowserShell(props: Readonly<{
                         // The wide chrome's address bar is this page's one address field; a phone page
                         // and the Session viewer draw no chrome, so the launchpad brings its own.
                         urlEntry={phone || inViewer}
+                        // The phone launchpad has no bottom bar: its address row carries the Browser's one `⋯`.
+                        urlEntryTrailing={phoneChrome ? <>{lentControls}{menuItems.length > 0 ? overflowMenu : null}</> : undefined}
                     />
                 ) : (
                     <BrowserViewHost
