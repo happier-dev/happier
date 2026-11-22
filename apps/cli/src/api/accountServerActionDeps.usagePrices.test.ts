@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import fastify from 'fastify';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { UsageAnalyticsQueryBatchRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -57,7 +58,11 @@ describe('CLI and MCP model prices through captured Account Actions', () => {
     let raw: Record<string, unknown> = {};
     let version = 1;
     let current = true;
-    app.post('/v2/usage/query', async request => { expect(JSON.stringify(request.body)).not.toContain('private-model'); return history; });
+    app.post('/v2/usage/query-batch', async request => {
+      expect(JSON.stringify(request.body)).not.toContain('private-model');
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      return { v: 1, results: queries.map(query => ({ query, value: history })) };
+    });
     app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, signingKeyFingerprint: null,
       contentKeyFingerprint: null, updatedAt: 1 }));
     app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
@@ -97,7 +102,7 @@ describe('CLI and MCP model prices through captured Account Actions', () => {
       'reference-model': { kind: 'rates', inputUsdPerMillion: 6, outputUsdPerMillion: 4 },
     } }, { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
     expect((await read()).costFactTotals?.find(fact => fact.kind === 'api_equivalent')?.amountUsd).toBe(8);
-    expect((await read()).accounting?.contributions?.[0]?.cost).toMatchObject(cost);
+    expect((await read()).accounting?.totals.cost).toMatchObject(cost);
     const mapped = { 'private-model': { kind: 'map', modelId: 'reference-model' },
       'reference-model': { kind: 'rates', inputUsdPerMillion: 6, outputUsdPerMillion: 4 } };
     expect(await executor.execute('settings.get', { anchor: 'usage.modelPrices' }, { surface: 'mcp', serverId: 'home' }))

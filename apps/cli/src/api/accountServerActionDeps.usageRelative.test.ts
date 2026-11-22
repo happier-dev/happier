@@ -9,7 +9,7 @@ import axios from 'axios';
 import { z } from 'zod/mini';
 import { createActionExecutor, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { normalizeUsageQuery, resolveUsageQueryPeriod } from '@happier-dev/protocol/inputs/usageQuery';
-import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -90,10 +90,22 @@ it.each(['cli', 'mcp'] as const)('uses Account night hours for the %s recorded a
   }) });
   const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 86_400_000 }, timeZoneOffsetMinutes: 120,
     includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
-  const readNight = async () => {
+  const readSlice = async () => {
     const result = await executor.execute('usage.query', { queries: [query] }, { surface, serverId: 'home' });
     expect(result.ok, JSON.stringify(result)).toBe(true);
-    const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+    return UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+  };
+  if (surface === 'mcp') {
+    const summary = await readSlice();
+    expect(summary.accounting?.totals.eventCount).toBe(10);
+    expect(summary.howYouWork).toBeUndefined();
+    expect(summary.incomplete?.omittedSections).toContain('howYouWork');
+    expect(reads.filter(path => /^\/v[12]\/sessions(?:\/|$)/.test(path))).toEqual([]);
+    await app.close();
+    return;
+  }
+  const readNight = async () => {
+    const slice = await readSlice();
     const ui = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value: slice.accounting, status: 'available' }],
       nightHours: hours }, bundledUsageModelPriceCatalog);
     expect(slice.howYouWork?.nightShift).toEqual(ui.results[0]?.howYouWork?.nightShift);
@@ -123,14 +135,18 @@ it.each([true, false])('uses one relative read range through the CLI HTTP bounda
   const requests: ReturnType<typeof UsageAnalyticsQueryRequestSchema.parse>[] = [];
   const historyRanges: unknown[] = [];
   const app = fastify();
-  app.post('/v2/usage/query', async request => {
-    const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
-    requests.push(input);
+  app.post('/v2/usage/query-batch', async request => {
+    const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+    requests.push(...queries);
     // Downstream private/history reads must not resolve relative intent again.
     readClockMs = nowMs + 60_000;
-    return { v: 1, totals: { eventCount: 0, tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [], coverage: { status: 'complete', reasons: [],
-      sources: [], missingDimensions: [], range: { ...input.dateRange, complete: true }, ranked: [] } };
+    return { v: 1, results: queries.map(query => ({ query, value: {
+      v: 1, totals: { eventCount: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } }, contributions: [],
+      coverage: { status: 'complete', reasons: [], sources: [], missingDimensions: [],
+        range: { ...query.dateRange, complete: true }, ranked: [] },
+    } })) };
   });
   app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 }));
   app.get('/v1/account/encryption', async () => ({ mode: 'plain', updatedAt: 1 }));
