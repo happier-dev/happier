@@ -677,7 +677,7 @@ describe('machine preset content envelopes', () => {
         ] });
     });
 
-    it('does not mutate an existing E2EE revision when its census says every envelope is prepared', async () => {
+    it('keeps an opened E2EE preset visible when the optional detail repair is unavailable', async () => {
         const credentials = {
             token: createAccountTokenForTests('owner', { currentAccount: true }),
             secret: encodeBase64(new Uint8Array(32).fill(31), 'base64url'),
@@ -688,29 +688,20 @@ describe('machine preset content envelopes', () => {
             serverIdentityId: 'srv_preset_prepared', accountId: 'owner', currentAccount: true,
             accountEncryptionMode: 'e2ee', credentials,
         });
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
-            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', encryption.contentDataKey)],
-        } });
-        harness.answer(serverId, '/v1/machines/presets/create', { body: { kind: 'refused', code: 'permission_denied' } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
         const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_preset_prepared');
-        await client.execute('machines.presets.create', {
-            homeId: 'srv_preset_prepared', id: 'prepared-preset', owner: { kind: 'team', teamId: 'team' }, controller,
-            privateContent: { v: 1, name: 'Prepared Team preset', launch },
-        });
-        const created = harness.requestsFor('/v1/machines/presets/create')[0]!.input as Record<string, unknown>;
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
-            kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', encryption.contentDataKey, 'prepared')],
-        } });
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
+        const created = sealStoredTeamPreset('prepared-preset', 'Prepared Team preset', [recipient('owner', encryption.contentDataKey)]);
+        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'unexpected' } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: {
             id: 'prepared-preset', homeId: 'srv_preset_prepared', revision: 4,
             owner: { kind: 'team', teamId: 'team' }, contentEncryptionMode: 'e2ee', controller,
             content: created.content, recipients: created.recipients,
-        }] } });
+        } } });
 
-        await expect(client.list()).resolves.toMatchObject({ kind: 'succeeded', value: [
-            expect.objectContaining({ id: 'prepared-preset', revision: 4, name: 'Prepared Team preset' }),
-        ] });
-        expect(harness.requestsFor('/v1/machines/presets/recipient-census')[1]?.input).toEqual({
+        await expect(client.read('machines.presets.get', { homeId: 'srv_preset_prepared', id: 'prepared-preset' })).resolves.toMatchObject({
+            kind: 'succeeded', value: { kind: 'found', preset: { id: 'prepared-preset', revision: 4, name: 'Prepared Team preset' } },
+        });
+        expect(harness.requestsFor('/v1/machines/presets/recipient-census')[0]?.input).toEqual({
             homeId: 'srv_preset_prepared', presetId: 'prepared-preset', owner: { kind: 'team', teamId: 'team' }, controller,
         });
         expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
@@ -745,46 +736,66 @@ describe('machine preset content envelopes', () => {
         harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: {
             kind: 'ready', contentEncryptionMode: 'e2ee', recipients: [recipient('owner', ownerEncryption.contentDataKey, 'prepared')],
         } });
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [existing] } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: existing } });
         harness.answer(serverId, '/v1/machines/presets/update', { select: value => {
             const input = value as Readonly<{ patch: Readonly<{ recipients: unknown }> }>;
             return { body: { kind: 'saved', preset: { ...existing, revision: 5, recipients: input.patch.recipients } } };
         } });
 
-        await expect(client.list()).resolves.toMatchObject({ kind: 'succeeded', value: [
-            expect.objectContaining({ id: 'pruned-preset', revision: 5, name: 'Pruned Team preset' }),
-        ] });
+        await expect(client.read('machines.presets.get', { homeId: existing.homeId, id: existing.id })).resolves.toMatchObject({
+            kind: 'succeeded', value: { kind: 'found', preset: { id: existing.id, revision: 5, name: 'Pruned Team preset' } },
+        });
         const update = harness.requestsFor('/v1/machines/presets/update')[0]?.input as { patch: Record<string, unknown> } | undefined;
         expect(update?.patch).toEqual({ recipients: [expect.objectContaining({ accountId: 'owner' })] });
         expect(update?.patch).not.toHaveProperty('content');
     });
 
-    it('keeps an already opened E2EE row visible when the optional recipient repair census is unavailable', async () => {
+    it('opens visible Team preset names and preserves pending keys without asking for recipient work until detail opens', async () => {
         const credentials = {
             token: createAccountTokenForTests('owner', { currentAccount: true }),
             secret: encodeBase64(new Uint8Array(32).fill(33), 'base64url'),
         };
         const encryption = await createEncryptionFromAuthCredentials(credentials);
+        const homeId = 'srv_team_preset_browse';
         const serverId = await harness.addHome({
-            name: 'Repair unavailable', serverUrl: 'https://preset-repair-unavailable.example',
-            serverIdentityId: 'srv_preset_repair_unavailable', accountId: 'owner', currentAccount: true,
+            name: 'Team presets', serverUrl: 'https://team-preset-browse.example',
+            serverIdentityId: homeId, accountId: 'owner', currentAccount: true,
             accountEncryptionMode: 'e2ee', credentials,
         });
         harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
-        const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, 'srv_preset_repair_unavailable');
-        const created = sealStoredTeamPreset('repair-unavailable-preset', 'Visible without repair', [
-            recipient('owner', encryption.contentDataKey),
-        ]);
-        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'unexpected' } });
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [{
-            id: 'repair-unavailable-preset', homeId: 'srv_preset_repair_unavailable', revision: 4,
+        const client = createMachinePresetCollectionClient({ serverId, accountId: 'owner' }, homeId);
+        const readable = recipient('owner', encryption.contentDataKey);
+        const pending = recipient('another-member', encryption.contentDataKey);
+        const teamRows = [
+            { id: 'visible-a', name: 'Warm services', recipients: [readable] },
+            { id: 'visible-b', name: 'Project Setup', recipients: [readable] },
+            { id: 'pending-a', name: 'New Team Setup', recipients: [pending] },
+        ].map(({ id, name, recipients }) => ({
+            id, homeId, revision: 4,
             owner: { kind: 'team', teamId: 'team' }, contentEncryptionMode: 'e2ee', controller,
-            content: created.content, recipients: created.recipients,
-        }] } });
+            ...sealStoredTeamPreset(id, name, recipients),
+        }));
+        harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'ready', contentEncryptionMode: 'e2ee',
+            recipients: [recipient('owner', encryption.contentDataKey, 'prepared')] } });
+        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: teamRows } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: teamRows[1] } });
+        harness.answer(serverId, '/v1/machines/managed/list', { body: { machines: [] } });
 
-        await expect(client.list()).resolves.toMatchObject({ kind: 'succeeded', value: [
-            expect.objectContaining({ id: 'repair-unavailable-preset', revision: 4, name: 'Visible without repair' }),
+        await expect(client.list({ sharedWithTeamId: 'team' })).resolves.toMatchObject({ kind: 'succeeded', value: [
+            { id: 'visible-a', name: 'Warm services' },
+            { id: 'visible-b', name: 'Project Setup' },
+            { id: 'pending-a', kind: 'private_content_unavailable', reason: 'team_preset_key_pending' },
         ] });
+        expect(harness.requestsFor('/v1/machines/presets/recipient-census')).toHaveLength(0);
+        expect(harness.requestsFor('/v1/machines/presets/get')).toHaveLength(0);
+
+        await expect(client.detail('visible-b')).resolves.toMatchObject({ kind: 'succeeded', value: {
+            preset: { id: 'visible-b', revision: 4, name: 'Project Setup', setup: { scripts: [{ body: 'echo ready' }] } }, machines: [],
+        } });
+        expect(harness.requestsFor('/v1/machines/presets/get').map(request => request.input)).toEqual([{ homeId, id: 'visible-b' }]);
+        expect(harness.requestsFor('/v1/machines/presets/recipient-census').map(request => request.input)).toEqual([
+            { homeId, presetId: 'visible-b', owner: { kind: 'team', teamId: 'team' }, controller },
+        ]);
         expect(harness.requestsFor('/v1/machines/presets/update')).toEqual([]);
     });
 
@@ -819,17 +830,19 @@ describe('machine preset content envelopes', () => {
                 recipient('owner', ownerEncryption.contentDataKey), recipient('member', memberEncryption.contentDataKey),
             ],
         } });
-        harness.answer(serverId, '/v1/machines/presets/list', { body: { kind: 'listed', presets: [existing] } });
+        harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: existing } });
         harness.answer(serverId, '/v1/machines/presets/update', { select: value => {
             const input = value as Readonly<{ patch: Readonly<{ recipients: unknown }> }>;
             return { body: { kind: 'saved', preset: { ...existing, revision: 2, recipients: input.patch.recipients } } };
         } });
 
-        await expect(ownerClient.list()).resolves.toMatchObject({ kind: 'succeeded', value: [expect.objectContaining({
-            id: existing.id, revision: 2,
-        })] });
+        await expect(ownerClient.read('machines.presets.get', { homeId: existing.homeId, id: existing.id })).resolves.toMatchObject({
+            kind: 'succeeded', value: { kind: 'found', preset: { id: existing.id, revision: 2 } },
+        });
 
-        expect(harness.requestsFor('/v1/machines/presets/recipient-census')[0]?.input).toEqual({
+        const censusRequests = harness.requestsFor('/v1/machines/presets/recipient-census');
+        expect(censusRequests).toHaveLength(1);
+        expect(censusRequests[0]?.input).toEqual({
             homeId: 'srv_preset_rewrap', presetId: existing.id, owner: { kind: 'team', teamId: 'team' }, controller,
         });
 

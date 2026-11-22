@@ -608,39 +608,30 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
     }
 
     async function openStoredPreset(raw: ManagedMachinePresetV1,
-        reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<Readonly<{
-        content: ManagedMachinePresetContentV1;
-        recipientProjection: ManagedMachinePresetRecipientProjectionV1;
-    }> | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
-        const custody = await (await reader())?.open(raw.contentEncryptionMode);
+        reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
+        const mode = raw.contentEncryptionMode;
+        const custody = await (await reader())?.open(mode);
         if (!custody) return null;
-        if (raw.contentEncryptionMode === 'plain') {
-            const projection = ManagedMachinePresetRecipientProjectionV1Schema.safeParse({ content: raw.content, recipientEnvelope: null });
-            const content = projection.success ? openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id,
-                mode: 'plain', projection: projection.data, custody }) : null;
-            return content && projection.success ? { content, recipientProjection: projection.data } : null;
-        }
-        const projection = projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
-            recipientAccountId: custody.accountId });
-        if (raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
-        const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id,
-            mode: 'e2ee', projection, custody });
-        return content ? { content, recipientProjection: projection } : null;
+        const projection = mode === 'plain'
+            ? ManagedMachinePresetRecipientProjectionV1Schema.safeParse({ content: raw.content, recipientEnvelope: null }).data
+            : projectManagedMachinePresetForRecipientV1({ content: raw.content, recipients: raw.recipients,
+                recipientAccountId: custody.accountId });
+        if (!projection) return null;
+        if (mode === 'e2ee' && raw.owner.kind === 'team' && projection.recipientEnvelope === null) return MACHINE_PRESET_TEAM_KEY_PENDING;
+        const content = openManagedMachinePresetRecipientProjectionAtCustodyV1({ presetId: raw.id, mode, projection, custody });
+        if (!content) return null;
+        const { content: _stored, recipients: _recipients, ...structural } = raw;
+        return { ...structural, ...content, recipientProjection: projection };
     }
 
-    async function openPreset(raw: ManagedMachinePresetV1,
+    async function openPresetWithRecipientRepair(raw: ManagedMachinePresetV1,
         reader: () => Promise<ManagedMachinePresetReadCustodyV1 | null>): Promise<OpenedMachinePreset | typeof MACHINE_PRESET_TEAM_KEY_PENDING | null> {
         const initiallyOpened = await openStoredPreset(raw, reader);
         if (!initiallyOpened || initiallyOpened === MACHINE_PRESET_TEAM_KEY_PENDING) return initiallyOpened;
-        // A current keyholder repairs newly owed Account envelopes on this normal read boundary. It cannot
-        // expose content to a non-keyholder, and the server rechecks the live census/CAS before accepting it.
+        // Opening a selected preset lets its keyholder repair owed Account envelopes. Home checks the current census and revision.
         const repaired = await repairRecipientEnvelopes(raw, reader);
-        const selected = repaired ?? raw;
-        const opened = selected === raw ? initiallyOpened : await openStoredPreset(selected, reader);
-        if (!opened || opened === MACHINE_PRESET_TEAM_KEY_PENDING) return opened;
-        const { content: _stored, recipients: _recipients, ...structural } = selected;
-        return { ...structural, ...opened.content, recipientProjection: opened.recipientProjection,
-            ...(raw.lastUsedAt !== undefined ? { lastUsedAt: raw.lastUsedAt } : {}) };
+        if (!repaired) return initiallyOpened;
+        return await openStoredPreset({ ...repaired, ...(raw.lastUsedAt === undefined ? {} : { lastUsedAt: raw.lastUsedAt }) }, reader);
     }
 
     /**
@@ -746,12 +737,12 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         const reader = () => readerState.key ??= captureManagedMachinePresetReadCustodyV1(scope, signal);
         try {
             if (actionId === 'machines.presets.get' && value.kind === 'found') {
-                const preset = await openPreset(value.preset, reader);
+                const preset = await openPresetWithRecipientRepair(value.preset, reader);
                 return !preset || preset === MACHINE_PRESET_TEAM_KEY_PENDING ? preset : { ...value, preset } as OpenedPresetActionOutput<T>;
             }
             if (actionId === 'machines.presets.list' && value.kind === 'listed') {
                 const presets = await Promise.all(value.presets.map(async raw => {
-                    const preset = await openPreset(raw, reader);
+                    const preset = await openStoredPreset(raw, reader);
                     if (preset && preset !== MACHINE_PRESET_TEAM_KEY_PENDING) return preset;
                     const { content: _content, recipients: _recipients, ...structural } = raw;
                     return { ...structural, kind: 'private_content_unavailable' as const, ...(preset ? { reason: preset } : {}) };
@@ -760,7 +751,7 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             }
             if ((actionId === 'machines.presets.create' || actionId === 'machines.presets.update'
                 || actionId === 'machines.presets.archive' || actionId === 'machines.presets.restore') && value.kind === 'saved') {
-                const preset = await openPreset(value.preset, reader);
+                const preset = await openPresetWithRecipientRepair(value.preset, reader);
                 return preset && preset !== MACHINE_PRESET_TEAM_KEY_PENDING ? { ...value, preset } as OpenedPresetActionOutput<T> : null;
             }
             return value as OpenedPresetActionOutput<T>;
