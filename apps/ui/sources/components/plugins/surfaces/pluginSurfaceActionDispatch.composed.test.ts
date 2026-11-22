@@ -6113,8 +6113,12 @@ describe('client Action declared SessionTarget admission', () => {
         const lookups: string[] = [];
         const activation = createClientActionActivation({ accountPlacement: true, invokingUi: true, accountLifetime,
             surfaces: ['plugin'], readOnly: true, sessionTarget: { field: 'sessionIds.*', cardinality: 'many' },
-            inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' } } },
-                required: ['sessionIds'], additionalProperties: false },
+            inputSchema: { anyOf: [
+                { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' }, minItems: 1 } },
+                    required: ['sessionIds'], additionalProperties: false },
+                { type: 'object', properties: { localRef: { type: 'string' } },
+                    required: ['localRef'], additionalProperties: false },
+            ] },
             accountHandler(value) {
                 reads.push(value);
                 return value;
@@ -6154,6 +6158,20 @@ describe('client Action declared SessionTarget admission', () => {
             expect(result, JSON.stringify({ result, reads, lookups })).toMatchObject({ ok: true, result: { kind: 'sessionReadSet', result: { sessionIds: ['stamped'] },
                 failures: [{ sessionId: 'outside', result: { ok: false, errorCode: 'session_target_unavailable' } }] } });
             expect(reads).toEqual([{ sessionIds: ['stamped'] }]);
+            expect(lookups).toEqual(['stamped']);
+
+            const entryResult = await dispatchPluginSurfaceAction({
+                action: { pluginId: CALLER_PLUGIN_ID, localId: activation.action.id },
+                input: { localRef: 'pull-request:7' },
+                invocationSurface: 'plugin', originSurface: 'ui', clientAction: {}, callerPluginId: CALLER_PLUGIN_ID,
+                requiredReadOnly: true,
+                hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                    serverId: home, authority: 'account_automation',
+                } },
+                pluginUiProjection: activation.projection, resolveContributedAction: resolveExactClientAction(activation.action),
+            });
+            expect(entryResult, JSON.stringify(entryResult)).toMatchObject({ ok: true, result: { localRef: 'pull-request:7' } });
+            expect(reads).toEqual([{ sessionIds: ['stamped'] }, { localRef: 'pull-request:7' }]);
             expect(lookups).toEqual(['stamped']);
         } finally { unregister(); await activation.composition.unload(); accountLifetime.retire(); }
     });

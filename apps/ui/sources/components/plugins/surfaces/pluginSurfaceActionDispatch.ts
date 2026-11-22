@@ -19,7 +19,7 @@ import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmitte
 import { projectedActionToDefinition } from '@/components/appShell/currentUiContext/contributedActionDefinition';
 import { resolveAccountMessageActionReference } from '@/sync/api/session/sessionMessageActionReference';
 import { projectMarkdownFindText } from '@/components/markdown/rendering/markdownFindProjection';
-import { bindActionSessionTargetOperands, readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
+import { bindActionSessionTargetOperands, readActionSessionReadSetOperand, readActionSessionTargetField, readActionSessionTargetOperands, registerHostSelectedActionSessionAddressV1, validateActionSessionAddressV1, validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { isActionSessionReadSetV1, normalizeSessionTargetV1, type ActionSessionAddressV1, type ActionResolvedSessionTargetsV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { ACTION_INVOKE_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, isSessionListActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isPresentUserHostInvocation, resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -1438,11 +1438,13 @@ async function admitContributedActionSessionTargets(
         return input.resourceCaller?.sessionId ? clientActionFailure('plugin_action_resource_placement_unavailable') : null;
     }
     const hasSessionOperand = declaredSessionTarget && isPluginActionInputRecord(normalizedInput)
-        && (declaredSessionTarget.field.includes('*')
-            ? readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field).length > 0
-            : readActionSessionTargetField(normalizedInput, declaredSessionTarget.field) !== undefined);
-    if (readSet || hasSessionOperand || input.sessionAddress !== undefined) {
-        const snapshot = input.hostAction?.context?.sessionTargetsV1;
+        && (readSet ? readActionSessionReadSetOperand(normalizedInput, declaredSessionTarget).value !== undefined
+            : declaredSessionTarget.field.includes('*')
+                ? readActionSessionTargetOperands(normalizedInput, declaredSessionTarget.field).length > 0
+                : readActionSessionTargetField(normalizedInput, declaredSessionTarget.field) !== undefined);
+    const snapshot = input.hostAction?.context?.sessionTargetsV1;
+    const boundReadSet = readSet && (snapshot || input.resourceCaller?.sessionId || input.hostAction?.context?.expectedSessionAddress);
+    if (hasSessionOperand || boundReadSet || input.sessionAddress !== undefined) {
         if (snapshot && declaredSessionTarget) {
             if (snapshot.actionId !== 'action.invoke' || snapshot.field !== `input.${declaredSessionTarget.field}`) {
                 return clientActionFailure('approval_stale');

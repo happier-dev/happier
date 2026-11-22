@@ -1,5 +1,6 @@
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { markSessionListQueryResultV1 } from '../sessions/awareness/action.js';
@@ -38,8 +39,10 @@ it('admits each exact Session in a contributed read set once and preserves reada
     safety: 'safe', sideEffectClass: 'read', placements: [], slash: null, bindings: null, examples: null, inputHints: null,
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false, api: true, plugin: true },
     sessionTarget,
-    inputSchema: { type: 'object', properties: { sessionIds: { type: 'array', items: { type: 'string' } } },
-      required: ['sessionIds'], additionalProperties: false },
+    inputSchema: z.toJSONSchema(z.union([
+      z.strictObject({ sessionIds: z.array(z.string()).min(1) }),
+      z.strictObject({ localRef: z.string() }),
+    ])),
   };
   const lookups: string[] = [];
   const reads: unknown[] = [];
@@ -54,6 +57,7 @@ it('admits each exact Session in a contributed read set once and preserves reada
     },
     invokeContributedAction: async ({ input, context }) => {
       reads.push({ input, targets: context.sessionTargetsV1?.targets, lookups: [...lookups] });
+      if ('localRef' in input) return { ok: true, result: { entry: input.localRef } };
       return { ok: true, result: { slices: [{ sessionId: 'a', value: 1 }, { sessionId: 'b', value: 2 }] } };
     },
   } as ActionExecutorDeps);
@@ -68,6 +72,28 @@ it('admits each exact Session in a contributed read set once and preserves reada
     result: { slices: [{ sessionId: 'a', value: 1 }, { sessionId: 'b', value: 2 }] },
     failures: [{ sessionId: 'foreign', result: unavailable }, { sessionId: 'missing', result: unavailable }],
   } });
+
+  const entryInput = { localRef: 'pull-request:7' };
+  const entryResult = await executor.execute('action.invoke', {
+    action: { pluginId: 'com.acme.targets', localId: 'read' }, input: entryInput,
+  }, context);
+  expect(entryResult).toEqual({ ok: true, result: { entry: 'pull-request:7' } });
+  expect(reads).toHaveLength(2);
+  expect(reads[1]).toEqual({ input: entryInput, targets: undefined, lookups });
+  const invocation = { action: { pluginId: 'com.acme.targets', localId: 'read' }, input: entryInput };
+  expect(await executor.execute('action.invoke', invocation, {
+    ...context, expectedSessionAddress: { serverId: 'home', sessionId: 'parent' },
+  })).toMatchObject({ ok: false, errorCode: 'session_address_mismatch' });
+  expect(await executor.execute('action.invoke', invocation, {
+    ...context, externalActionCredential: {
+      accountId: 'account', principalId: 'token', credentialId: 'token',
+      grant: ApiTokenGrantV1Schema.parse({ v: 1, actions: { families: [], ids: [definition.id] },
+        targets: { sessions: ['parent'], machines: [] }, approve: false,
+        origins: [], models: null, permissionModes: null, create: null }),
+    },
+  })).toMatchObject({ ok: false, errorCode: 'credential_scope_denied', details: { reason: 'target_required' } });
+  expect(reads).toHaveLength(2);
+  expect(lookups).toEqual(['a', 'foreign', 'missing', 'b']);
 });
 
 function harness() {

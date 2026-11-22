@@ -1,10 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import nacl from 'tweetnacl';
 import { definePlugin, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolObject, defineProtocolString, defineProtocolNumber, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { SessionTargetV1ProtocolSchema } from '@happier-dev/protocol/actions/sessionTargetV1';
-import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import {
+    openExternalActionRequesterAccountContextV1,
+    projectExternalActionRequesterInvocationV1,
+    sealExternalActionRequesterAccountContextV1,
+} from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionDefinitionV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
 import { readPluginActionReadObserver } from '@happier-dev/cli-common/plugins/registration/actionInputParser';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -32,10 +38,14 @@ describe('Resource read admission through an external authored Action', () => {
         const plugin = definePlugin({ id: 'acme.session-read-set', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
             actions: { read: { title: 'Read Sessions', scopes: ['global'], surfaces: ['plugin'], dangerLevel: 'safe', readOnly: true,
                 sessionTarget: { field: 'payload.sessionIds.*', cardinality: 'many' },
-                inputSchema: defineProtocolObject({ payload: defineProtocolObject({
-                    sessionIds: defineProtocolArray(defineProtocolString()),
-                }, { policy: 'closed' }) }, { policy: 'closed' }),
+                inputSchema: defineProtocolUnion([
+                    defineProtocolObject({ payload: defineProtocolObject({
+                        sessionIds: defineProtocolArray(defineProtocolString()),
+                    }, { policy: 'closed' }) }, { policy: 'closed' }),
+                    defineProtocolObject({ localRef: defineProtocolString() }, { policy: 'closed' }),
+                ]),
                 run(input) {
+                    if ('localRef' in input) return { entry: input.localRef };
                     reads.push([...input.payload.sessionIds]);
                     return input.payload.sessionIds.map(sessionId => ({ sessionId }));
                 },
@@ -68,6 +78,7 @@ describe('Resource read admission through an external authored Action', () => {
             executionPlacement: 'machine', sessionTarget: { field: 'payload.sessionIds.*', cardinality: 'many' },
             inputSchema: declaration.inputSchema ?? {},
         };
+        const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(11));
         const machineIngress = createActionExecutor({
             listContributedActionDefinitions: () => [definition],
             // Replace only the Machine hop. The requester carrier and receiving registry stay real.
@@ -75,9 +86,25 @@ describe('Resource read admission through an external authored Action', () => {
                 const invocation = projectExternalActionRequesterInvocationV1({ actionId: 'action.invoke', context,
                     account: { accountId: 'requester', serverId: 'home' }, target: { kind: 'machine', machineId: 'worker' } });
                 if (!invocation) throw new Error('Expected a requester carrier');
+                const purpose = { kind: 'external_action' } as const;
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-admission', binding: {
+                    accountId: 'requester', custodianAccountId: 'requester', authentication: { kind: 'account', tokenEpoch: 1 },
+                    serverIdentityId: 'home', machineId: 'worker', installationId: 'installation', accountEncryptionMode: 'plain',
+                    actionId: 'action.invoke', requestId: 'read-set', requestEnvelopeDigest: 'a'.repeat(43),
+                    target: { kind: 'machine', machineId: 'worker' },
+                } });
+                const sealed = sealExternalActionRequesterAccountContextV1({
+                    authorization, purpose, invocation, credentials: { token: 'fixture-requester', secret: null, encryption: null },
+                    installationPublicKey: installation.publicKey, randomBytes: nacl.randomBytes,
+                });
+                const received = openExternalActionRequesterAccountContextV1({
+                    authorization: sealed, purpose, machineId: 'worker', installationId: 'installation', serverIdentityId: 'home',
+                    installationPrivateKey: installation.secretKey, includeInvocation: true,
+                })?.invocation;
+                if (!received) throw new Error('Expected the receiver to open the requester invocation');
                 const result = await registry.invoke({ pluginId: plugin.manifest.id, localId: 'read', surface: 'plugin', input,
-                    approvalContext: { serverId: 'home', authority: invocation.authority, defaultSessionId: invocation.defaultSessionId,
-                        sessionListAccess: invocation.sessionListAccess } });
+                    approvalContext: { serverId: 'home', authority: received.authority, defaultSessionId: received.defaultSessionId,
+                        sessionListAccess: received.sessionListAccess } });
                 return result.status === 'executed' ? { ok: true, result: result.value }
                     : { ok: false, errorCode: result.code, error: result.message };
             },
@@ -118,6 +145,11 @@ describe('Resource read admission through an external authored Action', () => {
             });
             expect(lookups).toEqual(['caller']);
             expect(reads).toEqual([['admitted'], ['admitted'], ['caller', 'admitted'], ['caller']]);
+            lookups.length = 0;
+            expect(await machineIngress.execute('action.invoke', {
+                action: machineInput.action, input: { localRef: 'pull-request:7' },
+            }, machineContext)).toEqual({ ok: true, result: { entry: 'pull-request:7' } });
+            expect(lookups).toEqual([]);
         } finally { registry.dispose(); await kit.dispose(); }
     });
 

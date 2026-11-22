@@ -395,6 +395,12 @@ export function bindActionSessionTargetOperands(input: Readonly<Record<string, u
   return bound;
 }
 
+/** The terminal wildcard declares the elements of this exact array operand. */
+export function readActionSessionReadSetOperand(input: Readonly<Record<string, unknown>>, declaration: ActionSessionTargetDeclarationV1) {
+  const field = declaration.field.slice(0, -2);
+  return { field, value: readActionSessionTargetField(input, field) };
+}
+
 /** Admit each authored exact ID. The handler receives only canonical addresses and their IDs. */
 export async function admitActionSessionReadSet(
   deps: ActionExecutorDeps,
@@ -402,15 +408,22 @@ export async function admitActionSessionReadSet(
     contributedActionId: string;
     sameHome: (left: string, right: string) => boolean;
     scoped: (sessionId: string) => Promise<ActionExecuteFailure | null>;
+    admitWithoutTarget: () => ActionExecuteFailure | null;
   }>,
 ): Promise<ActionExecuteFailure | Readonly<{
   input: Readonly<Record<string, unknown>>;
-  targets: ActionResolvedSessionTargetsV1 | null;
-  failures: readonly ActionSessionReadSetFailureV1[];
-}>> {
+} & (
+  | { targets: null; failures?: undefined }
+  | { targets: ActionResolvedSessionTargetsV1 | null; failures: readonly ActionSessionReadSetFailureV1[] }
+)>> {
   const { actionId, context, declaration } = args;
-  const field = declaration.field.slice(0, -2);
-  const raw = readActionSessionTargetField(args.input, field);
+  const { field, value: raw } = readActionSessionReadSetOperand(args.input, declaration);
+  if (raw === undefined) {
+    if (context.expectedSessionAddress) {
+      return { ok: false, errorCode: 'session_address_mismatch', error: 'session_address_mismatch' };
+    }
+    return args.admitWithoutTarget() ?? { input: args.input, targets: null };
+  }
   if (!Array.isArray(raw) || raw.length === 0 || raw.some(value => typeof value !== 'string' || !value.trim())) {
     return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
   }

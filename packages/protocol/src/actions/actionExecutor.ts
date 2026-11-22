@@ -1251,6 +1251,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     sourceMachineIds?: ReadonlyMap<string, string>,
     hostInternal = false,
     targetOnly = false,
+    targetOverride?: null,
   ): ActionExecuteFailure | null {
     const grant = ctx.externalActionCredential?.grant;
     if (!grant) return null;
@@ -1311,7 +1312,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // Session-restricted grant must name a granted Session instead.
     const omittedContributedTarget = contributedQualifiedId !== undefined && input !== undefined
       && declaration !== undefined && !declaration.field.includes('*');
-    const target = sessionId ? { kind: 'session' as const, sessionId }
+    const target = targetOverride === null ? null : sessionId ? { kind: 'session' as const, sessionId }
       : widgetSurface || definitionAction || omittedContributedTarget ? null : ctx.externalActionTarget
       ?? (ctx.defaultSessionId ? { kind: 'session' as const, sessionId: ctx.defaultSessionId } : null);
     const result = evaluateScope({
@@ -1409,6 +1410,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return admitActionSessionReadSet(deps, {
       actionId, contributedActionId, declaration, input, context,
       sameHome: (left, right) => isSameHome(left, right, context),
+      admitWithoutTarget: () => credentialScopeFailure(actionId, context, input, false, undefined, hostInternal, true, null),
       scoped: async sessionId => await resolveActionCurrentSessionScopeFailure(actionId, { sessionId, serverId: context.serverId }, context,
         { sessionId: 'current_session' }, deps, undefined, 'read', workflowSessionScope)
         ?? await admitCredentialScope(actionId, context, { ...input, sessionId }, hostInternal, true),

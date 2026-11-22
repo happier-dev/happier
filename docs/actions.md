@@ -500,7 +500,10 @@ addresses. A Session-stamped Resource can admit only its stamped address.
 The host wraps the authored result as `{ kind: 'sessionReadSet', result, failures }`.
 Each refused ID has the same `session_target_unavailable` result for missing,
 foreign, and inaccessible Sessions. When every ID is refused, `result` is
-`null` and the handler does not run.
+`null` and the handler does not run. An Action schema can also offer another
+selector that omits the array. That call resolves zero Session targets and
+returns the handler's ordinary result. An explicit host-bound Session address
+still requires a matching operand.
 
 For Session-placed Actions with exact targets in 0.3 development, original CLI
 invocation reuses the ingress selector owner and the protected-message Session transport lookup

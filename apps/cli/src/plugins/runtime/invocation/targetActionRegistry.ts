@@ -1151,19 +1151,20 @@ export function createTargetActionInvocationRegistry(params: Readonly<{
                         await complete();
                         return { kind: 'settled', result: unavailable(readSet.errorCode, readSet.error) };
                     }
-                    if (!readSet.targets) {
+                    if (readSet.targets) {
+                        const filtered = indexed.invocation.prepare(readSet.input.input, { signal: lifetime.signal, inputAlreadyNormalized: true });
+                        if (filtered.kind === 'settled') {
+                            await complete();
+                            return { kind: 'settled', result: filtered.result };
+                        }
+                        preparedInput = filtered;
+                        readSetFailures = readSet.failures;
+                        invocation = { ...invocation, approvalContext: { ...invocation.approvalContext, sessionTargetsV1: readSet.targets } };
+                    } else if (readSet.failures) {
                         await complete();
                         return { kind: 'settled', result: { status: 'executed',
                             value: { kind: 'sessionReadSet', result: null, failures: readSet.failures } } };
                     }
-                    const filtered = indexed.invocation.prepare(readSet.input.input, { signal: lifetime.signal, inputAlreadyNormalized: true });
-                    if (filtered.kind === 'settled') {
-                        await complete();
-                        return { kind: 'settled', result: filtered.result };
-                    }
-                    preparedInput = filtered;
-                    readSetFailures = readSet.failures;
-                    invocation = { ...invocation, approvalContext: { ...invocation.approvalContext, sessionTargetsV1: readSet.targets } };
                 }
             }
             if (!isActionSessionReadSetV1(sessionTarget) && invocation.resourceSessionId && indexed.registration.definition.sessionTarget
