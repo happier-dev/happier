@@ -3,6 +3,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { HappyMcpSessionClient } from '@/mcp/startHappyServer';
 import type { Metadata } from '@/api/types';
 import { logger } from '@/ui/logger';
+import { createSessionAgentTitleMetadataUpdater, SessionAgentTitleUpdateDenied } from '@/session/services/setSessionTitle';
 
 import { registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -169,14 +170,14 @@ export function createHappierMcpServer(
         }
 
         try {
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: normalizedTitle,
-              updatedAt: Date.now(),
-            },
+          await Promise.resolve(client.updateMetadata(createSessionAgentTitleMetadataUpdater({
+            title: normalizedTitle,
+            readSettings: () => actionSettingsProvider.getAccountSettings() ?? {},
           })));
         } catch (error) {
+          if (error instanceof SessionAgentTitleUpdateDenied) {
+            return { ok: false as const, errorCode: error.code, error: error.code };
+          }
           logger.debug('[mcp] Failed to update title metadata via session-scoped bridge', {
             sessionId: normalizedSessionId,
             error,
@@ -272,17 +273,6 @@ export function createHappierMcpServer(
       changeTitle: createChangeTitleToolHandler({
         executor,
         surface: toolSurface,
-        afterCommit: async ({ title }) => {
-          // Keep the in-memory session metadata snapshot in sync so the UI / session agent
-          // can reflect the new title immediately (without requiring a full server refresh).
-          await Promise.resolve(client.updateMetadata((current) => ({
-            ...current,
-            summary: {
-              text: title,
-              updatedAt: Date.now(),
-            },
-          })));
-        },
       }),
       startExecutionRun: createStartExecutionRunToolHandler({ executor, surface: toolSurface }),
       executeActionByToolName: actionToolBridge.executeActionByToolName,

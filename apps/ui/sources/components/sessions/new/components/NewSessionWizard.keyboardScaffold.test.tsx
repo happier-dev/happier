@@ -99,6 +99,8 @@ vi.mock('@/components/sessions/keyboardAvoidance', async () => {
                 harness: testState.scaffoldHarness,
                 layout: createLayout(),
             }),
+        ComposerKeyboardScrollInset: (props: { testID?: string }) =>
+            ReactModule.createElement('ComposerKeyboardScrollInset', props),
         useComposerKeyboardLayoutContext: () => createLayout(),
         useComposerAvailablePanelHeight: () => testState.scaffoldAvailablePanelHeight,
     };
@@ -202,6 +204,31 @@ describe('NewSessionWizard keyboard scaffold integration', () => {
                 maxPanelHeight: 280,
                 panelMaxHeightMode: 'host-constrained',
             }));
+        } finally {
+            act(() => {
+                screen?.tree.unmount();
+            });
+        }
+    });
+
+    it('reserves the overlaid composer height at the end of the scrollable wizard content', async () => {
+        // On native the scaffold overlays the composer (position: absolute), so the wizard's
+        // scroll content must end with the shared composer inset or its last rows can never be
+        // scrolled out from behind the composer (issue #971).
+        const { NewSessionWizard } = await import('./NewSessionWizard');
+        let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+        const popoverBoundaryRef = React.createRef<View>() as unknown as React.RefObject<View>;
+
+        try {
+            screen = await renderScreen(
+                <NewSessionWizard
+                    {...buildWizardProps()}
+                    popoverBoundaryRef={popoverBoundaryRef}
+                />,
+            );
+
+            const scrollView = screen.tree.root.findByType('ScrollView' as never);
+            expect(scrollView.findAllByType('ComposerKeyboardScrollInset' as never)).toHaveLength(1);
         } finally {
             act(() => {
                 screen?.tree.unmount();

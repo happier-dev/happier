@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, Pressable, ScrollView, View } from 'react-native';
+import { Platform, Pressable, ScrollView, View, type StyleProp, type ViewStyle } from 'react-native';
 import { usePathname } from 'expo-router';
 
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
@@ -15,7 +15,8 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useAllSessions, useSessionMetadata } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { useVoiceActivityStore } from '@/voice/activity/voiceActivityStore';
+import { selectVoiceActivityEventCount, useVoiceActivityStore, type VoiceActivityState } from '@/voice/activity/voiceActivityStore';
+import type { VoiceActivityEvent } from '@/voice/activity/voiceActivityEvents';
 import { voiceActivityController } from '@/voice/activity/voiceActivityController';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { toggleLocalVoiceTurn } from '@/voice/local/localVoiceEngine';
@@ -38,11 +39,16 @@ import { isHiddenSystemSession } from '@happier-dev/protocol';
 import { getVoiceAgentSessionTeleportAvailability } from '@/voice/agent/getVoiceAgentSessionTeleportAvailability';
 import { normalizeNonEmptyString } from '@/voice/shared/normalizeNonEmptyString';
 import { Icon } from '@/components/ui/icons/Icon';
+import { stopReadAloud, useIsReadAloudActive } from '@/voice/local/readAloudState';
+import type { VoiceSettings } from '@/sync/domains/settings/voiceSettings';
+import type { VoiceSessionStatus } from '@/voice/session/types';
 
 
-export type VoiceSurfaceVariant = 'sidebar' | 'session';
+export type VoiceSurfaceVariant = 'sidebar' | 'session' | 'global';
+type VoiceSurfaceProps = Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: StyleProp<ViewStyle> }>;
 
-const EMPTY_EVENTS: ReadonlyArray<any> = [];
+const EMPTY_EVENTS: ReadonlyArray<VoiceActivityEvent> = [];
+const EMPTY_EVENT_GROUPS: VoiceActivityState['eventsBySessionId'] = {};
 
 function resolveSessionIdFromPathname(pathname: string | null | undefined): string | null {
   const normalized = String(pathname ?? '').trim();
@@ -51,19 +57,53 @@ function resolveSessionIdFromPathname(pathname: string | null | undefined): stri
   return sessionId.length > 0 ? sessionId : null;
 }
 
-export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; sessionId?: string | null; style?: any }>) {
+export function VoiceSurface(props: VoiceSurfaceProps) {
+  const readingAloud = useIsReadAloudActive();
+  if (props.variant === 'global' && !readingAloud) return null;
+  return <VoiceSurfacePlacement {...props} readingAloud={readingAloud} />;
+}
+
+function VoiceSurfacePlacement(props: VoiceSurfaceProps & Readonly<{ readingAloud: boolean }>) {
+  const voice = useSetting('voice');
+  const scopeDefault = voice?.ui?.scopeDefault === 'session' ? 'session' : 'global';
+  const [expanded, setExpanded] = React.useState(false);
+  const hydratedVoiceAgentEpochRef = React.useRef<number | null>(null);
+  const transcript = voice?.adapters?.local_conversation?.agent?.transcript;
+  const transcriptEpochRaw = Number(transcript?.epoch ?? 0);
+  const transcriptEpoch = Number.isFinite(transcriptEpochRaw) && transcriptEpochRaw >= 0 ? Math.floor(transcriptEpochRaw) : 0;
+  const hydrateTranscript = props.variant === 'sidebar' && voice?.ui?.activityFeedEnabled === true
+    && voice?.providerId === 'local_conversation'
+    && voice.adapters.local_conversation.conversationMode === 'agent' && transcript?.persistenceMode === 'persistent';
+  React.useEffect(() => {
+    if (!hydrateTranscript) hydratedVoiceAgentEpochRef.current = null;
+  }, [hydrateTranscript]);
+  React.useEffect(() => {
+    if (props.variant === 'global') return;
+    useVoiceTargetStore.getState().setScope(scopeDefault);
+  }, [props.variant, scopeDefault]);
+  // Standalone playback uses the app shell placement; live voice keeps its configured placement.
+  if (props.variant !== 'global' && props.readingAloud) return null;
+  return <VoiceSurfaceContent {...props} voice={voice} expanded={expanded} setExpanded={setExpanded}
+    hydratedVoiceAgentEpochRef={hydratedVoiceAgentEpochRef} hydrateTranscript={hydrateTranscript} transcriptEpoch={transcriptEpoch} />;
+}
+
+function VoiceSurfaceContent(props: VoiceSurfaceProps & Readonly<{
+  voice: VoiceSettings; readingAloud: boolean; expanded: boolean; setExpanded: React.Dispatch<React.SetStateAction<boolean>>;
+  hydratedVoiceAgentEpochRef: React.RefObject<number | null>;
+  hydrateTranscript: boolean; transcriptEpoch: number;
+}>) {
   const navigateToSession = useNavigateToSession();
   const pathname = usePathname();
   const { theme } = useUnistyles();
   const styles = stylesheet;
   const snap = useVoiceSessionSnapshot();
-  const voice: any = useSetting('voice');
+  const voice = props.voice;
   const voicePrivacy = readVoicePrivacySettings({ voice });
   const providerId = voice?.providerId ?? 'off';
   const ui = voice?.ui ?? {};
   const scopeDefault = ui.scopeDefault === 'session' ? 'session' : 'global';
   const surfaceLocation = ui.surfaceLocation === 'sidebar' || ui.surfaceLocation === 'session' ? ui.surfaceLocation : 'auto';
-  const activityFeedEnabled = voice?.ui?.activityFeedEnabled === true;
+  const activityFeedEnabled = !props.readingAloud && voice?.ui?.activityFeedEnabled === true;
   const activityFeedAutoExpandOnStart = voice?.ui?.activityFeedAutoExpandOnStart === true;
 
   const sessionSurfaceSessionId = typeof props.sessionId === 'string' ? props.sessionId.trim() : '';
@@ -72,7 +112,6 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   // field a send touches.
   const currentSessionMetadata = useSessionMetadata(sessionSurfaceSessionId);
 
-  const feedSessionId = props.variant === 'session' && typeof props.sessionId === 'string' ? props.sessionId : null;
   const lastFocusedSessionId = useVoiceTargetStore((s) => s.lastFocusedSessionId);
   const primaryActionSessionId = useVoiceTargetStore((s) => s.primaryActionSessionId);
   const primaryActionSessionKey = typeof primaryActionSessionId === 'string' ? primaryActionSessionId.trim() : '';
@@ -100,71 +139,6 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     props.variant === 'session'
     && getVoiceAgentSessionTeleportAvailability({ voice, sessionId: props.sessionId ?? null }).ok;
 
-  const voiceAgentTranscriptCfg = voice?.adapters?.local_conversation?.agent?.transcript ?? null;
-  const voiceAgentTranscriptPersistenceMode =
-    voiceAgentTranscriptCfg && (voiceAgentTranscriptCfg as any).persistenceMode === 'persistent' ? 'persistent' : 'ephemeral';
-  const voiceAgentTranscriptEpochRaw = voiceAgentTranscriptCfg ? Number((voiceAgentTranscriptCfg as any).epoch ?? 0) : 0;
-  const voiceAgentTranscriptEpoch =
-    Number.isFinite(voiceAgentTranscriptEpochRaw) && voiceAgentTranscriptEpochRaw >= 0 ? Math.floor(voiceAgentTranscriptEpochRaw) : 0;
-
-  // Avoid selectors that allocate new arrays on every getSnapshot call (can infinite-loop in React 18).
-  const eventsBySessionId = useVoiceActivityStore((s) => s.eventsBySessionId);
-  const events = React.useMemo(() => {
-    if (props.variant === 'session') {
-      return feedSessionId ? (eventsBySessionId[feedSessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS;
-    }
-
-    const all: any[] = [];
-    for (const v of Object.values(eventsBySessionId ?? {})) {
-      if (Array.isArray(v)) all.push(...v);
-    }
-    return all.length === 0 ? EMPTY_EVENTS : all;
-  }, [eventsBySessionId, feedSessionId, props.variant]);
-
-  const [expanded, setExpanded] = React.useState(false);
-
-  React.useEffect(() => {
-    // Keep store scope in sync with the user's default voice scope.
-    useVoiceTargetStore.getState().setScope(scopeDefault);
-  }, [scopeDefault]);
-
-  const hydratedVoiceAgentEpochRef = React.useRef<number | null>(null);
-  React.useEffect(() => {
-    const shouldHydrateVoiceAgentTranscript =
-      props.variant === 'sidebar' &&
-      activityFeedEnabled &&
-      providerId === 'local_conversation' &&
-      localConversationMode === 'agent' &&
-      voiceAgentTranscriptPersistenceMode === 'persistent';
-
-    if (!shouldHydrateVoiceAgentTranscript) {
-      hydratedVoiceAgentEpochRef.current = null;
-      return;
-    }
-      if (hydratedVoiceAgentEpochRef.current === voiceAgentTranscriptEpoch) return;
-
-      hydratedVoiceAgentEpochRef.current = voiceAgentTranscriptEpoch;
-      fireAndForget(hydrateVoiceAgentActivityFromCarrierSession(), { tag: 'VoiceSurface.hydrateVoiceAgentActivityFromCarrierSession' });
-    }, [activityFeedEnabled, localConversationMode, voiceAgentTranscriptEpoch, voiceAgentTranscriptPersistenceMode, props.variant, providerId]);
-
-  const lastStatusRef = React.useRef(snap.status);
-  React.useEffect(() => {
-    const prev = lastStatusRef.current;
-    lastStatusRef.current = snap.status;
-    if (!activityFeedEnabled) return;
-    if (!activityFeedAutoExpandOnStart) return;
-    if (expanded) return;
-    if (prev === 'disconnected' && snap.status !== 'disconnected') {
-      setExpanded(true);
-    }
-  }, [activityFeedAutoExpandOnStart, activityFeedEnabled, expanded, snap.status]);
-
-  const visibleEvents = React.useMemo(() => {
-    if (!Array.isArray(events) || events.length === 0) return EMPTY_EVENTS;
-    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
-    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
-    return [...tail].reverse();
-  }, [events, props.variant]);
   const bindingsByConversationSessionId = React.useSyncExternalStore(
     voiceSessionBindingStore.subscribe,
     () => voiceSessionBindingStore.getState().bindingsByConversationSessionId,
@@ -204,13 +178,14 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     return scopeDefault === 'global' ? props.variant === 'sidebar' : props.variant === 'session';
   })();
 
-  const showSurface =
+  const showSurface = props.readingAloud || (
     providerId !== 'off' &&
     locationAllowsVariant &&
-    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata }));
+    !(props.variant === 'session' && isHiddenSystemSession({ metadata: currentSessionMetadata })));
   if (!showSurface) return null;
 
   const statusInfo = (() => {
+    if (props.readingAloud) return { dot: theme.colors.status.connected, label: t('message.readAloudA11y') };
     switch (snap.status) {
       case 'connecting':
         return { dot: theme.colors.status.connecting, label: t('voiceAssistant.connecting') };
@@ -225,9 +200,9 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
   })();
 
   const canStart = !daemonLocalVoiceUnavailable && (allowsGlobalStart ? true : Boolean(startSessionId));
-  const isConnected = snap.status === 'connected';
+  const isConnected = !props.readingAloud && snap.status === 'connected';
   const isSpeaking = isConnected && snap.mode === 'speaking';
-  const canStop = snap.canStop && snap.status !== 'disconnected';
+  const canStop = props.readingAloud || (snap.canStop && snap.status !== 'disconnected');
   const showConnectingSpinner = snap.status === 'connecting' && !canStop;
   const toggleDisabledReason = !canStop && !canStart
     ? (daemonLocalVoiceUnavailable
@@ -246,11 +221,11 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     typeof snap.sessionId === 'string' &&
     snap.sessionId.trim().length > 0 &&
     (snap.mode === 'thinking' || snap.mode === 'speaking');
-  const voiceError = typeof snap.errorCode === 'string' && snap.errorCode.trim().length > 0
+  const voiceError = !props.readingAloud && typeof snap.errorCode === 'string' && snap.errorCode.trim().length > 0
     ? formatLocalVoiceErrorMessage({ errorCode: snap.errorCode, errorMessage: snap.errorMessage })
     : null;
   const targetLabel =
-    props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
+    !props.readingAloud && props.variant === 'sidebar' && voiceScope === 'global' && primaryActionSessionId
       ? (
         (primaryActionSessionMetadata
           ? getSessionName({ id: primaryActionSessionKey, metadata: primaryActionSessionMetadata })
@@ -263,6 +238,10 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
       : null;
 
   const onTogglePress = () => {
+    if (props.readingAloud) {
+      stopReadAloud();
+      return;
+    }
     if (canStop) {
       fireAndForget(voiceSessionManager.stop(''), { tag: 'VoiceSurface.stop' });
       return;
@@ -270,17 +249,6 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
     const resolvedStartSessionId = allowsGlobalStart ? (startSessionId ?? '') : startSessionId;
     if (!resolvedStartSessionId && !allowsGlobalStart) return;
     fireAndForget(voiceSessionManager.toggle(resolvedStartSessionId ?? ''), { tag: 'VoiceSurface.toggle' });
-  };
-
-  const onClearPress = () => {
-    if (props.variant === 'session' && feedSessionId) {
-      voiceActivityController.clearSession(feedSessionId);
-      return;
-    }
-    const state = useVoiceActivityStore.getState();
-    for (const sid of Object.keys(state.eventsBySessionId ?? {})) {
-      voiceActivityController.clearSession(sid);
-    }
   };
 
   const containerStyle = [
@@ -317,7 +285,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
           ) : (
             <View style={[styles.micBadge, { backgroundColor: theme.colors.surface.inset, borderColor: theme.colors.border.default }]}>
               <StatusDot color={statusInfo.dot} isPulsing={snap.status === 'connecting'} size={7} style={styles.dot as any} />
-              <Icon name={snap.mode === 'listening' ? 'microphone' : 'microphone-slash'} size={14} color={theme.colors.text.primary} style={styles.micIcon as any} />
+              <Icon name={props.readingAloud ? 'speaker-high' : snap.mode === 'listening' ? 'microphone' : 'microphone-slash'} size={14} color={theme.colors.text.primary} style={styles.micIcon as any} />
             </View>
           )}
           <View style={styles.statusTextCol}>
@@ -369,7 +337,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             </Pressable>
           ) : null}
 
-          {openConversationSessionId ? (
+          {!props.readingAloud && openConversationSessionId ? (
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={t('common.open')}
@@ -425,7 +393,7 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
             disabled={!canStop && !canStart}
             loading={showConnectingSpinner}
             active={snap.status !== 'disconnected' || providerId !== 'off'}
-            accessibilityLabel={canStop ? t('voiceAssistant.tapToEnd') : t('voiceAssistant.label')}
+            accessibilityLabel={props.readingAloud ? t('message.stopReadAloudA11y') : canStop ? t('voiceAssistant.tapToEnd') : t('voiceAssistant.label')}
           >
             {canStop ? (
               <Icon name="stop-circle" size={20} color={theme.colors.button?.primary?.tint ?? theme.colors.text.primary} />
@@ -440,7 +408,59 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
         </View>
       </View>
 
-      {activityFeedEnabled ? (
+      {activityFeedEnabled ? <VoiceSurfaceActivityFeed
+        variant={props.variant} sessionId={props.sessionId} expanded={props.expanded} setExpanded={props.setExpanded}
+        status={snap.status} autoExpandOnStart={activityFeedAutoExpandOnStart}
+        hydrateTranscript={props.hydrateTranscript} transcriptEpoch={props.transcriptEpoch}
+        hydratedVoiceAgentEpochRef={props.hydratedVoiceAgentEpochRef}
+      /> : null}
+    </View>
+  );
+}
+
+function VoiceSurfaceActivityFeed(props: Readonly<{
+  variant: VoiceSurfaceVariant; sessionId?: string | null; expanded: boolean;
+  setExpanded: React.Dispatch<React.SetStateAction<boolean>>; status: VoiceSessionStatus;
+  autoExpandOnStart: boolean; hydrateTranscript: boolean; transcriptEpoch: number;
+  hydratedVoiceAgentEpochRef: React.RefObject<number | null>;
+}>) {
+  const { theme } = useUnistyles();
+  const styles = stylesheet;
+  const { expanded, setExpanded } = props;
+  const feedSessionId = props.variant === 'session' ? (props.sessionId ?? '') : null;
+  const eventCount = useVoiceActivityStore((state) => selectVoiceActivityEventCount(state, feedSessionId));
+
+  const hydratedVoiceAgentEpochRef = props.hydratedVoiceAgentEpochRef;
+  React.useEffect(() => {
+    if (!props.hydrateTranscript || hydratedVoiceAgentEpochRef.current === props.transcriptEpoch) return;
+
+    hydratedVoiceAgentEpochRef.current = props.transcriptEpoch;
+    fireAndForget(hydrateVoiceAgentActivityFromCarrierSession(), { tag: 'VoiceSurface.hydrateVoiceAgentActivityFromCarrierSession' });
+  }, [props.hydrateTranscript, props.transcriptEpoch, hydratedVoiceAgentEpochRef]);
+
+  const lastStatusRef = React.useRef(props.status);
+  React.useEffect(() => {
+    const prev = lastStatusRef.current;
+    lastStatusRef.current = props.status;
+    if (!props.autoExpandOnStart) return;
+    if (expanded) return;
+    if (prev === 'disconnected' && props.status !== 'disconnected') {
+      setExpanded(true);
+    }
+  }, [props.autoExpandOnStart, expanded, props.status, setExpanded]);
+
+  const onClearPress = () => {
+    if (props.variant === 'session' && feedSessionId) {
+      voiceActivityController.clearSession(feedSessionId);
+      return;
+    }
+    const state = useVoiceActivityStore.getState();
+    for (const sid of Object.keys(state.eventsBySessionId ?? {})) {
+      voiceActivityController.clearSession(sid);
+    }
+  };
+
+  return (
         <View style={styles.feedContainer}>
           <View style={styles.feedHeader}>
               <Pressable
@@ -454,20 +474,20 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
                 {t('voiceActivity.title')}
               </Text>
               <Text style={[styles.feedCount, { color: theme.colors.text.secondary }]}>
-                {`${events.length}`}
+                {`${eventCount}`}
               </Text>
             </Pressable>
 
               <Pressable
                 onPress={onClearPress}
-                disabled={events.length === 0 || (props.variant === 'session' && !feedSessionId)}
+                disabled={eventCount === 0 || (props.variant === 'session' && !feedSessionId)}
                 accessibilityRole="button"
                 accessibilityLabel={t('voiceSurface.a11y.clearActivity')}
                 style={({ pressed }) => [
                   styles.clearButton,
                 {
                   opacity: pressed ? 0.72 : 1,
-                  backgroundColor: events.length === 0 ? 'transparent' : theme.colors.surface.inset,
+                  backgroundColor: eventCount === 0 ? 'transparent' : theme.colors.surface.inset,
                   borderColor: theme.colors.border.default,
                 },
               ]}
@@ -477,20 +497,32 @@ export function VoiceSurface(props: Readonly<{ variant: VoiceSurfaceVariant; ses
           </View>
 
           {expanded ? (
-            <VoiceSurfaceActivityEventsList events={events} visibleEvents={visibleEvents} />
+            <VoiceSurfaceActivityEventsList variant={props.variant} sessionId={feedSessionId} />
           ) : null}
         </View>
-      ) : null}
-    </View>
   );
 }
 
 function VoiceSurfaceActivityEventsList(props: Readonly<{
-  events: ReadonlyArray<any>;
-  visibleEvents: ReadonlyArray<any>;
+  variant: VoiceSurfaceVariant; sessionId: string | null;
 }>): React.ReactElement {
   const { theme } = useUnistyles();
   const styles = stylesheet;
+  const sessionEvents = useVoiceActivityStore((state) => props.sessionId !== null
+    ? (state.eventsBySessionId[props.sessionId] ?? EMPTY_EVENTS) : EMPTY_EVENTS);
+  const eventsBySessionId = useVoiceActivityStore((state) => props.sessionId === null ? state.eventsBySessionId : EMPTY_EVENT_GROUPS);
+  const events = React.useMemo(() => {
+    if (props.sessionId !== null) return sessionEvents;
+    const all: VoiceActivityEvent[] = [];
+    for (const group of Object.values(eventsBySessionId)) all.push(...group);
+    return all.length === 0 ? EMPTY_EVENTS : all;
+  }, [sessionEvents, eventsBySessionId, props.sessionId]);
+  const visibleEvents = React.useMemo(() => {
+    if (events.length === 0) return EMPTY_EVENTS;
+    const base = props.variant === 'sidebar' ? [...events].sort(sortVoiceActivityEventsByTsThenId) : events;
+    const tail = base.length > 50 ? base.slice(base.length - 50) : base;
+    return [...tail].reverse();
+  }, [events, props.variant]);
   const allSessions = useAllSessions();
   const sessionLabelById = React.useMemo(() => {
     const map = new Map<string, string>();
@@ -503,10 +535,10 @@ function VoiceSurfaceActivityEventsList(props: Readonly<{
 
   return (
     <ScrollView style={styles.feedScroll} contentContainerStyle={styles.feedScrollContent as any}>
-      {props.events.length === 0 ? (
+      {events.length === 0 ? (
         <Text style={[styles.emptyText, { color: theme.colors.text.secondary }]}>{t('voiceActivity.empty')}</Text>
       ) : (
-        props.visibleEvents.map((event) => (
+        visibleEvents.map((event) => (
           <Text key={event.id} style={[styles.eventText, { color: theme.colors.text.primary }]} numberOfLines={3}>
             {formatVoiceActivityEvent(event, sessionLabelById)}
           </Text>

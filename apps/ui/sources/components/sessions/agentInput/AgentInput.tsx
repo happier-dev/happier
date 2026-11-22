@@ -1,3 +1,4 @@
+import { AgentInputProviderQuotaLabel } from './components/AgentInputProviderQuotaLabel';
 import * as React from 'react';
 import { View, Platform, useWindowDimensions, ViewStyle, Pressable, ScrollView } from 'react-native';
 import { layout } from '@/components/ui/layout/layout';
@@ -44,6 +45,7 @@ import {
 } from '@/sync/domains/state/storage';
 import { useUserMessageHistory } from '@/hooks/session/useUserMessageHistory';
 import { useHasHardwareKeyboard } from '@/hooks/ui/useHasHardwareKeyboard';
+import { useComposerKeepsFocusAfterSend } from './hooks/useComposerKeepsFocusAfterSend';
 import type { NewSessionAfterSendMode } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { ComposerHistorySwipeArea, type ComposerHistoryDirection } from './ComposerHistorySwipeArea';
 import { AgentInputKeepKeyboardToggle } from './components/AgentInputKeepKeyboardToggle';
@@ -595,7 +597,12 @@ function AgentInputHiddenUsageOverflow(props: AgentInputHiddenUsageOverflowProps
                                     {t('agentInput.providerUsage.title')}
                                 </Text>
                                 <Text style={styles.hiddenUsageOverflowDetail}>
-                                    {providerUsageGauge.detailRightLabel}
+                                    <AgentInputProviderQuotaLabel
+                                        resetAtMs={providerUsageGauge.effectiveMeter.resetAtMs ?? providerUsageGauge.effectiveMeter.resetsAt}
+                                        remainingPct={providerUsageGauge.remainingPct}
+                                        detailLabel={providerUsageGauge.detailRightLabel}
+                                        presented={open}
+                                    />
                                 </Text>
                                 {providerUsageGauge.usedLimitLabel ? (
                                     <Text style={styles.hiddenUsageOverflowSubdetail}>
@@ -1400,9 +1407,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
     const sendActionDisabled = Boolean(props.disabled || props.isSendDisabled || props.isSending);
     const inputRef = React.useRef<MultiTextInputHandle>(null);
     const hasHardwareKeyboard = useHasHardwareKeyboard();
-    const keepFocusAfterSendSetting = useLocalSetting('composerKeepFocusAfterSend');
-    const keepFocusAfterSend = keepFocusAfterSendSetting === true
-        || (keepFocusAfterSendSetting == null && hasHardwareKeyboard);
+    const keepFocusAfterSend = useComposerKeepsFocusAfterSend();
     const showKeepKeyboardToggle = Boolean(props.sessionId) && !hasHardwareKeyboard;
     // History flicks cycle from an empty field and keep cycling while it shows a recalled message. The
     // person reaching into that message (focus, a caret move, an edit) ends it until the field is empty again.
@@ -1656,8 +1661,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
             setLiveTextStatus(nextStatus);
             updateInputSelectionState(nextState.selection);
         }
-        if (props.sessionId && !keepFocusAfterSend) {
-            inputRef.current?.blur();
+        if (props.sessionId) {
+            // Clicking Send can move focus to the button before this handler runs.
+            // Restore it during the send gesture, never from a later background update.
+            if (keepFocusAfterSend) inputRef.current?.focus();
+            else inputRef.current?.blur();
         }
         messageHistory.reset();
         setHistoryFlicksArmed(false);
@@ -2282,21 +2290,27 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
         && (props.onModelModeChange || hasSettingsAcpConfigSection),
     );
 
+    // The picker retains the running provider's row while the outbound chip follows the armed one.
+    const currentAgentMarkAgentId = props.sessionId && !sessionAgentId
+        ? null : sessionAgentId ?? props.agentType ?? null;
+    const currentAgentPickerLabel = armedComposerTarget
+        ? currentAgentMarkAgentId ? t(getAgentCore(currentAgentMarkAgentId).displayNameKey) : t('status.unknown')
+        : displayedAgentLabel ?? (props.agentType ? t(getAgentCore(props.agentType).displayNameKey) : t('status.unknown'));
     const currentAgentPickerRow = React.useMemo<AgentInputChipPickerOption | null>(() => (
         props.agentType
             ? {
                 id: `engine:${props.agentType}`,
-                label: displayedAgentLabel ?? t(getAgentCore(props.agentType).displayNameKey),
+                label: currentAgentPickerLabel,
                 icon: (
                     <AgentIcon
-                        agentId={engineChipMarkAgentId}
+                        agentId={currentAgentMarkAgentId}
                         size={12}
-                        style={{ transform: [{ scale: engineChipMarkAgentId ? getAgentPickerIconScale(engineChipMarkAgentId) : 1 }] }}
+                        style={{ transform: [{ scale: currentAgentMarkAgentId ? getAgentPickerIconScale(currentAgentMarkAgentId) : 1 }] }}
                     />
                 ),
             }
             : null
-    ), [displayedAgentLabel, engineChipMarkAgentId, props.agentType]);
+    ), [currentAgentMarkAgentId, currentAgentPickerLabel, props.agentType]);
 
     const internalAgentPickerOptions = React.useMemo<ReadonlyArray<AgentInputChipPickerOption>>(() => {
         if (!hasInternalAgentPickerOptions || !props.agentType || !currentAgentPickerRow) return [];
@@ -3391,7 +3405,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             {props.statusBadges?.map(({ key, renderPopover, onPress, ...badge }) => (
                                 <AgentInputStatusBadge
                                     key={key}
-                                    anchorRef={renderPopover ? statusBadgeAnchorRef : undefined}
+                                    anchorRef={renderPopover && key === activeStatusBadgeKey ? statusBadgeAnchorRef : undefined}
                                     onPress={renderPopover
                                         ? () => {
                                             setActiveStatusBadgeKey(activeStatusBadgeKey === key ? null : key);

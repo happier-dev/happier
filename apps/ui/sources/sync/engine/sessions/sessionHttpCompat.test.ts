@@ -316,13 +316,36 @@ describe('session record coercion carries the server-materialized unread entry f
         expect(parsed?.session.rollbackEligibleTurnStarts).toBeUndefined();
     });
 
-    it('KEYSTONE: rebuilds a carrier for every field the protocol record schema declares', async () => {
+    it.each([0, 1])('carries a supplied detail-only no-effect count of %i', (pendingBlockedNoEffectCount) => {
+        const parsed = parseCompatSessionByIdResponse({
+            session: rawSessionRow({ pendingBlockedNoEffectCount }),
+        });
+
+        expect(parsed?.session.pendingBlockedNoEffectCount).toBe(pendingBlockedNoEffectCount);
+    });
+
+    it('keeps an absent detail-only no-effect count absent in list and legacy detail records', async () => {
+        const page = await fetchSessionListPageCompat({ request: v2ListRequest([rawSessionRow()]), token: 'token', limit: 50 });
+        const detail = parseCompatSessionByIdResponse({ session: rawSessionRow() });
+
+        expect(page.sessions[0]).not.toHaveProperty('pendingBlockedNoEffectCount');
+        expect(detail?.session).not.toHaveProperty('pendingBlockedNoEffectCount');
+    });
+
+    it.each([-1, 0.5, '1', Number.MAX_SAFE_INTEGER + 1])('omits an invalid detail-only no-effect count: %j', (pendingBlockedNoEffectCount) => {
+        const parsed = parseCompatSessionByIdResponse({ session: rawSessionRow({ pendingBlockedNoEffectCount }) });
+
+        expect(parsed?.session.id).toBe('s1');
+        expect(parsed?.session).not.toHaveProperty('pendingBlockedNoEffectCount');
+    });
+
+    it('KEYSTONE: rebuilds a detail carrier for every field the protocol record schema declares', () => {
         // The record rebuild is an allow-list, so a newly declared protocol field
         // is silently dropped unless a carrier is added here too — the exact way
         // `unreadSince` was lost. Deriving the expectation from the schema shape
         // makes that class of omission fail instead of pass.
         const declaredFields = Object.keys(V2SessionRecordSchema.shape);
-        const request = v2ListRequest([rawSessionRow({
+        const parsed = parseCompatSessionByIdResponse({ session: rawSessionRow({
             meaningfulActivityAt: 25,
             archivedAt: null,
             encryptionMode: 'plain',
@@ -336,6 +359,7 @@ describe('session record coercion carries the server-materialized unread entry f
             thinkingAt: 0,
             pendingCount: 0,
             pendingBlockedCount: 0,
+            pendingBlockedNoEffectCount: 0,
             pendingVersion: 1,
             pendingActivationAuthorization: {
                 status: 'waiting',
@@ -347,10 +371,8 @@ describe('session record coercion carries the server-materialized unread entry f
             latestTurnStatus: 'completed',
             latestTurnStatusObservedAt: 27,
             lastRuntimeIssue: null,
-        })]);
-
-        const page = await fetchSessionListPageCompat({ request, token: 'token', limit: 50 });
-        const coerced = page.sessions[0];
+        }) });
+        const coerced = parsed?.session;
 
         expect(coerced).toBeDefined();
         expect(declaredFields.length).toBeGreaterThan(20);

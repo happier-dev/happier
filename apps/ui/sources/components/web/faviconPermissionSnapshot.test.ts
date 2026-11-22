@@ -4,6 +4,7 @@ import { createStorageStoreMock } from '@/dev/testkit/mocks/storage';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import type { Session } from '@/sync/domains/state/storageTypes';
+import { buildTranscriptRenderableAggregate } from '@/sync/domains/messages/transcriptRenderableAggregate';
 import { createReducer } from '@/sync/reducer/reducer';
 import type { SessionMessages } from '@/sync/store/domains/messages';
 import type { StorageState } from '@/sync/store/types';
@@ -220,6 +221,39 @@ describe('createFaviconPermissionSnapshotSelector', () => {
         expect(first.hasFreshPermission).toBe(false);
         expect(second).not.toBe(first);
         expect(second.hasFreshPermission).toBe(true);
+    });
+
+    it('reads pending transcript requests from the store aggregate instead of walking the transcript per apply', () => {
+        vi.setSystemTime(new Date(1_000));
+        const selector = createFaviconPermissionSnapshotSelector();
+        const session = createSession({
+            id: 'session1',
+            active: true,
+            activeAt: 1_000,
+            latestTurnStatus: 'in_progress',
+            latestTurnStatusObservedAt: 1_000,
+            presence: 'online',
+        });
+        const permission = createPermissionMessage(1_000);
+        let messageReads = 0;
+        const stateAtVersion = (messagesVersion: number) => createState({
+            sessions: { session1: session },
+            sessionMessages: {
+                session1: createSessionMessages({
+                    messageIdsOldestFirst: [permission.id],
+                    messagesById: createTrackedMessagesById(permission, () => { messageReads += 1; }),
+                    // The store keeps this aggregate current on every apply (O(changed)).
+                    renderableAggregate: buildTranscriptRenderableAggregate({ messages: [permission], completedRequests: null }),
+                    messagesVersion,
+                }),
+            },
+        });
+
+        // Each streamed apply bumps messagesVersion, which re-derives the snapshot.
+        const snapshots = [2, 3, 4].map((version) => selector(stateAtVersion(version)));
+
+        expect(snapshots.every((snapshot) => snapshot.hasFreshPermission)).toBe(true);
+        expect(messageReads).toBe(0);
     });
 
     it('keeps an agent-state permission past the runtime staleness window until the runtime goes offline', () => {

@@ -181,7 +181,7 @@ describe('PermissionHandler (mode parameter precedence)', () => {
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
 
-    handler.handleModeChange('bypassPermissions');
+    handler.admitPromptPermissionMode('bypassPermissions');
     handler.reset();
 
     handler.onMessage({

@@ -18,8 +18,8 @@ function runTriggerWebhooks(env, args) {
   });
 }
 
-test('trigger-webhooks supports dry-run and enforces server api->worker ordering', async () => {
-  const output = runTriggerWebhooks(
+test('legacy hooks cannot rebuild hosted server or UI after exact-image migration', () => {
+  for (const component of ['server', 'ui']) assert.throws(() => runTriggerWebhooks(
     {
       DEPLOY_WEBHOOK_URL: 'https://ci.example.com/api/deploy',
       CF_WEBHOOK_DEPLOY_CLIENT_ID: 'cf-id',
@@ -31,7 +31,7 @@ test('trigger-webhooks supports dry-run and enforces server api->worker ordering
       '--environment',
       'production',
       '--component',
-      'server',
+      component,
       '--repository',
       'happier-dev/happier',
       '--ref-name',
@@ -40,13 +40,7 @@ test('trigger-webhooks supports dry-run and enforces server api->worker ordering
       '0123456789abcdef0123456789abcdef01234567',
       '--dry-run',
     ],
-  );
-
-  assert.match(output, /refs\/heads\/deploy\/production\/server/);
-  assert.ok(
-    output.indexOf("server api") < output.indexOf("server worker"),
-    'expected server api hooks to be evaluated before server worker hooks',
-  );
+  ), (error) => /requires exact hosted images/.test(String(error.stderr)));
 });
 
 test('trigger-webhooks dry-run can resolve SHA with gh without executing it and URL-encodes deploy ref', async () => {

@@ -1,3 +1,5 @@
+import { readUsageLimitIssueFingerprintAgentId } from '@/session/usageLimitRecoveryControls/readUsageLimitIssueFingerprintAgentId';
+
 import type { DurableRecoveryGateResult } from '../recoveryScheduler/DurableBackoffRecoveryScheduler';
 import type { UsageLimitRecoveryIntent } from './UsageLimitRecoveryScheduler';
 
@@ -16,7 +18,10 @@ function normalizeKeyPart(value: string): string {
 
 function resolveSelectedAuthCoalesceKey(intent: UsageLimitRecoveryIntent): string | null {
   const selectedAuth = intent.selectedAuth;
-  if (selectedAuth.kind === 'native') return null;
+  if (selectedAuth.kind === 'native') {
+    const nativeId = selectedAuth.serviceId ?? readUsageLimitIssueFingerprintAgentId(intent.issueFingerprint);
+    return nativeId ? [normalizeKeyPart(nativeId), 'native'].join('\0') : null;
+  }
   if (selectedAuth.kind === 'profile') {
     return [
       normalizeKeyPart(selectedAuth.serviceId),

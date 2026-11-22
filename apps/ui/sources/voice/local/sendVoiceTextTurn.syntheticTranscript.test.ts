@@ -396,14 +396,11 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
       await sendTurn();
     } else {
       const { sendVoiceSessionComposerText } = await import('../sessionBinding/sendVoiceSessionComposerText');
+      const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+      const adapter = createLocalConversationVoiceAdapter();
       await expect(sendVoiceSessionComposerText({
         conversationSessionId: 'carrier-s1', text: 'keep this voice input',
-        getAdapter: () => ({
-          id: 'local_conversation', start: async () => {}, stop: async () => {}, toggle: async () => {},
-          interrupt: async () => {}, sendContextUpdate: () => {},
-          getSnapshot: () => ({ adapterId: 'local_conversation', sessionId: 'voice-global', status: 'connected', mode: 'idle', canStop: true }),
-          sendTextTurn: async ({ localId, handoffMode }) => sendTurn({ localId, handoffMode }),
-        }),
+        getAdapter: () => adapter,
       })).resolves.toEqual({ ok: true, localId: expect.any(String), disposition: 'handoff_acknowledged' });
     }
     const localId = enqueuePendingMessage.mock.calls[0]?.[4]?.localId;
@@ -411,6 +408,106 @@ describe('sendVoiceTextTurn synthetic transcript mirroring', () => {
     expect(handledRows.get(localId!)).toMatchObject({ localId, messageRole: 'user' });
     expect(pendingRows.size).toBe(0);
     expect(storage.getState().sessionPending['carrier-s1']?.messages ?? []).toEqual([]);
+  });
+
+  it('preserves the speech epoch while durable admission waits without cancelling submitted work', async () => {
+    voiceAgentBackend = 'openai_compat';
+    const settings = settingsParse({ voice: { providerId: 'local_conversation', adapters: { local_conversation: {
+      conversationMode: 'agent', agent: { backend: 'openai_compat', openaiCompat: { chatBaseUrl: 'http://voice.test' } },
+      tts: { provider: 'device', autoSpeakReplies: true },
+    } } } });
+    storage.setState({ settings });
+    const featureFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('http://voice.test/')) {
+        boundaryEvents.push('provider-reply');
+        return Response.json({ choices: [{ message: { role: 'assistant', content: 'The admitted reply.' } }] });
+      }
+      return featureFetch(input, init);
+    }));
+    const requestBoundary = vi.mocked(apiSocket.request).getMockImplementation();
+    if (!requestBoundary) throw new Error('Expected the HTTP boundary fixture');
+    let releaseEnqueue: (() => void) | undefined;
+    const enqueueAcknowledged = new Promise<void>(resolve => { releaseEnqueue = resolve; });
+    let enqueueWaiting = false;
+    vi.mocked(apiSocket.request).mockImplementation(async (...args) => {
+      const response = await requestBoundary(...args);
+      const [path, init] = args;
+      if (init?.method === 'POST' && path.endsWith('/pending')) {
+        enqueueWaiting = true;
+        await enqueueAcknowledged;
+      }
+      return response;
+    });
+    const { createVoicePlaybackController } = await import('@/voice/runtime/VoicePlaybackController');
+    const playbackController = createVoicePlaybackController();
+    const { sendVoiceTextTurn } = await import('./sendVoiceTextTurn');
+    const sending = sendVoiceTextTurn({ sessionId: 'voice-global', settings, userText: 'keep this admitted work',
+      playbackController, voiceAgentSessions: createVoiceAgentSessionController() });
+    try {
+      await vi.waitFor(() => expect(enqueueWaiting).toBe(true));
+      // A newer readout interrupts output while the older input's server acknowledgement is pending.
+      playbackController.interrupt();
+    } finally {
+      releaseEnqueue?.();
+      await sending;
+    }
+
+    expect(boundaryEvents).toContain('provider-reply');
+    expect(handledRows.size).toBe(1);
+    expect(pendingRows.size).toBe(0);
+    expect(appendAssistant).toHaveBeenCalled();
+    expect(speech).not.toHaveBeenCalled();
+  });
+
+  it('preserves newer playback while a typed voice turn waits for durable admission', async () => {
+    voiceAgentBackend = 'openai_compat';
+    const settings = settingsParse({ voice: { providerId: 'local_conversation', adapters: { local_conversation: {
+      conversationMode: 'agent', agent: { backend: 'openai_compat', openaiCompat: { chatBaseUrl: 'http://voice.test' } },
+      tts: { provider: 'device', autoSpeakReplies: true },
+    } } } });
+    storage.setState({ settings });
+    const featureFetch = globalThis.fetch;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith('http://voice.test/')) {
+        boundaryEvents.push('provider-reply');
+        return Response.json({ choices: [{ message: { role: 'assistant', content: 'The typed admitted reply.' } }] });
+      }
+      return featureFetch(input, init);
+    }));
+    const requestBoundary = vi.mocked(apiSocket.request).getMockImplementation();
+    if (!requestBoundary) throw new Error('Expected the HTTP boundary fixture');
+    let releaseEnqueue: (() => void) | undefined;
+    const enqueueAcknowledged = new Promise<void>(resolve => { releaseEnqueue = resolve; });
+    let enqueueWaiting = false;
+    vi.mocked(apiSocket.request).mockImplementation(async (...args) => {
+      const response = await requestBoundary(...args);
+      const [path, init] = args;
+      if (init?.method === 'POST' && path.endsWith('/pending')) {
+        enqueueWaiting = true;
+        await enqueueAcknowledged;
+      }
+      return response;
+    });
+    const { localVoicePlaybackController } = await import('@/voice/runtime/VoicePlaybackController');
+    const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+    const { sendVoiceSessionComposerText } = await import('@/voice/sessionBinding/sendVoiceSessionComposerText');
+    const adapter = createLocalConversationVoiceAdapter();
+    const sending = sendVoiceSessionComposerText({ conversationSessionId: 'carrier-s1',
+      text: 'keep this typed admitted work', getAdapter: () => adapter });
+    try {
+      await vi.waitFor(() => expect(enqueueWaiting).toBe(true));
+      localVoicePlaybackController.interrupt();
+    } finally {
+      releaseEnqueue?.();
+    }
+    await expect(sending).resolves.toMatchObject({ ok: true, disposition: 'handoff_acknowledged' });
+
+    expect(boundaryEvents).toContain('provider-reply');
+    expect(handledRows.size).toBe(1);
+    expect(pendingRows.size).toBe(0);
+    expect(appendAssistant).toHaveBeenCalled();
+    expect(speech).not.toHaveBeenCalled();
   });
 
   it.each([404, new RpcError('RPC method not available', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE)])(

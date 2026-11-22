@@ -1,13 +1,11 @@
 import { computeHasUnreadActivity } from '@/sync/domains/messages/unread';
-import {
-    readStoredSessionMessagesFromStateLike,
-    readStoredSessionMessagesReadProjectionFromStateLike,
-} from '@/sync/domains/messages/readStoredSessionMessages';
+import { readStoredSessionMessagesReadProjectionFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
+    readStoredTranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { resolveSessionReadableSeq } from '@/sync/domains/session/readCursor/resolveSessionReadableSeq';
@@ -150,11 +148,12 @@ export function deriveActivityAttentionFlags(
         })
         : false;
 
-    const sessionMessages = sessionMessagesState === null
-        ? undefined
-        : readStoredSessionMessagesFromStateLike(sessionMessagesState);
-    const pendingFlags = isHydratedSession(session)
-        ? derivePendingRequestFlagsFromSession(session, sessionMessages)
+    const hydratedSession = isHydratedSession(session) ? session : null;
+    const transcriptRequestStates = hydratedSession
+        ? readStoredTranscriptRequestStatesCache(sessionMessagesState, hydratedSession)
+        : null;
+    const pendingFlags = hydratedSession && transcriptRequestStates
+        ? derivePendingRequestFlagsFromSession(hydratedSession, undefined, transcriptRequestStates)
         : null;
 
     const pendingPermissionCandidate = options?.showPendingPermissionRequests !== false
@@ -182,8 +181,8 @@ export function deriveActivityAttentionFlags(
         meaningfulActivityAt: session.meaningfulActivityAt,
         hasPendingPermissionRequests: pendingPermissionCandidate,
         hasPendingUserActionRequests: pendingUserActionCandidate,
-        pendingRequestObservedAt: isHydratedSession(session)
-            ? deriveLatestPendingRequestObservedAtFromSession(session, sessionMessages)
+        pendingRequestObservedAt: hydratedSession && transcriptRequestStates
+            ? deriveLatestPendingRequestObservedAtFromSession(hydratedSession, undefined, transcriptRequestStates)
             : session.pendingRequestObservedAt ?? null,
     }, options?.nowMs ?? Date.now());
 

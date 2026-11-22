@@ -1,4 +1,5 @@
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import { readScmSnapshotChangedFileCount } from '@/scm/core/snapshotMappers';
 
 export type ScmStatusSummary = {
     branch: string | null;
@@ -24,8 +25,8 @@ export function buildScmStatusSummaryFromSnapshot(snapshot: ScmWorkingSnapshot |
         (snapshot.totals.includedFiles ?? 0)
         + (snapshot.totals.pendingFiles ?? 0)
         + (snapshot.totals.untrackedFiles ?? 0);
-    const entryCount = Array.isArray(snapshot.entries) ? snapshot.entries.length : null;
-    // Prefer the unique entry list when available (avoids double-counting partially-staged files),
+    const entryCount = Array.isArray(snapshot.entries) ? readScmSnapshotChangedFileCount(snapshot) : null;
+    // Prefer the per-path count when available (avoids double-counting partially-staged files),
     // but fall back to totals when the entry list is not present (or temporarily empty).
     const changedFiles = typeof entryCount === 'number' && entryCount > 0 ? entryCount : totalsChangedFiles;
     const hasAnyChanges = changedFiles > 0;

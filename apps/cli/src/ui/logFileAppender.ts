@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, closeSync, fstatSync, ftruncateSync, mkdirSync, openSync, readSync, statSync, writeSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
@@ -22,6 +22,8 @@ export class BufferedFileAppender {
   private readonly flushIntervalMs: number;
   private readonly maxBufferedBytes: number;
   private readonly onWriteError: ((error: unknown) => void) | null;
+  private readonly tailWindowBytes: number | null;
+  private fileBytes: number | null = null;
 
   private pendingLines: string[] = [];
   private pendingBytes = 0;
@@ -34,11 +36,20 @@ export class BufferedFileAppender {
     flushIntervalMs?: number;
     maxBufferedBytes?: number;
     onWriteError?: (error: unknown) => void;
+    /**
+     * Newest bytes the file must keep readable. Once the file reaches twice this, it is
+     * rewritten in place to its newest whole lines within the window, so it stays under 2x the window.
+     * The file must have this appender as its only writer.
+     */
+    tailWindowBytes?: number;
   }) {
     this.filePath = params.filePath;
     this.flushIntervalMs = params.flushIntervalMs ?? DEFAULT_LOG_FLUSH_INTERVAL_MS;
     this.maxBufferedBytes = params.maxBufferedBytes ?? DEFAULT_LOG_MAX_BUFFERED_BYTES;
     this.onWriteError = params.onWriteError ?? null;
+    this.tailWindowBytes = params.tailWindowBytes !== undefined && params.tailWindowBytes > 0
+      ? Math.floor(params.tailWindowBytes)
+      : null;
   }
 
   append(line: string): void {
@@ -68,6 +79,8 @@ export class BufferedFileAppender {
       const retried = this.retrySyncAfterEnoent(error, chunk);
       if (!retried) this.reportWriteError(error);
     }
+    // A synchronous drain may race an in-flight async append; trimming waits for the next async flush.
+    this.noteAppended(chunk);
   }
 
   private scheduleFlush(): void {
@@ -120,9 +133,55 @@ export class BufferedFileAppender {
           const retried = await this.retryAsyncAfterEnoent(error, chunk);
           if (!retried) this.reportWriteError(error);
         }
+        // No other write of this appender is pending here, so a synchronous trim cannot drop one.
+        if (this.noteAppended(chunk)) this.trimToTailWindow();
       }
     } finally {
       this.flushInFlight = false;
+    }
+  }
+
+  /** Returns true when the file may have reached twice the tail window. */
+  private noteAppended(chunk: string): boolean {
+    if (this.tailWindowBytes === null) return false;
+    if (this.fileBytes === null) {
+      try { this.fileBytes = statSync(this.filePath).size; } catch { this.fileBytes = 0; }
+    } else {
+      this.fileBytes += Buffer.byteLength(chunk);
+    }
+    return this.fileBytes >= this.tailWindowBytes * 2;
+  }
+
+  private trimToTailWindow(): void {
+    const windowBytes = this.tailWindowBytes;
+    if (windowBytes === null) return;
+    let descriptor: number | null = null;
+    try {
+      // In place, never rename/replace: Windows refuses those while another process
+      // (a viewer, a bug-report read) holds the log open; writing and truncating stay allowed.
+      descriptor = openSync(this.filePath, 'r+');
+      const size = fstatSync(descriptor).size;
+      this.fileBytes = size;
+      if (size < windowBytes * 2) return;
+      // Read one byte before the window so a window that starts on a line boundary keeps that line.
+      const buffer = Buffer.allocUnsafe(windowBytes + 1);
+      const bytesRead = readSync(descriptor, buffer, 0, buffer.length, size - buffer.length);
+      const firstNewline = buffer.subarray(0, bytesRead).indexOf(0x0A);
+      const tail = firstNewline >= 0 && firstNewline < bytesRead - 1
+        ? buffer.subarray(firstNewline + 1, bytesRead)
+        : buffer.subarray(1, bytesRead);
+      let written = 0;
+      while (written < tail.length) written += writeSync(descriptor, tail, written, tail.length - written, written);
+      ftruncateSync(descriptor, tail.length);
+      this.fileBytes = tail.length;
+    } catch (error) {
+      // Retry only after another window of writes, not on every flush.
+      if (this.fileBytes !== null) this.fileBytes -= windowBytes;
+      this.reportWriteError(error);
+    } finally {
+      if (descriptor !== null) {
+        try { closeSync(descriptor); } catch { /* already reported or harmless */ }
+      }
     }
   }
 

@@ -7,7 +7,7 @@ import {
     scmPathMatchesScopePath,
     type ScmRemoteMutationReason,
 } from '@happier-dev/protocol';
-import { mapUiSnapshotToRemotePolicySnapshot } from '@/scm/core/snapshotMappers';
+import { mapUiSnapshotToRemotePolicySnapshot, scmSnapshotEntriesAreComplete } from '@/scm/core/snapshotMappers';
 
 export type ScmOperationIntent =
     | 'fetch'
@@ -222,6 +222,11 @@ function hasSelectedPendingChanges(
         .map((value) => value.trim())
         .filter((value) => value.length > 0);
     if (selectedScopes.length === 0) {
+        return null;
+    }
+    // A truncated entry list cannot prove a selected path has no changes: report unknown so the
+    // caller falls back to the full-set totals.
+    if (!scmSnapshotEntriesAreComplete(snapshot)) {
         return null;
     }
 

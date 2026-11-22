@@ -501,9 +501,11 @@ omit a cause, replace an automatic cause with `manual`; removing or disabling
 the active member does the same when it selects a replacement.
 
 With priority strategy and `autoRestorePrimaryWhenReset` enabled, the canonical
-candidate selector can restore an eligible primary from fresh healthy quota
-observed after an automatic limit fallback, even without a provider reset time
-or surviving member failure marker. Explicit manual provenance prevents this
+candidate selector can restore the highest-priority eligible member ahead of
+the active member from fresh healthy quota observed after an automatic limit
+fallback, even while the first member remains exhausted and without a provider
+reset time or surviving member failure marker. Restoration requires headroom
+above the soft-switch threshold. Explicit manual provenance prevents this
 override. Older persisted groups without provenance retain the landed-reset
 proof; missing evidence is not treated as an automatic fallback.
 
@@ -889,6 +891,18 @@ postinstall verifier. SDK 55 already includes this correction, so the 0.3 line
 needs neither predecessor patch nor its source-build overrides.
 
 ### Inline question replies and notification presentation (development)
+
+Android remote action notifications in development use Expo data-only delivery
+when the existing push-token registration advertises the native
+`androidActionPresentationV1` capability. The CLI bounds the actual wire
+payload and preserves the selected category, channel, and request routing data.
+The native Expo presenter attaches the registered actions and applies the
+existing foreground policy. Firebase's automatic display bypasses that
+presenter for standard notification messages delivered in the background.
+This path requires the updated Android binary, relay, and CLI. Registrations
+without the capability continue to receive standard messages. Re-registering
+the same token without the capability clears it, including after an Android
+binary downgrade. iOS and non-action notifications use standard delivery.
 
 The existing structured-question descriptor normalizer projects supported single
 questions into optional `questionAnswerV1` notification data. Static native

@@ -14,7 +14,10 @@ import {
     useInboxActionOperationEntries,
     useUnavailableActionOperationIds,
 } from '@/sync/domains/actionOperations/useActionOperations';
-import type { InboxActionOperationEntry } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import {
+    isActionOperationInFlight,
+    type InboxActionOperationEntry,
+} from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { actionOperationReentry } from '@/sync/domains/actionOperations/actionOperationReentry';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
@@ -83,7 +86,7 @@ export function useActionOperationActivityModel(): ActionOperationActivityModel 
     const activeCount = React.useMemo(
         () => operations.reduce(
             (count, operation) => count + (
-                (operation.state === 'accepted' || operation.state === 'running')
+                isActionOperationInFlight(operation)
                 && observations.get(operation.scope.machineId) !== 'status_unavailable'
                 && !unavailableOperationIds.has(operation.operationId)
                     ? 1

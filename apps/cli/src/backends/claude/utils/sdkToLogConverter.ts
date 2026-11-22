@@ -21,6 +21,7 @@ import { readNonBlankOpaqueIdentifier } from '@/utils/opaqueIdentifiers'
 import { createClaudeTaskNotificationToolResultProjector, isClaudeTaskLifecycleResultEnvelope, readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope'
 import { projectClaudePeerMessage } from '../attachments/claudePeerMessageProjection'
 import { embedClaudeToolResultMetadata } from './claudeToolResultMetadata'
+import { isClaudeInternalUserTextMessage } from './readClaudeUserMessageText'
 
 /**
  * Context for converting SDK messages to log format
@@ -136,7 +137,6 @@ export class SDKToLogConverter {
             isSidechain = true;
             sidechainId = (sdkMessage as any).parent_tool_use_id;
             parentUuid = this.sidechainLastUUID.get((sdkMessage as any).parent_tool_use_id) ?? null;
-            this.sidechainLastUUID.set((sdkMessage as any).parent_tool_use_id!, uuid);
         }
         const baseFields = {
             parentUuid: parentUuid,
@@ -151,16 +151,16 @@ export class SDKToLogConverter {
             timestamp
         }
 
-        const peerMessage = projectClaudePeerMessage({ ...sdkMessage, ...baseFields });
-        if (peerMessage) {
-            if (!isSidechain) this.lastMainUuid = uuid;
-            // A linked subagent hand-back becomes its launching tool's result.
-            const projection = this.taskNotificationProjector.project(peerMessage, sidechainId ? { sidechainId } : undefined);
-            return projection ? projection.message : peerMessage;
-        }
-        const taskResult = this.taskNotificationProjector.project({ ...sdkMessage, ...baseFields }, sidechainId ? { sidechainId } : undefined);
+        const nativeRow = { ...sdkMessage, ...baseFields };
+        const peerMessage = projectClaudePeerMessage(nativeRow);
+        // A linked subagent hand-back becomes its launching tool's result.
+        const taskResult = this.taskNotificationProjector.project(peerMessage ?? nativeRow, sidechainId ? { sidechainId } : undefined);
+        const internalUserText = !peerMessage && !taskResult && isClaudeInternalUserTextMessage(sdkMessage);
+        if (sidechainId && !internalUserText) this.sidechainLastUUID.set(sidechainId, uuid);
+        if (peerMessage && !isSidechain) this.lastMainUuid = uuid;
         if (taskResult) return taskResult.message;
-        if (providers.claude.isClaudeInternalEventType(rawType)) return null;
+        if (peerMessage) return peerMessage;
+        if (internalUserText || providers.claude.isClaudeInternalEventType(rawType)) return null;
 
         let logMessage: RawJSONLines | null = null
         let shouldUpdateLastMainUuid = true

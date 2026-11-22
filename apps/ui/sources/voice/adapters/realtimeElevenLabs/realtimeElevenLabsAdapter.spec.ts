@@ -95,13 +95,12 @@ describe('realtime elevenlabs voice adapter', () => {
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
 
-    await adapter.sendTextTurn?.({
+    const dispatch = adapter.prepareTextTurn?.({
       controlSessionId: 'voice-global',
       conversationSessionId: 'carrier-s1',
       text: 'hello',
-      localId: 'voice-local-1',
-      handoffMode: 'interrupt_and_send',
     });
+    await dispatch?.({ localId: 'voice-local-1', handoffMode: 'interrupt_and_send' });
 
     expect(startRealtimeSession).not.toHaveBeenCalled();
     expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
@@ -121,13 +120,12 @@ describe('realtime elevenlabs voice adapter', () => {
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
 
-    await adapter.sendTextTurn?.({
+    const dispatch = adapter.prepareTextTurn?.({
       controlSessionId: 'voice-global',
       conversationSessionId: 'carrier-s1',
       text: 'hello',
-      localId: 'voice-local-2',
-      handoffMode: 'interrupt_and_send',
     });
+    await dispatch?.({ localId: 'voice-local-2', handoffMode: 'interrupt_and_send' });
 
     expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
     expect(appendVoiceConversationUserText).toHaveBeenCalledWith({
@@ -150,13 +148,12 @@ describe('realtime elevenlabs voice adapter', () => {
     const { createRealtimeElevenLabsVoiceAdapter } = await import('./realtimeElevenLabsAdapter');
     const adapter = createRealtimeElevenLabsVoiceAdapter();
 
-    await expect(adapter.sendTextTurn?.({
+    const dispatch = adapter.prepareTextTurn?.({
       controlSessionId: 'voice-global',
       conversationSessionId: 'carrier-s1',
       text: 'hello',
-      localId: 'voice-local-3',
-      handoffMode: 'interrupt_and_send',
-    })).rejects.toThrow('voice_service_unavailable');
+    });
+    await expect(dispatch?.({ localId: 'voice-local-3', handoffMode: 'interrupt_and_send' })).rejects.toThrow('voice_service_unavailable');
 
     expect(startRealtimeSession).toHaveBeenCalledWith('voice-global', undefined, false, { textOnly: true });
     expect(sendTextMessage).not.toHaveBeenCalled();

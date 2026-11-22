@@ -33,7 +33,8 @@ export function classifyLocalRelays(params: Readonly<{
   // CLI's channel.
   if (params.relays.length === 0) return findings;
 
-  const matchingRelay = params.relays.find((r) => r.releaseChannel === params.currentCliReleaseChannel);
+  const matchingRelays = params.relays.filter((r) => r.releaseChannel === params.currentCliReleaseChannel);
+  const matchingRelay = matchingRelays[0];
 
   if (!matchingRelay) {
     const missing: LocalRelayLaneMissing = {
@@ -49,20 +50,22 @@ export function classifyLocalRelays(params: Readonly<{
 
   // Only flag relay-version-stale when the CLI itself is up-to-date. Otherwise
   // we'd recommend a relay update that could outpace the running CLI.
-  if (
-    params.cliIsLatest
-    && matchingRelay.version !== null
-    && params.latestRelayVersionForCurrentChannel !== null
-    && semverLessThan(matchingRelay.version, params.latestRelayVersionForCurrentChannel)
-  ) {
-    const stale: LocalRelayVersionStale = {
-      kind: 'local_relay_version_stale',
-      severity: 'info',
-      autoApplyWithoutPrompt: false,
-      entry: matchingRelay,
-      latestVersion: params.latestRelayVersionForCurrentChannel,
-    };
-    findings.push(stale);
+  for (const relay of matchingRelays) {
+    if (
+      params.cliIsLatest
+      && relay.version !== null
+      && params.latestRelayVersionForCurrentChannel !== null
+      && semverLessThan(relay.version, params.latestRelayVersionForCurrentChannel)
+    ) {
+      const stale: LocalRelayVersionStale = {
+        kind: 'local_relay_version_stale',
+        severity: 'info',
+        autoApplyWithoutPrompt: false,
+        entry: relay,
+        latestVersion: params.latestRelayVersionForCurrentChannel,
+      };
+      findings.push(stale);
+    }
   }
 
   // Off-channel leftovers: the user has the matching-channel relay AND extras

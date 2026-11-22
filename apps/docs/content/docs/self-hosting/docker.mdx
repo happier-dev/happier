@@ -228,6 +228,40 @@ Happier Server supports two presets that share the same API and runtime. A prese
 
 ### Full flavor (recommended for production)
 
+The published `happierdev/relay-server` (also
+`ghcr.io/happier-dev/relay-server`) image defaults to light/SQLite with its bundled
+UI required. Run that same image with Postgres by setting these runtime values:
+
+```dotenv
+HAPPIER_SERVER_FLAVOR=full
+HAPPIER_DB_PROVIDER=postgres
+HAPPIER_SERVER_UI_REQUIRED=0
+HAPPIER_SERVER_UI_DIR=
+SERVER_ROLE=api
+HAPPIER_SOCKET_ADAPTER=redis-streams
+RUN_MIGRATIONS=1
+```
+
+Keep your existing `DATABASE_URL`, `REDIS_URL`, `HANDY_MASTER_SECRET` and file-storage
+configuration. Clearing `HAPPIER_SERVER_UI_DIR` disables the bundled UI when you
+serve the web app separately. For a worker, use the **same pinned image** with
+`SERVER_ROLE=worker` and `RUN_MIGRATIONS=0`; keep the same database, Redis and
+storage settings. A separate worker requires Redis and
+`HAPPIER_SOCKET_ADAPTER=redis-streams` on both services. The API accepts client
+connections on port 3005; the worker does not serve the client API. Run migrations
+on one designated API or through the entrypoint's `--migrate-only` command before
+starting the other replicas. The packaged Postgres migration executable runs
+before normal server startup when `RUN_MIGRATIONS=1`.
+
+Development change, pending publication: the generic `happierdev/webapp`
+and `ghcr.io/happier-dev/webapp` images serve the web app on port 8080.
+Set `HAPPIER_WEBAPP_SERVER_URL=https://your-api.example.com` at container startup
+to select your relay without rebuilding. This public runtime value takes
+precedence over the existing `EXPO_PUBLIC_HAPPIER_SERVER_URL` build argument.
+When unset, existing build-time defaults and server selection remain available.
+Restart the container after changing the value. The same image can therefore
+serve hosted and self-hosted deployments with different runtime URLs.
+
 Use this if you want a production setup: an external database, and optional Redis for multi-replica Socket.IO. By default, full flavor uses S3/Minio for public files, but you can opt into local disk storage with `HAPPIER_FILES_BACKEND=local`.
 
 **You will need:**

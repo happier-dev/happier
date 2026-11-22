@@ -27,6 +27,8 @@ export type PendingMessageQueuedBehindTurnPresentation = Readonly<{
     reason:
         | 'waiting_for_predecessor'
         | 'waiting_for_foreground_turn'
+        /** Asked to join the running turn, but the agent cannot take it mid-turn right now. */
+        | 'steer_unavailable_waiting_for_turn'
         | 'waiting_for_runtime_activity'
         | 'runtime_activity_unknown'
         | 'waiting_for_runtime';
@@ -307,7 +309,9 @@ export function getPendingMessageVisualState(
         || (requestedAction === 'steer_if_active' && foregroundState !== 'active_steerable');
     const waitsForForeground = ordinaryActionWaitsForForeground && foregroundState !== 'ready';
     if (waitsForForeground) {
-        return queuedWait('waiting_for_foreground_turn');
+        return queuedWait(requestedAction === 'steer_if_active' && foregroundState === 'active_unsteerable'
+            ? 'steer_unavailable_waiting_for_turn'
+            : 'waiting_for_foreground_turn');
     }
     if (ordinaryActionWaitsForForeground && sessionRuntime?.deliveryTiming === 'after_runtime_idle') {
         const runtimeActivityState = sessionRuntime.runtimeActivityState ?? 'unknown';

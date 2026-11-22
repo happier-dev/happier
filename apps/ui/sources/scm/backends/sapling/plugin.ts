@@ -1,4 +1,5 @@
 import type { ScmUiBackendPlugin } from '@/scm/registry/scmUiBackendPlugin';
+import { readScmSnapshotChangedFileCount } from '@/scm/core/snapshotMappers';
 import { resolveChangeSetModel, resolveSupportedDiffAreas } from '@/scm/registry/scmUiBackendPlugin';
 import { inferScmRemoteTarget } from '@happier-dev/protocol';
 
@@ -57,7 +58,7 @@ export const saplingScmUiPlugin: ScmUiBackendPlugin = {
     statusSummaryMapper(snapshot) {
         if (!snapshot) return null;
         return {
-            changedFiles: snapshot.entries.length,
+            changedFiles: readScmSnapshotChangedFileCount(snapshot),
             includedFiles: snapshot.totals.includedFiles,
             pendingFiles: snapshot.totals.pendingFiles,
             untrackedFiles: snapshot.totals.untrackedFiles,

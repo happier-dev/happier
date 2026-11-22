@@ -6,6 +6,7 @@ import { computeConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/conne
 
 import type { ConnectedServiceQuotaGaugeLabelFormatter, ConnectedServiceQuotaGaugeViewModel } from '@/sync/domains/connectedServices/connectedServiceQuotaGauge';
 import { renderScreen } from '@/dev/testkit';
+import { t } from '@/text';
 
 import { AgentInputProviderUsageBadge } from './AgentInputProviderUsageBadge';
 
@@ -82,6 +83,31 @@ function viewModel(): ConnectedServiceQuotaGaugeViewModel {
 }
 
 describe('AgentInputProviderUsageBadge', () => {
+    it('ticks only the visible quota details and keeps one timer for two deadlines', async () => {
+        vi.useFakeTimers();
+        vi.setSystemTime(1_700_000_000_000);
+        try {
+            const vm = viewModel();
+            const resetAtMs = Date.now() + 10_000;
+            const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={{
+                ...vm,
+                allMeterRows: [
+                    { ...vm.allMeterRows[0]!, resetAtMs },
+                    { ...vm.allMeterRows[0]!, meterId: 'second', resetAtMs },
+                ],
+            }} />);
+            const closedTimers = vi.getTimerCount();
+            act(() => screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.());
+            const firstLabel = screen.getTextContent();
+            const openTimers = vi.getTimerCount();
+            await act(async () => { vi.advanceTimersByTime(2_000); });
+            expect(screen.getTextContent()).not.toBe(firstLabel);
+            expect(openTimers - closedTimers).toBe(1);
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
     it('keeps unmeasured usage details without drawing a fabricated empty percentage bar', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: { v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
@@ -97,7 +123,7 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter:reached')).toBeTruthy();
         expect(screen.findByTestId('agent-input-provider-usage-meter-bar:reached')).toBeNull();
     });
-    it('renders each selected global window with its own remaining-first ring and accessible name', async () => {
+    it('draws concentric windows with one independently selected center number and accessible names', async () => {
         const vm = computeConnectedServiceQuotaGaugeViewModel({
             snapshot: {
                 v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
@@ -108,22 +134,32 @@ describe('AgentInputProviderUsageBadge', () => {
                         resetsAt: null, status: 'ok', details: { limitCategory: 'usage_limit' } },
                 ],
             },
-            windowMode: 'most_constrained', windowModes: ['weekly', 'daily'], nowMs: 2_000,
+            windowMode: 'most_constrained', windowModes: ['weekly', 'daily'], numberWindowMode: 'daily', nowMs: 2_000,
             formatter: fixtureFormatter,
         });
         if (!vm) throw new Error('Expected a reported quota gauge');
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
 
-        expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('18');
-        expect(screen.findByTestId('agent-input-provider-usage-value:daily')?.props.children).toBe('70');
+        expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('70');
+        expect(screen.findByTestId('agent-input-provider-usage-value:daily')).toBeNull();
         const imageLabels = screen.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'image')
             .map((node) => node.props.accessibilityLabel);
-        expect(imageLabels).toEqual(['Weekly 18% left', 'Daily 70% left']);
+        expect(imageLabels).toHaveLength(1);
+        expect(imageLabels[0]).toContain('Weekly 18% left');
+        expect(imageLabels[0]).toContain('Daily 70% left');
+        const arcs = screen.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
+        expect(arcs).toHaveLength(2);
+        expect(arcs[0].props.cx).toBe(arcs[1].props.cx);
+        expect(arcs[0].props.cy).toBe(arcs[1].props.cy);
+        expect(arcs[0].props.r).toBeGreaterThan(arcs[1].props.r);
+        for (const [index, remainingFraction] of [0.18, 0.70].entries()) {
+            const circumference = 2 * Math.PI * arcs[index].props.r;
+            expect(1 - arcs[index].props.strokeDashoffset / circumference).toBeCloseTo(remainingFraction);
+        }
         const aggregate = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
         expect(aggregate).toContain('Weekly 18% left');
         expect(aggregate).toContain('Daily 70% left');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label')?.props.children).toBe('Weekly');
-        expect(screen.findByTestId('agent-input-provider-usage-meter-label:daily')?.props.children).toBe('Daily');
+        expect(screen.findByTestId('agent-input-provider-usage-meter-label')).toBeNull();
         act(() => { screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.(); });
         expect(screen.findByTestId('agent-input-provider-usage-meter:daily')).toBeTruthy();
     });
@@ -138,13 +174,34 @@ describe('AgentInputProviderUsageBadge', () => {
         expect(screen.findByTestId('agent-input-provider-usage-meter-label')).toBeTruthy();
     });
 
-    it('announces the default single ring by the remaining percent it shows', async () => {
-        const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={viewModel()} />);
+    it.each([0, 34, 100])('fills and announces the single ring by its %i percent remaining', async (remainingPct) => {
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: {
+                v: 1, serviceId: 'openai-codex', profileId: 'work', fetchedAt: 1_000, staleAfterMs: 60_000,
+                planLabel: null, accountLabel: null,
+                meters: [{
+                    meterId: 'five_hour', label: '5-hour', used: 100 - remainingPct, limit: 100,
+                    unit: 'count', utilizationPct: null, resetsAt: null, status: 'ok', details: {},
+                }],
+            },
+            windowMode: 'most_constrained', nowMs: 2_000, formatter: fixtureFormatter,
+        });
+        if (!vm) throw new Error('Expected a measured quota gauge');
+        const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={vm} />);
 
-        expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe('18');
+        const expectRemainingFill = () => {
+            const arcs = screen.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
+            expect(arcs).toHaveLength(1);
+            const circumference = 2 * Math.PI * arcs[0].props.r;
+            expect(1 - arcs[0].props.strokeDashoffset / circumference).toBeCloseTo(remainingPct / 100);
+            expect(screen.findByTestId('agent-input-provider-usage-value')?.props.children).toBe(String(remainingPct));
+        };
+        expectRemainingFill();
         const label = String(screen.findByTestId('agent-input-provider-usage-badge')?.props.accessibilityLabel);
-        expect(label).toContain('18% left');
+        expect(label).toContain(`${remainingPct}% left`);
         expect(label).not.toContain('used');
+        await screen.update(<AgentInputProviderUsageBadge viewModel={{ ...vm, usageRings: [] }} />);
+        expectRemainingFill();
     });
 
     it('keeps subscription details live while the usage popover remains open', async () => {
@@ -153,8 +210,7 @@ describe('AgentInputProviderUsageBadge', () => {
             subscription: {
                 summary: 'Renews 15 September',
                 period: '15 August – 15 September',
-                renewal: 'on' as const,
-                renewalLabel: 'On',
+                status: 'renewing' as const,
                 checkedLabel: 'Checked 1 minute ago',
                 notice: null,
                 accessUntilLabel: null,
@@ -163,12 +219,18 @@ describe('AgentInputProviderUsageBadge', () => {
         };
         const screen = await renderScreen(<AgentInputProviderUsageBadge viewModel={firstViewModel} />);
         act(() => screen.findByTestId('agent-input-provider-usage-badge')?.props.onPress?.());
-        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toContain('On');
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.renewalOn'));
         await screen.update(<AgentInputProviderUsageBadge viewModel={{
             ...firstViewModel,
-            subscription: { ...firstViewModel.subscription, renewal: 'off', renewalLabel: 'Off', summary: 'Ends 15 September' },
+            subscription: { ...firstViewModel.subscription, status: 'ending', summary: 'Ends 15 September' },
         }} />);
-        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toContain('Off');
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.renewalOff'));
+        await screen.update(<AgentInputProviderUsageBadge viewModel={{
+            ...firstViewModel,
+            subscription: { ...firstViewModel.subscription, status: 'active', summary: null, period: null },
+        }} />);
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:renewal')?.props.children).toBe(t('connectedServices.subscription.active'));
+        expect(screen.findByTestId('agent-input-provider-usage-subscription:summary')).toBeNull();
         await screen.update(<AgentInputProviderUsageBadge viewModel={viewModel()} />);
         expect(screen.findByTestId('agent-input-provider-usage-subscription')).toBeNull();
     });
@@ -179,8 +241,7 @@ describe('AgentInputProviderUsageBadge', () => {
             subscription: {
                 summary: 'Ends 15 September',
                 period: null,
-                renewal: 'off' as const,
-                renewalLabel: 'Off',
+                status: 'ending' as const,
                 checkedLabel: 'Checked 1 minute ago',
                 notice: null,
                 accessUntilLabel: null,

@@ -1,13 +1,15 @@
 import axios, { AxiosError } from 'axios';
 import { randomBytes } from 'node:crypto';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { vi } from 'vitest';
-import { buildConnectedServiceCredentialRecord, type SessionTurnMutationV1, type SessionContinuationRecoveryIdentityV1, type ConnectedServiceAuthGroupV1, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, SessionTurnMutationV1Schema, type SessionTurnMutationV1, type SessionContinuationRecoveryIdentityV1, type ConnectedServiceAuthGroupV1, type ConnectedServiceBindingsV1 } from '@happier-dev/protocol';
 import type { TrackedSession } from '@/daemon/types';
 import { configuration } from '@/configuration';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
+import { createSessionMutationOutbox } from '@/api/session/mutations/createSessionMutationOutbox';
+import { createApiSessionSocketStub } from '@/testkit/backends/apiSessionSocketHarness';
 import { captureClaudeRuntimeAuthRequestIdentity, surfaceClaudeRateLimitRuntimeIssue } from '@/backends/claude/connectedServices/surfaceClaudeRuntimeIssues';
 import { createRuntimeAuthFailureReportIntake, type RuntimeAuthFailureReportBody } from '@/daemon/controlServer';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '../connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
@@ -68,6 +70,7 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
   newerTurnBeforeAdmission?: boolean;
   enrichedSecondProducer?: boolean;
   deferFailureProjection?: boolean;
+  deferTurnDelivery?: boolean;
 }> = {}) {
   const root = await mkdtemp(join(tmpdir(), 'happier-pool-recovery-'));
   const now = () => Date.now();
@@ -334,9 +337,42 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
     if (input.deferFailureProjection && mutation.action === 'fail') pendingProjections.push(apply);
     else apply();
   };
+  let turnDeliveryReleased = !input.deferTurnDelivery;
+  const turnOutboxes = new Map<string, ReturnType<typeof createSessionMutationOutbox>>();
+  const enqueueTurn = async (mutation: SessionTurnMutationV1) => {
+    let outbox = turnOutboxes.get(mutation.sessionId);
+    if (!outbox) {
+      // Only the server transport/projection is synthetic. Schema admission,
+      // durable custody, ordering and delivery use the production outbox.
+      const socket = createApiSessionSocketStub({
+        connected: true,
+        emitWithAck: async (event, payload) => {
+          if (event !== 'session-turn-mutation') throw new Error(`Unexpected turn transport event: ${event}`);
+          await projectTurn(SessionTurnMutationV1Schema.parse(payload));
+          return { ok: true };
+        },
+      });
+      outbox = createSessionMutationOutbox({
+        token: credentials.token, sessionId: mutation.sessionId,
+        getSocket: () => { socket.connected = turnDeliveryReleased; return socket; },
+        requestReconnect: () => {},
+      });
+      turnOutboxes.set(mutation.sessionId, outbox);
+    }
+    await outbox.enqueueSessionTurn(mutation);
+  };
+  async function readSessionJournalEntries(key: 'mutations' | 'entries') {
+    const suffix = key === 'entries' ? '.dead-letter' : '';
+    try {
+      return JSON.parse(await readFile(join(root, 'session-mutations', `session-${firstId}${suffix}.json`), 'utf8'))[key] as unknown[];
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw error;
+    }
+  }
   const makeProducer = () => {
     const lifecycle = createSessionTurnLifecycle({ sessionId: firstId, now,
-      createId: () => `failed-turn-${firstId}`, enqueueSessionTurn: projectTurn });
+      createId: () => `failed-turn-${firstId}`, enqueueSessionTurn: enqueueTurn });
     const session = { client: { sessionId: firstId, sessionTurnLifecycle: lifecycle } };
     return { lifecycle, session };
   };
@@ -348,7 +384,7 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
   const details = (resetAtMs: number | null) => ({ v: 1 as const, resetAtMs, retryAfterMs: null,
     limitCategory: 'usage_limit' as const, quotaScope: 'account' as const, recoverability: 'wait' as const,
     planType: null, utilization: null, overage: null, action: null, connectedService: null,
-    providerLimitId: input.window ?? 'five_hour' });
+    providerLimitId: input.window ?? 'five_hour', providerObservedAtMs: now() });
   return {
     sessions, applied, prompts, providerRequests, providerCompletions, diagnostics, results, registry,
     reports, turnMutations, rawSessions, continuationIdentities,
@@ -385,9 +421,20 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
         await Promise.all([first, second]);
         observer.lifecycle.dispose();
       } else await surfaceClaudeRateLimitRuntimeIssue(producer.session, details(failureReset), '[synthetic provider]');
+      // The producer intentionally reports recovery without awaiting its terminal
+      // write; drain that real outbox before exposing the observed fixture state.
+      for (const outbox of turnOutboxes.values()) await outbox.flush('flush');
       return reports.at(-1);
     },
     releaseFailureProjection() { for (const apply of pendingProjections.splice(0)) apply(); },
+    async sessionMutations() {
+      return await readSessionJournalEntries('mutations') as Array<{ payload: SessionTurnMutationV1 }>;
+    },
+    async sessionDeadLetters() { return await readSessionJournalEntries('entries'); },
+    async releaseTurnDelivery() {
+      turnDeliveryReleased = true;
+      for (const outbox of turnOutboxes.values()) await outbox.flush('connect');
+    },
     async rehydrateScheduler() { scheduler.dispose(); const next = makeScheduler(); scheduler = next.scheduler; intake = makeIntake(); scheduler.hydrate(); return next.hydratedIntents; },
     async proveProviderActivity(proofInput?: Readonly<{ staleAttempt?: boolean }>) {
       // The provider boundary returns the identity frozen when its continuation
@@ -396,7 +443,7 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
         const recoveryIdentity = proofInput?.staleAttempt
           ? { ...acceptedIdentity, failureFingerprint: 'runtime-auth-attempt:stale-provider-output' } : acceptedIdentity;
         const proofWrites: Promise<void>[] = [];
-        const resumed = createSessionTurnLifecycle({ sessionId, now, enqueueSessionTurn: projectTurn,
+        const resumed = createSessionTurnLifecycle({ sessionId, now, enqueueSessionTurn: enqueueTurn,
           onTurnLifecycleEvent: (event, terminalStatus) => {
             if (!isProviderActivityTurnLifecycleEvent(event, terminalStatus)) return;
             providerCompletions.push({ sessionId, recoveryIdentity });
@@ -414,6 +461,7 @@ export async function createConnectedServicePoolRecoveryFixture(input: Readonly<
     async outboxItems() { return readRuntimeAuthFailureReportOutboxItems(); },
     async dispose() {
       producer.lifecycle.dispose(); scheduler.dispose(); quotas.dispose(); storm.dispose();
+      for (const outbox of turnOutboxes.values()) await outbox.close();
       resetRuntimeAuthFailureReportOutboxDrainSchedulerForTests();
       controlTransport.report = null; axios.defaults.adapter = originalAdapter;
       Object.defineProperty(configuration, 'activeServerDir', serverDir); vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true });

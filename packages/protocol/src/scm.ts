@@ -209,6 +209,13 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
   pullRequest: ScmPullRequestSummarySchema.nullable().optional(),
   hasConflicts: z.boolean(),
   entries: z.array(ScmWorkingEntrySchema),
+  /**
+   * Entry-list delivery fact. Absent = `'complete'` (every entry is shipped, as from daemons
+   * that predate this field). `'truncated'` = the entries are a whole-entry prefix of the full
+   * set because the whole reply would otherwise exceed the RPC reply ceiling. Orthogonal to
+   * `totals.isComplete`, which tracks line-stat completeness.
+   */
+  entriesPresentation: z.enum(['complete', 'truncated']).optional(),
   totals: z.object({
     includedFiles: z.number().int().nonnegative(),
     pendingFiles: z.number().int().nonnegative(),
@@ -218,6 +225,11 @@ export const ScmWorkingSnapshotSchema = lazySchema(() => z.object({
     pendingAdded: z.number().int().nonnegative(),
     pendingRemoved: z.number().int().nonnegative(),
     isComplete: z.boolean().optional(),
+    /**
+     * Changed-file count of the full working set (one per path), taken before the entry list
+     * is truncated. Absent from daemons that predate it, which always ship every entry.
+     */
+    changedFiles: z.number().int().nonnegative().optional(),
   }),
 }));
 export type ScmWorkingSnapshot = z.infer<typeof ScmWorkingSnapshotSchema>;

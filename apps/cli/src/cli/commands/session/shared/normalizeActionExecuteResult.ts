@@ -29,6 +29,7 @@ export function normalizeActionExecuteResult(result: ActionExecuteResult): Norma
       ok: false,
       errorCode: result.errorCode,
       ...(result.error ? { errorMessage: result.error } : {}),
+      ...(result.candidates?.length ? { candidates: result.candidates } : {}),
       ...(result.details !== undefined ? { details: result.details } : {}),
     };
   }

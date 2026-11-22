@@ -37,6 +37,7 @@ import {
 } from './placement/sessionListPlacementProjection';
 import { didSessionListWorkingRetentionInputsChange } from './placement/sessionListWorkingRetention';
 import { reconcileSessionSnapshot } from '../sessionLifecycleProjection';
+import { getSessionStorageKind } from '../sessionStorageKind';
 import {
     deriveSessionRuntimePresentationState,
     resolveSessionRuntimePresenceFields,
@@ -54,6 +55,7 @@ export interface SessionListRenderableMetadata {
     sessionRepositoryV1?: SessionRepositoryV1 | null;
     /** Canonical Agent identity resolved before discarding full metadata evidence. */
     flavor?: string | null;
+    directTranscriptPendingV1?: true;
     directSessionV1?: {
         v: 1;
         providerId?: string;
@@ -283,6 +285,7 @@ export function buildSessionListRenderableMetadata(metadata: Metadata | null | u
         machineId: typeof metadata.machineId === 'string' ? metadata.machineId : null,
         sessionRepositoryV1: readSessionRepositoryV1FromMetadata(metadata),
         flavor: resolveAgentIdFromSessionMetadata(metadata),
+        ...(metadata.directTranscriptPendingV1 === true ? { directTranscriptPendingV1: true } : {}),
         directSessionV1,
         readStateV1,
         agentActivityCounts: deriveAgentActivityCounts(agentActivityEntries.map(toAgentActivityCountable)),
@@ -503,10 +506,11 @@ export function preserveSessionListRenderableStaleFields(
         && previous?.metadata == null
         && previous?.metadataUnavailable === true;
     const preserveDirectSessionClassification =
-        previous?.metadata?.directSessionV1 != null
+        previous?.metadata != null
         && next.metadata != null
-        && next.metadata.directSessionV1 == null
-        && previous.metadataVersion === next.metadataVersion;
+        && previous.metadataVersion === next.metadataVersion
+        && getSessionStorageKind(previous) === 'direct'
+        && getSessionStorageKind(next) === 'persisted';
 
     if (
         previous == null
@@ -520,6 +524,7 @@ export function preserveSessionListRenderableStaleFields(
         : preserveDirectSessionClassification
             ? {
                 ...(next.metadata as SessionListRenderableMetadata),
+                directTranscriptPendingV1: previous.metadata?.directTranscriptPendingV1,
                 directSessionV1: previous.metadata?.directSessionV1 ?? null,
             }
             : next.metadata;
@@ -557,6 +562,7 @@ function areSessionListRenderableMetadataEqual(
         && (previous.machineId ?? null) === (next.machineId ?? null)
         && areSessionRepositoriesEqual(previous.sessionRepositoryV1, next.sessionRepositoryV1)
         && (previous.flavor ?? null) === (next.flavor ?? null)
+        && previous.directTranscriptPendingV1 === next.directTranscriptPendingV1
         && (previous.directSessionV1?.v ?? null) === (next.directSessionV1?.v ?? null)
         && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null)
         && (previous.readStateV1?.v ?? null) === (next.readStateV1?.v ?? null)
@@ -798,6 +804,7 @@ function areSessionListRenderableEmbeddedRowMetadataEqual(
         && (previous.machineId ?? null) === (next.machineId ?? null)
         && areSessionRepositoriesEqual(previous.sessionRepositoryV1, next.sessionRepositoryV1)
         && (previous.flavor ?? null) === (next.flavor ?? null)
+        && previous.directTranscriptPendingV1 === next.directTranscriptPendingV1
         && (previous.directSessionV1?.v ?? null) === (next.directSessionV1?.v ?? null)
         && (previous.directSessionV1?.providerId ?? null) === (next.directSessionV1?.providerId ?? null)
         && (previous.readStateV1?.v ?? null) === (next.readStateV1?.v ?? null)
@@ -966,6 +973,7 @@ export function didSessionListRenderableWarmCacheFieldsChange(
     if ((prevMeta?.machineId ?? null) !== (nextMeta?.machineId ?? null)) return true;
     if ((prevMeta?.flavor ?? null) !== (nextMeta?.flavor ?? null)) return true;
     if ((prevMeta?.hiddenSystemSession === true) !== (nextMeta?.hiddenSystemSession === true)) return true;
+    if (prevMeta?.directTranscriptPendingV1 !== nextMeta?.directTranscriptPendingV1) return true;
     if ((prevMeta?.directSessionV1?.v ?? null) !== (nextMeta?.directSessionV1?.v ?? null)) return true;
     if ((prevMeta?.directSessionV1?.providerId ?? null) !== (nextMeta?.directSessionV1?.providerId ?? null)) return true;
 

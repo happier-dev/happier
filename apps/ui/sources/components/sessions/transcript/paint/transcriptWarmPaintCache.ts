@@ -19,7 +19,7 @@ const TRANSCRIPT_WARM_PAINT_CACHE_GLOBAL_KEY = '__HAPPIER_TRANSCRIPT_WARM_PAINT_
  * sessions being swiped between, and each eviction costs a full first-paint placeholder on the
  * next visit. Hundreds of records are still a few tens of kilobytes.
  */
-const TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS = 256;
+export const TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS = 256;
 
 /**
  * Staleness is decided by the CONTENT check below, not by age: a record that no longer describes

@@ -21,6 +21,7 @@ import {
 
 import {
     isUnchangedSessionDropResult,
+    writeOverlayGeometry,
     type UseSessionInlineDragCancelEvent,
     type UseSessionInlineDragDropResultEvent,
     type UseSessionInlineDragResolveDropResultEvent,
@@ -207,6 +208,21 @@ export function useSessionListRowInteractions({
     // The active drag snapshot is held in a ref for the hot resolve path so the
     // resolver never depends on React state timing.
     const activeDragSnapshotRef = React.useRef<SessionListDragSnapshot | null>(null);
+    type GeometryRefresh = {
+        snapshot: SessionListDragSnapshot;
+        running: boolean;
+        pending: boolean;
+        includeSource: boolean;
+    };
+    const geometryRefreshRef = React.useRef<GeometryRefresh | null>(null);
+    const lastResolvedEventRef = React.useRef<UseSessionInlineDragResolveDropResultEvent | null>(null);
+    // Measurement replies and scroll events must use the latest resolver, just
+    // as pointer events do, without introducing list-wide React state.
+    const refreshDropOverlayRef = React.useRef<() => void>(() => {});
+    React.useEffect(() => () => {
+        activeDragSnapshotRef.current = null;
+        lastResolvedEventRef.current = null;
+    }, []);
 
     // Lane A's live content-coordinate geometry registry. Rows register content
     // bounds on layout; the resolver queries it live every pointer frame.
@@ -284,6 +300,7 @@ export function useSessionListRowInteractions({
 
     const clearDragState = React.useCallback(() => {
         activeDragSnapshotRef.current = null;
+        lastResolvedEventRef.current = null;
         setActiveDragSnapshot(null);
         setDraggingSessionKey(null);
         autoscrollActive.value = false;
@@ -310,29 +327,79 @@ export function useSessionListRowInteractions({
      * stored refs at drag start. This keeps the idle layout path free of any
      * tree build.
      */
-    const registerRowContentGeometry = React.useCallback((rowId: string, ref: TreeDropMeasurableRef | null) => {
+    const registerRowContentGeometry = React.useCallback(async (rowId: string, ref: TreeDropMeasurableRef | null) => {
         if (!ref) return;
         const snapshot = activeDragSnapshotRef.current;
         if (!snapshot) return;
-        const topologyRow = snapshot.topology.rows.find((row) => row.rowId === rowId);
+        const topologyRow = snapshot.topology.rowsById.get(rowId);
         if (!topologyRow) return;
-        void measureWindowBounds(ref).then((windowBounds) => {
-            if (!windowBounds) return;
-            const contentBounds = windowBoundsToContentBounds(windowBounds, readViewportMetrics());
-            if (!contentBounds) return;
-            // Resolve against the snapshot still active when measurement landed.
-            if (activeDragSnapshotRef.current !== snapshot) return;
-            const row: TreeContentRow = {
-                id: topologyRow.rowId,
-                parentId: topologyRow.parentRowId,
-                containerId: topologyRow.containerId,
-                depth: topologyRow.depth,
-                kind: topologyRow.kind === 'leaf' ? 'leaf' : 'container',
-                bounds: contentBounds,
-            };
-            dropGeometryRegistry.registerRow(row);
-        });
+        const windowBounds = await measureWindowBounds(ref);
+        if (!windowBounds) return;
+        const contentBounds = windowBoundsToContentBounds(windowBounds, readViewportMetrics());
+        if (!contentBounds) return;
+        // Resolve against the snapshot still active when measurement landed.
+        if (activeDragSnapshotRef.current !== snapshot) return;
+        if (measuredRowRefsRef.current.get(rowId) !== ref) return;
+        const row: TreeContentRow = {
+            id: topologyRow.rowId,
+            parentId: topologyRow.parentRowId,
+            containerId: topologyRow.containerId,
+            depth: topologyRow.depth,
+            kind: topologyRow.kind === 'leaf' ? 'leaf' : 'container',
+            bounds: contentBounds,
+        };
+        dropGeometryRegistry.registerRow(row);
     }, [dropGeometryRegistry, readViewportMetrics]);
+
+    // Re-measure every registered row's content geometry. A resized row can
+    // move its same-sized siblings without giving those siblings onLayout.
+    const remeasureAllRegisteredRows = React.useCallback(async (includeSource = false) => {
+        const snapshot = activeDragSnapshotRef.current;
+        if (!snapshot) return;
+        // The lifted source follows the pointer. Its initial bounds describe
+        // its slot in the frozen list; remeasuring its transform would make it
+        // cover the stationary targets we are trying to hit.
+        const rows = Array.from(measuredRowRefsRef.current).filter(([rowId]) => includeSource || rowId !== snapshot.source.sourceRowId);
+        await Promise.all(rows.map(([rowId, ref]) => registerRowContentGeometry(rowId, ref)));
+        if (activeDragSnapshotRef.current === snapshot) refreshDropOverlayRef.current();
+    }, [registerRowContentGeometry]);
+
+    // One re-measure pass runs at a time per drag. Notifications that arrive
+    // while it measures (native measurement is async; autoscroll recycles cells
+    // every few frames) collapse into a single trailing pass.
+    const runGeometryRefresh = React.useCallback(async (state: GeometryRefresh) => {
+        if (geometryRefreshRef.current !== state || activeDragSnapshotRef.current !== state.snapshot) return;
+        state.pending = false;
+        state.running = true;
+        const includeSource = state.includeSource;
+        state.includeSource = false;
+        try {
+            await remeasureAllRegisteredRows(includeSource);
+        } finally {
+            state.running = false;
+        }
+        if (state.pending && geometryRefreshRef.current === state && activeDragSnapshotRef.current === state.snapshot) {
+            queueMicrotask(() => void runGeometryRefresh(state));
+        }
+    }, [remeasureAllRegisteredRows]);
+    const scheduleGeometryRefresh = React.useCallback((includeSource = false) => {
+        const snapshot = activeDragSnapshotRef.current;
+        if (!snapshot) return;
+        // Each frozen snapshot owns its queue, including its initial pass.
+        // Pending work from an ended drag cannot reserve the next drag's slot.
+        if (geometryRefreshRef.current?.snapshot !== snapshot) {
+            geometryRefreshRef.current = { snapshot, running: false, pending: false, includeSource: false };
+        }
+        const state = geometryRefreshRef.current;
+        state.includeSource ||= includeSource;
+        if (state.pending) return;
+        state.pending = true;
+        // A pass for this drag is measuring; it schedules the trailing pass.
+        // A pass left over from an earlier drag never holds this one.
+        if (state.running) return;
+        // Coalesce the layout/ref notifications from a single React commit.
+        queueMicrotask(() => void runGeometryRefresh(state));
+    }, [runGeometryRefresh]);
 
     const registerTreeRowBounds = React.useCallback<RegisterSessionListTreeRowBounds>((rowId, ref) => {
         if (ref) {
@@ -340,21 +407,14 @@ export function useSessionListRowInteractions({
         } else {
             measuredRowRefsRef.current.delete(rowId);
         }
-        registerRowContentGeometry(rowId, ref);
-    }, [registerRowContentGeometry]);
+        scheduleGeometryRefresh();
+    }, [scheduleGeometryRefresh]);
 
     const unregisterTreeRowBounds = React.useCallback<UnregisterSessionListTreeRowBounds>((rowId) => {
         measuredRowRefsRef.current.delete(rowId);
         dropGeometryRegistry.unregisterRow(rowId);
-    }, [dropGeometryRegistry]);
-
-    // Re-measure every registered row's content geometry. Called at drag start
-    // so the frozen-surface registry has fresh, scroll-stable bounds.
-    const remeasureAllRegisteredRows = React.useCallback(() => {
-        for (const [rowId, ref] of measuredRowRefsRef.current) {
-            registerRowContentGeometry(rowId, ref);
-        }
-    }, [registerRowContentGeometry]);
+        scheduleGeometryRefresh();
+    }, [dropGeometryRegistry, scheduleGeometryRefresh]);
 
     const handleTreeScroll = React.useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
         const nextOffsetY = event.nativeEvent.contentOffset?.y;
@@ -363,12 +423,14 @@ export function useSessionListRowInteractions({
         // stable for the frozen surface. Only the live scroll offset is tracked.
         scrollOffsetYRef.current = nextOffsetY;
         autoscrollScrollOffsetY.value = nextOffsetY;
+        refreshDropOverlayRef.current();
     }, [autoscrollScrollOffsetY]);
 
     const handleTreeContentSizeChange = React.useCallback((_width: number, height: number) => {
         if (typeof height !== 'number' || !Number.isFinite(height)) return;
         autoscrollContentHeight.value = Math.max(0, height);
-    }, [autoscrollContentHeight]);
+        scheduleGeometryRefresh();
+    }, [autoscrollContentHeight, scheduleGeometryRefresh]);
 
     const handleTreeListLayout = React.useCallback((event: Readonly<{
         nativeEvent?: { layout?: { y?: number; height?: number } };
@@ -379,7 +441,8 @@ export function useSessionListRowInteractions({
             viewportHeightRef.current = Math.max(0, height);
             autoscrollViewportHeight.value = Math.max(0, height);
         }
-    }, [autoscrollViewportHeight]);
+        scheduleGeometryRefresh();
+    }, [autoscrollViewportHeight, scheduleGeometryRefresh]);
 
     const handleTreeViewportMeasure = React.useCallback((ref: TreeDropMeasurableRef | null) => {
         void measureWindowBounds(ref).then((bounds) => {
@@ -389,8 +452,9 @@ export function useSessionListRowInteractions({
             viewportHeightRef.current = bounds.height;
             autoscrollViewportTopY.value = bounds.y;
             autoscrollViewportHeight.value = bounds.height;
+            scheduleGeometryRefresh();
         });
-    }, [autoscrollViewportHeight, autoscrollViewportTopY]);
+    }, [autoscrollViewportHeight, autoscrollViewportTopY, scheduleGeometryRefresh]);
 
     // ----- Folder assignment persistence ------------------------------------
 
@@ -448,6 +512,7 @@ export function useSessionListRowInteractions({
     const resolveDropResult = React.useCallback((
         event: UseSessionInlineDragResolveDropResultEvent,
     ): UseSessionInlineDragResolvedDrop => {
+        lastResolvedEventRef.current = event;
         const snapshot = activeDragSnapshotRef.current;
         autoscrollPointerY.value = event.pointer?.y ?? null;
         if (!snapshot) return IDLE_RESOLVED_DROP;
@@ -471,6 +536,12 @@ export function useSessionListRowInteractions({
             return IDLE_RESOLVED_DROP;
         }
     }, [autoscrollPointerY, dropGeometryRegistry, readViewportMetrics]);
+
+    refreshDropOverlayRef.current = () => {
+        const event = lastResolvedEventRef.current;
+        if (!activeDragSnapshotRef.current || !event?.pointer) return;
+        writeOverlayGeometry(dropOverlayShared, resolveDropResult(event).geometry);
+    };
 
     // ----- Pointer drag: commit the stable intent onto latest live state ----
 
@@ -613,6 +684,7 @@ export function useSessionListRowInteractions({
 
     const handleDragStart = React.useCallback((sessionKey: string) => {
         setNativeContextMenuSessionKey(null);
+        lastResolvedEventRef.current = null;
         // Freeze the visible surface: build the snapshot once at drag start from
         // the latest index + visible items. Tree topology only, no pixel
         // geometry — geometry stays live in the registry.
@@ -628,10 +700,10 @@ export function useSessionListRowInteractions({
         setDraggingSessionKey(sessionKey);
         // Re-measure every mounted row so the registry has fresh, scroll-stable
         // content bounds for the frozen surface.
-        remeasureAllRegisteredRows();
+        scheduleGeometryRefresh(true);
         autoscrollActive.value = true;
         autoscrollPointerY.value = null;
-    }, [autoscrollActive, autoscrollPointerY, folderActionsEnabled, folderSortMode, listItemsRef, remeasureAllRegisteredRows, sessionListIndexRef]);
+    }, [autoscrollActive, autoscrollPointerY, folderActionsEnabled, folderSortMode, listItemsRef, scheduleGeometryRefresh, sessionListIndexRef]);
 
     return {
         activeDragSnapshot,

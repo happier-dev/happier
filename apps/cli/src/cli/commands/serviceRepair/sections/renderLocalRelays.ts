@@ -1,5 +1,6 @@
 import { formatReleaseChannel } from '@/ui/format/releaseChannel';
 import { cleanRelayRuntimeVersion, code, glyph, sectionHeader, severity } from '@/ui/format/styles';
+import { localRelayUpdateArgs } from '../localRelayUpdateArgs';
 import type {
   LocalRelayEntry,
   RepairFinding,
@@ -53,7 +54,7 @@ function cardFor(entry: LocalRelayEntry, findings: readonly RepairFinding[], inv
   const stale = hit.find((f) => f.kind === 'local_relay_version_stale');
   if (stale && stale.kind === 'local_relay_version_stale') {
     const latest = cleanRelayRuntimeVersion(stale.latestVersion);
-    card.push(`    ${glyph.arrow()} ${severity.info(`version ${version} behind latest ${latest}`)} · ${code(`${invoker} relay host install`)}`);
+    card.push(`    ${glyph.arrow()} ${severity.info(`version ${version} behind latest ${latest}`)} · ${code(`${invoker} ${localRelayUpdateArgs(entry).join(' ')}`)}`);
   }
   const missing = hit.find((f) => f.kind === 'local_relay_lane_missing');
   if (missing && missing.kind === 'local_relay_lane_missing') {

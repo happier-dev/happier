@@ -781,6 +781,7 @@ export const zhHans: TranslationStructure = {
     details: "详情",
     fieldStatus: "状态",
     fieldAction: "动作",
+    fieldFailureReason: "失败原因",
     approve: "批准",
     reject: "拒绝",
     loadError: "加载审批失败。",
@@ -1253,6 +1254,7 @@ export const zhHans: TranslationStructure = {
     send: "发送",
     attach: "附加",
     addImage: "添加图片",
+    takePhoto: "拍照",
     addFile: "添加文件",
     linkFile: "链接文件",
     files: "文件",
@@ -2639,6 +2641,7 @@ export const zhHans: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} 已用`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
         now: "现在",
         outdated: "已过期",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3227,6 +3230,8 @@ export const zhHans: TranslationStructure = {
         `已跳过 ${count} 个超过最大附件大小的文件。`,
       noClipboardImageTitle: "剪贴板中没有图片",
       noClipboardImageBody: "请先复制图片，然后将其粘贴为附件。",
+      cameraPermissionDeniedTitle: "需要相机权限",
+      cameraPermissionDeniedBody: "请在设备设置中允许访问相机以拍照。",
     },
   },
 
@@ -3506,7 +3511,7 @@ export const zhHans: TranslationStructure = {
     trayOpenInHappier: '在 Happier 中打开',
     traySettings: '设置…',
     trayStartAtLogin: '登录时启动',
-    trayStopAndQuit: '停止后台服务并退出',
+    trayStopAndQuit: '退出 Happier（停止后台服务）',
     trayStart: '启动',
     trayRestart: '重新启动',
     trayStop: '停止',
@@ -5295,8 +5300,8 @@ export const zhHans: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `第${attempt}次`,
       title: "已达到使用限制",
       readyTitle: "使用限制已重置",
-      resetBody: ({ time }: { time: string }) =>
-        `此提供方要求会话等到 ${time} 后再继续。`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `此提供方要求会话等到 ${time}${duration ? ` (${duration})` : ''} 后再继续。`,
       genericBody: "此提供方要求会话等待后再继续。",
       stoppedBody: "自动恢复已停止，不会自行重试。请在下方重试。",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -5881,6 +5886,7 @@ export const zhHans: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: '正在等待运行时活动结束',
 	        runtimeActivityUnknownNotice: '正在等待运行时活动状态',
 	        waitingForRuntimeNotice: '正在等待运行时重新连接',
+	        steerUnavailableWaitingForTurnNotice: '暂时无法加入本轮 · 结束后发送',
 	        nonSteerableNotice: "当前轮次在此次模式切换后不能再接受插入。它会在下一轮运行，或使用立即发送来中断。",
 	        steerBlockedTerminalDraftNotice: '等待中：终端输入框中的草稿阻止了消息送达。请在终端中清除草稿或中断本轮。',
 	        clearTerminalComposer: {
@@ -6373,7 +6379,8 @@ export const zhHans: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '继续编辑', startAnother: '开始另一份', startedOpen: "会话已启动 · 打开",
-    status: { offline: '离线', syncing: '同步中', conflict: '冲突', machineUnavailable: '机器不可用', attachmentNeedsAttention: '附件需要处理', startInterrupted: '启动中断' },
+    status: { offline: '离线', syncing: '同步中', conflict: '冲突', machineUnavailable: '机器不可用', attachmentNeedsAttention: '附件需要处理', starting: '正在启动', startFailed: '无法启动' },
+    error: { title: '草稿错误', storageDescription: '无法在此设备上保存此草稿。离开前请将文本复制到安全的位置；下次编辑时会重新尝试保存。', encryptionDescription: "此设备无法同步草稿。", showDetailsHint: '显示此草稿出错的原因' },
     new: { action: '新建草稿' }, delete: { action: '删除草稿', confirmTitle: '删除草稿？', confirmDescription: '此草稿将从你的设备中移除。' },
     conflict: { title: '草稿冲突', description: '此字段已在另一台设备上更改。', mine: '此设备', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留设备版本', copyMine: '复制我的版本', copied: '已复制', copyFailed: '无法复制', field: { text: '文本', mentions: '提及', attachments: '附件', recipient: '接收者', agentContinuation: '代理延续', executionRunDelivery: '运行交付' } },
   },
@@ -8305,6 +8312,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "发送后保持编辑器焦点",
         keepFocusSubtitle: "留在消息框中，以便立即编写下一条消息。",
+        typeToFocusTitle: "随处输入",
+        typeToFocusSubtitle: "在文本框外直接输入即可跳到消息框。",
         title: '输入行为',
         footer: '设置按 Enter 发送以及消息历史行为。',
         enterToSendEnabledNativeSubtitle: '按 Enter 发送',
@@ -8331,16 +8340,17 @@ settingsSession: {
         manualSubtitle: "始终将消息保留在队列中，直到你恢复会话。",
       },
       title: "消息发送",
-      footer:
-        "控制在代理运行时你发送消息会发生什么。",
-      queueInAgentTitle: "加入代理队列（当前）",
-      queueInAgentSubtitle:
-        "立即写入对话记录；代理准备好后再处理。",
-      interruptTitle: "中断并发送",
-      interruptSubtitle: "终止当前回合，然后立即发送。",
-      pendingTitle: "等待就绪（待发送）",
-      pendingSubtitle:
-        "将消息保留在待发送队列；代理就绪后会拉取。",
+      footer: '选择在代理工作时发送消息会发生什么。',
+      busySend: {
+        addToTurnTitle: '加入当前轮次',
+        addToTurnSubtitle: '代理会立即读取并继续工作，就像在它自己的终端里输入一样。如果它无法在轮次中途接收，消息会在待发送中等到本轮结束。',
+        waitForTurnTitle: '等本轮结束',
+        waitForTurnSubtitle: '将消息留在待发送中，你可以编辑或调整顺序，本轮结束后再发送。',
+        interruptTitle: '停止本轮并发送',
+        interruptSubtitle: '停止代理当前的工作并立即发送消息。',
+      },
+      inactiveSessionsTitle: '非活动会话',
+      inactiveSessionsFooter: '在向代理已停止或机器离线的会话发送消息时适用。',
       pendingDrainModeTitle: "待发送队列处理",
       pendingDrainModeFooter:
         "选择代理每次就绪时只处理一条消息，还是一次处理整个待发送队列。",
@@ -8362,17 +8372,6 @@ settingsSession: {
         afterRuntimeIdleTitle: "运行时空闲后",
         afterRuntimeIdleSubtitle:
           "当已跟踪运行时活动仍在进行时，继续保留待发送消息。",
-      },
-      busySteerPolicyTitle: "代理忙碌时（支持引导）",
-      busySteerPolicyFooter:
-        "如果代理支持进行中引导，请选择消息是立即引导还是先进入待发送。",
-      busySteerPolicy: {
-        steerImmediatelyTitle: "立即引导",
-        steerImmediatelySubtitle:
-          "立刻发送并引导当前回合（不中断）。",
-        queueForReviewTitle: "加入待发送",
-        queueForReviewSubtitle:
-          "先放入待发送；稍后使用“立即引导”发送。",
       },
       nonSteerablePromptTitle: '当消息无法引导当前回合时',
       nonSteerablePromptFooter: '权限模式更改以及 /clear 或 /compact 无法在回合中途生效。选择智能体忙碌时 Happier 如何处理此类消息。',
@@ -8414,6 +8413,8 @@ settingsSession: {
       customResumePromptPlaceholder: "从你上次停下的地方继续。",
     },
     providerUsageGauge: {
+        numberTitle: "圆环中心数值",
+        numberSubtitle: "选择圆环中数值对应的限额。若不可用，则使用剩余额度最少的限额。",
       title: "提供方使用量",
       footer:
         "为所有账户选择输入框上方的用量仪表。仪表遵循每个池所选的用量限制。收藏的限额会为当前账户添加额外仪表。",
@@ -10623,6 +10624,9 @@ settingsSession: {
     sessionReferenceOpen: ({ name }: { name: string }) => `打开会话 ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `已切换到 ${mode} 模式`,
     discarded: "已丢弃",
+    readAloudA11y: "朗读",
+    stopReadAloudA11y: "停止朗读",
+    readAloudFailed: "无法朗读此消息。请检查语音设置。",
     recoveredHistory: "已恢复的历史记录",
     unknownEvent: "未知事件",
     contextCompactionStarted: "正在压缩上下文...",

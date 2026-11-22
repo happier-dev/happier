@@ -11,6 +11,42 @@ export type BusySteerSendPolicy = 'steer_immediately' | 'server_pending';
 
 export const DEFAULT_BUSY_STEER_SEND_POLICY: BusySteerSendPolicy = 'steer_immediately';
 
+/**
+ * The one user-facing answer to "when you send while the agent is working". It is a view over the
+ * two persisted keys `decideSessionMessageDelivery` consumes, so older clients sharing the Account
+ * keep reading values they understand.
+ *
+ * With a Pending-capable CLI, `agent_queue` and `server_pending` take the same durable Pending path
+ * with the same requested action; only the busy policy and `interrupt` change what happens to a
+ * mid-turn send. Both therefore map onto the same answer.
+ */
+export type SessionBusySendBehavior = 'add_to_turn' | 'wait_for_turn' | 'interrupt';
+
+export const SESSION_BUSY_SEND_BEHAVIORS = ['add_to_turn', 'wait_for_turn', 'interrupt'] as const satisfies readonly SessionBusySendBehavior[];
+
+export function resolveSessionBusySendBehavior(settings: Readonly<{
+    messageSendMode: MessageSendMode;
+    busySteerSendPolicy: BusySteerSendPolicy;
+}>): SessionBusySendBehavior {
+    if (settings.messageSendMode === 'interrupt') return 'interrupt';
+    return settings.busySteerSendPolicy === 'server_pending' ? 'wait_for_turn' : 'add_to_turn';
+}
+
+/** Persisted writes for a chosen answer; `interrupt` leaves the irrelevant busy policy untouched. */
+export function getSessionBusySendBehaviorSettings(behavior: SessionBusySendBehavior): Readonly<{
+    sessionMessageSendMode: MessageSendMode;
+    sessionBusySteerSendPolicy?: BusySteerSendPolicy;
+}> {
+    switch (behavior) {
+        case 'add_to_turn':
+            return { sessionMessageSendMode: 'server_pending', sessionBusySteerSendPolicy: 'steer_immediately' };
+        case 'wait_for_turn':
+            return { sessionMessageSendMode: 'server_pending', sessionBusySteerSendPolicy: 'server_pending' };
+        case 'interrupt':
+            return { sessionMessageSendMode: 'interrupt' };
+    }
+}
+
 export type SessionMessageDeliveryIntent =
     | 'default'
     | 'explicit_pending'

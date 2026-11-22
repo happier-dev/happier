@@ -143,10 +143,16 @@ automatic resume to be enabled. The same recovery attempt handles checks from
 an active session, the CLI, and MCP; changing how you check does not start a
 separate recovery loop.
 
-Happier manages the wait even when the provider has no separate quota-check
-command. A reported reset time determines when it can try to continue; without
-a reliable reset time, Happier tries again using its recovery backoff.
-Temporary check failures keep the wait active.
+Happier waits for all exhausted quota windows reported for the current failure.
+When their reset times are known, the latest one controls the wait. If a reset
+time is missing, automatic recovery needs a quota check that confirms capacity
+before it can continue. Temporary check failures keep the wait active. If the
+agent cannot check quota, choose **Resume now** from the session warning to
+manually retry interrupted work.
+
+The session warning shows the expected time when one is available. Open the
+composer's usage gauge or expand an account to see the time remaining for
+each reported reset.
 
 Happier sends the configured continuation prompt, not a replay of your original
 request. Once the continuation is accepted into Pending, its normal queue and

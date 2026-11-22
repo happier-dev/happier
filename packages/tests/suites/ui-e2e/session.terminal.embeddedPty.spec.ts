@@ -11,20 +11,10 @@ import { fakeClaudeFixturePath } from '../../src/testkit/fakeClaude';
 import { normalizeLoopbackBaseUrl } from '../../src/testkit/uiE2e/pageNavigation';
 import { spawnSessionFromDaemon } from '../../src/testkit/uiE2e/spawnSessionFromDaemon';
 import { collectBrowserDiagnostics } from '../../src/testkit/uiE2e/browserDiagnostics';
+import { mutateUiE2eScopedAccountSettings } from '../../src/testkit/uiE2e/scopedAccountSettingsStorage';
+import { mutateUiE2eLocalSettings } from '../../src/testkit/uiE2e/localSettingsStorage';
 
 const run = createRunDirs({ runLabel: 'ui-e2e' });
-
-async function enableEmbeddedTerminalInSettings(page: Page, baseUrl: string) {
-    await page.goto(`${baseUrl}/settings/features`, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('settings-feature-experiments-toggle')).toHaveCount(1, { timeout: 60_000 });
-
-    const experimentsToggle = page.getByTestId('settings-feature-experiments-toggle');
-    await experimentsToggle.click();
-
-    const terminalToggle = page.getByTestId('settings-feature-toggle-terminal.embeddedPty');
-    await expect(terminalToggle).toHaveCount(1, { timeout: 60_000 });
-    await terminalToggle.click();
-}
 
 async function expectTerminalTranscriptToContain(page: Page, testId: string, needle: string) {
     const terminal = page.getByTestId(testId);
@@ -133,7 +123,8 @@ test.describe('ui e2e: embedded terminal (PTY)', () => {
                 },
             });
 
-            await enableEmbeddedTerminalInSettings(page, uiBaseUrl);
+            await mutateUiE2eScopedAccountSettings({ page, featureToggles: { 'terminal.embeddedPty': true } });
+            await mutateUiE2eLocalSettings({ page, settingsPatch: { embeddedTerminalDockLocation: 'bottom' } });
 
             const sessionId = await spawnSessionFromDaemon({ daemon, directory: testDir });
             await page.goto(`${uiBaseUrl}/session/${sessionId}`, { waitUntil: 'domcontentloaded' });

@@ -326,7 +326,7 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
     expect(controlClientCalls).toEqual([]);
   });
 
-  it('keeps retry-after-derived check timing when Codex remains exhausted without a reset timestamp', async () => {
+  it('clears stale check timing when Codex confirms exhaustion without a reset timestamp', async () => {
     const runWithControlClient: RunWithControlClient = async (params) => ({
       ok: true,
       value: await params.run(createClient(async () => ({
@@ -369,7 +369,7 @@ describe('codexAppServerUsageLimitRecoveryControlAdapter', () => {
         sessionUsageLimitRecoveryV1: {
           status: 'waiting',
           resetAtMs: null,
-          nextCheckAtMs: 1_700_000_120_000,
+          nextCheckAtMs: null,
         },
       },
     });

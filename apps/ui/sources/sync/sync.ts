@@ -100,6 +100,8 @@ import {
 } from '@/sync/domains/session/organization';
 import { fetchAndApplySessionOrganizationSnapshot } from '@/sync/ops/sessionOrganization';
 import { createSessionListOrganizationSnapshotRequest } from '@/sync/engine/sessions/sessionListOrganizationSnapshotRequest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
+import { settleReceivedSessionMessages } from '@/sync/engine/sessions/sessionMessageMaterializationBarrier';
 import { ActivityUpdateAccumulator, type ActivityUpdateAccumulatorFlushOptions } from './reducer/activityUpdateAccumulator';
 import { MachineActivityAccumulator, type MachineActivityUpdate } from './reducer/machineActivityAccumulator';
 import { randomUUID } from '@/platform/randomUUID';
@@ -462,6 +464,7 @@ import {
     type SessionListFetchHydrationTelemetrySource,
 } from './engine/sessions/sessionListHydrationTelemetry';
 import { normalizeSessionListHydrationSessionIds } from './engine/sessions/sessionListHydrationPriority';
+import { isSessionListViewportRowDemanded, registerSessionListViewportDemand } from './domains/session/listing/sessionListViewportDemand';
 import {
     fetchUserMessageHistoryPage,
     USER_MESSAGE_HISTORY_REMOTE_PAGE_SIZE,
@@ -998,6 +1001,7 @@ class Sync {
     private sessionsSync: InvalidateSync;
     private fetchSessionsInFlight: { generation: number; promise: Promise<void> } | null = null;
     private fetchMoreSessionsInFlight: Promise<void> | null = null;
+    private sessionListViewportHydrationInFlight = new Set<string>();
     private sessionListNextCursor: string | null = null;
     private sessionListHasMore = false;
     private sessionListScrollActive = false;
@@ -2142,6 +2146,7 @@ class Sync {
         this.deferredWebVisibilityTeardown = null;
         this.stopJsThreadLagTelemetryRuntime();
         this.serverScopeGeneration += 1;
+        this.sessionListViewportHydrationInFlight = new Set();
         this.activePendingQueueOwnerContextBySession.clear();
         this.scopedPendingQueueOwnerContextBySession.clear();
         this.flushPendingSettingsForCurrentScopeNow();
@@ -2335,6 +2340,8 @@ class Sync {
 
 
         onSessionVisible = (sessionId: string) => {
+            // Entering a Session presents its current state, not the state one frame behind.
+            socketApplyFrame.flushNow();
             this.ensureSessionViewportHydrated();
             // Opening a session grows the hydrated working set; bound it (coalesced sweep).
             this.sessionTranscriptRetention.scheduleSweep();
@@ -2667,6 +2674,9 @@ class Sync {
             onLocalPendingProjectionCreated?: (event: Readonly<{ localId: string }>) => void;
         }>
     ) {
+        // The send reads the Session from the store: publish socket updates still waiting for
+        // their frame first, so it never builds on a frame-old snapshot.
+        socketApplyFrame.flushNow();
         let session = storage.getState().sessions[sessionId] ?? null;
         if (!session) {
             let hydration: EnsureSessionVisibleForRouteResult;
@@ -4451,6 +4461,41 @@ class Sync {
         }
     }
 
+    public registerSessionListViewportRows = (rows: readonly { serverId: string | null; sessionId: string }[]): (() => void) => {
+        const release = registerSessionListViewportDemand(rows);
+        fireAndForget(this.hydrateColdSessionListViewportRows(rows), { tag: 'Sync.hydrateColdSessionListViewportRows' });
+        return release;
+    };
+
+    private async hydrateColdSessionListViewportRows(rows: readonly { serverId: string | null; sessionId: string }[]): Promise<void> {
+        const { serverId } = getActiveServerSnapshot();
+        const generation = this.serverScopeGeneration;
+        if (!this.credentials || !rows.some((row) => row.serverId === serverId)) return;
+        const snapshot = this.fetchSessionsInFlight;
+        if (snapshot?.generation === generation) await snapshot.promise;
+        if (generation !== this.serverScopeGeneration) return;
+
+        const pending = this.sessionListViewportHydrationInFlight;
+        const renderables = storage.getState().sessionListRenderables;
+        const ids: string[] = [];
+        for (const row of rows) {
+            const { sessionId } = row;
+            if (row.serverId !== serverId || pending.has(sessionId) || !isSessionListViewportRowDemanded(serverId, sessionId)) continue;
+            const renderable = renderables[sessionId];
+            if (!renderable || renderable.metadata != null || renderable.metadataUnavailable === true) continue;
+            pending.add(sessionId);
+            ids.push(sessionId);
+        }
+        if (ids.length === 0) return;
+        try {
+            // A viewport can be reported after the ordinary snapshot has scheduled its fixed budget.
+            // Ask the existing required-row path for just those now-visible cold rows.
+            await this.fetchSessions({ sessionListScope: 'required', requiredHydrationSessionIds: ids });
+        } finally {
+            for (const id of ids) pending.delete(id);
+        }
+    }
+
     public fetchMoreSessions = async (): Promise<void> => {
         if (!this.credentials || !this.sessionListHasMore || !this.sessionListNextCursor) return;
         if (this.fetchMoreSessionsInFlight) return this.fetchMoreSessionsInFlight;
@@ -5720,6 +5765,10 @@ class Sync {
     }
 
     private fetchMessages = async (sessionId: string) => {
+        // Decide what to fetch from the transcript this client has already received: live rows
+        // still waiting for their frame are applied first, so a gap fetch starts at the covered prefix.
+        const settling = settleReceivedSessionMessages(sessionId);
+        if (settling) await settling;
         if (this.hasFetchedSessionsSnapshotForActiveServer && !this.isSessionKnownOnResolvedOwnerServer(sessionId)) {
             // Do not fetch messages when we cannot resolve the session to either the active server
             // or a locally known owner server. This avoids cross-server message fetches. The owner
@@ -8206,7 +8255,9 @@ class Sync {
               shouldContinue,
               artifactDataKeys: this.artifactDataKeys,
               retireSession: ({ sessionId }) => this.retireLocalSession(sessionId, sourceServerId),
-              applySessions: (sessions) => this.applySessions(sessions),
+              // Stable identity: the socket session coalescer flushes everything queued when its
+              // apply handler changes, so a per-update closure would publish every arrival alone.
+              applySessions: this.applySessions,
               fetchSessions: () => {
                   fireAndForget(this.fetchSessions(), {
                       tag: 'Sync.handleUpdate.fetchSessions',
@@ -8251,7 +8302,7 @@ class Sync {
         flushActivityUpdatesEngine({
             updates,
             sourceServerId: options?.sourceServerId,
-            applySessions: (sessions) => this.applySessions(sessions),
+            applySessions: this.applySessions,
         });
     }
 

@@ -2,7 +2,8 @@ import { buildHappyCliSubprocessLaunchSpec, type HappyCliSubprocessLaunchOptions
 import type { CatalogAgentId } from '@/backends/types';
 import { buildSpawnChildProcessEnv, DAEMON_DECIDED_CHILD_ENV_KEYS } from '../../spawn/buildSpawnChildProcessEnv';
 import type { HappierRuntimeServerContext } from '@/utils/env/resolveHappierRuntimeContextEnv';
-import { buildCgroupSelfMigratingHappyCliLaunchSpec } from '../linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
+import { DBUS_SESSION_BUS_ADDRESS_ENV_KEY } from '@/utils/env/linuxUserSessionEnv';
+import { resolveSystemdUserSessionLaunchSpec } from '../linux/resolveSystemdUserSessionLaunchSpec';
 
 type TmuxSpawnAgentId = CatalogAgentId | 'acp-catalog';
 
@@ -22,7 +23,7 @@ export function buildTmuxWindowEnv(
     'TSX_TSCONFIG_PATH',
     'USER',
     'LOGNAME',
-    'DBUS_SESSION_BUS_ADDRESS',
+    DBUS_SESSION_BUS_ADDRESS_ENV_KEY,
     'XDG_RUNTIME_DIR',
   ] as const;
 
@@ -84,12 +85,10 @@ export async function buildHostedRunnerSpawnConfig(params: HostedRunnerSpawnPara
     ...Object.fromEntries(Object.entries(childEnv).filter((entry): entry is [string, string] => typeof entry[1] === 'string')),
     ...daemonDecidedEnv,
   };
-  const scopedLaunchSpec = process.platform === 'linux'
-    ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
-      launchSpec,
-      environment: params.host === 'tmux' ? tmuxEnv : fullChildEnv,
-    })
-    : null;
+  const scopedLaunchSpec = await resolveSystemdUserSessionLaunchSpec({
+    launchSpec,
+    environment: params.host === 'tmux' ? tmuxEnv : fullChildEnv,
+  });
   const effectiveLaunchSpec = scopedLaunchSpec ?? launchSpec;
   const commandTokens = [effectiveLaunchSpec.filePath, ...effectiveLaunchSpec.args];
 

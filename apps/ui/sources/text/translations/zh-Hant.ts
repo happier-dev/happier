@@ -621,6 +621,12 @@ function plural({ count, singular, plural }: { count: number; singular: string; 
 }
 
 const zhHantOverrides: DeepPartial<TranslationStructure> = {
+    attachments: {
+        alerts: {
+            cameraPermissionDeniedTitle: '需要相機權限',
+            cameraPermissionDeniedBody: '請在裝置設定中允許存取相機以拍照。',
+        },
+    },
   settingsKeyboard: {
       title: 'Keyboard shortcuts',
       entrySubtitle: 'Discover and control app shortcuts',
@@ -1380,6 +1386,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 `剩餘 ${percent} · ${reset} 後重置`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} 已用`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
                 now: '現在',
                 outdated: '已過期',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}天 ${hours}小時`,
@@ -2041,6 +2048,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         send: '傳送',
         attach: '附加',
         addImage: '新增圖片',
+        takePhoto: '拍照',
         addFile: '新增檔案',
         linkFile: '連結檔案',
         files: '檔案',
@@ -3315,7 +3323,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         trayOpenInHappier: '在 Happier 中開啟',
         traySettings: '設定…',
         trayStartAtLogin: '登入時啟動',
-        trayStopAndQuit: '停止背景服務並結束',
+        trayStopAndQuit: '結束 Happier（停止背景服務）',
         trayStart: '啟動',
         trayRestart: '重新啟動',
         trayStop: '停止',
@@ -4824,7 +4832,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               overloadAttempt: ({ attempt }: { attempt: number }) => `第${attempt}次`,
             title: '已達到使用限制',
             readyTitle: '使用限制已重設',
-            resetBody: ({ time }: { time: string }) => `此提供者要求工作階段等到 ${time} 後再繼續。`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `此提供者要求工作階段等到 ${time}${duration ? ` (${duration})` : ''} 後再繼續。`,
             genericBody: '此提供者要求工作階段等待後再繼續。',
             stoppedBody: '自動復原已停止，不會自行重試。請在下方重試。',
             resetCreditBody: ({ count }: { count: number }) => `${count} 次使用重設可用。`,
@@ -5294,6 +5302,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     minutes > 0
                         ? `等待目前工作完成 · 已執行 ${minutes} 分鐘`
                         : '等待目前工作完成',
+                steerUnavailableWaitingForTurnNotice: '暫時無法加入本輪 · 結束後傳送',
                 deliveryBlockedReasons: {
                     terminalComposerDraft: '終端機輸入框中的草稿阻擋了遞送',
                     runtimeConfigBlocked: '執行階段設定阻擋了遞送',
@@ -5603,7 +5612,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
     sessionDrafts: {
         sectionTitle: '草稿', badge: '草稿', untitled: '未命名草稿', continueEditing: '繼續編輯', startAnother: '開始另一份', startedOpen: "工作階段已啟動 · 開啟",
-        status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', startInterrupted: '啟動中斷' },
+        status: { offline: '離線', syncing: '同步中', conflict: '衝突', machineUnavailable: '機器無法使用', attachmentNeedsAttention: '附件需要處理', starting: '正在啟動', startFailed: '無法啟動' },
+        error: { title: '草稿錯誤', storageDescription: '無法在此裝置上儲存此草稿。離開前請將文字複製到安全的位置；下次編輯時會重新嘗試儲存。', encryptionDescription: "此裝置無法同步草稿。", showDetailsHint: '顯示此草稿出錯的原因' },
         new: { action: '新增草稿' }, delete: { action: '刪除草稿', confirmTitle: '刪除草稿？', confirmDescription: '此草稿將從你的裝置移除。' },
         conflict: { title: '草稿衝突', description: '此欄位已在其他裝置上變更。', mine: '此裝置', synced: '已同步', useSynced: '使用同步版本', keepDevice: '保留裝置版本', copyMine: '複製我的版本', copied: '已複製', copyFailed: '無法複製', field: { text: '文字', mentions: '提及', attachments: '附件', recipient: '收件者', agentContinuation: '代理延續', executionRunDelivery: '執行傳送' } },
     },
@@ -7258,6 +7268,8 @@ settingsSession: {
         inputBehavior: {
             keepFocusTitle: "傳送後保持編輯器焦點",
             keepFocusSubtitle: "留在訊息欄位，以便立即撰寫下一則訊息。",
+            typeToFocusTitle: "隨處輸入",
+            typeToFocusSubtitle: "在文字欄位外直接輸入即可跳到訊息欄位。",
             title: '輸入行為',
             footer: '設定按 Enter 傳送與訊息歷史行為。',
             enterToSendEnabledNativeSubtitle: '按 Enter 傳送',
@@ -7277,13 +7289,17 @@ settingsSession: {
                 manualSubtitle: '始終將訊息保留在佇列中，直到你恢復工作階段。',
             },
             title: '訊息送出',
-            footer: '控制代理執行中送出訊息時的行為。',
-            queueInAgentTitle: '在代理中排隊（目前）',
-            queueInAgentSubtitle: '立即寫入逐字稿；代理準備好後再處理。',
-            interruptTitle: '中斷並送出',
-            interruptSubtitle: '中止目前回合，然後立即送出。',
-            pendingTitle: '等待就緒後送出',
-            pendingSubtitle: '將訊息保留在待處理佇列中；代理準備好後再拉取。',
+            footer: '選擇在代理工作時傳送訊息會發生什麼。',
+            busySend: {
+              addToTurnTitle: '加入目前輪次',
+              addToTurnSubtitle: '代理會立即讀取並繼續工作，就像在它自己的終端機裡輸入一樣。如果它無法在輪次中途接收，訊息會在待傳送中等到本輪結束。',
+              waitForTurnTitle: '等本輪結束',
+              waitForTurnSubtitle: '將訊息留在待傳送中，你可以編輯或調整順序，本輪結束後再傳送。',
+              interruptTitle: '停止本輪並傳送',
+              interruptSubtitle: '停止代理目前的工作並立即傳送訊息。',
+            },
+            inactiveSessionsTitle: '非使用中的工作階段',
+            inactiveSessionsFooter: '在傳送給代理已停止或機器離線的工作階段時適用。',
             pendingDrainModeTitle: '待處理佇列處理',
             pendingDrainModeFooter: '選擇代理每次就緒時只處理一則訊息，或一次處理整個待處理佇列。',
             pendingDrainMode: {
@@ -7299,14 +7315,6 @@ settingsSession: {
                 afterForegroundReadySubtitle: '代理可以接受下一回合時立即送出待處理訊息。',
                 afterRuntimeIdleTitle: '執行階段閒置後',
                 afterRuntimeIdleSubtitle: '當已追蹤的執行階段活動仍在進行時，繼續保留待處理訊息。',
-            },
-            busySteerPolicyTitle: '當代理忙碌時（支援導向）',
-            busySteerPolicyFooter: '若代理支援進行中的導向，請選擇訊息要立即導向，或先進入待處理。',
-            busySteerPolicy: {
-                steerImmediatelyTitle: '立即導向',
-                steerImmediatelySubtitle: '立刻送出並導向目前回合（不中斷）。',
-                queueForReviewTitle: '排入待處理',
-                queueForReviewSubtitle: '先把訊息放入待處理，之後再用「立即導向」送出。',
             },
             nonSteerablePromptTitle: '當訊息無法引導目前回合時',
             nonSteerablePromptFooter: '權限模式變更以及 /clear 或 /compact 無法在回合進行中套用。選擇代理程式忙碌時 Happier 如何處理此類訊息。',
@@ -7343,6 +7351,8 @@ settingsSession: {
             customResumePromptPlaceholder: '從你上次停下的地方繼續。',
         },
         providerUsageGauge: {
+            numberTitle: "圓環中心數值",
+            numberSubtitle: "選擇圓環中數值對應的限額。若無法使用，則使用剩餘額度最少的限額。",
             title: '提供者使用量',
             footer: "為所有帳戶選擇輸入框上方的用量儀表。儀表遵循每個池所選的用量限制。收藏的限額會為目前帳戶新增額外儀表。",
             visibilityTitle: '顯示提供者使用量儀表',
@@ -8990,6 +9000,9 @@ settingsSession: {
         sessionReferenceUnavailable: '無法使用的工作階段',
         sessionReferenceOpen: ({ name }: { name: string }) => `開啟工作階段 ${name}`,
         switchedToMode: ({ mode }: { mode: string }) => `已切換到 ${mode} 模式`,
+        readAloudA11y: '朗讀',
+        stopReadAloudA11y: '停止朗讀',
+        readAloudFailed: '無法朗讀此訊息。請檢查語音設定。',
         recoveredHistory: '已復原的歷史記錄',
         unknownEvent: '未知事件',
         contextCompactionStarted: '正在壓縮上下文...',

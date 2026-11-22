@@ -683,7 +683,7 @@ describe('buildDoctorRepairReport — local relay', async () => {
       currentCli: makeCurrentCli({ version: '0.12.3' }),
       automaticStartup: [makeAutomaticStartupEntry()],
       currentlyRunning: [],
-      localRelays: [relay],
+      localRelays: [{ ...relay, version: '0.12.3' }, { ...relay, mode: 'system' }],
       plan: makePlan(),
       currentServerId: 'default',
       preferredMode: 'user',
@@ -696,6 +696,7 @@ describe('buildDoctorRepairReport — local relay', async () => {
     });
     const kinds = report.findings.map((f) => f.kind);
     expect(kinds).toContain('local_relay_version_stale');
+    expect(report.findings.filter((f) => f.kind === 'local_relay_version_stale')).toMatchObject([{ entry: { mode: 'system' } }]);
   });
 
   it('does NOT flag version_stale when latest-known relay equals installed', async () => {

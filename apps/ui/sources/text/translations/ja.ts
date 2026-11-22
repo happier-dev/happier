@@ -766,6 +766,7 @@ export const ja: TranslationStructure = {
     details: "詳細",
     fieldStatus: "ステータス",
     fieldAction: "アクション",
+    fieldFailureReason: "失敗した理由",
     approve: "承認",
     reject: "拒否",
     loadError: "承認を読み込めませんでした。",
@@ -1256,6 +1257,7 @@ export const ja: TranslationStructure = {
     send: "送信",
     attach: "添付",
     addImage: "画像を追加",
+    takePhoto: "写真を撮る",
     addFile: "ファイルを追加",
     linkFile: "ファイルをリンク",
     files: "ファイル",
@@ -3120,6 +3122,7 @@ localTailscale: {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} 使用済み`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds}秒`,
         now: "今",
         outdated: "古い",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3613,6 +3616,8 @@ localTailscale: {
         `最大添付サイズを超えるため、${count} 件のファイルをスキップしました。`,
       noClipboardImageTitle: "クリップボードに画像がありません",
       noClipboardImageBody: "画像をコピーしてから、添付ファイルとして貼り付けてください。",
+      cameraPermissionDeniedTitle: "カメラへのアクセスが必要です",
+      cameraPermissionDeniedBody: "写真を撮るには、デバイスの設定でカメラへのアクセスを許可してください。",
     },
   },
 
@@ -3905,7 +3910,7 @@ localTailscale: {
     trayOpenInHappier: 'Happier で開く',
     traySettings: '設定…',
     trayStartAtLogin: 'ログイン時に起動',
-    trayStopAndQuit: 'バックグラウンドサービスを停止して終了',
+    trayStopAndQuit: 'Happier を終了（バックグラウンドサービスを停止）',
     trayStart: '開始',
     trayRestart: '再起動',
     trayStop: '停止',
@@ -5752,8 +5757,8 @@ localTailscale: {
         overloadAttempt: ({ attempt }: { attempt: number }) => `${attempt}回目`,
       title: "使用制限に達しました",
       readyTitle: "使用制限がリセットされました",
-      resetBody: ({ time }: { time: string }) =>
-        `このプロバイダーは、続行する前に ${time} まで待機するよう求めています。`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `このプロバイダーは、続行する前に ${time}${duration ? ` (${duration})` : ''} まで待機するよう求めています。`,
       genericBody: "このプロバイダーは、続行する前に待機するよう求めています。",
       stoppedBody: "自動リカバリーは停止し、自動では再試行しません。下から再試行してください。",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6345,6 +6350,7 @@ localTailscale: {
 	        waitingForRuntimeActivityNotice: 'ランタイムの処理完了を待っています',
 	        runtimeActivityUnknownNotice: 'ランタイムのアクティビティ状態を待っています',
 	        waitingForRuntimeNotice: 'ランタイムの再接続を待っています',
+	        steerUnavailableWaitingForTurnNotice: '今はこのターンに参加できません · 終了後に送信されます',
 	        nonSteerableNotice: "このモード変更後、現在のターンには挿入できません。次に実行されます。すぐに処理するには「今すぐ送信」を使って中断してください。",
 	        steerBlockedTerminalDraftNotice: '待機中: ターミナルの入力欄に未送信の下書きがあり配信できません。ターミナルで消去するか、ターンを中断してください。',
 	        clearTerminalComposer: {
@@ -6845,7 +6851,8 @@ localTailscale: {
 
   sessionDrafts: {
     sectionTitle: '下書き', badge: '下書き', untitled: '無題の下書き', continueEditing: '編集を続ける', startAnother: '別の下書きを開始', startedOpen: "セッションを開始しました · 開く",
-    status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', startInterrupted: '開始が中断されました' },
+    status: { offline: 'オフライン', syncing: '同期中', conflict: '競合', machineUnavailable: 'マシンを利用できません', attachmentNeedsAttention: '添付ファイルの確認が必要です', starting: '開始中', startFailed: '開始できませんでした' },
+    error: { title: '下書きのエラー', storageDescription: 'この下書きをこのデバイスに保存できませんでした。離れる前にテキストを安全な場所にコピーしてください。次に編集したときに保存を再試行します。', encryptionDescription: "このデバイスで下書きを同期できませんでした。", showDetailsHint: 'この下書きにエラーがある理由を表示します' },
     new: { action: '新しい下書き' }, delete: { action: '下書きを削除', confirmTitle: '下書きを削除しますか？', confirmDescription: 'この下書きはデバイスから削除されます。' },
     conflict: { title: '下書きの競合', description: 'このフィールドは別のデバイスで変更されました。', mine: 'このデバイス', synced: '同期済み', useSynced: '同期版を使用', keepDevice: 'デバイス版を保持', copyMine: '自分の版をコピー', copied: 'コピーしました', copyFailed: 'コピーできませんでした', field: { text: 'テキスト', mentions: 'メンション', attachments: '添付ファイル', recipient: '受信者', agentContinuation: 'エージェント継続', executionRunDelivery: '実行配信' } },
   },
@@ -8792,6 +8799,8 @@ settingsSession: {
     inputBehavior: {
         keepFocusTitle: "送信後もコンポーザーにフォーカスを保つ",
         keepFocusSubtitle: "入力欄に留まり、すぐ次のメッセージを書けます。",
+        typeToFocusTitle: "どこからでも入力",
+        typeToFocusSubtitle: "テキスト欄の外で入力を始めると、メッセージ欄に移動します。",
         title: '入力の動作',
         footer: 'Enterで送信とメッセージ履歴の動作を設定します。',
         enterToSendEnabledNativeSubtitle: 'Enterで送信',
@@ -8818,16 +8827,17 @@ settingsSession: {
         manualSubtitle: "セッションを再開するまで、常にメッセージをキューに残します。",
       },
       title: "メッセージ送信",
-      footer:
-        "エージェント実行中にメッセージを送信したときの挙動を設定します。",
-        queueInAgentTitle: "エージェントにキュー（現在）",
-        queueInAgentSubtitle:
-          "すぐにトランスクリプトに書き込み、エージェントが準備できたら処理します。",
-        interruptTitle: "中断して送信",
-        interruptSubtitle: "現在のターンを中断し、すぐに送信します。",
-        pendingTitle: "準備できるまで保留",
-        pendingSubtitle:
-          "メッセージを保留キューに保持し、準備ができたらエージェントが取り込みます。",
+      footer: 'エージェントの作業中にメッセージを送ったときの動作を選びます。',
+      busySend: {
+        addToTurnTitle: '現在のターンに追加',
+        addToTurnSubtitle: 'エージェントがすぐに読み取り、作業を続けます。ターミナルに直接入力するのと同じです。ターンの途中で受け取れない場合は、ターンが終わるまで保留中で待機します。',
+        waitForTurnTitle: 'ターンの終了を待つ',
+        waitForTurnSubtitle: 'メッセージを保留中に置き、編集や並べ替えをしたうえで、ターンが終わったら送信します。',
+        interruptTitle: 'ターンを止めて送信',
+        interruptSubtitle: 'エージェントの作業を止めて、すぐにメッセージを送信します。',
+      },
+      inactiveSessionsTitle: '非アクティブなセッション',
+      inactiveSessionsFooter: 'エージェントが停止している、またはマシンがオフラインのセッションに送信したときに適用されます。',
         pendingDrainModeTitle: "保留キューの処理",
         pendingDrainModeFooter:
           "エージェントが準備できるたびに1件だけ処理するか、保留キュー全体をまとめて処理するかを選びます。",
@@ -8849,17 +8859,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "ランタイムがアイドルになったら",
           afterRuntimeIdleSubtitle:
             "追跡中のランタイム活動が続いている間は、保留メッセージを待機させます。",
-        },
-        busySteerPolicyTitle: "エージェントが忙しいとき（ステア可能）",
-        busySteerPolicyFooter:
-          "エージェントが実行中ステアリングをサポートしている場合、すぐにステアするか、先に保留へ送るかを選びます。",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "すぐにステア",
-          steerImmediatelySubtitle:
-            "すぐに送信して現在のターンをステアします（中断なし）。",
-          queueForReviewTitle: "保留にキュー",
-          queueForReviewSubtitle:
-            "まず保留に入れ、後で「今すぐステア」で送信します。",
         },
         nonSteerablePromptTitle: 'メッセージがアクティブなターンに反映できないとき',
         nonSteerablePromptFooter: '権限モードの変更や /clear・/compact はターンの途中では適用できません。エージェントが処理中のとき、こうしたメッセージをどう扱うか選択します。',
@@ -8901,6 +8900,8 @@ settingsSession: {
         customResumePromptPlaceholder: "中断したところから続けてください。",
       },
       providerUsageGauge: {
+          numberTitle: "リング中央の数値",
+          numberSubtitle: "リング内の数値に使う上限を選択します。利用できない場合は、残量が最も少ない上限を使います。",
         title: "プロバイダー使用量",
         footer:
           "すべてのアカウントの入力欄に表示するゲージを選択します。各プールで選択された使用制限が適用されます。お気に入りは現在のアカウントにゲージを追加します。",
@@ -11234,6 +11235,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `${mode}モードに切り替えました`,
     discarded: "破棄済み",
+    readAloudA11y: "読み上げ",
+    stopReadAloudA11y: "読み上げを停止",
+    readAloudFailed: "このメッセージを読み上げられませんでした。音声設定を確認してください。",
     recoveredHistory: "復元された履歴",
     unknownEvent: "不明なイベント",
     contextCompactionStarted: "コンテキストを圧縮中...",

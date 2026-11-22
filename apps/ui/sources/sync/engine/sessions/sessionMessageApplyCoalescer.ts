@@ -2,6 +2,7 @@ import type { NormalizedMessage } from '@/sync/typesRaw';
 import { markStreamingMessagesAppliedForSessionUiTelemetry } from '@/sync/runtime/performance/sessionUiTelemetry';
 import { recordRealtimeFanoutCoalescerActivity } from '@/sync/runtime/performance/realtimeFanoutTelemetry';
 import { syncPerformanceTelemetry } from '@/sync/runtime/syncPerformanceTelemetry';
+import { socketApplyFrame, type SocketApplyFrameScheduler } from './socketApplyFrame';
 
 export type SessionMessageApplyCoalescerConfig = Readonly<{
     enabled: boolean;
@@ -9,22 +10,18 @@ export type SessionMessageApplyCoalescerConfig = Readonly<{
     maxBatchSize: number;
 }>;
 
-type TimerHandle = ReturnType<typeof setTimeout>;
-
 type SessionMessageApplyOptions = Readonly<{
-    deferLeadingBatch?: boolean;
     shouldContinue?: () => boolean;
 }>;
 
 type QueuedMessage = Readonly<{
     message: NormalizedMessage;
-    deferredLeadingBatch: boolean;
     shouldContinue: () => boolean;
 }>;
 
 type SessionQueueState = {
     queued: QueuedMessage[];
-    timer: TimerHandle | null;
+    cancelScheduledFlush: (() => void) | null;
 };
 
 type RealtimeFanoutCoalescerActivityKind = 'enqueue' | 'immediate' | 'flush' | 'drop';
@@ -48,6 +45,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
     getConfig: () => SessionMessageApplyCoalescerConfig;
     applyBatch: (sessionId: string, messages: NormalizedMessage[]) => void;
     onBatchApplied?: (sessionId: string, messages: NormalizedMessage[]) => void;
+    frame?: SocketApplyFrameScheduler;
 }>): Readonly<{
     enqueue: (sessionId: string, messages: NormalizedMessage[], options?: SessionMessageApplyOptions) => void;
     dropQueuedMessageIds: (sessionId: string, messageIds: readonly string[]) => void;
@@ -57,19 +55,19 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
     getQueuedMaxSeq: (sessionId: string) => number;
 }> {
     const queues = new Map<string, SessionQueueState>();
+    const frame = params.frame ?? socketApplyFrame;
 
     function getOrCreateQueue(sessionId: string): SessionQueueState {
         const existing = queues.get(sessionId);
         if (existing) return existing;
-        const created: SessionQueueState = { queued: [], timer: null };
+        const created: SessionQueueState = { queued: [], cancelScheduledFlush: null };
         queues.set(sessionId, created);
         return created;
     }
 
     function createQueuedMessages(messages: readonly NormalizedMessage[], options?: SessionMessageApplyOptions): QueuedMessage[] {
         const shouldContinue = options?.shouldContinue ?? (() => true);
-        const deferredLeadingBatch = options?.deferLeadingBatch === true;
-        return messages.map((message) => ({ message, deferredLeadingBatch, shouldContinue }));
+        return messages.map((message) => ({ message, shouldContinue }));
     }
 
     function takeCurrentMessages(entries: readonly QueuedMessage[]): NormalizedMessage[] {
@@ -83,9 +81,9 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
     }
 
     function clearFlushTimer(state: SessionQueueState): void {
-        if (state.timer) {
-            clearTimeout(state.timer);
-            state.timer = null;
+        if (state.cancelScheduledFlush) {
+            state.cancelScheduledFlush();
+            state.cancelScheduledFlush = null;
         }
     }
 
@@ -135,26 +133,11 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
     }
 
     function scheduleFlush(sessionId: string, state: SessionQueueState, windowMs: number): void {
-        if (state.timer) return;
-        state.timer = setTimeout(() => {
-            state.timer = null;
+        if (state.cancelScheduledFlush) return;
+        state.cancelScheduledFlush = frame.schedule(() => {
+            state.cancelScheduledFlush = null;
             flush(sessionId);
         }, windowMs);
-    }
-
-    function hasVisibleBlockingQueuedWork(state: SessionQueueState): boolean {
-        return state.queued.some((entry) => entry.deferredLeadingBatch || !entry.shouldContinue());
-    }
-
-    function flushQueuedSession(sessionId: string): void {
-        while (true) {
-            const state = queues.get(sessionId);
-            if (!state || state.queued.length === 0) return;
-            const queuedBefore = state.queued.length;
-            flush(sessionId);
-            const nextState = queues.get(sessionId);
-            if (!nextState || nextState.queued.length >= queuedBefore) return;
-        }
     }
 
     function flush(sessionId: string): void {
@@ -222,42 +205,7 @@ export function createSessionMessageApplyCoalescer(params: Readonly<{
             return;
         }
 
-        const existingState = queues.get(sessionId);
-        if (options?.deferLeadingBatch !== true && existingState && hasVisibleBlockingQueuedWork(existingState)) {
-            flushQueuedSession(sessionId);
-        }
-
         const state = getOrCreateQueue(sessionId);
-        if (state.timer === null && state.queued.length === 0) {
-            if (options?.deferLeadingBatch === true) {
-                state.queued.push(...createQueuedMessages(messages, options));
-                recordCoalescerFanoutActivity('enqueue', sessionId, messages.length, state.queued.length);
-                syncPerformanceTelemetry.count('sync.socket.messages.coalesce.queued', {
-                    messages: messages.length,
-                    queued: state.queued.length,
-                    leadingDeferred: 1,
-                    windowMs,
-                    maxBatchSize,
-                });
-                if (state.queued.length >= maxBatchSize) {
-                    flush(sessionId);
-                    return;
-                }
-                scheduleFlush(sessionId, state, windowMs);
-                return;
-            }
-
-            const leadingBatch = messages.slice(0, maxBatchSize);
-            const trailingMessages = messages.slice(maxBatchSize);
-            applyImmediate(sessionId, leadingBatch, maxBatchSize, options);
-            state.queued.push(...createQueuedMessages(trailingMessages, options));
-            if (trailingMessages.length > 0) {
-                recordCoalescerFanoutActivity('enqueue', sessionId, trailingMessages.length, state.queued.length);
-            }
-            scheduleFlush(sessionId, state, windowMs);
-            return;
-        }
-
         state.queued.push(...createQueuedMessages(messages, options));
         recordCoalescerFanoutActivity('enqueue', sessionId, messages.length, state.queued.length);
         syncPerformanceTelemetry.count('sync.socket.messages.coalesce.queued', {

@@ -6,7 +6,7 @@ import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { createV2SessionListInitialPage } from "./v2SessionListInitialPage";
-import { findV2SessionListRows, mapV2SessionListRows, V2_SESSION_LIST_ORDER_BY } from "./v2SessionListPage";
+import { findV2SessionListRowById, findV2SessionListRows, mapV2SessionListRows, V2_SESSION_LIST_ORDER_BY } from "./v2SessionListPage";
 
 /**
  * A binary running ahead of `prisma migrate deploy` reads a schema that does not have the columns
@@ -157,5 +157,10 @@ describe("session list on a pre-migration schema (SQLite integration)", () => {
         ]);
         expect(sessions.every((session) => session.unreadSince === null)).toBe(true);
         expect(sessions.every((session) => session.pendingActivationAuthorization === undefined)).toBe(true);
+
+        const detailRow = await findV2SessionListRowById({ userId: ownerId, sessionId: readId });
+        expect(detailRow).not.toBeNull();
+        const [detail] = mapV2SessionListRows({ rows: [detailRow!], userId: ownerId });
+        expect(detail).toMatchObject({ id: readId, unreadSince: null, pendingBlockedNoEffectCount: 0 });
     });
 });

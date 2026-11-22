@@ -68,7 +68,7 @@ describe('sendVoiceSessionComposerText', () => {
       events.push(`enqueue:${params.localId}`);
       return { localId: params.localId, accepted: true, externalHandoffClaimed: true } as const;
     });
-    const sendTextTurn = vi.fn(async (params: Readonly<{ localId: string }>) => {
+    const dispatchTextTurn = vi.fn(async (params: Readonly<{ localId: string }>) => {
       events.push(`dispatch:${params.localId}`);
     });
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
@@ -90,7 +90,7 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }),
     };
 
@@ -102,10 +102,7 @@ describe('sendVoiceSessionComposerText', () => {
       text: 'hello',
       localId: 'voice-local-1',
     });
-    expect(sendTextTurn).toHaveBeenCalledWith({
-      controlSessionId: 'voice-global',
-      conversationSessionId: 'carrier-s1',
-      text: 'hello',
+    expect(dispatchTextTurn).toHaveBeenCalledWith({
       localId: 'voice-local-1',
       handoffMode: 'interrupt_and_send',
     });
@@ -151,11 +148,11 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn: async (params) => {
+        prepareTextTurn: (params) => async (dispatch) => {
           appendVoiceConversationUserText({
             conversationSessionId: params.conversationSessionId,
             text: params.text,
-            localId: params.localId,
+            localId: dispatch.localId,
           });
         },
       }),
@@ -187,7 +184,7 @@ describe('sendVoiceSessionComposerText', () => {
       updatedAt: 123,
     });
 
-    const sendTextTurn = vi.fn(async () => {});
+    const dispatchTextTurn = vi.fn(async () => {});
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
 
     const result = await sendVoiceSessionComposerText({
@@ -203,15 +200,12 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }) as any,
     });
 
     expect(result).toMatchObject({ ok: true, disposition: 'handoff_acknowledged' });
-    expect(sendTextTurn).toHaveBeenCalledWith({
-      controlSessionId: 'voice-global',
-      conversationSessionId: 'carrier-s1',
-      text: 'hello',
+    expect(dispatchTextTurn).toHaveBeenCalledWith({
       localId: expect.any(String),
       handoffMode: 'interrupt_and_send',
     });
@@ -228,7 +222,7 @@ describe('sendVoiceSessionComposerText', () => {
       updatedAt: 123,
     });
 
-    const sendTextTurn = vi.fn(async () => {});
+    const dispatchTextTurn = vi.fn(async () => {});
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
     const result = await sendVoiceSessionComposerText({
       conversationSessionId: 'carrier-s1',
@@ -243,15 +237,12 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }) as any,
     });
 
     expect(result).toMatchObject({ ok: true, disposition: 'handoff_acknowledged' });
-    expect(sendTextTurn).toHaveBeenCalledWith({
-      controlSessionId: 'voice-global',
-      conversationSessionId: 'carrier-s1',
-      text: 'hello',
+    expect(dispatchTextTurn).toHaveBeenCalledWith({
       localId: expect.any(String),
       handoffMode: 'interrupt_and_send',
     });
@@ -267,7 +258,7 @@ describe('sendVoiceSessionComposerText', () => {
       targetSessionId: 's1',
       updatedAt: 123,
     });
-    const sendTextTurn = vi.fn(async () => {});
+    const dispatchTextTurn = vi.fn(async () => {});
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
     const params = {
       conversationSessionId: 'carrier-s1',
@@ -287,7 +278,7 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }),
     };
 
@@ -296,7 +287,7 @@ describe('sendVoiceSessionComposerText', () => {
       localId: 'voice-local-1',
       disposition: 'pending',
     });
-    expect(sendTextTurn).not.toHaveBeenCalled();
+    expect(dispatchTextTurn).not.toHaveBeenCalled();
   });
 
   it('fails visibly without dispatch when durable enqueue quarantines the user turn', async () => {
@@ -384,7 +375,7 @@ describe('sendVoiceSessionComposerText', () => {
       targetSessionId: null,
       updatedAt: 123,
     });
-    const sendTextTurn = vi.fn(async () => {});
+    const dispatchTextTurn = vi.fn(async () => {});
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
     const params = {
       conversationSessionId: 'carrier-s1',
@@ -404,7 +395,7 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }),
     };
 
@@ -413,7 +404,7 @@ describe('sendVoiceSessionComposerText', () => {
       reason: 'cancelled',
       localId: 'voice-local-1',
     });
-    expect(sendTextTurn).not.toHaveBeenCalled();
+    expect(dispatchTextTurn).not.toHaveBeenCalled();
   });
 
   it('blocks a typed missing V2 RPC before provider acceptance and rejects the submit', async () => {
@@ -490,7 +481,7 @@ describe('sendVoiceSessionComposerText', () => {
       updatedAt: 123,
     });
 
-    const sendTextTurn = vi.fn(async () => {
+    const dispatchTextTurn = vi.fn(async () => {
       throw new Error('send_failed');
     });
     const { sendVoiceSessionComposerText } = await import('./sendVoiceSessionComposerText');
@@ -511,7 +502,7 @@ describe('sendVoiceSessionComposerText', () => {
         interrupt: vi.fn(),
         sendContextUpdate: vi.fn(),
         getSnapshot: vi.fn(),
-        sendTextTurn,
+        prepareTextTurn: () => dispatchTextTurn,
       }),
     };
     const result = await sendVoiceSessionComposerText(params);
@@ -527,7 +518,7 @@ describe('sendVoiceSessionComposerText', () => {
       localId: 'voice-local-1',
       reason: 'delivery_outcome_uncertain',
     });
-    expect(sendTextTurn).toHaveBeenCalledTimes(1);
+    expect(dispatchTextTurn).toHaveBeenCalledTimes(1);
   });
 
   it('fails closed when the durable row was not atomically fenced for external handoff', async () => {

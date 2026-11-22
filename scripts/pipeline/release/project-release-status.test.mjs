@@ -243,3 +243,18 @@ test('channel promotion failure does not erase independently published products 
   assert.equal(preview.surfaces.find((surface) => surface.id === 'github_latest')?.state, 'not_requested');
   assert.equal(preview.terminal, 'complete');
 });
+
+for (const mode of ['standard', 'nightly']) {
+  test(`${mode} retains published unverified candidate identity without completing verification`, () => {
+    const status = projectReleaseStatus(mode, {
+      RELEASE_RUN: '42', RELEASE_RUN_URL: 'https://github.com/happier-dev/happier/actions/runs/42',
+      RELEASE_RUN_NAME: 'RELEASE', RELEASE_CHANNEL: 'production', SOURCE_SHA: 'a'.repeat(40),
+      REQUEST_SERVER: 'true', SERVER_CANDIDATE_RESULT: 'success',
+      SERVER_VERSION: '0.2.21', SERVER_CANDIDATE_VERSION: '0.2.21',
+      IMMUTABLE_VERIFICATION_RESULT: 'failure', SERVER_RESUME_VERIFIED: 'false',
+    });
+    const server = status.surfaces.find(surface => surface.id === 'server-immutable-candidate');
+    assert.equal(server.state, 'partial');
+    assert.deepEqual(server.identity, { sourceSha: 'a'.repeat(40), verified: false, product: 'server', version: '0.2.21' });
+  });
+}

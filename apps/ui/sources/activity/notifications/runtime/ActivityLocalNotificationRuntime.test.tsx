@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
-import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { createSessionFixture, renderScreen, flushHookEffects } from '@/dev/testkit';
+import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { installBrowserNotificationApiStub } from '@/dev/testkit/mocks/browserNotification';
 import { storage } from '@/sync/domains/state/storage';
 import * as profiles from '@/sync/domains/server/serverProfiles';
@@ -23,6 +24,7 @@ const initialState = storage.getState();
 const sendExpoLocalNotification = vi.hoisted(() => vi.fn(async () => 'notif-1'));
 const sendTauriLocalNotification = vi.hoisted(() => vi.fn(async () => true));
 const routerPush = vi.hoisted(() => vi.fn());
+const invokeTauri = vi.hoisted(() => vi.fn(async (_command: string, _args?: unknown) => false));
 
 vi.mock('react-native', async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -46,6 +48,8 @@ vi.mock('@/text', async () => {
 
 vi.mock('@/utils/platform/tauri', () => ({
     isTauriDesktop: () => reactNativeRuntime.isTauri,
+    invokeTauri,
+    listenTauriEvent: async () => () => undefined,
 }));
 
 vi.mock('expo-notifications', () => ({
@@ -67,6 +71,7 @@ vi.mock('expo-router', async () => {
 
 describe('ActivityLocalNotificationRuntime', () => {
     beforeEach(() => {
+        invokeTauri.mockReset().mockResolvedValue(false);
         storage.setState(initialState, true);
         const profile = profiles.upsertServerProfile({ serverUrl: 'https://stack.example.test', name: 'Test' });
         profiles.setActiveServerId(profile.id, { scope: 'device' });
@@ -181,6 +186,7 @@ describe('ActivityLocalNotificationRuntime', () => {
         };
         reactNativeRuntime.platformOs = 'web';
         reactNativeRuntime.isTauri = true;
+        invokeTauri.mockImplementation(async command => command === 'desktop_show_clickable_notification');
         setActiveViewingSessionId('session-1');
 
         try {
@@ -195,9 +201,11 @@ describe('ActivityLocalNotificationRuntime', () => {
             });
 
             expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-            expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+            expect(invokeTauri).toHaveBeenCalledWith('desktop_show_clickable_notification', expect.objectContaining({
                 title: 'Ready session',
+                data: expect.objectContaining({ sessionId: 'session-1', serverUrl: 'https://stack.example.test', accountId: 'account-1' }),
             }));
+            expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
             await act(async () => {
                 tree?.unmount();
@@ -210,6 +218,7 @@ describe('ActivityLocalNotificationRuntime', () => {
     it('respects per-topic device-local toggles and routes tauri events to the desktop channel', async () => {
         reactNativeRuntime.platformOs = 'web';
         reactNativeRuntime.isTauri = true;
+        invokeTauri.mockImplementation(async command => command === 'desktop_show_clickable_notification');
         storage.getState().applyLocalSettings({ localNotificationsShowReady: false });
 
         const { ActivityLocalNotificationRuntime } = await import('./ActivityLocalNotificationRuntime');
@@ -230,10 +239,13 @@ describe('ActivityLocalNotificationRuntime', () => {
         });
 
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
-        expect(sendTauriLocalNotification).toHaveBeenCalledWith(expect.objectContaining({
+        expect(invokeTauri).toHaveBeenCalledWith('desktop_show_clickable_notification', expect.objectContaining({
             title: 'Ready session',
             body: 'Command: pwd',
+            data: expect.objectContaining({ sessionId: 'session-1', serverUrl: 'https://stack.example.test', accountId: 'account-1', requestId: 'req-7' }),
         }));
+        expect(invokeTauri.mock.calls.filter(([command]) => command === 'desktop_show_clickable_notification')).toHaveLength(1);
+        expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
         await act(async () => {
             tree?.unmount();
@@ -242,6 +254,16 @@ describe('ActivityLocalNotificationRuntime', () => {
 
     it('shows browser notifications on the web and opens the session when one is clicked', async () => {
         reactNativeRuntime.platformOs = 'web';
+        const persisted = new Map<string, string>();
+        vi.stubGlobal('localStorage', {
+            getItem: (key: string) => persisted.get(key) ?? null,
+            setItem: (key: string, value: string) => { persisted.set(key, value); },
+            removeItem: (key: string) => { persisted.delete(key); },
+            key: (index: number) => [...persisted.keys()][index] ?? null,
+            get length() { return persisted.size; },
+        });
+        const token = `e30.${btoa(JSON.stringify({ sub: 'account-1' }))}.signature`;
+        expect(await TokenStorage.setCredentials({ token })).toBe(true);
         const browser = installBrowserNotificationApiStub('granted');
         vi.stubGlobal('focus', vi.fn());
 
@@ -274,8 +296,9 @@ describe('ActivityLocalNotificationRuntime', () => {
         expect(sendExpoLocalNotification).not.toHaveBeenCalled();
         expect(sendTauriLocalNotification).not.toHaveBeenCalled();
 
-        browser.shown[0].onclick?.();
-        expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('session-1'));
+        await act(async () => { browser.shown[0].onclick?.(); });
+        await flushHookEffects();
+        await vi.waitFor(() => expect(routerPush).toHaveBeenCalledWith(expect.stringContaining('session-1')));
 
         await act(async () => {
             tree.unmount();

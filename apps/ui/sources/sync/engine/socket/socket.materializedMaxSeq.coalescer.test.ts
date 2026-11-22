@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 import type { ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Session } from '@/sync/domains/state/storageTypes';
@@ -145,11 +146,12 @@ describe('socket new-message + coalescer: materialized max seq', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         clearActiveViewingSessionsForServerScopeReset();
         vi.useRealTimers();
     });
 
-    it('marks materializedMaxSeq for the active session leading batch immediately and waits for queued trailing batches', async () => {
+    it('marks materializedMaxSeq for the active session once its frame batch is applied', async () => {
         setActiveViewingSessionId('s1', 1);
         markSessionVisible('s1');
         storage.setState((prev) => ({
@@ -215,23 +217,19 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm2', messageSeq: 2 }) });
         await handleUpdateContainer({ ...baseParams, updateData: buildNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3 }) });
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
+        // Queued, not yet materialized: the gap detector reads the queued max seq meanwhile.
+        expect(applyMessages).not.toHaveBeenCalled();
+        expect(markSessionMaterializedMaxSeq).not.toHaveBeenCalled();
         expect(onMessageGapDetected).not.toHaveBeenCalled();
 
         await vi.runAllTimersAsync();
 
-        expect(applyMessages).toHaveBeenCalledTimes(2);
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect((applyMessages.mock.calls[0]?.[1] as Array<{ id: string }>).map((message) => message.id)).toEqual(['m2', 'm3']);
+        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 3);
-
-        const firstApplyOrder = applyMessages.mock.invocationCallOrder[0] ?? 0;
-        const firstMarkOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[0] ?? 0;
-        const secondApplyOrder = applyMessages.mock.invocationCallOrder[1] ?? 0;
-        const secondMarkOrder = markSessionMaterializedMaxSeq.mock.invocationCallOrder[1] ?? 0;
-        expect(firstApplyOrder).toBeGreaterThan(0);
-        expect(firstMarkOrder).toBeGreaterThan(firstApplyOrder);
-        expect(secondApplyOrder).toBeGreaterThan(firstMarkOrder);
-        expect(secondMarkOrder).toBeGreaterThan(secondApplyOrder);
+        expect(markSessionMaterializedMaxSeq.mock.invocationCallOrder[0]).toBeGreaterThan(applyMessages.mock.invocationCallOrder[0] ?? 0);
+        expect(onMessageGapDetected).not.toHaveBeenCalled();
     });
 
     it('defers the first off-screen new-message session projection until the coalescing window flushes', async () => {
@@ -1105,7 +1103,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
         expect(applySessions).not.toHaveBeenCalled();
     });
 
-    it('applies the leading new-message immediately when the session surface is visible without route focus', async () => {
+    it('applies a new-message at its frame when the session surface is visible without route focus', async () => {
         markSessionVisible('s1');
         storage.setState((prev) => ({
             ...prev,
@@ -1163,11 +1161,10 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 text: 'visible',
             }),
         });
+        await vi.runAllTimersAsync();
 
         expect(applyMessages).toHaveBeenCalledTimes(1);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith('s1', 2);
-
-        await vi.runAllTimersAsync();
     });
 
     it('drops queued off-screen new-message applies when the session is deleted', async () => {
@@ -1307,15 +1304,15 @@ describe('socket new-message + coalescer: materialized max seq', () => {
             updateData: buildPlainNewMessageUpdate({ sessionId: 's1', messageId: 'm3', messageSeq: 3, text: 'queued' }),
         });
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages).not.toHaveBeenCalled();
 
         shouldContinue = false;
         await vi.runAllTimersAsync();
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages).not.toHaveBeenCalled();
     });
 
-    it('does not let a queued new-message overwrite a newer immediate message-updated payload', async () => {
+    it('does not let a queued new-message overwrite a newer message-updated payload', async () => {
         setActiveViewingSessionId('s1', 1);
         markSessionVisible('s1');
         storage.setState((prev) => ({
@@ -1396,6 +1393,7 @@ describe('socket new-message + coalescer: materialized max seq', () => {
                 },
             } as ApiUpdateContainer,
         });
+        await vi.advanceTimersByTimeAsync(50);
         expect(appliedTexts.get('m1')).toBe('leading text');
         expect(applyMessages).toHaveBeenCalledTimes(1);
 

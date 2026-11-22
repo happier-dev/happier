@@ -25,6 +25,21 @@ describe('createClaudeUnifiedPromptEchoSuppressor', () => {
     expect(suppressor.shouldSuppressTranscriptMessage(userMessage('hello from ui', 1_200))).toBe(false);
   });
 
+  it('suppresses an SDK text-block UI prompt echo without hiding a later native prompt', () => {
+    const suppressor = createClaudeUnifiedPromptEchoSuppressor({ nowMs: () => 1_000 });
+    suppressor.recordAcceptedPrompt({ message: 'hello from ui' });
+
+    const echo: RawJSONLines = {
+      type: 'user',
+      uuid: 'sdk-ui-prompt-echo',
+      timestamp: new Date(1_100).toISOString(),
+      message: { role: 'user', content: [{ type: 'text', text: 'hello from ui' }] },
+    };
+
+    expect(suppressor.shouldSuppressTranscriptMessage(echo)).toBe(true);
+    expect(suppressor.shouldSuppressTranscriptMessage({ ...echo, uuid: 'later-native-prompt' })).toBe(false);
+  });
+
   it('suppresses an accepted prompt echo that the provider wrapped in paste markers', () => {
     // Claude Code 2.1.259 records a bracketed-paste prompt wrapped in its own paste markers. If
     // the echo is not recognised it is forwarded as a second, visible transcript message showing

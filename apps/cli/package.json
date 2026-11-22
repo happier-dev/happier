@@ -1,6 +1,6 @@
 {
   "name": "@happier-dev/cli",
-  "version": "0.2.20",
+  "version": "0.2.21",
   "description": "Mobile and Web client for Claude Code and Codex",
   "author": "Leeroy Brun <leeroy.brun@gmail.com>",
   "license": "MIT",
@@ -166,7 +166,7 @@
     "http-proxy": "^1.18.1",
     "https-proxy-agent": "^7.0.6",
     "ink": "^6.5.1",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.15.0",
     "node-pty": "^1.1.0",
     "open": "^10.2.0",
     "openapi-types": "12.1.3",

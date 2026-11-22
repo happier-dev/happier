@@ -13,6 +13,12 @@ vi.mock('node:child_process', async (importOriginal) => ({
   spawnSync: spawnSyncMock,
 }));
 
+// Isolate the OS home as well as the daemon home; relay installs are owned by the OS home.
+vi.mock('node:os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:os')>();
+  return { ...actual, homedir: () => process.env.HAPPIER_DAEMON_SERVICE_USER_HOME_DIR ?? actual.homedir() };
+});
+
 afterEach(() => { vi.restoreAllMocks(); spawnSyncMock.mockReset(); spawnSyncMock.mockReturnValue({ status: 0 }); });
 
 describe('post-update repair', () => {
@@ -27,7 +33,24 @@ describe('post-update repair', () => {
       HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable', HAPPIER_DAEMON_SERVICE_NODE_PATH: process.execPath,
     } }, async () => {
       expect(await maybeRunDoctorRepair({ migrationRan: false, channel: 'stable' })).toBe(false);
-      expect(spawnSyncMock).not.toHaveBeenCalled();
+      expect(spawnSyncMock).not.toHaveBeenCalledWith(expect.any(String), ['doctor', 'repair'], expect.any(Object));
+    });
+  });
+
+  it.each(['stable', 'preview', 'dev'] as const)('offers repair for an installed %s relay without service repairs', async (channel) => {
+    await withConfiguredDaemonTestHome({ prefix: 'post-update-relay-', env: {
+      HAPPIER_DAEMON_SERVICE_PLATFORM: 'linux', HAPPIER_DAEMON_SERVICE_CHANNEL: 'stable',
+      HAPPIER_PUBLIC_RELEASE_CHANNEL: 'stable', HAPPIER_DAEMON_SERVICE_NODE_PATH: process.execPath,
+    } }, async ({ homeDir }) => {
+      const { resolveRelayRuntimeDefaults } = await import('@happier-dev/cli-common/firstPartyRuntime');
+      const defaults = resolveRelayRuntimeDefaults({ channel: channel === 'dev' ? 'publicdev' : channel, homeDir });
+      mkdirSync(defaults.installRoot, { recursive: true });
+      writeFileSync(join(defaults.installRoot, 'self-host-state.json'), JSON.stringify({ version: '0.2.16' }));
+      expect(await maybeRunDoctorRepair({ migrationRan: false, channel: 'stable' })).toBe(true);
+      const binaryPath = resolveInstalledFirstPartyComponentPaths({
+        componentId: 'happier-cli', channel: 'stable', processEnv: process.env,
+      }).binaryPath;
+      expect(spawnSyncMock).toHaveBeenCalledWith(binaryPath, ['doctor', 'repair'], expect.any(Object));
     });
   });
 

@@ -231,4 +231,50 @@ describe('detectSessionTurnActivity', () => {
             turnInFlight: false,
         });
     });
+
+    it('excludes only blocked inputs proven to have no possible provider effect', async () => {
+        const { detectSessionTurnActivityFromProjection } = await import('./detectSessionTurnInFlight');
+        const base = {
+            latestTurnStatus: 'completed',
+            pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0,
+        };
+
+        expect(detectSessionTurnActivityFromProjection({
+            ...base, pendingCount: 1, pendingBlockedCount: 1, pendingBlockedNoEffectCount: 1,
+        })).toEqual({
+            pendingUserTurns: 0,
+            activeTaskInFlight: false,
+            turnInFlight: false,
+        });
+        // A deliverable message queued behind a blocked one is still pending work.
+        expect(detectSessionTurnActivityFromProjection({
+            ...base, pendingCount: 2, pendingBlockedCount: 1, pendingBlockedNoEffectCount: 1,
+        })).toEqual({
+            pendingUserTurns: 1,
+            activeTaskInFlight: false,
+            turnInFlight: true,
+        });
+        // A blocked input with an uncertain provider effect must still prevent a switch.
+        expect(detectSessionTurnActivityFromProjection({
+            ...base, pendingCount: 1, pendingBlockedCount: 1, pendingBlockedNoEffectCount: 0,
+        })).toEqual({
+            pendingUserTurns: 1,
+            activeTaskInFlight: false,
+            turnInFlight: true,
+        });
+    });
+
+    it.each([
+        {},
+        { pendingBlockedCount: 1 },
+        { pendingBlockedCount: 1, pendingBlockedNoEffectCount: -1 },
+        { pendingBlockedCount: 1, pendingBlockedNoEffectCount: 0.5 },
+        { pendingBlockedCount: 0, pendingBlockedNoEffectCount: 1 },
+        { pendingBlockedCount: 2, pendingBlockedNoEffectCount: 1 },
+    ])('keeps legacy or inconsistent pending facts conservative: %j', async (pendingFacts) => {
+        const { readSessionProjectedPendingInputCount } = await import('./detectSessionTurnInFlight');
+
+        expect(readSessionProjectedPendingInputCount({ pendingCount: 1, ...pendingFacts })).toBe(1);
+    });
 });

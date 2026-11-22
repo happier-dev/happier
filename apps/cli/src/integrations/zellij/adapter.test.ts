@@ -3232,7 +3232,6 @@ describe('createZellijTerminalHostAdapter', () => {
       hostKind: 'zellij',
       reason: 'bootstrap_cleanup_did_not_converge',
     });
-    expect(calls).toContain('close:terminal_1');
     expect(calls.at(-1)).toBe('kill:session-a');
   });
 

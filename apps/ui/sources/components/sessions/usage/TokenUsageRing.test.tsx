@@ -24,6 +24,14 @@ function renderRing(element: React.ReactElement): ReactTestRenderer {
 }
 
 describe('TokenUsageRing', () => {
+    it('keeps every concentric limit visible around a readable center at small sizes', () => {
+        const tree = renderRing(<TokenUsageRing used={70} limit={100} value="70" label="Provider usage" size={18}
+            rings={Array.from({ length: 6 }, (_, index) => ({ used: index * 20, limit: 100 }))} />);
+        const arcs = tree.root.findAll(node => String(node.type) === 'Circle' && typeof node.props.strokeDashoffset === 'number');
+        expect(arcs).toHaveLength(6);
+        expect(arcs.at(-1)?.props.r).toBeGreaterThan(4);
+    });
+
     it('renders caller-provided label and value for goal budget progress', () => {
         const tree = renderRing(
             <TokenUsageRing
@@ -34,12 +42,16 @@ describe('TokenUsageRing', () => {
                 testID="goal-budget-token-usage"
                 ringTestID="goal-budget-token-usage-ring"
                 valueTestID="goal-budget-token-usage-value"
+                progressTestID="goal-budget-token-usage-progress"
                 size={48}
             />,
         );
 
         expect(tree.root.findByProps({ accessibilityLabel: 'Goal budget' })).toBeTruthy();
         expect(tree.root.findByProps({ testID: 'goal-budget-token-usage-value' }).props.children).toBe('125k / 500k');
+        const progress = tree.root.findByProps({ testID: 'goal-budget-token-usage-progress' });
+        const circumference = 2 * Math.PI * progress.props.r;
+        expect(1 - progress.props.strokeDashoffset / circumference).toBeCloseTo(0.25);
     });
 
     it('clamps visual progress to the ring circumference', () => {

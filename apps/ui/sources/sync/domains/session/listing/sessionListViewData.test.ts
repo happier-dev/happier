@@ -1,3 +1,6 @@
+import { applyWorkspaceDisplayToSessionListViewData } from '../organization/viewState';
+import { buildSessionOrganizationLabelKey } from '../organization/keys';
+import { resolveSessionWorkspacePresentation } from './sessionWorkspacePresentation';
 import { describe, expect, it, vi } from 'vitest';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
 import { applySessionFoldersToSessionListViewData, buildSessionListViewData, type SessionListViewItem } from './sessionListViewData';
@@ -336,6 +339,31 @@ describe('buildSessionListViewData', () => {
             'header:project:repoB',
             'session:other:inactive:project:no-path',
         ]);
+    });
+
+    it('joins a saved pathless workspace name without exposing unnamed project headings', () => {
+        const metadata = { machineId: 'm1', path: '', host: 'host-a', version: '0.0.0' };
+        const otherMetadata = { ...metadata, machineId: 'm2', host: 'host-b' };
+        const serverId = 'server-a';
+        const workspaceKey = resolveSessionWorkspacePresentation({ metadata, machines: {} }).workspaceKey;
+        const otherKey = resolveSessionWorkspacePresentation({ metadata: otherMetadata, machines: {} }).workspaceKey;
+        const items = buildSessionListViewData({
+            named: makeSession({ id: 'named', active: true, metadata }),
+            unnamed: makeSession({ id: 'unnamed', active: true, metadata: otherMetadata }),
+        }, {}, { groupInactiveSessionsByProject: true, serverScope: { serverId } });
+        const key = (scopeKey: string) => buildSessionOrganizationLabelKey({ serverId, labelKind: 'workspace', scopeKey });
+        const labels = {
+            [key(workspaceKey)]: { labelKind: 'workspace', scopeKey: workspaceKey, archivedAt: null, createdAt: 1, updatedAt: 1,
+                display: { t: 'plain', v: { label: 'Saved workspace' } } },
+            [key(otherKey)]: { labelKind: 'workspace', scopeKey: otherKey, archivedAt: null, createdAt: 1, updatedAt: 1,
+                display: { t: 'plain', v: { color: { kind: 'accent', key: 'blue' } } } },
+        } as const;
+        const result = applyWorkspaceDisplayToSessionListViewData(items, labels);
+        expect(result?.map((item) => item.type === 'header' ? item.title : item.session.id)).toEqual([
+            'Active', 'Saved workspace', 'named', 'unnamed',
+        ]);
+        expect(applyWorkspaceDisplayToSessionListViewData(items, structuredClone(labels))).toBe(result);
+        expect(applyWorkspaceDisplayToSessionListViewData(items, {})).toBe(items);
     });
 
     it('uses section-agnostic project group keys for split activity sections', () => {

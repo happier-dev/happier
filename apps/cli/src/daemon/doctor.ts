@@ -7,10 +7,12 @@
 
 import spawn from 'cross-spawn';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import { readFile, readlink } from 'node:fs/promises';
+import { PUBLIC_RELEASE_RING_IDS, resolveFirstPartyComponentPublicReleaseVariant } from '@happier-dev/cli-common/firstPartyRuntime';
 import { listProcessSnapshot } from './processSnapshotCache';
 import { posixPsEnvironment } from './posixPs';
+import { logger } from '@/ui/logger';
 
 const SAFE_RESPAWN_ENVIRONMENT_VARIABLE_KEYS = ['CLAUDE_CONFIG_DIR', 'CODEX_HOME', 'CODEX_SQLITE_HOME'] as const;
 const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
@@ -21,7 +23,11 @@ const DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS = [
   'HAPPIER_WEBAPP_URL',
   'HAPPIER_PUBLIC_SERVER_URL',
 ] as const;
-const WINDOWS_HAPPY_HOST_PROCESS_NAMES = new Set(['happier', 'happier.exe', 'node', 'node.exe', 'bun', 'bun.exe', 'mainthread']);
+const HAPPY_CLI_PROCESS_NAMES = new Set(PUBLIC_RELEASE_RING_IDS.flatMap((channel) =>
+  resolveFirstPartyComponentPublicReleaseVariant({ componentId: 'happier-cli', channel }).installShims
+    .flatMap((name) => [name, `${name}.exe`]),
+));
+const WINDOWS_HAPPY_HOST_PROCESS_NAMES = new Set([...HAPPY_CLI_PROCESS_NAMES, 'node', 'node.exe', 'bun', 'bun.exe', 'mainthread']);
 
 export type DaemonOwnershipEnvironmentVariables = Partial<Record<
   typeof DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS[number],
@@ -39,6 +45,7 @@ export type HappyProcessInfo = {
 
 export type ProcessInfoByPid = {
   pid: number;
+  ppid?: number;
   stat?: string;
   name?: string;
   cmd?: string;
@@ -169,70 +176,105 @@ function parsePositiveInt(value: unknown): number | null {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
-function parseWindowsProcessInfoOutput(output: string): Map<number, { pid: number; name?: string; cmd?: string }> {
+function parseWindowsProcessInfoOutput(output: string): Map<number, RawProcessInfo> {
   const trimmed = output.trim();
   if (!trimmed) return new Map();
 
   const parsed = JSON.parse(trimmed) as unknown;
   const rows = Array.isArray(parsed) ? parsed : [parsed];
-  const result = new Map<number, { pid: number; name?: string; cmd?: string }>();
+  const result = new Map<number, RawProcessInfo>();
   for (const row of rows) {
     if (!row || typeof row !== 'object') continue;
     const pid = parsePositiveInt((row as { ProcessId?: unknown }).ProcessId);
     if (!pid) continue;
+    const parent = (row as { ParentProcessId?: unknown }).ParentProcessId;
+    const ppid = typeof parent === 'number' && Number.isSafeInteger(parent) && parent >= 0 ? parent : undefined;
     const name = typeof (row as { Name?: unknown }).Name === 'string' ? (row as { Name?: string }).Name : undefined;
     const commandLine = typeof (row as { CommandLine?: unknown }).CommandLine === 'string'
       ? (row as { CommandLine?: string }).CommandLine?.trim()
       : undefined;
-    result.set(pid, { pid, ...(name ? { name } : {}), ...(commandLine ? { cmd: commandLine } : {}) });
+    result.set(pid, { pid, ppid, ...(name ? { name } : {}), ...(commandLine ? { cmd: commandLine } : {}) });
   }
   return result;
 }
 
+// CIM may take several seconds on Windows. Await completion without blocking the daemon's
+// event loop or imposing a query-local deadline on otherwise valid process evidence.
+async function runWindowsProcessQuery(
+  script: string,
+): Promise<Map<number, RawProcessInfo>> {
+  try {
+    const output = await new Promise<string>((resolve, reject) => {
+      execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-Command', script],
+        { encoding: 'utf8', windowsHide: true },
+        (error, stdout) => {
+          if (error) reject(error);
+          else resolve(stdout);
+        },
+      );
+    });
+    return parseWindowsProcessInfoOutput(output);
+  } catch {
+    // Keep best-effort inspection observable without logging command lines or query output.
+    logger.warnFile('[DAEMON] Windows process query failed; process information is unavailable');
+    return new Map();
+  }
+}
+
 async function getProcessInfosByPidWindows(
   pids: readonly number[],
-): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
+): Promise<Map<number, RawProcessInfo>> {
   if (process.platform !== 'win32') return new Map();
 
   const uniquePids = Array.from(new Set(pids.filter((pid) => Number.isInteger(pid) && pid > 0)));
   if (uniquePids.length === 0) return new Map();
 
-  try {
-    const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
-    const script = [
-      `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, Name, CommandLine`,
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
-  } catch {
-    return new Map();
-  }
+  const filter = uniquePids.map((pid) => `ProcessId=${pid}`).join(' OR ');
+  const script = [
+    `$rows = Get-CimInstance Win32_Process -Filter "${filter}" | Select-Object ProcessId, ParentProcessId, Name, CommandLine`,
+    'if ($null -eq $rows) { return }',
+    '$rows | ConvertTo-Json -Compress',
+  ].join('; ');
+  return await runWindowsProcessQuery(script);
 }
 
-async function getAllProcessInfosWindows(): Promise<Map<number, { pid: number; name?: string; cmd?: string }>> {
+async function getAllProcessInfosWindows(): Promise<Map<number, RawProcessInfo>> {
   if (process.platform !== 'win32') return new Map();
 
-  try {
-    const script = [
-      '$rows = Get-CimInstance Win32_Process | Select-Object ProcessId, Name, CommandLine',
-      'if ($null -eq $rows) { return }',
-      '$rows | ConvertTo-Json -Compress',
-    ].join('; ');
-    const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-      windowsHide: true,
-    });
-    return parseWindowsProcessInfoOutput(output);
-  } catch {
-    return new Map();
+  const script = [
+    '$rows = Get-CimInstance Win32_Process -ErrorAction Stop | Select-Object ProcessId, ParentProcessId, Name, CommandLine',
+    'if ($null -eq $rows) { return }',
+    '$rows | ConvertTo-Json -Compress',
+  ].join('; ');
+  return await runWindowsProcessQuery(script);
+}
+
+/** Read the live ancestor chain through the same Windows inventory used by daemon inspection. */
+export async function findWindowsHappyProcessAncestors(): Promise<HappyProcessInfo[]> {
+  if (process.platform !== 'win32') return [];
+  const processes = await getAllProcessInfosWindows();
+  if (processes.size === 0) throw new Error('Windows process inventory is unavailable');
+  const ancestors: HappyProcessInfo[] = [];
+  const visited = new Set<number>([process.pid]);
+  let pid = process.ppid;
+  while (pid > 0) {
+    if (visited.has(pid)) throw new Error('Windows process ancestry contains a cycle');
+    visited.add(pid);
+    const proc = processes.get(pid);
+    // A parent may already have exited; Windows retains its PID on surviving children.
+    if (!proc) break;
+    // Windows can omit command lines for system/service ancestors. Only a potential
+    // Happier host needs one for classification; still walk through every parent.
+    if (proc.ppid === undefined || !proc.name || (!proc.cmd && isWindowsHappyHostProcessCandidate(proc.name))) {
+      throw new Error(`Cannot inspect Windows ancestor PID ${pid}`);
+    }
+    const classified = classifyHappyProcess(proc);
+    if (classified) ancestors.push(classified);
+    pid = proc.ppid;
   }
+  return ancestors;
 }
 
 async function getProcessInfoByPidWindows(pid: number): Promise<{ pid: number; name?: string; cmd?: string } | null> {
@@ -329,8 +371,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
     normalizedCommand.includes('happier.mjs') ||
     normalizedCommand.includes('@happier-dev/cli') ||
     normalizedCommand.includes('package-dist/index.mjs') ||
-    normalizedName === 'happier' ||
-    normalizedName === 'happier.exe';
+    HAPPY_CLI_PROCESS_NAMES.has(normalizedName);
 
   if (!isHappy) return null;
 
@@ -342,7 +383,7 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
     type = cmd.includes('tsx') ? 'dev-daemon-version-check' : 'daemon-version-check';
   } else if (cmd.includes('daemon start-sync') || cmd.includes('daemon start')) {
     type = cmd.includes('tsx') ? 'dev-daemon' : 'daemon';
-  } else if (cmd.includes('--started-by daemon')) {
+  } else if (indicatesDaemonStartedSessionCommand(cmd)) {
     type = cmd.includes('tsx') ? 'dev-daemon-spawned' : 'daemon-spawned-session';
   } else if (cmd.includes('doctor')) {
     type = cmd.includes('tsx') ? 'dev-doctor' : 'doctor';
@@ -358,6 +399,11 @@ export function classifyHappyProcess(proc: RawProcessInfo): HappyProcessInfo | n
       ? { daemonOwnershipEnvironmentVariables: proc.daemonOwnershipEnvironmentVariables }
       : {}),
   };
+}
+
+export function indicatesDaemonStartedSessionCommand(command: string): boolean {
+  const normalized = command.replace(/\s+/g, ' ').trim();
+  return /(?:^|[\s"])--started-by"?(?:=|\s+)\s*"?daemon"?(?=$|[\s"])/i.test(normalized);
 }
 
 async function findAllHappyProcessesSnapshot(): Promise<HappyProcessInfo[]> {

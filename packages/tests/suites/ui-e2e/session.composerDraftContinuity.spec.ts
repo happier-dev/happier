@@ -609,10 +609,21 @@ test.describe('ui e2e: session composer draft continuity', () => {
             await route.fulfill({ response });
         });
         await send.click();
+        await expect(reopened).toBeFocused();
         await expect.poll(() => didIntercept, { timeout: 30_000 }).toBe(true);
         await reopened.fill(newer);
+        await reopened.press('Tab');
+        await expect(reopened).not.toBeFocused();
+        const focusedElsewhere = await page.locator(':focus').elementHandle();
+        if (!focusedElsewhere) throw new Error('Expected another control to receive focus');
+        const enqueueResponse = page.waitForResponse((response) => (
+            pendingEnqueueUrl(new URL(response.url())) && response.request().method() === 'POST'
+        ));
         releaseResponse();
+        expect((await enqueueResponse).ok()).toBe(true);
+        await expect(send).toBeEnabled({ timeout: 60_000 });
         await expect(reopened).toHaveValue(newer, { timeout: 60_000 });
+        expect(await focusedElsewhere.evaluate((element) => document.activeElement === element)).toBe(true);
         await page.unroute(pendingEnqueueUrl);
     });
 

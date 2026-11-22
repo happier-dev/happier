@@ -1,5 +1,18 @@
 # Pending delivery architecture
 
+## Idleness evidence (development)
+
+The single-session `GET /v2/sessions/:sessionId` response includes optional
+`pendingBlockedNoEffectCount`: queued blocked inputs whose protocol delivery
+status proves that no provider effect is possible. The database reads this count
+with the session's existing Pending counters in one snapshot. Uncertain delivery,
+unknown reasons, and missing reasons do not contribute to this proof.
+
+The CLI subtracts only this proven subset when checking for an in-flight turn.
+An older server's missing proof preserves conservative treatment of all Pending
+input. `pendingCount` and `pendingBlockedCount` keep their existing meanings;
+list and socket payloads do not carry the additional detail-only count.
+
 ## Explicit non-interrupting delivery (development)
 
 **Steer now** requests immediate delivery of the exact Pending row without
@@ -32,11 +45,18 @@ itself does not establish provider acceptance of that follow-up.
 ## Composer busy-steer policy (development)
 
 `decideSessionMessageDelivery` owns the requested action for ordinary composer
-sends. Both configured delivery modes, **Queue in agent** and **Pending until
-ready**, honor **Steer immediately** by durably enqueuing `steer_if_active` when
-the session supports steering. An explicit per-send Pending intent or the
-**Server pending** busy policy keeps `enqueue`. Runtime readiness and payload
-steerability still gate delivery through the existing Pending owner.
+sends. With a Pending-capable CLI, the `agent_queue` and `server_pending`
+values of `sessionMessageSendMode` take the same durable Pending path, so the
+settings screen exposes one choice (**Add it to the current turn**, **Wait until
+the turn ends**, **Stop the turn and send**) through
+`resolveSessionBusySendBehavior` / `getSessionBusySendBehaviorSettings` in
+`submitMode.ts`. It writes the two existing keys, so older clients keep reading
+them. A `steer_immediately` busy policy durably enqueues `steer_if_active` when
+the session supports steering; an explicit per-send Pending intent or the
+`server_pending` busy policy keeps `enqueue`. Runtime readiness and payload
+steerability still gate delivery through the existing Pending owner, and a
+`steer_if_active` row that cannot steer the active turn shows the
+`steer_unavailable_waiting_for_turn` wait reason.
 
 The existing-session composer's send button offers per-message choices on long
 press (or right-click on web): **Steer now** when steering is supported, **Queue**,

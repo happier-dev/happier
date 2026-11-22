@@ -3,6 +3,7 @@ import { useLocalSearchParams } from 'expo-router';
 import { Platform, View } from 'react-native';
 import { SessionView } from '@/components/sessions/shell/SessionView';
 import { SessionInvalidLinkFallback } from '@/components/sessions/shell/SessionInvalidLinkFallback';
+import { SessionRouteEntryGate } from '@/components/sessions/shell/surface/sessionRouteEntryPresentation';
 import { TranscriptSameSessionHandoffProvider } from '@/components/sessions/transcript/viewport/lifecycle/transcriptSameSessionHandoff';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
@@ -72,7 +73,25 @@ function useInitialMobileSurfaceHint(
     return cacheRef.current?.persistedSurface ?? null;
 }
 
-export default React.memo(() => {
+function readSessionRouteIdParam(value: string | string[] | undefined): string {
+    return (typeof value === 'string'
+        ? value
+        : Array.isArray(value)
+            ? (value[0] ?? '')
+            : '').trim();
+}
+
+// Web keeps one stack entry per visit for Back/Forward; only the presented entry mounts the route.
+export default React.memo(function SessionRoute() {
+    const { id } = useLocalSearchParams<{ id?: string | string[] }>();
+    return (
+        <SessionRouteEntryGate sessionId={readSessionRouteIdParam(id)}>
+            <SessionRouteContent />
+        </SessionRouteEntryGate>
+    );
+});
+
+function SessionRouteContent() {
     const params = useLocalSearchParams<{
         id?: string | string[];
         serverId?: string | string[];
@@ -92,12 +111,7 @@ export default React.memo(() => {
         jumpSeq: jumpSeqParam,
         recoveryDataId: recoveryDataIdParam,
     } = params;
-    const sessionId =
-        (typeof sessionIdParam === 'string'
-            ? sessionIdParam
-            : Array.isArray(sessionIdParam)
-                ? (sessionIdParam[0] ?? '')
-                : '').trim();
+    const sessionId = readSessionRouteIdParam(sessionIdParam);
     const jumpSeqRaw = typeof jumpSeqParam === 'string'
         ? jumpSeqParam
         : Array.isArray(jumpSeqParam)
@@ -223,4 +237,4 @@ export default React.memo(() => {
                 )}
         </TranscriptSameSessionHandoffProvider>
     );
-});
+}

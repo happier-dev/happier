@@ -832,6 +832,7 @@ export const pt: TranslationStructure = {
     details: "Detalhes",
     fieldStatus: "Estado",
     fieldAction: "Ação",
+    fieldFailureReason: "Motivo da falha",
     approve: "Aprovar",
     reject: "Rejeitar",
     loadError: "Falha ao carregar a aprovação.",
@@ -1323,6 +1324,7 @@ export const pt: TranslationStructure = {
     send: "Enviar",
     attach: "Anexar",
     addImage: "Adicionar imagem",
+    takePhoto: "Tirar foto",
     addFile: "Adicionar arquivo",
     linkFile: "Vincular arquivo",
     files: "Arquivos",
@@ -2836,6 +2838,7 @@ export const pt: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usado`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "agora",
         outdated: "desatualizado",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3427,6 +3430,8 @@ export const pt: TranslationStructure = {
         `Ignorados ${count} ${plural({ count, singular: "arquivo", plural: "arquivos" })} que excedem o tamanho máximo de anexo.`,
       noClipboardImageTitle: "Nenhuma imagem na área de transferência",
       noClipboardImageBody: "Copie uma imagem e cole-a como anexo.",
+      cameraPermissionDeniedTitle: "Acesso à câmera necessário",
+      cameraPermissionDeniedBody: "Permita o acesso à câmera nas configurações do dispositivo para tirar uma foto.",
     },
   },
 
@@ -3726,7 +3731,7 @@ export const pt: TranslationStructure = {
     trayOpenInHappier: 'Abrir no Happier',
     traySettings: 'Ajustes…',
     trayStartAtLogin: 'Iniciar ao entrar',
-    trayStopAndQuit: 'Parar os serviços em segundo plano e sair',
+    trayStopAndQuit: 'Sair do Happier (parar os serviços em segundo plano)',
     trayStart: 'Iniciar',
     trayRestart: 'Reiniciar',
     trayStop: 'Parar',
@@ -5590,8 +5595,8 @@ export const pt: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Tentativa ${attempt}`,
       title: "Limite de uso atingido",
       readyTitle: "Limite de uso redefinido",
-      resetBody: ({ time }: { time: string }) =>
-        `Este provedor pede que a sessão espere até ${time} antes de continuar.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Este provedor pede que a sessão espere até ${time}${duration ? ` (${duration})` : ''} antes de continuar.`,
       genericBody: "Este provedor pede que a sessão espere antes de continuar.",
       stoppedBody: "A recuperação automática parou e não tentará novamente sozinha. Tente novamente abaixo.",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6182,6 +6187,7 @@ export const pt: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: 'Aguardando o fim da atividade do runtime',
 	        runtimeActivityUnknownNotice: 'Aguardando o estado de atividade do runtime',
 	        waitingForRuntimeNotice: 'Aguardando o runtime se reconectar',
+	        steerUnavailableWaitingForTurnNotice: 'Não pode entrar neste turno agora · será enviada quando terminar',
 	        nonSteerableNotice: "O turno atual não pode aceitar inserção após esta mudança de modo. Ele será executado depois, ou use Enviar agora para interromper.",
 	        steerBlockedTerminalDraftNotice: 'Em espera: um rascunho no compositor do terminal está a bloquear a entrega. Apague-o no terminal ou interrompa o turno.',
 	        clearTerminalComposer: {
@@ -6690,7 +6696,8 @@ export const pt: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Rascunhos', badge: 'Rascunho', untitled: 'Rascunho sem título', continueEditing: 'Continuar a editar', startAnother: 'Começar outro', startedOpen: "Sessão iniciada · Abrir",
-    status: { offline: 'Sem ligação', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', startInterrupted: 'Início interrompido' },
+    status: { offline: 'Sem ligação', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', starting: 'A iniciar', startFailed: 'Não foi possível iniciar' },
+    error: { title: 'Erro do rascunho', storageDescription: 'Não foi possível guardar este rascunho neste dispositivo. Copie o texto para um local seguro antes de sair; a gravação será tentada novamente na próxima edição.', encryptionDescription: "Este dispositivo não conseguiu sincronizar o rascunho.", showDetailsHint: 'Mostra porque é que este rascunho tem um erro' },
     new: { action: 'Novo rascunho' }, delete: { action: 'Eliminar rascunho', confirmTitle: 'Eliminar rascunho?', confirmDescription: 'Este rascunho será removido dos teus dispositivos.' },
     conflict: { title: 'Conflito de rascunho', description: 'Este campo mudou noutro dispositivo.', mine: 'Neste dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Manter do dispositivo', copyMine: 'Copiar o meu', copied: 'Copiado', copyFailed: 'Não foi possível copiar', field: { text: 'Texto', mentions: 'Menções', attachments: 'Anexos', recipient: 'Destinatário', agentContinuation: 'Continuação do agente', executionRunDelivery: 'Entrega da execução' } },
   },
@@ -8652,6 +8659,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Manter o editor em foco ao enviar",
           keepFocusSubtitle: "Permaneça no campo de mensagem para escrever a próxima em seguida.",
+          typeToFocusTitle: "Escrever de qualquer lugar",
+          typeToFocusSubtitle: "Comece a digitar fora de um campo de texto para ir ao campo de mensagem.",
           title: 'Comportamento da entrada',
           footer: 'Configure enviar com Enter e o comportamento do histórico de mensagens.',
           enterToSendEnabledNativeSubtitle: 'Pressione Enter para enviar',
@@ -8678,16 +8687,17 @@ settingsSession: {
           manualSubtitle: "Sempre manter as mensagens na fila até você retomar a sessão.",
         },
         title: "Envio de mensagens",
-        footer:
-          "Controla o que acontece quando você envia uma mensagem enquanto o agente está em execução.",
-        queueInAgentTitle: "Enfileirar no agente (atual)",
-        queueInAgentSubtitle:
-          "Escreva na transcrição imediatamente; o agente processa quando estiver pronto.",
-        interruptTitle: "Interromper e enviar",
-        interruptSubtitle: "Abortar o turno atual e enviar imediatamente.",
-        pendingTitle: "Pendente até estar pronto",
-        pendingSubtitle:
-          "Mantenha mensagens em uma fila de pendentes; o agente puxa quando estiver pronto.",
+        footer: 'Escolha o que acontece quando você envia uma mensagem enquanto o agente trabalha.',
+        busySend: {
+          addToTurnTitle: 'Adicionar ao turno atual',
+          addToTurnSubtitle: 'O agente lê na hora e continua trabalhando, como digitar no próprio terminal dele. Se não puder aceitar no meio do turno, a mensagem espera em Pendentes até o turno terminar.',
+          waitForTurnTitle: 'Esperar o turno terminar',
+          waitForTurnSubtitle: 'Mantém a mensagem em Pendentes, onde você pode editá-la ou reordená-la, e envia quando o turno terminar.',
+          interruptTitle: 'Parar o turno e enviar',
+          interruptSubtitle: 'Para o que o agente está fazendo e envia a mensagem na hora.',
+        },
+        inactiveSessionsTitle: 'Sessões inativas',
+        inactiveSessionsFooter: 'Vale quando você envia para uma sessão cujo agente parou ou cuja máquina está offline.',
         pendingDrainModeTitle: "Processamento da fila pendente",
         pendingDrainModeFooter:
           "Escolha se o agente pega uma mensagem por vez quando fica pronto ou agrupa toda a fila pendente.",
@@ -8709,17 +8719,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "Quando o runtime estiver inativo",
           afterRuntimeIdleSubtitle:
             "Mantém mensagens pendentes aguardando enquanto ainda houver atividade de runtime acompanhada.",
-        },
-        busySteerPolicyTitle: "Quando o agente está ocupado (com direção)",
-        busySteerPolicyFooter:
-          "Se o agente suporta direção em voo, escolha se as mensagens direcionam imediatamente ou vão para Pendente primeiro.",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "Direcionar imediatamente",
-          steerImmediatelySubtitle:
-            "Enviar na hora e direcionar o turno atual (sem interrupção).",
-          queueForReviewTitle: "Enfileirar em Pendente",
-          queueForReviewSubtitle:
-            "Coloque as mensagens primeiro em Pendente; envie depois usando \"Direcionar agora\".",
         },
         nonSteerablePromptTitle: 'Quando uma mensagem não pode direcionar o turno ativo',
         nonSteerablePromptFooter: 'Mudanças do modo de permissões e /clear ou /compact não podem ser aplicadas no meio do turno. Escolha o que o Happier faz com essas mensagens enquanto o agente está ocupado.',
@@ -8764,6 +8763,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continue de onde parou.",
       },
       providerUsageGauge: {
+          numberTitle: "Número no centro dos anéis",
+          numberSubtitle: "Escolha o limite para o número nos anéis. Se indisponível, será usado o limite mais restritivo.",
         title: "Uso do provedor",
         footer:
           "Escolha os indicadores do editor para todas as contas. Eles respeitam os limites selecionados em cada pool. Os favoritos adicionam indicadores para a conta ativa.",
@@ -11111,6 +11112,9 @@ settingsSession: {
     sessionReferenceOpen: ({ name }: { name: string }) => `Abrir a sessão ${name}`,
     switchedToMode: ({ mode }: { mode: string }) => `Mudou para o modo ${mode}`,
     discarded: "Descartado",
+    readAloudA11y: "Ler em voz alta",
+    stopReadAloudA11y: "Parar leitura em voz alta",
+    readAloudFailed: "Não foi possível ler esta mensagem em voz alta. Verifique as configurações de voz.",
     recoveredHistory: "Histórico recuperado",
     unknownEvent: "Evento desconhecido",
     contextCompactionStarted: "Compactando contexto...",

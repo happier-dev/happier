@@ -347,7 +347,7 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
         }
 
         if (item.type === 'session') {
-            const folderId = typeof item.folderId === 'string' && item.folderId.trim() ? item.folderId.trim() : null;
+            const folderId = item.groupKind !== 'pinned' && typeof item.folderId === 'string' && item.folderId.trim() ? item.folderId.trim() : null;
             const parentRowId = folderId ? treeRowId.folder(folderId) : null;
             const containerId = parentRowId ?? activeRoot.containerId;
             const container = containerMetadataById.get(containerId) ?? activeRoot;
@@ -368,7 +368,7 @@ export function buildSessionListTreeRows(params: BuildSessionListTreeRowsParams)
                 serverId: serverId || null,
                 sessionId,
                 folderId,
-                folderDepth: normalizeDepth(item.folderDepth),
+                folderDepth: item.groupKind === 'pinned' ? 0 : normalizeDepth(item.folderDepth),
                 workspace: item.workspace ?? container.workspace,
                 childContainerId: null,
                 childGroupKey: null,

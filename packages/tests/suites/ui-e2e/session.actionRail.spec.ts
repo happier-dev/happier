@@ -328,7 +328,6 @@ test.describe('ui e2e: session action rail', () => {
       await expect(page.locator('[data-testid^="transcript-message-"]').first()).toBeVisible({ timeout: 60_000 });
       const measureHeaderAlignment = async () => page.evaluate(() => {
         const avatar = document.querySelector('[data-testid="session-header-avatar"]')!;
-        const info = document.querySelector('[data-testid="session-header-info-button"]')!;
         const headerRow = avatar.parentElement!;
         const wrapper = headerRow.parentElement!;
         const candidates = Array.from(document.querySelectorAll('[data-testid^="transcript-message-"] div'));
@@ -339,18 +338,17 @@ test.describe('ui e2e: session action rail', () => {
         if (!cappedRow) throw new Error('missing visible width-capped transcript row');
         const row = cappedRow.getBoundingClientRect();
         const outer = wrapper.getBoundingClientRect();
-        const avatarRect = avatar.getBoundingClientRect();
-        const infoRect = info.getBoundingClientRect();
-        return { avatarLeft: avatarRect.left, transcriptLeft: row.left + 16,
-          actionsRight: infoRect.right, originalActionsRight: outer.right - Math.max(0, (outer.width - 850) / 2) - 16,
+        const header = headerRow.getBoundingClientRect();
+        return { headerLeft: header.left, transcriptLeft: row.left,
+          headerRight: header.right, originalHeaderRight: outer.right - Math.max(0, (outer.width - row.width) / 2),
           outerWidth: outer.width, rowWidth: row.width };
       });
       await expect.poll(async () => {
         const geometry = await measureHeaderAlignment();
-        return Math.abs(geometry.avatarLeft - geometry.transcriptLeft);
+        return Math.abs(geometry.headerLeft - geometry.transcriptLeft);
       }).toBeLessThanOrEqual(1);
       const wideHeaderGeometry = await measureHeaderAlignment();
-      expect(Math.abs(wideHeaderGeometry.actionsRight - wideHeaderGeometry.originalActionsRight)).toBeLessThanOrEqual(1);
+      expect(Math.abs(wideHeaderGeometry.headerRight - wideHeaderGeometry.originalHeaderRight)).toBeLessThanOrEqual(1);
       await testInfo.attach('closed-pane-header-geometry', { body: JSON.stringify(wideHeaderGeometry), contentType: 'application/json' });
       await page.screenshot({ path: testInfo.outputPath('rail-closed-header-alignment.png') });
       await review.click();

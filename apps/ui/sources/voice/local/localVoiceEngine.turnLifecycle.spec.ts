@@ -12,10 +12,36 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { Encryption } from '@/sync/encryption/encryption';
 import { sync } from '@/sync/sync';
 import { patchLocalVoiceState } from './localVoiceState';
+import { toggleReadAloud } from './readAloud';
+import { getReadAloudActiveKey } from './readAloudState';
+import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
-const nativeAudio = vi.hoisted(() => ({ record: vi.fn(), stop: vi.fn() }));
+const nativeAudio = vi.hoisted(() => ({ prepare: vi.fn(), record: vi.fn(), stop: vi.fn() }));
 const expoSpeechSpeak = vi.hoisted(() => vi.fn<(text: string, options?: { onDone?: () => void }) => void>());
-vi.mock('expo-speech', () => ({ speak: expoSpeechSpeak, stop: vi.fn(async () => {}) }));
+const expoSpeechStop = vi.hoisted(() => vi.fn(async () => {}));
+const recognition = vi.hoisted(() => {
+    const listeners = new Map<string, (event: Record<string, unknown>) => void>();
+    return {
+        listeners,
+        start: vi.fn(),
+        stop: vi.fn(() => {
+            listeners.get('result')?.({ isFinal: true, results: [{ transcript: 'discard this input' }] });
+            listeners.get('end')?.({});
+        }),
+    };
+});
+vi.mock('expo-speech', () => ({ speak: expoSpeechSpeak, stop: expoSpeechStop }));
+// Boundary: the native speech recognizer; endpointing and input cancellation remain real.
+vi.mock('expo-speech-recognition', () => ({ ExpoSpeechRecognitionModule: {
+    isRecognitionAvailable: () => true,
+    requestPermissionsAsync: async () => ({ granted: true }),
+    start: recognition.start,
+    stop: recognition.stop,
+    addListener: (event: string, listener: (event: Record<string, unknown>) => void) => {
+        recognition.listeners.set(event, listener);
+        return { remove: () => recognition.listeners.delete(event) };
+    },
+} }));
 vi.mock('expo-audio', () => ({
     RecordingPresets: { HIGH_QUALITY: { extension: '.m4a' } },
     AudioModule: {
@@ -23,10 +49,10 @@ vi.mock('expo-audio', () => ({
         setAudioModeAsync: async () => {},
         AudioRecorder: class {
             uri: string | null = null;
-            async prepareToRecordAsync() {}
+            async prepareToRecordAsync() { await nativeAudio.prepare(); }
             record() { nativeAudio.record(); }
             async stop() {
-                nativeAudio.stop();
+                await nativeAudio.stop();
                 this.uri = 'file:///tmp/voice-turn.m4a';
             }
         },
@@ -122,7 +148,7 @@ describe('local voice engine turn lifecycle (direct session)', () => {
             }
             if (!url.endsWith('/v1/features')) throw new Error(`Unexpected HTTP request: ${url}`);
             return Response.json({
-                features: { sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
+                features: { voice: { enabled: true }, sharing: { pendingQueueV2: { enabled: true }, pendingDeliveryState: { enabled: true } } },
                 capabilities: { compatibility: { pendingInput: { currentPendingInputProtocolVersion: 1 } },
                     session: { pendingInput: { protocolVersion: 1 } } },
             });
@@ -147,8 +173,13 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         });
         submitMessage = vi.spyOn(sync, 'submitMessage');
         nativeAudio.record.mockClear();
+        nativeAudio.prepare.mockReset();
         nativeAudio.stop.mockClear();
+        recognition.start.mockClear();
+        recognition.stop.mockClear();
+        recognition.listeners.clear();
         expoSpeechSpeak.mockReset().mockImplementation((_text, options) => options?.onDone?.());
+        expoSpeechStop.mockClear();
         patchLocalVoiceState({ status: 'idle', sessionId: null, error: null });
         localVoiceEngine = await import('./localVoiceEngine');
     }, 180_000);
@@ -159,6 +190,141 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         vi.unstubAllGlobals();
         Reflect.set(sync, 'encryption', initialEncryption);
         storage.setState(initialStorageState, true);
+    });
+
+    it('stops standalone message playback before starting the microphone', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        let finish: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((_text, options) => { finish = options?.onDone; });
+        const reading = toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            expect(getReadAloudActiveKey()).toBe('message-1');
+            await localVoiceEngine.toggleLocalVoiceTurn('s1');
+            expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+            expect(expoSpeechStop).toHaveBeenCalledTimes(1);
+            expect(getReadAloudActiveKey()).toBeNull();
+        } finally {
+            finish?.();
+            await reading;
+        }
+    });
+
+    it('cancels an active microphone recording before reading a message without sending it', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+        expoSpeechSpeak.mockImplementation((_text, options) => {
+            expect(nativeAudio.stop).toHaveBeenCalledTimes(1);
+            expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+            options?.onDone?.();
+        });
+
+        await expect(toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings })).resolves.toBe(true);
+
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+        expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+    });
+
+    it('can stop read-aloud while microphone cancellation is still preparing playback', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        let finishStop: (() => void) | undefined;
+        nativeAudio.stop.mockImplementationOnce(() => new Promise<void>(resolve => { finishStop = resolve; }));
+        const reading = toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings });
+        expect(getReadAloudActiveKey()).toBe('message-1');
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        await toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings });
+        expect(getReadAloudActiveKey()).toBeNull();
+        finishStop?.();
+        await reading;
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it.each([false, true])('finishes and discards pending microphone preparation before starting read-aloud (replace: %s)', async (replace) => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        let finishPrepare: (() => void) | undefined;
+        nativeAudio.prepare.mockImplementationOnce(() => new Promise<void>(resolve => { finishPrepare = resolve; }));
+        const starting = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        await vi.waitFor(() => expect(nativeAudio.prepare).toHaveBeenCalledTimes(1));
+        const reading = toggleReadAloud({ key: 'pending-start', text: 'Read this message', settings: storage.getState().settings });
+        const replacement = replace ? toggleReadAloud({ key: 'replacement', text: 'Read the replacement', settings: storage.getState().settings }) : null;
+        const spokeDuringPreparation = expoSpeechSpeak.mock.calls.length > 0;
+        finishPrepare?.();
+        await starting;
+        await reading;
+        if (replacement) await replacement;
+        expect(spokeDuringPreparation).toBe(false);
+        expect(nativeAudio.stop).toHaveBeenCalledTimes(1);
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+        expect(expoSpeechSpeak).toHaveBeenCalledWith(replace ? 'Read the replacement' : 'Read this message', expect.any(Object));
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+        expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it('uses the current TTS configuration after waiting for microphone cancellation', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true },
+            voice: voiceSettingsParse({ providerId: 'local_direct', adapters: { local_direct: {
+                stt: { provider: 'openai_compat', openaiCompat: { baseUrl: 'https://stt.example.test' } },
+                tts: { provider: 'openai_compat', openaiCompat: { baseUrl: 'https://old-tts.example.test' } },
+            } } }),
+        } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        let finishStop: (() => void) | undefined;
+        nativeAudio.stop.mockImplementationOnce(() => new Promise<void>(resolve => { finishStop = resolve; }));
+        const reading = toggleReadAloud({ key: 'configuration-switch', text: 'Read privately', settings: storage.getState().settings });
+        configureDirectVoice({ autoSpeakReplies: true });
+        finishStop?.();
+        await expect(reading).resolves.toBe(true);
+        expect(expoSpeechSpeak).toHaveBeenCalledWith('Read privately', expect.any(Object));
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it('does not start speech when the microphone cannot be stopped', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        nativeAudio.stop.mockRejectedValueOnce(new Error('microphone stop failed'));
+
+        await expect(toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings })).resolves.toBe(false);
+
+        expect(expoSpeechSpeak).not.toHaveBeenCalled();
+        expect(getReadAloudActiveKey()).toBeNull();
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'recording', sessionId: 's1', error: 'recording_stop_failed' });
+        expect(transcriptionRequests).toBe(0);
+        expect(submitMessage).not.toHaveBeenCalled();
+    });
+
+    it('discards device recognition and disables hands-free rearming before reading a message', async () => {
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true },
+            voice: voiceSettingsParse({ providerId: 'local_direct', adapters: { local_direct: {
+                stt: { provider: 'device' }, tts: { provider: 'device' }, handsFree: { enabled: true },
+            } } }),
+        } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        expect(localVoiceEngine.getLocalVoiceState().status).toBe('recording');
+        await toggleReadAloud({ key: 'message-1', text: 'Read this message', settings: storage.getState().settings });
+        expect(recognition.stop).toHaveBeenCalledTimes(1);
+        expect(recognition.start).toHaveBeenCalledTimes(1);
+        expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
+        expect(submitMessage).not.toHaveBeenCalled();
+        expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
     });
 
     it('speaks the final reply of the turn instead of thinking or interim text', async () => {
@@ -189,6 +355,168 @@ describe('local voice engine turn lifecycle (direct session)', () => {
         expect(expoSpeechSpeak).toHaveBeenCalledTimes(1);
         expect(expoSpeechSpeak.mock.calls[0]?.[0]).toBe('All tests pass.');
         expect(getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+    });
+
+    it('keeps a newer message readout when an already submitted direct-session reply arrives', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const turnPromise = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const localId = await readSubmittedLocalId();
+        setTurn(localId, 'in_progress', []);
+
+        let finishReading: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((text, options) => {
+            if (text === 'Read this message') finishReading = options?.onDone;
+            else options?.onDone?.();
+        });
+        const reading = toggleReadAloud({ key: 'newer-readout', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            await vi.waitFor(() => expect(expoSpeechSpeak).toHaveBeenCalledTimes(1));
+            expect(getReadAloudActiveKey()).toBe('newer-readout');
+            setTurn(localId, 'completed', [{ id: 'late-reply', kind: 'agent-text', text: 'The earlier task finished.',
+                seq: 11, localId: null, createdAt: Date.now() }]);
+            await turnPromise;
+
+            expect(getReadAloudActiveKey()).toBe('newer-readout');
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read this message']);
+            expect(submitMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            finishReading?.();
+            await reading;
+        }
+    });
+
+    it('keeps newer readout when an older hands-free reply finishes without rearming the microphone', async () => {
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true },
+            voice: voiceSettingsParse({ providerId: 'local_direct', adapters: { local_direct: {
+                stt: { provider: 'device' }, tts: { provider: 'device' },
+                handsFree: { enabled: true, endpointing: { silenceMs: 0, minSpeechMs: 0 } },
+            } } }),
+        } }));
+        await getServerFeaturesSnapshot({ force: true });
+        recognition.stop.mockImplementationOnce(() => recognition.listeners.get('end')?.({}));
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        recognition.listeners.get('result')?.({ isFinal: true, results: [{ transcript: 'run the tests' }] });
+        const localId = await readSubmittedLocalId();
+        setTurn(localId, 'in_progress', []);
+        expect(localVoiceEngine.getLocalVoiceState().status).toBe('sending');
+
+        let finishReading: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((_text, options) => { finishReading = options?.onDone; });
+        const reading = toggleReadAloud({ key: 'newer-handsfree-readout', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            await vi.waitFor(() => expect(expoSpeechSpeak).toHaveBeenCalledTimes(1));
+            setTurn(localId, 'completed', [{ id: 'late-handsfree-reply', kind: 'agent-text', text: 'The earlier task finished.',
+                seq: 11, localId: null, createdAt: Date.now() }]);
+            await vi.waitFor(() => expect(localVoiceEngine.getLocalVoiceState().status).not.toBe('sending'));
+
+            expect(getReadAloudActiveKey()).toBe('newer-handsfree-readout');
+            expect(localVoiceEngine.getLocalVoiceState()).toMatchObject({ status: 'idle', sessionId: 's1' });
+            expect(recognition.start).toHaveBeenCalledTimes(1);
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read this message']);
+            expect(submitMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            finishReading?.();
+            await reading;
+        }
+    });
+
+    it('preserves newer readout when committed recorded transcription finishes later', async () => {
+        configureDirectVoice({ autoSpeakReplies: true });
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true } } }));
+        await getServerFeaturesSnapshot({ force: true });
+        let releaseTranscription = () => {};
+        const transcription = new Promise<void>(resolve => { releaseTranscription = resolve; });
+        let transcriptionStarted = false;
+        const fetchBoundary = vi.mocked(globalThis.fetch);
+        const respond = fetchBoundary.getMockImplementation()!;
+        fetchBoundary.mockImplementation(async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (url === 'https://stt.example.test/v1/audio/transcriptions') {
+                transcriptionStarted = true;
+                await transcription;
+            }
+            return respond(input, init);
+        });
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const turn = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        await vi.waitFor(() => expect(transcriptionStarted).toBe(true));
+        let finishReading: (() => void) | undefined;
+        expoSpeechSpeak.mockImplementation((text, options) => {
+            if (text === 'Read this message') finishReading = options?.onDone;
+            else options?.onDone?.();
+        });
+        const reading = toggleReadAloud({ key: 'newer-stt-readout', text: 'Read this message', settings: storage.getState().settings });
+        try {
+            await vi.waitFor(() => expect(expoSpeechSpeak).toHaveBeenCalledTimes(1));
+            releaseTranscription();
+            const localId = await readSubmittedLocalId();
+            setTurn(localId, 'completed', [{ id: 'late-stt-reply', kind: 'agent-text', text: 'The recorded task finished.',
+                seq: 11, localId: null, createdAt: Date.now() }]);
+            await turn;
+            expect(getReadAloudActiveKey()).toBe('newer-stt-readout');
+            expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read this message']);
+            expect(submitMessage).toHaveBeenCalledTimes(1);
+        } finally {
+            releaseTranscription();
+            finishReading?.();
+            await reading;
+            await turn;
+        }
+    });
+
+    it('joins a committed recognizer shutdown before readout while preserving its submitted transcript', async () => {
+        storage.setState(state => ({ settings: { ...state.settings, experiments: true, featureToggles: { voice: true },
+            voice: voiceSettingsParse({ providerId: 'local_direct', adapters: { local_direct: {
+                stt: { provider: 'device' }, tts: { provider: 'device' },
+            } } }),
+        } }));
+        await getServerFeaturesSnapshot({ force: true });
+        recognition.stop.mockImplementationOnce(() => {});
+        await localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const turn = localVoiceEngine.toggleLocalVoiceTurn('s1');
+        const finishInput = () => {
+            recognition.listeners.get('result')?.({ isFinal: true, results: [{ transcript: 'run the tests' }] });
+            recognition.listeners.get('end')?.({});
+        };
+        const retirement = localVoiceEngine.cancelLocalVoiceRecording();
+        // The public handoff must expose the physical wait even after status becomes transcribing.
+        try {
+            expect(retirement).not.toBeNull();
+            let retired = false;
+            void retirement!.then(() => { retired = true; });
+            await Promise.resolve();
+            expect(retired).toBe(false);
+            let finishReading: (() => void) | undefined;
+            expoSpeechSpeak.mockImplementation((text, options) => {
+                if (text === 'Read this message') finishReading = options?.onDone;
+                else options?.onDone?.();
+            });
+            const reading = toggleReadAloud({ key: 'newer-recognition-readout', text: 'Read this message', settings: storage.getState().settings });
+            try {
+                finishInput();
+                await retirement;
+                const localId = await readSubmittedLocalId();
+                await vi.waitFor(() => expect(expoSpeechSpeak).toHaveBeenCalledTimes(1));
+                setTurn(localId, 'completed', [{ id: 'late-recognized-reply', kind: 'agent-text', text: 'The recognized task finished.',
+                    seq: 11, localId: null, createdAt: Date.now() }]);
+                await turn;
+                expect(getReadAloudActiveKey()).toBe('newer-recognition-readout');
+                expect(expoSpeechSpeak.mock.calls.map(([text]) => text)).toEqual(['Read this message']);
+                expect(recognition.stop).toHaveBeenCalledTimes(1);
+                expect(submitMessage).toHaveBeenCalledTimes(1);
+            } finally {
+                finishReading?.();
+                await reading;
+            }
+        } finally {
+            finishInput();
+            const localId = await readSubmittedLocalId();
+            setTurn(localId, 'completed', []);
+            await turn;
+        }
     });
 
     it('does not restore the voice session when the user hangs up while the reply is speaking', async () => {

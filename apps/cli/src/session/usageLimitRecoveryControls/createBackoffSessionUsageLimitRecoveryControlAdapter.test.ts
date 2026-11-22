@@ -148,6 +148,24 @@ describe('createBackoffSessionUsageLimitRecoveryControlAdapter', () => {
       } },
     });
   });
+  it('keeps an elapsed fallback wake from authorizing continuation, including a persisted wake', async () => {
+    const params = createParams();
+    const issue = params.rawSession.lastRuntimeIssue!;
+    issue.usageLimit!.resetAtMs = null;
+    const check = createBackoffSessionUsageLimitRecoveryControlAdapter({
+      providerId: 'codex', nowMs: () => 1_700_000_600_001, processEnv: {},
+    }).checkNow!;
+    expect(await check(params)).toMatchObject({ ok: true, status: 'waiting' });
+    expect(await check({
+      ...params,
+      metadata: { sessionUsageLimitRecoveryV1: {
+        ...createWaitingIntent(),
+        issueFingerprint: 'usage-limit:codex:turn-1:1700000000000:unknown',
+        resetAtMs: null, nextCheckAtMs: 1_700_000_600_000,
+      } },
+    })).toMatchObject({ ok: true, status: 'waiting' });
+  });
+
   it('clears a persisted pending intent instead of declaring ready when the latest turn completed normally', async () => {
     const adapter = createAdapter();
 

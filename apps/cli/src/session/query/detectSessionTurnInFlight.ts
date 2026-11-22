@@ -63,7 +63,17 @@ export function readSessionProjectedPendingRequestCount(value: unknown): number 
 
 export function readSessionProjectedPendingInputCount(value: unknown): number | null {
     const record = asRecord(value);
-    return record ? readNonnegativeInteger(record.pendingCount) : null;
+    const pendingCount = record ? readNonnegativeInteger(record.pendingCount) : null;
+    if (pendingCount === null || !record) return null;
+    // Only the server's coherent delivery-status projection can prove that a blocked
+    // input had no provider effect. Unknown outcomes and older servers stay busy.
+    const pendingBlockedCount = readNonnegativeInteger(record.pendingBlockedCount);
+    const pendingBlockedNoEffectCount = readNonnegativeInteger(record.pendingBlockedNoEffectCount);
+    if (pendingBlockedCount === null || pendingBlockedNoEffectCount === null
+        || pendingBlockedNoEffectCount > pendingBlockedCount || pendingBlockedCount > pendingCount) {
+        return pendingCount;
+    }
+    return pendingCount - pendingBlockedNoEffectCount;
 }
 
 export function detectSessionTurnActivityFromProjection(value: unknown): SessionTurnActivity | null {

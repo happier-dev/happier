@@ -75,14 +75,16 @@ export const resolveThemeProfile = ({ mode, profile }: ResolveThemeProfileInput)
 
     let nextColors = cloneTheme(baseTheme).colors;
 
+    const explicitOverrides = new Set<string>();
     for (const [tokenId, value] of Object.entries(profile.overrides[mode])) {
         const definition = getThemeProfileTokenDefinition(tokenId);
         if (!definition || !isValidThemeProfileColorValue(value)) {
             continue;
         }
 
+        explicitOverrides.add(tokenId);
         nextColors = setThemeProfilePathValue(nextColors, definition.path, value);
     }
 
-    return rememberEffectiveTheme(cacheKey, deriveThemeColors({ ...baseTheme, colors: nextColors }, baseTheme));
+    return rememberEffectiveTheme(cacheKey, deriveThemeColors({ ...baseTheme, colors: nextColors }, baseTheme, explicitOverrides));
 };

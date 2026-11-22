@@ -370,6 +370,40 @@ describe('evaluateScmOperationPreflight', () => {
         expect(result.allowed).toBe(true);
     });
 
+    it('treats a selected-path scan as unknown when entries are truncated', () => {
+        const snapshot = makeSnapshot({
+            entries: [],
+            entriesPresentation: 'truncated',
+        }, { pendingFiles: 1, changedFiles: 900 });
+
+        const result = evaluateScmOperationPreflight({
+            intent: 'commit',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot,
+            commitStrategy: 'atomic',
+            commitSelectionPaths: ['beyond-the-prefix.ts'],
+        } as any);
+
+        expect(result.allowed).toBe(true);
+    });
+
+    it('still blocks atomic commit when complete entries prove the selection has no pending changes', () => {
+        const result = evaluateScmOperationPreflight({
+            intent: 'commit',
+            scmWriteEnabled: true,
+            sessionPath: '/repo',
+            snapshot: makeSnapshot(undefined, { pendingFiles: 1 }),
+            commitStrategy: 'atomic',
+            commitSelectionPaths: ['missing.ts'],
+        } as any);
+
+        expect(result.allowed).toBe(false);
+        if (!result.allowed) {
+            expect(result.reason).toBe('included_changes_required');
+        }
+    });
+
     it('blocks stage/unstage intents when backend does not support include/exclude', () => {
         const result = evaluateScmOperationPreflight({
             intent: 'stage',

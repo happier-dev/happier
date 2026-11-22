@@ -1,4 +1,6 @@
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
+import { readStoredSessionMessagesFromStateLike } from '@/sync/domains/messages/readStoredSessionMessages';
+import type { TranscriptRenderableAggregate } from '@/sync/domains/messages/transcriptRenderableAggregate';
+import { canReuseTranscriptRenderableAggregateRequestStates } from '@/sync/domains/messages/transcriptRenderableAggregateReuse';
 import type { Message } from '@/sync/domains/messages/messageTypes';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import type { AgentState, Session } from '@/sync/domains/state/storageTypes';
@@ -234,6 +236,31 @@ export function collectTranscriptRequestStates(
     }
 }
 
+type StoredSessionMessagesForRequestStates = Parameters<typeof readStoredSessionMessagesFromStateLike>[0] & Readonly<{
+    renderableAggregate?: Pick<TranscriptRenderableAggregate, 'requestStates' | 'completedRequestsRef'>;
+}>;
+
+/**
+ * Request states of a session's stored transcript. The store keeps them in the session's renderable
+ * aggregate, updated per changed message on every apply; reading that aggregate keeps per-arrival
+ * consumers (favicon, attention, session header) O(requests) instead of walking the whole
+ * transcript, which grows with the session. Falls back to one walk when the aggregate is absent or
+ * was folded against a different `completedRequests` record. Callers only read the returned map.
+ */
+export function readStoredTranscriptRequestStatesCache(
+    sessionMessages: StoredSessionMessagesForRequestStates | null | undefined,
+    session: Pick<Session, 'agentState'>,
+): TranscriptRequestStatesCache {
+    const completedRequests = (session.agentState?.completedRequests as Record<string, unknown> | null | undefined) ?? null;
+    const aggregate = sessionMessages?.renderableAggregate;
+    if (aggregate?.requestStates && canReuseTranscriptRenderableAggregateRequestStates(aggregate, completedRequests)) {
+        return { states: aggregate.requestStates };
+    }
+    const states = new Map<string, TranscriptRequestState>();
+    collectTranscriptRequestStates(readStoredSessionMessagesFromStateLike(sessionMessages), completedRequests, states);
+    return { states };
+}
+
 function getTranscriptRequestStates(
     session: Session,
     messages?: ReadonlyArray<Message>,
@@ -242,16 +269,18 @@ function getTranscriptRequestStates(
     if (statesCache?.states) {
         return statesCache.states;
     }
-    const transcriptMessages = (() => {
-        if (messages) {
-            return messages;
-        }
+    if (!messages) {
         const storageState = readRegisteredStorageState();
-        return storageState ? (readStoredSessionMessages(storageState, session.id) ?? []) : [];
-    })();
+        const states = readStoredTranscriptRequestStatesCache(storageState?.sessionMessages?.[session.id], session).states
+            ?? new Map<string, TranscriptRequestState>();
+        if (statesCache) {
+            statesCache.states = states;
+        }
+        return states;
+    }
     const states = new Map<string, TranscriptRequestState>();
     collectTranscriptRequestStates(
-        transcriptMessages,
+        messages,
         (session.agentState?.completedRequests as Record<string, unknown> | null | undefined) ?? null,
         states,
     );

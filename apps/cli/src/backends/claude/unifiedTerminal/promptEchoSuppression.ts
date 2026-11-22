@@ -1,4 +1,5 @@
 import type { RawJSONLines } from '../types';
+import { readClaudeUserMessageText } from '../utils/readClaudeUserMessageText';
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity';
 
 export type ClaudeUnifiedAcceptedPrompt = Readonly<{
@@ -97,9 +98,8 @@ export function createClaudeUnifiedPromptEchoSuppressor(
     },
 
     shouldSuppressTranscriptMessage(message) {
-      if (message.type !== 'user') return false;
-      const content = message.message?.content;
-      if (typeof content !== 'string') return false;
+      const content = readClaudeUserMessageText(message);
+      if (content === null) return false;
       const normalizedContent = normalizeClaudeUnifiedPromptIdentityText(content);
       if (normalizedContent.length === 0) return false;
       const observedAtMs = readMessageTimestampMs(message) ?? nowMs();

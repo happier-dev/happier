@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - "deploy/**"
+      # Server/UI promotion deploys its exact pushed image directly.
+      - "!deploy/*/server"
+      - "!deploy/*/ui"
 
 permissions:
   contents: read

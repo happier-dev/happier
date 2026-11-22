@@ -1,6 +1,7 @@
 import {
     deriveLatestPendingRequestObservedAtFromSession,
     derivePendingRequestFlagsFromSession,
+    readStoredTranscriptRequestStatesCache,
 } from '@/sync/domains/session/pending/listPendingSessionRequests';
 import {
     deriveSessionRuntimePresentationState,
@@ -8,7 +9,6 @@ import {
     SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
 } from '@/sync/domains/session/attention/deriveSessionRuntimePresentationState';
 import type { Session } from '@/sync/domains/state/storageTypes';
-import { readStoredSessionMessages } from '@/sync/domains/messages/readStoredSessionMessages';
 import type { StorageState } from '@/sync/store/types';
 import { collectRecordIds } from '@/sync/store/sessionRecordProjection';
 import {
@@ -130,9 +130,9 @@ function deriveFaviconPermissionSnapshotFromSessions(
     for (const sessionId of sessionIds) {
         const session = state.sessions[sessionId];
         if (!session) continue;
-        const messages = readStoredSessionMessages(state, session.id);
-        const pendingFlags = derivePendingRequestFlagsFromSession(session, messages);
-        const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(session, messages);
+        const statesCache = readStoredTranscriptRequestStatesCache(state.sessionMessages?.[session.id], session);
+        const pendingFlags = derivePendingRequestFlagsFromSession(session, undefined, statesCache);
+        const pendingRequestObservedAt = deriveLatestPendingRequestObservedAtFromSession(session, undefined, statesCache);
         const runtimeState = deriveSessionRuntimePresentationState({
             active: session.active,
             activeAt: session.activeAt,

@@ -10,7 +10,7 @@
 
 type Rect = Readonly<{ x: number; y: number; width: number; height: number }>;
 type Point = Readonly<{ x: number; y: number }>;
-type BoundedRow = Readonly<{ depth: number; bounds: Rect }>;
+type BoundedRow = Readonly<{ id: string; depth: number; bounds: Rect }>;
 
 /**
  * True when `pointer` lies inside `bounds`. The bottom and right edges are
@@ -32,10 +32,17 @@ export function containsPointer(bounds: Rect, pointer: Point): boolean {
 export function hitTestRowAtPointer<Row extends BoundedRow>(
     rows: ReadonlyArray<Row>,
     pointer: Point,
+    deprioritizedRowId?: string,
 ): Row | null {
     const matches = rows.filter((row) => containsPointer(row.bounds, pointer));
     matches.sort((left, right) => {
         if (right.depth !== left.depth) return right.depth - left.depth;
+        // A lifted source's retained slot must not mask a stationary sibling
+        // that moved into it after layout. Keep ancestor/depth precedence.
+        if (deprioritizedRowId) {
+            const sourcePriority = Number(left.id === deprioritizedRowId) - Number(right.id === deprioritizedRowId);
+            if (sourcePriority !== 0) return sourcePriority;
+        }
         const leftArea = left.bounds.width * left.bounds.height;
         const rightArea = right.bounds.width * right.bounds.height;
         return leftArea - rightArea;

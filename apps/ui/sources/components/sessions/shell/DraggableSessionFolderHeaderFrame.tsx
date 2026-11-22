@@ -1,9 +1,10 @@
 import React from 'react';
-import { Platform, View } from 'react-native';
+import { Platform } from 'react-native';
 import Animated from 'react-native-reanimated';
 import { GestureDetector } from 'react-native-gesture-handler';
 
 import { type UseSessionInlineDragResult } from './useSessionInlineDrag';
+import { useSessionListTreeRowRegistration } from './useSessionListTreeRowRegistration';
 
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import {
@@ -44,12 +45,9 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
     onUnregisterTreeRowBounds: UnregisterSessionListTreeRowBounds;
 }>) {
     const dragKey = props.dragKey ?? `folder:${props.folderId ?? ''}`;
-    const wrapperRef = React.useRef<View>(null);
-    React.useEffect(() => {
-        return () => {
-            props.onUnregisterTreeRowBounds(props.treeRowId);
-        };
-    }, [props.onUnregisterTreeRowBounds, props.treeRowId]);
+    const { setWrapperRef, handleLayout } = useSessionListTreeRowRegistration(
+        props.treeRowId, props.onRegisterTreeRowBounds, props.onUnregisterTreeRowBounds,
+    );
     const { gesture, animatedStyle } = useSessionInlineDrag({
         sessionKey: dragKey,
         groupKey: props.groupKey,
@@ -66,11 +64,11 @@ export const DraggableSessionFolderHeaderFrame = React.memo(function DraggableSe
 
     const content = (
         <Animated.View
-            ref={wrapperRef}
+            ref={setWrapperRef}
             collapsable={false}
             testID={props.folderId ? `session-folder-drag-row-${props.folderId}` : undefined}
             style={animatedStyle}
-            onLayout={() => props.onRegisterTreeRowBounds(props.treeRowId, wrapperRef.current)}
+            onLayout={handleLayout}
         >
             {props.children(Platform.OS === 'web' ? gesture : undefined)}
         </Animated.View>

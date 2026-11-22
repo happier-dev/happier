@@ -41,6 +41,8 @@ pub const APP_TAURI_COMMANDS: &[&str] = &[
     "desktop_minimize_window",
     "desktop_toggle_window_maximize",
     "desktop_close_window",
+    "desktop_show_clickable_notification",
+    "desktop_take_pending_notification_data",
     "desktop_show_main_window",
     "desktop_start_window_dragging",
     "desktop_finish_shutdown",

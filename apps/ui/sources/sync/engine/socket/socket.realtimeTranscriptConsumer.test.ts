@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 vi.mock('@/sync/runtime/syncTuning', () => ({
     loadSyncTuning: () => ({
@@ -153,6 +154,7 @@ describe('socket realtime explicit transcript consumers', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         unregisterConsumer?.();
         unregisterConsumer = null;
         storage.setState(initialStorageState, true);
@@ -190,6 +192,7 @@ describe('socket realtime explicit transcript consumers', () => {
             updateData: buildPlainNewMessageUpdate(hiddenSessionId),
         });
 
+        socketApplyFrame.flushNow();
         expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
         expect(applyMessages).toHaveBeenCalledTimes(1);
         const [appliedSessionId, messages] = applyMessages.mock.calls[0] as [string, NormalizedMessage[]];
@@ -216,6 +219,7 @@ describe('socket realtime explicit transcript consumers', () => {
             updateData: buildPlainNewMessageUpdate(hiddenSessionId),
         });
 
+        socketApplyFrame.flushNow();
         expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
         expect(applyMessages).toHaveBeenCalledTimes(1);
     });
@@ -300,6 +304,7 @@ describe('socket realtime explicit transcript consumers', () => {
             updateData: buildPlainNewMessageUpdate(visibleSessionId),
         });
 
+        socketApplyFrame.flushNow();
         expect(markSessionTranscriptDeferred).not.toHaveBeenCalled();
         expect(applyMessages).toHaveBeenCalledTimes(1);
     });

@@ -110,8 +110,8 @@ test('npm-e2e-smoke run.sh rejects invalid remote server db mode', () => {
 test('npm-e2e-smoke run.sh uses consistent compose files when remote daemon enabled', () => {
   const content = fs.readFileSync(runScript, 'utf8');
   assert.match(content, /\bcompose_run=\(\s*\"\$\{compose_remote\[@\]\}\"\s*\)/);
-  assert.match(content, /\$\{compose_run\[@\]\}.*run --rm --no-deps cli/);
-  assert.match(content, /\$\{compose_run\[@\]\}.*run --rm --no-deps cli2/);
+  assert.match(content, /\$\{compose_run\[@\]\}.*run --rm --no-deps\b[^\n]* cli$/m);
+  assert.match(content, /\$\{compose_run\[@\]\}.*run --rm --no-deps\b[^\n]* cli2$/m);
 });
 
 test('npm-e2e-smoke run.sh cleanup does not hang indefinitely', () => {

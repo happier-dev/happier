@@ -36,6 +36,7 @@ import { maybeRunDoctorRepair } from './self/maybeRunDoctorRepair';
 import { resolveRunningCliPackageManagerOrigin } from '@/cli/runtime/update/cliUpdateFacts';
 import { reportUpdaterAdmission } from '@/cli/runtime/update/updaterAdmission';
 import {
+  assertWindowsCliUpdateIsOutsideManagedProcessTree,
   quiesceInstalledCliWindowsPayloadOwners,
   resolvePayloadOwnerStopTimeoutMs,
 } from '@/cli/runtime/update/quiesceInstalledCliWindowsPayloadOwners';
@@ -305,6 +306,8 @@ async function cmdUpdate(argv: string[], rawArgv: readonly string[] = process.ar
   })();
   const processEnv = { ...process.env, HAPPIER_HOME_DIR: configuration.happyHomeDir };
 
+  await assertWindowsCliUpdateIsOutsideManagedProcessTree();
+
   // Observed before anything changes: on Windows the update stops the payload's processes (every
   // relay's daemon), and only this observation still knows which service daemons must come back.
   const restartPlan = await planServiceDaemonsRestartAfterUpdate({
@@ -444,6 +447,10 @@ async function cmdInternalInstallPayload(argv: string[], rawArgv: readonly strin
     throw new Error('--version is required');
   }
 
+  if (componentId === 'happier-cli') {
+    await assertWindowsCliUpdateIsOutsideManagedProcessTree();
+  }
+
   // On Windows promotion stops every daemon of the payload (every relay's); the service daemons
   // observed running here come back afterwards through the same rule `self update` uses.
   const windowsServiceRestart = componentId === 'happier-cli' && process.platform === 'win32'
@@ -499,7 +506,7 @@ export async function handleSelfCliCommand(context: CommandContext): Promise<voi
   try {
     const argv = context.args.slice(1);
     const sub = argv[0] ?? 'help';
-    if (sub === 'help' || sub === '--help' || sub === '-h') {
+    if (sub === 'help' || argv.includes('--help') || argv.includes('-h')) {
       console.log(usage());
       return;
     }

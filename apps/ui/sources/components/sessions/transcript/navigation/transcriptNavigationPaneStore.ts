@@ -1,3 +1,5 @@
+import { TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS } from '@/components/sessions/transcript/paint/transcriptWarmPaintCache';
+import { LruMap } from '@/utils/cache/lruMap';
 import type { TranscriptNavigationEntryPressHandler } from './transcriptNavigationTypes';
 
 /**
@@ -24,7 +26,14 @@ export type TranscriptNavigationPaneStore = Readonly<{
     subscribe: (sessionId: string, listener: () => void) => () => void;
 }>;
 
-const emptySnapshotsBySessionId = new Map<string, TranscriptNavigationPaneSnapshot>();
+/**
+ * These empty snapshots exist only so `get()` returns a stable identity for
+ * `useSyncExternalStore`. Bounded by the same per-session working set as the warm-paint cache:
+ * evicting one costs at most one fresh empty object (one extra render) on the next visit.
+ */
+const emptySnapshotsBySessionId = new LruMap<string, TranscriptNavigationPaneSnapshot>({
+    maxEntries: TRANSCRIPT_WARM_PAINT_CACHE_MAX_SESSIONS,
+});
 
 /**
  * How long a reveal-then-jump press waits for the transcript host to register its jump

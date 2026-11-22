@@ -20,6 +20,8 @@ import { pruneLogsByCount } from '@/utils/logs/pruneLogsByCount'
 import {
   DAEMON_LOG_SUFFIX,
   LOG_FILE_SUFFIX,
+  LOG_FILE_TAIL_WINDOW_BYTES,
+  LOG_TOTAL_BUDGET_BYTES,
   resolveCrashedSessionLogKeepCount,
   resolveDaemonLogKeepCount,
   resolveSessionLogKeepCount,
@@ -170,6 +172,7 @@ async function pruneDaemonLogsForCurrentLogger(logFilePath: string): Promise<voi
     keepCount: resolveDaemonLogKeepCount(),
     keepPath: logFilePath,
   }).catch(() => ({ pruned: 0 }))
+  await pruneLogsWithinTotalBudget(logFilePath)
 }
 
 async function pruneSessionLogsForCurrentLogger(logFilePath: string): Promise<void> {
@@ -182,7 +185,24 @@ async function pruneSessionLogsForCurrentLogger(logFilePath: string): Promise<vo
     keepPath: logFilePath,
     keepPaths: [
       ...resolveCrashedSessionLogKeepPaths(configuration.logsDir),
-      ...resolveLiveSessionLogKeepPaths(configuration.logsDir, keepCount),
+      ...resolveLiveProcessLogKeepPaths(configuration.logsDir),
+    ],
+  }).catch(() => ({ pruned: 0 }))
+  await pruneLogsWithinTotalBudget(logFilePath)
+}
+
+/** Install-wide budget across daemon and session logs; every live, crashed or current log stays. */
+async function pruneLogsWithinTotalBudget(logFilePath: string): Promise<void> {
+  await pruneLogsByCount({
+    dir: configuration.logsDir,
+    suffix: LOG_FILE_SUFFIX,
+    // No count cap in this pass: only the byte budget decides.
+    keepCount: Number.MAX_SAFE_INTEGER,
+    maxTotalBytes: LOG_TOTAL_BUDGET_BYTES,
+    keepPath: logFilePath,
+    keepPaths: [
+      ...resolveCrashedSessionLogKeepPaths(configuration.logsDir),
+      ...resolveLiveProcessLogKeepPaths(configuration.logsDir),
     ],
   }).catch(() => ({ pruned: 0 }))
 }
@@ -254,15 +274,14 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
-function resolveLiveSessionLogKeepPaths(logsDir: string, keepCount: number): string[] {
+/** Logs (session or daemon) whose writing process is still running. */
+function resolveLiveProcessLogKeepPaths(logsDir: string): string[] {
   try {
     const livenessByPid = new Map<number, boolean>()
     return readdirSync(logsDir)
-      .filter((file) => file.endsWith(LOG_FILE_SUFFIX) && !file.endsWith(DAEMON_LOG_SUFFIX))
-      .sort((a, b) => a < b ? 1 : a > b ? -1 : 0)
-      .slice(Math.max(0, keepCount))
+      .filter((file) => file.endsWith(LOG_FILE_SUFFIX))
       .filter((file) => {
-        const match = /-pid-(\d+)\.log$/.exec(file)
+        const match = /-pid-(\d+)(?:-daemon)?\.log$/.exec(file)
         if (!match) return false
         const pid = Number(match[1])
         if (!Number.isSafeInteger(pid) || pid <= 0) return false
@@ -346,6 +365,7 @@ class Logger {
     this.warnFileEnabled = isFileLogLevelEnabled(this.fileLogLevel, 'warn')
     this.fileAppender = new BufferedFileAppender({
       filePath: this.logFilePath,
+      tailWindowBytes: LOG_FILE_TAIL_WINDOW_BYTES,
       onWriteError: (error) => this.handleFileWriteError(error),
     })
 

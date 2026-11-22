@@ -42,11 +42,11 @@ export interface TrackedSession {
    */
   sessionRunnerPid?: number;
   /**
-   * Hash of the observed process command line for PID reuse safety.
+   * Hash of the observed runner command line, for sessionRunnerPid ?? pid.
    * If present, we require this to match before sending SIGTERM by PID.
    */
   processCommandHash?: string;
-  /** Exact OS process-instance fingerprint used to distinguish PID generations. */
+  /** Exact OS process-instance fingerprint for sessionRunnerPid ?? pid. */
   processInstanceFingerprint?: string;
   /** Best-effort observed process command line used for startup runtime refresh checks. */
   processCommand?: string;

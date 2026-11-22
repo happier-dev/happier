@@ -104,6 +104,14 @@ describe('compareToolCalls', () => {
             { name: 'Test', arguments: { a: 1 } },
             { name: 'Test', arguments: [{ a: 1 }] }
         )).toBe(false);
+        expect(compareToolCalls(
+            { name: 'Test', arguments: {} },
+            { name: 'Test', arguments: [] }
+        )).toBe(false);
+        expect(compareToolCalls(
+            { name: 'Test', arguments: [] },
+            { name: 'Test', arguments: {} }
+        )).toBe(false);
     });
 
     it('treats equal function references as equal and different references as not equal', () => {

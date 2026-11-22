@@ -144,20 +144,16 @@ async function main() {
   if (!['ui', 'server', 'website', 'docs'].includes(component)) {
     fail(`Unsupported component: ${component}`);
   }
+  if (component === 'server' || component === 'ui') {
+    fail(`${component} requires exact hosted images; use DEPLOY — Deploy Branch with hosted_images or deploy-hosted-images.mjs --images.`);
+  }
 
   const listsByLabel = (() => {
     switch (component) {
-      case 'ui':
-        return [['ui', process.env.HAPPIER_UI_DEPLOY_WEBHOOKS ?? '']];
       case 'website':
         return [['website', process.env.HAPPIER_WEBSITE_DEPLOY_WEBHOOKS ?? '']];
       case 'docs':
         return [['docs', process.env.HAPPIER_DOCS_DEPLOY_WEBHOOKS ?? '']];
-      case 'server':
-        return [
-          ['server api', process.env.HAPPIER_SERVER_API_DEPLOY_WEBHOOKS ?? ''],
-          ['server worker', process.env.HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS ?? ''],
-        ];
       default:
         return [];
     }

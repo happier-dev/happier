@@ -486,6 +486,73 @@ describe('useInSessionAgentPickerControls', () => {
         expect(announceAccessibilityMessage).toHaveBeenCalledTimes(1);
     });
 
+    it.each([
+        ['kimi', 'kimi-code/k3.1-pro'],
+        ['codex', 'gpt-5'],
+    ])('omits an absent session mode when selecting a model for %s', async (agentId, modelId) => {
+        const hook = await renderControls({ entries: [entry('claude'), entry(agentId)] });
+        await openPicker(hook);
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.renderDetailContent?.();
+            detailSelectionChangeRef.current?.({
+                modelId,
+                modelLabel: 'K3.1 Pro',
+                sessionModeId: '',
+                configOverrides: {},
+            });
+        });
+
+        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+            method: 'session.continuation.inspectBatch',
+            payload: {
+                v: 1,
+                sourceSessionId: 'session-1',
+                selections: [{ v: 1, agentId, modelId }],
+            },
+        }));
+        expect(hook.getCurrent().armedContinuation?.selection).toEqual({
+            v: 1,
+            agentId,
+            modelId,
+        });
+    });
+
+    it('preserves the session mode for a target that supports session modes', async () => {
+        const hook = await renderControls({ entries: [entry('claude'), entry('codex')] });
+        await openPicker(hook);
+
+        await act(async () => {
+            optionsOf(hook.getCurrent())[1]?.renderDetailContent?.();
+            detailSelectionChangeRef.current?.({
+                modelId: 'gpt-5',
+                modelLabel: 'GPT-5',
+                sessionModeId: 'review',
+                configOverrides: {},
+            });
+        });
+
+        expect(machineRpcWithServerScope).toHaveBeenLastCalledWith(expect.objectContaining({
+            method: 'session.continuation.inspectBatch',
+            payload: {
+                v: 1,
+                sourceSessionId: 'session-1',
+                selections: [{
+                    v: 1,
+                    agentId: 'codex',
+                    modelId: 'gpt-5',
+                    acpSessionModeId: 'review',
+                }],
+            },
+        }));
+        expect(hook.getCurrent().armedContinuation?.selection).toEqual({
+            v: 1,
+            agentId: 'codex',
+            modelId: 'gpt-5',
+            acpSessionModeId: 'review',
+        });
+    });
+
     it('names the armed row for screen readers instead of wrapping a subtitle under it', async () => {
         const hook = await renderControls();
         await openPicker(hook);

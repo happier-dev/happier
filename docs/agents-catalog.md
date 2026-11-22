@@ -203,6 +203,20 @@ Every `cli.<agentId>` capability is wrapped by `apps/cli/src/capabilities/cliUpd
 - Update action: `install` with `{ intent: 'update', allowVendorRecipeExecution? }`. A `managed` install is reinstalled through the managed install owner. A `native` install runs the vendor updater (`claude update`, `codex update`, `opencode upgrade`, `agent update`) on the resolved executable, and only with `allowVendorRecipeExecution: true` (the UI's confirmation). Every other owner returns `update-not-available`, and its message includes the owner's command. Happier never spawns a package manager. The action succeeds only when a fresh detect reports a different version. That re-read uses the snapshot's slow-probe budget (`verifyVersion`), so a slow `--version` is not mistaken for "no version". If the version is unchanged because the managed installer's release-age rule still holds the newer version, the error is `update-held-by-release-age` (for example "0.24.6 is less than a day old; Happier installs it once it's a day old."). Otherwise it fails with `update-not-verified`.
 - Old daemons do not report these fields. Clients must offer the update action only when `updateSupported === true` is present, because an old daemon ignores `intent` and runs a plain install.
 
+### CLI inventory version reuse (development source)
+
+`apps/cli/src/capabilities/snapshots/cliSnapshot.ts` owns the daemon's CLI inventory.
+After the ordinary snapshot expires, recognized native installations can reuse a
+successful version while the real executable's filesystem identity is unchanged.
+Eligibility uses the existing install classifier and native executable headers;
+opaque scripts, package-manager shims and unclassified overrides keep probing.
+Concurrent ordinary version probes share the existing bounded execution path.
+Explicit `bypassCache` and `verifyVersion` requests always probe afresh, and
+invalidation retires pending observations so they cannot restore stale facts.
+Banners from failed executions remain best-effort metadata for that observation,
+but are not retained as version facts. This is development-source behavior,
+with no new request fields or persistent storage format.
+
 ### Checklist id conventions
 
 Checklist ids are treated as stable API between daemon and app:
@@ -665,6 +679,16 @@ without establishing global usage aliases.
 Runtime failure attribution and direct-account recovery compare that same
 context; an ambiguous live identity cannot authorize mutation of the runner's
 old launch profile. The public Session runtime-issue shape is unchanged.
+
+Claude runtime quota windows share the existing request-auth context. SDK/legacy
+submission and authenticated `UserPromptSubmit` replace that context, so queued
+read-ahead preserves the active request and measured windows cannot carry into the
+next request or selected account. A later failure supplements
+its scalar details with that request's observed windows; one resolved collection
+feeds both the Session runtime issue and the account-usage snapshot. Matching
+failure resets stay on their own window, and missing utilization remains unknown.
+Sidechain failures retain their account-quota evidence without failing the parent
+turn or replacing a complete observation with a single window.
 
 Credential metadata projects the attested organization through the protocol
 credential builder. The server invalidates usage-source aliases when that account

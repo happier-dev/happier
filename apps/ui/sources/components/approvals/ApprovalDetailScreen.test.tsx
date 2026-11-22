@@ -309,6 +309,26 @@ describe('ApprovalDetailScreen', () => {
         expect(text).toContain('Yes');
     });
 
+    it('shows why an approved request failed to run', async () => {
+        const failureMessage = 'Sessions requested by an AI session cannot be started from an approval in the app.';
+        currentArtifact = {
+            ...createApprovalArtifact(),
+            body: JSON.stringify({
+                ...defaultApprovalArtifactBody,
+                status: 'failed',
+                decision: { kind: 'approve', decidedAtMs: 2 },
+                execution: { executedAtMs: 3, ok: false, errorCode: 'unsupported', error: failureMessage },
+            }),
+        };
+        const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+
+        const screen = await renderScreen(<ApprovalDetailScreen artifactId="artifact-1" />);
+
+        const text = screen.getTextContent();
+        expect(text).toContain('approvals.fieldFailureReason');
+        expect(text).toContain(failureMessage);
+    });
+
     it('opens the linked session from the approval context card', async () => {
         const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
 

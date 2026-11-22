@@ -124,3 +124,13 @@ export const VoiceLocalTtsSchema = z.preprocess((raw) => {
 }, VoiceLocalTtsSchemaV2);
 
 export type VoiceLocalTtsSettings = z.infer<typeof VoiceLocalTtsSchema>;
+
+/** Required configuration, before provider execution resolves credentials and platform support. */
+export function isVoiceLocalTtsConfigured(tts: VoiceLocalTtsSettings): boolean {
+  if (tts.provider === 'openai_compat') return (tts.openaiCompat.baseUrl ?? '').trim().length > 0;
+  if (tts.provider === 'google_cloud') {
+    const apiKey = tts.googleCloud.apiKey;
+    return (apiKey?.value ?? '').trim().length > 0 || apiKey?.encryptedValue != null;
+  }
+  return true;
+}

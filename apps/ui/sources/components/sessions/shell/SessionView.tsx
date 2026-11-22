@@ -27,7 +27,7 @@ import { createGoalActionChip } from '@/components/sessions/agentInput/definitio
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerCamera, openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
@@ -84,6 +84,7 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import {
     areSessionDraftCurrentnessCapturesEqual,
+    getSessionDraftErrorReason,
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
@@ -194,7 +195,10 @@ import { useReconciledStableRows } from '@/hooks/session/reconcileStableRows';
 import { deriveSessionSubagentRecipients } from '@/sync/domains/session/subagents/deriveSessionSubagentRecipients';
 import type { AgentActivityCounts } from '@/sync/domains/session/agentActivity/deriveAgentActivityCounts';
 import { hasSessionSubagentLaunchCards } from '@/agents/registry/sessionSubagentUiBehavior';
-import { useSurfaceAnchorPathname } from '@/components/sessions/shell/surface/sessionSurfaceAnchorPathname';
+import {
+    isOwnedSessionRootPathname,
+    useSessionRouteEntryPresentation,
+} from '@/components/sessions/shell/surface/sessionRouteEntryPresentation';
 import { isExecutionRunNotRunningSendError, sessionExecutionRunSend } from '@/sync/ops/sessionExecutionRuns';
 import { nowServerMs } from '@/sync/runtime/time';
 import { readSessionUiTelemetryNowMs } from '@/sync/runtime/performance/sessionUiTelemetry';
@@ -291,7 +295,7 @@ import {
 import {
     resolveSessionActivityComposerTranslate,
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
@@ -312,7 +316,6 @@ import { AppPaneScopeHost } from '@/components/appShell/panes/AppPaneScopeHost';
 import { useRegisterSessionPaneDriver } from '@/components/sessions/panes/useRegisterSessionPaneDriver';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { SessionScreenTestIdsProvider } from './sessionScreenTestIds';
-import { useSessionScreenIsFocused } from './useSessionScreenIsFocused';
 import { resolveMobileWorkspaceExperienceToggleActionId } from '@/components/workspaceCockpit/mobileWorkspaceExperience';
 import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { useOpenSessionTarget } from '@/components/sessions/panes/open/useOpenSessionTarget';
@@ -612,42 +615,6 @@ const connectedServiceQuotaGaugeFormatter: ConnectedServiceQuotaGaugeLabelFormat
     subscriptionRenews: ({ date }) => t('connectedServices.subscription.renews', { date }),
     subscriptionRenewsInDays: ({ days }) => t('connectedServices.subscription.renewsInDays', { days }),
 };
-
-function isOwnedSessionRootPathname(pathname: string | null | undefined, sessionId: string): boolean {
-    const normalizedPathname = typeof pathname === 'string' ? pathname.trim() : '';
-    if (!normalizedPathname) {
-        return false;
-    }
-
-    const match = /^\/session\/([^/]+)\/?$/.exec(normalizedPathname);
-    if (!match) {
-        return false;
-    }
-
-    try {
-        return decodeURIComponent(match[1] ?? '') === sessionId;
-    } catch {
-        return false;
-    }
-}
-
-function isOwnedSessionRoutePathname(pathname: string | null | undefined, sessionId: string): boolean {
-    const normalizedPathname = typeof pathname === 'string' ? pathname.trim().split('?')[0] ?? '' : '';
-    if (!normalizedPathname) {
-        return false;
-    }
-
-    const match = /^\/session\/([^/]+)(?:\/.*)?$/.exec(normalizedPathname);
-    if (!match) {
-        return false;
-    }
-
-    try {
-        return decodeURIComponent(match[1] ?? '') === sessionId;
-    } catch {
-        return false;
-    }
-}
 
 function readSessionUsageLimitRecovery(metadata: unknown): SessionUsageLimitRecoveryV1 | null {
     if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -1597,20 +1564,12 @@ export const SessionView = React.memo((props: SessionViewProps) => {
     const isTablet = useIsTablet();
     const voiceSnap = useVoiceSessionSnapshot();
     const hasAuthCredentials = Boolean(credentials);
-    const routeFocused = useSessionScreenIsFocused();
-    const surfaceFocused = typeof props.surfaceFocusedOverride === 'boolean'
-        ? props.surfaceFocusedOverride
-        : routeFocused;
-    const anchorPathname = useSurfaceAnchorPathname(pathname);
-    // Web retains every visit for Back/Forward, so a stack can hold several entries of one session.
-    // The pathname anchors a surface under an overlay or under its own sub-route, but on the session
-    // root another entry is focused and owns it: an unfocused entry there is only history, and
-    // rendering it mounted one more hidden surface per earlier visit (issue #864).
-    const isRouteAnchor = typeof props.routeAnchorOverride === 'boolean'
-        ? props.routeAnchorOverride
-        : isOwnedSessionRoutePathname(anchorPathname, sessionId)
-            && (surfaceFocused || !isOwnedSessionRootPathname(pathname, sessionId));
-    const shouldRenderSessionSurface = surfaceFocused || isRouteAnchor;
+    // Web retains every visit for Back/Forward; the route mounts only the presented entry, and the
+    // overrides let embedding hosts (native, cockpit, previews) decide presentation themselves.
+    const { surfaceFocused, presented: shouldRenderSessionSurface } = useSessionRouteEntryPresentation(sessionId, {
+        surfaceFocused: props.surfaceFocusedOverride,
+        routeAnchor: props.routeAnchorOverride,
+    });
     const shouldRetainSessionSurface = Platform.OS === 'web' ? shouldRenderSessionSurface : true;
     const directSessionRuntime = useDirectSessionRuntime({
         sessionId,
@@ -3777,13 +3736,14 @@ function SessionViewLoaded({
         // the question the chip above already answers, and on a run whose named agents have all
         // finished the two disagreed — this effect closed the open work-state popover while the chip
         // stayed on screen naming the workflow (FIX-F1).
-        if (shouldRetainSessionActivityStatusBadge({
+        if (shouldDismissSessionActivityStatusBadge({
             activeStatusBadgeKey,
             hasPrimaryWorkStateItem: Boolean(primaryWorkStateItem),
             canShowEmptyGoalControls: canEditSessionGoals,
             agentActivityCounts,
-        })) return;
-        setActiveStatusBadgeKey(null);
+        })) {
+            setActiveStatusBadgeKey(null);
+        }
     }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, primaryWorkStateItem]);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
@@ -3827,6 +3787,7 @@ function SessionViewLoaded({
     const attachmentsUploadsTransferAvailable = useSessionFileUploadAvailability(sessionId);
     const attachmentsUploadsEnabled = attachmentsUploadsFeatureEnabled && attachmentsUploadsTransferAvailable;
     const sessionProviderUsageGaugeWindowModesSetting = useSetting('sessionProviderUsageGaugeWindowModes');
+    const sessionProviderUsageGaugeNumberWindowMode = useSetting('sessionProviderUsageGaugeNumberWindowMode');
     const pinnedQuotaMeterIdsByKey = useSetting('connectedServicesQuotaPinnedMeterIdsByKey');
     const sessionProviderUsageGaugeMode = useSetting('sessionProviderUsageGaugeMode');
     const sessionProviderUsageGaugeWindowModeSetting = useSetting('sessionProviderUsageGaugeWindowMode');
@@ -3841,10 +3802,10 @@ function SessionViewLoaded({
     const connectedServiceQuotaProfileRef = React.useMemo(() => (
         resolveConnectedServiceQuotaProfileRefForSession({
             metadata: session.metadata,
-            agentId,
+            agentId: liveComposerState.agentId,
             accountProfileConnectedServicesV2: accountProfile?.connectedServicesV2 ?? [],
         })
-    ), [accountProfile?.connectedServicesV2, agentId, session.metadata]);
+    ), [accountProfile?.connectedServicesV2, liveComposerState.agentId, session.metadata]);
     const connectedServiceQuotaGroupService = React.useMemo(() => (
         connectedServiceQuotaProfileRef?.groupId
             ? accountProfile?.connectedServicesV2.find((service) => (
@@ -4069,6 +4030,7 @@ function SessionViewLoaded({
     }, [connectedServiceQuotaProfileRef?.credentialHealthStatus]);
     const connectedServiceQuotaSnapshots = useConnectedServiceQuotaSnapshots(
         connectedServiceQuotaProfileRef ? [connectedServiceQuotaProfileRef] : [],
+        { fetchPolicy: surfaceFocused ? 'poll' : 'cache_only' },
     );
     const connectedServiceQuotaProfileKey = connectedServiceQuotaProfileRef
         ? connectedServiceProfileKey(connectedServiceQuotaProfileRef)
@@ -4077,11 +4039,15 @@ function SessionViewLoaded({
         ? connectedServiceQuotaSnapshots.snapshotsByKey[connectedServiceQuotaProfileKey] ?? null
         : null;
     const connectedServiceQuotaDisplaySnapshot = connectedServiceQuotaSnapshot;
+    // A direct link identifies the Session, but its native login needs a record published for it.
     const providerAccountUsageRecordIds = React.useMemo(
         () => readProviderAccountUsageRecordIdsFromMetadata(session.metadata),
         [session.metadata],
     );
-    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(providerAccountUsageRecordIds);
+    const providerAccountUsageSnapshotsByRecordId = useProviderAccountUsageSnapshots(
+        providerAccountUsageRecordIds,
+        { fetchEnabled: surfaceFocused },
+    );
     const connectedServiceQuotaActiveAccountLabel = React.useMemo(() => {
         if (!connectedServiceQuotaProfileRef) return connectedServiceQuotaDisplaySnapshot?.accountLabel ?? null;
         return resolveConnectedServiceProfileLabel({
@@ -4115,6 +4081,7 @@ function SessionViewLoaded({
         return selectConnectedServiceSessionProviderUsageGaugeSource({
             providerId: liveComposerState.agentId,
             connectedServiceSnapshot: providerUsageDisplaySnapshotSource?.snapshot ?? null,
+            connectedServiceProfileRef: connectedServiceQuotaProfileRef,
             connectedServiceRefProvenance: providerUsageDisplaySnapshotSource?.connectedServiceRefProvenance ?? null,
             sessionCheckNowSupported: usageLimitRecoveryCheckNowSupported,
             recoveryCredits: usageLimitRecoveryCredits,
@@ -4123,6 +4090,7 @@ function SessionViewLoaded({
     }, [
         connectedServiceQuotasEnabled,
         connectedServiceQuotaProfileCredentialUsable,
+        connectedServiceQuotaProfileRef,
         liveComposerState.agentId,
         providerUsageDisplaySnapshotSource,
         session.lastRuntimeIssue,
@@ -4138,6 +4106,7 @@ function SessionViewLoaded({
             activeModelId: modelMode,
             windowMode: sessionProviderUsageGaugeWindowMode,
             windowModes: sessionProviderUsageGaugeWindowModesSetting,
+            numberWindowMode: sessionProviderUsageGaugeNumberWindowMode,
             additionalMeterIds: connectedServiceQuotaProfileRef
                 && gaugeSource.snapshot.serviceId === connectedServiceQuotaProfileRef.serviceId
                 ? pinnedQuotaMeterIdsByKey[connectedServiceProfileKey(gaugeSource.snapshot)] ?? []
@@ -4161,6 +4130,7 @@ function SessionViewLoaded({
         pinnedQuotaMeterIdsByKey,
         connectedServiceQuotaLimitSelection,
         sessionProviderUsageGaugeWindowModesSetting,
+        sessionProviderUsageGaugeNumberWindowMode,
         sessionProviderUsageGaugeWindowMode,
     ]);
     const providerUsageGaugeConnectedServiceProfileRef =
@@ -4370,8 +4340,13 @@ function SessionViewLoaded({
     } = useDraft(sessionId, composerTextStore, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftConflict);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftStatus ?? 'clean'),
-        [draftStatus],
+        () => buildSessionDraftSyncStatusBadge(
+            draftStatus ?? 'clean',
+            draftScope
+                ? { readErrorReason: () => getSessionDraftErrorReason(draftScope, { kind: 'session', sessionId }) }
+                : undefined,
+        ),
+        [draftScope, draftStatus, sessionId],
     );
     const [pendingMessageEdit, setPendingMessageEdit] = React.useState<PendingMessageComposerEditState | null>(null);
     const pendingMessageEditRef = React.useRef(pendingMessageEdit);
@@ -5187,6 +5162,9 @@ function SessionViewLoaded({
         const handlePickAttachmentImage = React.useCallback(() => {
             openAttachmentFilePickerImages(filePickerRef.current);
         }, [filePickerRef]);
+        const handleTakeAttachmentPhoto = React.useCallback(() => {
+            openAttachmentFilePickerCamera(filePickerRef.current);
+        }, [filePickerRef]);
         const handleAppendLinkedPath = React.useCallback((path: string) => {
             setDraftValue((prev) => {
                 const base = prev ?? '';
@@ -5209,6 +5187,7 @@ function SessionViewLoaded({
             onPickAttachmentFile: handlePickAttachmentFile,
             onPickAttachmentImage: handlePickAttachmentImage,
             onPasteAttachmentImage: pasteAttachmentImage,
+            onTakeAttachmentPhoto: handleTakeAttachmentPhoto,
             onAppendLinkedPath: handleAppendLinkedPath,
             reviewCommentsEnabled,
             reviewScope,
@@ -6365,6 +6344,7 @@ function SessionViewLoaded({
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
+                        quotaWait={visibleUsageLimitRecoveryPresentation.banner.quotaWait}
                         surfaceFocused={surfaceFocused}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.primaryAction.testID}

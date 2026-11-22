@@ -134,8 +134,10 @@ import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/ne
 
 
 import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+import { isActionOperationInFlight } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useActionOperation, useAllActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { resolvePersistedNewSessionOperationIdentity } from '@/sync/domains/actionOperations/actionOperationReentry';
+import { buildNewSessionTargetFolder, readNewSessionTargetFolder } from '@/sync/domains/session/folders/newSessionTargetFolder';
 import {
     flushSessionDraft,
     writeNewSessionDraft,
@@ -236,6 +238,10 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         backendTarget: backendTargetParam,
         backendTargetKey: backendTargetKeyParam,
         actionOperationId: actionOperationIdParam,
+        targetFolderId: targetFolderIdParam,
+        targetFolderMachineId: targetFolderMachineIdParam,
+        targetFolderRootPath: targetFolderRootPathParam,
+        targetFolderServerId: targetFolderServerIdParam,
     } = useLocalSearchParams<{
         prompt?: string;
         draftId?: string | string[];
@@ -263,6 +269,10 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         backendTarget?: string;
         backendTargetKey?: string;
         actionOperationId?: string | string[];
+        targetFolderId?: string;
+        targetFolderMachineId?: string;
+        targetFolderRootPath?: string;
+        targetFolderServerId?: string;
     }>();
     const generatedDraftIdRef = React.useRef<string | null>(null);
     const draftId = React.useMemo(() => {
@@ -316,6 +326,19 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         [scopedDraftSnapshot],
     );
     const persistedDraft = shouldReplacePersistedDraftSelections ? null : scopedPersistedDraft;
+    const routeTargetFolder = React.useMemo(() => buildNewSessionTargetFolder({
+        folderId: typeof targetFolderIdParam === 'string' ? targetFolderIdParam : null,
+        serverId: typeof targetFolderServerIdParam === 'string' ? targetFolderServerIdParam : null,
+        machineId: typeof targetFolderMachineIdParam === 'string' ? targetFolderMachineIdParam : null,
+        rootPath: typeof targetFolderRootPathParam === 'string' ? targetFolderRootPathParam : null,
+    }), [targetFolderIdParam, targetFolderMachineIdParam, targetFolderRootPathParam, targetFolderServerIdParam]);
+    // Continuing a draft from the sidebar opens `/new` with only the draft id; the folder staged
+    // with the draft is what keeps that continuation folder-scoped.
+    const persistedTargetFolder = React.useMemo(
+        () => readNewSessionTargetFolder(scopedDraftSnapshot?.localSupplement.newSessionLocalState?.targetFolder),
+        [scopedDraftSnapshot],
+    );
+    const targetFolder = routeTargetFolder ?? persistedTargetFolder;
     const [launchUserAttemptId, setLaunchUserAttemptId] = React.useState<string | null>(() => (
         typeof persistedDraft?.launchUserAttemptId === 'string'
             ? persistedDraft.launchUserAttemptId
@@ -947,7 +970,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const reentryOperation = explicitReentryOperation ?? persistedOperationReentry?.operation ?? null;
     const isCreating = isCreatingLocally || (
         reentryOperation?.actionId === 'session.spawn_new'
-        && (reentryOperation.state === 'accepted' || reentryOperation.state === 'running')
+        && isActionOperationInFlight(reentryOperation)
     );
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
 
@@ -1695,6 +1718,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         checkoutCreationDraft,
         checkoutSelectionExplicit,
         promptStore,
+        targetFolder,
         agentType,
         backendTarget,
         transcriptStorage,
@@ -1821,6 +1845,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const { handleCreateSession, resumePersistedLaunchKey } = useCreateNewSession({
         router,
         onStartAnother: params?.onStartAnother,
+        targetFolder,
         selectedMachineId,
         selectedPath,
         getRequestedPath,

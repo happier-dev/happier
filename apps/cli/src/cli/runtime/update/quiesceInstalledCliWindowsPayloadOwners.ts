@@ -5,16 +5,33 @@ import spawn from 'cross-spawn';
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import { resolveInstalledFirstPartyComponentPaths } from '@happier-dev/cli-common/firstPartyRuntime';
 
-import { findAllHappyProcesses, type HappyProcessInfo } from '@/daemon/doctor';
+import { findAllHappyProcesses, findWindowsHappyProcessAncestors, type HappyProcessInfo } from '@/daemon/doctor';
 
-const TERMINATABLE_PROCESS_TYPES = new Set([
+const TERMINATABLE_PROCESS_TYPES = new Set<string>([
   'daemon',
   'dev-daemon',
   'daemon-spawned-session',
   'dev-daemon-spawned',
   'daemon-version-check',
   'dev-daemon-version-check',
-] as const);
+]);
+
+/** Refuse before locks, downloads or launcher moves: stopping an ancestor can kill this updater. */
+export async function assertWindowsCliUpdateIsOutsideManagedProcessTree(): Promise<void> {
+  if (process.platform !== 'win32') return;
+  let ancestors: HappyProcessInfo[];
+  try {
+    ancestors = await findWindowsHappyProcessAncestors();
+  } catch (error) {
+    // The inspection owner emits only fixed diagnostics and PIDs, never command lines
+    // or raw PowerShell output. Preserve that reason at the installer boundary.
+    const reason = error instanceof Error ? ` ${error.message}.` : '';
+    throw new Error(`Cannot verify Windows update process ancestry.${reason} Run the update from an independent terminal after resolving process inspection.`, { cause: error });
+  }
+  if (ancestors.some((ancestor) => TERMINATABLE_PROCESS_TYPES.has(ancestor.type))) {
+    throw new Error('Cannot update Happier from inside a Happier daemon or daemon-started session on Windows. Save your work and run the update from an independent terminal outside Happier.');
+  }
+}
 
 const DEFAULT_PAYLOAD_OWNER_STOP_TIMEOUT_MS = 30_000;
 
@@ -88,7 +105,7 @@ function isManagedPayloadOwnerProcess(params: Readonly<{
   processInfo: HappyProcessInfo;
   matchNeedles: readonly string[];
 }>): boolean {
-  if (!TERMINATABLE_PROCESS_TYPES.has(params.processInfo.type as (typeof TERMINATABLE_PROCESS_TYPES extends Set<infer T> ? T : never))) {
+  if (!TERMINATABLE_PROCESS_TYPES.has(params.processInfo.type)) {
     return false;
   }
   const normalizedCommand = normalizeProcessCommand(params.processInfo.command);

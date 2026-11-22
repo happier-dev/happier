@@ -73,7 +73,7 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     voice.sendContextualUpdate(opts.update);
   };
 
-  const sendTextTurn: NonNullable<VoiceAdapterController['sendTextTurn']> = async (opts) => {
+  const prepareTextTurn: NonNullable<VoiceAdapterController['prepareTextTurn']> = (opts) => async (dispatch) => {
     const voice = getVoiceSession();
     if (!voice) {
       throw new Error('voice_service_unavailable');
@@ -81,7 +81,7 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     appendVoiceConversationUserText({
       conversationSessionId: opts.conversationSessionId,
       text: opts.text,
-      localId: opts.localId,
+      localId: dispatch.localId,
     });
     if (!isVoiceSessionStarted()) {
       await startRealtimeSession(opts.controlSessionId, undefined, false, { textOnly: true });
@@ -112,7 +112,7 @@ export function createRealtimeElevenLabsVoiceAdapter(): VoiceAdapterController {
     toggle,
     interrupt,
     sendContextUpdate,
-    sendTextTurn,
+    prepareTextTurn,
     getSnapshot,
     subscribe,
   };

@@ -212,10 +212,7 @@ function isNoChangeCommit(params: Readonly<{
             beforeRowId: destination.beforeRowId,
             afterRowId: destination.afterRowId,
         });
-        return next != null && isOrderMapScopeUnchanged({
-            currentMap: context.sessionWorkspaceOrderV1 ?? {},
-            next,
-        });
+        return next != null && Object.keys(next).length === 0;
     }
 
     const next = buildSessionListGroupOrderAfterTreeDrop({
@@ -226,24 +223,7 @@ function isNoChangeCommit(params: Readonly<{
         beforeRowId: destination.beforeRowId,
         afterRowId: destination.afterRowId,
     });
-    return next != null && isOrderMapScopeUnchanged({
-        currentMap: context.sessionListGroupOrderV1,
-        next,
-    });
-}
-
-function isOrderMapScopeUnchanged(params: Readonly<{
-    currentMap: Readonly<Record<string, ReadonlyArray<string> | undefined>>;
-    next: Readonly<Record<string, ReadonlyArray<string>>>;
-}>): boolean {
-    for (const [scopeKey, nextKeys] of Object.entries(params.next)) {
-        const currentKeys = params.currentMap[scopeKey] ?? [];
-        if (currentKeys.length !== nextKeys.length) return false;
-        for (let index = 0; index < nextKeys.length; index += 1) {
-            if (currentKeys[index] !== nextKeys[index]) return false;
-        }
-    }
-    return true;
+    return next != null && Object.keys(next).length === 0;
 }
 
 function normalizeSessionListSectionMode(value: SessionListOrderingSectionMode | undefined): SessionListOrderingSectionMode {

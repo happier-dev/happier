@@ -2,6 +2,7 @@ import {
     PendingActivationAuthorizationV1Schema,
     V2SessionListResponseSchema,
     V2SessionByIdNotFoundSchema,
+    V2SessionRecordSchema,
     withConnectedServiceReaderSupport,
     type V2SessionListResponse,
     type V2SessionRecord,
@@ -187,6 +188,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
     const shareCanApprovePermissions = readOptionalBoolean(shareRecord?.canApprovePermissions) ?? topLevelCanApprovePermissions;
     const rollbackEligibleTurnStarts = readRollbackEligibleTurnStarts(raw.rollbackEligibleTurnStarts);
     const runtimeActivityProjection = resolveSessionRuntimeActivityProjectionFields({}, raw);
+    const pendingBlockedNoEffectCount = V2SessionRecordSchema.shape.pendingBlockedNoEffectCount.safeParse(raw.pendingBlockedNoEffectCount).data;
 
     return {
         id,
@@ -234,6 +236,7 @@ function coerceLegacySessionRecord(raw: unknown): V2SessionRecord | null {
         rollbackEligibleTurnStarts,
         pendingCount: readNumber(raw.pendingCount) ?? undefined,
         pendingBlockedCount: readNumber(raw.pendingBlockedCount) ?? undefined,
+        ...(pendingBlockedNoEffectCount !== undefined ? { pendingBlockedNoEffectCount } : {}),
         pendingVersion: readNumber(raw.pendingVersion) ?? undefined,
         pendingActivationAuthorization: PendingActivationAuthorizationV1Schema.safeParse(raw.pendingActivationAuthorization).data,
         thinking: readOptionalBoolean(raw.thinking),

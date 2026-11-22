@@ -1,3 +1,4 @@
+import { createCodexAppServerUsageLimitRecoveryControlAdapter } from '@/backends/codex/appServer/usageLimitRecoveryControl/codexAppServerUsageLimitRecoveryControlAdapter';
 import { createClaudeUsageLimitRecoveryControlAdapter } from '@/backends/claude/connectedServices/claudeUsageLimitRecoveryControlAdapter';
 import { buildCodexAgentRuntimeDescriptor } from '@happier-dev/agents';
 import {
@@ -1049,6 +1050,48 @@ describe('sessionUsageLimitRecoveryControlRouter', () => {
       checkRuntimeAuthUsageLimitRecovery: checkOwner,
     });
     expect(checkOwner).not.toHaveBeenCalled();
+  });
+
+  it('keeps probing after Codex invalidates the previously recorded reset', async () => {
+    vi.useFakeTimers();
+    const issue = createUsageLimitIssue();
+    const resetAtMs = issue.usageLimit.resetAtMs!;
+    vi.setSystemTime(resetAtMs - 10_000);
+    let metadata = createMetadata({ sessionUsageLimitRecoveryV1: {
+      v: 1, status: 'waiting', issueFingerprint: buildUsageLimitIssueFingerprint(issue),
+      armedAtMs: issue.occurredAt, resetAtMs, nextCheckAtMs: resetAtMs, attemptCount: 0,
+      maxAttempts: 3, lastProbeError: null, resumePromptMode: 'standard', selectedAuth: { kind: 'native' },
+    } });
+    const request = vi.fn(async () => ({ primary: { usedPercent: 100 } }));
+    const adapter = createCodexAppServerUsageLimitRecoveryControlAdapter({
+      runWithControlClient: async ({ run }) => ({ ok: true, value: await run({
+        request, notify: async () => {},
+        registerRequestHandler: () => () => {},
+        registerNotificationHandler: () => () => {},
+      }) }),
+    });
+    const resume = vi.fn(async () => true);
+    const check = () => routeSessionUsageLimitRecoveryCheckNow({
+      token: 'token', credentials: createCredentials(), sessionId: 'codex-untimed-reset',
+      rawSession: createRawSession({ id: 'codex-untimed-reset', latestTurnStatus: 'failed', lastRuntimeIssue: issue }),
+      metadata, currentMachineId: 'machine-local', ctx, mode: 'plain',
+      callLiveSessionRpc: vi.fn(), resolveAdapter: async () => adapter, resumeInactiveSessionWhenReady: resume,
+    });
+    try {
+      for (const now of [resetAtMs - 10_000, resetAtMs + 60_000]) {
+        vi.setSystemTime(now);
+        mocks.updateSessionMetadataWithRetry.mockImplementationOnce(async ({ updater }) => {
+          metadata = updater(metadata);
+          return { version: 2, metadata };
+        });
+        expect(parseOperationResult(await check())).toMatchObject({ ok: true, status: 'waiting' });
+        expect(metadata.sessionUsageLimitRecoveryV1).toMatchObject({ resetAtMs: null, nextCheckAtMs: null });
+      }
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(resume).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps unowned native off mode passive when its backoff adapter becomes ready', async () => {

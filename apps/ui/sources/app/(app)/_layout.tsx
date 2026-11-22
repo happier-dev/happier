@@ -19,7 +19,7 @@ import { PushNotificationPermissionPrimingRuntime } from '@/activity/notificatio
 import { DesktopTrayRuntime } from '@/desktop/tray/DesktopTrayRuntime';
 import { ReleaseNotesAutoShowMount } from '@/changelog/releaseNotes';
 import { createAppStackScreenOptions } from '@/components/navigation/createAppStackScreenOptions';
-import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
+import { renderAppStackScreenWithVoiceSurface } from '@/components/navigation/appStackScreenLayout';
 import { NavigatorSafeAreaBleed } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { MobileBottomChromeHost } from '@/components/navigation/mobile/chrome/MobileBottomChromeHost';
 import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
@@ -196,7 +196,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             <DesktopTrayRuntime />
             {auth.isAuthenticated ? <AuthenticatedAppShellRuntimes /> : null}
             <NavigatorSafeAreaBleed>
-            <Stack screenOptions={baseStackScreenOptions} screenLayout={renderAppStackScreen}>
+            <Stack screenOptions={baseStackScreenOptions} screenLayout={renderAppStackScreenWithVoiceSurface}>
             <Stack.Screen
                 name="desktop/pet-overlay"
                 options={DESKTOP_PET_OVERLAY_SCREEN_OPTIONS}

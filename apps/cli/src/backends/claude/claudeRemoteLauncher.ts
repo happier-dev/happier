@@ -1330,10 +1330,9 @@ export async function claudeRemoteLauncher(
         };
         const surfaceRemoteRateLimitRuntimeIssue = async (
             details: NormalizedProviderUsageLimitDetailsV1,
-            observedWindows?: readonly NormalizedProviderUsageLimitDetailsV1[],
         ): Promise<void> => {
             recordPrimaryProviderUnavailableForPromptDelivery(details);
-            await surfaceClaudeRateLimitRuntimeIssue(session, details, '[remote]', { observedWindows });
+            await surfaceClaudeRateLimitRuntimeIssue(session, details, '[remote]');
         };
         const recordRemoteQuotaEvidence = async (windows: readonly NormalizedProviderUsageLimitDetailsV1[]): Promise<void> => {
             await recordClaudeRateLimitQuotaEvidence(session, windows, '[remote]');
@@ -1736,6 +1735,7 @@ export async function claudeRemoteLauncher(
                         if (updated) await apply(updated);
                     },
                     canCallTool: permissionHandler.handleToolCall,
+                    onBeforeProviderPrompt: () => captureClaudeRuntimeAuthRequestIdentity(session),
                     isAborted: (toolCallId: string) => {
                         return permissionHandler.isAborted(toolCallId);
                     },
@@ -1760,9 +1760,8 @@ export async function claudeRemoteLauncher(
                             unifiedTerminalLaunchOptionsHash = p.mode.claudeUnifiedTerminalEnabled === true
                                 ? hashClaudeUnifiedTerminalLaunchOptionsForQueue(p.mode)
                                 : null;
-                            permissionHandler.handleModeChange(p.mode.permissionMode);
+                            permissionHandler.admitPromptPermissionMode(p.mode.permissionMode);
                             const providerMessage = await resolveQueuedPromptForProvider(p);
-                            if (p.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                             if (p.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(p.mode)) {
                                 await beginPromptTurn();
                             } else {
@@ -1803,9 +1802,8 @@ export async function claudeRemoteLauncher(
                         const nextMode = msg.mode;
                         mode = nextMode;
                         unifiedTerminalLaunchOptionsHash = nextUnifiedTerminalLaunchOptionsHash;
-                        permissionHandler.handleModeChange(nextMode.permissionMode);
+                        permissionHandler.admitPromptPermissionMode(nextMode.permissionMode);
                         const providerMessage = await resolveQueuedPromptForProvider(msg);
-                        if (msg.pendingProviderAction !== 'steer') await captureClaudeRuntimeAuthRequestIdentity(session);
                         if (msg.pendingProviderAction !== 'steer' && !shouldDeferTurnStartUntilTerminalInjection(nextMode)) {
                             await beginPromptTurn();
                         } else {
@@ -1898,8 +1896,8 @@ export async function claudeRemoteLauncher(
                         workflowActivitySource?.observeTranscriptMessage(value, observation);
                     },
                     onWorkStateSnapshot: publishWorkStateSnapshot,
-                    onRateLimitEvent: async (details: NormalizedProviderUsageLimitDetailsV1, observedWindows: readonly NormalizedProviderUsageLimitDetailsV1[]) => {
-                        await surfaceRemoteRateLimitRuntimeIssue(details, observedWindows);
+                    onRateLimitEvent: async (details: NormalizedProviderUsageLimitDetailsV1) => {
+                        await surfaceRemoteRateLimitRuntimeIssue(details);
                     },
                     onQuotaEvidence: async (windows: readonly NormalizedProviderUsageLimitDetailsV1[]) => {
                         await recordRemoteQuotaEvidence(windows);

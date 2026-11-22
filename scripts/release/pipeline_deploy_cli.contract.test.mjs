@@ -16,11 +16,11 @@ test('pipeline deploy CLI can run deploy dry-run using env-file mode', async () 
       '--deploy-environment',
       'production',
       '--component',
-      'server',
+      'docs',
       '--repository',
       'happier-dev/happier',
       '--ref-name',
-      'deploy/production/server',
+      'deploy/production/docs',
       '--sha',
       '0123456789abcdef0123456789abcdef01234567',
       '--dry-run',
@@ -34,8 +34,7 @@ test('pipeline deploy CLI can run deploy dry-run using env-file mode', async () 
         DEPLOY_WEBHOOK_URL: 'https://ci.example.com/api/deploy',
         CF_WEBHOOK_DEPLOY_CLIENT_ID: 'cf-id',
         CF_WEBHOOK_DEPLOY_CLIENT_SECRET: 'cf-secret',
-        HAPPIER_SERVER_API_DEPLOY_WEBHOOKS: 'server-api',
-        HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS: 'server-worker',
+        HAPPIER_DOCS_DEPLOY_WEBHOOKS: 'docs',
       },
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -43,7 +42,20 @@ test('pipeline deploy CLI can run deploy dry-run using env-file mode', async () 
     },
   );
 
-  assert.match(out, /\[pipeline\] deploy webhooks: env=production component=server ref=deploy\/production\/server/);
-  assert.match(out, /Dokploy webhook target: ref=refs\/heads\/deploy\/production\/server/);
+  assert.match(out, /\[pipeline\] deploy webhooks: env=production component=docs ref=deploy\/production\/docs/);
+  assert.match(out, /Dokploy webhook target: ref=refs\/heads\/deploy\/production\/docs/);
+});
+
+test('pipeline deploy CLI refuses server webhooks without exact hosted images', () => {
+  assert.throws(() => execFileSync(process.execPath, [
+    resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'),
+    'deploy', '--deploy-environment', 'production', '--component', 'server',
+    '--repository', 'happier-dev/happier', '--ref-name', 'deploy/production/server',
+    '--sha', '0123456789abcdef0123456789abcdef01234567', '--dry-run', '--secrets-source', 'env',
+  ], { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 30_000 }), (error) => {
+    assert.equal(error.status, 1);
+    assert.match(error.stderr, /server requires exact hosted images; use DEPLOY — Deploy Branch with hosted_images or deploy-hosted-images\.mjs --images\./);
+    return true;
+  });
 });
 

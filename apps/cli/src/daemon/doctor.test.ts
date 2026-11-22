@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { classifyHappyProcess } from './doctor';
 
 describe('classifyHappyProcess', () => {
+  it.each(['hprev.exe', 'hdev.exe'])('recognizes the compiled CLI installed as %s', (name) => {
+    expect(classifyHappyProcess({ pid: 123, name, cmd: `C:\\Users\\alice\\.happier\\bin\\${name} daemon start-sync` }))
+      .toMatchObject({ type: 'daemon' });
+  });
+
   it('should ignore unrelated processes with "happy" in the name', () => {
     const res = classifyHappyProcess({ pid: 123, name: 'happy-hour', cmd: 'happy-hour --serve' });
     expect(res).toBeNull();
@@ -17,11 +22,12 @@ describe('classifyHappyProcess', () => {
     expect(res!.type).toBe('daemon');
   });
 
-  it('should detect a daemon-spawned session process', () => {
+  it.each(['--started-by daemon', '--started-by=daemon', '"--started-by" "daemon"'])(
+    'detects a daemon-spawned session with %s', (startedBy) => {
     const res = classifyHappyProcess({
       pid: 123,
       name: 'node',
-      cmd: '/usr/bin/node /repo/dist/index.mjs --started-by daemon',
+      cmd: `/usr/bin/node /repo/dist/index.mjs ${startedBy}`,
     });
     expect(res).not.toBeNull();
     expect(res!.type).toBe('daemon-spawned-session');

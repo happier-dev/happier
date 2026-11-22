@@ -1,8 +1,10 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Disposable, PtyExitEvent, PtyProcess, PtyProvider, PtySpawnParams } from '@/integrations/pty/ptyProvider';
 import { wrapBracketedPaste } from '@/agent/runtime/terminal/injection/bracketedPaste';
 import { createClaudePromptSubmitVerificationPolicy } from '@/backends/claude/unifiedTerminal/claudePromptSubmitVerification';
+import { parseClaudeScreenState } from '@/backends/claude/unifiedTerminal/tuiControls/screenState';
 import { TERMINAL_SHIFT_TAB_SEQUENCE } from '../terminalHost/controlTypes';
 import { createPtyTerminalHostAdapter } from './adapter';
 import { createVirtualTerminalScreen } from './virtualTerminalScreen';
@@ -71,6 +73,51 @@ function createFakeProviderWithProcess(factory: () => FakePtyProcess) {
   };
   return { provider, processes, spawnCalls };
 }
+
+type RecordedPtyStream = Readonly<{ cols: number; rows: number; chunks: readonly string[] }>;
+
+function replayRecordedPtyStream(name: string) {
+  const stream = JSON.parse(readFileSync(new URL(`./__fixtures__/${name}`, import.meta.url), 'utf8')) as RecordedPtyStream;
+  const screen = createVirtualTerminalScreen({ cols: stream.cols, rows: stream.rows });
+  for (const chunk of stream.chunks) screen.write(chunk);
+  return { screen, chunks: stream.chunks };
+}
+
+function parseCapturedScreen(screen: ReturnType<typeof createVirtualTerminalScreen>) {
+  const capture = screen.capture();
+  return parseClaudeScreenState(capture.text, { cursor: capture.cursor });
+}
+
+describe('createVirtualTerminalScreen with recorded Claude streams', () => {
+  it('consumes the charset designation Claude re-sends while a permission dialog is open', () => {
+    // The last recorded chunk re-asserts terminal modes with ESC ( B SI while the cursor sits on
+    // the focused choice. Printing the designator's B over the ❯ hid the dialog selection.
+    const { screen } = replayRecordedPtyStream('claude-2.1.325-permission-dialog.json');
+    const state = parseCapturedScreen(screen);
+
+    expect(screen.capture().text).toContain(' ❯ 1. Yes');
+    expect(state.permissionPromptVisible).toBe(true);
+    expect(state.visibleDialogSelection?.options.find((option) => option.focused)?.shortcut).toBe('1');
+  });
+
+  it('keeps a typed composer clean and submittable when Claude re-asserts its terminal modes', () => {
+    // Recorded composer stream (cursor at the end of the typed prompt) followed by the recorded
+    // mode re-assertion chunk from the permission stream, as it reaches a composer-focused cursor.
+    const prompt = 'fix the flaky build please';
+    const { screen } = replayRecordedPtyStream('claude-2.1.325-typed-composer.json');
+    const { chunks } = replayRecordedPtyStream('claude-2.1.325-permission-dialog.json');
+    const modeReassertion = chunks[chunks.length - 1]!;
+    expect(modeReassertion.startsWith('\u001b(B')).toBe(true);
+
+    screen.write(modeReassertion);
+
+    expect(parseCapturedScreen(screen).composerContent).toBe(prompt);
+    expect(createClaudePromptSubmitVerificationPolicy().isPromptStagedBeforeSubmit?.({
+      promptText: prompt,
+      screenText: screen.capture().text,
+    })).toBe(true);
+  });
+});
 
 describe('createVirtualTerminalScreen', () => {
   it('overwrites stale footer cells when Claude redraws a Japanese composer', () => {
@@ -142,6 +189,30 @@ describe('createVirtualTerminalScreen', () => {
     expect(screen.capture()).toEqual({ text: `${glyph}XYZ`, cursor: { x: 5, y: 0 } });
     screen.write('\u001b[3GX');
     expect(screen.capture().text).toBe(`${glyph}XYZ`);
+  });
+
+  it.each(['(', ')', '*', '+'])('consumes the ESC %s charset designation without printing it', (intermediate) => {
+    const screen = createVirtualTerminalScreen({ cols: 10, rows: 3 });
+    screen.write(`ab\u001b${intermediate}Bc\u001b${intermediate}0d`);
+    expect(screen.capture()).toEqual({ text: 'abcd', cursor: { x: 4, y: 0 } });
+  });
+
+  it('restores the cursor saved by DECSC around a scroll-region reset', () => {
+    const screen = createVirtualTerminalScreen({ cols: 10, rows: 3 });
+    screen.write('\u001b[2;4H\u001b7\u001b[r');
+    expect(screen.capture().cursor).toEqual({ x: 0, y: 0 });
+    screen.write('\u001b[3;1Hy\u001b8x');
+    expect(screen.capture()).toEqual({ text: '\n   x\ny', cursor: { x: 4, y: 1 } });
+  });
+
+  it('restores the main screen and cursor when leaving the alternate screen', () => {
+    const screen = createVirtualTerminalScreen({ cols: 10, rows: 3 });
+    screen.write('$ claude');
+    screen.write('\u001b[?1049h');
+    expect(screen.capture()).toEqual({ text: '', cursor: { x: 0, y: 0 } });
+    screen.write('\u001b[2;1H> composer');
+    screen.write('\u001b[?1049l');
+    expect(screen.capture()).toEqual({ text: '$ claude', cursor: { x: 8, y: 0 } });
   });
 
   it('tracks clear-screen and cursor-position terminal writes', () => {

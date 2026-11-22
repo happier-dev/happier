@@ -33,7 +33,7 @@ import { PopoverBackdrop } from './backdrop';
 import { POPOVER_PORTAL_Z_INDEX, tryRenderWebPortal, useNativeOverlayPortalNode } from './portal';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 
-const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any }>;
+const ViewWithWheel = View as unknown as React.ComponentType<ViewProps & { onWheel?: any; onClick?: React.MouseEventHandler }>;
 
 export type {
     PopoverAnchor,
@@ -519,6 +519,12 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
     }, [edgePadding]);
 
     const keyboardHeightRef = React.useRef(0);
+    React.useLayoutEffect(() => {
+        if (!open || Platform.OS === 'web' || keyboardBottomInsetProp !== undefined) return;
+        if (typeof Keyboard.isVisible !== 'function') return;
+        // Opening after the keyboard has settled does not emit another keyboard event.
+        keyboardHeightRef.current = Keyboard.isVisible() ? Keyboard.metrics?.()?.height ?? 0 : 0;
+    }, [open, keyboardBottomInsetProp]);
 
     const recompute = React.useCallback(async () => {
         if (!open) return;
@@ -1251,6 +1257,11 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
         if (typeof event?.stopPropagation === 'function') event.stopPropagation();
     }, [shouldPortalWeb]);
 
+    const stopPortalClick = React.useCallback((event: React.MouseEvent) => {
+        // React events from a portal still bubble to its logical ancestors.
+        event.stopPropagation();
+    }, []);
+
     // IMPORTANT: hooks must not be conditional. This must run even when `open === false`
     // to avoid changing hook order between renders.
     const paddingStyle = React.useMemo<ViewStyle>(() => {
@@ -1407,7 +1418,7 @@ export function Popover(props: PopoverWithBackdrop | PopoverWithoutBackdrop) {
             <ViewWithWheel
                 ref={contentContainerRef}
                 {...(shouldPortalWeb
-                    ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb } as any)
+                    ? ({ onWheel: stopScrollEventPropagationOnWeb, onTouchMove: stopScrollEventPropagationOnWeb, onClick: stopPortalClick } as any)
                     : {})}
                 {...(Platform.OS === 'web' && shouldPortalWeb
                     ? ({ nativeID: portalIdRef.current, testID: portalIdRef.current } as any)

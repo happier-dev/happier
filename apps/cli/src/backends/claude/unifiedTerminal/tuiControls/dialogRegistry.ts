@@ -470,7 +470,14 @@ export function getClaudeUnifiedDialogIdentity(dialog: ClaudeUnifiedVisibleDialo
       dialogId: dialog.dialogId, occurrenceId: dialog.occurrenceId,
       toolName: dialog.toolName, toolInput: dialog.toolInput,
       ...(dialog.dialogId === 'tool_permission'
-        ? { context: dialog.permissionPresentation?.context, options: dialog.options }
+        ? {
+          // Claude's unattended safety countdown changes the display, not the permission.
+          context: dialog.permissionPresentation?.context.replace(
+            /(Claude\s+Code\s+will\s+automatically\s+block\s+this\s+request\s+in\s+)\d+:\d{2}(,)/u,
+            '$1<countdown>$2',
+          ),
+          options: dialog.options,
+        }
         : {}),
     });
   }

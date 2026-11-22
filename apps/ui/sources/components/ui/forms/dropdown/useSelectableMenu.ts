@@ -107,18 +107,29 @@ export function useSelectableMenu(params: {
         return firstEnabledIndex();
     }, [allItems.length, allowEmptySelection, firstEnabledIndex, isEnabledIndex]);
 
-    // Initialize / reset selection when the query or available items change.
-    useEffect(() => {
+    // What the reset below depends on: item order, ids and enabled state. Callers often rebuild
+    // `items` on every render (a session header re-renders on each streamed update), so keying the
+    // reset on array identity both dropped the person's highlight and scheduled a state update after
+    // every commit, which under continuous updates trips React's nested-update limit (#185).
+    const selectionResetKey = useMemo(
+        () => allItems.map((item) => `${item.id}\u0000${item.disabled ? 1 : 0}`).join('\u0001'),
+        [allItems],
+    );
+    const resetSelectedIndex = useMemo((): number => {
         const preferredId = params.initialSelectedId ?? null;
         if (preferredId) {
             const idx = allItems.findIndex((i) => i.id === preferredId);
-            if (idx >= 0 && isEnabledIndex(idx)) {
-                setSelectedIndex(idx);
-                return;
-            }
+            if (idx >= 0 && isEnabledIndex(idx)) return idx;
         }
-        setSelectedIndex(allowEmptySelection ? -1 : firstEnabledIndex());
-    }, [allItems, allowEmptySelection, firstEnabledIndex, isEnabledIndex, params.initialSelectedId, searchQuery]);
+        return allowEmptySelection ? -1 : firstEnabledIndex();
+        // allItems only matters through selectionResetKey (ids and enabled state in order).
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [selectionResetKey, allowEmptySelection, params.initialSelectedId]);
+
+    // Initialize / reset selection when the query or available items change.
+    useEffect(() => {
+        setSelectedIndex(resetSelectedIndex);
+    }, [resetSelectedIndex, selectionResetKey, searchQuery]);
 
     const moveSelection = useCallback((dir: -1 | 1, from: number = selectedIndex) => {
         if (allItems.length === 0) return;

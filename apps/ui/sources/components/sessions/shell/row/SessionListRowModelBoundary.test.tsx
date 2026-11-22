@@ -402,6 +402,22 @@ describe('SessionListRowModelBoundary', () => {
         await screen.unmount();
     });
 
+    it('shows a new row project colour before it enters the subscription set or is clicked', async () => {
+        const { resolveSessionWorkspacePresentation } = await import('@/sync/domains/session/listing/sessionWorkspacePresentation');
+        const workspaceKey = resolveSessionWorkspacePresentation({ metadata: baseSession.metadata, machines: {} }).workspaceKey;
+        reactiveStorageHarness.setState({
+            ...reactiveStorageHarness.getState(),
+            sessionOrganizationLabelsByLabelKey: {
+                [`server_a:workspace:${workspaceKey}`]: { labelKind: 'workspace', scopeKey: workspaceKey, display: { t: 'plain', v: { color: { kind: 'accent', key: 'green' } } }, archivedAt: null, createdAt: 1, updatedAt: 1 },
+            },
+        } as TestStorageState);
+        const { SessionListRowModelBoundary } = await import('./SessionListRowModelBoundary');
+        const screen = await renderScreen(<SessionListRowModelBoundary {...createBoundaryProps()} rowStoreSubscriptionEnabled={false} />);
+        expect(screen.findByTestId('session-list-row-boundary:sess_a')?.props.rowModel.appearanceColor).toEqual({ kind: 'accent', key: 'green' });
+        expect(reactiveStorageHarness.listenerCount()).toBe(0);
+        await screen.unmount();
+    });
+
     it('shows real row content when the row first mounts while the surface is inactive', async () => {
         const { SessionListRowModelBoundary } = await import('./SessionListRowModelBoundary');
         await act(async () => {

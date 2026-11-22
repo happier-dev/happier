@@ -65,6 +65,24 @@ describe('runGuidedRepair running daemon CLI mismatch repair', () => {
     expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining(['self', 'update', '--dev']), expect.any(Object));
   });
 
+  it('updates the stale relay in its installed channel and scope', async () => {
+    promptInputMock.mockResolvedValueOnce('y');
+    const { runGuidedRepair } = await import('./runGuidedRepair');
+    await runGuidedRepair({
+      currentCli: { releaseChannel: 'dev', version: '0.12.3', invoker: 'hdev' },
+      findings: [{
+        kind: 'local_relay_version_stale', severity: 'info', autoApplyWithoutPrompt: false,
+        latestVersion: '0.12.3',
+        entry: { releaseChannel: 'dev', ringId: 'publicdev', mode: 'system', version: '0.12.1',
+          serviceActive: true, serviceEnabled: true, healthy: true,
+          relayUrl: 'http://localhost:3005', port: 3005, installRoot: '/opt/happier-dev' },
+      }],
+    });
+    expect(spawnSyncMock).toHaveBeenCalledWith(expect.any(String), expect.arrayContaining([
+      'relay', 'host', 'install', '--channel', 'dev', '--mode', 'system', '--preserve-active-server', '--yes',
+    ]), expect.any(Object));
+  });
+
   it('keeps the default interactive answer on daemon restart only', async () => {
     const { runGuidedRepair } = await import('./runGuidedRepair');
 

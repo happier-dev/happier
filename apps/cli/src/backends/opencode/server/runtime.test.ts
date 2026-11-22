@@ -10203,6 +10203,42 @@ describe('createOpenCodeServerRuntime', () => {
     expect(session.sendUserTextMessageCommitted).not.toHaveBeenCalled();
   });
 
+  it.each(['success', 'failed'] as const)('publishes root-session V2 tools while running and after %s', async (outcome) => {
+    const { client, session, runtime, promptPromise } = await beginOpenCodePromptForTest();
+    const identity = { sessionID: 'ses_1', assistantMessageID: 'native-tool-message', id: 'native-root-tool' };
+    const input = outcome === 'success' ? { path: '/tmp/example.txt' } : {};
+    const emitNative = (type: string, data: Record<string, unknown>) => {
+      const normalized = normalizeOpenCodeV2Event(type, { ...identity, ...data });
+      return client.__emit({ directory: '/tmp', payload: normalized });
+    };
+    const calls = () => sentAgentMessagesOfType(session, 'tool-call');
+    const results = () => sentAgentMessagesOfType(session, 'tool-result');
+
+    try {
+      await emitNative('session.tool.input.started', { name: 'read' });
+      expect(calls()).toHaveLength(0);
+      const call = { input, executed: outcome === 'success' };
+      await Promise.all([emitNative('session.tool.called', call), emitNative('session.tool.called', call)]);
+      await expect.poll(calls).toMatchObject([{ callId: identity.id, name: 'read', input }]);
+      expect(results()).toHaveLength(0);
+
+      const terminal = outcome === 'success'
+        ? { content: [{ type: 'text', text: 'native file contents' }], executed: true }
+        : { error: { type: 'tool.execution', message: 'native tool failure' }, executed: false };
+      await emitNative(`session.tool.${outcome}`, terminal);
+      await emitNative(`session.tool.${outcome}`, terminal);
+      await emitTerminalAssistantAndIdle(client, { messageId: 'native-tool-turn-end' });
+      await promptPromise;
+
+      expect(calls()).toHaveLength(1);
+      expect(results()).toMatchObject([outcome === 'success'
+        ? { callId: identity.id, output: { output: 'native file contents' } }
+        : { callId: identity.id, isError: true, output: { status: 'failed', error: 'native tool failure' } }]);
+    } finally {
+      await runtime.reset();
+    }
+  });
+
   it.each([false, true])('routes released V2 subagent tool progress until child termination (terminal before acknowledgement: %s)', async (terminalBeforeAcknowledgement) => {
     const { client, session, runtime, promptPromise } = await beginOpenCodePromptForTest();
     const emitNative = async (type: string, data: Record<string, unknown>) => {

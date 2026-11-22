@@ -1,6 +1,6 @@
 import { ExecutionRunLaunchOriginSchema, type BackendTargetRefV1, type ExecutionRunLaunchOrigin } from '@happier-dev/protocol';
 
-import type { Message, ToolCallMessage } from '@/sync/domains/messages/messageTypes';
+import type { Message, ToolCall } from '@/sync/domains/messages/messageTypes';
 import { sortTranscriptMessagesOldestFirst } from '@/sync/domains/messages/transcriptOrdering';
 import { resolveToolTranscriptSidechainId } from '@/components/tools/shell/views/resolveToolTranscriptSidechainId';
 import { readExecutionRunIdFromToolPayload } from '@/sync/domains/session/participants/deriveExecutionRunPollingRefreshKey';
@@ -72,24 +72,27 @@ function readLaunchOrigin(value: unknown): ExecutionRunLaunchOrigin | null {
     return parsed.success ? parsed.data : null;
 }
 
-function readTranscriptBackendTarget(params: Readonly<{
-    inputRecord: Record<string, unknown>;
-    resultRecord: Record<string, unknown>;
-    current?: TranscriptExecutionRunState | undefined;
-}>): BackendTargetRefV1 | null {
-    return (
-        readBackendTargetRef(params.inputRecord.backendTarget)
-        ?? readBackendTargetRef(params.resultRecord.backendTarget)
-        ?? params.current?.backendTarget
-        ?? (() => {
-            const legacyBackendId =
-                readOptionalString(params.inputRecord, 'backendId')
-                ?? readOptionalString(params.resultRecord, 'backendId')
-                ?? params.current?.backendId
-                ?? null;
-            return legacyBackendId ? { kind: 'builtInAgent', agentId: legacyBackendId } satisfies BackendTargetRefV1 : null;
-        })()
-    );
+/** Per-call facts only: previous observations and legacy backend fallback belong to the index. */
+export function readTranscriptExecutionRunToolFields(tool: ToolCall) {
+    const inputRecord = tool.input && typeof tool.input === 'object'
+        ? (tool.input as Record<string, unknown>)
+        : {};
+    const resultRecord = tool.result && typeof tool.result === 'object' && !Array.isArray(tool.result)
+        ? (tool.result as Record<string, unknown>)
+        : {};
+    return {
+        runId: readExecutionRunIdFromToolPayload(tool),
+        displayLabel: readOptionalString(inputRecord, 'label') ?? readOptionalString(resultRecord, 'label'),
+        sidechainId: resolveToolTranscriptSidechainId({ tool, normalizedToolName: 'SubAgentRun' }),
+        backendTarget: readBackendTargetRef(inputRecord.backendTarget) ?? readBackendTargetRef(resultRecord.backendTarget),
+        backendId: readOptionalString(inputRecord, 'backendId') ?? readOptionalString(resultRecord, 'backendId'),
+        intent: readOptionalString(inputRecord, 'intent') ?? readOptionalString(resultRecord, 'intent'),
+        permissionMode: readOptionalString(inputRecord, 'permissionMode') ?? readOptionalString(resultRecord, 'permissionMode'),
+        retentionPolicy: readOptionalString(inputRecord, 'retentionPolicy') ?? readOptionalString(resultRecord, 'retentionPolicy'),
+        runClass: readOptionalString(inputRecord, 'runClass') ?? readOptionalString(resultRecord, 'runClass'),
+        ioMode: readOptionalString(inputRecord, 'ioMode') ?? readOptionalString(resultRecord, 'ioMode'),
+        launchOrigin: readLaunchOrigin(inputRecord.launchOrigin) ?? readLaunchOrigin(resultRecord.launchOrigin),
+    };
 }
 
 export function resolveTranscriptBackendLabel(state: TranscriptExecutionRunState): string | null {
@@ -105,24 +108,18 @@ export function deriveTranscriptExecutionRunStateIndex(messages: readonly Messag
 
     for (const message of orderedMessages) {
         if (!message || message.kind !== 'tool-call') continue;
-        const toolMessage = message as ToolCallMessage;
+        const toolMessage = message;
         if (toolMessage.tool?.name !== 'SubAgentRun') continue;
 
-        const runId = readExecutionRunIdFromToolPayload(toolMessage.tool);
+        const fields = readTranscriptExecutionRunToolFields(toolMessage.tool);
+        const runId = fields.runId;
         if (!runId) continue;
 
-        const inputRecord = toolMessage.tool.input && typeof toolMessage.tool.input === 'object'
-            ? (toolMessage.tool.input as Record<string, unknown>)
-            : {};
-        const resultRecord = toolMessage.tool.result && typeof toolMessage.tool.result === 'object' && !Array.isArray(toolMessage.tool.result)
-            ? (toolMessage.tool.result as Record<string, unknown>)
-            : {};
         const status = deriveTranscriptExecutionRunStatus(toolMessage.tool);
         const current = byRunId.get(runId);
-        const sidechainId = resolveToolTranscriptSidechainId({ tool: toolMessage.tool, normalizedToolName: 'SubAgentRun' }) ?? current?.sidechainId;
-        const displayLabel = readOptionalString(inputRecord, 'label')
-            ?? readOptionalString(resultRecord, 'label')
-            ?? current?.displayLabel;
+        const sidechainId = fields.sidechainId ?? current?.sidechainId;
+        const displayLabel = fields.displayLabel ?? current?.displayLabel;
+        const backendId = fields.backendId ?? current?.backendId ?? null;
 
         const nextStatus =
             status === 'unknown' && current?.status === 'running'
@@ -145,14 +142,15 @@ export function deriveTranscriptExecutionRunStateIndex(messages: readonly Messag
             toolMessageRouteId: message.id,
             toolId: typeof toolMessage.tool.id === 'string' ? toolMessage.tool.id.trim() : current?.toolId,
             sidechainId: sidechainId ?? undefined,
-            backendTarget: readTranscriptBackendTarget({ inputRecord, resultRecord, current }),
-            backendId: readOptionalString(inputRecord, 'backendId') ?? readOptionalString(resultRecord, 'backendId') ?? current?.backendId ?? null,
-            intent: readOptionalString(inputRecord, 'intent') ?? readOptionalString(resultRecord, 'intent') ?? current?.intent ?? null,
-            permissionMode: readOptionalString(inputRecord, 'permissionMode') ?? readOptionalString(resultRecord, 'permissionMode') ?? current?.permissionMode ?? null,
-            retentionPolicy: readOptionalString(inputRecord, 'retentionPolicy') ?? readOptionalString(resultRecord, 'retentionPolicy') ?? current?.retentionPolicy ?? null,
-            runClass: readOptionalString(inputRecord, 'runClass') ?? readOptionalString(resultRecord, 'runClass') ?? current?.runClass ?? null,
-            ioMode: readOptionalString(inputRecord, 'ioMode') ?? readOptionalString(resultRecord, 'ioMode') ?? current?.ioMode ?? null,
-            launchOrigin: readLaunchOrigin(inputRecord.launchOrigin) ?? readLaunchOrigin(resultRecord.launchOrigin) ?? current?.launchOrigin ?? null,
+            backendTarget: fields.backendTarget ?? current?.backendTarget
+                ?? (backendId ? { kind: 'builtInAgent', agentId: backendId } : null),
+            backendId,
+            intent: fields.intent ?? current?.intent ?? null,
+            permissionMode: fields.permissionMode ?? current?.permissionMode ?? null,
+            retentionPolicy: fields.retentionPolicy ?? current?.retentionPolicy ?? null,
+            runClass: fields.runClass ?? current?.runClass ?? null,
+            ioMode: fields.ioMode ?? current?.ioMode ?? null,
+            launchOrigin: fields.launchOrigin ?? current?.launchOrigin ?? null,
             startedAtMs,
             updatedAtMs: readToolCallObservedAtMs(toolMessage) ?? current?.updatedAtMs,
             finishedAtMs,

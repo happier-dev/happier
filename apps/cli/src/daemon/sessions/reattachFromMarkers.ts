@@ -19,7 +19,7 @@ import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers
 import { resolveSessionRuntimeSnapshot } from './runtimeSnapshot/resolveSessionRuntimeSnapshot';
 
 import type { TrackedSession } from '../types';
-import { findAllHappyProcesses, findHappyProcessByPid, type HappyProcessInfo } from '../doctor';
+import { findAllHappyProcesses, findHappyProcessByPid, indicatesDaemonStartedSessionCommand, type HappyProcessInfo } from '../doctor';
 import { adoptSessionsFromMarkers, isOwnedLiveDaemonSessionProcessCommand } from '../reattach';
 import {
   clearSessionMarkerConnectedServiceRestartIntent,
@@ -58,11 +58,6 @@ function readRuntimeSnapshotMetadata(value: unknown): Record<string, unknown> | 
 
 function shouldRecoverMarkerlessDaemonSpawnedSessions(env: NodeJS.ProcessEnv = process.env): boolean {
   return parseOptionalBooleanEnv(env.HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED) !== false;
-}
-
-function indicatesDaemonStartedSessionCommand(command: string): boolean {
-  const normalized = command.replace(/\s+/g, ' ').trim();
-  return /(?:^|[\s"])--started-by"?(?:=|\s+)\s*"?daemon"?(?=$|[\s"])/i.test(normalized);
 }
 
 function extractBackendTargetFromCommand(command: string): SpawnSessionOptions['backendTarget'] | undefined {

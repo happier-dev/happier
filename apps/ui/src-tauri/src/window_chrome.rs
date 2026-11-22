@@ -15,6 +15,10 @@ use tauri::{App, Emitter, Manager, Runtime, TitleBarStyle, WebviewWindow, Window
 #[path = "macos_window_frame.rs"]
 mod macos_window_frame;
 
+#[cfg(all(desktop, not(target_os = "macos")))]
+#[path = "window_frame.rs"]
+mod window_frame;
+
 #[cfg(desktop)]
 const MAIN_WINDOW_LABEL: &str = "main";
 
@@ -65,6 +69,58 @@ pub struct DesktopWindowChromePolicyPayload {
 #[serde(rename_all = "camelCase")]
 pub struct DesktopWindowStatePayload {
     pub is_maximized: bool,
+}
+
+#[cfg(desktop)]
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeWindowPresentation {
+    pub minimized: bool,
+    pub maximized: bool,
+    pub fullscreen: bool,
+}
+
+/// Reads the native presentation state before deciding whether geometry is a normal frame.
+#[cfg(desktop)]
+pub(crate) fn read_native_window_presentation<R: Runtime>(
+    window: &Window<R>,
+) -> Result<NativeWindowPresentation, String> {
+    #[cfg(target_os = "linux")]
+    {
+        use gtk::prelude::*;
+
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        let retained = window.clone();
+        window
+            .run_on_main_thread(move || {
+                let presentation = retained
+                    .gtk_window()
+                    .map_err(|error| error.to_string())
+                    .map(|window| {
+                        // New geometry can arrive before GTK and Tao refresh their cached flags.
+                        // Read GDK's current state so a maximized rect cannot become normal.
+                        let state = window
+                            .window()
+                            .map(|window| window.state())
+                            .unwrap_or_else(gtk::gdk::WindowState::empty);
+                        NativeWindowPresentation {
+                            minimized: state.contains(gtk::gdk::WindowState::ICONIFIED),
+                            maximized: state.contains(gtk::gdk::WindowState::MAXIMIZED),
+                            fullscreen: state.contains(gtk::gdk::WindowState::FULLSCREEN),
+                        }
+                    });
+                let _ = send.send(presentation);
+            })
+            .map_err(|error| error.to_string())?;
+        receive.recv().map_err(|error| error.to_string())?
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        Ok(NativeWindowPresentation {
+            minimized: window.is_minimized().map_err(|error| error.to_string())?,
+            maximized: window.is_maximized().map_err(|error| error.to_string())?,
+            fullscreen: window.is_fullscreen().map_err(|error| error.to_string())?,
+        })
+    }
 }
 
 #[cfg(desktop)]
@@ -257,13 +313,18 @@ fn resolve_desktop_window_state_payload_for_policy(
 #[cfg(desktop)]
 fn resolve_desktop_window_state_payload_for_window<R: Runtime>(
     window: &Window<R>,
-) -> DesktopWindowStatePayload {
+) -> Result<DesktopWindowStatePayload, String> {
     let policy = resolve_window_chrome_policy(window.app_handle(), window.label());
     if !desktop_window_chrome_policy_tracks_maximized_state(policy) {
-        return resolve_desktop_window_state_payload_for_policy(policy, false);
+        return Ok(resolve_desktop_window_state_payload_for_policy(
+            policy, false,
+        ));
     }
 
-    resolve_desktop_window_state_payload_for_policy(policy, window.is_maximized().unwrap_or(false))
+    Ok(resolve_desktop_window_state_payload_for_policy(
+        policy,
+        read_native_window_presentation(window)?.maximized,
+    ))
 }
 
 #[cfg(desktop)]
@@ -296,12 +357,16 @@ fn emit_desktop_window_state<R: Runtime>(window: &WebviewWindow<R>) {
         return;
     }
 
+    let presentation = match read_native_window_presentation(&window.as_ref().window()) {
+        Ok(presentation) => presentation,
+        Err(error) => {
+            log::warn!("could not read native window presentation for state event: {error}");
+            return;
+        }
+    };
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_policy(
-            policy,
-            window.is_maximized().unwrap_or(false),
-        ),
+        resolve_desktop_window_state_payload_for_policy(policy, presentation.maximized),
     );
 }
 
@@ -363,6 +428,15 @@ pub(crate) fn present_main_window_for_lifecycle_event(
     }
 }
 
+/// Writes a pending window frame to disk; the app exit path calls this so a move or resize made
+/// just before quitting is kept.
+#[cfg(all(desktop, not(target_os = "macos")))]
+pub(crate) fn flush_main_window_frame(app: &tauri::AppHandle) {
+    if let Some(tracker) = app.try_state::<window_frame::FrameTracker>() {
+        tracker.flush();
+    }
+}
+
 /// The main window, built from its `tauri.conf.json` entry (`"create": false`: the app creates it
 /// here, so a login start in menu-bar mode never loads a web UI).
 #[cfg(desktop)]
@@ -379,6 +453,12 @@ pub(crate) fn create_main_window(app: &tauri::AppHandle) -> tauri::Result<Webvie
     let window = tauri::WebviewWindowBuilder::from_config(app, &config)?
         .decorations(policy.use_window_decorations)
         .build()?;
+    // macOS autosaves its own frame in `configure_main_window`; elsewhere restore it while the
+    // window is still hidden so it never flashes at the default size first.
+    #[cfg(not(target_os = "macos"))]
+    if let Some(tracker) = app.try_state::<window_frame::FrameTracker>() {
+        tracker.track(&window);
+    }
     configure_main_window(app, &window);
     Ok(window)
 }
@@ -423,7 +503,7 @@ pub async fn desktop_set_native_title_bar(
 #[cfg(desktop)]
 #[tauri::command]
 pub async fn desktop_get_window_state(window: Window) -> Result<DesktopWindowStatePayload, String> {
-    Ok(resolve_desktop_window_state_payload_for_window(&window))
+    resolve_desktop_window_state_payload_for_window(&window)
 }
 
 #[cfg(desktop)]
@@ -437,7 +517,7 @@ pub async fn desktop_minimize_window(window: Window) -> Result<bool, String> {
     window.minimize().map_err(|error| error.to_string())?;
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_window(&window),
+        resolve_desktop_window_state_payload_for_window(&window)?,
     );
     Ok(true)
 }
@@ -450,14 +530,14 @@ pub async fn desktop_toggle_window_maximize(window: Window) -> Result<bool, Stri
         return Ok(false);
     }
 
-    if window.is_maximized().unwrap_or(false) {
+    if read_native_window_presentation(&window)?.maximized {
         window.unmaximize().map_err(|error| error.to_string())?;
     } else {
         window.maximize().map_err(|error| error.to_string())?;
     }
     let _ = window.emit(
         DESKTOP_WINDOW_STATE_EVENT,
-        resolve_desktop_window_state_payload_for_window(&window),
+        resolve_desktop_window_state_payload_for_window(&window)?,
     );
     Ok(true)
 }
@@ -516,6 +596,15 @@ pub fn register(app: &mut App) -> tauri::Result<()> {
         preferences::WindowChromePreferences::default()
     };
     app.manage(DesktopWindowChromeState(std::sync::Mutex::new(preferences)));
+    #[cfg(not(target_os = "macos"))]
+    match app.path().app_config_dir() {
+        Ok(dir) => {
+            app.manage(window_frame::FrameTracker::new(
+                dir.join("window-state/main-window-frame.json"),
+            ));
+        }
+        Err(error) => log::warn!("could not initialize main-window frame persistence: {error}"),
+    }
     if crate::menu_bar::launched_in_menu_bar_mode(app.handle()) {
         return Ok(());
     }

@@ -2,6 +2,10 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { parseArgs } from 'node:util';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { resolveHostedImages } from './hosted-images.mjs';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
 import {
@@ -496,6 +500,7 @@ async function main() {
       'push-latest': { type: 'string', default: 'true' },
       'build-relay': { type: 'string', default: 'true' },
       'build-dev-box': { type: 'string', default: 'true' },
+      'hosted-services': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -508,7 +513,7 @@ async function main() {
   const { channelTag, floatTag, policyEnv } = resolveDockerTagSpec(channel);
 
   const pushLatest = parseBool(values['push-latest'], '--push-latest');
-  const buildRelay = parseBool(values['build-relay'], '--build-relay');
+  let buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
 
@@ -518,6 +523,13 @@ async function main() {
 
   const ghcrNamespaceRaw = String(process.env.GHCR_NAMESPACE ?? 'ghcr.io/happier-dev').trim();
   const ghcrNamespace = ghcrNamespaceRaw.endsWith('/') ? ghcrNamespaceRaw.slice(0, -1) : ghcrNamespaceRaw;
+  const hostedImages = resolveHostedImages({
+    selected: values['hosted-services'], channel, sha, repoRoot: process.cwd(), namespace: ghcrNamespace,
+  });
+  const hostedRelay = hostedImages.find(({ service }) => service === 'relay-server');
+  const hostedServer = Boolean(hostedRelay);
+  buildRelay ||= hostedServer;
+  if (hostedImages.length && !registries.has('ghcr')) fail('Hosted images require the ghcr registry');
 
   /** @type {Partial<Record<'dockerhub' | 'ghcr', Readonly<{ relayBase: string; devBase: string }>>>} */
   const basesByRegistry = {};
@@ -576,10 +588,12 @@ async function main() {
 
   /**
    * @param {readonly string[]} tags
-   * @param {{ target: string; file: string; cacheScope: string; extraArgs?: string[] }} params
+   * @param {{ target: string; file: string; cacheScope: string; extraArgs?: string[]; captureDigest?: boolean }} params
    */
   const runBuildxForTags = async (tags, params) => {
     if (tags.length === 0) return;
+    const metadataDir = params.captureDigest && !dryRun ? mkdtempSync(join(tmpdir(), 'published-image-')) : null;
+    const metadataFile = metadataDir ? join(metadataDir, 'metadata.json') : null;
     const args = [
       'buildx',
       'build',
@@ -594,24 +608,33 @@ async function main() {
       ...(useGhaCache ? ['--cache-from', `type=gha,scope=${params.cacheScope}`] : []),
       ...(useGhaCache ? ['--cache-to', `type=gha,mode=max,scope=${params.cacheScope}`] : []),
       ...(params.extraArgs ?? []),
+      ...(metadataFile ? ['--metadata-file', metadataFile] : []),
       '--label',
       `org.opencontainers.image.revision=${sha}`,
       ...tags.flatMap((t) => ['--tag', t]),
       '.',
     ];
 
-    await runDockerBuildxBuildWithRetry({
-      dockerArgs: args,
-      dryRun,
-      onRetry: (attempt, errorText) => {
-        console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
-        if (errorText) {
-          const firstLine = String(errorText).split('\n').find(Boolean);
-          if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
-        }
-        dockerPreflight({ dryRun: false });
-      },
-    });
+    try {
+      await runDockerBuildxBuildWithRetry({
+        dockerArgs: args,
+        dryRun,
+        onRetry: (attempt, errorText) => {
+          console.warn(`[pipeline] docker buildx build failed (attempt ${attempt}/${DEFAULT_BUILD_RETRIES}), retrying...`);
+          if (errorText) {
+            const firstLine = String(errorText).split('\n').find(Boolean);
+            if (firstLine) console.warn(`[pipeline] transient error: ${firstLine}`);
+          }
+          dockerPreflight({ dryRun: false });
+        },
+      });
+      if (!metadataFile) return null;
+      const digest = JSON.parse(readFileSync(metadataFile, 'utf8'))['containerimage.digest'];
+      if (typeof digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(digest)) throw new Error('Docker did not report the pushed image digest');
+      return digest;
+    } finally {
+      if (metadataDir) rmSync(metadataDir, { recursive: true, force: true });
+    }
   }
 
   const useGhaCache = String(process.env.GITHUB_ACTIONS ?? '').toLowerCase() === 'true';
@@ -622,6 +645,7 @@ async function main() {
       dryRun,
       env: process.env,
       includeRelay: buildRelay,
+      expectedServerSourceSha: hostedServer ? sha : undefined,
       includeDevBox: buildDevBox,
     })
     : null;
@@ -637,12 +661,17 @@ async function main() {
     ];
 
     for (const tagSet of relayTagSets) {
-      await runBuildxForTags(tagSet.tags, {
+      const digest = await runBuildxForTags(uniq([
+        ...tagSet.tags,
+        ...(hostedRelay ? [`${tagSet.base}:${hostedRelay.image.split(':').at(-1)}`] : []),
+      ]), {
         target: 'relay-server',
         file: 'Dockerfile',
         cacheScope: 'relay-server',
         extraArgs,
+        captureDigest: Boolean(hostedRelay) && tagSet.registry === 'ghcr',
       });
+      if (digest && hostedRelay) hostedRelay.image += `@${digest}`;
     }
 
     try {
@@ -675,6 +704,27 @@ async function main() {
         extraArgs,
       });
     }
+  }
+
+  for (const hosted of hostedImages) {
+    if (hosted.service === 'relay-server') continue;
+    const base = `${ghcrNamespace}/${hosted.service}`;
+    const tags = uniq([
+      hosted.image, `${base}:${channelTag}`, ...(pushLatest ? [`${base}:${floatTag}`] : []),
+      ...(registries.has('dockerhub') ? [`happierdev/${hosted.service}:${hosted.image.split(':').at(-1)}`, `happierdev/${hosted.service}:${channelTag}`, ...(pushLatest ? [`happierdev/${hosted.service}:${floatTag}`] : [])] : []),
+    ]);
+    const digest = await runBuildxForTags(tags, {
+      target: hosted.target,
+      file: 'Dockerfile',
+      cacheScope: hosted.target,
+      captureDigest: true,
+      extraArgs: ['--build-arg', `HAPPIER_EMBEDDED_POLICY_ENV=${policyEnv}`,
+        ...resolveOptionalDockerBuildArgs(process.env, { defaultSentryRelease: sha })],
+    });
+    if (digest) hosted.image += `@${digest}`;
+  }
+  if (process.env.GITHUB_OUTPUT) {
+    appendFileSync(process.env.GITHUB_OUTPUT, `hosted_images=${JSON.stringify(Object.fromEntries(hostedImages.flatMap(({ consumers, image }) => consumers.map((service) => [service, image]))))}\n`);
   }
 }
 

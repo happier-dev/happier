@@ -190,6 +190,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         description: 'Whether the session composer stays focused after sending a message',
         storageScope: 'local',
     },
+    composerTypeToFocusEnabled: {
+        schema: z.boolean().catch(true),
+        default: true,
+        description: 'Typing outside a text field on web moves into the session composer',
+        storageScope: 'local',
+    },
     uiBackdropBlurEnabled: {
         schema: z.boolean(),
         default: true,

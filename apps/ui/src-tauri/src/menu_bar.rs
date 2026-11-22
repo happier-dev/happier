@@ -267,7 +267,7 @@ pub fn quit(app: &AppHandle) {
     }
 }
 
-/// "Stop background services and quit". With a web UI, the quit handoff carries the choice there
+/// "Quit Happier (close background services)". With a web UI, the quit handoff carries the choice there
 /// (it knows the sessions and asks when some run). Tray-only, the native side cannot see sessions,
 /// so it always confirms before stopping anything that runs, then stops and exits.
 pub fn stop_services_and_quit(app: &AppHandle) {

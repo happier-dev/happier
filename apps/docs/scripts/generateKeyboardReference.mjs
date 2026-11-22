@@ -196,6 +196,10 @@ Shortcuts respect focus. Most do nothing while you are typing in the composer,
 which is why sending has its own explicitly editable-safe binding rather than
 relying on you leaving the field first.
 
+On web and desktop you don't need a shortcut to start writing: typing a
+character outside a text field moves into the composer. See
+[Type anywhere to write](/sessions/session-settings#type-anywhere-to-write).
+
 ## Changing them
 
 **Settings → Keyboard shortcuts** lists every command with its current binding

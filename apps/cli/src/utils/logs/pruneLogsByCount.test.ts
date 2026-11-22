@@ -1,4 +1,4 @@
-import { access, chmod, mkdir, readdir, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, readdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -146,6 +146,31 @@ describe('pruneLogsByCount', () => {
       }
 
       await expect(access(join(dir, '2026-06-22-10-00-00-daemon.log'))).resolves.toBeUndefined();
+    });
+  });
+
+  it('keeps total log bytes within the budget by removing the oldest logs first, never a kept path', async () => {
+    await withTempDir('happier-cli-prune-budget-', async (root) => {
+      const dir = join(root, 'logs');
+      await mkdir(dir, { recursive: true });
+      const files = [
+        { name: 'current-daemon.log', bytes: 50, mtime: 1 },
+        { name: 'oldest.log', bytes: 10, mtime: 2 },
+        { name: 'older.log', bytes: 30, mtime: 3 },
+        { name: 'newer.log', bytes: 30, mtime: 4 },
+        { name: 'newest.log', bytes: 15, mtime: 5 },
+      ];
+      for (const file of files) {
+        await writeFile(join(dir, file.name), 'x'.repeat(file.bytes));
+        await utimes(join(dir, file.name), file.mtime, file.mtime);
+      }
+
+      const result = await pruneLogsByCount({
+        dir, suffix: '.log', keepCount: files.length, maxTotalBytes: 100, keepPath: join(dir, 'current-daemon.log'),
+      });
+
+      expect(result.pruned).toBe(2);
+      expect(await listNames(dir)).toEqual(['current-daemon.log', 'newer.log', 'newest.log']);
     });
   });
 });

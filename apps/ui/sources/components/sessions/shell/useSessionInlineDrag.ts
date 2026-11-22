@@ -50,7 +50,7 @@ function isCommitEligibleResolvedDrop(resolved: UseSessionInlineDragResolvedDrop
     return kind !== 'idle' && kind !== 'blocked';
 }
 
-/** Empty/unchanged targets may use the last eligible drop and otherwise end quietly. */
+/** Empty/unchanged release targets may commit the last hovered pointer's live drop; otherwise they end quietly. */
 export function isUnchangedSessionDropResult(result: SessionListTreeDropResult): boolean {
     if (result.sessionListBlockReason) return false;
     const instruction = result.instruction;
@@ -130,7 +130,7 @@ function pointerFromAbsoluteCoordinates(absoluteX: number | null | undefined, ab
  * the values are read by `useAnimatedStyle` in `TreeDropOverlay`, so the moving
  * line/outline never requires a React rerender of the list rows.
  */
-function writeOverlayGeometry(target: TreeDropOverlaySharedValues, geometry: TreeDropVisualGeometry): void {
+export function writeOverlayGeometry(target: TreeDropOverlaySharedValues, geometry: TreeDropVisualGeometry): void {
     if (geometry.kind === 'none') {
         hideOverlay(target);
         return;
@@ -203,7 +203,10 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
     const didStartDrag = useSharedValue(false);
     const didDragDuringTouch = useSharedValue(false);
     const didActivateLongPress = useSharedValue(false);
-    const lastCommitEligibleResolvedDropRef = useRef<UseSessionInlineDragResolvedDrop | null>(null);
+    // The last hovered pointer, not its resolution: list geometry can change
+    // under a stationary pointer (scroll, row layout), so a release-time
+    // fallback re-resolves it to commit exactly what the indicator shows.
+    const lastHoveredPointerRef = useRef<Readonly<{ x: number; y: number }> | null>(null);
     const dragHapticsRef = useRef<ReturnType<typeof createDragHapticsSession> | null>(null);
 
     const gesture = useMemo(() => {
@@ -232,11 +235,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
 
         const fireDragUpdate = (sk: string, gk: string, absoluteX: number, absoluteY: number) => {
             const resolved = resolveDropForPointer(sk, gk, absoluteX, absoluteY);
-            if (isCommitEligibleResolvedDrop(resolved)) {
-                lastCommitEligibleResolvedDropRef.current = resolved;
-            } else {
-                lastCommitEligibleResolvedDropRef.current = null;
-            }
+            lastHoveredPointerRef.current = { x: absoluteX, y: absoluteY };
             dragHapticsRef.current?.updateDestination(resolved.destinationKey);
             writeOverlayGeometry(overlayShared, resolved.geometry);
             onDragUpdateRef.current?.({
@@ -248,10 +247,12 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         };
         const fireDragComplete = async (sk: string, gk: string, absoluteX: number | null, absoluteY: number | null) => {
             const resolved = resolveDropForPointer(sk, gk, absoluteX, absoluteY);
-            const committed = isUnchangedSessionDropResult(resolved.result)
-                ? lastCommitEligibleResolvedDropRef.current ?? resolved
-                : resolved;
-            lastCommitEligibleResolvedDropRef.current = null;
+            const hovered = lastHoveredPointerRef.current;
+            lastHoveredPointerRef.current = null;
+            const live = hovered && isUnchangedSessionDropResult(resolved.result)
+                ? resolveDropForPointer(sk, gk, hovered.x, hovered.y)
+                : null;
+            const committed = live && isCommitEligibleResolvedDrop(live) ? live : resolved;
             const haptics = dragHapticsRef.current;
             dragHapticsRef.current = null;
             hideOverlay(overlayShared);
@@ -271,7 +272,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         const fireDragCancel = (sk: string, gk: string) => {
             dragHapticsRef.current?.cancel();
             dragHapticsRef.current = null;
-            lastCommitEligibleResolvedDropRef.current = null;
+            lastHoveredPointerRef.current = null;
             hideOverlay(overlayShared);
             onDragCancelRef.current?.({
                 sessionKey: sk,
@@ -282,7 +283,7 @@ export function useSessionInlineDrag(params: UseSessionInlineDragParams): UseSes
         const clearOverlay = () => {
             dragHapticsRef.current?.cancel();
             dragHapticsRef.current = null;
-            lastCommitEligibleResolvedDropRef.current = null;
+            lastHoveredPointerRef.current = null;
             hideOverlay(overlayShared);
         };
         const fireLongPressActivated = (sk: string) => {

@@ -82,6 +82,8 @@ export interface CreateSessionMetadataOptions {
     modelUpdatedAt?: number;
     /** Generic ACP transport marker for sessions that run through an ACP backend. */
     acpProviderId?: string;
+    /** Storage selected for a fresh session whose provider link is still pending. */
+    transcriptStorage?: 'direct' | 'persisted';
 }
 
 function consumeSessionEnv(
@@ -186,6 +188,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     });
     const nativeAgentEnvironmentV1 = readSessionNativeEnvironment(opts.nativeAgentEnvironment);
     const metadataBase: Metadata = {
+        ...(opts.transcriptStorage === 'direct' ? { directTranscriptPendingV1: true } : {}),
         ...(nativeAgentEnvironmentV1 ? { nativeAgentEnvironmentV1 } : {}),
         path: sessionPath,
         host: os.hostname(),

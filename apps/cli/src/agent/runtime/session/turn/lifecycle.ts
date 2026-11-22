@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+    createSessionTurnFailureIssue,
     createSessionTurnMutation,
     type SessionTurnMutationV1,
 } from '@/api/session/mutations/sessionMutationTypes';
@@ -82,24 +83,6 @@ function mutationActionForStatus(status: PrimaryTurnStatusV1): SessionTurnMutati
     if (status === 'completed') return 'complete';
     if (status === 'failed') return 'fail';
     return 'cancel';
-}
-
-function createSyntheticIssue(params: Readonly<{
-    provider?: string;
-    providerTurnId?: string;
-    observedAt: number;
-}>): SessionRuntimeIssueV1 {
-    return {
-        v: 1,
-        scope: 'primary_session',
-        status: 'failed',
-        code: 'provider_turn_failed',
-        source: 'unknown',
-        occurredAt: params.observedAt,
-        ...(params.provider ? { provider: params.provider } : {}),
-        ...(params.providerTurnId ? { providerTurnId: params.providerTurnId } : {}),
-        sanitizedPreview: 'Provider reported turn failure',
-    };
 }
 
 function normalizeTranscriptAnchors(
@@ -366,7 +349,7 @@ export function createSessionTurnLifecycle(
         mergeProviderFacts(turn, input);
         const observedAt = input.observedAt ?? now();
         const issue = input.status === 'failed'
-            ? input.issue ?? createSyntheticIssue({
+            ? input.issue ?? createSessionTurnFailureIssue({
                 provider: normalizeOptionalString(input.provider) ?? turn.provider,
                 providerTurnId: turn.providerTurnId ?? providerTurnId,
                 observedAt,

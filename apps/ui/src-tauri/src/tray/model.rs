@@ -224,7 +224,7 @@ impl Default for TrayLabels {
             quit: "Quit Happier".into(),
             quit_keep_services: "Quit Happier (keep background services running)".into(),
             quit_stop_services: "Quit Happier and stop background services".into(),
-            stop_services_and_quit: "Stop background services and quit".into(),
+            stop_services_and_quit: "Quit Happier (close background services)".into(),
             connected: "Connected".into(),
             offline: "Offline".into(),
             needs_attention: "Needs attention".into(),
@@ -638,7 +638,7 @@ fn service_submenu(model: &TrayMenuModel, row: &ServiceRow) -> MenuEntry {
 /// ✓ Start at login
 /// ───
 /// Quit Happier                  ⌘Q
-/// Stop background services and quit
+/// Quit Happier (close background services)
 /// ```
 pub fn build_menu_entries(model: &TrayMenuModel) -> Vec<MenuEntry> {
     let labels = &model.labels;

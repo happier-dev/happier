@@ -33,6 +33,7 @@ async function writeFakePackagedRuntime(params: Readonly<{ dir: string; logPath:
     `#!/bin/sh\nset -e\nif [ "\${1:-}" = "--migrate-only" ]; then\n  echo "SQLITE_MIGRATE provider=$HAPPIER_DB_PROVIDER url=$DATABASE_URL" >> "${params.logPath}"\n  exit 0\nfi\necho "SERVER flavor=$HAPPIER_SERVER_FLAVOR provider=$HAPPIER_DB_PROVIDER url=$DATABASE_URL sqlite_auto=$HAPPIER_SQLITE_AUTO_MIGRATE args=$*" >> "${params.logPath}"\n`,
     { mode: 0o755 },
   );
+  await writeFile(serverPath, (await readFile(serverPath, 'utf8')) + `if [ "\${PRINT_RUNTIME_OPTIONS:-}" = "1" ]; then\n echo "ROLE=$SERVER_ROLE UI_REQUIRED=$HAPPIER_SERVER_UI_REQUIRED UI_DIR=$HAPPIER_SERVER_UI_DIR LEGACY_FLAVOR=$HAPPY_SERVER_FLAVOR LEGACY_PROVIDER=$HAPPY_DB_PROVIDER" >> "${params.logPath}"\nfi\n`);
   await writeFile(
     migrationPath,
     `#!/bin/sh
@@ -76,6 +77,23 @@ describe('run-server.sh', () => {
 
   afterEach(async () => {
     await rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it.each(['api', 'worker'])('overrides relay image defaults for the %s role using only runtime env', async (role) => {
+    const serverPath = await writeFakePackagedRuntime({ dir: tmpDir, logPath });
+    const result = spawnSync('sh', [getScriptPath(), serverPath], {
+      encoding: 'utf8',
+      env: { ...process.env, HAPPY_SERVER_FLAVOR: 'light', HAPPY_DB_PROVIDER: 'sqlite',
+        HAPPIER_SERVER_FLAVOR: 'full', HAPPIER_DB_PROVIDER: 'postgres',
+        HAPPIER_SERVER_UI_REQUIRED: '0', HAPPIER_SERVER_UI_DIR: '', SERVER_ROLE: role,
+        DATABASE_URL: 'postgresql://postgres@db/happier', RUN_MIGRATIONS: role === 'api' ? '1' : '0',
+        PRINT_RUNTIME_OPTIONS: '1', MIGRATIONS_MAX_ATTEMPTS: '1', MIGRATIONS_RETRY_DELAY_SECONDS: '0' },
+    });
+    expect(result.status).toBe(0);
+    const lines = await readLogLines(logPath);
+    expect(lines.some((line) => line.startsWith('MIGRATE '))).toBe(role === 'api');
+    expect(lines).toContain('SERVER flavor=full provider=postgres url=postgresql://postgres@db/happier sqlite_auto= args=');
+    expect(lines).toContain(`ROLE=${role} UI_REQUIRED=0 UI_DIR= LEGACY_FLAVOR=full LEGACY_PROVIDER=postgres`);
   });
 
   it('starts the light flavor when HAPPIER_SERVER_FLAVOR=light', async () => {

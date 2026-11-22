@@ -286,6 +286,8 @@ export function mergeSessionMetadataForStartup(opts: {
         lifecycleState: 'running',
         lifecycleStateSince: opts.nowMs,
     };
+    // Deferred startup can merge the original creation metadata after the link was proven.
+    if (merged.directSessionV1) delete merged.directTranscriptPendingV1;
 
     if (mode === 'attach') {
         // When attaching to an existing session, preserve machine/workspace identity fields from the

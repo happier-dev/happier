@@ -1,6 +1,10 @@
 import type { DaemonServerWorkErrorClassification, DaemonServerWorkErrorKind } from '@/daemon/serverWork/types';
 import { isDeepStrictEqual } from 'node:util';
 import { logger } from '@/ui/logger';
+import {
+  ConnectedServiceAuthGroupGenerationConflictError,
+  ConnectedServiceAuthGroupRuntimeStateRevisionConflictError,
+} from '@/api/connectedServices/connectedServiceCredentialApi';
 import { classifyDaemonServerWorkError } from '@/daemon/serverWork/classifyDaemonServerWorkError';
 import {
   DurableBackoffRecoveryScheduler,
@@ -718,6 +722,26 @@ function resolveRuntimeAuthRecoveryDisposition(input: Readonly<{
 }
 
 function classifyHandlerError(error: unknown): RetryDecision {
+  if (error && typeof error === 'object' && 'code' in error
+    && error.code === 'connected_service_continuation_turn_projection_pending') {
+    return {
+      retryable: true,
+      classification: { kind: 'dependency_unavailable', retryable: true },
+      failurePhase: 'handler',
+      failureReason: error.code,
+      lastError: error.code,
+    };
+  }
+  if (error instanceof ConnectedServiceAuthGroupRuntimeStateRevisionConflictError
+    || error instanceof ConnectedServiceAuthGroupGenerationConflictError) {
+    return {
+      retryable: true,
+      classification: { kind: 'dependency_unavailable', retryable: true },
+      failurePhase: 'handler',
+      failureReason: error.message,
+      lastError: error.message,
+    };
+  }
   if (error instanceof ConnectedServiceAuthGroupSwitchLeaseExpiredError) {
     return {
       retryable: true,

@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger'
+import { readSessionTranscriptStorage } from '@/agent/runtime/readSessionTranscriptStorage';
 import { buildSessionEventContent } from './sessionEventContent';
 import { EventEmitter } from 'node:events'
 import axios from 'axios';
@@ -731,6 +732,7 @@ export class ApiSessionClient extends EventEmitter {
     private sessionSyncPendingInputServerContract: SessionSyncPendingInputServerContractResult | null = null;
     private pendingInputReadinessAbortController: AbortController | null = null;
     private convergePendingInputReadiness: ((onContractPrepared?: () => void) => Promise<boolean>) | null = null;
+    private readonly transcriptReplayReadyListeners = new Set<(signal: AbortSignal) => Promise<void>>();
     private changesSyncInFlight: Promise<void> | null = null;
     private readonly sessionChangesCursorByAccountId = new Map<string, number>();
     private accountIdPromise: Promise<string> | null = null;
@@ -870,6 +872,11 @@ export class ApiSessionClient extends EventEmitter {
     subscribeToSessionConnectionState(listener: (state: ManagedConnectionState) => void): () => void {
         this.on(SESSION_CONNECTION_STATE_EVENT, listener);
         return () => { this.off(SESSION_CONNECTION_STATE_EVENT, listener); };
+    }
+
+    subscribeToTranscriptReplayReady(listener: (signal: AbortSignal) => Promise<void>): () => void {
+        this.transcriptReplayReadyListeners.add(listener);
+        return () => { this.transcriptReplayReadyListeners.delete(listener); };
     }
 
     private isSessionSocketOnlineForAckWrite(): boolean {
@@ -1019,12 +1026,7 @@ export class ApiSessionClient extends EventEmitter {
 	            this.encryptionKey = session.encryptionKey;
 	            this.encryptionVariant = session.encryptionVariant;
 	        }
-	        this.transcriptStorage = (() => {
-	            const raw = typeof process.env.HAPPIER_TRANSCRIPT_STORAGE === 'string'
-	                ? process.env.HAPPIER_TRANSCRIPT_STORAGE.trim().toLowerCase()
-	                : '';
-	            return raw === 'direct' ? 'direct' : 'persisted';
-	        })();
+	        this.transcriptStorage = readSessionTranscriptStorage();
         this.startedByDaemonProcess = (() => {
             const idx = process.argv.indexOf('--started-by');
             if (idx < 0) return false;
@@ -1038,6 +1040,7 @@ export class ApiSessionClient extends EventEmitter {
             encryptionKey: this.encryptionKey,
             encryptionVariant: this.encryptionVariant,
             encryptionMode: this.sessionEncryptionMode,
+            responseMaxBytes: configuration.rpcResponseMaxBytes,
             logger: (msg, data) => logger.debug(msg, data),
             onRegistrationError: (error) => {
                 const probe = classifySessionTransportErrorToProbeResult(error);
@@ -1126,7 +1129,7 @@ export class ApiSessionClient extends EventEmitter {
         // Runtime-activity authority must exist before producer/RPC composition registers its
         // immutable expected owners. Registering producers first silently returned null and left
         // an authorized v2 session with no execution-run owner.
-        this.userSocket = createUserScopedSocket({ token: this.token });
+        this.userSocket = createUserScopedSocket({ token: this.token, sessionUpdateInterest: this.sessionId });
         this.sessionMutationOutbox = createSessionMutationOutbox({
             token: this.token,
             sessionId: this.sessionId,
@@ -1167,8 +1170,8 @@ export class ApiSessionClient extends EventEmitter {
         // Always register execution-run RPC methods so callers never see "RPC method not available".
         // Feature gating is enforced inside the handler implementations.
         const streamedTranscriptSession = {
-            subscribeToSessionConnectionState: (listener: (state: ManagedConnectionState) => void) =>
-                this.subscribeToSessionConnectionState(listener),
+            subscribeToTranscriptReplayReady: (listener: (signal: AbortSignal) => Promise<void>) =>
+                this.subscribeToTranscriptReplayReady(listener),
             enqueueAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown>; provenance: SessionTranscriptObservationProvenanceV1 }) =>
                 this.enqueueAgentMessageCommitted(provider, body, opts),
             sendAgentMessageCommitted: (provider: ACPProvider, body: ACPMessageData, opts: { localId: string; meta?: Record<string, unknown> }) =>
@@ -1379,10 +1382,6 @@ export class ApiSessionClient extends EventEmitter {
                     supportsRuntimeActivityV2(serverContract)
                     && supportsPendingInputV1(serverContract)
                 );
-                if (!requiresRuntimeActivityPublisherReadiness) {
-                    this.sessionSyncPendingInputServerContract = serverContract;
-                    clearPendingInputReadiness();
-                }
                 onContractPrepared?.();
                 if (supportsRuntimeActivityV2(serverContract)) {
                     await this.runtimeActivitySnapshotPublisher[RUNTIME_ACTIVITY_DESIRED_REOFFER_REQUEST]().catch((error) => {
@@ -1402,11 +1401,7 @@ export class ApiSessionClient extends EventEmitter {
                         && this.pendingInputReadinessAbortController === pendingInputReadinessAbortController
                     ) {
                         const tail = this.sessionMutationOutbox.readRuntimeActivitySnapshotTail();
-                        if (tail.custody === null && tail.settlement !== null) {
-                            this.sessionSyncPendingInputServerContract = serverContract;
-                            clearPendingInputReadiness();
-                            break;
-                        }
+                        if (tail.custody === null && tail.settlement !== null) break;
                         const changed = await this.sessionMutationOutbox.waitForRuntimeActivitySnapshotTailChange(
                             tail.sequence,
                             pendingInputReadinessAbortController.signal,
@@ -1414,7 +1409,21 @@ export class ApiSessionClient extends EventEmitter {
                         if (!changed) return false;
                     }
                 }
-                return isResolvedContractCurrent() && !pendingInputReadinessAbortController.signal.aborted;
+                const signal = pendingInputReadinessAbortController.signal;
+                if (!isResolvedContractCurrent() || signal.aborted) return false;
+                await Promise.all(Array.from(this.transcriptReplayReadyListeners, async (replay) => {
+                    try {
+                        await replay(signal);
+                    } catch (error) {
+                        logger.infoFile('[API] Failed to replay retained transcript after reconnect', {
+                            error: serializeAxiosErrorForLog(error),
+                        });
+                    }
+                }));
+                if (!isResolvedContractCurrent() || signal.aborted) return false;
+                this.sessionSyncPendingInputServerContract = serverContract;
+                clearPendingInputReadiness();
+                return true;
             };
             const promise = converge().finally(() => {
                 if (readinessConvergence?.promise === promise) readinessConvergence = null;

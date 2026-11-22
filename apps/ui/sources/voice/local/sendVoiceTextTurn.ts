@@ -62,6 +62,24 @@ export async function sendVoiceTextTurn(params: {
     handoffMode: 'interrupt_and_send';
   }>;
 }): Promise<void> {
+  const { sessionId, playbackController, voiceAgentSessions, ...input } = params;
+  return prepareVoiceTextTurn({ sessionId, playbackController, voiceAgentSessions })(input);
+}
+
+type VoiceTextTurnContext = Pick<Parameters<typeof sendVoiceTextTurn>[0], 'sessionId' | 'playbackController' | 'voiceAgentSessions'>;
+
+/** Capture output ownership before recognition or durable admission, then dispatch the accepted input. */
+export function prepareVoiceTextTurn(
+  params: VoiceTextTurnContext,
+): (input: Omit<Parameters<typeof sendVoiceTextTurn>[0], keyof VoiceTextTurnContext>) => Promise<void> {
+  const playbackEpoch = params.playbackController.captureEpoch();
+  return (input) => dispatchVoiceTextTurn({ ...params, ...input }, playbackEpoch);
+}
+
+async function dispatchVoiceTextTurn(
+  params: Parameters<typeof sendVoiceTextTurn>[0],
+  playbackEpoch: number,
+): Promise<void> {
   const { sessionId, settings, userText } = params;
   const { adapterId, config } = resolveLocalVoiceAdapterSettings(settings);
   const networkTimeoutMs = resolveVoiceNetworkTimeoutMs(config?.networkTimeoutMs, 15_000);
@@ -88,7 +106,7 @@ export async function sendVoiceTextTurn(params: {
       text: userText,
       pendingPort: params.pendingPort,
       dispatch: async (durableDispatch) => {
-        await sendVoiceTextTurn({ ...params, durableDispatch });
+        await dispatchVoiceTextTurn({ ...params, durableDispatch }, playbackEpoch);
       },
     });
     if (!result.ok) throw new Error(result.message ?? result.reason);
@@ -160,7 +178,6 @@ export async function sendVoiceTextTurn(params: {
       throwIfAborted();
       const chunker = streamingSpeechEnabled ? createTtsChunker(streamingChunkChars) : null;
       const streamingSpeechTextContext = chunker ? createSpeechTextContext() : undefined;
-      const playbackEpoch = params.playbackController.captureEpoch();
       let queuedChunkCount = 0;
       let chunkPlaybackQueue: Promise<void> = Promise.resolve();
       // One failure is reported once per turn; the rest of that turn's speech is skipped.
@@ -291,6 +308,10 @@ export async function sendVoiceTextTurn(params: {
     return;
   }
 
+  if (!params.playbackController.isEpochCurrent(playbackEpoch)) {
+    setIdleStateUnlessRecording(sessionId);
+    return;
+  }
   await speakAssistantText({
     text: assistantText,
     settings,

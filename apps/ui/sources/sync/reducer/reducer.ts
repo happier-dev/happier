@@ -124,7 +124,7 @@ import { runMessageToEventConversion } from "./phases/messageToEventConversion";
 import { runAgentStatePermissionsPhase } from "./phases/agentStatePermissions";
 import { runUserAndTextPhase } from "./phases/userAndText";
 import { runToolCallsPhase } from "./phases/toolCalls";
-import { runToolResultsPhase } from "./phases/toolResults";
+import { runToolResultsPhase, resolveSidechainParentMessageId } from "./phases/toolResults";
 import { runSidechainsPhase } from "./phases/sidechains";
 import { runModeSwitchEventsPhase } from "./phases/modeSwitchEvents";
 import { equalOptionalStringArrays } from "./helpers/arrays";
@@ -598,11 +598,21 @@ export function reducer(
     // Sidechain children should never be emitted as top-level transcript updates. They belong to
     // sidechain state only and are rendered under the owning tool-call when that tool-call exists.
     const sidechainChildIds = new Set<string>();
-    for (const chain of state.sidechains.values()) {
+    const sidechainParentByChildId = new Map<string, string>();
+    for (const [sidechainId, chain] of state.sidechains) {
+        const parentId = resolveSidechainParentMessageId(state, sidechainId);
         for (const m of chain) {
             sidechainChildIds.add(m.id);
+            if (parentId) sidechainParentByChildId.set(m.id, parentId);
             if (changed.has(m.id)) applyIncomingObservationMetadata(m);
         }
+    }
+
+    // A descendant update must republish its root before child rows are filtered out.
+    // Iterating the Set also visits added parents, so this reaches every ancestor once.
+    for (const id of changed) {
+        const parentId = sidechainParentByChildId.get(id);
+        if (parentId) changed.add(parentId);
     }
 
     const filteredSidechainChildIds: string[] = [];

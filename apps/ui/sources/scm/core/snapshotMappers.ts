@@ -67,6 +67,27 @@ export function mapProtocolEntryToUiEntry(entry: ProtocolScmWorkingSnapshot['ent
     };
 }
 
+/**
+ * Whether `entries` is the complete working set. A truncated snapshot carries only a prefix, so
+ * any decision that treats a missing path as "not changed" (pruning, path diffs, selected-change
+ * scans) must gate on this.
+ */
+export function scmSnapshotEntriesAreComplete(
+    snapshot: Pick<ScmWorkingSnapshot, 'entriesPresentation'>,
+): boolean {
+    return snapshot.entriesPresentation === undefined || snapshot.entriesPresentation === 'complete';
+}
+
+/**
+ * Changed-file count of the full working set. Daemons that bound the entry list report it in
+ * `totals.changedFiles`; older daemons always ship every entry, one per changed path.
+ */
+export function readScmSnapshotChangedFileCount(
+    snapshot: Pick<ScmWorkingSnapshot, 'entries' | 'totals'>,
+): number {
+    return snapshot.totals.changedFiles ?? snapshot.entries.length;
+}
+
 export function mapProtocolSnapshotToUiSnapshot(
     snapshot: ProtocolScmWorkingSnapshot,
     projectKey: string
@@ -97,6 +118,7 @@ export function mapProtocolSnapshotToUiSnapshot(
         pullRequest: snapshot.pullRequest ?? null,
         hasConflicts: snapshot.hasConflicts,
         entries: snapshot.entries.map(mapProtocolEntryToUiEntry),
+        ...(snapshot.entriesPresentation === undefined ? {} : { entriesPresentation: snapshot.entriesPresentation }),
         totals: {
             includedFiles: snapshot.totals.includedFiles,
             pendingFiles: snapshot.totals.pendingFiles,
@@ -106,6 +128,7 @@ export function mapProtocolSnapshotToUiSnapshot(
             pendingAdded: snapshot.totals.pendingAdded,
             pendingRemoved: snapshot.totals.pendingRemoved,
             ...(snapshot.totals.isComplete === undefined ? {} : { isComplete: snapshot.totals.isComplete }),
+            ...(snapshot.totals.changedFiles === undefined ? {} : { changedFiles: snapshot.totals.changedFiles }),
         },
     };
 }

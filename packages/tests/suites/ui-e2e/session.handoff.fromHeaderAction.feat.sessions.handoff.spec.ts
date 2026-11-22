@@ -778,10 +778,11 @@ test.describe('ui e2e: session handoff pre-acceptance failure from header action
     await expect(page.getByTestId('web-modal-confirm')).toHaveCount(1, { timeout: 60_000 });
     await page.getByTestId('web-modal-confirm').click();
 
-    await expect(page.getByText('Session handoff failed', { exact: true })).toHaveCount(1, { timeout: 180_000 });
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(1, { timeout: 60_000 });
+    const failureDialog = page.getByRole('dialog', { name: 'Session handoff failed', exact: true });
+    await expect(failureDialog).toBeVisible({ timeout: 180_000 });
+    await expect(failureDialog.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByTestId('session-handoff-recovery-modal')).toHaveCount(0);
-    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await failureDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
 
     await waitForSessionInfoMachineTarget({
       page,

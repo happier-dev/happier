@@ -796,3 +796,45 @@ describe('sessions domain: renderable patches', () => {
         }));
     });
 });
+
+describe('sessions domain: applySessions transcript reads', () => {
+    it('refreshes a loaded session renderable from the store aggregate without materializing the transcript', async () => {
+        mockSessionsDomainBoundaries();
+
+        const { createSessionsDomain } = await import('./sessions');
+        const { buildTranscriptRenderableAggregate } = await import('../../domains/messages/transcriptRenderableAggregate');
+        const { get, setState, domain } = createHarness(createSessionsDomain);
+
+        const message = { kind: 'agent-text', id: 'm1', localId: null, createdAt: 2, text: 'hello' } as any;
+        let messageReads = 0;
+        const messagesById: Record<string, unknown> = {};
+        Object.defineProperty(messagesById, 'm1', {
+            enumerable: true,
+            get: () => {
+                messageReads += 1;
+                return message;
+            },
+        });
+        setState({
+            sessionMessages: {
+                s1: {
+                    isLoaded: true,
+                    messageIdsOldestFirst: ['m1'],
+                    messagesById,
+                    messagesMap: messagesById,
+                    messagesVersion: 1,
+                    // Kept current by the messages domain on every apply.
+                    renderableAggregate: buildTranscriptRenderableAggregate({ messages: [message], completedRequests: null }),
+                },
+            },
+        });
+
+        // A streamed transcript publishes a session update (new seq) per message.
+        for (let seq = 5; seq < 8; seq += 1) {
+            domain.applySessions([{ id: 's1', seq, createdAt: 1, updatedAt: seq, active: true, activeAt: seq, metadata: null, agentState: null } as any]);
+        }
+
+        expect(get().sessionListRenderables.s1).toBeDefined();
+        expect(messageReads).toBe(0);
+    });
+});

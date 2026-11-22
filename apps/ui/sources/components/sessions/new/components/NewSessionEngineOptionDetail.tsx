@@ -174,7 +174,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     });
 
     const [selectedModelId, setSelectedModelId] = React.useState(() => normalizeSelectedOptionId(props.selectedModelId));
-    const [selectedSessionModeId, setSelectedSessionModeId] = React.useState(() => normalizeSelectedOptionId(props.selectedSessionModeId));
+    const [selectedSessionModeId, setSelectedSessionModeId] = React.useState(() => props.selectedSessionModeId ?? '');
     const [selectedConfigOverrides, setSelectedConfigOverrides] = React.useState<Readonly<Record<string, string>>>(() => props.selectedConfigOverrides ?? {});
     const selectionRef = React.useRef<Readonly<{
         modelId: string;
@@ -182,7 +182,8 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         configOverrides: Readonly<Record<string, string>>;
     }>>({
         modelId: normalizeSelectedOptionId(props.selectedModelId),
-        sessionModeId: normalizeSelectedOptionId(props.selectedSessionModeId),
+        // Model's `default` sentinel is not a native session mode. Preserve no override.
+        sessionModeId: props.selectedSessionModeId ?? '',
         configOverrides: props.selectedConfigOverrides ?? {},
     });
 
@@ -196,7 +197,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     }, [props.selectedModelId]);
 
     React.useEffect(() => {
-        const nextSessionModeId = normalizeSelectedOptionId(props.selectedSessionModeId);
+        const nextSessionModeId = props.selectedSessionModeId ?? '';
         selectionRef.current = {
             ...selectionRef.current,
             sessionModeId: nextSessionModeId,

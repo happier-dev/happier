@@ -794,6 +794,7 @@ export const pl: TranslationStructure = {
     details: "Szczegóły",
     fieldStatus: "Stan",
     fieldAction: "Akcja",
+    fieldFailureReason: "Przyczyna niepowodzenia",
     approve: "Zatwierdź",
     reject: "Odrzuć",
     loadError: "Nie udało się wczytać zatwierdzenia.",
@@ -1296,6 +1297,7 @@ export const pl: TranslationStructure = {
     send: "Wyślij",
     attach: "Dołącz",
     addImage: "Dodaj obraz",
+    takePhoto: "Zrób zdjęcie",
     addFile: "Dodaj plik",
     linkFile: "Połącz plik",
     files: "Pliki",
@@ -2743,6 +2745,7 @@ export const pl: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} użyto`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "teraz",
         outdated: "nieaktualne",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3334,6 +3337,8 @@ export const pl: TranslationStructure = {
         `Pominięto ${count} ${plural({ count, one: "plik", few: "pliki", many: "plików" })}, które przekraczają maksymalny rozmiar załącznika.`,
       noClipboardImageTitle: "Brak obrazu w schowku",
       noClipboardImageBody: "Skopiuj obraz, a potem wklej go jako załącznik.",
+      cameraPermissionDeniedTitle: "Wymagany dostęp do aparatu",
+      cameraPermissionDeniedBody: "Zezwól na dostęp do aparatu w ustawieniach urządzenia, aby zrobić zdjęcie.",
     },
   },
 
@@ -3634,7 +3639,7 @@ export const pl: TranslationStructure = {
     trayOpenInHappier: 'Otwórz w Happier',
     traySettings: 'Ustawienia…',
     trayStartAtLogin: 'Uruchamiaj przy logowaniu',
-    trayStopAndQuit: 'Zatrzymaj usługi w tle i zakończ',
+    trayStopAndQuit: 'Zamknij Happier (zatrzymaj usługi w tle)',
     trayStart: 'Uruchom',
     trayRestart: 'Uruchom ponownie',
     trayStop: 'Zatrzymaj',
@@ -5491,8 +5496,8 @@ export const pl: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Próba ${attempt}`,
       title: "Osiągnięto limit użycia",
       readyTitle: "Limit użycia został zresetowany",
-      resetBody: ({ time }: { time: string }) =>
-        `Ten dostawca prosi sesję o czekanie do ${time} przed kontynuacją.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Ten dostawca prosi sesję o czekanie do ${time}${duration ? ` (${duration})` : ''} przed kontynuacją.`,
       genericBody: "Ten dostawca prosi sesję o czekanie przed kontynuacją.",
       stoppedBody: "Automatyczne odzyskiwanie zostało zatrzymane i nie ponowi się samo. Spróbuj ponownie poniżej.",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6086,6 +6091,7 @@ export const pl: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: 'Oczekiwanie na zakończenie aktywności środowiska',
 	        runtimeActivityUnknownNotice: 'Oczekiwanie na stan aktywności środowiska',
 	        waitingForRuntimeNotice: 'Oczekiwanie na ponowne połączenie środowiska',
+	        steerUnavailableWaitingForTurnNotice: 'Nie może teraz dołączyć do tej tury · zostanie wysłana po niej',
 	        nonSteerableNotice: "Bieżąca tura nie może przyjąć wstawienia po tej zmianie trybu. Wiadomość uruchomi się później albo użyj Wyślij teraz, aby przerwać.",
 	        steerBlockedTerminalDraftNotice: 'Oczekiwanie: szkic w polu tekstowym terminala blokuje dostarczenie. Wyczyść go w terminalu lub przerwij turę.',
 	        clearTerminalComposer: {
@@ -6590,7 +6596,8 @@ export const pl: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Wersje robocze', badge: 'Wersja robocza', untitled: 'Wersja bez tytułu', continueEditing: 'Kontynuuj edycję', startAnother: 'Rozpocznij nową', startedOpen: "Sesja rozpoczęta · Otwórz",
-    status: { offline: 'Poza siecią', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', startInterrupted: 'Uruchamianie przerwane' },
+    status: { offline: 'Poza siecią', syncing: 'Synchronizowanie', conflict: 'Konflikt', machineUnavailable: 'Maszyna niedostępna', attachmentNeedsAttention: 'Załącznik wymaga uwagi', starting: 'Uruchamianie', startFailed: 'Nie udało się uruchomić' },
+    error: { title: 'Błąd szkicu', storageDescription: 'Nie udało się zapisać tego szkicu na tym urządzeniu. Skopiuj tekst w bezpieczne miejsce, zanim wyjdziesz; zapis zostanie ponowiony przy następnej edycji.', encryptionDescription: "To urządzenie nie mogło zsynchronizować szkicu.", showDetailsHint: 'Pokazuje, dlaczego ten szkic ma błąd' },
     new: { action: 'Nowa wersja robocza' }, delete: { action: 'Usuń wersję roboczą', confirmTitle: 'Usunąć wersję roboczą?', confirmDescription: 'Ta wersja robocza zostanie usunięta z Twoich urządzeń.' },
     conflict: { title: 'Konflikt wersji roboczej', description: 'To pole zmieniono na innym urządzeniu.', mine: 'Na tym urządzeniu', synced: 'Zsynchronizowane', useSynced: 'Użyj zsynchronizowanej', keepDevice: 'Zachowaj z urządzenia', copyMine: 'Kopiuj moją', copied: 'Skopiowano', copyFailed: 'Nie udało się skopiować', field: { text: 'Tekst', mentions: 'Wzmianki', attachments: 'Załączniki', recipient: 'Odbiorca', agentContinuation: 'Kontynuacja agenta', executionRunDelivery: 'Dostarczenie wykonania' } },
   },
@@ -8534,6 +8541,8 @@ settingsSession: {
       inputBehavior: {
           keepFocusTitle: "Zachowaj fokus w edytorze po wysłaniu",
           keepFocusSubtitle: "Pozostań w polu wiadomości, aby od razu pisać następną.",
+          typeToFocusTitle: "Pisz z dowolnego miejsca",
+          typeToFocusSubtitle: "Zacznij pisać poza polem tekstowym, aby przejść do pola wiadomości.",
           title: 'Zachowanie wprowadzania',
           footer: 'Skonfiguruj wysyłanie klawiszem Enter i zachowanie historii wiadomości.',
           enterToSendEnabledNativeSubtitle: 'Naciśnij Enter, aby wysłać',
@@ -8560,16 +8569,17 @@ settingsSession: {
           manualSubtitle: "Zawsze pozostawiaj wiadomości w kolejce do ręcznego wznowienia sesji.",
         },
         title: "Wysyłanie wiadomości",
-        footer:
-          "Określa, co dzieje się, gdy wysyłasz wiadomość, gdy agent pracuje.",
-        queueInAgentTitle: "W kolejce agenta (obecnie)",
-        queueInAgentSubtitle:
-          "Zapisz od razu w transkrypcie; agent przetworzy, gdy będzie gotowy.",
-        interruptTitle: "Przerwij i wyślij",
-        interruptSubtitle: "Przerwij bieżący krok, a następnie wyślij natychmiast.",
-        pendingTitle: "Oczekujące do gotowości",
-        pendingSubtitle:
-          "Trzymaj wiadomości w kolejce oczekujących; agent pobierze je, gdy będzie gotowy.",
+        footer: 'Wybierz, co się dzieje, gdy wysyłasz wiadomość, kiedy agent pracuje.',
+        busySend: {
+          addToTurnTitle: 'Dodaj do bieżącej tury',
+          addToTurnSubtitle: 'Agent od razu ją czyta i pracuje dalej, jak przy pisaniu w jego terminalu. Jeśli nie może jej przyjąć w trakcie tury, wiadomość czeka w Oczekujących do końca tury.',
+          waitForTurnTitle: 'Poczekaj na koniec tury',
+          waitForTurnSubtitle: 'Wiadomość zostaje w Oczekujących, gdzie możesz ją edytować lub zmienić kolejność, i zostanie wysłana po turze.',
+          interruptTitle: 'Zatrzymaj turę i wyślij',
+          interruptSubtitle: 'Zatrzymuje pracę agenta i od razu wysyła wiadomość.',
+        },
+        inactiveSessionsTitle: 'Nieaktywne sesje',
+        inactiveSessionsFooter: 'Dotyczy wysyłania do sesji, której agent się zatrzymał lub której maszyna jest offline.',
         pendingDrainModeTitle: "Przetwarzanie kolejki oczekujących",
         pendingDrainModeFooter:
           "Wybierz, czy agent pobiera jedną wiadomość przy każdej gotowości, czy grupuje całą kolejkę oczekujących.",
@@ -8591,17 +8601,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "Gdy runtime jest bezczynny",
           afterRuntimeIdleSubtitle:
             "Zatrzymaj wiadomości oczekujące, dopóki śledzona aktywność runtime nadal trwa.",
-        },
-        busySteerPolicyTitle: "Gdy agent jest zajęty (z obsługą sterowania)",
-        busySteerPolicyFooter:
-          "Jeśli agent obsługuje sterowanie w locie, wybierz, czy wiadomości mają sterować od razu, czy najpierw trafić do Oczekujących.",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "Steruj od razu",
-          steerImmediatelySubtitle:
-            "Wyślij od razu i steruj bieżącym krokiem (bez przerywania).",
-          queueForReviewTitle: "Do Oczekujących",
-          queueForReviewSubtitle:
-            "Najpierw umieść w Oczekujących; wyślij później przez \"Steruj teraz\".",
         },
         nonSteerablePromptTitle: 'Gdy wiadomość nie może sterować aktywną turą',
         nonSteerablePromptFooter: 'Zmiany trybu uprawnień oraz /clear lub /compact nie mogą zostać zastosowane w trakcie tury. Wybierz, co Happier robi z taką wiadomością, gdy agent jest zajęty.',
@@ -8646,6 +8645,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Kontynuuj od miejsca, w którym skończyłeś.",
       },
       providerUsageGauge: {
+          numberTitle: "Liczba w środku pierścieni",
+          numberSubtitle: "Wybierz limit dla liczby w pierścieniach. Jeśli jest niedostępny, używany jest najbardziej ograniczający limit.",
         title: "Użycie dostawcy",
         footer:
           "Wybierz wskaźniki edytora dla wszystkich kont. Uwzględniają limity użycia wybrane w każdej puli. Ulubione dodają wskaźniki aktywnego konta.",
@@ -10998,6 +10999,9 @@ settingsSession: {
     switchedToMode: ({ mode }: { mode: string }) =>
       `Przełączono na tryb ${mode}`,
     discarded: "Odrzucono",
+    readAloudA11y: "Odczytaj na głos",
+    stopReadAloudA11y: "Zatrzymaj czytanie na głos",
+    readAloudFailed: "Nie udało się odczytać tej wiadomości na głos. Sprawdź ustawienia głosu.",
     recoveredHistory: "Odzyskana historia",
     unknownEvent: "Nieznane zdarzenie",
     contextCompactionStarted: "Kompaktowanie kontekstu...",

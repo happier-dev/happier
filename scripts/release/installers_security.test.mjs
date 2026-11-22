@@ -74,6 +74,20 @@ test('release-owned minisign public key exists', async () => {
   assert.match(publicKey, /^RWQ/m);
 });
 
+test('install.ps1 extracts bundled minisign with the Windows PowerShell .NET API', async () => {
+  const raw = (await readFile(installPs1Path, 'utf8')).replaceAll('\r\n', '\n');
+  const ensureMinisign = raw.match(/function Ensure-Minisign\s*\{[\s\S]*?\n\}(?=\n\nfunction )/)?.[0];
+  assert.ok(ensureMinisign);
+  // Expand-Archive modules can select the overwrite overload absent from .NET
+  // Framework. Its two-argument API works in both Windows PowerShell and pwsh.
+  assert.doesNotMatch(ensureMinisign, /\bExpand-Archive\b/);
+  assert.match(ensureMinisign, /Add-Type -AssemblyName System\.IO\.Compression\.FileSystem/);
+  assert.match(ensureMinisign, /\[System\.IO\.Compression\.ZipFile\]::ExtractToDirectory\(\$zipPath, \$extractDir\)/);
+  const cleanup = ensureMinisign.indexOf('Remove-Item -LiteralPath $extractDir -Recurse -Force');
+  const extract = ensureMinisign.indexOf('::ExtractToDirectory(');
+  assert.ok(cleanup >= 0 && cleanup < extract, 'replace the previous extraction before using the non-overwriting API');
+});
+
 async function createMinisignBootstrapFixture(t) {
   const raw = (await readFile(installPs1Path, 'utf8')).replaceAll('\r\n', '\n');
   const functions = ['Resolve-MinisignExecutablePath', 'Invoke-NativeCommandCapturingOutput',
@@ -113,6 +127,9 @@ async function createMinisignBootstrapFixture(t) {
     `  [IO.File]::Copy(${quote(binary)}, (Join-Path $dir 'minisign.exe'))`, '}',
     '$fixtureZip = Join-Path $fixtureRoot "fixture.zip"',
     '[IO.Compression.ZipFile]::CreateFromDirectory($archiveRoot, $fixtureZip)',
+    '$staleExtraction = Join-Path $fixtureRoot "minisign-extract"',
+    '[IO.Directory]::CreateDirectory($staleExtraction) | Out-Null',
+    '[IO.File]::WriteAllText((Join-Path $staleExtraction "stale.txt"), "previous extraction")',
     // Installed system commands must not bypass the fallback under test.
     'function Get-Command { param($Name, $ErrorAction); if ($Name -eq "minisign") { return $null }; Microsoft.PowerShell.Core\\Get-Command @PSBoundParameters }',
     // Network/download bytes and filesystem visibility are genuine system
@@ -142,6 +159,7 @@ test(`install.ps1 bootstraps the native minisign executable without winget under
     ...prelude, ...functions,
     '$selected = Ensure-Minisign -TempRoot $fixtureRoot',
     'if (-not (Test-Path -LiteralPath $selected -PathType Leaf)) { throw "Bundled minisign is missing" }',
+    'if (Test-Path -LiteralPath (Join-Path $staleExtraction "stale.txt")) { throw "Previous extraction was not replaced" }',
     'Write-Output "native-minisign-ready"',
   ].join('\n'));
   assert.match(execFileSync(powerShell, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script], { encoding: 'utf8' }), /native-minisign-ready/);

@@ -348,6 +348,8 @@ export const V2SessionRecordSchema = lazySchema(() => z
     thinkingAt: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().min(0).optional(),
     pendingBlockedCount: z.number().int().min(0).optional(),
+    // Detail-only proof; absence must not make blocked delivery appear idle.
+    pendingBlockedNoEffectCount: z.number().int().min(0).safe().optional(),
     pendingVersion: z.number().int().min(0).optional(),
     dataEncryptionKey: z.string().nullable(),
     share: SessionShareSchema.nullable().optional(),

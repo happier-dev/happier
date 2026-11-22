@@ -13,7 +13,7 @@ const multiTextInputHandleMocks = vi.hoisted(() => ({
     setSelection: vi.fn(),
     setTextAndSelection: vi.fn(),
 }));
-const localSettingOverrides = vi.hoisted(() => ({} as Record<string, unknown>));
+const localSettingOverrides = vi.hoisted((): Partial<import('@/sync/domains/settings/localSettings').LocalSettings> => ({}));
 const useActiveSuggestionsMock = vi.hoisted(() => vi.fn(() => [[], -1, () => {}, () => {}] as const));
 
 // The Agent mark is a rendering boundary that reaches the generated Agent
@@ -35,10 +35,13 @@ vi.mock('@/agents/registry/AgentIcon', () => ({
 }));
 
 installAgentInputCommonModuleMocks({
-    storeHooks: async (importOriginal) => ({
-        ...(await importOriginal()) as Record<string, unknown>,
-        useLocalSetting: (key: string) => localSettingOverrides[key] ?? null,
-    }),
+    storeHooks: async (importOriginal) => {
+        const { createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
+        return {
+            ...(await importOriginal()) as Record<string, unknown>,
+            useLocalSetting: createUseLocalSettingMock({ values: localSettingOverrides }),
+        };
+    },
     reactNative: async () => {
         const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeWebMock({
@@ -79,8 +82,9 @@ installAgentInputCommonModuleMocks({
         return createModalModuleMock().module;
     },
     storage: async () => {
-        const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
+        const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
+            useLocalSetting: createUseLocalSettingMock({ values: localSettingOverrides }),
             useSetting: (key: string) => {
                 if (key === 'profiles') return [];
                 if (key === 'agentInputEnterToSend') return true;
@@ -1162,6 +1166,7 @@ describe('AgentInput (send button accessibility)', () => {
         screen.pressByTestId('session-composer-send');
 
         expect(multiTextInputHandleMocks.blur).toHaveBeenCalledTimes(1);
+        expect(multiTextInputHandleMocks.focus).not.toHaveBeenCalled();
 
         await screen.unmount();
     });
@@ -1183,6 +1188,7 @@ describe('AgentInput (send button accessibility)', () => {
         screen.pressByTestId('session-composer-send');
 
         expect(multiTextInputHandleMocks.blur).not.toHaveBeenCalled();
+        expect(multiTextInputHandleMocks.focus).toHaveBeenCalled();
         await screen.unmount();
     });
 

@@ -818,3 +818,41 @@ test('single-channel matrix resume accepts its channel job name and retains hist
   }
   assert.equal(resolveReleaseResume({ ...input, jobs: [{ ...input.jobs[0], name: 'Release production channel / deploy_ui / promote' }] }).uiCompleted.ota, false);
 });
+
+test('published partial candidates bind their version without completing rolling verification', () => {
+  for (const product of ['cli', 'stack', 'server', 'ui-web']) {
+    const candidate = {
+      id: `${product === 'stack' ? 'hstack' : product}-immutable-candidate`, requested: true,
+      state: 'partial', result: 'success',
+      identity: { product, version: '0.2.21-dev.1', sourceSha: SOURCE_SHA, verified: false },
+    };
+    const input = { originRun: originRun(), artifacts: [statusArtifact()], downloadedDigest: DIGEST,
+      status: status({ surfaces: [candidate] }), expected };
+    assert.equal(resolveReleaseResume(input).versions[product], '0.2.21-dev.1');
+    assert.equal(Object.values(resolveReleaseResume(input).completed).some(Boolean), false);
+    assert.throws(() => resolveReleaseResume({ ...input, status: status({ surfaces: [
+      { ...candidate, identity: { ...candidate.identity, sourceSha: 'c'.repeat(40) } },
+    ] }) }), /source SHA/);
+  }
+});
+
+test('legacy published partial candidate recovers only a unique public release tagged at its source', () => {
+  const candidate = { id: 'server-immutable-candidate', requested: true, state: 'partial', result: 'success',
+    identity: { sourceSha: SOURCE_SHA, verified: false } };
+  const input = { originRun: originRun(), artifacts: [statusArtifact()], downloadedDigest: DIGEST,
+    status: status({ surfaces: [status().surfaces[0], candidate] }), expected,
+    publishedReleases: [{ tag_name: 'server-v0.2.21-dev.1', draft: false }],
+    tagRefs: [{ ref: 'refs/tags/server-v0.2.21-dev.1', object: { type: 'commit', sha: SOURCE_SHA } }],
+  };
+  assert.equal(resolveReleaseResume(input).versions.server, '0.2.21-dev.1');
+  for (const change of [
+    { publishedReleases: [] },
+    { publishedReleases: [{ ...input.publishedReleases[0], draft: true }] },
+    { tagRefs: [{ ...input.tagRefs[0], object: { type: 'commit', sha: 'c'.repeat(40) } }] },
+    { publishedReleases: [...input.publishedReleases, { tag_name: 'server-v0.2.21-dev.2', draft: false }],
+      tagRefs: [...input.tagRefs, { ref: 'refs/tags/server-v0.2.21-dev.2', object: { type: 'commit', sha: SOURCE_SHA } }] },
+  ]) assert.throws(() => resolveReleaseResume({ ...input, ...change }), /unique published server candidate/);
+  assert.throws(() => resolveReleaseResume({ ...input, status: status({ surfaces: [
+    { ...candidate, identity: { ...candidate.identity, sourceSha: 'c'.repeat(40) } },
+  ] }) }), /source SHA/);
+});

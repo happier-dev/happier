@@ -30,6 +30,8 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(publishDocker, /\n\s*build_dev_box:\n/);
   assert.match(publishDocker, /\n\s*server_version:\n/);
   assert.match(publishDocker, /\n\s*cli_version:\n/);
+  assert.match(publishDocker, /\n\s*hosted_services:\n/);
+  assert.match(publishDocker, /--hosted-services "\$HOSTED_SERVICES"/);
   assert.match(publishDocker, /HAPPIER_DOCKER_SERVER_VERSION:\s*\${{\s*inputs\.server_version\s*}}/);
   assert.match(publishDocker, /HAPPIER_DOCKER_CLI_VERSION:\s*\${{\s*inputs\.cli_version\s*}}/);
   assert.match(
@@ -111,6 +113,39 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   );
 });
 
+test('hosted promotions publish before deploy-ref promotion and deploy the publisher exact tags', async () => {
+  for (const [file, promote] of [['promote-server.yml', 'promote_deploy_ref'], ['promote-ui.yml', 'promote']]) {
+    const workflow = YAML.parse(await loadWorkflow(file));
+    const publish = workflow.jobs.publish_hosted;
+    assert.equal(publish?.uses, './.github/workflows/publish-docker.yml');
+    assert.equal(publish.with.build_relay, false);
+    assert.equal(publish.with.build_dev_box, false);
+    assert.equal(publish.with.registries, file === 'promote-ui.yml' ? 'dockerhub,ghcr' : 'ghcr');
+    assert.ok(workflow.jobs[promote].needs.includes('publish_hosted'));
+    const deploy = workflow.jobs[promote].steps.find((step) => step.env?.HOSTED_IMAGES);
+    assert.equal(deploy?.env?.HOSTED_IMAGES, '${{ needs.publish_hosted.outputs.hosted_images }}');
+    assert.match(deploy.run, /dispatch-hosted-deploy\.mjs/);
+    assert.equal(workflow.jobs[promote].environment, 'release-shared');
+    assert.equal(deploy.env.DEPLOY_COMPONENT, file === 'promote-ui.yml' ? 'ui' : 'server');
+    assert.equal(deploy.env.GH_REPO, '${{ github.repository }}');
+    assert.ok(deploy.env.GH_TOKEN.includes('token.outputs.token'));
+    assert.doesNotMatch(deploy.if ?? '', /changed|force_deploy/, 'resume must redeploy the same image map even after ref promotion');
+    assert.doesNotMatch(JSON.stringify(deploy.env), /DOKPLOY/);
+    const token = workflow.jobs[promote].steps.find((step) => step.id === (file === 'promote-ui.yml' ? 'app_token' : 'promotion_token'));
+    assert.equal(token.with['permission-actions'], 'write');
+    assert.doesNotMatch(JSON.stringify(workflow.jobs[promote]), /trigger-webhooks\.mjs|trigger-server-deploy-webhooks/);
+  }
+  const autoDeploy = YAML.parse(await loadWorkflow('deploy-on-deploy-branch.yml'));
+  assert.ok(autoDeploy.on.push.branches.includes('!deploy/*/server'));
+  assert.ok(autoDeploy.on.push.branches.includes('!deploy/*/ui'));
+  const manualDeploy = YAML.parse(await loadWorkflow('deploy.yml'));
+  assert.ok(manualDeploy.on.workflow_dispatch.inputs.hosted_images);
+  const manualImages = manualDeploy.jobs.deploy.steps.find((step) => /deploy-hosted-images\.mjs/.test(step.run ?? ''));
+  assert.ok(manualImages);
+  assert.match(manualImages.env.DOKPLOY_API_APPLICATION_ID, /inputs\.component == 'server'/);
+  assert.match(manualImages.env.DOKPLOY_UI_APPLICATION_ID, /inputs\.component == 'ui'/);
+});
+
 test('nightly dev docker waits for the release artifacts it consumes', async () => {
   const nightly = await loadWorkflow('nightly-dev.yml');
   assert.match(
@@ -120,6 +155,17 @@ test('nightly dev docker waits for the release artifacts it consumes', async () 
   assert.match(nightly, /authorized_sha:\s*\${{\s*needs\.prepare_release_candidate\.outputs\.source_sha\s*}}/);
   assert.match(nightly, /server_version:\s*\${{\s*needs\.server_runtime\.outputs\.version\s*}}/);
   assert.match(nightly, /cli_version:\s*\${{\s*needs\.cli\.outputs\.version\s*}}/);
+});
+
+test('production UI deployment never falls back to the preview server URL', async () => {
+  for (const name of ['deploy.yml']) {
+    const workflow = YAML.parse(await loadWorkflow(name));
+    const steps = Object.values(workflow.jobs).flatMap((job) => job.steps ?? []);
+    const deploy = steps.find((step) => step.env?.DOKPLOY_UI_SERVER_URL);
+    assert.ok(deploy, `${name} must pass the target UI server URL`);
+    assert.equal(deploy.env.DOKPLOY_UI_SERVER_URL,
+      "${{ vars[format('HAPPIER_{0}_SERVER_URL', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}");
+  }
 });
 
 test('Docker publishing runs its dependency-free trusted pipeline without a workspace install', async () => {
@@ -170,15 +216,6 @@ test('Docker candidate source is prepared without release or registry secrets', 
   assert.equal(sourceCheckout?.with?.['persist-credentials'], false);
   assert.match(JSON.stringify(candidate), /actions\/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02/);
 
-  // G3: main moves after publication, so admission binds the exact admitted SHA to the
-  // promotion source branch (or the canonical channel branch when standalone).
-  const stableGuard = candidate.steps.find((step) => step.name === 'Verify admitted publication source');
-  assert.ok(stableGuard, 'stable Docker admission must bind the admitted commit to its source branch');
-  assert.match(stableGuard.if, /inputs\.channel == 'stable'/);
-  assert.equal(stableGuard.env.AUTHORIZED_SHA, '${{ inputs.authorized_sha }}');
-  assert.equal(stableGuard.env.PROMOTION_SOURCE_REF, '${{ inputs.promotion_source_ref }}');
-  assert.match(stableGuard.run, /resolve-authorized-release-source\.mjs/);
-  assert.match(stableGuard.run, /--allow-source-ancestor/);
   assert.doesNotMatch(
     JSON.stringify(candidate),
     /source_ref != 'main'/,

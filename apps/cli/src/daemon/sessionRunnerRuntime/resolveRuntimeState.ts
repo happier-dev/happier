@@ -1,4 +1,5 @@
 import type { TrackedSession } from '@/daemon/types';
+import { readTrackedSessionRunner } from '@/daemon/sessionRunnerProcessIdentity';
 import type { SessionRunnerDaemonEntrypointSourceV1 } from '@happier-dev/protocol';
 
 import {
@@ -7,6 +8,7 @@ import {
 } from './resolveRunnerEntrypointIdentity';
 import { readSessionRunnerStartingModeFromProcessCommand } from './readSessionRunnerStartingMode';
 import { resolveSessionRunnerRestartEligibility } from './resolveRestartEligibility';
+import { resolveSessionRunnerActivityDisabledReason } from './resolveActivityDisabledReason';
 import type {
   SessionRunnerEntrypointIdentity,
   SessionRunnerRestartDisabledReason,
@@ -88,6 +90,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
   const disabledReason =
     resolveDisabledReason(tracked) ??
     resolveIdentityDisabledReason({ runnerIdentity, currentIdentity: params.currentIdentity }) ??
+    resolveSessionRunnerActivityDisabledReason(sessionId, {}, tracked) ??
     (sessionId ? params.resolveActivityDisabledReason?.(sessionId) ?? null : null);
 
   return {
@@ -97,7 +100,7 @@ export function resolveSessionRunnerRuntimeState(params: Readonly<{
     daemonId: normalizeString(params.daemonId) || null,
     observedAtMs: params.observedAtMs ?? Date.now(),
     runner: {
-      pid: tracked?.pid ?? null,
+      pid: tracked ? readTrackedSessionRunner(tracked).pid : null,
       runtimeId: runnerIdentity.status === 'known' ? runnerIdentity.comparableId : null,
       cliVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,
       entrypointVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,

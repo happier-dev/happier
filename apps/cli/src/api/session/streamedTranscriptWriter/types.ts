@@ -4,7 +4,6 @@ import type { StreamedTranscriptSegmentState } from './segmentRuntime';
 import type { EphemeralSendResult } from '../ephemeralSendOutcome';
 import type { SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol';
 import type { SessionMessageCommitResult } from '../sessionMessageCommitResult';
-import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 
 export type StreamedTranscriptCommitOptions = {
   localId: string;
@@ -17,7 +16,7 @@ export type StreamedTranscriptEnqueueOptions = StreamedTranscriptCommitOptions &
 }>;
 
 export type StreamedTranscriptWriterSession = Readonly<{
-  subscribeToSessionConnectionState?: (listener: (state: ManagedConnectionState) => void) => () => void;
+  subscribeToTranscriptReplayReady?: (listener: (signal: AbortSignal) => Promise<void>) => () => void;
   sendAgentMessage?: (
     provider: ACPProvider,
     body: ACPMessageData,

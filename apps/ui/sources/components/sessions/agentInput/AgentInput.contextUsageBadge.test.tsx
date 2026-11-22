@@ -44,7 +44,7 @@ installAgentInputCommonModuleMocks({
             Text: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('Text', props, props.children),
             Pressable: React.forwardRef((props: TestPressableProps, ref) =>
-                React.createElement('Pressable', { ...props, __ref: ref }, renderPressableChildren(props.children))),
+                React.createElement('Pressable', { ...props, ref }, renderPressableChildren(props.children))),
             ScrollView: (props: Record<string, unknown> & { children?: React.ReactNode }) =>
                 React.createElement('ScrollView', props, props.children),
             ActivityIndicator: (props: Record<string, unknown>) =>
@@ -289,6 +289,42 @@ vi.mock('@/sync/domains/sessionControl/sessionModeControl', () => ({
 vi.mock('@/sync/domains/sessionControl/configOptionsControl', () => ({
     computeSessionConfigOptionControls: () => null,
 }));
+
+it('anchors each status popover to the badge that opened it', async () => {
+    const { AgentInput } = await import('./AgentInput');
+    let observedAnchor: React.RefObject<unknown> | undefined;
+    const screen = await renderScreen(
+        <AgentInput
+            value=""
+            onSend={() => {}}
+            onChangeText={() => {}}
+            placeholder="Message"
+            autocompleteKinds={[]}
+            autocompleteSuggestions={async () => []}
+            statusBadges={['work-state', 'draft-sync-status'].map((key) => ({
+                key,
+                label: key,
+                testID: key,
+                renderPopover: ({ anchorRef }) => {
+                    observedAnchor = anchorRef;
+                    return null;
+                },
+            }))}
+        />,
+        {
+            createNodeMock: ({ props }) => {
+                if (!props || typeof props !== 'object' || !('testID' in props)) return null;
+                const { testID } = props;
+                return testID === 'work-state' || testID === 'draft-sync-status' ? { testID } : null;
+            },
+        },
+    );
+
+    await screen.pressByTestIdAsync('work-state');
+    expect(observedAnchor?.current).toEqual({ testID: 'work-state' });
+    await screen.pressByTestIdAsync('draft-sync-status');
+    expect(observedAnchor?.current).toEqual({ testID: 'draft-sync-status' });
+});
 
 describe('AgentInput (context usage badge)', () => {
     it('renders host-provided trailing status actions even without another status item', async () => {

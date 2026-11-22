@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { socketApplyFrame } from '@/sync/engine/sessions/socketApplyFrame';
 
 import type { ApiMessage, ApiUpdateContainer } from '@/sync/api/types/apiTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -502,6 +503,7 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         clearActiveViewingSessionsForServerScopeReset();
         useVoiceTargetStore.setState({
             scope: 'global',
@@ -794,6 +796,10 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             ),
         });
 
+        // The promoted hidden segment is applied before the visible one, which takes its frame.
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        await vi.runAllTimersAsync();
+
         expect(applyMessages).toHaveBeenCalledTimes(2);
         expect(applyMessages.mock.calls[0]?.[1]?.[0]).toMatchObject({
             localId: 'segment-hidden',
@@ -803,10 +809,6 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             localId: 'segment-visible',
             content: [{ type: 'text', text: 'visible live' }],
         });
-
-        await vi.runAllTimersAsync();
-
-        expect(applyMessages).toHaveBeenCalledTimes(2);
     });
 
     it('keeps hidden durable message projection deferred when queued hidden stream segments are applied on reveal', async () => {
@@ -863,6 +865,8 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             ),
         });
 
+        await vi.runAllTimersAsync();
+
         expect(durableApplyMessages).not.toHaveBeenCalled();
         expect(streamApplyMessages).toHaveBeenCalledTimes(2);
         expect(streamApplyMessages.mock.calls[0]?.[1]?.[0]).toMatchObject({
@@ -873,8 +877,6 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             localId: 'visible-segment',
             content: [{ type: 'text', text: 'visible live' }],
         });
-
-        await vi.runAllTimersAsync();
     });
 
     it('requires encryption before applying encrypted stream segments', async () => {
@@ -1150,8 +1152,7 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             } as ApiUpdateContainer,
         });
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
-        expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith(sessionId, 2);
+        expect(applyMessages).not.toHaveBeenCalled();
 
         await handleEphemeralSocketUpdate({
             update: buildTranscriptStreamSegmentUpdate(sessionId, {
@@ -1181,11 +1182,14 @@ describe('socket update handling: transcript stream segment ephemerals', () => {
             applyMessages,
         });
 
-        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect(applyMessages).not.toHaveBeenCalled();
 
         await vi.runAllTimersAsync();
 
-        expect(applyMessages).toHaveBeenCalledTimes(2);
+        // One frame batch carries the durable row and the live segment, in arrival order.
+        expect(applyMessages).toHaveBeenCalledTimes(1);
+        expect((applyMessages.mock.calls[0]?.[1] as Array<{ id: string; localId: string | null }>).map((message) => message.localId ?? message.id))
+            .toEqual(['durable-message-1', 'segment-1']);
         expect(markSessionMaterializedMaxSeq).toHaveBeenCalledWith(sessionId, 2);
     });
 });

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { createTestAuth } from '../../src/testkit/auth';
@@ -26,7 +26,8 @@ import {
     resolveCliUpdateValidationLaunchEnv,
 } from '../../src/testkit/releaseValidation/cliUpdateSources';
 import { createRunDirs } from '../../src/testkit/runDir';
-import { fetchMessagesSince } from '../../src/testkit/sessions';
+import { fetchMessagesSince, fetchSessionV2 } from '../../src/testkit/sessions';
+import { listPendingQueueV2 } from '../../src/testkit/pendingQueueV2';
 import { waitFor } from '../../src/testkit/timing';
 
 const run = createRunDirs({ runLabel: 'core' });
@@ -154,6 +155,31 @@ async function waitForListedDaemonSession(params: {
     });
     if (!found) throw new Error(`session ${params.sessionId} not listed`);
     return found;
+}
+
+async function waitForRestartableDaemonSession(params: {
+    testDir: string;
+    port: number;
+    controlToken?: string | null;
+    sessionId: string;
+}): Promise<void> {
+    await waitFor(async () => {
+        const eligibility = await daemonControlPostJson<RestartSessionRunnerCommandJson>({
+            port: params.port,
+            controlToken: params.controlToken,
+            path: '/session-runners/restart',
+            body: {
+                sessionId: params.sessionId,
+                mode: 'force_current_cli',
+                dryRun: true,
+                reason: 'daemon_restart_session_runners_command',
+            },
+        });
+        await writeFile(resolve(params.testDir, `cli-update.restart-eligibility-${params.port}.json`), JSON.stringify(eligibility, null, 2));
+        expect(eligibility.status).toBe(200);
+        expect(eligibility.data.status).toBe('dry_run_restartable');
+        return true;
+    }, { timeoutMs: 60_000, intervalMs: 150, context: 'daemon idle runner restart admission' });
 }
 
 async function readDaemonSessionMarkerSnapshot(params: {
@@ -573,6 +599,7 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
         const daemonEnv = {
             ...process.env,
             CI: '1',
+            HAPPIER_LOG_LEVEL: 'debug',
             HAPPIER_VARIANT: 'dev',
             HAPPIER_DISABLE_CAFFEINATE: '1',
             HAPPIER_HOME_DIR: daemonHomeDir,
@@ -670,6 +697,15 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
             expectedPid: originalRunnerPid,
         });
 
+        // Settle the first turn before replacing its daemon, then observe the
+        // replacement daemon's admission after reattachment before restarting.
+        await waitForRestartableDaemonSession({
+            testDir,
+            port: daemon.state.httpPort,
+            controlToken: daemon.state.controlToken,
+            sessionId,
+        });
+
         const updatedDaemonState = await replaceTestDaemonWithoutStoppingSessions({
             testDir,
             happyHomeDir: daemonHomeDir,
@@ -686,6 +722,13 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
             controlToken: updatedDaemonState.controlToken,
             sessionId,
             expectedPid: originalRunnerPid,
+        });
+
+        await waitForRestartableDaemonSession({
+            testDir,
+            port: updatedDaemonState.httpPort,
+            controlToken: updatedDaemonState.controlToken,
+            sessionId,
         });
 
         const restartSummary = await runCliJsonCommandFromSnapshot<RestartSessionRunnerCommandJson>({
@@ -747,16 +790,32 @@ describe('core e2e: CLI update continuity reattaches the existing fake Claude se
             text: secondPrompt,
         });
 
-        await waitForFakeClaudeUserText(fakeLogPath, (text) => text.includes(secondPrompt), { timeoutMs: 90_000, pollMs: 150 });
-        await waitForAssistantMessageContaining({
-            baseUrl: server.baseUrl,
-            token: auth.token,
-            sessionId,
-            secret,
-            requiredSubstring: 'FAKE_CLAUDE_OK_',
-            afterSeqStart: afterRestartSeq,
-            timeoutMs: 120_000,
-        });
+        try {
+            await waitForFakeClaudeUserText(fakeLogPath, (text) => text.includes(secondPrompt), { timeoutMs: 90_000, pollMs: 150 });
+            await waitForAssistantMessageContaining({
+                baseUrl: server.baseUrl,
+                token: auth.token,
+                sessionId,
+                secret,
+                requiredSubstring: 'FAKE_CLAUDE_OK_',
+                afterSeqStart: afterRestartSeq,
+                timeoutMs: 120_000,
+            });
+        } finally {
+            // Snapshot while the server and restarted runner are still alive. Keep
+            // each read's failure as evidence without hiding the original timeout.
+            const snapshots = await Promise.allSettled([
+                listPendingQueueV2({ baseUrl: server.baseUrl, token: auth.token, sessionId, includeDiscarded: true }),
+                fetchSessionV2(server.baseUrl, auth.token, sessionId),
+            ]);
+            await writeFile(resolve(testDir, 'cli-update.post-restart-delivery.json'), JSON.stringify({
+                sessionId,
+                runnerPid: restartedDaemonSession.pid,
+                observedAt: new Date().toISOString(),
+                pending: snapshots[0].status === 'fulfilled' ? snapshots[0].value : { error: String(snapshots[0].reason) },
+                session: snapshots[1].status === 'fulfilled' ? snapshots[1].value : { error: String(snapshots[1].reason) },
+            }, null, 2));
+        }
 
         const activeServer = server;
         if (!activeServer) {

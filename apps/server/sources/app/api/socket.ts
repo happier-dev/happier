@@ -19,7 +19,12 @@ import { machineTransferHandler } from "./socket/machineTransferHandler";
 import { artifactUpdateHandler } from "./socket/artifactUpdateHandler";
 import { accessKeyHandler } from "./socket/accessKeyHandler";
 import { getSocketRooms } from "./socketRooms";
-import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
+import { CONNECTED_SERVICE_READER_SUPPORT_SOCKET_AUTH_FIELD, readConnectedServiceReaderSupport, SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD } from "@happier-dev/protocol";
+import {
+    SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES,
+    SOCKET_RPC_PING_INTERVAL_MS,
+    SOCKET_RPC_PING_TIMEOUT_MS,
+} from "@happier-dev/protocol/socketRpc";
 import { createAdapter } from "@socket.io/redis-streams-adapter";
 import { getRedisClient } from "@/storage/redis/redis";
 import { randomUUID } from "node:crypto";
@@ -38,7 +43,7 @@ import { registerUiFocusSocketEvent } from "./socket/registerUiFocusSocketEvent"
 import { readHappierSocketData } from "./socket/socketData";
 import { registerReleasedUiV021SessionEndSocketEvent } from "@/app/session/compatibility/registerReleasedUiV021SessionEndSocketEvent";
 
-export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = 25_000_000;
+export const DEFAULT_SOCKET_MAX_HTTP_BUFFER_SIZE = SOCKET_RPC_DEFAULT_MAX_HTTP_BUFFER_BYTES;
 
 export function resolveSocketMaxHttpBufferSizeFromEnv(env: Record<string, string | undefined>): number {
     const raw = (env.HAPPIER_SOCKET_MAX_HTTP_BUFFER_SIZE ?? env.HAPPY_SOCKET_MAX_HTTP_BUFFER_SIZE ?? '').trim();
@@ -108,8 +113,8 @@ export function startSocket(app: Fastify) {
         },
         ...(shouldEnableRedisAdapter ? { adapter: createAdapter(getRedisClient()) } : {}),
         transports: ['websocket', 'polling'],
-        pingTimeout: 45000,
-        pingInterval: 15000,
+        pingTimeout: SOCKET_RPC_PING_TIMEOUT_MS,
+        pingInterval: SOCKET_RPC_PING_INTERVAL_MS,
         path: '/v1/updates',
         maxHttpBufferSize: resolveSocketMaxHttpBufferSizeFromEnv(process.env),
         allowUpgrades: true,
@@ -315,22 +320,23 @@ export function startSocket(app: Fastify) {
                 machineId
             };
         } else {
+            const interest: unknown = socket.handshake.auth[SESSION_UPDATE_INTEREST_SOCKET_AUTH_FIELD];
             connection = {
                 connectionType: 'user-scoped',
                 socket,
-                userId
+                userId,
+                ...(clientType === 'user-scoped' && typeof interest === 'string' && interest.trim() && interest === interest.trim()
+                    ? { sessionUpdateInterest: interest }
+                    : {}),
             };
         }
         eventRouter.addConnection(userId, connection);
         incrementWebSocketConnection(connection.connectionType);
 
-        // Join Socket.IO rooms for multi-process fanout (Phase 5).
-        // Note: we keep the existing in-memory routing for now; rooms are a forward-compat hook.
+        // Join Socket.IO rooms for multi-process fanout.
         socket.join(getSocketRooms({
-            userId,
+            ...connection,
             clientType: metadata.clientType,
-            sessionId,
-            machineId,
             connectedServiceIds: socketData.connectedServiceIds,
         }));
 

@@ -108,6 +108,55 @@ describe('waitForIdleViaSocket', () => {
     httpRead.mockRestore();
   });
 
+  it('rechecks a blocked queue signal and waits until the snapshot proves no provider effect', async () => {
+    vi.useFakeTimers();
+    const socket = createSocketStub();
+    vi.doMock('@/api/session/sockets', () => ({ createSessionScopedSocket: () => socket }));
+    vi.doUnmock('@/session/transport/http/sessionsHttp');
+    const axios = (await import('axios')).default;
+    let pendingBlockedNoEffectCount = 0;
+    const httpRead = vi.spyOn(axios, 'get').mockImplementation(async () => ({
+      status: 200, statusText: 'OK', headers: {}, config: { headers: new axios.AxiosHeaders() },
+      data: { session: {
+        id: 'sess-1', seq: 0, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+        metadata: '', metadataVersion: 0, agentState: null, agentStateVersion: 0,
+        dataEncryptionKey: null, encryptionMode: 'plain', latestTurnStatus: 'completed',
+        pendingCount: 1, pendingBlockedCount: 1, pendingBlockedNoEffectCount,
+        pendingVersion: pendingBlockedNoEffectCount + 1,
+        pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
+      } },
+    }));
+    const { detectLatestSessionTurnActivity } = await import('@/session/query/detectLatestSessionTurnActivity');
+    const { waitForIdleViaSocket } = await import('./sessionSocketAgentState');
+    const result = waitForIdleViaSocket({
+      token: 'token', sessionId: 'sess-1',
+      ctx: { encryptionKey: new Uint8Array(32).fill(1), encryptionVariant: 'dataKey' },
+      sessionEncryptionMode: 'plain', timeoutMs: 1_000,
+      initialTurnActivity: { pendingUserTurns: 1, activeTaskInFlight: false, turnInFlight: true },
+      initialAgentStateSummary: { pendingRequestsCount: 0 },
+      initialAgentStateCiphertextBase64: null, preferProjectionUpdates: true,
+      recheckTurnActivity: () => detectLatestSessionTurnActivity({
+        token: 'token', sessionId: 'sess-1', encryptionMode: 'plain', encryptionKey: null, encryptionVariant: 'plain',
+      }),
+    });
+    let settled = false;
+    void result.then(() => { settled = true; });
+    const signal = (pendingVersion: number) => socket.emit('update', {
+      id: `blocked-${pendingVersion}`, seq: pendingVersion, createdAt: Date.now(),
+      body: { t: 'pending-changed', sid: 'sess-1', pendingCount: 1, pendingBlockedCount: 1, pendingVersion },
+    });
+
+    signal(1);
+    await vi.advanceTimersByTimeAsync(300);
+    expect(settled).toBe(false);
+
+    pendingBlockedNoEffectCount = 1;
+    signal(2);
+    await vi.advanceTimersByTimeAsync(300);
+    await expect(result).resolves.toMatchObject({ idle: true });
+    httpRead.mockRestore();
+  });
+
   it('keeps waiting when the busy-turn recheck fetch returns a fresh busy agentState', async () => {
     vi.useFakeTimers();
 

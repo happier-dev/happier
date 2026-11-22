@@ -82,6 +82,20 @@ describe('desktop deep-link delivery', () => {
         dispose();
     });
 
+    it('leaves notification activation to the native owner while routing other links', async () => {
+        native.invoke.mockResolvedValue(['happier-preview://notification-action?payload=original']);
+        const navigate = vi.fn();
+        const dispose = installDesktopDeepLinks(navigate);
+        await flush();
+        native.receive?.([
+            'happier-dev://notification-action/?payload=next',
+            'happier://notification-action?payload=invalid',
+            'happier://session/kept?serverId=relay',
+        ]);
+        expect(navigate.mock.calls.map(([href]) => href)).toEqual(['/session/kept?serverId=relay']);
+        dispose();
+    });
+
     it('releases a late listener and never routes after disposal', async () => {
         let resolveListen!: (stop: () => void) => void;
         native.listen.mockImplementation((_event, receive) => {

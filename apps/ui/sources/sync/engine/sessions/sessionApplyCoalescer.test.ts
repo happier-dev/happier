@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { createSessionApplyCoalescer, type SessionApplyCoalescerSession } from './sessionApplyCoalescer';
+import { socketApplyFrame } from './socketApplyFrame';
 
 function buildSession(sessionId: string, seq: number): SessionApplyCoalescerSession {
     return {
@@ -27,6 +28,7 @@ describe('createSessionApplyCoalescer', () => {
     });
 
     afterEach(() => {
+        socketApplyFrame.flushNow();
         vi.useRealTimers();
     });
 
@@ -44,7 +46,7 @@ describe('createSessionApplyCoalescer', () => {
             pendingUserActionRequestCount: 0,
             pendingRequestObservedAt: null,
         } satisfies SessionApplyCoalescerSession;
-        coalescer.enqueue([settled], { deferLeadingBatch: true });
+        coalescer.enqueue([settled]);
         coalescer.enqueue([{
             ...settled,
             updatedAt: 2,
@@ -78,7 +80,7 @@ describe('createSessionApplyCoalescer', () => {
             ...buildSession('s1', 3), metadataVersion: 3,
             metadata: { path: '/current', host: 'host' },
         };
-        coalescer.enqueue([queued], { deferLeadingBatch: true });
+        coalescer.enqueue([queued]);
         coalescer.enqueue([{
             ...queued, metadataVersion: 2, metadata: { path: '/stale', host: 'host' },
             agentStateVersion: 2, agentState: { requests: {} },
@@ -89,6 +91,27 @@ describe('createSessionApplyCoalescer', () => {
             metadataVersion: 3, metadata: { path: '/current' }, agentStateVersion: 2,
             pendingPermissionRequestCount: 0,
         });
+    });
+
+    it('applies every session update that arrives within one frame as one batch at that frame', async () => {
+        const applied: string[][] = [];
+        const coalescer = createSessionApplyCoalescer({
+            getConfig: () => ({ enabled: true, windowMs: 16, maxBatchSize: 200 }),
+            applyBatch: (sessions) => {
+                applied.push(sessions.map((session) => `${session.id}@${session.seq}`));
+            },
+        });
+
+        coalescer.enqueue([buildSession('s1', 1)]);
+        coalescer.enqueue([buildSession('s2', 2)]);
+        coalescer.enqueue([buildSession('s1', 3)]);
+        expect(applied).toEqual([]);
+
+        await vi.advanceTimersByTimeAsync(16);
+
+        expect(applied).toEqual([['s1@3', 's2@2']]);
+        await vi.runAllTimersAsync();
+        expect(applied).toHaveLength(1);
     });
 
     it('drops queued sessions whose guard becomes stale before delayed flush', async () => {

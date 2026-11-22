@@ -117,6 +117,8 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "url",
+ "windows 0.61.3",
  "windows-registry",
  "windows-sys 0.60.2",
 ]

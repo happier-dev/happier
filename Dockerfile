@@ -193,13 +193,23 @@ RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/di
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp
 USER root
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl jq
+COPY docker/webapp-runtime.sh /opt/happier/webapp-runtime.sh
+COPY docker/webapp-entrypoint.sh /docker-entrypoint.d/40-happier-runtime.sh
+RUN chmod +x /docker-entrypoint.d/40-happier-runtime.sh
 COPY --from=webapp-builder /repo/apps/ui/dist /usr/share/nginx/html
+RUN find /usr/share/nginx/html -name '*.html.gz' -delete
 RUN rm /etc/nginx/conf.d/default.conf
 RUN echo 'server { \
     listen 8080; \
     gzip_static on; \
     gzip_vary on; \
+    sub_filter "<head>" '\''<head><script src="/happier-runtime-config.js"></script>'\''; \
+    location = /happier-runtime-config.js { \
+        alias /tmp/happier-runtime-config.js; \
+        default_type application/javascript; \
+        add_header Cache-Control "no-store"; \
+    } \
     \
     location = /health { \
         return 200 "ok\n"; \
