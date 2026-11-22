@@ -64,11 +64,13 @@ export function useTriageListWindow(publication?: TriageListPublicationV1): Tria
   const { active } = usePluginSurfaceActivity();
   const sharedScope = usePluginUiEphemeralSharedScope();
   const hostReadiness = usePluginHostReadiness(Object.is(TRIAGE_DATA_ACTION_EXECUTION_V1.target, 'daemon'));
-  const committedReadiness = useRef(hostReadiness);
+  const sourceMachine = usePluginHostReadiness();
+  const clientReadiness = useMemo(() => ({ ...hostReadiness, sourceMachine }), [hostReadiness, sourceMachine]);
+  const committedReadiness = useRef(clientReadiness);
   useLayoutEffect(() => {
-    committedReadiness.current = hostReadiness;
-    setTriageListWindowReadiness(hostApi, sharedScope, hostReadiness);
-  }, [hostApi, sharedScope, hostReadiness]);
+    committedReadiness.current = clientReadiness;
+    setTriageListWindowReadiness(hostApi, sharedScope, clientReadiness);
+  }, [hostApi, sharedScope, clientReadiness]);
 
   const subscribe = useCallback((listener: () => void) => {
     const lease = acquireTriageListWindow(hostApi, sharedScope, committedReadiness.current, dataClient, active);

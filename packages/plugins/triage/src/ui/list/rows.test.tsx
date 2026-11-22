@@ -471,11 +471,11 @@ describe('the window-honesty line', () => {
     // A cold first read can take a minute; the line under the skeleton is where the window speaks, so it says the
     // read is under way rather than leaving the reader with placeholder rows and no words.
     expect(readTriageWindowStatementV1({
-      loadedCount: 0, window: null, configuredSources: sources, entries, firstRead: true, text,
+      loadedCount: 0, window: null, configuredSources: sources, entries, readingSources: true, text,
     })).toEqual(['Reading your sources…']);
     // Once a window exists the loaded count speaks, never both.
     expect(readTriageWindowStatementV1({
-      loadedCount: 12, window: { coverage: 'complete', lanes: [] }, configuredSources: sources, entries, firstRead: false, text,
+      loadedCount: 12, window: { coverage: 'complete', lanes: [] }, configuredSources: sources, entries, readingSources: false, text,
     })).toEqual(['12 loaded', 'complete']);
   });
 

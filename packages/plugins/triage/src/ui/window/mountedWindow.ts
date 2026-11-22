@@ -70,12 +70,14 @@ const mountedByHost = new Map<
 >();
 const TRIAGE_LIST_WINDOW_SHARED_KEY_V1 = 'triage.list-window.v1';
 
+export type TriageListClientReadinessV1 = PluginUiHostReadiness & Readonly<{ sourceMachine?: PluginUiHostReadiness }>;
+
 type SharedMountedWindow = Readonly<{
   store: TriageListWindowStoreV1;
-  registerClient(host: TriageListWindowHostV1, readiness: PluginUiHostReadiness | undefined,
+  registerClient(host: TriageListWindowHostV1, readiness: TriageListClientReadinessV1 | undefined,
     data: AccountDataObserver | null, scope: PluginUiEphemeralSharedScope): () => void;
   // Older v1 artifact producers expose only store/registerClient.
-  setClientReadiness?(host: TriageListWindowHostV1, readiness: PluginUiHostReadiness): void;
+  setClientReadiness?(host: TriageListWindowHostV1, readiness: TriageListClientReadinessV1): void;
   readState?(): TriageMountedWindowReadState;
   subscribeReadiness?(listener: () => void): () => void;
 }>;
@@ -143,7 +145,7 @@ async function readEntriesThrough(
 export function acquireTriageListWindow(
   host: TriageListWindowHostV1,
   scope: PluginUiEphemeralSharedScope | null,
-  readiness: PluginUiHostReadiness = UNSPECIFIED_READINESS,
+  readiness: TriageListClientReadinessV1 = UNSPECIFIED_READINESS,
   data: AccountDataObserver | null = null,
   active = true,
 ): TriageListWindowLeaseV1 {
@@ -156,10 +158,10 @@ export function acquireTriageListWindow(
     const sharedLease = scope?.acquire<SharedMountedWindow>(
       TRIAGE_LIST_WINDOW_SHARED_KEY_V1,
       () => {
-        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: PluginUiHostReadiness | null;
+        const clients = new Map<TriageListWindowHostV1, { leases: number; readiness: TriageListClientReadinessV1 | null;
           data: AccountDataObserver | null; scope: PluginUiEphemeralSharedScope }>();
         const readinessListeners = new Set<() => void>();
-        let activeReadiness: PluginUiHostReadiness | null = readiness;
+        let activeReadiness: TriageListClientReadinessV1 | null = null;
         let readState = UNMOUNTED_READ_STATE;
         const publishReadiness = () => {
           // Follow the exact first client the transport below uses. These are
@@ -168,6 +170,7 @@ export function acquireTriageListWindow(
           const next = clients.values().next().value;
           if (next === undefined || next.readiness === activeReadiness) return;
           activeReadiness = next.readiness;
+          store.setSourceMachineReadiness(activeReadiness?.sourceMachine ?? UNSPECIFIED_READINESS);
           for (const listener of [...readinessListeners]) listener();
         };
         let executionOriginEpoch = 0;
@@ -360,7 +363,7 @@ export function subscribeToTriageListWindow(
 }
 
 export function setTriageListWindowReadiness(host: TriageListWindowHostV1,
-  scope: PluginUiEphemeralSharedScope | null, readiness: PluginUiHostReadiness): void {
+  scope: PluginUiEphemeralSharedScope | null, readiness: TriageListClientReadinessV1): void {
   mountedFor(host, scope)?.shared.setClientReadiness?.(host, readiness);
 }
 

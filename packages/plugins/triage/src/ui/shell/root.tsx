@@ -2562,7 +2562,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     pins: marks.more || pinsLoadMore?.kind === 'failed' || pinsLoadMore?.kind === 'unresumable'
       ? planTriageListContinuationV1({ section: 'pins', state: pinsLoadMore, text })
       : null,
-    firstRead: state.kind === 'initial',
+    readingSources: state.kind === 'initial' || listWindow?.readingSources === true,
     text,
   });
 

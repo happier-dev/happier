@@ -106,7 +106,8 @@ export type TriageListWindowSnapshotV1 = Readonly<{
      */
     completedAtMs?: number;
     pending: 'idle' | 'initial' | 'refresh';
-    /** The host is still establishing its Machine binding; original diagnostics remain available. */
+    /** Missing contributions in the roster are provisional while Machine admission is being established. */
+    sourceAdmissionPending?: true;
     /**
      * How many passes this mount has read: it moves once per pass the coordinator admitted, whether or not the
      * window changed, and never for a demand the pacing refused. A reader that follows reads (the list's
@@ -207,6 +208,7 @@ export type TriageListWindowChangeV1 = Readonly<{
 
 export type TriageListWindowStoreV1 = Readonly<{
     getSnapshot(): TriageListWindowSnapshotV1;
+    setSourceMachineReadiness(readiness: Readonly<{ pending: boolean; ready?: boolean }>): void;
     /** Project the retained acquisition through another lens, at this mount's depth, without mutating it. */
     project(lens: TriageListLensV1): TriageListWindowV1 | undefined;
     subscribe(listener: (change: TriageListWindowChangeV1) => void): () => void;
@@ -350,6 +352,8 @@ export function createTriageListWindowStore(deps: Readonly<{
     let orderedEntryKeys: readonly string[] | null = null;
     let configuredSources: TriageListEntriesResultV1['configuredSources'] = [];
     let configuredSourcesStatus: TriageListEntriesResultV1['configuredSourcesStatus'] = 'complete';
+    let sourceMachineReadiness: Readonly<{ pending: boolean; ready?: boolean }> | undefined;
+    let rosterReadWhileResolving = false;
     let configuredSourceTaskScope: boolean | undefined;
     let window: TriageListWindowV1 | null = null;
     let error: TriageListWindowErrorV1 | null = null;
@@ -596,6 +600,10 @@ export function createTriageListWindowStore(deps: Readonly<{
             freshness: freshness(completed),
             ...(completed === undefined ? {} : { completedAtMs: completed }),
             pending,
+            ...((sourceMachineReadiness?.pending === true
+                || (rosterReadWhileResolving && sourceMachineReadiness?.ready !== false))
+                && configuredSources.some(source => !source.available)
+                ? { sourceAdmissionPending: true as const } : {}),
             passes,
             ...(appendable === undefined ? {} : { loadMore: appendable }),
             // The one gate on the store-wide slot, and the reason it is here
@@ -1319,10 +1327,13 @@ export function createTriageListWindowStore(deps: Readonly<{
             // Enumerating configured instances is a Collection read; it reaches no
             // provider, which is what lets a cold mount and the Composer picker
             // be visibly unsynchronized instead of falsely empty.
-            const enumeration = sourceRefresh && configuredSourceTaskScope === taskScope
+            const reusesRoster = sourceRefresh !== undefined && configuredSourceTaskScope === taskScope;
+            const resolving = sourceMachineReadiness?.pending === true;
+            const enumeration = reusesRoster
                 ? { configuredSources, configuredSourcesStatus }
                 : await enumerateConfiguredSources(censusLens);
             if (!isCurrentRoster()) return;
+            if (!reusesRoster) rosterReadWhileResolving = resolving;
             configuredSourceTaskScope = taskScope;
             const configuredSourceChange = syncConfiguredSources(
                 enumeration.configuredSources,
@@ -1449,6 +1460,12 @@ export function createTriageListWindowStore(deps: Readonly<{
 
     return Object.freeze({
         getSnapshot: readSnapshot,
+        setSourceMachineReadiness(readiness) {
+            if (sourceMachineReadiness?.pending === readiness.pending
+                && sourceMachineReadiness?.ready === readiness.ready) return;
+            sourceMachineReadiness = readiness;
+            publish();
+        },
         getRow(key) {
             return foldBaseline.entries.get(key)?.row ?? null;
         },
@@ -1622,5 +1639,6 @@ function sameTriageListWindowSnapshot(left: TriageListWindowSnapshotV1, right: T
         && left.pending === right.pending && left.passes === right.passes
         && left.loadMore === right.loadMore && left.refreshBlocked === right.refreshBlocked
         && left.unreadableSources === right.unreadableSources && left.configuredSources === right.configuredSources
-        && left.configuredSourcesReady === right.configuredSourcesReady;
+        && left.configuredSourcesReady === right.configuredSourcesReady
+        && left.sourceAdmissionPending === right.sourceAdmissionPending;
 }

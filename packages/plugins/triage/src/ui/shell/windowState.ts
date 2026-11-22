@@ -154,6 +154,8 @@ export type TriageListShellStateV1 =
       window: TriageListWindowV1;
       /** A refresh is in flight over rows that are already on screen. */
       refreshing: boolean;
+      /** The first read is incomplete or is waiting for the source roster to settle. */
+      readingSources?: true;
       /** The rows are real but no longer known to be current. */
       stale: boolean;
       /** Read-health presentation only; age by itself does not request an amber warning. */
@@ -204,8 +206,6 @@ export function readTriageListSourceFailuresV1(snapshot: TriageListWindowSnapsho
 const NO_SOURCE_FAILURES_V1: readonly TriageListSourceFailureV1[] = Object.freeze([]);
 
 function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShellFailureV1 | null {
-  const unavailableSourceIds = new Set(snapshot.configuredSources
-    .filter((source) => !source.available).map((source) => source.sourceInstanceId));
   // Every distinct connection is kept. A reader with three broken ones needs
   // all three names, not the first.
   const sources: TriageListSourceFailureV1[] = projectTriageFailedSourceHealth(snapshot)
@@ -240,7 +240,7 @@ function readShellFailure(snapshot: TriageListWindowSnapshotV1): TriageListShell
   // the pass has not reached is still only unfinished coverage.
   const failureIndexBySource = new Map(sources.map((source, index) => [source.sourceInstanceId, index]));
   for (const configured of snapshot.configuredSources) {
-    if (!unavailableSourceIds.has(configured.sourceInstanceId)) continue;
+    if (configured.available || snapshot.sourceAdmissionPending === true) continue;
     const sourceInstance = {
       source: configured.source,
       sourceInstanceId: configured.sourceInstanceId,
@@ -614,10 +614,14 @@ export function resolveTriageListShellState(
       wholeScanFailure?.sources ?? []);
     const failure = viewHealth.selectedFailures.length === 0 ? null
       : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures });
+    const readingSources = viewHealth.body.coverage === 'partial'
+      && (snapshot.pending === 'initial' || snapshot.sourceAdmissionPending === true);
+    if (window.rows.length === 0 && failure === null && readingSources) return Object.freeze({ kind: 'initial' });
     return Object.freeze({
       kind: 'window',
       window,
       refreshing: snapshot.pending !== 'idle',
+      ...(readingSources ? { readingSources: true as const } : {}),
       stale,
       showReadWarning: viewHealth.showReadWarning,
       failure,

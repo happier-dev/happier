@@ -137,19 +137,20 @@ export function readTriageWindowStatementV1(input: Readonly<{
   entries: TriageListContinuationCopyV1;
   /** The pins' own continuation copy, while there are more pins or reading them failed; otherwise `null`. */
   pins?: TriageListContinuationCopyV1 | null;
-  /** The first read has not answered yet (the page holds its skeleton rows). */
-  firstRead?: boolean;
+  /** The first read has not settled, including when some rows have arrived. */
+  readingSources?: boolean;
   text: (key: string, fallback?: string, values?: Readonly<Record<string, string | number>>) => string;
 }>): readonly string[] | undefined {
   const { window, text } = input;
   const parts: string[] = [];
   // With nothing loaded the body's own state (a failure, an empty or quiet list) is the whole answer, so the
   // line adds nothing about entries beneath it.
-  if (window === null && input.firstRead === true) {
-    parts.push(text('plugins.triage.surface.window.reading', 'Reading your sources…'));
-  }
   if (window !== null && input.loadedCount > 0) {
     parts.push(text('plugins.triage.surface.window.loaded', '{count} loaded', { count: input.loadedCount }));
+  }
+  if (input.readingSources === true) {
+    parts.push(text('plugins.triage.surface.window.reading', 'Reading your sources…'));
+  } else if (window !== null && input.loadedCount > 0) {
     if (input.entries.tone === 'warning') {
       // A connection that stopped short because it failed is said once, by the page's failure line.
       const saidByPage = input.entries.actionLabel === undefined && window.lanes.some((lane) =>

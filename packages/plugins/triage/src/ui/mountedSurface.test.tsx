@@ -205,7 +205,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
     /** Derived from the existing 1,000-row store fixture, not an observed F cardinality. */
     mixedFailureScale?: boolean;
     /** Source A answers one complete page that asks nothing of the reader. */
-    quietFirstPage?: boolean; singleSource?: boolean }> = {}) {
+    quietFirstPage?: boolean; singleSource?: boolean; coldSourceAdmission?: boolean }> = {}) {
     const { collections, control } = createTestkitCorpusCollections();
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow('a', SOURCE_A, INSTANCE_A, 1,
         options.mixedFailureScale ? 'GitHub workspace' : LABEL_A)));
@@ -213,7 +213,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         options.mixedFailureScale ? 'Bitbucket workspace' : LABEL_B)));
     const acmeSource = { pluginId: 'happier.third.acme', localId: 'issues' };
     const acmeInstance = '33333333-3333-4333-8333-333333333333';
-    if (options.mixedFailureScale) control.sourceInstances.seed(toCorpusStoredValue(
+    if (options.mixedFailureScale || options.coldSourceAdmission) control.sourceInstances.seed(toCorpusStoredValue(
         instanceRow('c', acmeSource, acmeInstance, 3, 'Acme workspace')));
 
     const scans = new Map<object, ScanFn>();
@@ -225,6 +225,8 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         sessionRead: 'ready' as 'ready' | 'missing' | 'failed' | 'pending', sessionReads: 0,
         sessionReadOverrides: new Map<string, 'ready' | 'missing' | 'failed'>(),
         scanGate: null as Promise<void> | null,
+        scanBGate: null as Promise<void> | null,
+        sourceBActivating: options.coldSourceAdmission === true,
         readExactEntryTitle: null as ((entryId: string) => Promise<string>) | null,
         /** The host refusing one connection's list invocation (an offline Machine, a broken transport). */
         listInvocationFailure: null as ((sourceInstanceId: string) => PluginError | null) | null };
@@ -307,6 +309,7 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
     const scanB: ScanFn = async () => {
         scanCalls.count += 1;
         await state.scanGate;
+        await state.scanBGate;
         if (state.sourceBFails) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } };
         }
@@ -471,9 +474,11 @@ function createHarness(options: Readonly<{ tasks?: boolean; details?: boolean; c
         // harness inventory avoids inventing an unavailable personal source.
         return await listTriageEntries({ ...parsed, sources: parsed.sources.kind === 'allConfigured'
             ? await selectTestkitConfiguredSources([INSTANCE_A, ...(options.singleSource ? [] : [INSTANCE_B]),
-                ...(options.mixedFailureScale ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
+                ...(options.mixedFailureScale || options.coldSourceAdmission ? [acmeInstance] : [])], collections.sourceInstances) : parsed.sources }, {
             sourceInstances: collections.sourceInstances,
-            readSourceSnapshot: async () => ({ contributions: admitted }),
+            readSourceSnapshot: async () => ({ contributions: state.sourceBActivating
+                ? admitted.filter(source => source.contributor.pluginId !== SOURCE_B.pluginId || source.contributor.contributionId !== SOURCE_B.localId)
+                : admitted }),
             executeScan,
             taskOnly,
             nowMs: () => Date.now(),
@@ -1526,6 +1531,41 @@ describe('the mounted PRs & Issues surface', () => {
         // One inventory read, then one independently settling Action per source.
         expect(harness.actionCalls.filter(action => action === TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1)).toHaveLength(3);
         expect(readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope).passes).toBe(1);
+    });
+
+    it('keeps the sheet and healthy rows while source admission and a late read settle', async () => {
+        const harness = createHarness({ coldSourceAdmission: true, quietFirstPage: true });
+        const resolving = { ...sourceContextFixture(harness), requesterExecutionReady: true,
+            machineConnectionPending: true, machineExecutionReady: false };
+        const shell = await mountSurface(renderShellSurface, harness, 'cold-source-admission', resolving);
+        const list = () => document.querySelector(`[data-testid="${TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}"]`);
+        const region = list();
+        expect(region).not.toBeNull();
+        await settleWindow('view', shell);
+        await visibleTexts(shell, ['Replace the duplicated normalizer']);
+        expect.soft(list()).toBe(region);
+        expect.soft(region?.textContent).toContain('Reading your sources…');
+        expect.soft(document.body.textContent).not.toContain('Not installed or enabled on this machine.');
+        expect.soft(document.body.textContent).not.toContain('could not be read');
+
+        let release!: () => void;
+        harness.state.scanBGate = new Promise<void>(resolve => { release = resolve; });
+        harness.state.sourceBActivating = false;
+        await act(async () => {
+            await shell.updateSurface({ ...resolving, machineConnectionPending: false, machineExecutionReady: true });
+        });
+        await visibleTexts(shell, ['Replace the duplicated normalizer']);
+        expect(list()).toBe(region);
+        expect(document.body.textContent).not.toContain(`${LABEL_B} could not be read`);
+        expect(document.body.textContent).not.toContain('Middle change');
+
+        await act(async () => { release(); });
+        await settleWindow('view', shell);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+        expect(list()).toBe(region);
+        expect(document.body.textContent).toContain('Acme workspace could not be read');
+        expect(document.body.textContent).toContain('Not installed or enabled on this machine.');
+        expect(document.body.textContent).not.toContain(`${LABEL_B} could not be read`);
     });
 
     it('renders one window assembled from every configured source', async () => {
