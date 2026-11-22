@@ -21,8 +21,9 @@ export type RestoredSessionTagRejoin = Readonly<{
 export async function restoreSessionTagRejoinInTx(
     tx: Tx,
     existing: CreatedSessionRow,
+    isDatedExternalLinkReplay = false,
 ): Promise<TransactionResult<RestoredSessionTagRejoin> & Pick<RestoredSessionTagRejoin, "session">> {
-    if (existing.active && existing.archivedAt === null) {
+    if (isDatedExternalLinkReplay || (existing.active && existing.archivedAt === null)) {
         return { ...transactionResult(() => ({ session: existing, publication: null })), session: existing };
     }
 

@@ -96,7 +96,7 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
         });
     }
 
-    it("preserves source dates only during external Session birth", async () => {
+    it("keeps external Session source dates on birth and replay, and records current activity on rejoin", async () => {
         const owner = await createAccount("pk-external-source-dates");
         await withApp(async (app) => {
             const headers = {
@@ -120,10 +120,21 @@ describe("session create-or-load metadata envelope (SQLite integration)", () => 
             const loaded = await app.inject({
                 method: "POST", url: "/v1/sessions", headers,
                 payload: { ...layoutOneBody, tag, currentStorageState: "machine_only",
-                    externalSourceDates: { createdAtMs: 1000, updatedAtMs: 2000 } },
+                    externalSourceDates: { createdAtMs, updatedAtMs } },
             });
             expect(loaded.statusCode, loaded.body).toBe(200);
-            expect(loaded.json().session.createdAt).toBe(createdAtMs);
+            expect(loaded.json()).toMatchObject({ created: false, session: { id, createdAt: createdAtMs } });
+            const replayed = await db.session.findUniqueOrThrow({ where: { id } });
+            expect(replayed.meaningfulActivityAt?.getTime()).toBe(updatedAtMs);
+
+            const rejoined = await app.inject({
+                method: "POST", url: "/v1/sessions", headers,
+                payload: { ...layoutOneBody, tag, currentStorageState: "machine_only" },
+            });
+            expect(rejoined.statusCode, rejoined.body).toBe(200);
+            expect(rejoined.json()).toMatchObject({ created: false, session: { id, createdAt: createdAtMs } });
+            const afterRejoin = await db.session.findUniqueOrThrow({ where: { id } });
+            expect(afterRejoin.meaningfulActivityAt?.getTime()).toBeGreaterThan(updatedAtMs);
         });
     });
 

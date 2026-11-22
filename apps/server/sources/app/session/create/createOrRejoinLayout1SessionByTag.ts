@@ -129,7 +129,8 @@ async function resolveExistingLayout1SessionInTx(
         throw error;
     }
 
-    const restored = await restoreSessionTagRejoinInTx(tx, existing);
+    // The first link carries source dates. An explicit rejoin omits them.
+    const restored = await restoreSessionTagRejoinInTx(tx, existing, prepared.externalSourceDates !== undefined);
     if (prepared.discussionParticipant && prepared.discussionParticipantLaunch && authentication) {
         const bound = await bindDiscussionParticipantSessionInTx(tx, {
             accountId: prepared.accountId, discussionParticipant: prepared.discussionParticipant,
