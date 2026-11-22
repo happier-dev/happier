@@ -1782,37 +1782,55 @@ describe('daemon Session Account authority', () => {
     expect(admitted).toEqual([]);
   });
 
-  it('carries original requester Home authorization from the admitted Session into Account effects', async () => {
+  it('carries requester Home authorization with the locally resolved Session origin into Account effects', async () => {
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
     const target = { kind: 'machine' as const, machineId: 'alice-machine' };
+    const automationToken = `fixture.${Buffer.from(JSON.stringify({ sub: 'bob' })).toString('base64url')}.signature`;
     const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: operation.requestId, target, input: operation.input });
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
       data: { session: ownedSessionRecord() } });
-    const network = vi.spyOn(axios, 'post').mockImplementation(async (url, _body, config) => {
+    vi.spyOn(axios, 'request').mockImplementation(async ({ url }) => {
+      expect(url).toBe(`https://bob-home.test${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`);
+      return { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+    });
+    const network = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
       if (String(url).endsWith('/verify')) return { status: 200, data: { ok: true } };
       expect(config?.headers).toMatchObject({ Authorization: 'Bearer bob-session-token' });
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
       return { status: 200, data: { v: 1, token: 'bob-home-proof', binding: {
         accountId: 'bob', authentication: { kind: 'account', tokenEpoch: 4 }, serverIdentityId: 'bob-home',
         machineId: target.machineId, custodianAccountId: 'alice', installationId: 'alice-installation',
         actionId: operation.actionId, requestId: operation.requestId, target, accountEncryptionMode: 'plain',
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        sessionActionOrigin: { ...request.sessionActionOrigin, sourceTurnId: 'different-turn' },
+        sessionActionSource: { machineId: target.machineId, installationId: 'alice-installation' },
       } } };
     });
     let delivered = 0;
+    let deliveredOrigins: readonly (string | undefined)[] = [];
     const execute = createDaemonSessionAccountActionExecutor({ ...plainSessionAdmission('bob-session-token'),
       serverId: 'bob-profile', serverHttpBaseUrl: 'https://bob-home.test', token: 'bob-session-token',
-      ...{ prepareExternalActionAuthorization: async () => {
+      ...{ prepareExternalActionAuthorization: async ({ sessionActionOrigin }) => {
         const minted = await mintExternalActionExecutionAuthorization({ actionId: operation.actionId, envelope,
-          machineId: target.machineId, pat: 'bob-session-token', serverHttpBaseUrl: 'https://bob-home.test' });
+          machineId: target.machineId, pat: 'bob-session-token', serverHttpBaseUrl: 'https://bob-home.test', sessionActionOrigin,
+          sessionActionSource: { machineId: target.machineId, installationId: 'alice-installation' },
+          installationProof: signMachineInstallationProof({ privateKey: installation.secretKey, payload: {
+            version: 1, accountId: 'bob', machineId: target.machineId, installationId: 'alice-installation',
+            externalActionOrigin: { homeId: 'bob-home', actionId: operation.actionId,
+              requestId: operation.requestId, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+              origin: sessionActionOrigin },
+          } }) });
         if (!minted.ok) return null;
         const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: minted.authorization,
           serverId: 'bob-profile', serverIdentityId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test',
           target, installationId: 'alice-installation', privateKey: installation.secretKey });
-        return authorization ? { authorization, target } : null;
+        return authorization ? { authorization, target, verifyMachineAdmissionCurrent: async () => true } : null;
       } },
       createExecutor: () => createActionExecutor({
-        ...createCliActionDeps({ token: 'bob-session-token', sessionId: '', mode: 'plain', ctx: null }),
+        ...createCliActionDeps({ token: automationToken, serverHttpBaseUrl: 'https://bob-home.test', sessionId: '', mode: 'plain', ctx: null }),
         notificationsNotifyMe: async (_input, context) => {
+          deliveredOrigins = [context.sessionActionOrigin?.sourceTurnId,
+            context.externalActionExecutionAuthorization?.binding.sessionActionOrigin?.sourceTurnId];
           const headers = await context.externalActionExecutionAuthorization?.requesterHttpProjection?.createRequestHeaders({
             effectActionId: operation.actionId, method: 'POST', path: '/v1/projects/account-rows/list', body: {},
           });
@@ -1824,6 +1842,7 @@ describe('daemon Session Account authority', () => {
     expect(await execute(operation, { sessionId: 'bob-session', isCurrent: async () => true }))
       .toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
     expect(delivered).toBe(1);
+    expect(deliveredOrigins).toEqual([operation.witness.turnId, 'different-turn']);
     expect(network).toHaveBeenCalled();
   });
 

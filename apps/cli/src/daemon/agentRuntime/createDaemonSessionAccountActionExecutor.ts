@@ -478,7 +478,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
       ...(external?.verifyMachineAdmissionCurrent ? {
         verifyMachineAdmissionCurrent: external.verifyMachineAdmissionCurrent,
-        sessionActionOrigin: external.authorization.binding.sessionActionOrigin,
+        sessionActionOrigin,
       } : {}),
       ...(external?.originalActionEnvelope ? { originalActionEnvelope: external.originalActionEnvelope } : {}),
     };
