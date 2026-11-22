@@ -22,8 +22,8 @@ it.each([
     { width: 390, narrow: true },
 ])('keeps the shared terminal tab pointer-accessible at $width px beside trust, live link, and checkout path', async ({ width, narrow }) => {
     const terminal: SessionTerminalDescriptor = {
-        terminalId: 'borrowed-web', title: 'Web', mark: { kind: 'shell' }, status: 'running',
-        detail: null, borrowed: true, url: 'http://localhost:5173/',
+        terminalId: 'borrowed-web', title: 'Development checkout web service', mark: { kind: 'shell' }, status: 'running',
+        detail: null, borrowed: true, url: 'http://127.0.0.1:42051/',
         place: 'Read only · /home/happier/team-projects/development/accepted-workspace/worktrees/checkout-with-a-long-name',
     };
     const host = document.body.appendChild(document.createElement('div'));

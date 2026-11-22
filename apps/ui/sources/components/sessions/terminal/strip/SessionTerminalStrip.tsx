@@ -257,7 +257,8 @@ const stylesheet = StyleSheet.create((theme) => ({
         flexGrow: 1,
         flexShrink: 1,
         flexBasis: tabMinWidthPx,
-        minWidth: 0,
+        // Keep the shared tab's hit area inside its scroll viewport when adjacent controls compete for width.
+        minWidth: tabMinWidthPx,
         flexDirection: 'row',
         marginRight: 8,
     }),
