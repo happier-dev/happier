@@ -99,6 +99,9 @@ export function resolveMachineDestinationPurposeEligibility(
         return { eligible: true, managedWake };
     }
     if (purpose === 'finite' || purpose === 'service-start') {
+        // Another person's Machine is listed from what Home publishes (grant, presence) with no status
+        // read; the Move or Run's own admission decides at the point of effect.
+        if (shared) return { eligible: true };
         if (!facts?.worker) return { eligible: false, reason: 'worker_status_unavailable', ...(facts?.workerStatusFailed ? { statusFailed: true as const } : {}) };
         if (!facts.worker.eligible) {
             // A stale copy refusal must not offer setup on an offline destination.

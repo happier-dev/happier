@@ -83,7 +83,10 @@ export function useMachineDestinationWorkerStatus(params: Readonly<{
             if (state) wakes.set(managed.enrolledMachineId, state);
         }
     }
-    const candidates = new Map(machines.filter(machine => resolveMachinePickerPresence(machine, undefined, scope).selectable)
+    // A Machine the person doesn't own is never status-read in the background: its status route is
+    // custodian-only, and the Move or Run's own admission and review decide at the point of effect.
+    const candidates = new Map(machines.filter(machine => machine.isShared !== true
+        && resolveMachinePickerPresence(machine, undefined, scope).selectable)
         .map(machine => [machine.id, machine] as const));
     const candidateIds = [...candidates.keys()].sort();
     const candidateHints = new Map(candidateIds.map(id => {

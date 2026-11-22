@@ -572,6 +572,48 @@ describe('worker destination list demand', () => {
         await hook.unmount();
     });
 
+    // Board B ruling 2026-11-22 05:05Z: no background status read for a Machine the person doesn't own;
+    // the Move/Run's own admission and review decide at the point of effect.
+    it.each([
+        { purpose: 'finite', role: 'manage' }, { purpose: 'finite', role: 'use' },
+        { purpose: 'service-start', role: 'manage' }, { purpose: 'service-start', role: 'use' },
+    ] as const)('lists a $role-granted Machine the person does not own as selectable for $purpose with no status read', async ({ purpose, role }) => {
+        const owned = createMachineFixture({ id: 'own-worker', active: true, activeAt: Date.now() });
+        const shared = (id: string, online: boolean) => createMachineFixture({ id, active: online, activeAt: online ? Date.now() : 0,
+            isShared: true, access: { custodian: { accountId: 'ben', displayName: 'Ben' }, role, resourceMode: 'plain', accessState: 'ready' } } as Partial<Machine>);
+        const bens = shared('bens-worker', true);
+        const bensAway = shared('bens-away', false);
+        await seedAnsweredMachines([owned, bens, bensAway]);
+        rpc.machine.mockImplementation(async ({ machineId }: { machineId: string }) => ({
+            eligible: true, candidate: { serverId, machineId },
+            load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible',
+        } satisfies ProjectWorkerStatusResultV1));
+        const hook = await renderHook(() => useMachineSelectionListModel<Machine>({
+            purpose, workerPlacement: { workspace: { serverId, refId: 'checkout' } },
+            groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
+                machines: [owned, bens, bensAway].map(machine => ({ ...machine, serverId, serverName: 'Worker picker' })) }],
+            selectedMachine: null, selectedServerId: serverId, recentMachines: [], favoriteMachines: [],
+            onSelectMachine: () => {}, onSelectScopedMachine: () => {},
+            showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+        }));
+        const option = (id: string) => hook.getCurrent().rootStep.sections
+            .flatMap(section => section.kind === 'static' ? section.options : []).find(candidate => candidate.id.endsWith(id));
+        try {
+            // Owned rows keep their exact status read.
+            await waitForHomeGovernance(() => expect(option('own-worker')?.disabled).toBe(false));
+            await flushHookEffects({ cycles: 20 });
+            expect(rpc.machine.mock.calls.map(([call]) => call.machineId)).toEqual(['own-worker']);
+            // Another person's online Machine is listed from what Home publishes: selectable, no load claim, no "checking".
+            expect(option('bens-worker')?.disabled).toBe(false);
+            for (const key of ['projectWorkers.loading', 'projectWorkers.statusUnavailable', 'projectWorkers.free']) {
+                expect(option('bens-worker')?.subtitle).not.toContain(key);
+            }
+            // Offline stays offline: presence alone keeps it unselectable.
+            expect(option('bens-away')?.disabled).toBe(true);
+            expect(hook.getCurrent().offlineOnlyMachineIdsByServerId[serverId]).toEqual(['bens-away']);
+        } finally { await hook.unmount(); }
+    });
+
     it('rechecks the same exact candidate after its admitted metadata version changes, not a wrapper-only render', async () => {
         const machine = createMachineFixture({ id: 'worker', active: true, activeAt: Date.now(), metadataVersion: 1 });
         await seedAnsweredMachines([machine]);
