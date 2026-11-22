@@ -32,7 +32,8 @@ async function captureArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
                 mode: read.artifact.encryptionMode, bodyVersion: revision.bodyVersion, dataEncryptionKey: read.artifact.dataEncryptionKey,
                 provenanceDataEncryptionKey: read.artifact.provenanceDataEncryptionKey, content: revision.provenance }) : null;
         if (revision.provenance && (read.artifact.encryptionMode === 'plain' || read.artifact.provenanceDataEncryptionKey) && !provenance) return { ok: false as const, error: 'artifact_content_unavailable' as const };
-        projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt });
+        projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt,
+            sizeBytes: revision.body.byteLength + (revision.provenance?.byteLength ?? 0) });
     }
     return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
 }

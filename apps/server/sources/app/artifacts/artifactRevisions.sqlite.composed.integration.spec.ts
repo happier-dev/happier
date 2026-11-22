@@ -821,6 +821,38 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
         });
     });
 
+    it.each(['text', 'pdf'] as const)('lists retained %s bodies with their stored sizes and preserves missing-document refusals', async kind => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const content = Uint8Array.of(37, 80, 68, 70, 45, 49);
+            const blobId = crypto.randomUUID();
+            const initialBody = kind === 'text' ? body('first') : encodePlainArtifactStoredContent({ body: {
+                blobId, mime: 'application/pdf', sizeBytes: content.length,
+                sha256: createHash('sha256').update(content).digest('hex'),
+            } });
+            const created = await app.inject({ method: 'POST',
+                url: kind === 'text' ? '/v1/artifacts' : '/v1/artifacts/content/binary', headers: headers(owner.id), payload: {
+                    id, header: encodePlainArtifactStoredContent({ title: 'Revision inventory' }), body: initialBody,
+                    dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+                    ...(kind === 'pdf' ? { blob: { blobId, content: { t: 'plain', v: privacyKit.encodeBase64(content) } } } : {}),
+                } });
+            expect(created.statusCode, created.body).toBe(200);
+            expect((await app.inject({ method: 'POST', url: kind === 'text' ? `/v1/artifacts/${id}` : `/v1/artifacts/${id}/content/binary`, headers: headers(owner.id),
+                payload: { body: body('second'), expectedBodyVersion: 1, ...(kind === 'pdf' ? { blob: null } : {}) } })).statusCode).toBe(200);
+            expect((await app.inject({ url: `/v1/artifacts/${id}`, headers: headers(owner.id) })).statusCode).toBe(200);
+            const stored = await db.artifactRevision.findUniqueOrThrow({ where: { artifactId_bodyVersion: { artifactId: id, bodyVersion: 1 } } });
+            const list = await app.inject({ url: `/v1/artifacts/${id}/revisions`, headers: headers(owner.id) });
+            expect(list.statusCode, list.body).toBe(200);
+            expect(list.json().revisions).toEqual([expect.objectContaining({ bodyVersion: 1, body: initialBody,
+                sizeBytes: stored.body.byteLength + (stored.provenance?.byteLength ?? 0) })]);
+            expect((await app.inject({ url: `/v1/artifacts/${id}/revisions`, headers: headers(stranger.id) })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'DELETE', url: `/v1/artifacts/${id}`, headers: headers(owner.id) })).statusCode).toBe(200);
+            expect((await app.inject({ url: `/v1/artifacts/${id}/revisions`, headers: headers(owner.id) })).statusCode).toBe(404);
+        });
+    });
+
     it("retains ten prior stored bodies, rejects stale restores, and restores through the normal update", async () => {
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const stranger = await db.account.create({ data: { encryptionMode: "plain" } });
