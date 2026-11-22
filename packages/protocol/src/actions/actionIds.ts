@@ -253,6 +253,7 @@ import { PUBLIC_PROFILE_ACTION_IDS_V1 } from '../account/publicProfileActionIds.
 import { AUTOMATION_OCCURRENCE_ACTION_IDS } from '../automations/occurrenceActionIds.js';
 
 export const WORKFLOW_RUN_START_ACTION_ID_V1 = 'workflow.run.start';
+export const WORKFLOW_RUN_GET_ACTION_ID_V1 = 'workflow.run.get';
 export const WORKFLOW_RUN_RESUME_ACTION_ID_V1 = 'workflow.run.resume';
 export const WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1 = 'workflow.run.invocations.retry';
 export const EXTERNAL_SESSION_STATUS_GET_ACTION_ID = 'sessions.external.status.get';
@@ -267,7 +268,7 @@ export const WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1 = 'workflow.subjects.list';
 export const WORKFLOW_VALIDATE_ACTION_ID_V1 = 'workflow.validate' as const;
 export const WORKFLOW_ACTION_IDS_V1 = [
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1,
-  WORKFLOW_VALIDATE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  WORKFLOW_VALIDATE_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', WORKFLOW_RUN_GET_ACTION_ID_V1, 'workflow.run.wait',
   'workflow.run.read_state.set',
   'workflow.run.pause', WORKFLOW_RUN_RESUME_ACTION_ID_V1, 'workflow.run.cancel', 'workflow.run.invocations.list',
   'workflow.run.invocations.get', WORKFLOW_RUN_INVOCATIONS_RETRY_ACTION_ID_V1, 'workflow.run.delete',
@@ -286,7 +287,7 @@ export const WORKFLOW_DANGER_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new S
   'workflow.trigger.run_now',
 ]);
 export const WORKFLOW_READ_ACTION_IDS: ReadonlySet<WorkflowActionIdV1> = new Set([
-  'workflow.validate', WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', 'workflow.run.get', 'workflow.run.wait',
+  'workflow.validate', WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1, 'workflow.run.list', 'workflow.run.summaries', WORKFLOW_RUN_GET_ACTION_ID_V1, 'workflow.run.wait',
   'workflow.run.invocations.list', 'workflow.run.invocations.get',
   'workflow.definition.list', 'workflow.definition.get', 'workflow.definition.import', 'workflow.definition.export', 'workflow.definition.capture',
   WORKFLOW_SUBJECTS_LIST_ACTION_ID_V1, 'workflow.trigger.list',

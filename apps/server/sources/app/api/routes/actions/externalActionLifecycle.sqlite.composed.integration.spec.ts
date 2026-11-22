@@ -81,7 +81,7 @@ describe('installed Session signed lifecycle scope', () => {
                 sourceTurnId: 'turn', callerPermissionMode: null, requestId },
                 sessionActionSource: { machineId: machine.id, installationId: machine.installationId! } } : {}),
         }, { resolveCurrentSessionMachine }));
-        const verifyRequest = async (method: string, path: string, body?: unknown, sessionId?: string, effectActionId = actionId, sessionRouteActionId?: 'session.transcript.get') => {
+        const verifyRequest = async (method: string, path: string, body?: unknown, sessionId?: string, effectActionId: string = actionId, sessionRouteActionId?: 'session.transcript.get') => {
             return verifyExternalActionDomainExecutionRequest({ authorizationToken: authorization.token,
                 effectActionId, encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
                 method, path, body, ...(sessionId ? { sessionRouteTarget: { kind: 'session' as const, sessionId, ...(sessionRouteActionId ? { actionId: sessionRouteActionId } : {}) } } : {}), resolveCurrentSessionMachine,
@@ -228,8 +228,12 @@ describe('installed Session signed lifecycle scope', () => {
             actionId === 'review.start' ? 'review.new_round' : 'review.start')).toBeNull();
     });
 
-    it('admits the real Review child Workflow storage adapter under its original Session proof', async () => {
-        const f = await fixture('review.start', false, true);
+    it.each([
+        { rootAction: 'review.start', childAction: 'workflow.run.start', sessionTarget: true },
+        { rootAction: 'review.new_round', childAction: 'workflow.run.get', sessionTarget: false },
+        { rootAction: 'review.new_round', childAction: 'workflow.run.start', sessionTarget: false },
+    ] as const)('admits $rootAction child $childAction through the real Workflow storage adapter', async ({ rootAction, childAction, sessionTarget }) => {
+        const f = await fixture(rootAction, false, sessionTarget);
         // Replace HTTP and the local installation lookup; retain storage, signing and server admission.
         const post = vi.spyOn(axios, 'post').mockResolvedValue({ data: null });
         const installation = vi.spyOn(currentMachineInstallation, 'readCurrentMachineInstallation').mockResolvedValue(null);
@@ -242,11 +246,13 @@ describe('installed Session signed lifecycle scope', () => {
                     if (!resolved.ok) throw new Error(resolved.reason);
                     return resolved.headers;
                 }, value => typeof value === 'string' && value.trim() ? value.trim() : null);
-            const execute = async (sessionId: string) => {
+            const execute = async (targetId: string) => {
+                const target = sessionTarget ? { kind: 'session' as const, sessionId: targetId }
+                    : { kind: 'machine' as const, machineId: targetId };
                 // workflowFamily passes the actual child Action and unchanged context to this factory.
-                await storage.createWorkflowRunStorage({ actionId: 'workflow.run.start', context: {
+                await storage.createWorkflowRunStorage({ actionId: childAction, context: {
                     surface: 'ui', authority: 'present_user', externalActionExecutionAuthorization: f.authorization,
-                    externalActionTarget: { kind: 'session', sessionId },
+                    externalActionTarget: target,
                 } }).execute({ operation: 'get', runId: crypto.randomUUID() }, { publisherMachineId: f.machine.id });
                 const call = post.mock.calls.at(-1)!;
                 const header = (name: string) => {
@@ -254,8 +260,8 @@ describe('installed Session signed lifecycle scope', () => {
                     if (typeof value !== 'string') throw new Error(`Missing signed header ${name}`);
                     return value;
                 };
-                expect(header(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBe('workflow.run.start');
-                expect(header(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER)).toBe(encodeExternalActionResolvedTargetV1({ kind: 'session', sessionId }));
+                expect(header(EXTERNAL_ACTION_EFFECT_ACTION_HEADER)).toBe(childAction);
+                expect(header(EXTERNAL_ACTION_RESOLVED_TARGET_HEADER)).toBe(encodeExternalActionResolvedTargetV1(target));
                 const refusals: string[] = [];
                 const verified = await verifyExternalActionDomainExecutionRequest({
                     authorizationToken: header(EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER),
@@ -266,11 +272,14 @@ describe('installed Session signed lifecycle scope', () => {
                     resolveCurrentSessionMachine: async () => f.machine.id,
                     onRefusal: phase => refusals.push(phase),
                 });
-                expect(refusals).toEqual(sessionId === f.root.id ? [] : ['resolved_target']);
+                expect(refusals).toEqual(targetId === (sessionTarget ? f.root.id : f.machine.id) ? [] : ['resolved_target']);
                 return verified;
             };
-            expect.soft(await execute(f.root.id)).not.toBeNull();
+            expect.soft(await execute(sessionTarget ? f.root.id : f.machine.id)).not.toBeNull();
             expect(await execute(f.otherRoot.id)).toBeNull();
+            expect(await f.verifyRequest('POST', '/v3/automations/runs/workflow-storage',
+                { operation: 'cancel', runId: crypto.randomUUID(), publisherMachineId: f.machine.id, expectedRevision: 1 },
+                undefined, 'workflow.run.cancel')).toBeNull();
         } finally { post.mockRestore(); installation.mockRestore(); }
     });
 
