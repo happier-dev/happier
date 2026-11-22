@@ -4,7 +4,6 @@ import { View } from 'react-native';
 import type { HappierUiTheme } from '../../../environment/types.js';
 import { useOptionalHappierUiTypography } from '../../../environment/context.js';
 import { HAPPIER_SPACE_STEPS } from '../../../environment/spacing.js';
-import { HappierBadge } from '../../content/Foundation.js';
 import { HappierDataRows } from '../../data/DataRows.js';
 import { HAPPIER_DATA_METRICS } from '../../data/dataText.js';
 import { HappierDataMetric, type HappierDataMetricProps } from '../../data/Metric.js';
@@ -78,7 +77,7 @@ function SummaryFigure(props: Readonly<{ metric: UsageSummaryMetric; children: R
 }
 
 export type UsageFootprintLabels = Readonly<{
-  title: string; reason: string; noEstimate: string; accounted: string; tokensUnit: string;
+  title: string; reason: string; accounted: string; tokensUnit: string;
   proxy: string; proxyDetail: string; methodTitle: string; methodBody: string;
 }>;
 export type UsageFootprintBodyProps = Readonly<{
@@ -88,11 +87,9 @@ export type UsageFootprintBodyProps = Readonly<{
   accountedTokens?: string;
   /** Admitted precision belongs to the figure, never its surrounding method or coverage controls. */
   accountedTokensDatum?: HappierChartDatum;
-  badgeColor?: string;
-  badgeBackgroundColor?: string;
   textStyles?: Readonly<{ title?: HappierStyleProp; reason?: HappierStyleProp; methodTitle?: HappierStyleProp }>;
-  /** Host density projection for the heading row and tightly grouped copy. */
-  spacing?: Readonly<{ head: number; detail: number }>;
+  /** Host density projection for tightly grouped copy. */
+  spacing?: Readonly<{ detail: number }>;
   coverage?: ReactNode;
   testID?: string;
 }>;
@@ -102,25 +99,25 @@ export function UsageFootprintBody(props: UsageFootprintBodyProps) {
   const labels = props.labels;
   const typography = useOptionalHappierUiTypography();
   const reasonStyle = props.textStyles?.reason ?? { ...resolveHappierTypeRoleStyle('body', props.theme, typography), color: props.theme.colors.secondaryText };
-  const accounted = props.accountedTokens === undefined ? null : <HappierDataMetric theme={props.theme}
-    testID={props.testID ? `${props.testID}.tokens` : undefined} label={labels.accounted} value={props.accountedTokens} unit={labels.tokensUnit}
-    comparison={{ value: labels.proxy, label: labels.proxyDetail, meaning: 'neutral' }} />;
+  // What was accounted is a caption-size fact with its note: set as the large figure, an energy widget's token count
+  // read as the footprint itself (acceptance 11-22 #26). The title says there is no estimate; no chip repeats it.
+  const metaStyle = { ...resolveHappierTypeRoleStyle('meta', props.theme, typography), color: props.theme.colors.secondaryText };
+  const fact = props.accountedTokens === undefined ? null : <HappierText style={metaStyle} testID={props.testID ? `${props.testID}.tokens` : undefined}>
+    {`${labels.accounted} · ${props.accountedTokens} ${labels.tokensUnit}`}
+  </HappierText>;
+  const accounted = fact === null ? null : <View style={{ gap: HAPPIER_SPACE_STEPS.s2 }}>
+    {props.accountedTokensDatum ? <ChartDatum datum={props.accountedTokensDatum}
+      testID={props.testID ? `${props.testID}.tokens.detail` : undefined}>{fact}</ChartDatum> : fact}
+    <HappierText style={{ ...metaStyle, color: props.theme.colors.mutedText }}>{`${labels.proxy} · ${labels.proxyDetail}`}</HappierText>
+  </View>;
   return <View style={{ gap: 18, minWidth: 0 }} testID={props.testID ? `${props.testID}.footprint` : undefined}>
-    <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: props.spacing?.head ?? HAPPIER_SPACE_STEPS.s12 }}>
-      <View style={{ flex: 1, minWidth: 0, gap: props.spacing?.detail ?? HAPPIER_SPACE_STEPS.s4 }}>
-        <HappierText style={props.textStyles?.title ?? { ...resolveHappierTypeRoleStyle('heading', props.theme, typography), color: props.theme.colors.text }} testID={props.testID ? `${props.testID}.status` : undefined}>
-          {labels.title}
-        </HappierText>
-        <HappierText style={reasonStyle}>{labels.reason}</HappierText>
-      </View>
-      <HappierBadge color={props.badgeColor ?? props.theme.colors.secondaryText} backgroundColor={props.badgeBackgroundColor ?? props.theme.colors.control}>
-        <HappierText style={{ ...resolveHappierTypeRoleStyle('micro', props.theme, typography), color: props.badgeColor ?? props.theme.colors.secondaryText }}>
-          {labels.noEstimate}
-        </HappierText>
-      </HappierBadge>
+    <View style={{ gap: props.spacing?.detail ?? HAPPIER_SPACE_STEPS.s4 }}>
+      <HappierText style={props.textStyles?.title ?? { ...resolveHappierTypeRoleStyle('heading', props.theme, typography), color: props.theme.colors.text }} testID={props.testID ? `${props.testID}.status` : undefined}>
+        {labels.title}
+      </HappierText>
+      <HappierText style={reasonStyle}>{labels.reason}</HappierText>
     </View>
-    {accounted && props.accountedTokensDatum ? <ChartDatum datum={props.accountedTokensDatum}
-      testID={props.testID ? `${props.testID}.tokens.detail` : undefined}>{accounted}</ChartDatum> : accounted}
+    {accounted}
     <View style={{ gap: props.spacing?.detail ?? HAPPIER_SPACE_STEPS.s4 }}>
       <HappierText style={props.textStyles?.methodTitle ?? { ...resolveHappierTypeRoleStyle('body', props.theme, typography, 'semiBold'), color: props.theme.colors.text }}>{labels.methodTitle}</HappierText>
       <HappierText style={reasonStyle}>{labels.methodBody}</HappierText>

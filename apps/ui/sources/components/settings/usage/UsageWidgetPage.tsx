@@ -646,7 +646,8 @@ function UsagePageHeader(
   const { retry, history, layouts, phone } = props;
   // A phone's header line cannot hold the partial or read-failure sentence: it says "Partial" and opens the sentence
   // on demand, never an ellipsis mid-word (USAGE-ACCEPT 1113 #16, 1118 #9). A failure keeps its Retry at the line end.
-  const [noticeOpen, setNoticeOpen] = React.useState(false);
+  // Which notice is open, by its identity: a new notice (Views Retry turning into the ownership refusal) opens closed.
+  const [openNotice, setOpenNotice] = React.useState<string | null>(null);
   const sessionTitle = useSessionDisplayTitles(React.useMemo(() => props.sessionId ? [{ sessionId: props.sessionId }] : [], [props.sessionId]))[0] ?? null;
   const { observedAtMs, olderReadAtMs, olderSource, machines, agents } = props.facts;
   const openNewSession = useOpenNewSession();
@@ -670,9 +671,12 @@ function UsagePageHeader(
       retry, history, layouts, startSession);
     if (!resolved && olderReadAtMs === null && !olderSource) return null;
     const testID = resolved?.testID ?? 'usage-page.header.freshness';
-    const shortened = phone && resolved?.short ? resolved.short : null;
+    // The short word stands in only when the sentence is longer; Details is offered only when opening adds text.
+    const shortened = phone && resolved?.short && resolved.short !== resolved.reason ? resolved.short : null;
+    const noticeKey = `${testID}:${resolved?.reason ?? ''}`;
+    const noticeOpen = openNotice === noticeKey;
     const detail = shortened || olderReadAtMs !== null || olderSource ? { label: noticeOpen ? t('usage.showLess') : t('common.details'), testID: `${testID}.detail`,
-      onPress: () => setNoticeOpen(open => !open) } : null;
+      onPress: () => setOpenNotice(open => open === noticeKey ? null : noticeKey) } : null;
     const expanded = detail !== null && noticeOpen;
     const reason = [
       shortened && !expanded ? shortened : resolved?.reason ?? counts.map(count => count.text).join(' · '),
@@ -701,7 +705,7 @@ function UsagePageHeader(
         </View>
       </SurfaceFreshnessOnSheetProvider>
     );
-  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, noticeOpen, olderReadAtMs, olderSource, counts]);
+  }, [props.facts, props.homeUnavailable, props.appsShown, retry, history, layouts, startSession, phone, openNotice, olderReadAtMs, olderSource, counts]);
   const facts = React.useMemo((): PageHeaderMetaFact[] => [
     ...(observedAtMs !== null
       ? [{ key: 'asOf', icon: 'clock' as const, text: t('usage.board.page.asOf', { time: formatUsageObservedAt(observedAtMs) }) }]

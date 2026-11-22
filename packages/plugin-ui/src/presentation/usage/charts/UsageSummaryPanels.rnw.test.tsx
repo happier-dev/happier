@@ -7,7 +7,7 @@ import { ChartInteractionProvider } from '../../data/ChartDatum.js';
 
 describe('shared Usage summary panels', () => {
   it('keeps footprint retry and method outside its admitted token target, and removes the datum with the tokens', async () => {
-    const labels = { title: 'Insufficient basis', reason: 'No applicable method', noEstimate: 'No estimate',
+    const labels = { title: 'Insufficient basis', reason: 'No applicable method',
       accounted: 'Accounted', tokensUnit: 'tokens', proxy: 'Proxy', proxyDetail: 'Not measured energy',
       methodTitle: 'Method', methodBody: 'Requires serving evidence' };
     const render = (accountedTokens?: string) => <ChartInteractionProvider renderDatum={(datum, visual, testID) =>
@@ -24,6 +24,9 @@ describe('shared Usage summary panels', () => {
       expect(datum?.textContent).not.toContain('Requires serving evidence');
       expect(datum?.querySelector('button')).toBeNull();
       expect(mount.container.querySelector('[data-testid="retry"]')).toBeTruthy();
+      // The proxy is a caption-size fact with its note, never the energy widget's large figure; no chip repeats the title.
+      expect(mount.container.querySelector('[data-testid="footprint.tokens"]')?.textContent).toBe('Accounted · 4.2M tokens');
+      expect(mount.container.textContent).toContain('Proxy · Not measured energy');
       await mount.render(render());
       expect(mount.container.querySelector('[data-testid="footprint.tokens.detail"]')).toBeNull();
       expect(mount.container.textContent).not.toContain('4,186,010');
@@ -62,7 +65,7 @@ describe('shared Usage summary panels', () => {
 
   it('removes accounted tokens when disclosure narrows while keeping the footprint method visible', async () => {
     const labels = {
-      title: 'Insufficient basis', reason: 'No applicable method', noEstimate: 'No estimate',
+      title: 'Insufficient basis', reason: 'No applicable method',
       accounted: 'Accounted', tokensUnit: 'tokens', proxy: 'Proxy', proxyDetail: 'Not measured energy',
       methodTitle: 'Method', methodBody: 'Requires serving evidence',
     };
@@ -71,7 +74,6 @@ describe('shared Usage summary panels', () => {
       expect(mount.container.textContent).toContain('720K tokens');
       await mount.render(<UsageFootprintBody theme={theme} labels={labels} />);
       expect(mount.container.textContent).toContain('Insufficient basis');
-      expect(mount.container.textContent).toContain('No estimate');
       expect(mount.container.textContent).toContain('Requires serving evidence');
       expect(mount.container.textContent).not.toContain('Accounted');
       expect(mount.container.textContent).not.toContain('tokens');

@@ -5061,7 +5061,7 @@ const enConnectedServices = {
     quotaRefreshMintFailed: "The provider could not mint a usage credential.",
     quotaRefreshRateLimited: "Usage refresh is rate limited.",
     quotaRefreshFailed: 'Couldn’t refresh usage.',
-    quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `Couldn't verify ownership for ${accounts}.` : 'Couldn’t verify account ownership.',
+    quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `Couldn't confirm ownership of ${accounts}, so their limits and switching order are held back.` : 'Couldn’t confirm account ownership, so limits and the switching order are held back.',
     quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} Try again after ${time}.`,
     requestFailedWithStatus: ({ status }: { status: number }) =>
       `The connected-service request failed (${status}). Refresh and try again.`,

@@ -126,7 +126,6 @@ const originalLabels: PublicUsageOriginalLabels = {
   footprint: {
     title: 'Insufficient basis',
     reason: 'No applicable method',
-    noEstimate: 'No estimate',
     accounted: 'Accounted',
     tokensUnit: 'tokens',
     proxy: 'Proxy',
@@ -371,7 +370,7 @@ describe('HappierPublicProfile', () => {
   it.each([
     ['usage_daily', {}, 'Activity level'],
     ['usage_period_summary', {}, 'Active days'],
-    ['usage_footprint', {}, 'No estimate'],
+    ['usage_footprint', {}, 'Insufficient basis'],
     ['usage_source_coverage', {}, 'partial'],
     ['usage_rhythm', { style: 'heatmap' }, 'Activity level'],
     ['usage_rhythm', { style: 'weekdayHour' }, 'Activity level'],

@@ -38,7 +38,7 @@ export function usagePublicOriginalLabels(query: Pick<UsageQuery, 'timeZoneOffse
           : method === 'unknown' ? t('usage.board.sources.coverageUnknown') : t('usage.widgets.usage_sources'),
     },
     footprint: { title: t('usage.board.howYouWork.footprintInsufficientTitle'), reason: t('usage.board.howYouWork.footprintInsufficientReason'),
-      noEstimate: t('usage.board.howYouWork.footprintNoEstimate'), accounted: t('usage.board.howYouWork.footprintAccounted'), tokensUnit: t('usage.tokens').toLocaleLowerCase(),
+      accounted: t('usage.board.howYouWork.footprintAccounted'), tokensUnit: t('usage.tokens').toLocaleLowerCase(),
       proxy: t('usage.board.howYouWork.footprintProxy'), proxyDetail: t('usage.board.howYouWork.footprintProxyDetail'),
       methodTitle: t('usage.board.howYouWork.footprintMethodTitle'), methodBody: t('usage.board.howYouWork.footprintMethodBody') },
     period,

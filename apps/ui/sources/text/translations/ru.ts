@@ -4594,7 +4594,7 @@ export const ru: TranslationStructure = {
       quotaRefreshMintFailed: "Провайдер не смог создать учётные данные для чтения использования.",
       quotaRefreshRateLimited: "Частота обновления данных ограничена.",
       quotaRefreshFailed: 'Не удалось обновить данные об использовании.',
-      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `Не удалось подтвердить, кому принадлежит ${accounts}.` : 'Не удалось подтвердить, кому принадлежит аккаунт.',
+      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `Не удалось подтвердить, кому принадлежит ${accounts}, поэтому лимиты и порядок переключения не показаны.` : 'Не удалось подтвердить, кому принадлежит аккаунт, поэтому лимиты и порядок переключения не показаны.',
       quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} Повторите попытку после ${time}.`,
       requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',

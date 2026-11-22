@@ -321,9 +321,10 @@ export function HappierFreshnessLine(props: Readonly<{
         </>
       ) : (
         <>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: metrics.gapPx, flexGrow: 1, flexShrink: 1, minWidth: 0,
+          {/* The glyph sits on the first line of the words, never centred on a block that stacked to several lines. */}
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: metrics.gapPx, flexGrow: 1, flexShrink: 1, minWidth: 0,
             flexBasis: props.action ? LINE_TEXT_BASIS_PX : 'auto' }}>
-            {props.icon}
+            <View style={{ height: metrics.text.lineHeight, justifyContent: 'center' }}>{props.icon}</View>
             <View style={{ flex: 1, minWidth: 0 }}>{props.children}</View>
           </View>
           {props.action ? <View style={{ flexShrink: 0, marginLeft: 'auto' }}>{props.action}</View> : null}

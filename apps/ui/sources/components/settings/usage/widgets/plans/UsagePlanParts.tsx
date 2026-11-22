@@ -97,8 +97,11 @@ export function readPlanAccountsStatement(
       : affected.length === accounts.length && accounts.length > 1
       ? usageSourceTitle('quota')
       : affected.map((entry) => nameOf(entry.account).title).join(', ');
-    reasons.push(kind === 'partial' ? usagePartialHistoryLabel()
-      : t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
+    // An older reading is said by its time (the line's "As of"), not as partial history: only an account with no
+    // current reading makes the history partial (acceptance 11-22 #24).
+    const partialHistory = affected.some((entry) => !entry.account.read?.current);
+    if (kind !== 'partial') reasons.push(t(kind === 'failed' ? 'usage.board.page.coverageFailed' : 'usage.board.page.coveragePending', { sources }));
+    else if (partialHistory) reasons.push(usagePartialHistoryLabel());
   }
   const times = affected
     .map((entry) => entry.account.read?.current ? entry.account.state.asOfMs ?? entry.account.observedAtMs : null)
@@ -123,9 +126,12 @@ export function planAccountStatesMode(
   pageHasDetail: boolean,
   replacesContent: boolean,
   sources: readonly UsageQuerySourceState[],
-): 'line' | 'reading' | 'hidden' {
+): 'line' | 'reading' | 'reason' | 'hidden' {
   if (!pageHasDetail || usageCoverageLineMode(sources, pageHasDetail) !== 'hidden') return 'line';
-  return kind === 'pending' && replacesContent ? 'reading' : 'hidden';
+  if (!replacesContent) return 'hidden';
+  // Nothing else in the body: a pending read holds its room, and a settled failure still says why in one line (the
+  // header's reason, its Retry staying in the header), never a title over nothing (acceptance 11-22 #21).
+  return kind === 'pending' ? 'reading' : kind === 'failed' ? 'reason' : 'hidden';
 }
 
 /**
@@ -180,6 +186,7 @@ export function UsagePlanAccountStates(props: Readonly<{
     return <UsageCoverageLine slice={props.slice} sources={['quota']} onRetry={props.onRetry} testID={`${props.testID}.coverage`} />;
   }
   if (mode === 'reading') return <UsageBodyReading testID={`${props.testID}.loading`} />;
+  if (mode === 'reason') return <UsageBodyInsufficient testID={`${props.testID}.reason`} title={statement.reason} />;
   if (mode === 'hidden') return null;
   const pending = statement.kind === 'pending';
   return <SurfaceFreshnessLine testID={props.testID} asOf={statement.asOf} reason={statement.reason} busy={pending}

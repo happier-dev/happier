@@ -413,10 +413,10 @@ describe('one selected money basis across Usage bodies', () => {
       howYouWork: [{ query: props.query, asOfMs: day, detail: { status: 'available', facts: [] } }],
     }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageFootprintWidget {...props} slice={slice} id="usage_footprint" testID="footprint" />);
-    const metric = screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'footprint.tokens');
-    expect(metric?.props.value).toBe(formatTokenCount(slice.accounting!.totals.tokens.total));
-    expect(metric?.props.comparison.value).toBe(t('usage.board.howYouWork.footprintProxy'));
-    expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.footprintNoEstimate'));
+    // A caption-size fact with its proxy note, never the widget's large figure (acceptance 11-22 #26).
+    expect(screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'footprint.tokens')).toBeUndefined();
+    expect(screen.getTextContent()).toContain(formatTokenCount(slice.accounting!.totals.tokens.total));
+    expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.footprintProxyDetail'));
     const datum = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'footprint.tokens.detail');
     expect(datum?.props.datum.value).toContain('4,186,010');
     expect(datum?.findAllByType(UsageCoverageLine)).toHaveLength(0);

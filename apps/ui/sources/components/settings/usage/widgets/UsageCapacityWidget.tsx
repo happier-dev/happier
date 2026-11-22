@@ -7,6 +7,7 @@ import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreferenc
 import { useWidgetFrameBodyCaption, useWidgetFrameBodyMeta } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { useUsageOpenView } from '../usageDrill';
+import { useUsageWidgetPageHasCoverageDetail } from './usageWidgetBatch';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { Text } from '@/components/ui/text/Text';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -44,6 +45,8 @@ import {
   isUsagePlanAccountDrawn,
   isUsagePlanAccountSettledUnread,
   readPendingPlanAccountCount,
+  readPlanAccountsStatement,
+  planAccountStatesMode,
   usePlanText,
   UsagePlanDisclosure,
 } from './plans/UsagePlanParts';
@@ -284,7 +287,13 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // One cause is said once: when every drawn account's reading is old, "last read" joins the headline's line (the
   // oldest reading) instead of repeating under each segment or cell (acceptance 11-18 #15).
   const everyStale = drawn.length > 1 && drawn.every((account) => account.stale && account.observedAtMs !== null);
-  const oldestReadMs = everyStale ? Math.min(...drawn.map((account) => account.observedAtMs!)) : null;
+  // The read time is said once: by the read-state line under the body when that line shows (Home: "As of 3:09 AM ·
+  // Retry"), else in the headline (acceptance 11-22 #24). The line's own owner decides whether it shows.
+  const pageHasDetail = useUsageWidgetPageHasCoverageDetail();
+  const accountsStatement = readPlanAccountsStatement(projection.accounts, nameOf);
+  const timeInStateLine = accountsStatement?.asOf != null && planAccountStatesMode(accountsStatement.kind, pageHasDetail,
+    drawn.length === 0, projection.accounts.map((account) => account.state)) === 'line';
+  const oldestReadMs = everyStale && !timeInStateLine ? Math.min(...drawn.map((account) => account.observedAtMs!)) : null;
   // Until the first allowance answers there is no tightest to name, but the headline's room is held: the
   // figure it will be and one quiet line ("Reading 5 accounts…"), so its arrival moves nothing below it.
   const pendingAccounts = readPendingPlanAccountCount(projection.accounts);
@@ -491,6 +500,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         onRetry={props.model.refresh}
         testID={`${props.testID}.state`}
         pendingInHeadline={reading || provisionalReading}
+        replacesContent={drawn.length === 0}
       />
     </View>
   );
@@ -742,9 +752,11 @@ const styles = StyleSheet.create((theme) => ({
   body: { gap: 18 },
   hero: { gap: theme.space.s2 },
   nextMeter: { alignSelf: 'stretch' },
+  // The words beside the figure sit on its last line, as a baseline would: the figure is wrapped (its exact-value
+  // datum), so a row baseline resolved to the wrapper's top and floated the caption (acceptance 11-22 #24).
   heroLine: {
     flexDirection: 'row',
-    alignItems: 'baseline',
+    alignItems: 'flex-end',
     flexWrap: 'wrap',
     columnGap: theme.space.s10,
   },

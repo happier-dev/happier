@@ -2915,7 +2915,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             quotaRefreshMintFailed: "供應商無法產生使用情況憑證。",
             quotaRefreshRateLimited: "使用情況重新整理頻率已受限。",
             quotaRefreshFailed: '無法重新整理使用情況。',
-            quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `無法驗證 ${accounts} 的歸屬。` : '無法驗證帳號歸屬。',
+            quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `無法驗證 ${accounts} 的歸屬，因此暫不顯示限額和切換順序。` : '無法驗證帳號歸屬，因此暫不顯示限額和切換順序。',
             quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} 請在 ${time} 之後重試。`,
             requestFailedWithStatus: ({ status }: { status: number }) => `The connected-service request failed (${status}). Refresh and try again.`,
             generic: '連線服務動作失敗。請重新整理後再試。',

@@ -39,13 +39,11 @@ export function UsageFootprintWidget(props: UsageBodyProps) {
     <UsageFootprintBody theme={chartTheme} testID={props.testID} accountedTokens={accountedTokens}
       accountedTokensDatum={exact === null || accountedTokens.includes(exact) ? undefined : { label: t('usage.board.howYouWork.footprintAccounted'),
         value: `${exact} ${t('usage.tokens').toLocaleLowerCase()}`, subtitle: t('usage.board.howYouWork.footprintProxyDetail') }}
-      spacing={{ head: theme.space.s12, detail: theme.space.s4 }}
-      badgeColor={theme.colors.text.secondary} badgeBackgroundColor={theme.colors.surface.inset}
+      spacing={{ detail: theme.space.s4 }}
       textStyles={{ title: styles.title, reason: styles.reason, methodTitle: styles.methodTitle }}
       labels={{
         title: t('usage.board.howYouWork.footprintInsufficientTitle'),
         reason: t('usage.board.howYouWork.footprintInsufficientReason'),
-        noEstimate: t('usage.board.howYouWork.footprintNoEstimate'),
         accounted: t('usage.board.howYouWork.footprintAccounted'),
         tokensUnit: t('usage.tokens').toLocaleLowerCase(),
         proxy: t('usage.board.howYouWork.footprintProxy'),

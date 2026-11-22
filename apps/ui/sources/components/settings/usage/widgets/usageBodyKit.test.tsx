@@ -42,10 +42,11 @@ describe('the page failure fact', () => {
     const both = [{ sources: [{ source: 'work', status: 'error' }, { source: 'how_you_work', status: 'partial' }] }] as never;
     expect(readUsagePageFailure(both)?.quiet).toBe(true);
   });
-  it('states a quota ownership refusal once and only offers Retry for an independently recoverable failure', () => {
+  it('states a quota ownership refusal once and offers the page Retry for it (an explicit reread)', () => {
     const refusal = { source: 'quota:work', status: 'error', errorCode: 'ownership_unproven' } as const;
     const reason = t('connectedServices.errors.quotaOwnershipUnproven', {});
-    expect(readUsagePageFailure([{ sources: [refusal] }, { sources: [refusal] }])).toMatchObject({ reason, retryable: false });
+    // What it holds back is said and the one Retry is offered (acceptance 11-22 #20).
+    expect(readUsagePageFailure([{ sources: [refusal] }, { sources: [refusal] }])).toMatchObject({ reason, retryable: true });
     const quota = { source: 'quota:other', status: 'stale', errorCode: 'provider_account_usage_read_failed', asOfMs: 100 } as const;
     const failure = readUsagePageFailure([{ sources: [quota, refusal] }]);
     expect(failure).toMatchObject({ retryable: true, retainedQuotaAsOfMs: 100 });
@@ -648,9 +649,14 @@ describe('shared Usage identity and dependent coverage', () => {
     it('keeps the date of historical coverage instead of presenting an old observation as today', () => {
         const timestamp = new Date(2024, 3, 22, 9, 15).getTime();
         const now = new Date(2024, 3, 23, 9, 15).getTime();
+        // The current year goes unsaid; another year's date carries it (acceptance 11-22 #27).
         expect(formatUsageObservedAt(timestamp, now, 'en')).toBe(new Intl.DateTimeFormat('en', {
-            hour: 'numeric', minute: '2-digit', year: 'numeric', month: 'short', day: 'numeric',
+            hour: 'numeric', minute: '2-digit', month: 'short', day: 'numeric',
         }).format(timestamp));
+        const lastYear = new Date(2023, 11, 30, 9, 15).getTime();
+        expect(formatUsageObservedAt(lastYear, now, 'en')).toBe(new Intl.DateTimeFormat('en', {
+            hour: 'numeric', minute: '2-digit', year: 'numeric', month: 'short', day: 'numeric',
+        }).format(lastYear));
         expect(formatUsageObservedAt(now, now, 'en')).toBe(new Intl.DateTimeFormat('en', {
             hour: 'numeric', minute: '2-digit',
         }).format(now));

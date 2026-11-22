@@ -945,7 +945,9 @@ export function readUsagePageFailure(slices: readonly Pick<UsageQueryResultSlice
     ...(ownershipUnproven ? [t('connectedServices.errors.quotaOwnershipUnproven', {})] : []),
   ].join(' · ');
   const quotaTimes = retryable.flatMap(source => usagePageReadFamily(source.source) === 'quota' && source.asOfMs !== undefined ? [source.asOfMs] : []);
-  return { reason, quiet, retryable: retryable.length > 0, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
+  // An ownership refusal is retried by an explicit reread (the owner's same-material recovery), so the notice offers the
+  // page's one Retry for it too (acceptance 11-22 #20).
+  return { reason, quiet, retryable: retryable.length > 0 || ownershipUnproven, retainedQuotaAsOfMs: quotaTimes.length ? Math.min(...quotaTimes) : null };
 }
 
 /**

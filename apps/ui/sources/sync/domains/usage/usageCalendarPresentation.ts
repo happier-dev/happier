@@ -88,8 +88,10 @@ export function isUsageObservationFromEarlierDay(timestampMs: number, nowMs = Da
 
 export function formatUsageObservedAt(timestampMs: number, nowMs = Date.now(), locales?: Intl.LocalesArgument): string {
     const today = isUsageObservationOnCurrentDay(timestampMs, nowMs);
+    // The date joins an earlier day's time; the year only another year's (acceptance 11-22 #27).
+    const thisYear = new Date(timestampMs).getFullYear() === new Date(nowMs).getFullYear();
     return formatWithCachedDateTimeFormatter(timestampMs, locales ?? getPreferredLanguage(), { hour: 'numeric', minute: '2-digit',
-        ...(!today ? { year: 'numeric', month: 'short', day: 'numeric' } as const : {}) });
+        ...(!today ? { month: 'short', day: 'numeric', ...(thisYear ? {} : { year: 'numeric' }) } as const : {}) });
 }
 
 /** Exact selected dates; a named rolling preset cannot be recovered from a range's duration. */

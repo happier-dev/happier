@@ -1047,15 +1047,14 @@ describe('mounted Usage page scope commands', () => {
         const retryControls = () => screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'));
         const noticeId = 'usage-page.header.failed';
         if (viewsFail) {
+            // The ownership refusal's Retry is the page's one Retry, which rereads the saved Views too (acceptance 11-22 #20).
             await waitForHomeGovernance(() => {
-                expect(reader!.readCurrentUiContext()!.commands.map(command => command.title))
-                    .toContain(`${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`);
+                expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toContain(t('usage.board.page.retryRead'));
             });
-            expect(screen.findHostByTestId('usage-page.header.viewsFailed')).not.toBeNull();
-            expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.viewsRetry']);
+            expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
             const readsBeforeRetry = savedViewsReads;
             savedViewsFailed = false;
-            await screen.pressByTestIdAsync('usage-page.header.viewsRetry');
+            await screen.pressByTestIdAsync('usage-page.header.retry');
             await waitForHomeGovernance(() => {
                 expect(savedViewsReads).toBeGreaterThan(readsBeforeRetry);
                 expect(screen.findHostByTestId('usage-page.header.viewsFailed')).toBeNull();
@@ -1068,7 +1067,8 @@ describe('mounted Usage page scope commands', () => {
             expect(diagnosis).toContain(ownershipRefused ? t('connectedServices.errors.quotaOwnershipUnproven', {}) : usageSourceTitle('quota'));
             if (accountingFails) expect(diagnosis).toContain(usageSourceTitle('accounting'));
         });
-        expect(retryControls().map(node => node.props.testID)).toEqual(ownershipRefused ? [] : ['usage-page.header.retry']);
+        // An ownership refusal holds the switching order back and offers the page's one Retry too (acceptance 11-22 #20).
+        expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
         if (ownershipRefused) return;
         failed = false;
         await screen.pressByTestIdAsync('usage-page.header.retry');

@@ -60,6 +60,11 @@ describe('readPlanAccountsStatement', () => {
     expect(statement?.reason).toBe('Partial history');
   });
 
+  it('says an older reading by its time alone, never as partial history (acceptance 11-22 #24)', () => {
+    const statement = readPlanAccountsStatement([account('a', 'stale', true, now - 2000), account('b', 'stale', true, now - 1000)], nameOf);
+    expect(statement).toMatchObject({ kind: 'partial', asOf: now - 2000, reason: '' });
+  });
+
   it('names only the affected accounts and lets a failure lead', () => {
     const statement = readPlanAccountsStatement([
       account('fresh', 'available', true), account('lost', 'error', true), account('slow', 'pending', false),
@@ -119,7 +124,9 @@ describe('planAccountStatesMode', () => {
   });
   it('lets the page carry a shared quota failure and keeps a standalone failure as a line', () => {
     const quota = [{ source: 'quota:work', status: 'error' as const }];
-    expect(planAccountStatesMode('failed', true, true, quota)).toBe('hidden');
+    // A body with nothing else to draw still says why in one line; the page header keeps the Retry (acceptance 11-22 #21).
+    expect(planAccountStatesMode('failed', true, true, quota)).toBe('reason');
+    expect(planAccountStatesMode('failed', true, false, quota)).toBe('hidden');
     expect(planAccountStatesMode('failed', false, true, quota)).toBe('line');
   });
 });

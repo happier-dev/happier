@@ -170,7 +170,7 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
       ) : null}
       {recordedWeek}
       <UsagePlanAccountStates accounts={projection.accounts} nameOf={nameOf} slice={props.slice}
-        onRetry={props.model.refresh} testID={`${props.testID}.state`} />
+        onRetry={props.model.refresh} testID={`${props.testID}.state`} replacesContent={drawn.length === 0} />
       {paceTargetLink}
     </View>
   );

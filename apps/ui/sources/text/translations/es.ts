@@ -4898,7 +4898,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
       quotaRefreshMintFailed: "El proveedor no pudo generar una credencial de uso.",
       quotaRefreshRateLimited: "La actualización del uso está limitada.",
       quotaRefreshFailed: "No se pudo actualizar el uso.",
-      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `No se pudo verificar la titularidad de ${accounts}.` : 'No se pudo verificar la titularidad de la cuenta.',
+      quotaOwnershipUnproven: ({ accounts }: { accounts?: string }) => accounts ? `No se pudo verificar la titularidad de ${accounts}, así que sus límites y el orden de cambio quedan retenidos.` : 'No se pudo verificar la titularidad de la cuenta, así que los límites y el orden de cambio quedan retenidos.',
       quotaRefreshRetryAt: ({ error, time }: { error: string; time: string }) => `${error} Inténtalo de nuevo después de ${time}.`,
     },
     diagnostics: {
