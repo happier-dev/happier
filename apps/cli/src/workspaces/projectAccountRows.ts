@@ -241,7 +241,8 @@ function selectedProjection(snapshot: ActiveProjectAccountRowsSnapshot, selectio
     if (key.kind === 'relationship-graph') return snapshot.relationships;
     if (key.kind === 'project-session-defaults') return snapshot.rows.find(row =>
       buildProjectAccountRowPhysicalKeyV1(row.key) === buildProjectAccountRowPhysicalKeyV1(key));
-    return snapshot.organizations.find(row => row.key.serverId === key.serverId && row.key.projectKey === key.projectKey);
+    const identity = buildProjectAccountRowPhysicalKeyV1(key);
+    return snapshot.organizations.find(row => buildProjectAccountRowPhysicalKeyV1(row.key) === identity);
   }
   // The installed owner already projects these domains. A refs-only fence must
   // not scan unrelated organization rows merely to observe its selected refs.
