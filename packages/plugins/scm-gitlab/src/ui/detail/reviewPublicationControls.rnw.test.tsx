@@ -328,7 +328,7 @@ describe('mounted GitLab Review publication controls', () => {
     await expect(mergeRequest.findByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
-    for (const name of ['Submit review', 'Publish selected comment', 'Publish reply']) {
+    for (const name of ['Publish 1 comment', 'Publish selected comment', 'Publish reply']) {
       await expect(Promise.resolve(mergeRequest.controls.presentation(name))).resolves.toBeDefined();
     }
 
@@ -353,13 +353,13 @@ describe('mounted GitLab Review publication controls', () => {
 
   it('mounts and dispatches submit-review plus standalone review-comment-create', async () => {
     const detail = await mountControl('merge-request');
-    await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toBeDefined();
+    await expect(Promise.resolve(detail.controls.presentation('Publish 1 comment'))).resolves.toBeDefined();
     await expect(Promise.resolve(detail.controls.presentation('Publish selected comment'))).resolves.toBeDefined();
     await expect(detail.getByRole('checkbox', { name: PROPOSAL.body })).resolves.toMatchObject({
       state: { checked: true },
     });
 
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
     expect(recorded.at(-1)).toMatchObject({
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
       input: {
@@ -384,7 +384,7 @@ describe('mounted GitLab Review publication controls', () => {
   it('offers Request changes and requires a summary before publishing a verdict', async () => {
     const detail = await mountControl('merge-request');
     await act(async () => detail.press(await detail.getByRole('radio', { name: 'Request changes' })));
-    await expect(Promise.resolve(detail.controls.presentation('Submit review'))).resolves.toMatchObject({
+    await expect(Promise.resolve(detail.controls.presentation('Publish 1 comment'))).resolves.toMatchObject({
       disabled: true,
     });
     await expect(detail.getByText('Add a summary before publishing this verdict.')).resolves.toBeDefined();
@@ -432,7 +432,7 @@ describe('mounted GitLab Review publication controls', () => {
     expect(preview).toContain('[Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)');
     expect(preview).not.toContain('<details>');
 
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
     const submittedBody = [
       '**Request changes · 1 finding**',
       `Head: ${HEAD}`,
@@ -449,13 +449,84 @@ describe('mounted GitLab Review publication controls', () => {
     });
   });
 
+  describe('the shared Publish sheet drives the one publication plan', () => {
+    const finding = (id: string, severity: 'blocker' | 'nit', title: string, line: number) => ({
+      ...PROPOSAL,
+      id,
+      threadId: id,
+      body: `${title}.`,
+      anchor: { kind: 'line', filePath: 'src/retry/policy.ts', line, side: 'after' },
+      finding: { id: `finding-${id}`, severity, category: 'correctness', title, summary: `${title}.` },
+    }) as typeof PROPOSAL;
+    const THREE: GitlabReviewProposalReadV1 = { status: 'ready', proposals: [
+      PROPOSAL,
+      finding('review-comment-2', 'blocker', 'Timer survives a manual reconnect', 57),
+      finding('review-comment-3', 'nit', 'README example uses the old option name', 88),
+    ] };
+    const entryIds = () => (recorded.at(-1)?.input as { publicationPlan: { entries: Array<{ happierCommentId: string }> } })
+      .publicationPlan.entries.map(entry => entry.happierCommentId);
+
+    it('posts only the checked findings and counts them on Publish', async () => {
+      const detail = await mountControl('merge-request', { input: INPUT, proposals: THREE });
+      // Nits start unchecked and stay listed as not posted.
+      await expect(detail.getByRole('checkbox', { name: 'README example uses the old option name' }))
+        .resolves.toMatchObject({ state: { checked: false } });
+      await expect(detail.getByText('Nit · policy.ts:88 · not posted')).resolves.toBeDefined();
+      await expect(detail.getByText('2 of 3 · ignored ones are never posted')).resolves.toBeDefined();
+      expect(detail.controls.presentation('Publish 2 comments')?.disabled).toBe(false);
+
+      await act(async () => detail.press(await detail.getByRole('checkbox', { name: 'Timer survives a manual reconnect' })));
+      expect(detail.controls.presentation('Publish 2 comments')).toBeUndefined();
+      await act(async () => detail.controls.press('Publish 1 comment'));
+      expect(recorded.at(-1)?.action).toMatchObject(actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview));
+      expect(entryIds()).toEqual([PROPOSAL.id]);
+    });
+
+    it('leaves the walkthrough out of the preview and the posted summary when it is switched off', async () => {
+      const detail = await mountControl('merge-request', {
+        input: { ...INPUT, admittedReview: { reviewId: 'selected-review', roundOrdinal: 1 } },
+        withWalkthrough: true,
+        proposals: THREE,
+      });
+      await act(async () => detail.press(await detail.getByRole('radio', { name: 'Comment' })));
+      const box = document.body.querySelector('textarea');
+      if (!box) throw new Error('Expected the summary editor');
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(box, 'Two findings to fix.');
+        box.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      const readPreview = () => document.body.querySelector('[data-testid="gitlab-review-publication-preview"]')?.textContent ?? '';
+      await vi.waitFor(() => expect(readPreview()).toContain('Walkthrough · 1 stop'));
+      expect(readPreview()).toContain('2 inline comments');
+      await expect(detail.getByText('Folded under the summary · 1 stop, its title and first sentence')).resolves.toBeDefined();
+
+      await act(async () => detail.press(await detail.getByRole('switch', { name: 'Include the walkthrough' })));
+      expect(readPreview()).not.toContain('Walkthrough');
+      await act(async () => detail.controls.press('Publish 2 comments'));
+      const verdict = (recorded.at(-1)?.input as { publicationPlan: { verdict: { body: string } } }).publicationPlan.verdict;
+      expect(verdict.body).toContain('Two findings to fix.');
+      expect(verdict.body).not.toContain('Walkthrough');
+      expect(entryIds()).toEqual([PROPOSAL.id, 'review-comment-2']);
+    });
+
+    it('cannot publish once every finding is unchecked', async () => {
+      const detail = await mountControl('merge-request', { input: INPUT, proposals: THREE });
+      for (const name of [PROPOSAL.body, 'Timer survives a manual reconnect']) {
+        await act(async () => detail.press(await detail.getByRole('checkbox', { name })));
+      }
+      await expect(detail.getByText('0 of 3 · ignored ones are never posted')).resolves.toBeDefined();
+      expect(detail.controls.presentation('Publish 0 comments')?.disabled).toBe(true);
+      expect(recorded).toHaveLength(0);
+    });
+  });
+
   it('reports a declined host confirmation as canceled with no provider completion', async () => {
     nextError = new PluginError({
       code: 'plugin_action_current_intent_rejected',
       message: 'The current confirmation intent was declined.',
     });
     const detail = await mountControl('merge-request');
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
     await expect(detail.getByText('Publication canceled')).resolves.toBeDefined();
     await expect(detail.getByText('Nothing was sent to GitLab.')).resolves.toBeDefined();
     expect(completed).toBe(0);
@@ -467,7 +538,7 @@ describe('mounted GitLab Review publication controls', () => {
       message: 'The handler did not return a publication result.',
     });
     const detail = await mountControl('merge-request');
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
     await expect(detail.getByText('Publication did not settle')).resolves.toBeDefined();
     expect(completed).toBe(1);
   });
@@ -480,7 +551,7 @@ describe('mounted GitLab Review publication controls', () => {
       preexistingDraftIds: ['draft-9', 'draft-10'],
     } as JsonValue;
     const detail = await mountControl('merge-request');
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
 
     expect(recorded).toHaveLength(1);
     await expect(detail.getByText(
@@ -545,7 +616,7 @@ describe('mounted GitLab Review publication controls', () => {
       preexistingDraftCount: 0,
     } as JsonValue;
     const detail = await mountControl('merge-request');
-    await act(async () => detail.controls.press('Submit review'));
+    await act(async () => detail.controls.press('Publish 1 comment'));
     await expect(detail.getByText('Publication outcome unknown')).resolves.toBeDefined();
     await expect(detail.getByText(
       '0/1 comments published; 1 unconfirmed; 0 failed; 0 not attempted. Verdict: notRequested.',

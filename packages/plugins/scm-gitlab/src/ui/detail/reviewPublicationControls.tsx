@@ -8,7 +8,9 @@ import {
   Button,
   Form,
   MarkdownEditor,
-  ReviewPublicationSummaryPreview,
+  ReviewPublicationSheet,
+  reviewPublicationDefaultSelection,
+  reviewPublicationPublish,
   Row,
   Stack,
   Status,
@@ -374,7 +376,7 @@ export function GitlabMergeRequestPublicationControls({
     if (proposals.status !== 'ready') return;
     setSelectedIds((current) => {
       const retained = current.filter((id) => proposals.proposals.some((item) => item.id === id));
-      return retained.length > 0 ? retained : proposals.proposals.map((proposal) => proposal.id);
+      return retained.length > 0 ? retained : reviewPublicationDefaultSelection(proposals.proposals);
     });
   }, [proposals]);
 
@@ -398,7 +400,8 @@ export function GitlabMergeRequestPublicationControls({
     ? null
     : { kind: publication.kind, body: serializeReviewPublicationSummaryForForgeV1(publication.summary) };
   const verdictNeedsBody = verdict !== 'none' && summaryBody === '';
-  const submitPayload = buildGitlabMergeRequestReviewPublicationInputV1(
+  const publish = reviewPublicationPublish(text, { proposalCount: proposals.proposals.length, entryCount: selected.length });
+  const submitPayload = publish.blocked ? null : buildGitlabMergeRequestReviewPublicationInputV1(
     input,
     selected,
     verdictValue,
@@ -457,83 +460,73 @@ export function GitlabMergeRequestPublicationControls({
           fallback="Publish proposed comments linked to this merge request. GitLab’s unrelated drafts stay pending."
         />
       </Stack>
-      <ProposalReadState read={proposals} />
-      {proposals.proposals.length === 0 ? null : (
-        <Form.Select
-          label={text('plugins.gitlab.ui.publication.comments', 'Review comments')}
-          options={proposals.proposals.map((proposal) => ({
-            value: proposal.id,
-            label: proposal.body,
-          }))}
-          value={selectedIds}
-          multiple
-          onChange={(value) => {
-            if (Array.isArray(value)) {
-              setSelectedIds(value.filter((item): item is string => typeof item === 'string'));
-            }
-          }}
-        />
-      )}
-      <Form.Select
-        label={text('plugins.gitlab.ui.publication.verdict', 'Review verdict')}
-        options={GITLAB_VERDICT_CHOICES.map((value) => ({
-          value,
-          label: value === 'none'
-            ? text('plugins.gitlab.ui.publication.verdict.none', 'No verdict')
-            : value === 'approve'
-              ? text('plugins.gitlab.ui.publication.verdict.approve', 'Approve')
-              : value === 'requestChanges'
-                ? text('plugins.gitlab.ui.publication.verdict.requestChanges', 'Request changes')
-                : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
-        }))}
-        value={verdict}
-        onChange={(value) => {
-          const next = GITLAB_VERDICT_CHOICES.find((candidate) => candidate === value);
-          if (next !== undefined) setVerdict(next);
+      <ReviewPublicationSheet
+        forgeName="GitLab"
+        testID="gitlab-review-publication"
+        verdict={{
+          options: GITLAB_VERDICT_CHOICES.map((value) => ({
+            value,
+            label: value === 'none'
+              ? text('plugins.gitlab.ui.publication.verdict.none', 'No verdict')
+              : value === 'approve'
+                ? text('plugins.gitlab.ui.publication.verdict.approve', 'Approve')
+                : value === 'requestChanges'
+                  ? text('plugins.gitlab.ui.publication.verdict.requestChanges', 'Request changes')
+                  : text('plugins.gitlab.ui.publication.verdict.comment', 'Comment'),
+          })),
+          value: verdict,
+          onChange: (value) => {
+            const next = GITLAB_VERDICT_CHOICES.find((candidate) => candidate === value);
+            if (next !== undefined) setVerdict(next);
+          },
         }}
-      />
-      <Form.Field label={text('plugins.gitlab.ui.publication.summary', 'Review summary')}>
-        <MarkdownEditor
-          accessibilityLabel={text('plugins.gitlab.ui.publication.summary', 'Review summary')}
+        summary={<MarkdownEditor
+          accessibilityLabel={text('plugins.gitlab.ui.publication.summary', 'Summary')}
           value={summary}
           onChange={setSummary}
-        />
-      </Form.Field>
-      {verdict !== 'none' && walkthrough?.length ? <Form.Toggle
-        label={text('plugins.gitlab.ui.publication.includeWalkthrough', 'Include the walkthrough')}
-        value={includeWalkthrough} onChange={setIncludeWalkthrough} /> : null}
-      {submitPayload?.publicationPlan.verdict && publication
-        ? <ReviewPublicationSummaryPreview testID="gitlab-review-publication-preview" parts={publication.summary} /> : null}
-      {verdictNeedsBody ? (
-        <Text
-          variant="micro"
-          tone="warning"
-          valueKey="plugins.gitlab.ui.publication.summaryRequired"
-          fallback="Add a summary before publishing this verdict."
-        />
-      ) : null}
-      <Row gap="small">
-        <Action.Control
-          title={text('plugins.gitlab.ui.publication.submit', 'Submit review')}
-          variant="primary"
-          disabled={submitPayload === null || verdictNeedsBody || acknowledgement !== null}
-          action={{
-            pluginId: GITLAB_PLUGIN_ID,
-            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
-          }}
-          controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
-        />
-        <Action.Control
-          title={text('plugins.gitlab.ui.publication.createComment', 'Publish selected comment')}
-          variant="secondary"
-          disabled={createPayload === null}
-          action={{
-            pluginId: GITLAB_PLUGIN_ID,
-            localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
-          }}
-          controller={createControl}
-        />
-      </Row>
+        />}
+        notices={<>
+          <ProposalReadState read={proposals} />
+          {verdictNeedsBody ? (
+            <Text
+              variant="micro"
+              tone="warning"
+              valueKey="plugins.gitlab.ui.publication.summaryRequired"
+              fallback="Add a summary before publishing this verdict."
+            />
+          ) : null}
+        </>}
+        proposals={proposals.proposals}
+        selectedIds={selectedIds}
+        onSelectedIdsChange={setSelectedIds}
+        walkthrough={verdict !== 'none' && walkthrough?.length
+          ? { included: includeWalkthrough, onChange: setIncludeWalkthrough, stopCount: walkthrough.length }
+          : null}
+        preview={submitPayload?.publicationPlan.verdict && publication ? publication.summary : null}
+        inlineCommentCount={submitPayload?.publicationPlan.entries.length ?? selected.length}
+        actions={<Row gap="small" wrap>
+          <Action.Control
+            title={publish.title}
+            variant="primary"
+            disabled={submitPayload === null || verdictNeedsBody || acknowledgement !== null}
+            action={{
+              pluginId: GITLAB_PLUGIN_ID,
+              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview,
+            }}
+            controller={submitPayload === null ? { prepare: () => null, onSettled() {} } : submitControl(submitPayload)}
+          />
+          <Action.Control
+            title={text('plugins.gitlab.ui.publication.createComment', 'Publish selected comment')}
+            variant="secondary"
+            disabled={createPayload === null}
+            action={{
+              pluginId: GITLAB_PLUGIN_ID,
+              localId: GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestReviewCommentCreate,
+            }}
+            controller={createControl}
+          />
+        </Row>}
+      />
       <PublicationOutcome execution={submitExecution} />
       {acknowledgedPayload === null ? null : (
         <Action.Control

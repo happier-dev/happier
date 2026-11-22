@@ -900,10 +900,12 @@ function ExactWrite({
   capabilities,
   operation,
   primaryWrite,
+  variant = 'secondary',
 }: Readonly<{
   localId: string;
   title: string;
-  titleKey: string;
+  titleKey?: string;
+  variant?: 'primary' | 'secondary';
   parseResult: (value: unknown) => GithubMutationResultV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
@@ -916,12 +918,12 @@ function ExactWrite({
   const capabilityReason = primaryWrite === undefined ? githubOperationCapabilityReason(text, capabilities, operation) : primaryWrite.disabledReason;
   const write = useGithubWrite(localId, parseResult, onObserved);
   if (capabilityReason !== null) {
-    return <UnavailableOperationWrite title={title} titleKey={titleKey} reason={capabilityReason} />;
+    return <UnavailableOperationWrite title={title} titleKey={titleKey} reason={capabilityReason} variant={variant} />;
   }
   return (
     <Stack gap="small">
       {primaryWrite === undefined ? <Action.Control action={write.action} controller={write.controllerFor(payload)}
-        title={title} titleKey={titleKey} variant="secondary" disabled={payload === null || write.pending} />
+        title={title} titleKey={titleKey} variant={variant} disabled={payload === null || write.pending} />
         : <Action.Control action={primaryWrite.actionRef!} controller={primaryWrite.controllerFor!()}
           signal={primaryWrite.signal} title={title} titleKey={titleKey} variant="secondary"
           disabled={payload === null || primaryWrite.pending} />}

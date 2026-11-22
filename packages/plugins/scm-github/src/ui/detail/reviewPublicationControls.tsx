@@ -1,7 +1,7 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, ReviewPublicationSummaryPreview, Stack, Status, Text, useHappierReviewPublicationEvidence, usePluginTranslation,
-  type ReviewCommentProposalReadV1,
+  Banner, Button, Form, ReviewPublicationSheet, reviewPublicationDefaultSelection, reviewPublicationPublish, Stack, Status,
+  useHappierReviewPublicationEvidence, usePluginTranslation, type ReviewCommentProposalReadV1,
 } from '@happier-dev/plugin-ui';
 import {
   buildReviewCommentPublicationEntryV1, buildReviewPublicationSummaryV1, parseReviewCommentPublicationPlanV1,
@@ -31,7 +31,8 @@ type PublicationWriteControlProps = Readonly<{
     | NonNullable<ReturnType<typeof buildGithubPullRequestReviewCommentCreateInputV1>>
     | NonNullable<ReturnType<typeof buildGithubPullRequestReviewPublicationInputV1>> | null;
   title: string;
-  titleKey: string;
+  titleKey?: string;
+  variant?: 'primary' | 'secondary';
   parseResult: (value: unknown) => GithubMutationResultV1 | null;
   onObserved: GithubObservedEntryHandlerV1;
   capabilities: GithubReadStateV1<GithubRepositoryCapabilitiesV1>;
@@ -191,15 +192,19 @@ export function PullRequestReviewPublicationWrite({
     if (proposalRead !== 'ready') return;
     setSelectedIds((selected) => {
       const retained = selected.filter((id) => proposals.some((proposal) => proposal.id === id));
-      return retained.length > 0 ? retained : proposals.map((proposal) => proposal.id);
+      return retained.length > 0 ? retained : reviewPublicationDefaultSelection(proposals);
     });
   }, [proposalRead, proposals]);
 
+  const selected = React.useMemo(
+    () => proposals.filter(proposal => selectedIds.includes(proposal.id)),
+    [proposals, selectedIds],
+  );
+  const publish = reviewPublicationPublish(text, { proposalCount: proposals.length, entryCount: selected.length });
   const publication = React.useMemo(() => {
     if (proposalRead !== 'ready') return null;
     const revision = input.observation.snapshot.reviewRevision;
     if (revision === undefined) return null;
-    const selected = proposals.filter(proposal => selectedIds.includes(proposal.id));
     const entries = selected.map(buildReviewCommentPublicationEntryV1);
     const authoredBody = verdictBody.trim();
     if (authoredBody === '') return null;
@@ -229,12 +234,12 @@ export function PullRequestReviewPublicationWrite({
       verdict: Object.freeze({ kind: verdict, body: serializeReviewPublicationSummaryForForgeV1(summary) }),
     });
     return { plan, summary };
-  }, [includeWalkthrough, input, proposalRead, proposals, quality, selectedIds, verdict, verdictBody, walkthrough]);
+  }, [includeWalkthrough, input, proposalRead, quality, selected, verdict, verdictBody, walkthrough]);
   const payload = React.useMemo(
-    () => publication === null
+    () => publication === null || publish.blocked
       ? null
       : buildGithubPullRequestReviewPublicationInputV1(input, publication.plan),
-    [input, publication],
+    [input, publication, publish.blocked],
   );
   const standaloneCommentPlan = React.useMemo<ReviewCommentPublicationPlanV1 | null>(() => {
     if (proposalRead !== 'ready') return null;
@@ -268,89 +273,81 @@ export function PullRequestReviewPublicationWrite({
     [input, standaloneCommentPlan],
   );
   return (
-    <Stack gap="small">
-      <Form.Select
-        label={text('plugins.github.ui.mutations.review.verdict', 'Review verdict')}
-        options={GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
+    <ReviewPublicationSheet
+      forgeName="GitHub"
+      verdict={{
+        options: GITHUB_REVIEW_VERDICTS_V1.map((value) => ({
           value,
           label: value === 'requestChanges'
             ? text('plugins.github.ui.mutations.review.verdict.requestChanges', 'Request changes')
             : value === 'approve'
               ? text('plugins.github.ui.mutations.review.verdict.approve', 'Approve')
               : text('plugins.github.ui.mutations.review.verdict.comment', 'Comment'),
-        }))}
-        value={verdict}
-        onChange={(value) => {
+        })),
+        value: verdict,
+        onChange: (value) => {
           const next = GITHUB_REVIEW_VERDICTS_V1.find((candidate) => candidate === value);
           if (next !== undefined) setVerdict(next);
-        }}
-      />
-      {proposalRead === 'loading' ? (
-        <Status
-          tone="muted"
-          label={text('plugins.github.ui.mutations.review.proposals.loading', 'Reading review proposals…')}
-        />
-      ) : null}
-      {proposalRead === 'failed' ? (
-        <Banner
-          tone="danger"
-          title={text('plugins.github.ui.mutations.review.proposals.failed', 'Review proposals are unavailable')}
-          description={text('plugins.github.ui.mutations.review.proposals.failed.description', 'Happier could not read the proposed comments linked to this pull request.')}
-        />
-      ) : null}
-      {proposalRead === 'ready' && proposals.length === 0 ? (
-        <Status
-          tone="muted"
-          label={text('plugins.github.ui.mutations.review.proposals.empty', 'No proposed review comment is linked to this pull request yet.')}
-        />
-      ) : null}
-      {proposals.length > 0 ? (
-        <Form.Select
-          label={text('plugins.github.ui.mutations.review.proposal', 'Review comments')}
-          options={proposals.map((proposal) => ({
-            value: proposal.id,
-            label: typeof proposal.body === 'string' ? proposal.body : '',
-          }))}
-          value={selectedIds}
-          multiple
-          required
-          onChange={(value) => {
-            if (Array.isArray(value)) {
-              setSelectedIds(value.filter((item): item is string => typeof item === 'string'));
-            }
-          }}
-        />
-      ) : null}
-      <ReviewProposalContinuation read={publicationProposals} />
-      <Form.TextField
-        label={text('plugins.github.ui.mutations.review.summary', 'Review summary')}
+        },
+      }}
+      summary={<Form.TextField
+        label={text('plugins.github.ui.mutations.review.summary', 'Summary')}
         value={verdictBody}
         required
         onChange={setVerdictBody}
-      />
-      {walkthrough?.length ? <Form.Toggle label={text('plugins.github.ui.mutations.review.includeWalkthrough', 'Include the walkthrough')}
-        value={includeWalkthrough} onChange={setIncludeWalkthrough} /> : null}
-      {publication ? <ReviewPublicationSummaryPreview parts={publication.summary} /> : null}
-      <WriteControl
-        localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
-        payload={payload}
-        title="Submit review"
-        titleKey="plugins.github.ui.mutations.review.submit"
-        parseResult={parseReviewPublicationResult}
-        onObserved={onObserved}
-        capabilities={capabilities}
-        operation="pullRequestSubmitReview"
-      />
-      <WriteControl
-        localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate}
-        payload={standaloneCommentPayload}
-        title="Publish selected comment"
-        titleKey="plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel"
-        parseResult={parseReviewPublicationResult}
-        onObserved={onObserved}
-        capabilities={capabilities}
-        operation="pullRequestReviewCommentCreate"
-      />
-    </Stack>
+      />}
+      notices={<>
+        {proposalRead === 'loading' ? (
+          <Status
+            tone="muted"
+            label={text('plugins.github.ui.mutations.review.proposals.loading', 'Reading review proposals…')}
+          />
+        ) : null}
+        {proposalRead === 'failed' ? (
+          <Banner
+            tone="danger"
+            title={text('plugins.github.ui.mutations.review.proposals.failed', 'Review proposals are unavailable')}
+            description={text('plugins.github.ui.mutations.review.proposals.failed.description', 'Happier could not read the proposed comments linked to this pull request.')}
+          />
+        ) : null}
+        {proposalRead === 'ready' && proposals.length === 0 ? (
+          <Status
+            tone="muted"
+            label={text('plugins.github.ui.mutations.review.proposals.empty', 'No proposed review comment is linked to this pull request yet.')}
+          />
+        ) : null}
+        <ReviewProposalContinuation read={publicationProposals} />
+      </>}
+      proposals={proposals}
+      selectedIds={selectedIds}
+      onSelectedIdsChange={setSelectedIds}
+      walkthrough={walkthrough?.length
+        ? { included: includeWalkthrough, onChange: setIncludeWalkthrough, stopCount: walkthrough.length }
+        : null}
+      preview={publication?.summary ?? null}
+      inlineCommentCount={publication?.plan.entries.length ?? selected.length}
+      actions={<Stack gap="small">
+        <WriteControl
+          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
+          payload={payload}
+          title={publish.title}
+          variant="primary"
+          parseResult={parseReviewPublicationResult}
+          onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestSubmitReview"
+        />
+        <WriteControl
+          localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestReviewCommentCreate}
+          payload={standaloneCommentPayload}
+          title="Publish selected comment"
+          titleKey="plugins.github.mutations.reviewCommentCreate.confirmation.confirmLabel"
+          parseResult={parseReviewPublicationResult}
+          onObserved={onObserved}
+          capabilities={capabilities}
+          operation="pullRequestReviewCommentCreate"
+        />
+      </Stack>}
+    />
   );
 }

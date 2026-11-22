@@ -1418,6 +1418,8 @@ Declaration: `dist/index.d.ts`
 - type `ReviewCommentProposalQueryV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalReadV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalWithBodyV1` from `dist/index.d.ts`
+- value `ReviewPublicationSheet` from `dist/index.d.ts`
+- type `ReviewPublicationSheetProps` from `dist/index.d.ts`
 - value `ReviewPublicationSummaryPreview` from `dist/index.d.ts`
 - value `ReviewSeverity` from `dist/index.d.ts`
 - type `ReviewSeverityProps` from `dist/index.d.ts`
@@ -1910,6 +1912,8 @@ Declaration: `dist/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/index.d.ts`
+- value `reviewPublicationDefaultSelection` from `dist/index.d.ts`
+- value `reviewPublicationPublish` from `dist/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/index.d.ts`
 - value `sliceFindRanges` from `dist/index.d.ts`
@@ -3407,6 +3411,8 @@ Declaration: `dist/components/index.d.ts`
 - type `ReturnedAnswerQuestion` from `dist/components/index.d.ts`
 - value `ReturnedAnswerQuote` from `dist/components/index.d.ts`
 - type `ReturnedAnswerQuoteProps` from `dist/components/index.d.ts`
+- value `ReviewPublicationSheet` from `dist/components/index.d.ts`
+- type `ReviewPublicationSheetProps` from `dist/components/index.d.ts`
 - value `ReviewPublicationSummaryPreview` from `dist/components/index.d.ts`
 - value `ReviewSeverity` from `dist/components/index.d.ts`
 - type `ReviewSeverityProps` from `dist/components/index.d.ts`
@@ -3891,6 +3897,8 @@ Declaration: `dist/components/index.d.ts`
 - value `resolveHappierWorkTheme` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupCells` from `dist/components/index.d.ts`
 - value `resolveWidgetGroupColumns` from `dist/components/index.d.ts`
+- value `reviewPublicationDefaultSelection` from `dist/components/index.d.ts`
+- value `reviewPublicationPublish` from `dist/components/index.d.ts`
 - value `scaleTextStyleMetrics` from `dist/components/index.d.ts`
 - value `settleHappierRaisedEdge` from `dist/components/index.d.ts`
 - value `sliceFindRanges` from `dist/components/index.d.ts`

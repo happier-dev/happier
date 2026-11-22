@@ -51,6 +51,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { CountedDisclosureItem as PluginCountedDisclosureItem } from '@happier-dev/plugin-ui/components';
 import { PluginCheckboxSpecimen } from '@/components/dev/pluginUi/CheckboxSpecimen';
+import { ReviewPublicationSheetSpecimen } from '@/components/dev/pluginUi/ReviewPublicationSheetSpecimen';
 import {
     HappierBadge,
     HappierBanner,
@@ -473,6 +474,9 @@ function PluginStateSamples() {
             <PluginBuiltInParitySamples />
             <Sample title="Plugin Checkbox — Viewed in a Files row">
                 <PluginCheckboxSpecimen />
+            </Sample>
+            <Sample title="Plugin ReviewPublicationSheet">
+                <ReviewPublicationSheetSpecimen />
             </Sample>
             <PluginActionSamples />
             <PluginExpandedSamples />

@@ -749,7 +749,7 @@ describe('the mounted GitHub write controls', () => {
       .toBe(true);
     expect((await denied.getByRole('button', { name: 'Close pull request' })).state?.disabled)
       .toBe(true);
-    expect((await denied.getByRole('button', { name: 'Submit review' })).state?.disabled)
+    expect((await denied.getByRole('button', { name: 'Publish review' })).state?.disabled)
       .toBe(true);
   });
 
@@ -770,7 +770,7 @@ describe('the mounted GitHub write controls', () => {
 
     const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' });
 
-    expect(actionHost(detail).presentation('Submit review')).toBeDefined();
+    expect(actionHost(detail).presentation('Publish review')).toBeDefined();
     await expect(detail.getByRole('button', { name: 'Close pull request' }))
       .resolves.toMatchObject({ role: 'button', state: { disabled: true } });
     expect(await detail.queryByText('This repository does not support this change.'))
@@ -980,7 +980,7 @@ describe('the mounted GitHub write controls', () => {
       'Update branch',
       'Request review',
       'Withdraw review requests',
-      'Submit review',
+      'Publish 1 comment',
       'Publish selected comment',
     ]) {
       expect(actionHost(detail).presentation(name)).toBeDefined();
@@ -1003,8 +1003,8 @@ describe('the mounted GitHub write controls', () => {
     await waitForPublicationProposalRead(detail);
     await expect(detail.findByRole('checkbox', { name: 'The implementation is ready to merge.' }))
       .resolves.toMatchObject({ state: { checked: true } });
-    expect(actionHost(detail).presentation('Submit review')?.disabled).toBe(true);
-    await expect(act(async () => { await actionHost(detail).press('Submit review'); })).rejects.toThrow();
+    expect(actionHost(detail).presentation('Publish 1 comment')?.disabled).toBe(true);
+    await expect(act(async () => { await actionHost(detail).press('Publish 1 comment'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
 
@@ -1018,8 +1018,8 @@ describe('the mounted GitHub write controls', () => {
     await act(async () => {
       await detail.press(await detail.findByRole('radio', { name: 'Approve' }));
     });
-    expect(actionHost(detail).presentation('Submit review')?.disabled).toBe(true);
-    await expect(act(async () => { await actionHost(detail).press('Submit review'); })).rejects.toThrow();
+    expect(actionHost(detail).presentation('Publish 1 comment')?.disabled).toBe(true);
+    await expect(act(async () => { await actionHost(detail).press('Publish 1 comment'); })).rejects.toThrow();
     expect(recorded.filter((entry) => typeof entry.action === 'object')).toHaveLength(0);
   });
 
