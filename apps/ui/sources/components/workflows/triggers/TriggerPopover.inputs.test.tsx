@@ -120,6 +120,32 @@ const DAILY_TRIGGER = { kind: 'schedule' as const, enabled: true,
     schedule: { kind: 'cron' as const, scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'Europe/Zurich' } };
 
 describe('Run a workflow trigger inputs', () => {
+    it('shows the saved exact-turn policy in the Session attachment editor and preserves it on save', async () => {
+        const { readTriggerWhen } = await import('./sessionTriggerForm');
+        const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
+        const subject = { kind: 'session', serverId: 'portable-home', sessionId: 'session-one' } as const;
+        const policy = { kind: 'currentTurn', sourceTurnId: 'exact-turn' } as const;
+        const set = WorkflowTriggerSetV1Schema.parse({
+            automationId: 'automation-one', revision: 1, enabled: true, health: 'available',
+            scopeSessionId: subject.sessionId,
+            triggers: [{
+                id: '663792e4-3cc3-475a-aa2d-16202d129854', revision: 1, createdAt: 1, updatedAt: 1,
+                kind: 'sessionLifecycle', enabled: true, events: ['parentTurnCompleted'], subject, policy,
+                remainingOccurrences: 1, status: { state: 'waiting', runId: null }, triggerDefinitionEnvelope: 'stored-definition',
+            }],
+        });
+        const when = readTriggerWhen(set.triggers[0]!);
+        if (!when) throw new Error('Exact-turn definition did not reopen');
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="saved-turn" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId={subject.sessionId} showThen={false}
+            initial={{ when, enabled: true, then: { kind: 'runWorkflow', ref: 'workflow-one', inputs: {} } }}
+            workflowOptions={[]} onSubmit={submit} />);
+        expect(screen.getTextContent()).toContain('workflows.triggers.card.howOftenKind.thisTurn');
+        await screen.pressByTestIdAsync('saved-turn-submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toMatchObject({ kind: 'sessionLifecycle', subject, policy });
+    });
+
     it('saves one local date/time or a relative delay as one absolute occurrence and reopens it unchanged', async () => {
         const { LocalDateTimeEditor } = await import('@/components/ui/dateTime/LocalDateTimeEditor');
         const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');

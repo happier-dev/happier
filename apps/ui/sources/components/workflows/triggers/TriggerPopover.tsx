@@ -682,6 +682,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     if (kind !== undefined) changeWhenKind(kind);
                                 }}
                             />}
+                            {displayedTrigger?.kind === 'sessionLifecycle' && displayedTrigger.policy.kind === 'currentTurn' ? <Item
+                                testID={`${props.testID}-current-turn`}
+                                mode="info" title={t('workflows.triggers.card.howOften')}
+                                detail={t('workflows.triggers.card.howOftenKind.thisTurn')} showChevron={false} /> : null}
                             {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID}
                                 currentUiContextCommandScope={commandScope} when={when} onChange={setWhen} /> : null}
                             {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
