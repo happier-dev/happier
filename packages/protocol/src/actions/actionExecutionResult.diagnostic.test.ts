@@ -91,6 +91,13 @@ describe('Action failure cause projection', () => {
       .toMatchObject({ errorCode: code, httpStatus: 503 });
   });
 
+  it('retains the native invalid spawn argument code without exposing the argument', () => {
+    const error = Object.assign(new TypeError('private launch argument'), { code: 'ERR_INVALID_ARG_VALUE' });
+    expect(projectActionFailureCauseV1(error, 'exec.spawn')).toEqual({
+      phase: 'exec.spawn', errorClass: 'TypeError', errorCode: 'ERR_INVALID_ARG_VALUE', httpStatus: null,
+    });
+  });
+
   it('retains the original Action cause after a Session wrapper crosses another Action boundary', () => {
     const actionCause = { phase: 'providers.source_open', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } as const;
     const failureCause = { phase: 'authentication', failureReason: 'unknown', actionCause };

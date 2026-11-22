@@ -425,7 +425,7 @@ export function readUnexpectedActionErrorDiagnosticV1(error: unknown): Readonly<
       if (typeof code === 'string' && (/^P\d{4}$/u.test(code) || [
         'EACCES', 'EPERM', 'ENOENT', 'EEXIST', 'EIO', 'ENOSPC', 'EMFILE', 'ENFILE', 'EBUSY', 'EINVAL',
         'ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EPIPE', 'ENOTFOUND', 'EAI_AGAIN',
-        'UND_ERR_INVALID_ARG',
+        'ERR_INVALID_ARG_VALUE', 'UND_ERR_INVALID_ARG',
         'plugin_exec_system_tool_unavailable', 'guest_payload_missing', 'remote_command_failed',
         'service_unavailable',
         'SQLITE_BUSY', 'SQLITE_LOCKED', 'SQLITE_IOERR', 'SQLITE_FULL', 'SQLITE_CONSTRAINT', 'SQLITE_ERROR',
