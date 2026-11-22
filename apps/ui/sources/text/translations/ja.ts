@@ -6350,6 +6350,7 @@ localTailscale: {
 	        waitingForRuntimeActivityNotice: 'ランタイムの処理完了を待っています',
 	        runtimeActivityUnknownNotice: 'ランタイムのアクティビティ状態を待っています',
 	        waitingForRuntimeNotice: 'ランタイムの再接続を待っています',
+	        steerUnavailableWaitingForTurnNotice: '今はこのターンに参加できません · 終了後に送信されます',
 	        nonSteerableNotice: "このモード変更後、現在のターンには挿入できません。次に実行されます。すぐに処理するには「今すぐ送信」を使って中断してください。",
 	        steerBlockedTerminalDraftNotice: '待機中: ターミナルの入力欄に未送信の下書きがあり配信できません。ターミナルで消去するか、ターンを中断してください。',
 	        clearTerminalComposer: {
@@ -8826,16 +8827,17 @@ settingsSession: {
         manualSubtitle: "セッションを再開するまで、常にメッセージをキューに残します。",
       },
       title: "メッセージ送信",
-      footer:
-        "エージェント実行中にメッセージを送信したときの挙動を設定します。",
-        queueInAgentTitle: "エージェントにキュー（現在）",
-        queueInAgentSubtitle:
-          "すぐにトランスクリプトに書き込み、エージェントが準備できたら処理します。",
-        interruptTitle: "中断して送信",
-        interruptSubtitle: "現在のターンを中断し、すぐに送信します。",
-        pendingTitle: "準備できるまで保留",
-        pendingSubtitle:
-          "メッセージを保留キューに保持し、準備ができたらエージェントが取り込みます。",
+      footer: 'エージェントの作業中にメッセージを送ったときの動作を選びます。',
+      busySend: {
+        addToTurnTitle: '現在のターンに追加',
+        addToTurnSubtitle: 'エージェントがすぐに読み取り、作業を続けます。ターミナルに直接入力するのと同じです。ターンの途中で受け取れない場合は、ターンが終わるまで保留中で待機します。',
+        waitForTurnTitle: 'ターンの終了を待つ',
+        waitForTurnSubtitle: 'メッセージを保留中に置き、編集や並べ替えをしたうえで、ターンが終わったら送信します。',
+        interruptTitle: 'ターンを止めて送信',
+        interruptSubtitle: 'エージェントの作業を止めて、すぐにメッセージを送信します。',
+      },
+      inactiveSessionsTitle: '非アクティブなセッション',
+      inactiveSessionsFooter: 'エージェントが停止している、またはマシンがオフラインのセッションに送信したときに適用されます。',
         pendingDrainModeTitle: "保留キューの処理",
         pendingDrainModeFooter:
           "エージェントが準備できるたびに1件だけ処理するか、保留キュー全体をまとめて処理するかを選びます。",
@@ -8857,17 +8859,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "ランタイムがアイドルになったら",
           afterRuntimeIdleSubtitle:
             "追跡中のランタイム活動が続いている間は、保留メッセージを待機させます。",
-        },
-        busySteerPolicyTitle: "エージェントが忙しいとき（ステア可能）",
-        busySteerPolicyFooter:
-          "エージェントが実行中ステアリングをサポートしている場合、すぐにステアするか、先に保留へ送るかを選びます。",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "すぐにステア",
-          steerImmediatelySubtitle:
-            "すぐに送信して現在のターンをステアします（中断なし）。",
-          queueForReviewTitle: "保留にキュー",
-          queueForReviewSubtitle:
-            "まず保留に入れ、後で「今すぐステア」で送信します。",
         },
         nonSteerablePromptTitle: 'メッセージがアクティブなターンに反映できないとき',
         nonSteerablePromptFooter: '権限モードの変更や /clear・/compact はターンの途中では適用できません。エージェントが処理中のとき、こうしたメッセージをどう扱うか選択します。',

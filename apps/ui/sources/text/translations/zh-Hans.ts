@@ -5886,6 +5886,7 @@ export const zhHans: TranslationStructure = {
 	        waitingForRuntimeActivityNotice: '正在等待运行时活动结束',
 	        runtimeActivityUnknownNotice: '正在等待运行时活动状态',
 	        waitingForRuntimeNotice: '正在等待运行时重新连接',
+	        steerUnavailableWaitingForTurnNotice: '暂时无法加入本轮 · 结束后发送',
 	        nonSteerableNotice: "当前轮次在此次模式切换后不能再接受插入。它会在下一轮运行，或使用立即发送来中断。",
 	        steerBlockedTerminalDraftNotice: '等待中：终端输入框中的草稿阻止了消息送达。请在终端中清除草稿或中断本轮。',
 	        clearTerminalComposer: {
@@ -8339,16 +8340,17 @@ settingsSession: {
         manualSubtitle: "始终将消息保留在队列中，直到你恢复会话。",
       },
       title: "消息发送",
-      footer:
-        "控制在代理运行时你发送消息会发生什么。",
-      queueInAgentTitle: "加入代理队列（当前）",
-      queueInAgentSubtitle:
-        "立即写入对话记录；代理准备好后再处理。",
-      interruptTitle: "中断并发送",
-      interruptSubtitle: "终止当前回合，然后立即发送。",
-      pendingTitle: "等待就绪（待发送）",
-      pendingSubtitle:
-        "将消息保留在待发送队列；代理就绪后会拉取。",
+      footer: '选择在代理工作时发送消息会发生什么。',
+      busySend: {
+        addToTurnTitle: '加入当前轮次',
+        addToTurnSubtitle: '代理会立即读取并继续工作，就像在它自己的终端里输入一样。如果它无法在轮次中途接收，消息会在待发送中等到本轮结束。',
+        waitForTurnTitle: '等本轮结束',
+        waitForTurnSubtitle: '将消息留在待发送中，你可以编辑或调整顺序，本轮结束后再发送。',
+        interruptTitle: '停止本轮并发送',
+        interruptSubtitle: '停止代理当前的工作并立即发送消息。',
+      },
+      inactiveSessionsTitle: '非活动会话',
+      inactiveSessionsFooter: '在向代理已停止或机器离线的会话发送消息时适用。',
       pendingDrainModeTitle: "待发送队列处理",
       pendingDrainModeFooter:
         "选择代理每次就绪时只处理一条消息，还是一次处理整个待发送队列。",
@@ -8370,17 +8372,6 @@ settingsSession: {
         afterRuntimeIdleTitle: "运行时空闲后",
         afterRuntimeIdleSubtitle:
           "当已跟踪运行时活动仍在进行时，继续保留待发送消息。",
-      },
-      busySteerPolicyTitle: "代理忙碌时（支持引导）",
-      busySteerPolicyFooter:
-        "如果代理支持进行中引导，请选择消息是立即引导还是先进入待发送。",
-      busySteerPolicy: {
-        steerImmediatelyTitle: "立即引导",
-        steerImmediatelySubtitle:
-          "立刻发送并引导当前回合（不中断）。",
-        queueForReviewTitle: "加入待发送",
-        queueForReviewSubtitle:
-          "先放入待发送；稍后使用“立即引导”发送。",
       },
       nonSteerablePromptTitle: '当消息无法引导当前回合时',
       nonSteerablePromptFooter: '权限模式更改以及 /clear 或 /compact 无法在回合中途生效。选择智能体忙碌时 Happier 如何处理此类消息。',

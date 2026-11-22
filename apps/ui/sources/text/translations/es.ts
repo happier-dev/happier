@@ -6066,6 +6066,7 @@ export const es: TranslationStructure = {
           waitingForRuntimeActivityNotice: 'Esperando a que termine la actividad del runtime',
           runtimeActivityUnknownNotice: 'Esperando el estado de actividad del runtime',
           waitingForRuntimeNotice: 'Esperando a que el runtime se vuelva a conectar',
+          steerUnavailableWaitingForTurnNotice: 'No puede unirse a este turno ahora · se enviará cuando termine',
           nonSteerableNotice: "El turno actual no puede aceptar inserciones después de este cambio de modo. Se ejecutará después, o usa Enviar ahora para interrumpir.",
           steerBlockedTerminalDraftNotice: 'En espera: un borrador en el compositor del terminal bloquea la entrega. Bórralo en el terminal o interrumpe el turno.',
           clearTerminalComposer: {
@@ -8574,16 +8575,17 @@ settingsSession: {
           manualSubtitle: "Mantener siempre los mensajes en cola hasta que reanudes la sesión.",
         },
         title: "Envío de mensajes",
-        footer:
-          "Controla lo que ocurre cuando envías un mensaje mientras el agente está ejecutándose.",
-        queueInAgentTitle: "En cola en el agente (actual)",
-        queueInAgentSubtitle:
-          "Escribe en la transcripción de inmediato; el agente lo procesa cuando esté listo.",
-        interruptTitle: "Interrumpir y enviar",
-        interruptSubtitle: "Aborta el turno actual y envía de inmediato.",
-        pendingTitle: "Pendiente hasta estar listo",
-        pendingSubtitle:
-          "Mantén los mensajes en una cola de pendientes; el agente los toma cuando esté listo.",
+        footer: 'Elige qué ocurre cuando envías un mensaje mientras el agente trabaja.',
+        busySend: {
+          addToTurnTitle: 'Añadirlo al turno actual',
+          addToTurnSubtitle: 'El agente lo lee al momento y sigue trabajando, como si escribieras en su propio terminal. Si no puede aceptarlo a mitad de turno, el mensaje espera en Pendientes hasta que termine el turno.',
+          waitForTurnTitle: 'Esperar a que termine el turno',
+          waitForTurnSubtitle: 'Deja el mensaje en Pendientes, donde puedes editarlo o reordenarlo, y lo envía cuando termine el turno.',
+          interruptTitle: 'Detener el turno y enviar',
+          interruptSubtitle: 'Detiene lo que hace el agente y envía el mensaje de inmediato.',
+        },
+        inactiveSessionsTitle: 'Sesiones inactivas',
+        inactiveSessionsFooter: 'Se aplica cuando envías a una sesión cuyo agente se detuvo o cuya máquina está sin conexión.',
         pendingDrainModeTitle: "Procesamiento de pendientes",
         pendingDrainModeFooter:
           "Elige si el agente toma un mensaje por cada punto de disponibilidad o agrupa toda la cola pendiente.",
@@ -8605,17 +8607,6 @@ settingsSession: {
           afterRuntimeIdleTitle: "Cuando el runtime esté inactivo",
           afterRuntimeIdleSubtitle:
             "Mantén los mensajes pendientes esperando mientras siga activa la actividad de runtime seguida.",
-        },
-        busySteerPolicyTitle: "Cuando el agente está ocupado (con dirección)",
-        busySteerPolicyFooter:
-          "Si el agente admite dirección en caliente, elige si los mensajes dirigen de inmediato o van primero a Pendientes.",
-        busySteerPolicy: {
-          steerImmediatelyTitle: "Dirigir de inmediato",
-          steerImmediatelySubtitle:
-            "Envía al instante y dirige el turno actual (sin interrumpir).",
-          queueForReviewTitle: "Poner en Pendientes",
-          queueForReviewSubtitle:
-            "Pon los mensajes primero en Pendientes; envíalos después con \"Dirigir ahora\".",
         },
         nonSteerablePromptTitle: 'Cuando un mensaje no puede dirigir el turno activo',
         nonSteerablePromptFooter: 'Los cambios de modo de permisos y /clear o /compact no pueden aplicarse a mitad de turno. Elige qué hace Happier con esos mensajes mientras el agente está ocupado.',

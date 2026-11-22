@@ -155,6 +155,9 @@ function getPendingQueuedReasonNotice(visualState: PendingMessageVisualState, mi
     if (reason === 'waiting_for_runtime') {
         return t('session.pendingMessages.waitingForRuntimeNotice');
     }
+    if (reason === 'steer_unavailable_waiting_for_turn') {
+        return t('session.pendingMessages.steerUnavailableWaitingForTurnNotice');
+    }
     return t('session.pendingMessages.waitingForTurnNotice', { minutes });
 }
 
