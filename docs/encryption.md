@@ -145,11 +145,22 @@ and response, and the collector uses the signed Environment scope without
 receiving the reader's Account credentials. A new presentation of the signed
 root passes through the existing admission boundary.
 
-Home delivers the executor's installation key with the admission, so Home
-alone does not vouch for it. Before sealing, the sealing owner compares the
-delivered key with a fingerprint read from E2EE content that Home cannot forge.
-It uses the same refusals for every kind: `installation_key_mismatch` and
-`installation_key_unbound`. Neither falls back to the delivered key.
+Home delivers the executor's installation key with the admission. Before
+sealing, the sealing owner compares the delivered key with a fingerprint read
+from the Machine's E2EE content. It uses the same refusals for every kind:
+`installation_key_mismatch` and `installation_key_unbound`. Neither falls back
+to the delivered key.
+
+The pin stops a Home that changes only the delivered key: Home cannot write
+E2EE content under a Machine data key it does not know. It does not stop a Home
+that replaces the Machine's data-key envelope and its content together. Under
+the accepted 2026-09-23 residual (in "Machine metadata + daemon state"), an
+Account-sealed per-Machine data key names no Machine, so such a Home can seal a
+key it chose to the Account and publish content that pins its own installation
+key. A reader that opens the Machine row Home serves now has no earlier key to
+compare. The CLI does this on every dispatch, so its pin is a consistency check
+on the current row, not independent proof. The pin is only as strong as the
+reader's trust in the Machine data key it opened.
 
 - **Environment collector reads.** When the telemetry writer installs or moves
   the collector, it pins `telemetryCollector` (the collector Machine id and a
