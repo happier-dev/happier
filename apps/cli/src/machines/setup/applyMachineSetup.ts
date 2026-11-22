@@ -26,7 +26,6 @@ import type { TerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve, posix } from 'node:path';
 import { userInfo } from 'node:os';
-import { logger } from '@/ui/logger';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { executeHostFiniteTerminalProcess } from '@/terminal/pty/finiteProcess';
@@ -294,7 +293,7 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   const attachment = { kind: 'machineSetup' as const, serverId: input.homeId, machineId: input.machineId,
     ...(input.preset ? { preset: input.preset } : {}), ...(input.managedId ? { managedId: input.managedId } : {}) };
   input.operation.operationOwnerUpdate.update({ domainRef: attachment });
-  let refreshDaemonGroups: (() => Promise<void>) | undefined;
+  let refreshDaemonGroups: Parameters<NonNullable<ProjectSetupOperationContext['restartUserServices']>>[0] | undefined;
   if (input.plans.length) {
     const plans = input.plans.map(plan => ({ plan }));
     let daemonRestartRequired = false;
@@ -347,21 +346,21 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
       : await readMachineSetupSessionRefreshRequirement(input.plans, input.groupRefreshNative, daemonRestartRequired);
     if (requiredStep) {
       const elevation = input.elevation;
-      // A deferred refresh cannot provide groups to scripts that must finish
-      // before that refresh runs. Keep their existing typed recovery remedy.
-      if (!input.sources.some(source => source.scripts?.some(script => script.body))
-        && requiredStep.scope === 'userServices' && elevation && input.operation.afterTerminalSuccessAcknowledged
+      // Scripts need the new groups before they run. Managed creation also
+      // owns a Home report bound to the admitting invocation. Both use the
+      // explicit refresh remedy when their invocation cannot span the restart.
+      if (!input.managedId && !input.sources.some(source => source.scripts?.some(script => script.body))
+        && requiredStep.scope === 'userServices' && elevation && input.operation.restartUserServices
         && input.plans.some(plan => plan.steps.some(step => step.kind === 'group' && step.name === 'docker'
           && machineSetupStepChangesDaemonGroupsV1(step, requiredStep.username)))) {
         const step = buildUserManagerGroupRefreshStep(input.groupRefreshNative?.user ?? userInfo());
         const basis = input.plans[0]!.basis;
-        // Restarting this user manager can kill this process. The operation
-        // owner runs this last effect only after Home acknowledges success.
+        // The restart stops this daemon. The operation owner retains the
+        // completed native result for the replacement receiver to settle.
         refreshDaemonGroups = async () => {
           const result = await runElevatedMachineSetupIntent({ machineId: input.machineId, operationId,
             signal, basis, steps: [step] }, elevation);
-          if (result.outcome !== 'applied') logger.warn('[machineSetup] Post-settlement group refresh did not complete',
-            { outcome: result.outcome });
+          return result.outcome;
         };
       } else return { ok: false, errorCode: 'requires_session_refresh',
         error: describeMachineSetupSessionRefresh(requiredStep), details: { requiredStep } };
@@ -486,8 +485,8 @@ async function applyAdmittedMachineSetup(input: AdmittedMachineSetupInput, onUns
   }
   if (refreshDaemonGroups) {
     input.operation.operationProgress.update({ phase: 'setup', label:
-      'Docker membership is applied. Happier restarts to pick it up after this result reaches Home.' });
-    input.operation.afterTerminalSuccessAcknowledged?.(refreshDaemonGroups);
+      'Restarting the user services to finish Docker setup.' });
+    input.operation.restartUserServices?.(refreshDaemonGroups);
   }
   return { ok: true, result: { operationId, ...(terminalId ? { terminalId } : {}) } };
 }

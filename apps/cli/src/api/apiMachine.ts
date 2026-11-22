@@ -143,7 +143,8 @@ import { isV2ChangesSyncEnabled } from '@/api/session/sessionChangesSyncOnConnec
 import { createMachineSkillHostService, resolveMachineSkillInstallTarget } from '@/prompts/skills/machineInstall/machineSkillHost';
 import { createMachineSkillActionExecutor } from '@/prompts/skills/machineInstall/machineSkillActionExecutor';
 import { createExternalActionMachineRpcExecution, verifyExternalActionExecutionAuthorizationCurrent } from './externalActionExecutionAuthorization';
-import { externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, externalActionTargetsEqualV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { readRefreshedUserServiceGroups } from '@/daemon/service/userManagerGroups';
 import { rejectUnavailableSessionInputV1, PendingActivationRequestedEphemeralV1Schema, type SessionInputMachineTargetV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SESSION_PENDING_REQUESTER_BOOTSTRAP_EVENT_V1, SessionPendingRequesterBootstrapRequestV1Schema,
     SessionPendingRequesterBootstrapResponseV1Schema, type SessionPendingRequesterBootstrapV1 } from '@happier-dev/protocol/sessions/messages/sessionPendingMachineAdmissionV1';
@@ -1525,11 +1526,18 @@ export class ApiMachineClient {
                 contributionRegistryProjectionRevision: state?.contributionRegistryProjectionRevision ?? 0,
                 ...(this.lifecycleDependencies.controlPort !== undefined ? { httpPort: this.lifecycleDependencies.controlPort } : {}),
             })));
+            const recoveredSetup = this.actionOperationRuntime.store.hasRecoveredSetupRestarts();
+            const groupsRefreshed = recoveredSetup && this.rpcHandlerManager.hasHandler(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)
+                ? await readRefreshedUserServiceGroups().catch(() => false) : false;
             if (
                 this.socket === socket
                 && this.activeTransportGeneration === transportGeneration
                 && socket.connected === true
             ) {
+                if (recoveredSetup) {
+                    try { this.actionOperationRuntime.store.settleRecoveredSetupRestarts(groupsRefreshed); }
+                    catch { logger.warn('[API MACHINE] Could not save the recovered Setup operation outcome'); }
+                }
                 this.machineControlRunningGeneration = transportGeneration;
                 this.lifecycleDependencies.onMachineControlReadinessChange?.(true);
                 this.observeStartupMachineAdminAccess();
@@ -1877,9 +1885,6 @@ export class ApiMachineClient {
             readCredentials: async () => this.projectionSchedulingClosed || configuration.activeServerId !== machineRuntimeServerId
                 ? null : await readStoredCredentialsForServerId(machineRuntimeServerId),
             publishContent: content => { emitActionOperationSnapshotV1({ socket: this.socket, machineId: this.machine.id, content }); },
-            publishContentAcknowledged: async content => await emitActionOperationSnapshotV1({
-                socket: this.socket, machineId: this.machine.id, content, acknowledge: true,
-            }) === true,
         });
         this.actionOperationRuntime = createHostActionOperationRuntime({
             ...(this.lifecycleDependencies.projectOpenReceiptPersistence !== undefined
@@ -1900,7 +1905,6 @@ export class ApiMachineClient {
                 }).catch(error => logger.warn('Backup outcome event publication failed', error));
             },
             publishSnapshot: actionOperationPublisher,
-            publishSnapshotAcknowledged: actionOperationPublisher.acknowledge,
             supportsCoreCancellation: (actionId, input) => {
                 if (actionId !== 'session.spawn_new') return true;
                 if (!input || typeof input !== 'object' || Array.isArray(input)) return false;
@@ -5398,11 +5402,13 @@ export class ApiMachineClient {
         // Managed enrollment consumes this same readiness fact before its Setup
         // children. Installed Setup receivers must be acknowledged, including on
         // server-role Machines whose Session creation namespaces are inactive.
-        const setupMethods = [
+        const setupMethods: string[] = [
             ...MACHINE_ADMIN_ACCESS_ACTION_IDS, ...MACHINE_ROLES_ACTION_IDS, ...MACHINE_ISOLATION_ACTION_IDS,
             ...MACHINE_AGENT_ISOLATION_ACTION_IDS, ...MACHINE_REACHABILITY_ACTION_IDS_V1, ...MACHINE_GUARD_ACTION_IDS,
             MACHINE_SETUP_PLAN_ACTION_ID_V1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
         ].filter(method => this.rpcHandlerManager.hasHandler(method));
+        if (this.actionOperationRuntime.store.hasRecoveredSetupRestarts()
+            && this.rpcHandlerManager.hasHandler(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1)) setupMethods.push(EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1);
         return [...REQUIRED_MACHINE_CONTROL_RPC_METHODS, ...setupMethods]
             .filter(method => !this.rpcHandlerManager.inactiveRoleIdFor(method));
     }

@@ -135,17 +135,12 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
             input.observeOperationPublication?.(content);
             emitActionOperationSnapshotV1({ socket: machineSocket, machineId: home.machineId, content });
         },
-        publishContentAcknowledged: async content => {
-            input.observeOperationPublication?.(content);
-            return await emitActionOperationSnapshotV1({ socket: machineSocket, machineId: home.machineId, content, acknowledge: true }) === true;
-        },
     }) : undefined;
     const actionOperations = createHostActionOperationRuntime({
         serverId: home.serverId, machineId: home.machineId,
         custodyBinding: { serverId: home.serverId, installationId: home.installationId },
         resolveAccountId: async () => home.accountId,
-        ...(actionOperationPublisher ? { publishSnapshot: actionOperationPublisher,
-            publishSnapshotAcknowledged: actionOperationPublisher.acknowledge } : {}),
+        ...(actionOperationPublisher ? { publishSnapshot: actionOperationPublisher } : {}),
     });
     const invokeContributedAction = createDaemonExternalActionContributedInvoker({
         managedProviderOperationAuthority,

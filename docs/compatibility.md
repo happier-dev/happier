@@ -13235,6 +13235,14 @@ read still asks current daemon authority first.
 
 ### Action operation observation epochs (development)
 
+Recipe-only Docker Setup uses the existing `action.operations.get` terminal
+observation and result shape across a user-service restart. Its encrypted
+device-local receipts use a file prefix that older daemons ignore. A downgrade
+keeps other receipt history readable and leaves a pending Setup restart result
+unavailable until an upgraded receiver can observe it. Its native effects are
+never replayed during receipt recovery. The Home relay handling the held
+observation and the guest receiver both need the restart-aware implementation.
+
 Current development Session creation can negotiate committed-Session observation
 through the existing Machine `sessionSpawn` protocol capability, epoch 3.
 Home advertises `capabilities.machines.sessionSpawn.protocolVersions`; a daemon

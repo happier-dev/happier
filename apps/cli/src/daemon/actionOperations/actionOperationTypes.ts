@@ -27,9 +27,12 @@ export type HostActionOperationExecute = (context: Readonly<{
   operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
   operationCancellation?: ActionOperationCancellation;
   operationReview?: ActionOperationReviewContinuation;
-  afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
+  restartUserServices?: RegisterSetupUserServiceRestart;
   settleManagedNativeOperation?: import('@/machines/managed/managedIntentReconciler').ManagedMachineOperationSettlementContext['settleManagedNativeOperation'];
 }>) => Promise<ActionExecuteResult>;
+
+/** Native Setup registers its last effect. The receipt owner controls its dispatch and settlement. */
+export type RegisterSetupUserServiceRestart = (restart: () => Promise<'applied' | 'not_applied' | 'outcome_unknown'>) => void;
 
 /** Host-only authority captured from the currently admitted cancellation request. */
 export type ActionOperationCancellationContext = Readonly<Partial<Pick<RpcHandlerContext,

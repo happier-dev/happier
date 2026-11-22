@@ -4,6 +4,7 @@ import type { Socket } from 'socket.io';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { callSocketRpc } from '@happier-dev/sync-client';
 import { waitForExecutionRunTerminal } from '@happier-dev/protocol/execution/runs/waitForTerminal';
@@ -33,10 +34,11 @@ describe('CLI Run observation across target reconnect', () => {
     afterAll(async () => { await cluster?.close(); vi.unstubAllEnvs(); reloadConfiguration(); });
     afterEach(() => { for (const client of clients.splice(0)) client.disconnect(); });
 
-    it.each(['control', 'reconnect', 'finished-offline', 'never-returns'] as const)('%s preserves the caller observation', async scenario => {
+    it.each(['control', 'reconnect', 'finished-offline', 'never-returns', 'setup-reconnect'] as const)('%s preserves the caller observation', async scenario => {
         const [source, destination] = cluster.nodes;
         const sessionId = `wait-${scenario}`;
-        const method = SESSION_RPC_METHODS.EXECUTION_RUN_WAIT;
+        const setup = scenario === 'setup-reconnect';
+        const method = setup ? ACTION_OPERATION_RPC_METHODS_V2.get : SESSION_RPC_METHODS.EXECUTION_RUN_WAIT;
         const scopedMethod = `${sessionId}:${method}`;
         let finish!: () => void;
         const terminal = new Promise<void>(resolve => { finish = resolve; });
@@ -45,8 +47,13 @@ describe('CLI Run observation across target reconnect', () => {
         const firstObservation = new Promise<void>(resolve => { observed = resolve; });
         const issuedBudgets: Array<number | null | undefined> = [];
         const manager = new RpcHandlerManager({ scopePrefix: sessionId, encryptionMode: 'plain', logger() {} });
-        manager.registerHandler(method, async (_request, context) => {
+        manager.registerHandler(method, async (request, context) => {
             observed();
+            if (setup) {
+                expect(request).toEqual({ operationId: 'retained-setup', waitForTerminal: true });
+                await terminal;
+                return { kind: 'found', operation: { operationId: 'retained-setup', state: status } };
+            }
             return waitForExecutionRunTerminal({ runId: 'retained-run', timeoutMs: null, signal: context?.signal,
                 readRun: async () => ({ ok: true as const, data: { run: { runId: 'retained-run', status } } }),
                 waitForTerminal: async () => terminal });
@@ -72,12 +79,13 @@ describe('CLI Run observation across target reconnect', () => {
                     callParams: request.params, callerSocketId: socket.id, timeoutMs: request.timeoutMs }));
             });
         source.io.on('connection', relay);
-        const timeoutMs = scenario === 'never-returns' ? 500 : scenario === 'reconnect' ? null : 5_000;
+        const timeoutMs = scenario === 'never-returns' ? 500 : scenario === 'reconnect' || setup ? null : 5_000;
         const pending = withUserScopedRpcSocket({ token: 'fixture', serverUrl: `http://127.0.0.1:${source.port}`,
             connectTimeoutMs: 5_000, disconnectMessage: 'Caller disconnected' }, async (socket, ready) => {
             await ready();
-            return readRpcObservation({ request: { runId: 'retained-run' }, observation: {}, read: request => callSocketRpc({
-                socket, target: { kind: 'session', id: sessionId }, method, params: request,
+            return readRpcObservation({ request: setup ? { operationId: 'retained-setup', waitForTerminal: true } : { runId: 'retained-run' },
+                observation: {}, read: request => callSocketRpc({
+                socket, target: { kind: setup ? 'machine' : 'session', id: sessionId }, method, params: request,
                 content: { mode: 'plain' }, timeoutMs,
             }) });
         });
@@ -108,6 +116,9 @@ describe('CLI Run observation across target reconnect', () => {
             if (scenario === 'never-returns') {
                 expect(result).toHaveProperty('error');
                 if ('error' in result) expect(isSocketIoAckTimeoutError(result.error)).toBe(true);
+            } else if (setup) {
+                expect(issuedBudgets).toEqual([null, null]);
+                expect(result).toMatchObject({ value: { kind: 'found', operation: { operationId: 'retained-setup', state: 'succeeded' } } });
             } else {
                 expect(result).toMatchObject({ value: { ok: true, status: 'succeeded', result: { run: { runId: 'retained-run' } } } });
             }

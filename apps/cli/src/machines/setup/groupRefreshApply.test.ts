@@ -99,7 +99,7 @@ describe('Software Apply group refresh recovery', () => {
         rootEquivalentGroups: [], passwordlessSudoToRoot: 'allowed', managedDropIn: 'valid', tailscaledOperator: { authorization: 'unknown' } }),
     };
     const acknowledges = vi.fn();
-    const input = { ...f.input, operation: { ...f.input.operation, ...(mode === 'user-with-ack' ? { afterTerminalSuccessAcknowledged: acknowledges } : {}) }, setup: { items: [item], scripts: [{ body: 'docker info' }] }, recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], elevation,
+    const input = { ...f.input, operation: { ...f.input.operation, ...(mode === 'user-with-ack' ? { restartUserServices: acknowledges } : {}) }, setup: { items: [item], scripts: [{ body: 'docker info' }] }, recipePlans: [{ sourceIndex: 0, itemIndex: 0, plan }], elevation,
       groupRefreshNative: { platform: 'linux' as const, user: { username: 'happier', uid: 1000 }, groups: [1000],
         serviceLabel: 'happier-daemon.default', readCgroup: async () => mode !== 'system'
           ? '0::/user.slice/user-1000.slice/user@1000.service/app.slice/happier-daemon.default.service\n'

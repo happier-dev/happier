@@ -10,6 +10,7 @@ import { type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/m
 import { type AnyClientUpgradeRequiredV1 } from '@happier-dev/protocol/clientCompatibility/upgradeRequiredV1';
 import { isSocketIoAckTimeoutError, MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { MANAGED_FINITE_WAKE_RPC_METHOD, ManagedFiniteWakeRequestV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { isSocketRpcActionApiServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
@@ -183,9 +184,11 @@ export async function forwardRpcCall(params: Omit<Parameters<typeof executeRpcFo
     return result;
 }
 
-function isRetainedObservation(params: Readonly<{ method: string; callParams: unknown; authorization?: SocketRpcAuthorizationContext }>): boolean {
+function isRetainedObservation(params: Readonly<{ method: string; callParams: unknown; timeoutMs?: number | null; authorization?: SocketRpcAuthorizationContext }>): boolean {
     const method = params.method.slice(params.method.indexOf(':') + 1);
     if (method === SESSION_RPC_METHODS.EXECUTION_RUN_WAIT) return true;
+    // An exact Action operation wait may span a receiving daemon restart.
+    if (method === ACTION_OPERATION_RPC_METHODS_V2.get && params.timeoutMs === null) return true;
     if (method !== MANAGED_FINITE_WAKE_RPC_METHOD
         || !isSocketRpcActionApiServerOriginAuthorizationContext(params.authorization)) return false;
     const request = ManagedFiniteWakeRequestV1Schema.safeParse(params.callParams);

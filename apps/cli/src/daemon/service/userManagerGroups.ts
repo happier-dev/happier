@@ -2,7 +2,8 @@ export { buildUserManagerGroupRefreshStep } from '@happier-dev/cli-common/system
 
 import { readFile } from 'node:fs/promises';
 import { userInfo } from 'node:os';
-import { buildUserManagerGroupRefreshStep, machineSetupStepChangesDaemonGroupsV1 } from '@happier-dev/cli-common/machineSetup';
+import { buildUserManagerGroupRefreshStep, createMachineSetupNativeBackend, machineSetupStepChangesDaemonGroupsV1,
+  type MachineSetupNativeCommand, type MachineSetupNativeCommandResult } from '@happier-dev/cli-common/machineSetup';
 import { planServiceAction } from '@happier-dev/cli-common/service';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import type { MachineSetupSessionRefreshV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -16,6 +17,19 @@ export type DaemonGroupRefreshNative = Readonly<{
   serviceLabel?: string;
   readCgroup?: () => Promise<string>;
 }>;
+
+/** Both the active user manager and this receiver must have the refreshed kernel groups. */
+export async function readRefreshedUserServiceGroups(native: Pick<DaemonGroupRefreshNative, 'platform' | 'user' | 'groups'>
+  & Readonly<{ run?: (command: MachineSetupNativeCommand) => Promise<MachineSetupNativeCommandResult> }> = {}): Promise<boolean> {
+  const platform = native.platform ?? process.platform;
+  if (platform !== 'linux') return false;
+  const observation = await createMachineSetupNativeBackend({ platform, ...(native.run ? { run: native.run } : {}) })
+    .observe(buildUserManagerGroupRefreshStep(native.user ?? userInfo()));
+  const expected = observation.facts.expectedGroupIds;
+  const groups = new Set(native.groups ?? [...process.getgroups!(), process.getgid!()]);
+  return observation.status === 'satisfied' && Array.isArray(expected) && expected.length === groups.size
+    && expected.every(id => typeof id === 'number' && groups.has(id));
+}
 
 export async function readMachineSetupSessionRefreshRequirement(
   plans: readonly MachineSetupEffectPlanV1[], native: DaemonGroupRefreshNative = {}, changed = false,

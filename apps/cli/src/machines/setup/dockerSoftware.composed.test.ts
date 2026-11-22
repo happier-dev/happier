@@ -21,6 +21,8 @@ import type { MachineElevationDependencies, MachineElevationSpawn } from '../adm
 import { prepareMachineSetupPlanV1 } from './prepareMachineSetupPlan';
 import { groupMachineSetupChanges } from '../../../../../apps/ui/sources/components/settings/machines/managed/machineSetupReviewChanges';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import type { RetainedProjectOpenReceipt } from '@/daemon/actionOperations/projectOpenReceiptPersistence';
+import { readRefreshedUserServiceGroups } from '@/daemon/service/userManagerGroups';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { prepareDedicatedDaemonBootstrap, MachineEffectInternalRequestSchema } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 
@@ -332,7 +334,7 @@ it.each([{ configured: false, installed: false, refreshFails: false, engine: 'ab
   { configured: true, installed: true, refreshFails: true, engine: 'ready' },
   { configured: true, installed: false, refreshFails: false, engine: 'cliOnly' },
   { configured: true, installed: false, refreshFails: false, engine: 'stopped' }] as const)(
-  'Apply preserves terminal success across the post-acknowledgement refresh (%j)', async ({ configured, installed, refreshFails, engine }) => {
+  'Apply keeps the receipt running through the user-manager restart (%j)', async ({ configured, installed, refreshFails, engine }) => {
   const f = await fixture('ubuntu', engine, refreshFails);
   const uid = vi.spyOn(process as NodeJS.Process & { getuid: () => number }, 'getuid').mockReturnValue(0);
   try {
@@ -364,19 +366,17 @@ it.each([{ configured: false, installed: false, refreshFails: false, engine: 'ab
     };
     const elevation: MachineElevationDependencies = { installationId: 'installation', installedCli: '/managed/happier', spawn,
       readPolicy: async () => ({ version: 1, mode: 'preauthorized' }), verifyCurrent: async () => true, observe: async () => f.observation };
-    let acknowledge!: (value: boolean) => void;
-    const homeAcknowledgement = new Promise<boolean>(resolve => { acknowledge = resolve; });
+    const staged = Promise.withResolvers<void>();
     let refreshFinished!: () => void;
     const refreshed = new Promise<void>(resolve => { refreshFinished = resolve; });
     const operationId = `docker-access-${configured}-${installed}`;
-    const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner',
-      generateOperationId: () => operationId, publishSnapshotAcknowledged: async snapshot => {
-        expect(snapshot).toMatchObject({ operationId, state: 'succeeded' });
-        return homeAcknowledgement;
-      } });
-    const execution = operations.observeExecution({ actionId: 'machines.setup.apply', input: {}, execute: async operation => {
-      operation.operationAcceptance?.accept({ operationId });
-      return await applyMachineSetup({ homeId: 'home', machineId: 'machine', requesterAccountId: 'owner',
+    const receipts = new Map<string, RetainedProjectOpenReceipt>();
+    const runtime = () => createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'owner',
+      generateOperationId: () => operationId, projectOpenReceiptPersistence: { retained: [...receipts.values()],
+        save: receipt => { receipts.set(receipt.snapshot.operationId, receipt); }, remove: id => { receipts.delete(id); } } });
+    const operations = runtime();
+    const execution = operations.observeExecution({ actionId: 'machines.setup.apply', input: {}, response: 'admission', execute: async operation => {
+      const result = await applyMachineSetup({ homeId: 'home', machineId: 'machine', requesterAccountId: 'owner',
       userHomeDirectory: '/home/happier', setup: reviewed.sources.map(source => source.setup), recipePlans: reviewed.recipePlans,
       elevation: { ...elevation, spawn: launch => {
         const child = spawn(launch);
@@ -393,17 +393,32 @@ it.each([{ configured: false, installed: false, refreshFails: false, engine: 'ab
         return { exitCode: 1, stdout: '', stderr: 'permission denied while trying to connect to the Docker socket' };
       } },
       operation });
+      staged.resolve();
+      return result;
     } });
-    expect(await execution).toMatchObject({ ok: true, result: { operationId } });
-    const terminal = await operations.handlers.getV2({ operationId, waitForTerminal: true });
-    expect(terminal, JSON.stringify(terminal)).toMatchObject({
-      kind: 'found', operation: { operationId, state: 'succeeded' } });
+    expect(await execution).toMatchObject({ ok: true, result: { status: 'accepted', operationId } });
+    await staged.promise;
+    expect(await operations.handlers.getV2({ operationId })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
     expect(f.effects).not.toContainEqual(['restart', '--', 'user@1000.service']);
     expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: 1 });
-    acknowledge(true);
+    const departingConnection = new AbortController();
+    const oldObservation = operations.runner.waitForTerminal({ machineId: 'machine', accountId: 'owner' }, operationId,
+      departingConnection.signal).catch(error => error);
     await refreshed;
-    expect(await operations.handlers.getV2({ operationId })).toMatchObject({
-      kind: 'found', operation: { operationId, state: 'succeeded' } });
+    if (refreshFails) {
+      expect(await oldObservation).toMatchObject({ operationId, state: 'failed', error: { effectAttempted: true } });
+    } else {
+      departingConnection.abort();
+      expect(await oldObservation).toMatchObject({ name: 'AbortError' });
+      const replacement = runtime();
+      const terminal = replacement.handlers.getV2({ operationId, waitForTerminal: true });
+      expect(await replacement.handlers.getV2({ operationId })).toMatchObject({ kind: 'found', operation: { state: 'running' } });
+      expect(await readRefreshedUserServiceGroups({ ...groupRefreshNative, groups: [1000], run: f.run })).toBe(false);
+      const kernelGroupsRefreshed = await readRefreshedUserServiceGroups({ ...groupRefreshNative, run: f.run });
+      expect(kernelGroupsRefreshed).toBe(true);
+      replacement.store.settleRecoveredSetupRestarts(kernelGroupsRefreshed);
+      expect(await terminal).toMatchObject({ kind: 'found', operation: { operationId, state: 'succeeded', result: { operationId } } });
+    }
     expect(await f.run({ executable: 'docker', args: ['info'] })).toMatchObject({ code: refreshFails ? 1 : 0 });
     expect(f.service()).toEqual({ enabled: true, running: true });
     if (engine === 'stopped') expect([...f.installed]).toEqual([]);
@@ -417,6 +432,6 @@ it.each([{ configured: false, installed: false, refreshFails: false, engine: 'ab
     expect(await f.plan()).toMatchObject({ ok: true, result: { support: [{ status: 'satisfied' }] } });
     expect(reviewed.recipePlans?.[0]?.plan.steps.find(step => step.kind === 'group')).toMatchObject({
       name: 'docker', members: ['happier'], review: { description: expect.stringMatching(/root.equivalent.*administrator/i) } });
-    expect(f.effects).toContainEqual(['restart', '--', 'user@1000.service']);
+    expect(f.effects.filter(args => args[0] === 'restart')).toEqual([['restart', '--', 'user@1000.service']]);
   } finally { uid.mockRestore(); await f.runtime.dispose(); }
 });

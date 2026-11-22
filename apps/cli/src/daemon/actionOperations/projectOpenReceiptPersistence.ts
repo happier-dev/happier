@@ -8,6 +8,8 @@ import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protoc
 import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { ensureProtectedLocalStateDirectorySync, ensureProtectedLocalStateFileSync,
     readProtectedLocalStateFileSync } from '@/utils/fs/protectedLocalState';
@@ -19,6 +21,7 @@ const ReceiptSchema = z.strictObject({
     preparedInput: z.optional(z.string()),
     deploymentChildIdentity: z.optional(z.string()),
     requesterWorkAttributionV1: z.optional(RequesterWorkAttributionV1Schema),
+    setupRestartResult: z.optional(MachineSetupApplyResultV1Schema),
 });
 const ReceiptReadSchema = createStoredReadSchema(ReceiptSchema);
 const EnvelopeReadSchema = createStoredReadSchema(z.strictObject({ version: z.literal(1), ciphertext: z.string() }));
@@ -29,7 +32,7 @@ export type RetainedProjectOpenReceipt = Readonly<z.infer<typeof ReceiptSchema>>
 export type ProjectOpenReceiptPersistence = Readonly<{
     retained: readonly RetainedProjectOpenReceipt[];
     save(receipt: RetainedProjectOpenReceipt): void;
-    remove(operationId: string): void;
+    remove(operationId: string, setupRestart?: true): void;
 }>;
 
 export class ProjectOpenReceiptPersistenceError extends Error {
@@ -41,8 +44,9 @@ export class ProjectOpenReceiptPersistenceError extends Error {
     }
 }
 
-function entryName(operationId: string): string {
-    return `${createHash('sha256').update(operationId).digest('hex')}.json`;
+function entryName(operationId: string, setupRestart: boolean): string {
+    // Older daemons ignore this receipt kind and can still open their existing receipts.
+    return `${setupRestart ? 'setup-restart-' : ''}${createHash('sha256').update(operationId).digest('hex')}.json`;
 }
 
 export function requiresActionOperationReceiptPersistence(actionId: string | undefined): boolean {
@@ -59,12 +63,16 @@ export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
     ensureProtectedLocalStateDirectorySync(input.directory, { authority: 'owned' });
     const directory = join(input.directory, partition);
     ensureProtectedLocalStateDirectorySync(directory, { authority: 'owned' });
-    const retained = readdirSync(directory).filter(name => /^[a-f0-9]{64}\.json$/.test(name)).map(name => {
+    const retained = readdirSync(directory).filter(name => /^(?:setup-restart-)?[a-f0-9]{64}\.json$/.test(name)).map(name => {
         const envelope = EnvelopeReadSchema.parse(JSON.parse(readProtectedLocalStateFileSync(join(directory, name))));
         const receipt = ReceiptReadSchema.parse(storage.openJson({ purpose: 'project_open_receipt', ciphertext: envelope.ciphertext }));
         // The partition belongs to the installed custodian. A shared Machine's
         // admitted requester can be a different Account; the store scopes reads.
-        if (!requiresActionOperationReceiptPersistence(receipt.snapshot.actionId) || entryName(receipt.snapshot.operationId) !== name
+        const setupRestart = receipt.setupRestartResult;
+        const matchesOwner = setupRestart
+            ? receipt.snapshot.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && setupRestart.operationId === receipt.snapshot.operationId
+            : requiresActionOperationReceiptPersistence(receipt.snapshot.actionId);
+        if (!matchesOwner || entryName(receipt.snapshot.operationId, Boolean(setupRestart)) !== name
             || receipt.snapshot.scope.machineId !== input.machineId) {
             throw new ProjectOpenReceiptPersistenceError('open', false);
         }
@@ -73,13 +81,13 @@ export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
     return {
         retained,
         save(receipt) {
-            const path = join(directory, entryName(receipt.snapshot.operationId));
+            const path = join(directory, entryName(receipt.snapshot.operationId, receipt.setupRestartResult !== undefined));
             writeJsonAtomicSync(path, { version: 1,
                 ciphertext: storage.sealJson({ purpose: 'project_open_receipt', value: receipt }) });
             ensureProtectedLocalStateFileSync(path, { authority: 'owned' });
         },
-        remove(operationId) {
-            try { unlinkSync(join(directory, entryName(operationId))); }
+        remove(operationId, setupRestart) {
+            try { unlinkSync(join(directory, entryName(operationId, setupRestart === true))); }
             catch (error) {
                 // Expiry still applies in the operation owner; a failed deletion
                 // leaves an expired encrypted file for the next startup to prune.

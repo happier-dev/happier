@@ -1,6 +1,7 @@
 import { isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { randomUUID } from 'node:crypto';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import { isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { createPendingSessionBirth } from './pendingSessionBirth';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1, MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
@@ -53,6 +54,7 @@ import type {
   ActionOperationSetupDecision,
   DeploymentTokenOperationOrigin,
   ManagedCreationContinuationResult,
+  RegisterSetupUserServiceRestart,
 } from './actionOperationTypes';
 
 type ActiveInvocation = Readonly<{
@@ -69,6 +71,7 @@ type ActiveInvocation = Readonly<{
   refreshSetupReview: () => Promise<void>;
   decideSetupReview: (decision: ActionOperationSetupDecision) => Promise<void>;
   serviceMoveStart?: { claimed: boolean };
+  attachSetupRestartObserver?: () => void;
 }>;
 
 function createCancellationRequestError(): Error {
@@ -120,7 +123,6 @@ export function createActionOperationRunner(deps: Readonly<{
   store: ActionOperationStore;
   resolveAction: (actionId: string) => ResolvedTrackedAction | null;
   generateOperationId?: () => string;
-  publishSnapshotAcknowledged?: (snapshot: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1) => Promise<boolean>;
 }>) {
   const generateOperationId = deps.generateOperationId ?? randomUUID;
   const active = new Map<string, ActiveInvocation>();
@@ -173,7 +175,7 @@ export function createActionOperationRunner(deps: Readonly<{
       operationAcceptance?: import('@happier-dev/protocol').ActionExecutorContext['operationAcceptance'];
       onCancellationRequested: ActionOperationCancellation['onRequest'];
       operationReview: ActionOperationReviewContinuation;
-      afterTerminalSuccessAcknowledged?: (effect: () => Promise<void>) => void;
+      restartUserServices?: RegisterSetupUserServiceRestart;
     }>) => Promise<ActionExecuteResult>;
   }>): Promise<ActionExecuteResult> => {
     const action = request.action ?? deps.resolveAction(request.actionId);
@@ -284,8 +286,9 @@ export function createActionOperationRunner(deps: Readonly<{
       };
       const cancellationListeners = new Set<Parameters<ActionOperationCancellation['onRequest']>[0]>();
       const ownerEvidence: { outcome?: ActionExecuteResult } = {};
-      let lastEffect: (() => Promise<void>) | undefined;
-      let terminalSuccess: import('@happier-dev/protocol/actions').ActionOperationSnapshotV1 | null = null;
+      let restartUserServices: Parameters<RegisterSetupUserServiceRestart>[0] | undefined;
+      const restartObserver = action.actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1 && request.response === 'admission'
+        && deps.store.canRetainSetupRestart ? Promise.withResolvers<void>() : undefined;
       const onCancellationRequested: ActionOperationCancellation['onRequest'] = (listener) => {
         cancellationListeners.add(listener);
         return () => { cancellationListeners.delete(listener); };
@@ -347,9 +350,9 @@ export function createActionOperationRunner(deps: Readonly<{
             publishOwnerUpdate,
             onCancellationRequested,
             operationReview,
-            afterTerminalSuccessAcknowledged: effect => {
-              lastEffect = effect;
-            },
+            ...(restartObserver ? { restartUserServices: (restart: Parameters<RegisterSetupUserServiceRestart>[0]) => {
+              restartUserServices = restart;
+            } } : {}),
             operationAcceptance: { operationId, actionId: action.actionId,
               originRunId: deps.store.get(request.scope, operationId)?.originRunId,
               ...(action.actionId === 'session.spawn_new' ? {
@@ -384,6 +387,25 @@ export function createActionOperationRunner(deps: Readonly<{
               ...nativeOutcome,
               ...(handlerResult.operationCredentialUses ? { operationCredentialUses: handlerResult.operationCredentialUses } : {}),
             } : handlerResult;
+          if (executionResult.ok && restartUserServices && restartObserver) {
+            // The observer has the exact admitted receipt. Until it attaches,
+            // a Workflow can still be recording that receipt in its Run.
+            await raceWithAbort(restartObserver.promise, controller.signal);
+            controller.signal.throwIfAborted();
+            deps.store.retainSetupRestart(operationId, executionResult.result);
+            cancellation = 'unsupported';
+            const restartOutcome = await restartUserServices();
+            if (restartOutcome === 'not_applied') {
+              const failure = { ok: false as const, errorCode: 'action_outcome_unknown', effectAttempted: true,
+                error: 'The Machine could not restart its user services to finish Setup' };
+              deps.store.fail(operationId, failure);
+              return failure;
+            }
+            // The restarted daemon owns settlement. A response from its
+            // departing predecessor cannot prove receiver readiness.
+            await waitForTerminal(request.scope, operationId, controller.signal, true);
+            return executionResult;
+          }
           if (resumeActionRequest && existing?.observation?.kind === 'review_required' && executionResult.ok
             && ActionApprovalRequestCreatedResultSchema.safeParse(executionResult.result).success) {
             // An explicit Ask during a reviewed resume does not complete the
@@ -538,7 +560,7 @@ export function createActionOperationRunner(deps: Readonly<{
           if (!executionResult.ok && executionResult.errorCode === 'cancelled') {
             deps.store.cancel(operationId, failureResult);
           } else if (executionResult.ok) {
-            terminalSuccess = deps.store.succeed(operationId, executionResult.result);
+            deps.store.succeed(operationId, executionResult.result);
             settleReviewedIsolationPredecessors({ store: deps.store, scope: request.scope, action, operationId,
               requestInput: request.input, result: executionResult.result, isActive: heldId => active.has(heldId) });
             const completed = deps.store.get(request.scope, operationId)?.domainRef;
@@ -588,7 +610,6 @@ export function createActionOperationRunner(deps: Readonly<{
           }
           return executionResult;
         } catch (error) {
-          terminalSuccess = null;
           const { ok: _ok, ...projected } = projectActionOperationFailure(error, 'action_operation_failed', action.actionId);
           const nativeOutcome = ownerEvidence.outcome;
           if (isUnconfirmedNativeOutcome(action.actionId, nativeOutcome)) {
@@ -623,22 +644,12 @@ export function createActionOperationRunner(deps: Readonly<{
           // Retired pending creation observes birth once; transport failure is
           // still uncertainty and must not replace the original pending reply.
           await sessionBirth.reconcile(request.scope, operationId).catch(() => undefined);
-          const publish = deps.publishSnapshotAcknowledged;
-          const effect = lastEffect;
-          const snapshot = terminalSuccess;
-          if (snapshot && effect && publish) {
-            // Settlement and active ownership finish before this transport-only
-            // continuation. Missing Home admission or a failed last effect leaves
-            // the known result intact; neither is another running operation.
-            void Promise.resolve().then(() => publish(snapshot)).then(async admitted => {
-              if (admitted) await effect();
-            }).catch(() => undefined);
-          }
         }
       });
       // Retain both observations on one invocation. Each spawn caller opts in
       // independently; the receipt never changes the native/input lifecycle.
       active.set(operationId, { actionId: action.actionId, input: request.input, scope: request.scope, controller, get cancellation() { return cancellation; }, result, acceptance,
+        ...(restartObserver ? { attachSetupRestartObserver: restartObserver.resolve } : {}),
         ...(action.actionId === 'projects.service.relocate' ? { serviceMoveStart: { claimed: false } } : {}),
         resumeSetupReview: retainedReview.resume,
         refreshSetupReview: retainedReview.refresh,
@@ -772,7 +783,7 @@ export function createActionOperationRunner(deps: Readonly<{
     const snapshot = deps.store.get(scope, operationId);
     if (!snapshot || readActionOperationTerminalResultV1(snapshot) || !requireSettlement && snapshot.observation || includeSetupReview && snapshot.setupReview || hasManagedPrompt(snapshot) || hasApprovalHold(snapshot)) return snapshot;
     const invocation = active.get(operationId);
-    if (!invocation && !requireSettlement) return snapshot;
+    if (!invocation && !requireSettlement && !deps.store.isRecoveringSetupRestart(operationId)) return snapshot;
     // Cancelling observation is not a request to stop the admitted command.
     if (signal?.aborted) throw signal.reason ?? createCancellationRequestError();
     let onAbort: (() => void) | undefined;
@@ -785,7 +796,10 @@ export function createActionOperationRunner(deps: Readonly<{
           };
           unsubscribe = deps.store.subscribe(inspect);
           inspect();
-          if (!requireSettlement) void invocation!.result.catch(() => undefined).then(() => resolve(deps.store.get(scope, operationId)));
+          if (!requireSettlement && invocation) {
+            invocation.attachSetupRestartObserver?.();
+            void invocation.result.catch(() => undefined).then(() => resolve(deps.store.get(scope, operationId)));
+          }
         });
       const aborted = new Promise<never>((_resolve, reject) => {
         onAbort = () => reject(signal?.reason ?? createCancellationRequestError());

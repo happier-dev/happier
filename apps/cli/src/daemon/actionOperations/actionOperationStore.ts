@@ -11,7 +11,8 @@ import type {
 import type { ActionOperationListV2Request } from '@happier-dev/protocol/actions/operations/v1';
 
 import type { ActionOperationQueryScope, ActionOperationScope, DeploymentTokenOperationOrigin, ManagedCreationContinuationResult } from './actionOperationTypes';
-import { MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_ACQUIRE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import type { LiveWorkCategoryV1, LiveWorkItemV1, LiveWorkInventoryV1, LiveWorkListenerV1 } from '@/daemon/lifecycle/managedActivity';
 import { isDeepStrictEqual } from 'node:util';
@@ -20,7 +21,8 @@ import { DeploymentTargetLinkProvisionedResultV1Schema } from '@happier-dev/prot
 import { DeploymentBackupActionInputSchemasV1, type DeploymentBackupActionInputV1, type DeploymentBackupTargetV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { DeploymentBackupRestoreInputV1Schema, type DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence, type ProjectOpenReceiptPersistence } from './projectOpenReceiptPersistence';
+import { ProjectOpenReceiptPersistenceError, requiresActionOperationReceiptPersistence,
+  type ProjectOpenReceiptPersistence, type RetainedProjectOpenReceipt } from './projectOpenReceiptPersistence';
 import { MACHINE_REACHABILITY_CONFIGURE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
 import { isDeploymentBackupEvidenceActionIdV1, isDeploymentTargetLinkActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
@@ -161,7 +163,9 @@ export function createActionOperationStore(options?: Readonly<{
   const invocationMetadata = new Map<string, RetainedInvocationInput & Readonly<{ deploymentChildIdentity?: string;
     deploymentTokenOrigin?: DeploymentTokenOperationOrigin; requesterWorkAttributionV1?: RequesterWorkAttributionV1;
     backupInput?: DeploymentBackupOperation['input']; backupTargetKey?: string; retainedTeardown?: RetainedTeardownExecution;
-    creationContinuationResult?: ManagedCreationContinuationResult }>>();
+    creationContinuationResult?: ManagedCreationContinuationResult;
+    setupRestartResult?: RetainedProjectOpenReceipt['setupRestartResult'] }>>();
+  const recoveredSetupRestarts = new Set<string>();
   // Derived from this owner's authored invocation input; imported history cannot
   // manufacture backup or restore evidence. No separate persisted receipt ledger.
   const backupOperationIds = new Map<string, Set<string>>();
@@ -173,7 +177,9 @@ export function createActionOperationStore(options?: Readonly<{
     if (ids?.size === 0) backupOperationIds.delete(key);
   };
   const removeSnapshot = (operationId: string): void => {
-    if (requiresActionOperationReceiptPersistence(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
+    if (invocationMetadata.get(operationId)?.setupRestartResult) projectOpenReceiptPersistence?.remove(operationId, true);
+    else if (requiresActionOperationReceiptPersistence(snapshots.get(operationId)?.actionId)) projectOpenReceiptPersistence?.remove(operationId);
+    recoveredSetupRestarts.delete(operationId);
     unindexBackup(operationId);
     snapshots.delete(operationId);
     invocationMetadata.delete(operationId);
@@ -239,7 +245,8 @@ export function createActionOperationStore(options?: Readonly<{
     const transientProgressOnly = previous !== undefined && !isTerminal(snapshot)
       && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
         || retainsReturnedRecoveryResult(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
-    if (!transientProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
+    if (!transientProgressOnly && metadata && (requiresActionOperationReceiptPersistence(snapshot.actionId) || metadata.setupRestartResult)
+      && projectOpenReceiptPersistence !== undefined) {
       const refusePersistence = (phase: ProjectOpenReceiptPersistenceError['storagePhase']): never => {
         const effectAttempted = snapshot.state !== 'accepted' && previous?.state !== 'accepted';
         if (!effectAttempted) removeSnapshot(snapshot.operationId);
@@ -249,6 +256,7 @@ export function createActionOperationStore(options?: Readonly<{
       try {
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
           ...(metadata.preparedInput !== undefined ? { preparedInput: metadata.preparedInput } : {}),
+          ...(metadata.setupRestartResult ? { setupRestartResult: metadata.setupRestartResult } : {}),
           ...(metadata.deploymentChildIdentity ? { deploymentChildIdentity: metadata.deploymentChildIdentity } : {}),
           ...(metadata.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: metadata.requesterWorkAttributionV1 } : {}) });
       } catch {
@@ -327,7 +335,12 @@ export function createActionOperationStore(options?: Readonly<{
     if (updated === current) return current;
     const next = freezeSnapshot(updated);
     snapshots.set(operationId, next);
-    notify(next, current);
+    try { notify(next, current); }
+    catch (error) {
+      // A failed durable handoff cannot publish memory-only Setup success.
+      if (invocationMetadata.get(operationId)?.setupRestartResult) snapshots.set(operationId, current);
+      throw error;
+    }
     if (isTerminal(next)) prune();
     return next;
   };
@@ -338,7 +351,8 @@ export function createActionOperationStore(options?: Readonly<{
     const prior = receipt.snapshot;
     const { observation: _observation, setupReview: _review, result: _result, ...remaining } = prior;
     const settledAt = Math.max(prior.startedAt ?? prior.createdAt, now());
-    const snapshot = isTerminal(prior) ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
+    const pendingSetupRestart = receipt.setupRestartResult !== undefined && !isTerminal(prior);
+    const snapshot = isTerminal(prior) || pendingSetupRestart ? freezeSnapshot(prior) : freezeSnapshot(ActionOperationSnapshotV1Schema.parse({
       ...remaining,
       // Returned resource and recovery facts remain useful after the coordinator is lost.
       ...(retainsReturnedRecoveryResult(prior.actionId) && prior.result !== undefined ? { result: prior.result } : {}),
@@ -349,10 +363,12 @@ export function createActionOperationStore(options?: Readonly<{
     }));
     snapshots.set(snapshot.operationId, snapshot);
     retainInvocation(snapshot, { inputIdentity: receipt.inputIdentity,
+      ...(receipt.setupRestartResult ? { setupRestartResult: receipt.setupRestartResult } : {}),
       ...(receipt.preparedInput !== undefined ? { preparedInput: receipt.preparedInput } : {}),
       ...(receipt.deploymentChildIdentity ? { deploymentChildIdentity: receipt.deploymentChildIdentity } : {}),
       ...(receipt.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: receipt.requesterWorkAttributionV1 } : {}) });
-    if (!isTerminal(prior)) {
+    if (pendingSetupRestart) recoveredSetupRestarts.add(snapshot.operationId);
+    else if (!isTerminal(prior)) {
       try {
         projectOpenReceiptPersistence?.save({ ...receipt, snapshot });
         emitBackupOutcome(snapshot, prior);
@@ -362,7 +378,33 @@ export function createActionOperationStore(options?: Readonly<{
   }
   prune();
 
-  return Object.freeze({
+  const store = {
+    canRetainSetupRestart: projectOpenReceiptPersistence != null,
+    retainSetupRestart(operationId: string, result: unknown): void {
+      const current = snapshots.get(operationId);
+      const metadata = invocationMetadata.get(operationId);
+      const setupRestartResult = MachineSetupApplyResultV1Schema.parse(result);
+      if (!projectOpenReceiptPersistence || current?.state !== 'running' || current.actionId !== MACHINE_SETUP_APPLY_ACTION_ID_V1
+        || !metadata || setupRestartResult.operationId !== operationId) throw new Error('action_operation_unavailable');
+      invocationMetadata.set(operationId, { ...metadata, setupRestartResult });
+      try {
+        mutate(operationId, snapshot => ({ ...snapshot, revision: snapshot.revision + 1, cancellation: 'unsupported' }));
+      } catch (error) {
+        invocationMetadata.set(operationId, metadata);
+        throw error;
+      }
+    },
+    isRecoveringSetupRestart: (operationId: string): boolean => recoveredSetupRestarts.has(operationId),
+    hasRecoveredSetupRestarts: (): boolean => recoveredSetupRestarts.size > 0,
+    settleRecoveredSetupRestarts(groupsRefreshed: boolean): void {
+      for (const operationId of recoveredSetupRestarts) {
+        const result = invocationMetadata.get(operationId)?.setupRestartResult;
+        if (groupsRefreshed && result) store.succeed(operationId, result);
+        else store.fail(operationId, { errorCode: 'action_outcome_unknown', effectAttempted: true,
+          error: 'The restarted Machine could not confirm refreshed user service credentials' });
+        recoveredSetupRestarts.delete(operationId);
+      }
+    },
     /** Private daemon read of this owner's real custody, independent of the public Account projection. */
     readLiveWork(): Omit<LiveWorkInventoryV1, 'idleSince'> {
       const items = [...snapshots.values()].flatMap(snapshot => {
@@ -739,7 +781,8 @@ export function createActionOperationStore(options?: Readonly<{
       };
     },
 
-  });
+  };
+  return Object.freeze(store);
 }
 
 export type ActionOperationStore = ReturnType<typeof createActionOperationStore>;

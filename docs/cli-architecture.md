@@ -4475,25 +4475,23 @@ possible downtime to Plan. When automatic refresh is unavailable, Apply returns
 `requires_session_refresh` with a typed `requiredStep` instead of running later
 scripts or reporting readiness. A no-op retry still requires recovery when the
 account membership is correct but the daemon's kernel groups are stale.
-Pending setup scripts retain that recovery instruction: they cannot inherit the
-new groups from a refresh deferred until after their own successful completion.
-Retry the reviewed setup after refreshing the session. Recipe-only setup can
-finish before the automatic refresh.
-For Docker access on Linux, a daemon inside `user@<uid>.service` runs the existing
-administrator user-manager refresh as its last effect, after the operation has
-settled successfully and Home has acknowledged its terminal snapshot. The review
-explains that membership is applied and Happier restarts to pick it up. The native
-Apply plan never restarts its own operation owner. This refresh interrupts
-all its user services. Restarting only the daemon cannot refresh the manager's
-groups. A system-service install names the
-existing daemon unit restart instead. An unrecognized/manual installation names
-a fresh login session. Those installations and other group grants retain the
-typed recovery instruction.
-The reconnect uses ordinary presence. No setup result retention or reconciliation
-is added. If acknowledgement is missing or refresh fails, success remains settled;
-the next Docker use reports the existing typed inaccessible-Docker prerequisite.
-This visible, recoverable glitch is accepted; review and reapply Software after
-reconnect to retry the refresh.
+Pending setup scripts need fresh groups before they run. Setup with scripts, a
+bound managed creation report, a system-service or manual installation, or an
+invocation without a retained observer uses the typed recovery instruction.
+Review and reapply Software after refreshing the session.
+
+For recipe-only Docker access on Linux, a daemon inside `user@<uid>.service`
+can finish Setup through the existing administrator user-manager restart. Once
+the caller observes the admitted Setup receipt, the target retains that exact
+operation and its native result in the encrypted device-local receipt store
+before dispatching the restart. The operation stays running. The replacement
+daemon verifies the active user manager and its own refreshed kernel groups
+and waits for Home to acknowledge its Action receiver registration. It then
+settles the same operation. The held Workflow observation can follow the same
+receipt across reconnect and allows the next App child only after success.
+Unknown outcomes retain their existing Workflow recovery rules. The refresh
+interrupts all of that account's user services, and restarting only the daemon
+leaves the manager's groups stale.
 
 The Docker Software recipe and dedicated bootstrap consume one shared Docker
 setup declaration. On Ubuntu and Debian, a missing Docker executable selects

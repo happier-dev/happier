@@ -136,7 +136,6 @@ export function createHostActionOperationRuntime(deps: Readonly<{
   generateOperationId?: () => string;
   onBackupOutcome?: NonNullable<Parameters<typeof createActionOperationStore>[0]>['onBackupOutcome'];
   publishSnapshot?: (snapshot: ActionOperationSnapshotV1) => void | Promise<void>;
-  publishSnapshotAcknowledged?: (snapshot: ActionOperationSnapshotV1) => Promise<boolean>;
   projectOpenReceiptPersistence?: ProjectOpenReceiptPersistence | null;
   onInspection?: (operation: ActionOperationSnapshotV1) => void;
   supportsCoreCancellation?: (
@@ -160,7 +159,6 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         : null;
     },
     ...(deps.generateOperationId ? { generateOperationId: deps.generateOperationId } : {}),
-    ...(deps.publishSnapshotAcknowledged ? { publishSnapshotAcknowledged: deps.publishSnapshotAcknowledged } : {}),
   });
   let owner: ActionOperationDomainOwner | null = null;
   const attachedOwners = new Set<ActionOperationDomainOwner>();
@@ -427,7 +425,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
         || (cancellableActionId && deps.supportsCoreCancellation?.(cancellableActionId, request.input) === true)
         ? 'supported'
         : 'unsupported',
-      execute: async ({ actionRequestId, resumeActionRequest, signal, earlierActiveResult, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, afterTerminalSuccessAcknowledged }) => {
+      execute: async ({ actionRequestId, resumeActionRequest, signal, earlierActiveResult, updateProgress, publishOwnerUpdate, operationAcceptance, onCancellationRequested, requesterWorkAttributionV1, operationReview, restartUserServices }) => {
         const execute = resumeActionRequest && retainedTeardown
           ? retainedTeardown.resume ?? retainedTeardown.execute : request.execute;
         const result = await execute({
@@ -442,7 +440,7 @@ export function createHostActionOperationRuntime(deps: Readonly<{
           operationOwnerUpdate: { update: publishOwnerUpdate },
           operationCancellation: { onRequest: onCancellationRequested },
           operationReview,
-          ...(afterTerminalSuccessAcknowledged ? { afterTerminalSuccessAcknowledged } : {}),
+          ...(restartUserServices ? { restartUserServices } : {}),
           ...(settleManagedNativeOperation ? { settleManagedNativeOperation } : {}),
           ...(operationAcceptance ? { operationAcceptance } : {}),
         });
