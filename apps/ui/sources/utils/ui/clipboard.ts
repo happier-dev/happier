@@ -92,3 +92,20 @@ export function beginClipboardWriteFromUi(mimeType: 'image/png' | 'text/plain'):
         refuse: async () => { refuse(); await copied; },
     };
 }
+
+/** Begin the web write during the gesture while the source Action resolves the text. */
+export async function writeResolvedClipboardTextFromUi(
+    resolveText: () => Promise<string | undefined>,
+    writeText: (text: string) => Promise<boolean>,
+): Promise<boolean> {
+    const pending = Platform.OS === 'web' && typeof ClipboardItem !== 'undefined'
+        && typeof globalThis.navigator?.clipboard?.write === 'function'
+        ? beginClipboardWriteFromUi('text/plain') : null;
+    try {
+        const text = await resolveText();
+        if (!text) return false;
+        return pending ? await pending.write(new Blob([text], { type: 'text/plain' })) : await writeText(text);
+    } finally {
+        await pending?.refuse();
+    }
+}

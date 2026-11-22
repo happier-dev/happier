@@ -14,7 +14,7 @@ import type {
 import type {
   DaemonLocalServicePreviewOpenOrCreateResponseV1,
 } from '@happier-dev/protocol/local/services/preview/v1';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -22,6 +22,7 @@ import {
   findTestInstanceByTypeContainingText,
   createDeferred,
   flushHookEffects,
+  installBrowserClipboardBoundary,
   waitForTestEvent,
   renderHook,
   renderScreen,
@@ -97,7 +98,7 @@ installHomeGovernanceBoundaries(homes);
 await loadSyncSingletonForTests();
 const previewBoundaries = new Map<string, Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>>();
 
-async function addBrowserHome(serverUrl: string) {
+async function addBrowserHome(serverUrl: string, localServicesEnabled?: boolean) {
   const serverIdentityId = `srv_${new URL(serverUrl).hostname}`;
   const boundary = await createExternalActionAccountHttpBoundary({
     serverUrl, serverIdentityId, accountId: 'viewer-account', machineId: 'machine_1',
@@ -110,7 +111,7 @@ async function addBrowserHome(serverUrl: string) {
   });
   previewBoundaries.set(new URL(serverUrl).origin, boundary);
   const id = await homes.addHome({
-    name: 'Browser Home', serverUrl, serverIdentityId, accountId: 'viewer-account', currentAccount: true,
+    name: 'Browser Home', serverUrl, serverIdentityId, accountId: 'viewer-account', currentAccount: true, localServicesEnabled,
     credentials: { token: testState.previewToken },
   });
   const scope = { serverId: resolveServerProfileScopeIdForIdentifier(id), accountId: 'viewer-account' };
@@ -1038,6 +1039,61 @@ describe('BrowserShell', () => {
       ok: false,
       reason: 'unavailable',
     });
+  });
+
+  it('copies the private destination of the service registered for the active frame', async ({ onTestFinished }) => {
+    const { BrowserShell } = await import('./BrowserShell');
+    const { createProjectServiceDeclarationTargetIdV1 } = await import('@happier-dev/protocol/local/services/actions/v1');
+    const { buildLocalServiceDeclarationPreviewLandingUrlV1 } = await import('@happier-dev/protocol/local/services/preview/v1');
+    const { applyLocalServicePreviewSnapshot, createLocalServicePreviewState } = await import('@/sync/domains/local/services/preview/store');
+    const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+    const serverUrl = 'https://browser-copy-home.example.test';
+    const previousPlatform = Platform.OS;
+    const browserStorage = installLocalStorageMock();
+    Reflect.set(Platform, 'OS', 'web');
+    onTestFinished(() => {
+      browserStorage.restore();
+      Reflect.set(Platform, 'OS', previousPlatform);
+    });
+    const home = await addBrowserHome(serverUrl, true);
+    const selection = { kind: 'manifest', name: 'web' } as const;
+    const stableId = createProjectServiceDeclarationTargetIdV1({ serverId: home.id, machineId: target.machineId, id: 'workspace_1' }, selection);
+    const browserTarget = { kind: 'localServicePreview', machineId: target.machineId, targetId: stableId, display: target.display } as const;
+    const serviceTarget = { kind: 'managed_service', machineId: target.machineId, managedServiceId: 'attempt_1',
+      cwd: '/worktree', declaration: { workspaceRefId: 'workspace_1', selection } } as const;
+    const destinationUrl = buildLocalServiceDeclarationPreviewLandingUrlV1(serverUrl, {
+      serverId: home.id, machineId: target.machineId, targetId: stableId,
+    });
+    const clipboard = vi.fn<(value: string) => Promise<void>>().mockResolvedValue(undefined);
+    installBrowserClipboardBoundary(clipboard);
+    const copy = vi.fn((input: unknown) => {
+      expect(input).toMatchObject({ target: serviceTarget, action: 'copy_url' });
+      return { v: 1, requestId: 'copy_1', action: 'copy_url', status: 'succeeded', auditEvents: [], destinationUrl };
+    });
+    previewBoundaries.set(serverUrl, await createExternalActionAccountHttpBoundary({
+      serverUrl, serverIdentityId: `srv_${new URL(serverUrl).hostname}`, accountId: 'viewer-account',
+      machineId: target.machineId, actionId: 'localServices.actions.copyUrl', tokenEpoch: 0,
+      requesterInvocation: 'credentials', execute: copy,
+    }));
+    const previewState = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
+      generatedAt: 1, refreshState: 'idle', diagnostics: [], previews: [{ previewId: serviceTarget.managedServiceId,
+        resource: { previewId: serviceTarget.managedServiceId, machineId: target.machineId, serviceTarget, browserTarget,
+          owner: { kind: 'user', id: 'viewer-account' }, target: { host: '127.0.0.1', port: 5173, scheme: 'http' },
+          initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host' },
+        accessUrl: 'https://preview.happier.test/', expiresAt: null, diagnostics: [],
+      }],
+    });
+    const base = await createShellState();
+    const state = { ...base, viewsById: { ...base.viewsById, view_1: { ...base.viewsById.view_1!, target: browserTarget } } };
+    const screen = await renderScreen(<BrowserShell browserSessionId="browser_session_1" platform="web"
+      state={state} onCommand={vi.fn()} localServicePreviewState={previewState}
+      localServicePreviewServerId={home.id} testID="private-preview" />);
+
+    await screen.pressByTestIdAsync('private-preview-address-copy');
+
+    expect(copy).toHaveBeenCalledOnce();
+    expect(clipboard).toHaveBeenCalledExactlyOnceWith(destinationUrl);
+    await screen.unmount();
   });
 
   it('says on the ended card why Open again was refused, and leads to Services once nothing runs it', async () => {

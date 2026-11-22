@@ -2,7 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { flushHookEffects, installBrowserClipboardBoundary, renderScreen } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, installBrowserClipboardBoundary, renderScreen } from '@/dev/testkit';
 
 import { BrowserUrlField } from './BrowserUrlField';
 
@@ -293,6 +293,57 @@ describe('BrowserUrlField — toolbar address density', () => {
 
         expect(clipboardSpies.setClipboardStringSafe).toHaveBeenCalledExactlyOnceWith('https://www.example.com/docs');
         expect(screen.findByTestId(`${TEST_ID}-copy-feedback`)).toBeTruthy();
+    });
+
+    it('copies the resolved private destination without using the displayed listener as a fallback', async () => {
+        clipboardSpies.setClipboardStringSafe.mockClear();
+        const destination = 'https://app.happier.test/preview-service/machine/project-service%3Aweb?serverId=home';
+        const resolveCopyUrl = vi.fn<() => Promise<string | undefined>>()
+            .mockResolvedValueOnce(destination)
+            .mockResolvedValueOnce(undefined);
+        const screen = await renderScreen(
+            <BrowserUrlField
+                testID={TEST_ID}
+                trailingAction="copy"
+                value="http://localhost:5173/"
+                onSubmitUrl={vi.fn()}
+                resolveCopyUrl={resolveCopyUrl}
+            />,
+        );
+
+        await screen.pressByTestIdAsync(`${TEST_ID}-copy`);
+        await screen.pressByTestIdAsync(`${TEST_ID}-copy`);
+
+        expect(clipboardSpies.setClipboardStringSafe).toHaveBeenCalledExactlyOnceWith(destination);
+    });
+
+    it('starts the web clipboard write in the gesture and supplies the admitted destination when it resolves', async ({ onTestFinished }) => {
+        const destination = createDeferred<string>();
+        const copy = createDeferred<string>();
+        class ClipboardItemPort {
+            constructor(readonly data: Record<string, Promise<Blob>>) {}
+        }
+        vi.stubGlobal('ClipboardItem', ClipboardItemPort);
+        const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+        const write = vi.fn(async ([item]: [ClipboardItemPort]) => {
+            copy.resolve(await (await item.data['text/plain']!).text());
+        });
+        Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { write } });
+        onTestFinished(() => {
+            vi.unstubAllGlobals();
+            if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard);
+        });
+        const screen = await renderScreen(<BrowserUrlField testID={TEST_ID} trailingAction="copy"
+            value="http://localhost:5173/" onSubmitUrl={vi.fn()} resolveCopyUrl={() => destination.promise} />);
+
+        const press = screen.pressByTestIdAsync(`${TEST_ID}-copy`);
+        try {
+            await vi.waitFor(() => expect(write).toHaveBeenCalledOnce(), { timeout: 500 });
+        } finally {
+            destination.resolve('https://app.happier.test/private-preview');
+            await press;
+        }
+        expect(await copy.promise).toBe('https://app.happier.test/private-preview');
     });
 
     it('surfaces an inline invalid message and does not navigate when the input is not an address', async () => {

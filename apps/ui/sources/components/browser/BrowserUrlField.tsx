@@ -15,6 +15,8 @@ import {
 } from '@/sync/domains/browser/shell';
 import { t } from '@/text';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { writeResolvedClipboardTextFromUi } from '@/utils/ui/clipboard';
 import { ESCAPE_LAYER_PRIORITIES, useEscapeLayer } from '@/keyboard/escape';
 
 /**
@@ -166,6 +168,9 @@ export type BrowserUrlFieldProps = Readonly<{
     placeholder?: string;
     accessibilityLabel?: string;
     trailingAction?: BrowserUrlFieldTrailingAction;
+    /** A private resource can admit a different copy destination than its displayed address. */
+    resolveCopyUrl?: () => Promise<string | undefined>;
+    clipboardScope?: ServerAccountScope | null;
     /**
      * Prettify the blurred value (drop the scheme, `www.`, and a bare trailing slash). The address
      * bar reflects a loaded page and wants this; the launchpad's entry box starts empty and does not.
@@ -204,10 +209,10 @@ export type BrowserUrlFieldProps = Readonly<{
 export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement {
     const { theme } = useUnistyles();
     const paintColor = useHappierMaterialColorResolver();
-    const writeClipboard = useClipboardWrite();
     const densityKey = props.density ?? 'toolbar';
     const density = DENSITY[densityKey];
     const trailingAction = props.trailingAction ?? 'none';
+    const writeClipboard = useClipboardWrite(props.clipboardScope, { enabled: trailingAction === 'copy' });
     const inputRef = React.useRef<RNTextInput | null>(null);
     React.useImperativeHandle(props.focusRef, () => ({
         focus: () => {
@@ -325,11 +330,13 @@ export function BrowserUrlField(props: BrowserUrlFieldProps): React.ReactElement
 
     const handleCopyUrl = React.useCallback(async () => {
         if (!props.value || props.disabled) return;
-        const copied = await writeClipboard(props.value);
+        const copied = props.resolveCopyUrl
+            ? await writeResolvedClipboardTextFromUi(props.resolveCopyUrl, writeClipboard)
+            : await writeClipboard(props.value);
         if (copied) {
             copyFeedback.markCopied('url');
         }
-    }, [copyFeedback, props.disabled, props.value, writeClipboard]);
+    }, [copyFeedback, props.disabled, props.resolveCopyUrl, props.value, writeClipboard]);
 
     const fieldRowStyle = React.useMemo(() => ({
         // `minHeight`, not `height`: Q2 measured that the app's `uiFontScale` GROWS the line box, so a

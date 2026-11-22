@@ -17,6 +17,7 @@ import type {
     ActionExecuteResult,
 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { BrowserViewTargetV1 } from '@happier-dev/protocol/browser/target/v1';
+import { isProjectServiceDeclarationTargetIdV1 } from '@happier-dev/protocol/local/services/actions/v1';
 
 import { BrowserLaunchpad } from '@/components/browser/launchpad';
 import { resolveAgentBrowserPrerequisite } from '@/components/browser/launchpad/BrowserLaunchpad';
@@ -44,8 +45,10 @@ import { selectBrowserDiagnosticsForView, createBrowserDiagnosticsUiStore } from
 import type { BrowserDiagnosticsPanelProjection } from '@/sync/domains/browser/diagnostics';
 import type { BrowserRecordingState } from '@/sync/domains/browser/recording';
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation';
-import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
+import { selectLocalServicePreviewByBrowserTarget, type LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { useLocalServicePreviewStateController } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
+import { buildLocalServiceCopyUrlRequest, readLocalServiceCopyDestination } from '@/components/sessions/localServices/lifecycleActions';
+import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import {
     usePluginLocalizedTextResolver,
@@ -444,6 +447,18 @@ export function BrowserShell(props: Readonly<{
         props.localServicePreviewState !== undefined
             ? props.localServicePreviewState
             : previewController.state;
+    const previewTarget = activeView?.target.kind === 'localServicePreview' ? activeView.target : null;
+    const managedPreviewCopy = previewTarget !== null
+        && (previewTarget.serviceTarget !== undefined || isProjectServiceDeclarationTargetIdV1(previewTarget.targetId));
+    const previewCopyScope = managedPreviewCopy ? previewController.accountLifetime?.scope ?? null : null;
+    const { executeForPresentation: executePreviewCopy } = useMountedActionExecution(previewCopyScope);
+    const resolvePreviewCopyUrl = React.useCallback(async () => {
+        if (!localServicePreviewState) return undefined;
+        const target = selectLocalServicePreviewByBrowserTarget(localServicePreviewState, previewTarget)?.resource.serviceTarget;
+        if (!target) return undefined;
+        const result = await executePreviewCopy('localServices.actions.copyUrl', buildLocalServiceCopyUrlRequest({ target }));
+        return result?.ok ? readLocalServiceCopyDestination(result.result) : undefined;
+    }, [executePreviewCopy, localServicePreviewState, previewTarget]);
     // Only drawer identity/sections live in chrome. Its open body reads the event history.
     const activeDiagnostics = React.useMemo(() => activeView && browserDiagnostics
         ? selectBrowserDiagnosticsForView(createBrowserDiagnosticsUiStore(), {
@@ -737,6 +752,8 @@ export function BrowserShell(props: Readonly<{
             focusRef={urlFieldRef}
             density={controlMetrics.addressDensity}
             trailingAction={phone ? 'none' : 'copy'}
+            resolveCopyUrl={managedPreviewCopy ? resolvePreviewCopyUrl : undefined}
+            clipboardScope={managedPreviewCopy ? previewCopyScope : undefined}
             formatWhileBlurred
             displayHost={selectBrowserViewDisplayHost(activeView)}
             value={selectBrowserViewAddress(activeView)

@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, LocalServiceCopyUrlResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1 } from '@happier-dev/protocol/local/services/actions/v1';
+import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionResultV1Schema, LocalServiceCopyUrlResultV1Schema, LocalServiceManagedServiceActionTargetV1Schema, type LocalServiceActionKindV1, type LocalServiceActionRequestV1, type LocalServiceManagedServiceActionTargetV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import type { FrontDoorRuntimeActionExecute as RuntimeActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { DaemonLocalServiceLauncherHistoryClearResponseV1Schema, DaemonLocalServiceLauncherLeafRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -12,6 +12,7 @@ import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { t } from '@/text';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { writeResolvedClipboardTextFromUi } from '@/utils/ui/clipboard';
 import { readLocalServiceActionOutcome } from './localServiceActionOutcome';
 import { executeLocalServiceActionWithAdmission, isLocalServiceActionAdmissionCurrent, readLocalServiceSetupConsentReview, useLocalServiceActionExecutor, type LocalServiceActionAdmission, type LocalServiceActionInvocationOptions } from './localServiceActionAdmission';
 
@@ -82,11 +83,11 @@ function isManagedServiceHomeCurrent(target: LocalServiceLaunchTarget, serverId:
 }
 
 function buildManagedServiceActionRequest(input: Readonly<{
-    target: LocalServiceLaunchTarget;
+    target: LocalServiceLaunchTarget | LocalServiceManagedServiceActionTargetV1;
     action: Extract<LocalServiceActionKindV1, 'copy_url' | 'forget' | 'stop_managed' | 'restart_managed'>;
     requestId?: string;
 }> & Pick<LocalServiceActionRequestV1, 'expectedEffectDigest' | 'choice'>): LocalServiceActionRequestV1 {
-    const target = readManagedServiceActionTarget(input.target);
+    const target = 'source' in input.target ? readManagedServiceActionTarget(input.target) : input.target;
     if (!target) throw new Error('local_service_control_target_unavailable');
     const request: LocalServiceActionRequestV1 = {
         requestId: input.requestId ?? createLocalServiceActionRequestId(), target, action: input.action, force: false,
@@ -161,12 +162,18 @@ export function buildLocalServiceCopyUrlRequest(input: Readonly<{
     sessionId?: string | null;
     workspaceId?: string | null;
     requestId?: string;
-}> | Readonly<{ target: LocalServiceLaunchTarget; requestId?: string }>): LocalServiceActionRequestV1 {
+}> | Readonly<{ target: LocalServiceLaunchTarget | LocalServiceManagedServiceActionTargetV1; requestId?: string }>): LocalServiceActionRequestV1 {
     if ('target' in input) return buildManagedServiceActionRequest({ ...input, action: 'copy_url' });
     return buildInventoryEntryActionRequest({
         ...input,
         action: 'copy_url',
     });
+}
+
+export function readLocalServiceCopyDestination(result: unknown, fallback?: string): string | undefined {
+    const parsed = LocalServiceCopyUrlResultV1Schema.safeParse(result);
+    if (!parsed.success || parsed.data.status !== 'succeeded' || parsed.data.action !== 'copy_url') return undefined;
+    return parsed.data.destinationUrl ?? fallback;
 }
 
 function readInventoryEntryIdFromTarget(target: LocalServiceLaunchTarget): string | undefined {
@@ -416,25 +423,22 @@ export function useLocalServiceCopyUrlAction(
         if (!dispatchable) {
             return await copyToClipboard(value);
         }
-        const result = await runtimeActionExecute!({
-            actionId: 'localServices.actions.copyUrl',
-            input: managed ? buildLocalServiceCopyUrlRequest({ target }) : buildLocalServiceCopyUrlRequest({
-                inventoryEntryId: inventoryEntryId!,
-                machineId: machineId!,
-                sessionId: sessionId ?? target.sessionId,
-                workspaceId: workspaceId ?? target.workspaceId,
-            }),
-            context: {
-                ...(sessionId ? { defaultSessionId: sessionId } : {}),
-                ...(actionServerId ? { serverId: actionServerId } : {}),
-                surface: 'ui',
-            },
-        });
-        const parsed = LocalServiceCopyUrlResultV1Schema.safeParse(result);
-        if (!parsed.success || parsed.data.status !== 'succeeded' || parsed.data.action !== 'copy_url') {
-            return false;
-        }
-        const destination = parsed.data.destinationUrl ?? (managed?.declaration ? undefined : value);
-        return destination === undefined ? false : await copyToClipboard(destination);
+        return await writeResolvedClipboardTextFromUi(async () => {
+            const result = await runtimeActionExecute!({
+                actionId: 'localServices.actions.copyUrl',
+                input: managed ? buildLocalServiceCopyUrlRequest({ target: managed }) : buildLocalServiceCopyUrlRequest({
+                    inventoryEntryId: inventoryEntryId!,
+                    machineId: machineId!,
+                    sessionId: sessionId ?? target.sessionId,
+                    workspaceId: workspaceId ?? target.workspaceId,
+                }),
+                context: {
+                    ...(sessionId ? { defaultSessionId: sessionId } : {}),
+                    ...(actionServerId ? { serverId: actionServerId } : {}),
+                    surface: 'ui',
+                },
+            });
+            return readLocalServiceCopyDestination(result, managed?.declaration ? undefined : value);
+        }, copyToClipboard);
     }, [copyToClipboard, machineId, runtimeActionExecute, serverId, sessionId, workspaceId]);
 }
