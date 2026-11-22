@@ -15,6 +15,9 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { t } from '@/text';
+import { useUnistyles } from 'react-native-unistyles';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { shapeWorkerDestinationSections, workerDestinationSectionTitles } from '@/components/projects/workers/workerDestinationSections';
 
 /**
  * Dev-only: the Project work destination list (Move a service, Run a script on a worker) drawn by the
@@ -26,7 +29,6 @@ const SERVER_NAME = 'Personal Home';
 const NOW = Date.now();
 const noop = () => {};
 const EMPTY: Machine[] = [];
-const SECTION_TITLES = { all: t('projectWorkers.workersSection') };
 
 const machine = (
   id: string,
@@ -69,7 +71,9 @@ const worker = (serverId: string, machineId: string, running: number): ProjectWo
   explanation: 'eligible',
 });
 
-export function WorkerPickerStatesSpecimen() {
+export function WorkerPickerStatesSpecimen(props: Readonly<{ service: boolean }>) {
+  const { theme } = useUnistyles();
+  const phone = useDeviceType() === 'phone';
   // The signed-in Home supplies the reachability scope, so presence reads exactly as in the real picker.
   const account = useActiveServerAccountScope();
   const serverId = account?.serverId ?? '';
@@ -82,7 +86,7 @@ export function WorkerPickerStatesSpecimen() {
     return { ownership: 'owned', worker: worker(serverId, row.id, row.id === 'studio' ? 1 : 0) };
   }, [serverId]);
   const list = useMachineSelectionListModel<Machine>({
-    purpose: 'service-start',
+    purpose: props.service ? 'service-start' : 'finite',
     resolveMachinePlacementFacts: resolveFacts,
     groups,
     selectedMachine: null,
@@ -97,9 +101,15 @@ export function WorkerPickerStatesSpecimen() {
     showSearch: false,
     showCliGlyphs: false,
     autoDetectCliGlyphs: false,
-    sectionTitles: SECTION_TITLES,
+    sectionTitles: workerDestinationSectionTitles(props.service),
     testIdPrefix: 'worker-picker-specimen',
   });
+  // The picker's own shaping owner, so this specimen draws exactly the grouping the pages draw.
+  const rootStep = React.useMemo(() => ({ ...list.rootStep, sections: shapeWorkerDestinationSections({
+    sections: list.rootStep.sections, title: t('projectWorkers.runOn', { name: 'test' }), testID: 'worker-picker-specimen',
+    phone, iconColor: theme.colors.text.secondary, primary: { title: t('projectServices.thisMachine', { name: 'devbox' }) }, onChoosePrimary: noop,
+    servicePresentation: props.service,
+  }) }), [list.rootStep, phone, props.service, theme.colors.text.secondary]);
   return (
     <View style={styles.stage}>
       <View style={styles.card} testID="worker-picker-specimen">
@@ -110,7 +120,7 @@ export function WorkerPickerStatesSpecimen() {
         >
           <SelectionList
             testID="worker-picker-specimen-list"
-            rootStep={list.rootStep}
+            rootStep={rootStep}
             selectedOptionId={null}
             onSelect={noop}
             onRequestClose={noop}

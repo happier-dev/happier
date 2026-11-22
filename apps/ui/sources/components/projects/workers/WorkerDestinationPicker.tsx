@@ -11,7 +11,6 @@ import { useMachineSelectionListModel, type ServerScopedMachinePoolSelection } f
 import { useMachinePoolGroups } from '@/components/sessions/new/hooks/machines/useMachinePoolGroups';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
-import { Icon } from '@/components/ui/icons/Icon';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import {
   MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
@@ -20,20 +19,16 @@ import {
 import {
   SELECTION_LIST_LARGE_POPOVER_SIZE,
   SelectionList,
-  type SelectionListOption,
   type SelectionListSectionDescriptor,
 } from '@/components/ui/selectionList';
 import { useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { t } from '@/text';
 import { ManagedMachineSelectionOffers, type ManagedMachineConfigurationContinuation } from '@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers';
+import { shapeWorkerDestinationSections, workerDestinationSectionTitles, type WorkerDestinationPrimaryRow } from './workerDestinationSections';
 import { managedMachineSelectionOptionId, type ManagedMachineSelectionDraft, type ManagedMachineSelectionOffer } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
-/** The checkout's own Machine row: what "This machine" means for this picker. */
-export type WorkerDestinationPrimaryRow = Readonly<{
-  title: string;
-  subtitle?: string;
-}>;
+export type { WorkerDestinationPrimaryRow } from './workerDestinationSections';
 
 export type WorkerDestinationPickerProps = Readonly<{
   testID: string;
@@ -134,8 +129,8 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
     [props.memoryDemand, props.subjectName],
   );
   const sectionTitles = React.useMemo(
-    () => ({ all: t('projectWorkers.workersSection') }),
-    [],
+    () => workerDestinationSectionTitles(!!props.servicePresentation),
+    [props.servicePresentation],
   );
   const [managedOffers, setManagedOffers] = React.useState<readonly ManagedMachineSelectionOffer[]>([]);
   const onOffers = React.useCallback((home: string, offers: readonly ManagedMachineSelectionOffer[]) => {
@@ -187,117 +182,19 @@ function OpenWorkerDestinationPicker(props: WorkerDestinationPickerProps) {
   });
 
   const rootStep = React.useMemo(() => {
-    const sections = list.rootStep.sections;
-    const isPoolSection = (section: SelectionListSectionDescriptor) =>
-      section.id === 'machine-pools' || section.id.endsWith(':machine-pools');
-    const poolOptions = sections
-      .filter(isPoolSection)
-      .flatMap((section) => (section.kind === 'static' ? section.options : []))
-      .filter((option) => option.id.startsWith('pool:'));
-    const lonePool =
-      !props.exactTargetOnly && props.presentPoolAsAutomatic && poolOptions.length === 1
-        ? poolOptions[0]!
-        : null;
-    const leading: SelectionListOption[] = [
-      ...(lonePool
-        ? [
-            {
-              ...lonePool,
-              label: t('projectWorkers.automatic'),
-              subtitle: [lonePool.label, lonePool.subtitle]
-                .filter(Boolean)
-                .join(' · '),
-              icon: (
-                <Icon
-                  name="stack"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              ),
-            } as SelectionListOption,
-          ]
-        : []),
-      ...(props.primary
-        ? [
-            {
-              id: 'primary',
-              testID: `${props.testID}-option:primary`,
-              label: props.primary.title,
-              ...(props.primary.subtitle
-                ? { subtitle: props.primary.subtitle }
-                : {}),
-              icon: (
-                <Icon
-                  name="hard-drives"
-                  size={18}
-                  color={theme.colors.text.secondary}
-                />
-              ),
-              onSelect: () => onChooseRef.current({ kind: 'primary' }),
-            } satisfies SelectionListOption,
-          ]
-        : []),
-    ];
-    const poolSections = props.exactTargetOnly || lonePool
-      ? []
-      : sections.filter(isPoolSection).map(
-          (section) =>
-            ({
-              ...section,
-              ...(section.kind === 'static'
-                ? {
-                    options: section.options.map((option) =>
-                      option.id.startsWith('pool:')
-                        ? ({
-                            ...option,
-                            ...(props.servicePresentation
-                              ? {
-                                  label: t('projectServices.anyWorker'),
-                                  subtitle: t('projectServices.anyWorkerDetail', { pool: option.label }),
-                                }
-                              : {}),
-                            icon: (
-                              <Icon
-                                name="stack"
-                                size={18}
-                                color={theme.colors.text.secondary}
-                              />
-                            ),
-                          } as SelectionListOption)
-                        : option,
-                    ),
-                  }
-                : {}),
-              title: props.servicePresentation ? undefined : t('projectWorkers.poolsSection'),
-            }) as SelectionListSectionDescriptor,
-        );
-    const machineSections = sections
-      .filter((section) => !isPoolSection(section))
-      .map(
-        (section) =>
-          ({
-            ...section,
-            // New-machine offers keep their own heading; only Machine buckets are "Workers".
-            title: section.id === 'managed-machines' ? section.title
-              : props.servicePresentation ? undefined : t('projectWorkers.workersSection'),
-          }) as SelectionListSectionDescriptor,
-      );
-    const ordered: SelectionListSectionDescriptor[] = [
-      ...(leading.length > 0
-        ? [
-            {
-              kind: 'static',
-              id: 'run-on-leading',
-              // The phone sheet already titles itself with this text; a desktop popover has no header.
-              title: props.servicePresentation || phone ? undefined : props.title,
-              options: leading,
-            } as const,
-          ]
-        : []),
-      ...machineSections,
-      ...poolSections,
-      ...(props.trailingSections ?? []),
-    ];
+    const ordered = shapeWorkerDestinationSections({
+      sections: list.rootStep.sections,
+      title: props.title,
+      testID: props.testID,
+      phone,
+      iconColor: theme.colors.text.secondary,
+      primary: props.primary,
+      onChoosePrimary: () => onChooseRef.current({ kind: 'primary' }),
+      exactTargetOnly: props.exactTargetOnly,
+      presentPoolAsAutomatic: props.presentPoolAsAutomatic,
+      servicePresentation: props.servicePresentation,
+      trailingSections: props.trailingSections,
+    });
     return {
       ...list.rootStep,
       sections: ordered,

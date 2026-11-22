@@ -46,6 +46,8 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 const { PlanOptionRow } = await import('@/components/ui/selectionList/SelectionListOptionRow');
 const { useMachineSelectionListModel } = await import('./useMachineSelectionListModel');
+const { shapeWorkerDestinationSections, workerDestinationSectionTitles } = await import('@/components/projects/workers/workerDestinationSections');
+const { t } = await import('@/text');
 const { useMachineDestinationWorkerStatus } = await import('@/components/sessions/new/hooks/machines/useMachineDestinationWorkerStatus');
 const { getActionOperation } = await import('@/sync/ops/actionOperations');
 const { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded } = await import('@/sync/domains/machines/reachability/machineReachability');
@@ -611,6 +613,43 @@ describe('worker destination list demand', () => {
             // Offline stays offline: presence alone keeps it unselectable.
             expect(option('bens-away')?.disabled).toBe(true);
             expect(hook.getCurrent().offlineOnlyMachineIdsByServerId[serverId]).toEqual(['bens-away']);
+        } finally { await hook.unmount(); }
+    });
+
+    // The Project work pickers (Move a service, Run a script, Worker settings) draw the list model's sections through
+    // one shaping owner; a Machine shared with you stays under its owner's heading, never under "Workers" or untitled.
+    it.each([
+        { purpose: 'finite', servicePresentation: false }, { purpose: 'service-start', servicePresentation: true },
+    ] as const)('keeps a shared Machine under its shared heading in the $purpose picker', async ({ purpose, servicePresentation }) => {
+        const owned = createMachineFixture({ id: 'own-worker', active: true, activeAt: Date.now() });
+        const shared = (id: string, displayName: string | null) => createMachineFixture({ id, active: true, activeAt: Date.now(),
+            isShared: true, access: { custodian: { accountId: `custodian-of-${id}`, displayName }, role: 'use', resourceMode: 'plain', accessState: 'ready' } } as Partial<Machine>);
+        const bens = shared('bens-worker', 'Ben');
+        const unnamed = shared('unnamed-worker', null);
+        await seedAnsweredMachines([owned, bens, unnamed]);
+        rpc.machine.mockResolvedValue({ eligible: true, candidate: { serverId, machineId: owned.id },
+            load: { kind: 'known', running: 0, queued: 0, accepting: true, runAtMost: null }, explanation: 'eligible' });
+        const hook = await renderHook(() => {
+            const list = useMachineSelectionListModel<Machine>({
+                purpose, workerPlacement: { workspace: { serverId, refId: 'checkout' } },
+                groups: [{ serverId, serverName: 'Worker picker', loading: false, signedOut: false,
+                    machines: [owned, bens, unnamed].map(machine => ({ ...machine, serverId, serverName: 'Worker picker' })) }],
+                selectedMachine: null, selectedServerId: serverId, recentMachines: [], favoriteMachines: [],
+                onSelectMachine: () => {}, onSelectScopedMachine: () => {},
+                showFavorites: false, showRecent: false, showSearch: false, showCliGlyphs: false, autoDetectCliGlyphs: false,
+                sectionTitles: workerDestinationSectionTitles(servicePresentation),
+            });
+            return shapeWorkerDestinationSections({ sections: list.rootStep.sections, title: 'Run on', testID: 'picker', phone: false,
+                iconColor: 'ink', primary: { title: 'This machine' }, onChoosePrimary: () => {}, servicePresentation });
+        });
+        const titleOf = (id: string) => hook.getCurrent().find(section => section.kind === 'static'
+            && section.options.some(option => option.id.endsWith(id)))?.title;
+        try {
+            await waitForHomeGovernance(() => expect(titleOf('own-worker')).toBe(servicePresentation ? undefined : t('projectWorkers.workersSection')));
+            expect(titleOf('bens-worker')).toBe(t('machines.destinations.shared', { team: 'Ben' }));
+            // No public owner name: the heading still says it is shared, and never shows an account id.
+            expect(titleOf('unnamed-worker')).toBe(t('machines.destinations.sharedWithoutOwner'));
+            expect(JSON.stringify(hook.getCurrent().map(section => section.title))).not.toContain('custodian-of-');
         } finally { await hook.unmount(); }
     });
 

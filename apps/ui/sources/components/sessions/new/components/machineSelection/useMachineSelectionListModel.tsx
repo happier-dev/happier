@@ -224,7 +224,8 @@ export type BuildMachineSelectionListModelParams<TMachine extends MachineDisplay
      * that work does there ("runs directly", lab machine-sandboxes-1115 scene 2). Hosts that start no Session omit it.
      */
     isolationWorkKind?: MachineIsolationWorkKind;
-    sectionTitles?: Readonly<Partial<Record<MachineSelectionBucketId, string>>>;
+    /** Titles for the non-shared buckets; `null` leaves that bucket untitled. Shared buckets always name their owner. */
+    sectionTitles?: Readonly<Partial<Record<Exclude<MachineSelectionBucketId, 'shared'>, string | null>>>;
 }>;
 
 
@@ -1057,6 +1058,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 id: bucket.key ?? bucket.id,
                 title: bucket.id === 'shared'
                     ? describeMachineSharedGroupTitle(bucket.custodian)
+                    : params.sectionTitles?.[bucket.id] === null ? undefined
                     : params.sectionTitles?.[bucket.id] ?? bucketTitle(bucket.id),
                 options: bucket.machines.map((machine) => {
                     const availability = resolveRowAvailability(machine, group.serverId, params.resolveMachineAvailability, purpose, resolveMachinePlacementFacts, params.workerSubject, scopeForServer(group.serverId));
