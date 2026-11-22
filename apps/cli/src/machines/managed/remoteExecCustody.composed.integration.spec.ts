@@ -10,7 +10,7 @@ import { ManagedAcquireInputV1Schema, ManagedExecOutputV1Schema } from '@happier
 import type { ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { ActionOperationGetV1ResponseSchema, ActionOperationRevisionEphemeralV1Schema,
+import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema, ActionOperationRevisionEphemeralV1Schema,
     ActionOperationSnapshotV1Schema, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ExternalActionRequestEnvelopeV2Schema, ExternalActionResponseEnvelopeV2Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -381,15 +381,17 @@ it.runIf(process.platform === 'linux')('runs an approved custodian CLI command t
     expect(providerReads).toEqual([providerAccount.accountId]);
 }, 120_000);
 
-it.runIf(process.platform === 'linux')('wakes the stopped guest after requester CLI Ask while its daemon stays offline', async () => {
-    const { input, requester, cliFor, context, managed, guest, nativeCalls, powerCalls } = await createManagedExecFixture('stopped');
+it.runIf(process.platform === 'linux')('wakes the stopped guest after requester CLI Ask and lets that requester find and re-read its operation', async () => {
+    const { input, requester, cliFor, context, managed, guest, nativeCalls, powerCalls, scope, owner } =
+        await createManagedExecFixture('stopped');
     vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'auto');
     const presenter = vi.fn<CliApprovalRequestedHandler>(async (_artifactId, _signal, decide) => {
         expect(powerCalls).toHaveLength(0);
         expect(nativeCalls).toHaveLength(0);
         return await decide('approve');
     });
-    const execution = await cliFor(requester.credentials, presenter).execute(MANAGED_EXEC_ACTION_ID_V1, input, context());
+    const runContext = context();
+    const execution = await cliFor(requester.credentials, presenter).execute(MANAGED_EXEC_ACTION_ID_V1, input, runContext);
     expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { exitCode: 3 } });
     expect(presenter).toHaveBeenCalledTimes(1);
     expect(powerCalls).toMatchObject([{ intent: 'start' }]);
@@ -398,6 +400,21 @@ it.runIf(process.platform === 'linux')('wakes the stopped guest after requester 
         desired: 'start', observation: { power: 'running' },
     });
     expect(await db.machine.findUniqueOrThrow({ where: { id: guest.id }, select: { active: true } })).toEqual({ active: false });
+    const listed = await requester.cli.execute(ACTION_OPERATION_LIST_ACTION_ID_V1, {
+        ...scope, requestIdentity: { actionId: MANAGED_EXEC_ACTION_ID_V1, requestId: runContext.actionRequestId },
+    }, context());
+    expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true });
+    if (!listed.ok || !execution.ok) return;
+    const operation = ActionOperationListV1ResponseSchema.parse(listed.result).items.find(item => item.requestId === runContext.actionRequestId);
+    if (!operation) throw new Error('Expected the requester-owned command operation');
+    const address = { ...scope, operationId: operation.operationId };
+    const [read, custodianRead] = await Promise.all([requester.cli, owner].map(cli =>
+        cli.execute(ACTION_OPERATION_GET_ACTION_ID_V1, address, context())));
+    expect(read, JSON.stringify(read)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+        operationId: address.operationId, requestId: runContext.actionRequestId, state: 'succeeded',
+        scope: { accountId: requester.accountId, machineId: scope.machineId }, result: execution.result,
+    } } });
+    expect(custodianRead, JSON.stringify(custodianRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
 }, 120_000);
 
 it.runIf(process.platform === 'linux')('keeps managed command input and output private to the requesting Account with the guest daemon offline', async () => {

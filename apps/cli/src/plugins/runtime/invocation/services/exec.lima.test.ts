@@ -7,6 +7,11 @@ import { join } from 'node:path';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { ActionHandler } from '@happier-dev/plugin-sdk/actions';
 import { LIMA_PLUGIN } from '@happier-dev/plugins-machine-lima/manifest';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { createActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
+import { createActionOperationStore } from '@/daemon/actionOperations/actionOperationStore';
 import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
@@ -203,35 +208,38 @@ describe('Lima declared native process environment', () => {
                 },
             });
             const pluginId = LIMA_PLUGIN.manifest.id;
-            const seed = {
+            const seedFor = (signal: AbortSignal) => ({
                 plugin: { id: pluginId, version: '0.0.0' },
                 contribution: { id: 'exec', qualifiedId: `${pluginId}/actions/exec` },
                 occurrenceId: 'lima-stop-test', correlationId: 'lima-stop-test', surface: 'cli' as const,
-                signal: controller.signal, isOccurrenceCurrent: () => true,
-            };
-            const binding = owners.resolveInvocationHostPolicy({
-                pluginId, occurrenceId: seed.occurrenceId, qualifiedId: seed.contribution.qualifiedId,
-            }, { hostAccessRequests: requests, surface: seed.surface, signal: seed.signal }).serviceBinding;
+                signal, isOccurrenceCurrent: () => true,
+            });
             const handlers = new Map<string, ActionHandler>();
             await LIMA_PLUGIN.activate({ actions: { register(id: string, handler: ActionHandler) {
                 handlers.set(id, handler);
                 return { dispose() {} };
             } } } as unknown as PluginApi);
-            const context = {
-                invokedAtMs: 123,
-                signal: controller.signal,
-                services: { ...owners.createServices(seed, binding), managedServices: { dependencies: { status: async (id: string) => ({
-                    state: 'ready', id, version: '2.2.1', sourceId: 'system',
-                    executable: { kind: 'managedDependency', id: { pluginId, localId: id } },
-                }) } } },
-            } as unknown as PluginInvocationContext;
+            const invocationContext = (signal: AbortSignal) => {
+                const seed = seedFor(signal);
+                const binding = owners.resolveInvocationHostPolicy({
+                    pluginId, occurrenceId: seed.occurrenceId, qualifiedId: seed.contribution.qualifiedId,
+                }, { hostAccessRequests: requests, surface: seed.surface, signal }).serviceBinding;
+                return {
+                    invokedAtMs: 123,
+                    signal,
+                    services: { ...owners.createServices(seed, binding), managedServices: { dependencies: { status: async (id: string) => ({
+                        state: 'ready', id, version: '2.2.1', sourceId: 'system',
+                        executable: { kind: 'managedDependency', id: { pluginId, localId: id } },
+                    }) } } },
+                } as unknown as PluginInvocationContext;
+            };
             const exec = handlers.get('exec');
             if (!exec) throw new Error('Lima exec Action was not activated');
             const resource = { instance, store: root, arch: 'x86_64', vmType: 'qemu', cpus: 1,
                 memoryBytes: 1024 ** 3, diskBytes: 1024 ** 3, image: 'https://example.test/lima.img', mounts: [] };
-            const invoke = (argv: readonly string[], command: string) => Promise.resolve(exec({
+            const invoke = (argv: readonly string[], command: string, signal = controller.signal) => Promise.resolve(exec({
                 resource, argv, inputBase64: Buffer.from(command + '\n').toString('base64'), allowWake: false, timeoutMs: null,
-            }, context));
+            }, invocationContext(signal)));
             // Read a real exit and output before aborting the same carrier type.
             // Bash job notifications must never be included in guest stderr.
             await expect(invoke(['/bin/sh', '-s', '--', 'exit-status-probe'],
@@ -241,16 +249,28 @@ describe('Lima declared native process environment', () => {
                 stderrBase64: Buffer.from('guest-stderr').toString('base64'),
             });
             const command = `sleep 30 & child=$!; printf '%s %s\n' "$$" "$child" > "${started}"; wait "$child"; touch "${completed}"`;
-            const invocation = invoke(['/bin/sh', '-s'], command);
-            // The carrier can throw on abort. The deciding observable is guest liveness.
-            const settled = invocation.catch(() => undefined);
+            const scope = { accountId: 'requester', machineId: 'controller' };
+            const operationId = 'managed-exec-stop';
+            const store = createActionOperationStore();
+            const spec = getActionSpec(MANAGED_EXEC_ACTION_ID_V1);
+            const runner = createActionOperationRunner({ store, generateOperationId: () => operationId,
+                resolveAction: () => ({ actionId: spec.id, title: spec.title, operation: spec.operation! }) });
+            const settled = runner.observe({ actionId: spec.id, scope, requestId: operationId, input: {},
+                cancellation: 'supported', execute: async ({ signal }) => {
+                    try {
+                        return { ok: true, result: await invoke(['/bin/sh', '-s'], command, signal) };
+                    } catch (error) {
+                        return { ok: false, ...normalizeActionExecutorThrownError(error, spec.id) };
+                    }
+                },
+            });
             let pids: number[] = [];
             try {
                 await vi.waitFor(async () => {
                     pids = (await readFile(started, 'utf8')).trim().split(' ').map(Number);
                     expect(pids).toHaveLength(2);
                 });
-                controller.abort();
+                expect(runner.cancel(scope, operationId)).toEqual({ kind: 'requested' });
                 await vi.waitFor(async () => {
                     const running = await Promise.all(pids.map(async pid => {
                         const state = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
@@ -259,7 +279,10 @@ describe('Lima declared native process environment', () => {
                     expect(running).toEqual([false, false]);
                 }, { timeout: 2000 });
                 expect(existsSync(completed)).toBe(false);
+                expect(await settled).toMatchObject({ ok: false, errorCode: 'cancelled' });
+                expect(store.get(scope, operationId)).toMatchObject({ state: 'cancelled', settledAt: expect.any(Number) });
             } finally {
+                runner.cancel(scope, operationId);
                 controller.abort();
                 for (const pid of pids) {
                     try { process.kill(pid, 'SIGKILL'); } catch { /* already exited */ }

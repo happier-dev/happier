@@ -85,7 +85,14 @@ export function createLimaSdkExecutor({ exec, executable, signal, tieGuestToCarr
     try {
       await handle.write(Buffer.from(`${Buffer.from(stdin ?? []).toString('base64')}
 `));
-      return await handle.wait();
+      const result = await handle.wait();
+      const { observed, requestedBy } = result.termination;
+      // Only this non-PTY carrier closes the watchdog's stdin and stops the
+      // guest group on abort. Other native process terminations stay raw.
+      if (requestedBy.kind === 'abort' && (observed.kind === 'exit' || observed.kind === 'signal')) {
+        throw new PluginError({ code: 'cancelled' });
+      }
+      return result;
     } finally {
       await handle.dispose();
     }
