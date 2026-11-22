@@ -3,7 +3,7 @@ import { readDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments
 import type { HostEventEnvelopeV1 } from '@happier-dev/protocol';
 import { readDeploymentReceiptCompletionWakeV1 } from '@happier-dev/protocol/plugins/events/hostReferencesV1';
 
-/** Project the committed receipt wake. Home has already selected the first completion transition. */
+/** Project the committed receipt wake with the outcome transition selected by Home. */
 export async function projectDeploymentReceiptInvalidationsForHost(body: Extract<UpdateBody, { t: 'account-change' }>, resolveServerId: () => Promise<string>):
     Promise<readonly HostEventEnvelopeV1<'@happier/deployment/receipt-invalidated'>[]> {
     const entityIds = [...new Set(body.entityIds ?? [])];

@@ -31,17 +31,17 @@ export const DeploymentReceiptCompletionV1Schema = lazyZodSchema(() => z.strictO
 }));
 export type DeploymentReceiptCompletionV1 = z.infer<typeof DeploymentReceiptCompletionV1Schema>;
 
-/** R25 completes the invocation at its first outcome. Receipt reconciliation can continue. */
+/** R25 observes each transition into a Deploy outcome independently of Receipt settlement. */
 export function projectDeploymentReceiptCompletionV1(previous: DeploymentStateV1, next: DeploymentStateV1,
     revision: number, occurredAt: number): DeploymentReceiptCompletionV1 | null {
     const outcome = AutomationActionOutcomeV1Schema.safeParse(next);
-    return outcome.success && !AutomationActionOutcomeV1Schema.safeParse(previous).success
+    return outcome.success && previous !== next
         ? { state: outcome.data, revision, occurredAt } : null;
 }
 
 const prefix = 'deployment-receipt-completion:';
 
-/** A companion to the normal receipt wake. Null distinguishes an ordinary write from a first outcome. */
+/** A companion to the normal receipt wake. Null marks a write without an outcome transition. */
 export function buildDeploymentReceiptCompletionWakeV1(environmentId: string, deploymentId: string,
     completion: DeploymentReceiptCompletionV1 | null): string {
     return `${prefix}${encodeURIComponent(environmentId)}:${encodeURIComponent(deploymentId)}${completion

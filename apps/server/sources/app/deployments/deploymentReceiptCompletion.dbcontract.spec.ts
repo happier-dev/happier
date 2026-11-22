@@ -34,7 +34,7 @@ describe('After Deploy Receipt recovery (real database)', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it('admits one unknown Run after losing the operation, skips later failure, and admits a direct failure', async () => {
+    it('admits one After Deploy Run for each committed outcome and rejoins on replay', async () => {
         const serverId = await getOrCreateServerIdentityId();
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const accountId = account.id;
@@ -88,12 +88,13 @@ describe('After Deploy Receipt recovery (real database)', () => {
             });
         };
 
+        const subject = { kind: 'environment' as const, serverId, environmentId };
         const workflow = await createAutomation({ accountId, input: AutomationDefinitionCreateRequestSchema.parse({
             automationId: randomUUID(), name: 'After deploy', enabled: true, workflowDefinitionId: 'builtin:review-and-converge',
             executionRecipe: { v: 2, templateVersion: 1, triggerEvidence: null, placement: 'action_invocation',
                 workflow: { t: 'plain', v: { executionTarget: { kind: 'session' } } } },
             assignments: [], triggers: [{ triggerId: randomUUID(), trigger: { kind: 'action', phase: 'after', enabled: true,
-                actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] } }],
+                actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], subject } }],
         }) });
         const trigger = workflow.triggers[0]!;
         const triggers = [{ automationId: workflow.id, triggerId: trigger.id, triggerRevision: trigger.revision }];
@@ -112,7 +113,7 @@ describe('After Deploy Receipt recovery (real database)', () => {
             expect(observation.definitions).toEqual([]);
             const [evidence] = matchActionAutomationCompletionV1({ observation: { ...observation,
                 sourceInstanceId: observation.sourceInstanceId, machineId: controller.machineId }, declaration,
-                trigger: { kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] },
+                trigger: { kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], subject },
             });
             if (!evidence) throw new Error('Expected a native After Deploy occurrence');
             const { results } = await admitAutomationActionOccurrencesV1({ accountId, input: { evidence, triggers } });
@@ -171,18 +172,24 @@ describe('After Deploy Receipt recovery (real database)', () => {
             expect(admitted).toEqual([{ kind: 'admitted', outcome: 'outcome_unknown', occurredAt: transitionTime }]);
             const occurredAt = admitted[0]!.occurredAt;
             expect(await settle(running, 3, 'failed')).toMatchObject({ ok: true, deploymentRevision: 4, state: 'failed' });
-            await deliver(takeReceiptWake());
-            expect(admitted).toHaveLength(1);
+            const failedWake = takeReceiptWake();
+            await deliver(failedWake);
+            const failed = await db.deployment.findUniqueOrThrow({ where: { id: running.id } });
+            expect(admitted[1]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: failed.settledAt?.getTime() });
             await deliver(unknownWake);
-            expect(admitted[1]).toEqual({ kind: 'rejoined', outcome: 'outcome_unknown', occurredAt });
-            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(1);
+            await deliver(failedWake);
+            expect(admitted.slice(2)).toEqual([
+                { kind: 'rejoined', outcome: 'outcome_unknown', occurredAt },
+                { kind: 'rejoined', outcome: 'failed', occurredAt: failed.settledAt?.getTime() },
+            ]);
+            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(2);
 
             const direct = await createRunningReceipt();
             expect(await settle(direct, 2, 'failed')).toMatchObject({ ok: true, deploymentRevision: 3, state: 'failed' });
             await deliver(takeReceiptWake());
             const settled = await db.deployment.findUniqueOrThrow({ where: { id: direct.id } });
-            expect(admitted[2]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: settled.settledAt?.getTime() });
-            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(2);
+            expect(admitted[4]).toEqual({ kind: 'admitted', outcome: 'failed', occurredAt: settled.settledAt?.getTime() });
+            expect(await db.automationRun.count({ where: { automationId: workflow.id } })).toBe(3);
         } finally {
             subscription?.dispose();
             wake.mockRestore();

@@ -41,12 +41,11 @@ unknown and releases the in-progress slot.
 
 ## After Deploy Workflow completion (0.3 development)
 
-Home publishes the first success, failure, cancellation or unknown outcome of
-an admitted Deploy on its committed Receipt wake. An After Deploy Workflow sees
-the outcome and the database time of that transition. An unknown outcome can
-release the effect slot and later reconcile. The Receipt then shows the later
-result, while the Workflow keeps the first observation. Re-delivery of that
-observation rejoins the original Run.
+Home publishes transitions to success, failure, cancellation or unknown for an
+admitted Deploy on its committed Receipt wake. An After Deploy Workflow sees the
+outcome and database time of the transition. An unknown outcome releases the
+effect slot and remains unsettled in the Receipt. Re-delivery of the same
+occurrence rejoins its original Run.
 
 ## Browser exception setup (0.3 development)
 

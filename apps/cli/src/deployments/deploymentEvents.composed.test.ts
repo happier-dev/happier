@@ -126,7 +126,7 @@ function fixture(event: string | readonly string[] = 'deployment-failed', pageSi
         } };
 }
 describe('deployment receipt Events through canonical admission', () => {
-    it('publishes the recovered unknown observation at its committed time and skips later refinements for After Deploy', async () => {
+    it('publishes recovered unknown and a later failed observation at their committed times for After Deploy', async () => {
         const f = fixture(['deployment-outcome-unknown'], 10, true);
         const controller = { machineId: 'controller', installationId: 'installation' };
         const running = createDeploymentReceiptHeaderV1({ id: 'interrupted', environmentId: 'env', revision: 2,
@@ -160,12 +160,14 @@ describe('deployment receipt Events through canonical admission', () => {
             eventRef: { pluginId: materialization.pluginId, localId: 'deployment-outcome-unknown' }, occurredAt: 7,
         })]);
         f.rows[0] = createDeploymentReceiptHeaderV1({ ...running, state: 'failed', revision: 4, settledAtMs: 8 });
-        await f.accountWake(['deployment-receipt:env:interrupted', 'deployment-receipt-completion:env:interrupted']);
-        expect(native()).toHaveLength(1);
+        await f.accountWake(['deployment-receipt:env:interrupted', 'deployment-receipt-completion:env:interrupted:failed:4:8']);
+        expect(native()).toHaveLength(2);
+        expect(native()[1]).toMatchObject({ eventRef: { localId: 'deployment-failed' }, occurredAt: 8,
+            payload: { deploymentId: 'interrupted', receiptRevision: 4 } });
         f.rows.push(createDeploymentReceiptHeaderV1({ ...running, id: 'direct', state: 'failed', revision: 3, settledAtMs: 9 }));
         await f.accountWake(['deployment-receipt:env:direct', 'deployment-receipt-completion:env:direct:failed:3:9']);
-        expect(native()).toHaveLength(2);
-        expect(native()[1]).toMatchObject({ eventRef: { localId: 'deployment-failed' }, occurredAt: 9, payload: { deploymentId: 'direct' } });
+        expect(native()).toHaveLength(3);
+        expect(native()[2]).toMatchObject({ eventRef: { localId: 'deployment-failed' }, occurredAt: 9, payload: { deploymentId: 'direct' } });
     });
     it('pushes pending, ready, failure and retained cleanup receipts for one preview template without polling', async () => {
         const f = fixture('deployment-receipt-changed', 10);
