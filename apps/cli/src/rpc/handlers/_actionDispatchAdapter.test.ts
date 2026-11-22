@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import axios from 'axios';
+import { describe, expect, it, vi } from 'vitest';
 import { CallerInputConstraintsV1Schema } from '@happier-dev/protocol/auth/callerInputConstraintsV1';
 import { isPermissionModeGrantedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { WorkspaceSyncSourceContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 import {
@@ -13,9 +15,36 @@ import {
     type RpcActionExecutor,
 } from './_actionDispatchAdapter';
 
+async function withAdmittedRequester(
+    input: Pick<Parameters<typeof admitRequesterAccountActionContext>[0], 'authorization' | 'invocation'>,
+    assert: (authorization: typeof input.authorization) => void,
+): Promise<void> {
+    const channel = await createRequesterCurrentnessSocketHarness();
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+        if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: input.authorization.binding.accountId } };
+        if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+        if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        } };
+        throw new Error('Unexpected requester Home read');
+    });
+    try {
+        const admitted = await admitRequesterAccountActionContext({
+            ...input, credentials: { token: 'requester-fixture', encryption: null }, serverId: 'requester-profile',
+            serverIdentityId: input.authorization.binding.serverIdentityId, serverHttpBaseUrl: 'https://requester-home.test',
+            isCurrent: async () => true,
+        });
+        if (!admitted) throw new Error('Expected admitted requester Account custody');
+        try { assert(admitted.authorization); } finally { await admitted.dispose(); }
+    } finally {
+        get.mockRestore();
+        await channel.close();
+    }
+}
+
 describe('RPC action dispatch adapter', () => {
     it.each(['owner', 'unknown', 'other_account', 'other_home', 'terminal', 'session', 'workflow', 'plugin'] as const)(
-        'admits only qualified private host attribution at the RPC receiver (%s)', kind => {
+        'admits only qualified private host attribution at the RPC receiver (%s)', async kind => {
         const cause = { requestRef: 'original-input', requester: kind === 'unknown' ? null : {
             accountId: kind === 'other_account' ? 'another-person' : 'person',
             serverId: kind === 'other_home' ? 'srv_other' : 'srv_home',
@@ -34,15 +63,13 @@ describe('RPC action dispatch adapter', () => {
             ...(kind === 'workflow' ? { workflowActionOrigin: { runId: 'workflow-run', requestId: 'host-request' } } : {}),
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId: 'host-request', target, input: {} }),
         } });
-        // The socket boundary has already admitted this private host context;
-        // retain the actual classifier and RPC projection beneath it.
-        Object.defineProperty(authorization, 'requesterAccountProjection', { value: Object.defineProperty({}, requesterActionContext,
-            { value: { invocation } }) });
-        const receive = () => buildActionExecutorContextForRpc({ callerInputAuthorization: authorization,
-            ...(kind === 'plugin' ? { transportPluginCaller: { kind: 'plugin' as const, pluginId: 'acme.agent',
-                contributionLocalId: 'write' } } : {}) });
-        if (kind === 'owner' || kind === 'unknown') expect(receive()).toMatchObject({ authority: 'account_automation', actionRequestAttributionV1: cause });
-        else expect(receive).toThrowError(expect.objectContaining({ rpcErrorCode: 'RPC_FORBIDDEN' }));
+        await withAdmittedRequester({ authorization, invocation }, admitted => {
+            const receive = () => buildActionExecutorContextForRpc({ callerInputAuthorization: admitted,
+                ...(kind === 'plugin' ? { transportPluginCaller: { kind: 'plugin' as const, pluginId: 'acme.agent',
+                    contributionLocalId: 'write' } } : {}) });
+            if (kind === 'owner' || kind === 'unknown') expect(receive()).toMatchObject({ authority: 'account_automation', actionRequestAttributionV1: cause });
+            else expect(receive).toThrowError(expect.objectContaining({ rpcErrorCode: 'RPC_FORBIDDEN' }));
+        });
     });
 
     it('keeps an installed Machine Workflow origin on live agent policy without inventing Session authority', () => {
@@ -66,7 +93,7 @@ describe('RPC action dispatch adapter', () => {
         expect(context.workspaceWrites).toBeUndefined();
     });
 
-    it('marks continuation provenance only for verified requester custody or the in-process transport', () => {
+    it('marks continuation provenance only for verified requester custody or the in-process transport', async () => {
         const target = { kind: 'machine' as const, machineId: 'machine' };
         const requestId = 'voice-run-start';
         const authorization = (token: string) => ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token, binding: {
@@ -75,26 +102,23 @@ describe('RPC action dispatch adapter', () => {
             actionId: 'execution.run.start', requestId, target,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input: {} }),
         } });
-        // RpcHandlerManager attaches opened requester custody only after Home verified the signed hop.
-        const verified = authorization('home-verified-hop');
-        Object.defineProperty(verified, 'requesterAccountProjection', { value: Object.defineProperty({}, requesterActionContext, {
-            value: { invocation: ExternalActionRequesterInvocationV1Schema.parse({ caller: { kind: 'host' }, surface: 'voice',
-                authority: 'present_user' }) } }) });
-        const inProcess = authorization('in-process-transport');
-        const ingress = authorization('root-ingress');
-        const fact = (context: ReturnType<typeof buildActionExecutorContextForRpc>) => context.externalActionContinuation;
+        await withAdmittedRequester({ authorization: authorization('home-verified-hop') }, verified => {
+            const inProcess = authorization('in-process-transport');
+            const ingress = authorization('root-ingress');
+            const fact = (context: ReturnType<typeof buildActionExecutorContextForRpc>) => context.externalActionContinuation;
 
-        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified }))).toBe(true);
-        // The registrar may forward the same verified object as the explicit authorization.
-        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
-            externalActionExecutionAuthorization: verified }))).toBe(true);
-        expect(fact(buildActionExecutorContextForRpc({ localActionContext: { externalActionExecutionAuthorization: inProcess } }))).toBe(true);
-        // Root ingress, or any explicit authorization that is not the verified hop, never sets it.
-        expect(fact(buildActionExecutorContextForRpc({ externalActionExecutionAuthorization: ingress }))).toBeUndefined();
-        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
-            externalActionExecutionAuthorization: ingress }))).toBeUndefined();
-        // A Home-forwarded root without opened requester custody is not a continuation either.
-        expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: authorization('unopened-hop') }))).toBeUndefined();
+            expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified }))).toBe(true);
+            // The registrar may forward the same verified object as the explicit authorization.
+            expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
+                externalActionExecutionAuthorization: verified }))).toBe(true);
+            expect(fact(buildActionExecutorContextForRpc({ localActionContext: { externalActionExecutionAuthorization: inProcess } }))).toBe(true);
+            // Root ingress, or any explicit authorization that is not the verified hop, never sets it.
+            expect(fact(buildActionExecutorContextForRpc({ externalActionExecutionAuthorization: ingress }))).toBeUndefined();
+            expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: verified,
+                externalActionExecutionAuthorization: ingress }))).toBeUndefined();
+            // A Home-forwarded root without opened requester custody is not a continuation either.
+            expect(fact(buildActionExecutorContextForRpc({ callerInputAuthorization: authorization('unopened-hop') }))).toBeUndefined();
+        });
     });
 
     it('preserves the explicit original authorization before host-local authorization', () => {
