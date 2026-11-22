@@ -17,6 +17,7 @@ import {
   type TriageSourceHealthV1,
 } from '../../projection/sourceHealth.js';
 import {
+  evaluateRefreshEligibility,
   isTriageRefreshPacingBlockActiveV1,
   type TriageRefreshPacingReasonV1,
 } from '../../refresh/refreshEligibility.js';
@@ -426,7 +427,10 @@ export function readTriageSourceFailureRowV1(
     reason: permanent && lineReason === SOURCE_FAILURE_COPY_V1.transient
       ? text('plugins.triage.surface.sources.permanent', 'Trying again won’t fix this. Details has what support needs.')
       : withRetryAt(resolveSourceFailureReason(text, lineReason), source, text, locale),
-    fix: source.needsConnectionChange === true ? 'connection' : permanent ? null : 'retry',
+    fix: source.needsConnectionChange === true ? 'connection'
+      : permanent || evaluateRefreshEligibility({
+          nowMs: Date.now(), retryNotBeforeMs: source.retryNotBeforeMs ?? null,
+        }).kind === 'blocked' ? null : 'retry',
     details: source.code === undefined ? null
       : readSourceFailureDetails(source, text),
   });
@@ -436,7 +440,11 @@ export function readTriageSourceFailureRowV1(
  * The one line a failure takes beside listed rows: who could not be read, why when one reason covers them all, and
  * the one press that can help. Each connection's own reason and diagnostic wait in Manage sources, so the rows lead.
  */
-export type TriageListFailureLineV1 = Readonly<{ label: string; recovery: 'retry' | 'manageSources' }>;
+export type TriageListFailureLineV1 = Readonly<{
+  label: string;
+  recovery: 'retry' | 'manageSources' | null;
+  pacedUntilMs?: number;
+}>;
 
 export function readTriageListFailureLine(
   failure: TriageListShellFailureV1,
@@ -444,6 +452,20 @@ export function readTriageListFailureLine(
   locale?: string,
 ): TriageListFailureLineV1 {
   const first = failure.sources[0];
+  const deadlines = failure.sources.flatMap(source => source.retryNotBeforeMs === undefined ? [] : [source.retryNotBeforeMs]);
+  if (deadlines.length > 0 && deadlines.length === failure.sources.length) {
+    // A read can help as soon as any source is eligible.
+    const pacedUntilMs = Math.min(...deadlines);
+    const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
+    const retained = failure.retainedRows === true
+      ? `${text('plugins.triage.surface.lastKnown', 'Showing the last known list')}. ` : '';
+    return Object.freeze({
+      label: `${retained}${names} · ${readRetryAtSentence(text, locale ?? 'en', pacedUntilMs)}`,
+      pacedUntilMs,
+      recovery: evaluateRefreshEligibility({ nowMs: Date.now(), retryNotBeforeMs: pacedUntilMs }).kind === 'blocked'
+        ? null : 'retry',
+    });
+  }
   const machineUnreachable = first !== undefined && failure.sources.every((source) => source.machineUnreachable === true);
   const needsConnectionChange = failure.sources.every((source) => source.needsConnectionChange === true);
   if (failure.sources.length > 1 || failure.retainedRows === true || machineUnreachable) {

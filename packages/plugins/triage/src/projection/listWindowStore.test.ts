@@ -2152,6 +2152,8 @@ describe('the mounted PRs & Issues window store', () => {
         try {
             await store.refresh('view');
             const readAtMs = store.getSnapshot().completedAtMs;
+            const loadedRows = store.getSnapshot().window?.rows.map(row => row.key);
+            expect(loadedRows?.length).toBeGreaterThan(0);
             const deadlineMs = harness.clock.nowMs + 10;
             harness.state.sourceAFailure = { class: 'rateLimit', code: 'source-busy', retryNotBeforeMs: deadlineMs };
             harness.state.sourceBFailure = { class: 'rateLimit', code: 'source-busy', retryNotBeforeMs: deadlineMs };
@@ -2161,6 +2163,7 @@ describe('the mounted PRs & Issues window store', () => {
             await store.refresh('view');
             expect(harness.scanCalls.count).toBe(reads);
             expect(store.getSnapshot()).toMatchObject({ freshness: 'stale', completedAtMs: readAtMs });
+            expect(store.getSnapshot().window?.rows.map(row => row.key)).toEqual(loadedRows);
 
             harness.state.sourceAFailure = null;
             harness.state.sourceBFailure = null;

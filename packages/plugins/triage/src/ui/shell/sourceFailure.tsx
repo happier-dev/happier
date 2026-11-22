@@ -35,7 +35,8 @@ export function TriageListFailureStatus(props: Readonly<{
   const { locale } = useSurfaceContext();
   const line = readTriageListFailureLine(props.failure, text, locale);
   return <Status tone="warning" label={line.label}
-    action={line.recovery === 'manageSources' ? props.manageSources ?? props.retry : props.retry} />;
+    action={line.recovery === null ? undefined
+      : line.recovery === 'manageSources' ? props.manageSources ?? props.retry : props.retry} />;
 }
 
 /**

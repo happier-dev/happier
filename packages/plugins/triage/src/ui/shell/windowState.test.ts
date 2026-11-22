@@ -126,9 +126,6 @@ describe('resolveTriageListShellState', () => {
       if (source === undefined) throw new Error('Expected a named source');
       expect(readTriageSourceFailureRowV1(source, undefined, 'en-US').reason).toBe(`Asked us to slow down. Try again at ${clock}.`);
       expect(readTriageListFailureNotice(state.failure, undefined, 'en-US').description).toContain(`Try again at ${clock}.`);
-      const line = readTriageListFailureLine(state.failure, undefined, 'en-US').label;
-      expect(line.endsWith(`Asked us to slow down. Try again at ${clock}.`)).toBe(true);
-      expect(line.match(/may be missing/g)).toHaveLength(1);
       // One translated sentence owns the time's position and punctuation (ja puts it first).
       const ja: TriageTextResolverV1 = (key, fallback = '') => key === 'plugins.triage.surface.waiting.retryAtTime' ? '{time}以降に再試行できます。' : fallback;
       const jaClock = new Intl.DateTimeFormat('ja', { hour: 'numeric', minute: '2-digit' }).format(retryNotBeforeMs);
@@ -304,6 +301,24 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
     expect(state.failure.sources[0]?.needsConnectionChange).toBe(false);
   });
+  it('carries a paced source reset to the list line and suppresses retry until then', () => {
+    const retryNotBeforeMs = Date.now() + 60_000;
+    const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
+      sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
+      health: { kind: 'failed', failure: { class: 'rateLimit', code: 'http_429', retryNotBeforeMs } },
+    }] }) }));
+    if (state.kind !== 'window' || state.failure === null) throw new Error('Expected named source health');
+    const paced = readTriageListFailureLine(state.failure);
+    expect(paced).toMatchObject({ pacedUntilMs: retryNotBeforeMs, recovery: null });
+    expect(paced.label).not.toContain('could not be read');
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(retryNotBeforeMs);
+    try {
+      expect(readTriageListFailureLine(state.failure).recovery).toBe('retry');
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   it('preserves the provider refusal code as well as its readable failure class', () => {
     const state = resolveTriageListShellState(snapshot({ window: window({ lanes: [{
       sourceInstanceId: INSTANCE, source: SOURCE, exhausted: false,
