@@ -62,6 +62,7 @@ export type RetainedAgentRuntimeLeaf = Readonly<{
     factory: AgentRuntimeFactory;
     externalSessions?: AgentExternalSessionsContribution;
     catalogEntry: AgentCatalogEntry | null;
+    resolveConnectedAccountLaunchCatalogEntry?(): Promise<AgentCatalogEntry | null>;
     dispose(): Promise<void>;
 }>;
 
@@ -183,10 +184,13 @@ export async function loadRetainedAgentRuntimeLeaf(params: Readonly<{
 async function projectRetainedAgentCatalogEntry(input: Readonly<{
     attested: Awaited<ReturnType<typeof verifyRunnerAgentBindingAgainstGeneration>>;
     declaredEntry: AgentCatalogEntry | null;
-}>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'dispose'>> {
+}>): Promise<Pick<RetainedAgentRuntimeLeaf, 'catalogEntry' | 'resolveConnectedAccountLaunchCatalogEntry' | 'dispose'>> {
     const { attested, declaredEntry } = input;
     if (!declaredEntry || attested.bindingKind !== 'plugin_factory_v1') {
-        return { catalogEntry: declaredEntry, dispose: async () => {} };
+        return {
+            catalogEntry: declaredEntry,
+            dispose: async () => {},
+        };
     }
     let disposed = false;
     let acquisition: ReturnType<typeof acquireRetainedAgentCatalogEntry> | null = null;
@@ -196,12 +200,20 @@ async function projectRetainedAgentCatalogEntry(input: Readonly<{
         const catalog = await acquisition;
         return disposed ? null : catalog;
     };
-    // Existing launch/resume consumers need these registrations during load.
-    // Capacity alone activates the exact retained source only when sizing is demanded.
-    const eager = attested.declaredAgent.connectedAccounts?.length || declaredEntry.vendorResumeSupport === 'experimental'
+    const eager = declaredEntry.vendorResumeSupport === 'experimental'
         ? await acquire() : null;
     return Object.freeze({
+        ...(attested.declaredAgent.connectedAccounts?.length ? {
+            async resolveConnectedAccountLaunchCatalogEntry() {
+                return (await acquire())?.catalogEntry ?? null;
+            },
+        } : {}),
         catalogEntry: Object.freeze({ ...declaredEntry, ...eager?.catalogEntry,
+            getConnectedServiceStateSharingDescriptor: async () => {
+                const catalog = await acquire();
+                const descriptor = await catalog?.catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
+                return disposed ? null : descriptor ?? null;
+            },
             resolveRuntimeMaxInputUnicodeCharacters: async (input: Parameters<NonNullable<AgentCatalogEntry['resolveRuntimeMaxInputUnicodeCharacters']>>[0]) => {
                 const catalog = await acquire();
                 const limit = await catalog?.catalogEntry?.resolveRuntimeMaxInputUnicodeCharacters?.(input);

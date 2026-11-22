@@ -36,7 +36,7 @@ describe('cold connected Codex source admission', () => {
                 expect(ExternalSessionsSourceSchema.parse(result.source)).toEqual(result.source);
                 const catalogEntry = await runtime.registry.acquireAgentCatalogEntry!('codex');
                 if (!catalogEntry) throw new Error('Expected the acquired Codex catalog');
-                expect(result.source.homePath).toBe(resolveConnectedServiceMaterializedHomeRoot('codex', {
+                expect(result.source.homePath).toBe(await resolveConnectedServiceMaterializedHomeRoot('codex', {
                     activeServerDir, serviceId: 'openai-codex', profileId: String(source.connectedServiceProfileId),
                 }, catalogEntry));
                 if (typeof result.source.homePath !== 'string') throw new Error('Expected a stamped home');

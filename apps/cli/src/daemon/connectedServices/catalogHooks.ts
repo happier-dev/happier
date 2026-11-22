@@ -36,18 +36,22 @@ export async function getConnectedServiceMaterializedHomeFreshness(
     entry.getConnectedServiceMaterializedHomeFreshness?.() ?? Promise.resolve(null));
 }
 
-/** Pure layout projection from the caller's acquired executable catalog facts. */
-export function resolveConnectedServiceMaterializedHomeRoot(
+/** Resolves layout from the caller's exact catalog, acquiring lazy facts for the selected service. */
+export async function resolveConnectedServiceMaterializedHomeRoot(
   agentId: CatalogAgentId,
   params: Omit<ConnectedServiceMaterializedHomeRootParams, 'agentId'>,
   catalogEntry: AgentCatalogEntry | null,
-): string | null {
+): Promise<string | null> {
   const entry = catalogEntry;
   if (entry?.id !== agentId) return null;
-  const nativeHome = entry?.connectedAccountNativeHome;
   const service = resolveQualifiedConnectedAccountServiceForIngressServiceId(params.serviceId);
-  if (!nativeHome || !service
-    || !entry.connectedAccountServiceIds?.includes(buildQualifiedPluginContributionKey(service))) return null;
+  if (!service || !entry.connectedAccountServiceIds?.includes(buildQualifiedPluginContributionKey(service))) return null;
+  let nativeHome = entry.connectedAccountNativeHome;
+  if (!nativeHome) {
+    const descriptor = await entry.getConnectedServiceStateSharingDescriptor?.();
+    if (descriptor?.providerSupportStatus === 'supported') nativeHome = descriptor.nativeHome;
+  }
+  if (!nativeHome) return null;
   const selection = params.selection;
   return resolveConnectedServiceNativeHomeTargetRoot({
     agentId, activeServerDir: params.activeServerDir, nativeHome,

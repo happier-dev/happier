@@ -684,13 +684,15 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
         },
       });
       const leaf = await loadRetainedAgentRuntimeLeaf({ paths: fixture.paths, binding: fixture.binding });
-      expect(leaf).toMatchObject({ catalogEntry: {
+      expect(await leaf.factory({} as never)).toMatchObject({ retainedCatalogActive: false });
+      expect(leaf.catalogEntry?.connectedAccountNativeHome).toBeUndefined();
+      expect(await leaf.resolveConnectedAccountLaunchCatalogEntry?.()).toMatchObject({
         id: 'acme.runner-loader/fixture', connectedAccountNativeHome: home,
         connectedAccountRequestAuthUses: launchUses.requestAuthUses,
         connectedAccountFileEnvironmentUses: launchUses.fileEnvironmentUses,
         connectedAccountEnvironmentUses: launchUses.environmentUses,
         connectedAccountEnvironmentUnsetUses: launchUses.environmentUnsetUses,
-      } });
+      });
       expect(await leaf.factory({} as never)).toMatchObject({ retainedCatalogActive: true });
       const nativeHomeRoot = join(tempRoot, 'native-home');
       await mkdir(nativeHomeRoot);
@@ -712,6 +714,8 @@ describe('loadRetainedAgentRuntimeLeaf', () => {
       );
       await leaf.dispose();
       expect(await leaf.factory({} as never)).toMatchObject({ retainedCatalogActive: false });
+      await expect(leaf.resolveConnectedAccountLaunchCatalogEntry?.()).resolves.toBeNull();
+      await expect(leaf.catalogEntry?.getConnectedServiceStateSharingDescriptor?.()).resolves.toBeNull();
       await expect(loadRetainedAgentRuntimeLeaf({ paths: fixture.paths,
         binding: { ...fixture.binding, sourceCustody: { ...fixture.binding.sourceCustody,
           kind: 'managed', immutableGenerationId: 'foreign-generation', installSource: 'localPath' } },

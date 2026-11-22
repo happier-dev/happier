@@ -265,7 +265,7 @@ export async function resolveConfiguredExternalSessionSourceAtAdmission(params: 
   if (!activeServerDir || !catalogAgentId || !serviceId.success) {
     return { ok: false, code: 'source_invalid' };
   }
-  const homePath = resolveConnectedServiceMaterializedHomeRoot(catalogAgentId, {
+  const homePath = await resolveConnectedServiceMaterializedHomeRoot(catalogAgentId, {
     activeServerDir,
     serviceId: serviceId.data,
     profileId: connectedProfile.profile.profileId,

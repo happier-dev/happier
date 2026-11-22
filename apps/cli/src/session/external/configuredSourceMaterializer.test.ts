@@ -211,8 +211,8 @@ function agent(contribution: PluginAgentContributionV2 = codexContribution) {
   };
 }
 
-function connectedCodexSource(activeServerDir: string, profileId: string) {
-  const homePath = resolveConnectedServiceMaterializedHomeRoot('codex', {
+async function connectedCodexSource(activeServerDir: string, profileId: string) {
+  const homePath = await resolveConnectedServiceMaterializedHomeRoot('codex', {
     activeServerDir,
     serviceId: 'openai-codex',
     profileId,
@@ -367,8 +367,8 @@ describe('configured external-session source materializer', () => {
   it('admits the connected Codex home through the real raw source surface without explicit preactivation', async () => {
     if (!admittedRuntime) throw new Error('Admitted runtime fixture unavailable');
     const activeServerDir = join(admittedRuntime.happyHomeDir, 'active-server');
-    const expectedSource = connectedCodexSource(activeServerDir, 'work').source;
-    expect(resolveConnectedServiceMaterializedHomeRoot('codex', {
+    const expectedSource = (await connectedCodexSource(activeServerDir, 'work')).source;
+    expect(await resolveConnectedServiceMaterializedHomeRoot('codex', {
       activeServerDir, serviceId: 'openai-codex', profileId: 'work',
     }, testCatalogEntry)).toBe(expectedSource.homePath);
     const source = ExternalSessionsSourceSchema.parse({
@@ -509,7 +509,7 @@ describe('configured external-session source materializer', () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-codex-connected-source-admission-'));
     try {
       const activeServerDir = join(root, 'active-server');
-      const connectedSource = connectedCodexSource(activeServerDir, 'work');
+      const connectedSource = await connectedCodexSource(activeServerDir, 'work');
       const connectedCodexHome = connectedSource.source.homePath;
       expect(ExternalSessionsSourceSchema.parse(connectedSource.source)).toEqual(connectedSource.source);
       const descriptor = await getConnectedServiceStateSharingDescriptor('codex');
@@ -873,8 +873,8 @@ describe('configured external-session source materializer', () => {
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
     await withTemporaryActiveServerDir(async (activeServerDir) => {
-      const workSource = connectedCodexSource(activeServerDir, 'work');
-      const retiredSource = connectedCodexSource(activeServerDir, 'retired-profile');
+      const workSource = await connectedCodexSource(activeServerDir, 'work');
+      const retiredSource = await connectedCodexSource(activeServerDir, 'retired-profile');
       const request = {
         agents: [agent()],
         account,
@@ -2786,7 +2786,7 @@ describe('configured external-session source materializer', () => {
       subscription: { dispose },
     }));
     await withTemporaryActiveServerDir(async (activeServerDir) => {
-      const selectedSource = connectedCodexSource(activeServerDir, 'work');
+      const selectedSource = await connectedCodexSource(activeServerDir, 'work');
       const composition = await createConfiguredPluginExternalSessionsAdapter({
         agents: [agent()],
         account: {
@@ -3807,7 +3807,7 @@ describe('configured external-session source materializer', () => {
       revision = 'settings:4';
       const liveRemoval = await createLifecycle();
       try {
-        const workSourceId = connectedCodexSource(activeServerDir, 'work').sourceId;
+        const workSourceId = (await connectedCodexSource(activeServerDir, 'work')).sourceId;
         holdWorkQuery = true;
         const admittedQuery = liveRemoval.authorService.list({ sourceId: workSourceId });
         await workQueryStarted.promise;
@@ -3885,7 +3885,7 @@ describe('configured external-session source materializer', () => {
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
     await withTemporaryActiveServerDir(async (activeServerDir) => {
-      const workSource = connectedCodexSource(activeServerDir, 'work');
+      const workSource = await connectedCodexSource(activeServerDir, 'work');
       const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
         agents: [agent()],
         activeServerDir,
@@ -4093,7 +4093,7 @@ describe('configured external-session source materializer', () => {
       try {
         const admission = lifecycle.resolveAuthorSource({
           agentId: 'codex',
-          sourceId: profiles && !targetDefault ? connectedCodexSource(activeServerDir, 'work').sourceId : 'codexHome:user:::',
+          sourceId: profiles && !targetDefault ? (await connectedCodexSource(activeServerDir, 'work')).sourceId : 'codexHome:user:::',
           remoteSessionId: 'remote-1',
         }, { accountScopeKey: expectedScope });
         if (allowed) {
@@ -4265,8 +4265,8 @@ describe('configured external-session source materializer', () => {
       readAfterTranscript: async () => ({ outcome: 'already_current' }),
     };
     await withTemporaryActiveServerDir(async (activeServerDir) => {
-      const workSource = connectedCodexSource(activeServerDir, 'work');
-      const backupSource = connectedCodexSource(activeServerDir, 'backup');
+      const workSource = await connectedCodexSource(activeServerDir, 'work');
+      const backupSource = await connectedCodexSource(activeServerDir, 'backup');
       const lifecycle = await createLiveConfiguredPluginExternalSessionsAdapter({
         agents: [agent()],
         activeServerDir,

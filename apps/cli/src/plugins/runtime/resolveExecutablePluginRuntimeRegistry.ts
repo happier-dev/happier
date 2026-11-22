@@ -7457,12 +7457,15 @@ export async function resolveExecutablePluginRuntimeRegistry(
             });
             let acquired = false;
             try {
+                const catalogEntry = retainedLeaf.resolveConnectedAccountLaunchCatalogEntry
+                    ? await retainedLeaf.resolveConnectedAccountLaunchCatalogEntry()
+                    : retainedLeaf.catalogEntry;
                 if (await readHardRevocationRevision() !== input.pluginHardRevocationRevision) {
                     return null;
                 }
                 const retainedAgent = Object.freeze({
                     ...declaredAgent,
-                    catalogEntry: retainedLeaf.catalogEntry,
+                    catalogEntry,
                 });
                 const retainedContributes = createResolvedContributionRegistry({
                     agents: Object.freeze([retainedAgent]),
