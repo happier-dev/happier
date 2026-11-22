@@ -2688,7 +2688,8 @@ export const fr: TranslationStructure = {
                 stateMismatch: 'Cette réponse d’autorisation ne correspond pas à la tentative en cours. Lancez une nouvelle autorisation.',
                 rejected: ({ reason }: { reason: string }) => `Le fournisseur a refusé l’autorisation : ${reason}`,
                 rejectedGeneric: 'Le fournisseur a refusé l’autorisation.',
-                responseKept: 'La réponse collée a été conservée. Appuyez sur Continuer pour réessayer ; si le fournisseur signale un code invalide ou déjà utilisé, lancez une nouvelle autorisation.',
+                exchangeOutcomeUnknown: "Impossible de confirmer que la connexion a abouti. Vérifiez vos comptes connectés et, si nécessaire, reconnectez-vous avec un nouveau code.",
+                responseKept: "La demande n’a pas été envoyée. Vérifiez votre connexion, puis appuyez sur Continuer pour utiliser la réponse déjà collée.",
             },
         },
         oauthEmbedded: {

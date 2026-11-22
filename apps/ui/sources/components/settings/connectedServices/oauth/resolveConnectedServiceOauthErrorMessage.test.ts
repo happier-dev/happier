@@ -37,8 +37,8 @@ describe('resolveConnectedServiceOauthErrorMessage', () => {
     expect(message).toBe('This reconnect returned credentials for a different connected profile. Start reconnect again from the target profile.');
   });
 
-  it('keeps human-readable error messages', () => {
+  it('does not show arbitrary transport or provider prose', () => {
     const message = resolveConnectedServiceOauthErrorMessage(new Error('Token exchange failed: 400'), 'fallback');
-    expect(message).toBe('Token exchange failed: 400');
+    expect(message).toBe('fallback');
   });
 });

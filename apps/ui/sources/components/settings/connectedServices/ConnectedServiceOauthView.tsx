@@ -186,7 +186,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
         });
       } catch (error) {
         // The shared OAuth view displays error.message verbatim, so hand it the resolved text.
-        throw new Error(resolveConnectedServiceOauthErrorMessage(error, t('errors.tokenExchangeFailed')));
+        throw new Error(resolveConnectedServiceOauthErrorMessage(error, t('errors.tokenExchangeFailed'), 'exchange'));
       }
     },
     onSuccess: (record: unknown) => {
@@ -203,6 +203,7 @@ export const ConnectedServiceOauthView = React.memo(function ConnectedServiceOau
           const message = resolveConnectedServiceOauthErrorMessage(
             e,
             t('connectedServices.oauthPaste.alerts.failedToConnect'),
+            'save',
           );
           await Modal.alert(
             t('common.error'),

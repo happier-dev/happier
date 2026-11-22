@@ -1,3 +1,4 @@
+import { classifyConnectedServiceTransportFailure, isConnectedServicePreDispatchFailure } from '@/sync/api/account/connectedServiceNetworkError';
 import { readConnectedServiceApiErrorFields } from '@/sync/api/account/connectedServiceApiError';
 import { t } from '@/text';
 
@@ -11,14 +12,21 @@ function isServerSideStatus(status: number | undefined): status is number {
 export function resolveConnectedServiceOauthErrorMessage(
   error: unknown,
   fallbackMessage: string,
+  phase?: 'exchange' | 'save',
 ): string {
   if (!(error instanceof Error)) return fallbackMessage;
+  const fields = readConnectedServiceApiErrorFields(error);
+  const wasNotSent = isConnectedServicePreDispatchFailure(error);
+  if ((phase === 'exchange' || phase === 'save') && !wasNotSent
+    && (classifyConnectedServiceTransportFailure(error) !== null
+      || isServerSideStatus(fields?.status)
+      || fields?.code === 'connect_oauth_exchange_outcome_unknown')) {
+    return t('connectedServices.oauthPaste.errors.exchangeOutcomeUnknown');
+  }
   const networkMessage = resolveConnectedServiceNetworkErrorMessage(error);
   if (networkMessage) return networkMessage;
   if (error instanceof ConnectedServiceOauthRejectedError) {
-    return error.oauthError
-      ? t('connectedServices.oauthPaste.errors.rejected', { reason: error.oauthError })
-      : t('connectedServices.oauthPaste.errors.rejectedGeneric');
+    return t('connectedServices.oauthPaste.errors.rejectedGeneric');
   }
   const code = error.message.trim();
   if (!code) return fallbackMessage;
@@ -40,10 +48,10 @@ export function resolveConnectedServiceOauthErrorMessage(
     return t('errors.tokenExchangeFailed');
   }
   if (code.startsWith('connect_oauth_')) {
-    const status = readConnectedServiceApiErrorFields(error)?.status;
+    const status = fields?.status;
     return isServerSideStatus(status)
       ? t('connectedServices.requestErrors.serverHttp', { status: String(status) })
       : fallbackMessage;
   }
-  return code;
+  return fallbackMessage;
 }

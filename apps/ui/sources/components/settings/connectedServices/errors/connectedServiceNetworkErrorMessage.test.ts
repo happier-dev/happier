@@ -41,10 +41,10 @@ describe('connected-service connectivity messages', () => {
     );
   });
 
-  it('shows a sanitized provider rejection instead of the raw redirect parameter', async () => {
+  it('uses the localized provider rejection for both standard and unfamiliar redirect errors', async () => {
     const { ConnectedServiceOauthRejectedError } = await import('../oauth/connectedServiceOauthErrors');
     expect(resolveConnectedServiceOauthErrorMessage(new ConnectedServiceOauthRejectedError('access_denied'), 'fallback'))
-      .toBe('The provider rejected the authorization: access_denied');
+      .toBe('The provider rejected the authorization.');
     expect(resolveConnectedServiceOauthErrorMessage(new ConnectedServiceOauthRejectedError('<b>x</b> SECRET code=abc'), 'fallback'))
       .toBe('The provider rejected the authorization.');
   });

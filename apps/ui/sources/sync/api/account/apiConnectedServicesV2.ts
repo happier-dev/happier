@@ -222,7 +222,7 @@ export async function exchangeConnectedServiceOauthViaProxy(
         ...(params.state ? { state: params.state } : {}),
       }),
     },
-    { includeAuth: false, retry: 'none' },
+    { includeAuth: false, retry: 'none', waitForReachability: true },
   );
 
   if (!response.ok) {
@@ -239,7 +239,9 @@ export async function exchangeConnectedServiceOauthViaProxy(
   const json = await response.json().catch(() => null);
   const bundle = json && typeof (json as any).bundle === 'string' ? String((json as any).bundle) : '';
   if (!bundle) {
-    throw new HappyError('invalid response', false, { status: response.status, kind: 'server' });
+    throw createConnectedServiceApiError(null, {
+      status: response.status, fallbackCode: 'connect_oauth_exchange_outcome_unknown',
+    });
   }
 
   return { bundle };

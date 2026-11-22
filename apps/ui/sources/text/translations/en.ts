@@ -2689,7 +2689,8 @@ export const en = {
                 stateMismatch: 'This authorization response does not match the current attempt. Start a new authorization.',
                 rejected: ({ reason }: { reason: string }) => `The provider rejected the authorization: ${reason}`,
                 rejectedGeneric: 'The provider rejected the authorization.',
-                responseKept: 'Your pasted response was kept. Press Continue to try again; if the provider reports an invalid or used code, start a new authorization.',
+                exchangeOutcomeUnknown: "Happier couldn’t confirm whether sign-in completed. Check your connected accounts. If you need to sign in again, start with a new code.",
+                responseKept: "The request wasn’t sent. Check your connection, then press Continue to use the response you already pasted.",
             },
         },
         oauthEmbedded: {

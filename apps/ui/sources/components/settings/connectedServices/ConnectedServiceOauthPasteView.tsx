@@ -10,7 +10,7 @@ import { Text, TextInput } from '@/components/ui/text/Text';
 import { Modal } from '@/modal';
 import { useAuth } from '@/auth/context/AuthContext';
 import { assertConnectedServiceOperationSupported } from '@/sync/api/account/connectedServiceOperationSupport';
-import { classifyConnectedServiceTransportFailure } from '@/sync/api/account/connectedServiceNetworkError';
+import { isConnectedServicePreDispatchFailure } from '@/sync/api/account/connectedServiceNetworkError';
 import { useServerFeaturesRuntimeSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import { generateOauthState, generatePkceCodes, parseOauthCallbackUrl } from '@/utils/auth/oauthCore';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -107,7 +107,10 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       // exact attempt's PKCE; structured callback responses still return state.
       const returnedState = parsed.rawAuthorizationCode ? state : parsed.state ?? '';
       if (!code) throw new Error('Missing code');
-      if (!returnedState) throw new Error(copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
+      if (!returnedState) {
+        await Modal.alert(t('common.error'), copy?.missingStateError ?? t('connectedServices.oauthPaste.errors.missingState'));
+        return;
+      }
       if (returnedState !== state) throw new Error('connect_oauth_state_mismatch');
 
       const credentials = ensureCredentials();
@@ -136,10 +139,8 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       );
       props.onDone();
     } catch (e: unknown) {
-      const networkFailure = classifyConnectedServiceTransportFailure(e) !== null;
-      // No HTTP response came back for the exchange, so the failure says nothing about the code.
-      // It is kept for the user to resubmit deliberately, never retried automatically.
-      const keepResponse = networkFailure && !exchangeResponded;
+      // A one-use code can be resubmitted only when the transport attests it was never sent.
+      const keepResponse = exchangeAttempted && !exchangeResponded && isConnectedServicePreDispatchFailure(e);
       if (exchangeAttempted && !keepResponse) {
         // The provider may have consumed this one-use code before the failure.
         setRedirectUrlInput('');
@@ -153,6 +154,7 @@ export const ConnectedServiceOauthPasteView = React.memo(function ConnectedServi
       const message = resolveConnectedServiceOauthErrorMessage(
         e,
         t('connectedServices.oauthPaste.alerts.failedToConnect'),
+        exchangeResponded ? 'save' : exchangeAttempted ? 'exchange' : undefined,
       );
       await Modal.alert(
         t('common.error'),

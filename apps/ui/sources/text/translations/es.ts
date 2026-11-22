@@ -2920,7 +2920,8 @@ export const es: TranslationStructure = {
         stateMismatch: "Esta respuesta de autorización no coincide con el intento actual. Inicia una autorización nueva.",
         rejected: ({ reason }: { reason: string }) => `El proveedor rechazó la autorización: ${reason}`,
         rejectedGeneric: "El proveedor rechazó la autorización.",
-        responseKept: "Se conservó la respuesta pegada. Pulsa Continuar para reintentar; si el proveedor indica que el código no es válido o ya se usó, inicia una autorización nueva.",
+        exchangeOutcomeUnknown: "No se pudo confirmar si se completó el inicio de sesión. Revisa tus cuentas conectadas y, si hace falta, vuelve a iniciar sesión con un código nuevo.",
+        responseKept: "La solicitud no se envió. Comprueba tu conexión y pulsa Continuar para usar la respuesta que ya pegaste.",
       },
     },
     oauthEmbedded: {

@@ -1,4 +1,3 @@
-import { log } from '@/log';
 import {
   serverFetch,
   ServerFetchConnectivityTimeoutError,
@@ -12,10 +11,6 @@ import { AsyncTimeoutError } from '@/utils/timing/time';
 
 export type ConnectedServiceNetworkFailureCategory = 'unreachable' | 'timeout';
 
-/**
- * The request never produced an HTTP response. Whether the server saw it is unknown, so this
- * says nothing about the credentials or authorization code that were being sent.
- */
 /**
  * The wrapper replaces the cause's class, so the stop decisions the shared `backoff` reads from
  * the cause (`retryable`, `canTryAgain`, and the connectivity gate's `endpoint_offline`) are
@@ -80,64 +75,26 @@ export function classifyConnectedServiceTransportFailure(error: unknown): Connec
   return null;
 }
 
-/** Strips the query and fragment so codes, tokens and other parameters never reach a log or error. */
-function toLoggableEndpoint(path: string): string {
-  return path.split(/[?#]/, 1)[0] ?? '';
+/** Only a refusal from the connectivity owner proves that the request was never dispatched. */
+export function isConnectedServicePreDispatchFailure(error: unknown): boolean {
+  const cause = error instanceof ConnectedServiceNetworkError ? error.cause : error;
+  return cause instanceof ServerReachabilityWaitTimeoutError
+    || (cause instanceof HappyError && cause.code === 'endpoint_offline');
 }
 
-function describeCause(cause: unknown): string {
-  if (!(cause instanceof Error)) return 'unknown';
-  return `${cause.name}: ${cause.message}`.replace(/\?\S*/g, '?').slice(0, 200);
-}
-
-// Server error codes are short machine identifiers; anything else may carry arbitrary content.
-const SERVER_ERROR_CODE = /^[a-z0-9_]{1,80}$/;
-
-async function readServerErrorCode(response: Response): Promise<string | null> {
-  try {
-    const json: unknown = await response.clone().json();
-    if (!json || typeof json !== 'object') return null;
-    const { error, code } = json as { error?: unknown; code?: unknown };
-    for (const value of [error, code]) {
-      if (typeof value === 'string' && SERVER_ERROR_CODE.test(value)) return value;
-    }
-  } catch {
-    // A non-JSON error body has no code to report.
-  }
-  return null;
-}
-
-/**
- * Canonical transport for every Connected Services request. A dropped connection or timeout is
- * reported as a {@link ConnectedServiceNetworkError}, and each failed attempt is logged with its
- * operation, endpoint, failure category and the server's error code (off the caller's path, so a
- * stalled body never delays the response) — never request bodies,
- * headers, query parameters or response details beyond that code.
- */
 export async function connectedServiceFetch(
   operation: string,
   path: string,
   init?: ServerReadRequestInit,
   options?: Parameters<typeof serverFetch>[2],
 ): Promise<Response> {
-  const method = String(init?.method ?? 'GET').toUpperCase();
-  const endpoint = toLoggableEndpoint(path);
-  let response: Response;
   try {
-    response = await serverFetch(path, init, options);
+    return await serverFetch(path, init, options);
   } catch (error) {
     const category = classifyConnectedServiceTransportFailure(error);
     if (!category) throw error;
-    log.log(`[connectedServices] ${operation} failed: category=${category} request=${method} ${endpoint} cause=${describeCause(error)}`);
-    throw new ConnectedServiceNetworkError({ operation, endpoint, category, cause: error });
-  }
-  if (!response.ok) {
-    const rejected = `[connectedServices] ${operation} rejected: status=${response.status} request=${method} ${endpoint}`;
-    log.log(rejected);
-    // Diagnostic only: the caller gets the response now, and the code is logged if the body arrives.
-    void readServerErrorCode(response).then((serverCode) => {
-      if (serverCode) log.log(`${rejected} code=${serverCode}`);
+    throw new ConnectedServiceNetworkError({
+      operation, endpoint: path.split(/[?#]/, 1)[0] ?? '', category, cause: error,
     });
   }
-  return response;
 }

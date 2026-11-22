@@ -2852,7 +2852,8 @@ export const pl: TranslationStructure = {
         stateMismatch: "Ta odpowiedź autoryzacji nie pasuje do bieżącej próby. Rozpocznij nową autoryzację.",
         rejected: ({ reason }: { reason: string }) => `Dostawca odrzucił autoryzację: ${reason}`,
         rejectedGeneric: "Dostawca odrzucił autoryzację.",
-        responseKept: "Wklejona odpowiedź została zachowana. Naciśnij Kontynuuj, aby spróbować ponownie; jeśli dostawca zgłosi nieprawidłowy lub już użyty kod, rozpocznij nową autoryzację.",
+        exchangeOutcomeUnknown: "Nie udało się potwierdzić, czy logowanie się zakończyło. Sprawdź połączone konta i w razie potrzeby zaloguj się ponownie przy użyciu nowego kodu.",
+        responseKept: "Żądanie nie zostało wysłane. Sprawdź połączenie i naciśnij Kontynuuj, aby użyć wklejonej odpowiedzi.",
       },
     },
     oauthEmbedded: {

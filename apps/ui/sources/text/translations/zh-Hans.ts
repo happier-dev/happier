@@ -2748,7 +2748,8 @@ export const zhHans: TranslationStructure = {
         stateMismatch: "此授权响应与当前尝试不匹配。请重新开始授权。",
         rejected: ({ reason }: { reason: string }) => `提供方拒绝了授权：${reason}`,
         rejectedGeneric: "提供方拒绝了授权。",
-        responseKept: "已保留你粘贴的响应。点击“继续”重试；如果提供方提示代码无效或已被使用，请重新开始授权。",
+        exchangeOutcomeUnknown: "无法确认登录是否已完成。请检查已连接的账户，如需重新登录，请使用新验证码。",
+        responseKept: "请求未发送。请检查网络连接，然后按“继续”使用已粘贴的响应。",
       },
     },
     oauthEmbedded: {

@@ -2774,7 +2774,8 @@ export const ca: TranslationStructure = {
                 stateMismatch: 'Aquesta resposta d\'autorització no coincideix amb l\'intent actual. Inicia una autorització nova.',
                 rejected: ({ reason }: { reason: string }) => `El proveïdor ha rebutjat l'autorització: ${reason}`,
                 rejectedGeneric: 'El proveïdor ha rebutjat l\'autorització.',
-                responseKept: 'S\'ha conservat la resposta enganxada. Prem Continua per tornar-ho a provar; si el proveïdor indica que el codi no és vàlid o ja s\'ha usat, inicia una autorització nova.',
+                exchangeOutcomeUnknown: "No hem pogut confirmar si s’ha completat l’inici de sessió. Comprova els comptes connectats i, si cal, torna a iniciar sessió amb un codi nou.",
+                responseKept: "La sol·licitud no s’ha enviat. Comprova la connexió i prem Continua per utilitzar la resposta que ja has enganxat.",
             },
         },
         oauthEmbedded: {

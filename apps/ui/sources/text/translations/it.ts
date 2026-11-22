@@ -3271,7 +3271,8 @@ export const it: TranslationStructure = {
         stateMismatch: "Questa risposta di autorizzazione non corrisponde al tentativo corrente. Avvia una nuova autorizzazione.",
         rejected: ({ reason }: { reason: string }) => `Il provider ha rifiutato l'autorizzazione: ${reason}`,
         rejectedGeneric: "Il provider ha rifiutato l'autorizzazione.",
-        responseKept: "La risposta incollata è stata conservata. Premi Continua per riprovare; se il provider segnala un codice non valido o già usato, avvia una nuova autorizzazione.",
+        exchangeOutcomeUnknown: "Non è stato possibile confermare il completamento dell’accesso. Controlla gli account connessi e, se necessario, accedi di nuovo con un nuovo codice.",
+        responseKept: "La richiesta non è stata inviata. Controlla la connessione, quindi premi Continua per usare la risposta che hai già incollato.",
       },
     },
     oauthEmbedded: {

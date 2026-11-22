@@ -1494,7 +1494,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 stateMismatch: '此授權回應與目前的嘗試不相符。請重新開始授權。',
                 rejected: ({ reason }: { reason: string }) => `提供者拒絕了授權：${reason}`,
                 rejectedGeneric: '提供者拒絕了授權。',
-                responseKept: '已保留你貼上的回應。按「繼續」重試；若提供者回報代碼無效或已被使用，請重新開始授權。',
+                exchangeOutcomeUnknown: "無法確認登入是否已完成。請檢查已連結的帳戶，如需重新登入，請使用新的驗證碼。",
+                responseKept: "要求未傳送。請檢查網路連線，然後按「繼續」使用已貼上的回應。",
             },
         },
         oauthEmbedded: {

@@ -2945,7 +2945,8 @@ export const pt: TranslationStructure = {
         stateMismatch: "Esta resposta de autorização não corresponde à tentativa atual. Inicie uma nova autorização.",
         rejected: ({ reason }: { reason: string }) => `O provedor rejeitou a autorização: ${reason}`,
         rejectedGeneric: "O provedor rejeitou a autorização.",
-        responseKept: "A resposta colada foi mantida. Toque em Continuar para tentar de novo; se o provedor informar um código inválido ou já usado, inicie uma nova autorização.",
+        exchangeOutcomeUnknown: "Não foi possível confirmar se o início de sessão foi concluído. Verifique as contas conectadas e, se necessário, inicie sessão novamente com um novo código.",
+        responseKept: "O pedido não foi enviado. Verifica a ligação e carrega em Continuar para usar a resposta que já colaste.",
       },
     },
     oauthEmbedded: {
