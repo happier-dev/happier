@@ -2579,6 +2579,13 @@ describe('installed deployment storage and target composition', () => {
                     { role: scenario === 'promote retained platform' ? 'promote' : 'rollback' }, { role: 'observe' },
                 ] } });
                 if (!('input' in prepared)) throw new Error('Expected a prepared provider traffic change');
+                if (scenario === 'promote retained platform') {
+                    expect(prepared.preview).toMatchObject({ platformPromotion: {
+                        environment: { id: environment.environment.id, name: environment.content.name },
+                        revision: { kind: 'repository', sha: rootSourceIntent.sha },
+                        providerEnvironment: row.content.providerIdentity.providerEnvironment,
+                    } });
+                }
                 const stored = decodePlainArtifactStoredContent(String(documents.get(prepared.input.contentArtifactId)!.body));
                 const content = DeploymentPlatformContentV1Schema.parse(JSON.parse(z.object({ body: z.string() }).parse(stored).body));
                 expect(content).toMatchObject({ sourceIntent: rootSourceIntent, sourceMethod: 'upload', machines: [], images: [],
@@ -4406,8 +4413,10 @@ describe('installed deployment storage and target composition', () => {
                 definition: { ...receipt.content.sourceIntent, contentRevision: 4 } });
             expect(destination.content.definition).toMatchObject({ contentRevision: 3 });
             expect(prepared.preview).toMatchObject({ promotion: { artifact: 'image',
-                candidateDocument: receipt.content.sourceIntent.document } });
+                candidateDocument: receipt.content.sourceIntent.document,
+                sourceRevision: { kind: 'stored', contentRevision: receipt.content.sourceIntent.contentRevision } } });
             expect(prepared.preview).toMatchObject({ deployment: {
+                environment: { id: destination.environment.id, name: destination.content.name },
                 revision: { kind: 'stored', contentRevision: 4 },
                 replaces: { deploymentId: servingDestination.deployment.id, revision: { kind: 'stored', contentRevision: 3 } },
             } });

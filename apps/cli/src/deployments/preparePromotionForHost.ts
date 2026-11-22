@@ -26,7 +26,7 @@ export async function preparePromotionForHost(request: Readonly<{
                 observation: { v: 1, state: 'queued', observedAtMs: Date.now() } } });
     }
     const candidate = await host.createCandidate(destination, content);
-    return { promotion, environment: destination, input: buildDeploymentPromoteInputV1(request.input, {
+    return { promotion, environment: destination, sourceReceipt: selected.sourceReceipt, input: buildDeploymentPromoteInputV1(request.input, {
         requestKey: request.input.requestKey ?? randomUUID(), expectedRevision: environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision, candidate,
         // The existing review owner publishes the replacement before approval.

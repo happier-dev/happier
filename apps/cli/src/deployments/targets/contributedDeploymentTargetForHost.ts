@@ -5,7 +5,7 @@ import type { HostReviewedChildrenPlanV1, HostReviewedChildrenPreparationV1 } fr
 import { createActionExecuteFailureError, ActionApprovalRequestCreatedResultSchema, isActionOutcomeUnknownErrorCodeV1,
     type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { deploymentInProgressStates, DeploymentProviderTeardownContentV1Schema, type DeploymentProviderTeardownContentV1, DeploymentPlatformContentV1Schema, resolveDeploymentSourceMethodV1, type DeploymentPlatformContentV1, type DeploymentContentV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptFailureV1 } from '@happier-dev/deployments/contracts/v1';
-import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_PROMOTE_ACTION_ID_V1, DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
@@ -241,7 +241,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
     async function prepareAction(request: Omit<DaemonDeploymentPreparationRequest, 'input'>
         & { input: Exclude<DeploymentReceiptDispatchV1, { actionId: 'deployments.teardown' }>['input'] },
         candidate: DeploymentPlatformContentV1, environment: DeploymentEnvironmentDetailV1,
-        sourceAdmitted: boolean): Promise<DaemonDeploymentPreparationResult> {
+        sourceAdmitted: boolean, promotionSource?: DeploymentReceiptDetailV1): Promise<DaemonDeploymentPreparationResult> {
         if ('onFailure' in request.input && request.input.onFailure !== undefined) return failure('unsupported_action');
         if (request.actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && 'restoreBackupId' in request.input
             && request.input.restoreBackupId !== undefined) return failure('unsupported_action');
@@ -287,6 +287,18 @@ export function createContributedDeploymentTargetForHost(host: Host) {
                         revision: projectDeploymentReviewRevisionV1(servingSource, serving.content.commitSubject) } : null,
                     platformName: resolvePluginLocalizedStringV2Text(scope.targetTitle), providerResourceId: scope.common.providerIdentity.providerResourceId,
                     providerEnvironment: scope.common.providerIdentity.providerEnvironment, data: 'keep',
+                } });
+                return { input: request.input, hostReviewedChildren: { children: scope.children }, preview };
+            }
+            if (request.actionId === DEPLOYMENT_PROMOTE_ACTION_ID_V1 && 'sourceDeploymentId' in request.input) {
+                const source = promotionSource ?? await host.readReceipt({ environmentId: request.input.sourceEnvironmentId,
+                    deploymentId: request.input.sourceDeploymentId, context: request.context });
+                if (!source.content.sourceIntent) return failure('deployment_conflict');
+                const preview = normalizeStrictJsonValue({ ...reviewTitle, providerReview, platformPromotion: {
+                    environment: { id: environment.environment.id, name: environment.content.name },
+                    revision: projectDeploymentReviewRevisionV1(source.content.sourceIntent, source.content.commitSubject),
+                    platformName: resolvePluginLocalizedStringV2Text(scope.targetTitle), providerResourceId: scope.common.providerIdentity.providerResourceId,
+                    providerEnvironment: scope.common.providerIdentity.providerEnvironment,
                 } });
                 return { input: request.input, hostReviewedChildren: { children: scope.children }, preview };
             }

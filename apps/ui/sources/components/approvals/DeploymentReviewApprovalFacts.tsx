@@ -12,12 +12,14 @@ import { ActionApprovalFieldsCard, type ApprovalFieldExtras, type ApprovalFields
 import { t } from '@/text';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 
-type PlatformRollbackReview = Extract<DeploymentApprovalReviewV1, { platformRollback: unknown }>['platformRollback'];
+type PlatformReview =
+  | Extract<DeploymentApprovalReviewV1, { platformRollback: unknown }>['platformRollback']
+  | Extract<DeploymentApprovalReviewV1, { platformPromotion: unknown }>['platformPromotion'];
 
 export type DeploymentReviewApproval = Readonly<{
-  review: DeploymentReviewV1 | PlatformRollbackReview;
+  review: DeploymentReviewV1 | PlatformReview;
   /** A promotion wraps the destination's deploy review with the Compose document change it applies. */
-  promotion: Readonly<{ composeChanges: boolean }> | null;
+  promotion: Readonly<{ composeChanges?: boolean; sourceRevision?: DeploymentReviewRevisionV1 }> | null;
 }>;
 
 /**
@@ -40,10 +42,12 @@ export function readDeploymentReviewApproval(
   );
   if (!parsed.success) return null;
   if ('platformRollback' in parsed.data) return { review: parsed.data.platformRollback, promotion: null };
+  if ('platformPromotion' in parsed.data) return { review: parsed.data.platformPromotion, promotion: {} };
   return 'deployment' in parsed.data
     ? {
         review: parsed.data.deployment,
         promotion: {
+          sourceRevision: parsed.data.promotion.sourceRevision,
           composeChanges:
             parsed.data.promotion.previousDocument !==
             parsed.data.promotion.candidateDocument,
@@ -114,6 +118,10 @@ function readMachines(review: DeploymentReviewApproval['review']): readonly Revi
         review: machine.review,
       }))
     : [{ id: review.machineId ?? null, review }];
+}
+
+function readRollbackData(review: DeploymentReviewApproval['review']): 'keep' | 'restoreBackup' | undefined {
+  return 'platformName' in review ? ('data' in review ? review.data : undefined) : review.rollbackData;
 }
 
 function revisionText(revision: DeploymentReviewRevisionV1): string {
@@ -203,11 +211,13 @@ function describeReviewFields(
   names: MachineNames,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
-  const { environment, revision, replaces } = review;
+  const { environment, revision } = review;
+  const reviewedVersion = promotion?.sourceRevision ?? revision;
+  const replaces = 'replaces' in review ? review.replaces : undefined;
   const native = 'platformName' in review ? undefined : review;
   const platform = 'platformName' in review ? review : undefined;
   const { secretBindingNames, ownServer, onFailure } = native ?? {};
-  const rollbackData = platform?.data ?? native?.rollbackData;
+  const rollbackData = readRollbackData(review);
   const ingress = environment?.ingress;
   const nameOf = (id: string | null) => (id ? names[id] ?? null : null);
   const valueNameOf = (id: string | null) => (id ? names[id] ?? t('approvals.machineNotKnown') : null);
@@ -215,13 +225,13 @@ function describeReviewFields(
   const soleMachine = soleMachineName(machines, names);
   const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
   const rows = [
-    // The page's title already names the environment whenever it names the version (`useDeploymentReviewDecision`).
-    ...field('environment', t('projects.deployments.review.environment'), revision ? null : environment?.name),
+    ...field('destination', t('projects.deployments.promotion.destination'), promotion ? environment?.name : null),
+    ...field('environment', t('projects.deployments.review.environment'), !promotion && !revision ? environment?.name : null),
     // What it replaces finishes the version's line (lab d3: "Replaces #38 · b81e0d4"); alone it keeps its own row.
-    ...(revision ? field('version', t('projects.deployments.review.version'), revisionText(revision), {
+    ...(reviewedVersion ? field('version', t('projects.deployments.review.version'), revisionText(reviewedVersion), {
       note: replaces === undefined ? undefined
         // Deploying the version that already serves is a redeploy; it does not "replace" itself.
-        : replaces && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
+        : replaces && revision && sameRevision(replaces.revision, revision) ? t('projects.deployments.review.replacesSame')
           : replaces ? t('projects.deployments.review.replacesNote', { revision: revisionText(replaces.revision) })
             : t('projects.deployments.review.replacesNothing'),
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
@@ -253,7 +263,7 @@ function describeReviewFields(
     ...field('ingress', t('projects.deployments.review.reachedThrough'), ingress
       ? ingress.kind === 'cloudflareTunnel' ? t('projects.deployments.review.ingressTunnel') : valueNameOf(ingress.edgeMachineId)
       : null),
-    ...(promotion ? field('promotion', t('projects.deployments.review.promotion'), [
+    ...(promotion && !platform ? field('promotion', t('projects.deployments.review.promotion'), [
       t('projects.deployments.review.promotionImages'),
       promotion.composeChanges ? t('projects.deployments.review.promotionCompose') : null,
     ].filter(Boolean).join(' ')) : []),
@@ -299,12 +309,12 @@ export function describeDeploymentReviewDecision(
   if (!approval) return null;
   const { revision, environment } = approval.review;
   if (!revision || !environment) return null;
-  const vars = { version: revisionText(revision), environment: environment.name };
+  const vars = { version: revisionText(approval.promotion?.sourceRevision ?? revision), environment: environment.name };
   const rollback = actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1;
   const title = approval.promotion ? t('projects.deployments.review.decisionPromote', vars)
     : rollback ? t('projects.deployments.review.decisionRollback', vars)
       : t('projects.deployments.review.decisionDeploy', vars);
-  const data = 'platformName' in approval.review ? approval.review.data : approval.review.rollbackData;
+  const data = readRollbackData(approval.review);
   const description = rollback && data
     ? t(data === 'restoreBackup' ? 'projects.deployments.review.rollbackRestoresBackup' : 'projects.deployments.review.rollbackKeepsData', { machine })
     : machine ? t('projects.deployments.review.consequenceOn', { machine }) : t('projects.deployments.review.consequence');
@@ -427,7 +437,7 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   return (
     <>
       <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
-        title={t('platformName' in props.approval.review || props.approval.review.rollbackData
+        title={t(readRollbackData(props.approval.review)
           ? 'projects.deployments.review.rollbackWhatChanges' : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
       {props.machines.map((machine, index) => (
         <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple} decided={props.decided}

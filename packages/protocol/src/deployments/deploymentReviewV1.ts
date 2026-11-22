@@ -144,7 +144,16 @@ export const DeploymentPromotionReviewV1Schema = z.strictObject({
   artifact: z.literal('image'),
   previousDocument: z.string(),
   candidateDocument: z.string(),
+  sourceRevision: z.optional(DeploymentReviewRevisionV1Schema),
 });
+const platformReview = {
+  environment: environmentReview,
+  revision: DeploymentReviewRevisionV1Schema,
+  platformName: z.string(),
+  providerResourceId: id,
+  providerEnvironment: id,
+};
+
 export const DeploymentApprovalReviewV1Schema = z.union([
   DeploymentReviewV1Schema,
   z.strictObject({
@@ -154,14 +163,15 @@ export const DeploymentApprovalReviewV1Schema = z.union([
   z.strictObject({
     summary: z.optional(z.string()),
     platformRollback: z.strictObject({
-      environment: environmentReview,
-      revision: DeploymentReviewRevisionV1Schema,
+      ...platformReview,
       replaces: replacedDeployment,
-      platformName: z.string(),
-      providerResourceId: id,
-      providerEnvironment: id,
       data: z.literal('keep'),
     }),
+    providerReview: StrictJsonValueSchema,
+  }),
+  z.strictObject({
+    summary: z.optional(z.string()),
+    platformPromotion: z.strictObject(platformReview),
     providerReview: StrictJsonValueSchema,
   }),
 ]);

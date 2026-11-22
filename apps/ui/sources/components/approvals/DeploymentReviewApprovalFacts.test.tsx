@@ -17,12 +17,15 @@ vi.mock('react-native-unistyles', async () => {
 vi.mock('@/text', async () => {
   const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
   return createTextModuleMock({ translate: (key, params) => key === 'projects.deployments.review.replacesNote'
-    ? `${key} ${String(params?.revision)}` : key });
+    ? `${key} ${String(params?.revision)}`
+    : key === 'projects.deployments.review.versionStored' ? `Compose revision ${String(params?.revision)}`
+    : key === 'projects.deployments.review.decisionPromote' ? `Promote ${String(params?.version)} to ${String(params?.environment)}`
+    : key });
 });
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 
-const { DeploymentReviewApprovalFacts, readDeploymentReviewApproval } = await import('./DeploymentReviewApprovalFacts');
+const { DeploymentReviewApprovalFacts, describeDeploymentReviewDecision, readDeploymentReviewApproval } = await import('./DeploymentReviewApprovalFacts');
 
 const initialState = storage.getState();
 afterEach(() => {
@@ -63,6 +66,31 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(displayed).toContain(target === 'own-server'
       ? 'projects.deployments.review.rollbackDataRestored' : 'projects.deployments.review.rollbackDataKept');
   });
+  it.each(['own-server', 'platform'] as const)('names the selected %s Destination before the version', async target => {
+    const environment = { id: 'destination', name: 'Production website' };
+    const revision = { kind: 'repository', sha: 'a'.repeat(40) };
+    const deploymentReview = target === 'own-server'
+      ? { deployment: { ...machineReview, environment,
+          revision: { kind: 'stored', contentRevision: 4, composeDigest: `sha256:${'c'.repeat(64)}` }, replaces: null },
+        promotion: { artifact: 'image', previousDocument: 'previous', candidateDocument: 'candidate',
+          sourceRevision: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'c'.repeat(64)}` } } }
+      : { platformPromotion: { environment, revision, platformName: 'Vercel',
+          providerResourceId: 'public-website', providerEnvironment: 'production' },
+        providerReview: { sourceMethod: 'gitIntegration' } };
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview } });
+    if (!approval) throw new Error('Expected a typed Promotion review');
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="promotion-facts" />,
+    );
+    const text = screen.getTextContent().replace(/\s+/g, ' ').trim();
+    expect(text.startsWith('projects.deployments.review.whatTitle projects.deployments.promotion.destination Production website ')).toBe(true);
+    expect(text).toContain(target === 'own-server' ? 'Compose revision 1' : 'aaaaaaa');
+    expect(text).not.toContain('Compose revision 4');
+    expect(describeDeploymentReviewDecision(approval, 'deployments.promote', null)?.title)
+      .toBe(target === 'own-server' ? 'Promote Compose revision 1 to Production website' : 'Promote aaaaaaa to Production website');
+    if (target === 'platform') expect(text).not.toContain('projects.deployments.review.promotionImages');
+  });
+
   it.each([false, true])('shows required build platforms and the emulation cost without claiming an observed execution mode (controller: %s)', async controller => {
     const review = { ...machineReview,
       buildSupport: { status: 'notObserved' as const, requestedPlatforms: ['linux/amd64', 'linux/arm64'] } };

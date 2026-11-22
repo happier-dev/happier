@@ -1989,9 +1989,12 @@ the signed binding. Preparation reads consume that same admitted scope through
 the existing ActionSpec transports.
 The current native producer supports recorded-image promotion between stored
 definitions; explicit rebuild remains typed unsupported until its producer lands.
-For platform receipts, the Promote sheet shows the effect declared by the
-target's Promote action. A platform Rollback review shows which provider
-deployment will serve and keeps its data.
+Promote review names the source Receipt's version and the receiving Environment.
+Destination is the first fact. Own-server reviews show the selected version
+even when the destination assigns it a different Compose revision. For platform
+receipts, the chooser shows the effect declared by the target's Promote Action,
+and review names the provider target. A platform Rollback review shows which
+provider deployment will serve and keeps its data.
 Compact requests require the corresponding protocol and controller reload;
 older controllers continue to require prepared references and reject this new input.
 Pending supersession retains its source intent and request/operation identity,

@@ -109,6 +109,7 @@ import { readDeploymentUniformTargetLinkRevisionV1 } from './deploymentUniformPr
 import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentContentForHost';
 import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { preparePromotionForHost } from './preparePromotionForHost';
+import { projectDeploymentReviewRevisionV1, type DeploymentPromotionReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
@@ -2256,6 +2257,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (reviewedReentry && authorsCandidate) return failure('approval_stale');
                 let preparationEnvironment: DeploymentEnvironmentDetailV1 | undefined;
                 let preparationPromotion: Awaited<ReturnType<typeof readStoredPromotionCandidateForHost>> | undefined;
+                let promotionSource: DeploymentReceiptDetailV1 | undefined;
                 let preparedCandidate: Readonly<{ title: string; content: DeploymentContentV1 }> | undefined;
                 let input: OwnServerDeploymentReviewRequest['input'];
                 const createCandidate = async (environment: DeploymentEnvironmentDetailV1, content: DeploymentContentV1) => {
@@ -2288,6 +2290,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     });
                     input = prepared.input;
                     preparationPromotion = prepared.promotion;
+                    promotionSource = prepared.sourceReceipt;
                     preparationEnvironment = prepared.environment;
                 }
                 else if (originalRequest.actionId === 'deployments.rollback' && 'deploymentId' in originalInput) {
@@ -2394,7 +2397,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     const platform = DeploymentPlatformContentV1Schema.safeParse(candidate.content);
                     if (!platform.success) return failure('invalid_parameters');
                     return await contributedTarget.prepareAction(request, platform.data, environment,
-                        preparedCandidate !== undefined || Boolean(reviewedReentry));
+                        preparedCandidate !== undefined || Boolean(reviewedReentry), promotionSource);
                 }
                 const nativeCandidate = DeploymentOwnServerContentV1Schema.parse(candidate.content);
                 if (reviewedReentry && !nativeCandidate.ownServer) return failure('approval_stale');
@@ -2411,7 +2414,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ? assertCurrent(request.context) : assertEnvironmentContentOwnerCurrent(contentEnvironmentRequest, await readContentOwner());
                 let candidateEnvironmentContent: DeploymentEnvironmentDetailV1['content'] | undefined;
                 let sourceImageArchives: NonNullable<DeploymentContentV1['ownServer']>['imageArchives'];
-                let promotionReview: { artifact: 'image'; previousDocument: string; candidateDocument: string } | undefined;
+                let promotionReview: z.infer<typeof DeploymentPromotionReviewV1Schema> | undefined;
                 if (request.actionId === 'deployments.promote') {
                     if (!('sourceDeploymentId' in request.input)) return failure('deployment_invalid');
                     // The current native producer only admits immutable images.
@@ -2448,7 +2451,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                             contentHeaderVersion: created.revision.headerVersion, contentBodyVersion: created.revision.bodyVersion } };
                     }
                     promotionReview = { artifact: 'image', previousDocument: destination.content.definition.document,
-                        candidateDocument: candidateEnvironmentContent.definition.document };
+                        candidateDocument: candidateEnvironmentContent.definition.document,
+                        sourceRevision: projectDeploymentReviewRevisionV1(sourceReceipt.content.sourceIntent, sourceReceipt.content.commitSubject) };
                 }
                 if (!content.previewDomain && !nativeCandidate.ownServer) {
                     const effectiveEnvironment = candidateEnvironmentContent ?? environment.content;
