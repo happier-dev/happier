@@ -418,9 +418,8 @@ function TeamSetupPlanPage(
   const suggestedTask = taskSelection?.task;
   const openTask = React.useCallback(async (project: OpenedProject, prompt: string) => {
     if (!machineId) return;
-    const result = await openFirstTask({ project, machineId, prompt });
-    if (!result.ok) Modal.alert(t('common.error'), result.error);
-  }, [machineId, openFirstTask]);
+    await openFirstTask({ project, machineId, prompt, lifetime: props.lifetime });
+  }, [machineId, openFirstTask, props.lifetime]);
   // Rows and the suggested task consume the retained observer's native snapshots.
   const taskProject = useTeamSetupBatchProgress(
     suggestedTask ? currentBatch : null, suggestedTask?.sourceId ?? '', undefined, { observeOpen: false },

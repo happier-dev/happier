@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -31,6 +31,9 @@ import { createRegisteredScmBackendAdapter } from '@/scm/pluginBackends/register
 import { createScmBackendRegistry } from '@/scm/registry';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
 import { createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/projectSetupAcceptedWorkspace';
+import { reviewProjectSetupEffect } from '@/workspaces/projectSetup/projectSetupPreparation';
+import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
 
 await import('@/scm/workspace/workspaceCheckoutOperations');
 const { openProject } = await import('./openProject');
@@ -116,6 +119,47 @@ describe('openProject with a subfolder the repository lacks', () => {
     } });
     expect(JSON.stringify(result)).not.toContain('secret');
     OpenProjectResultV1Schema.parse(result);
+  });
+
+  it('projects already completed setup on Open only while its native inputs still match', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-open-completed-setup-'));
+    temporaryRoots.push(root);
+    const directory = join(root, 'checkout');
+    await mkdir(join(directory, '.happier'), { recursive: true });
+    const writeSetup = (command: string) => writeFile(join(directory, '.happier/project.json'), JSON.stringify({ version: 1,
+      workspace: { setup: [{ kind: 'command', command }] } }));
+    await writeSetup('echo first');
+    const rows = createProjectAccountRowsHttpBoundary([]);
+    vi.spyOn(axios, 'get').mockImplementation(plainAccountRead);
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => url.includes('trust')
+      ? { status: 200, data: { status: 'absent' } } : rows(url, body));
+    const serverId = 'srv_test_home';
+    const machineId = 'machine';
+    const serverHttpBaseUrl = 'https://home.example';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null };
+    const preparation = { nativeIo: { resolveTool: async () => null }, platform: { os: 'linux', arch: 'x64' }, successHomeDir: join(root, 'state') };
+    const signal = new AbortController().signal;
+    const invoke = () => runWithRealGitScmRuntime(() => openProject({ serverId, machineId,
+      source: { kind: 'folder', path: directory }, materialization: { kind: 'attach' },
+    }, { serverId, serverHttpBaseUrl, machineId, accountId: 'account', setupPreparation: preparation,
+      readCredentials: async () => credentials,
+    }, { signal, callerAuthority: 'present_user', machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account',
+      machineId, installationId: 'installation', role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true }));
+    const opened = await invoke();
+    expect(opened).toMatchObject({ kind: 'opened', setup: 'approvalRequired' });
+    if (opened.kind !== 'opened' || !('machineId' in opened.workspace)) throw new Error('Expected a native checkout');
+    const association = await resolveProjectSetupAcceptedWorkspace({ address: opened.workspace, serverId, serverHttpBaseUrl, credentials, signal });
+    const reviewed = await reviewProjectSetupEffect({ ...preparation, projectAssociation: association, workspace: association.workspace,
+      purpose: 'setup', requester: { credentials, serverHttpBaseUrl }, signal });
+    if (reviewed.kind !== 'reviewed') throw new Error(reviewed.code);
+    const target = { serverId, machineId, workspaceRefId: association.workspace.id };
+    await createProjectSetupSuccessStore({ homeDir: preparation.successHomeDir }).recordCompletion(target, {
+      v: 1, workspaceRefId: target.workspaceRefId, ...reviewed.plan.successBasis, confirmedCommandCount: 1, completedAtMs: 1,
+    });
+    expect(await invoke()).toMatchObject({ kind: 'opened', setup: 'notRequired' });
+    await writeSetup('echo changed');
+    expect(await invoke()).toMatchObject({ kind: 'opened', setup: 'approvalRequired' });
   });
 
   it.each(['clone-failed', 'native-auth-refused', 'subfolder-missing'] as const)('writes no Project for %s and retains only completed clones', async failure => {

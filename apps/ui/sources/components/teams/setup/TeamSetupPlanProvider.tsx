@@ -2,7 +2,6 @@ import * as React from 'react';
 
 import { useAuth } from '@/auth/context/AuthContext';
 import { publishPresentationNotice, retirePresentationNotice } from '@/components/sessions/presentation/presentationNotices';
-import { Modal } from '@/modal';
 import { createFrontDoorActionExecute, type FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { useActiveServerAccountScopeLifetime } from '@/sync/store/hooks';
 import { t } from '@/text';
@@ -63,9 +62,8 @@ function TeamSetupRepositoryReadiness({ batch, complete, openFirstTask, requestI
             action: {
                 label: t('teams.join.setupPage.repositoryReadyStart', { repository: source.name }),
                 run: async () => {
-                    if (!selection.lifetime.isCurrent()) return;
-                    const result = await openFirstTask({ project: readyProject, machineId: selection.target.machineId, prompt: '' });
-                    if (!result.ok && selection.lifetime.isCurrent()) Modal.alert(t('common.error'), result.error);
+                    await openFirstTask({ project: readyProject, machineId: selection.target.machineId,
+                        prompt: '', lifetime: selection.lifetime });
                 },
             },
         });

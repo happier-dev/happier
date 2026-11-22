@@ -609,9 +609,12 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
           platform: runtime.setupPreparation?.platform ?? { os: process.platform === 'win32' ? 'windows' : process.platform, arch: process.arch },
           signal: context.signal,
         });
-        // "prepared" is B's reviewed execution plan, never a completion or a launch waiver.
-        setup = prepared.kind === 'pendingApproval' ? 'approvalRequired' : prepared.kind === 'notRequired' ? 'notRequired'
-          : prepared.kind === 'prepared' ? 'prepared' : 'failed';
+        // The preparation owner already matched the saved completion against this checkout and its current inputs.
+        if (prepared.kind === 'notRequired' || (prepared.kind === 'prepared' && prepared.previousSuccess)) {
+          setup = 'notRequired';
+        } else {
+          setup = prepared.kind === 'pendingApproval' ? 'approvalRequired' : prepared.kind === 'prepared' ? 'prepared' : 'failed';
+        }
         if (setup === 'failed') logger.warnLocalFile('[Project Open] Passive setup failed', { kind: prepared.kind });
       } catch (error) {
         logger.warnLocalFile('[Project Open] Passive setup failed', { code: codeOf(error),

@@ -119,13 +119,18 @@ describe('selected Team batch progress', () => {
         });
         const requestId = controller.batch?.selection.repositories[0]?.requestId;
         if (!requestId) throw new Error('No native request from the selected batch');
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
+            snapshots: [opening({ requestId, createdAt: 3 }),
+                setupOperation({ operationId: 'previous-setup', createdAt: 1, startedAt: 1, state: 'succeeded', settledAt: 2 })] }));
         act(() => leaveReview());
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
-            snapshots: [opening({ requestId, state: 'succeeded', settledAt: 2, result: preparedResult }), setupOperation()] }));
+            snapshots: [opening({ requestId, revision: 2, state: 'succeeded', createdAt: 3, settledAt: 4, result: preparedResult })] }));
         await act(async () => { openProject.resolve(preparedResult); await run; });
         expect(readPresentationNotice()).toBeNull();
+        act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId,
+            snapshots: [setupOperation({ createdAt: 5, startedAt: 5 })] }));
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshots: [setupOperation({ revision: 2,
-            state: 'succeeded', settledAt: 4 })] }));
+            createdAt: 5, startedAt: 5, state: 'succeeded', settledAt: 6 })] }));
         expect(readPresentationNotice()?.message).toBe('Shared repository is ready');
         expect(openDraft).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('current-session-presentation-notice-action');

@@ -20,7 +20,9 @@ import {
     type MachineSetupPresetInput,
 } from '@/components/settings/machines/managed/machineSetupApply';
 import type { MachineSetupPreparedApply } from '@/components/settings/machines/managed/machineSetupReview';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 
 type MachineSetupApplyResultV1 = ReturnType<typeof MachineSetupApplyResultV1Schema.parse>;
 
@@ -142,11 +144,15 @@ export async function runTeamSetupPlan(params: Readonly<{
 export async function openTeamSetupFirstTask(params: Readonly<{
     executeAction: FrontDoorActionExecute;
     context: TeamSetupActionContext;
+    lifetime: ServerAccountScopeLifetime;
     project: Extract<OpenProjectResultV1, { kind: 'opened' }>;
     machineId: string;
     prompt: string;
-}>): Promise<ActionExecuteResult> {
-    return params.executeAction('session.authoring.open', buildTeamSetupFirstTaskInput(params), params.context);
+}>) {
+    return openSessionAuthoringAction(buildTeamSetupFirstTaskInput(params), params.lifetime, {
+        signal: params.context.signal,
+        executeAction: (actionId, input) => params.executeAction(actionId, input, params.context),
+    });
 }
 
 /** The composer seed for one opened checkout; a blank prompt opens an empty draft (the seed owner refuses blank text). */
