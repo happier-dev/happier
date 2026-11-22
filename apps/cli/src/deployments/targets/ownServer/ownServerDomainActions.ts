@@ -16,10 +16,12 @@ import {
     DeploymentDomainObservationV1Schema, DeploymentDomainTransitionInputV1Schema,
     DeploymentDomainMachineTopologyV1Schema, type DeploymentDomainHeaderV1, type DeploymentDomainTopologyV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainReviewChildRpcV1Schema, type DeploymentDomainReviewChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveDomainIngress, selectDomainCaddyPlacements, readDomainIngressMembersForHost, selectDomainMembershipMachines } from './domainRouteSelection';
 import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
-import { DeploymentDomainPreparedContentInputV1Schema, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DeploymentDomainNativeSetupObservationV1Schema, DeploymentDomainPreparedContentInputV1Schema,
+    type DeploymentDomainNativeSetupReviewV1, type DeploymentDomainPlacementV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { readDeploymentDomainArtifactV1, readDeploymentEnvironmentArtifactV1,
@@ -72,9 +74,10 @@ type DomainDiscoveryHost = Readonly<{
     readTelemetryCollectorPlacement?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorPlacement'];
 }>;
 
-/** Add and recovery Remove consume the same native observation and origin selection. */
-async function discoverOwnServerDomainPlacement(request: Readonly<{
-    actionId: 'deployments.domains.add' | 'deployments.domains.remove'; input: DeploymentDomainDiscoverChildRpcV1['input'];
+/** Review, Add and recovery Remove address the same installations. */
+async function readOwnServerDomainDestinations(request: Readonly<{
+    input: Pick<DeploymentDomainDiscoverChildRpcV1['input'], 'telemetryMachineId'>
+        & Pick<DeploymentDomainReviewChildRpcV1['input'], 'membershipMachines'>;
     environment: Awaited<ReturnType<DomainDiscoveryHost['readEnvironment']>>;
     content: DeploymentDomainContentV1;
     targetLinkId: string; context: ActionExecutorContext;
@@ -94,13 +97,27 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
         installationId: collector.installationId, state: 'active' as const }]
         : await readDomainIngressMembersForHost(link,
             'membershipMachines' in request.input ? request.input.membershipMachines : undefined, context, host.readReceipt);
-    const discoveryInput = { ...request.input, ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
     const destinations = membersForIngress.map(member => ({
         machineId: member.machineId, installationId: member.installationId }));
     if (ingress?.kind === 'edgeCaddy' && !destinations.some(member => member.machineId === ingress.edgeMachineId)) {
         destinations.push({ machineId: ingress.edgeMachineId,
             installationId: await host.readInstallation(ingress.edgeMachineId, context) });
     }
+    return { ok: true as const, ingress, collector, collectorMachineId, membersForIngress, destinations };
+}
+
+/** Add and recovery Remove consume the same native observation and origin selection. */
+async function discoverOwnServerDomainPlacement(request: Readonly<{
+    actionId: 'deployments.domains.add' | 'deployments.domains.remove'; input: DeploymentDomainDiscoverChildRpcV1['input'];
+    environment: Awaited<ReturnType<DomainDiscoveryHost['readEnvironment']>>;
+    content: DeploymentDomainContentV1;
+    targetLinkId: string; context: ActionExecutorContext;
+}>, host: DomainDiscoveryHost) {
+    const selectedDestinations = await readOwnServerDomainDestinations(request, host);
+    if (!selectedDestinations.ok) return selectedDestinations;
+    const { ingress, collector, collectorMachineId, membersForIngress, destinations } = selectedDestinations;
+    const { context, environment } = request;
+    const discoveryInput = { ...request.input, ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
     const machines: DeploymentDomainTopologyV1['machines'] = [];
     for (const destination of destinations) {
         const nativeScope = { environmentId: environment.environment.id, domainId: request.input.domainId,
@@ -143,6 +160,30 @@ async function discoverOwnServerDomainPlacement(request: Readonly<{
         ...(selected.tunnelOrigin ? { tunnelOrigin: selected.tunnelOrigin } : {}) };
     return { ok: true as const, placements: selected.placements, topology,
         ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}) };
+}
+
+async function reviewOwnServerDomainSetup(input: DeploymentDomainReviewChildRpcV1['input'],
+    environment: DeploymentEnvironmentDetailV1, content: DeploymentDomainContentV1, context: ActionExecutorContext,
+    host: DomainDiscoveryHost, dispatch: (job: DeploymentDomainReviewChildRpcV1, context: ActionExecutorContext) => Promise<unknown>,
+): Promise<DeploymentDomainNativeSetupReviewV1 | ActionExecuteFailure> {
+    const selected = await readOwnServerDomainDestinations({ input, environment, content, targetLinkId: input.targetLinkId, context }, host);
+    if (!selected.ok) return selected;
+    const rows = await Promise.all(selected.destinations.map(async destination => {
+        const { collector, collectorMachineId } = selected;
+        const job = DeploymentDomainReviewChildRpcV1Schema.parse({ v: 1, kind: 'domainReview', actionId: 'deployments.domains.add',
+            input, ...destination, ...(collectorMachineId ? { telemetryMachineId: collectorMachineId } : {}),
+            ...(collector?.kind === 'ready' && collector.app && destination.machineId === collector.machineId
+                ? { telemetryApp: collector.app } : {}) });
+        const observed = DeploymentDomainNativeSetupObservationV1Schema.safeParse(await dispatch(job, context).catch(error => {
+            context.signal?.throwIfAborted();
+            logger.debug('[Deployment] Domain Machine review unavailable', { machineId: destination.machineId,
+                errorCode: projectDeploymentException(error, { phase: 'deployment.domain.native_execution' }).errorCode });
+            return null;
+        }));
+        const status = observed.success ? observed.data.status : 'unavailable';
+        return status === 'notNeeded' ? [] : [{ machineId: destination.machineId, status }];
+    }));
+    return { domainNativeSetup: rows.flat() };
 }
 
 /** The Environment Domain owner supplies its complete live set through its existing pages. */
@@ -241,6 +282,7 @@ export type ObservedDomainReview = Readonly<{
 export async function prepareOwnServerDomainReviewedChildren(
     request: Parameters<NonNullable<ActionExecutorDeps['prepareHostReviewedChildren']>>[0],
     host: DomainDiscoveryHost & Readonly<{ storage: NonNullable<ActionExecutorDeps['deploymentAction']>;
+        reviewNativeSetup?: (job: DeploymentDomainReviewChildRpcV1, context: ActionExecutorContext) => Promise<unknown>;
         open(id: string, context: ActionExecutorContext): Promise<DeploymentArtifactDocumentV1 | null> }>,
     observed?: ObservedDomainReview,
 ): Promise<HostReviewedChildrenDomainPreparationV1> {
@@ -276,8 +318,13 @@ export async function prepareOwnServerDomainReviewedChildren(
     if (add && !environment?.targetLinks.some(item => item.targetLink.id === add.targetLinkId)) return failure('target_mismatch');
     const resolved = resolveDomainIngress(content, environment?.content.ingress, add !== undefined);
     if (resolved.status === 'unavailable') return failure(resolved.reason, resolved.details);
+    const preview = add && environment && !request.approvalReplay && host.reviewNativeSetup
+        && environment.targetLinks.some(item => item.targetLink.id === add.targetLinkId && item.targetLink.targetKind === 'ownServer')
+        ? await reviewOwnServerDomainSetup(add, environment, content, request.context, host, host.reviewNativeSetup) : undefined;
+    if (isActionExecuteFailure(preview)) return preview;
+    const approvalPreview = preview?.domainNativeSetup.length ? preview : undefined;
     const selected = resolved.selection;
-    if (!selected) return null;
+    if (!selected) return approvalPreview ? { children: [], approvalPreview } : null;
     const credentialRef = readCloudflareDomainAccount(selected.selection);
     if (!credentialRef) return failure('connected_account_required');
     const { accountId, zoneId, tunnel } = selected.controller;
@@ -306,7 +353,7 @@ export async function prepareOwnServerDomainReviewedChildren(
         ? resolveCloudflareDomainTunnelOwnership(content,
             (await readEnvironment(domain.targetLinkId)).content.cloudflareTunnels)
         : undefined;
-    return { children: [{ action: { pluginId: credentialRef.service.pluginId, localId: `cloudflare-named/${role}` }, role,
+    return { ...(approvalPreview ? { approvalPreview } : {}), children: [{ action: { pluginId: credentialRef.service.pluginId, localId: `cloudflare-named/${role}` }, role,
         scopeInput: { credentialRef, accountId, zoneId,
             owned: prepared?.owned ?? selected.controller.owned,
             dnsOwnership: prepared?.dnsOwnership ?? selected.controller.dnsOwnership,

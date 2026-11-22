@@ -77,7 +77,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
             ...('deploymentId' in selected.value ? { deploymentId: routing.deploymentId } : {}),
             contentCustody: true } } : false;
     }
-    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns') {
+    if (routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainReview' || routing.kind === 'domainDns') {
         if (method === 'POST' && routing.kind === 'domain' && !proof.nativeIncumbentSource) {
             const domainAdmission = admittedChild?.domainAdmission;
             if (proof.path === `/v1/deployments/machines/${encodeURIComponent(routing.machineId)}/connector-secret-grant`) {
@@ -125,7 +125,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
                 return { metadataRead: { environmentId: input.environmentId, contentCustody: true } };
         }
         if (!artifactId) return false;
-        const content = routing.kind === 'domain' ? routing.capture.content : routing.kind === 'domainDiscover' ? routing.input : undefined;
+        const content = routing.kind === 'domain' ? routing.capture.content
+            : routing.kind !== 'domainDns' && 'contentArtifactId' in routing.input ? routing.input : undefined;
         if (artifactId === content?.contentArtifactId || artifactId === environment.contentArtifactId) return true;
         const targetLinkId = routing.kind === 'domain' ? routing.capture.placement.targetLinkId : routing.input.targetLinkId;
         return await tx.deploymentTargetLink.findFirst({ where: { id: targetLinkId, environmentId: input.environmentId,

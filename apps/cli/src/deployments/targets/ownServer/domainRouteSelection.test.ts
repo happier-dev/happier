@@ -605,7 +605,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'Domain stale Link child refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'Tunnel review with ready Caddy', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -627,6 +627,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         remedy: 'Inspect and reconcile the existing Caddy seed before retrying the Domain operation.' });
     const nativeUnknownFailure = MachineElevationFailureV1Schema.parse({ ...nativeCheckFailure, kind: 'native_effect_failed' });
     const environment = createDeploymentEnvironmentDetailV1();
+    const reviewTunnel = scenario === 'Tunnel review with ready Caddy';
     const adminWriteRefused = scenario === 'direct installed Caddy admin write refused';
     const recordedReplicaCase = scenario === 'direct installed Caddy' || scenario === 'direct installed Caddy redirect';
     // A public Add settles from its finite DNS observation; private origins
@@ -651,7 +652,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     if (adminAccessRefused) {
         environment.content.ingress = { kind: 'edgeCaddy', edgeMachineId: 'a' };
     } else if (scenario !== 'shared' && scenario !== 'misdirected discovery' && scenario !== 'missing tunnel origin' && scenario !== 'membership drain') {
-        if (!retainedSeed) delete environment.content.ingress;
+        if (!retainedSeed && !reviewTunnel) delete environment.content.ingress;
         link.members = [link.members[0]!];
         link.machines = ['a'];
     }
@@ -664,7 +665,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     if (scenario === 'no active Domain members') delete link.activeDeploymentId;
     if (scenario === 'membership join installed') link.members[0]!.state = 'joining';
     const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied' || scenario === 'native Caddy privileged host port occupied';
-    const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || recordedReplicaCase || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
+    const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || recordedReplicaCase || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed || reviewTunnel;
     if (installedCaddy) {
         link.state = 'deployed';
         link.activeDeploymentId = 'serving';
@@ -750,10 +751,10 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                         });
                         return { exitCode: 0, stdout: '', stderr: '' };
                     }
-                    if (args.includes('{{json .NetworkSettings.Ports}}')) return { exitCode: 0, stdout: JSON.stringify({
-                        '80/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
-                        '443/tcp': [{ HostIp: '0.0.0.0', HostPort: '443' }],
-                    }), stderr: '' };
+                    if (args.some(arg => arg.includes('.NetworkSettings.Ports'))) return { exitCode: 0,
+                        stdout: JSON.stringify({ name: '/coolify-proxy', ports: {
+                            '443/tcp': [{ HostIp: '0.0.0.0', HostPort: '443' }],
+                        } }), stderr: '' };
                     if (args.includes('ls')) return { exitCode: 0, stdout: '"coolify-proxy"', stderr: '' };
                     throw new Error('Port refusal cannot mutate Docker');
                 } } : nativeDocker.get(observedCaddy.adminSocketPath)!,
@@ -780,6 +781,13 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         hostname: 'qa-domain-1101-ingress.localhost', target: { service: 'web', containerPort: 80,
             ...(scenario === 'direct installed Caddy redirect' ? { redirectTo: 'https://destination.example.test' } : {}) },
         healthCheck: { path: '/', expectStatus: 200 },
+        ...(reviewTunnel ? { ingress: { provider: { kind: 'builtin', id: 'cloudflareNamed' },
+            config: { hostname: 'qa-domain-1101-ingress.localhost', controller: { accountId: 'vendor-account',
+                zoneId: 'vendor-zone', tunnel: { kind: 'adopt', tunnelId: 'reviewed-tunnel', name: 'environment-tunnel' },
+                owned: [], dnsOwnership: [],
+                connector: { imageRef: 'cloudflare/cloudflared:2026.10.0', version: '2026.10.0' } } },
+            credentialRefs: [{ purpose: 'tunnel.manage', credentialRef: { kind: 'connectedAccount',
+                account: { service: { pluginId: 'happier.deploy.cloudflare', localId: 'cloudflare' }, accountId: 'default' } } }] } } : {}),
         // A previously prepared tunnel retains its opaque target grant; this
         // native recovery does not configure the vendor Account again.
         ...(retainedSeed ? { cloudflarePreparation: { tunnelId: retainedConnector.subject.connectorId, owned: [], dnsOwnership: [],
@@ -1170,6 +1178,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             },
             elevation: {
                 readPolicy: async () => {
+                    if (reviewTunnel) return { version: 1, mode: 'none' };
                     if (!retainedSeed) throw new Error('Port refusal cannot request elevation');
                     return { version: 1, mode: 'preauthorized' };
                 },
@@ -1224,6 +1233,19 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
         isCurrent: async () => true, createExecutor: () => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps }) });
     try {
         if (!requester) throw new Error('Expected admitted Domain requester');
+        if (reviewTunnel) {
+            const { contentArtifactId: _artifactId, contentHeaderVersion: _headerVersion,
+                contentBodyVersion: _bodyVersion, ...authoredScope } = input;
+            const job = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domainReview', actionId: 'deployments.domains.add',
+                machineId: 'a', installationId: 'installed-a', input: { ...authoredScope, content: domainContent } });
+            const nativeIdentity = { version: 1 as const, installationId: 'installed-a', createdAt: 1,
+                publicKey: Buffer.from(identity.publicKey).toString('base64url'), privateKey: Buffer.from(identity.secretKey).toString('base64url') };
+            vi.mocked(installationStore.readInstallationIdentityIfExistsSync).mockReturnValue(nativeIdentity);
+            expect(await memberDeps!.deploymentChild(job, { actionRequestId: 'domain-review' })).toEqual({ status: 'accessRequired' });
+            expect(admissions).toEqual([]);
+            expect(transitions).toEqual([]);
+            return;
+        }
         const execute = () => deps.deploymentAction(actionId, actionInput, { externalActionExecutionAuthorization: requester.authorization,
             originalActionEnvelope: envelope, externalActionTarget: target, actionRequestId: envelope.requestId,
             operationAcceptance: { operationId: 'domain-operation', accept() {} } });
@@ -1405,8 +1427,9 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
             expect(children).toHaveLength(0);
         } else if (occupiedPort) {
             expect(ActionExecuteResultSchema.parse(result)).toMatchObject({ ok: false, errorCode: 'foreign_effect_conflict', details: {
-                failure: { kind: 'native_observation_unavailable', reason: 'port_in_use', stepId: 'caddy-public-port', port: 80 },
-                remedy: expect.stringContaining('Tunnel'),
+                failure: { kind: 'native_observation_unavailable', reason: 'port_in_use', stepId: 'caddy-public-port', port: scenario === 'native Caddy port occupied' ? 443 : 80 },
+                remedy: scenario === 'native Caddy port occupied'
+                    ? expect.stringMatching(/Docker container coolify-proxy.*Move or stop it.*Tunnel/) : expect.stringContaining('Tunnel'),
             } });
             expect(admissions).toEqual([]);
             expect(children).toEqual([]);

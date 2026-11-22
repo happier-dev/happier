@@ -78,7 +78,7 @@ export function createDaemonDeploymentChildExecutor(host: OwnServerDeploymentTar
             await assertCurrent(context);
             if (job.kind === 'snapshot') return ports.snapshot ? await ports.snapshot(job, context) : failure('unsupported_action');
             if (job.kind === 'dataRole') return ports.dataRole ? await ports.dataRole(job, context) : failure('unsupported_action');
-            if (job.kind === 'domain' || job.kind === 'domainDiscover' || job.kind === 'domainDns') return await ports.domainNative(job, context);
+            if (job.kind === 'domain' || job.kind === 'domainDiscover' || job.kind === 'domainReview' || job.kind === 'domainDns') return await ports.domainNative(job, context);
             if (job.kind === 'teardown' || job.kind === 'prepare' && job.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
                 if (readInstallationIdentityIfExistsSync()?.installationId !== job.installationId) return failure('target_mismatch');
                 return await ports.teardown(job, context);

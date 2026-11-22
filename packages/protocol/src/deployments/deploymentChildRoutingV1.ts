@@ -5,7 +5,8 @@ import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js'
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentArtifactContentReferenceV1Schema } from './deploymentArtifactContentReferenceV1.js';
 import type { DeploymentChildRpcV1 } from './deploymentChildRpcV1.js';
-import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema } from './deploymentChildRpcV1.js';
+import { DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema, DeploymentDomainReviewChildRoutingV1Schema } from './deploymentChildRpcV1.js';
+import { isDeploymentDomainNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 import { DeploymentTeardownStepV1Schema } from './deploymentTeardownRequestV1.js';
 
 const common = { v: z.literal(1), actionId: z.enum(['deployments.deploy', 'deployments.rollback', 'deployments.promote']),
@@ -27,7 +28,7 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => {
     z.strictObject({ v: z.literal(1), kind: z.literal('dataRole'), actionId: z.literal('deployments.bindings.set'),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id, expectedRevision: revision }),
         targetLinkId: id, deploymentId: id, service: id, candidateContent: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
-    DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema,
+    DeploymentDomainChildRoutingV1Schema, DeploymentDomainDiscoverChildRoutingV1Schema, DeploymentDomainReviewChildRoutingV1Schema,
     z.strictObject({ v: z.literal(1), kind: z.literal('domainDns'), actionId: z.literal('deployments.domains.verify'),
         machineId: id, installationId: id, input: z.strictObject({ serverId: id, environmentId: id,
             targetLinkId: id, expectedRevision: revision, expectedTargetLinkRevision: revision, requestKey: id }) }),
@@ -44,8 +45,8 @@ export const DeploymentChildRoutingV1Schema = lazyZodSchema(() => {
     z.strictObject({ ...common, kind: z.literal('member'), deploymentId: id, actionOperationId: id,
         phase: z.enum(['activate', 'restore', 'observe', 'cleanup']), selectedDeploymentId: id }),
 ]).check(z.refine(value => value.kind !== 'member' || value.phase !== 'cleanup' || value.selectedDeploymentId === value.deploymentId),
-    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
-    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined)));
+    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'domainReview' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.promote') === (value.promotion !== undefined)),
+    z.refine(value => value.kind === 'domainDns' || value.kind === 'snapshot' || value.kind === 'dataRole' || value.kind === 'domain' || value.kind === 'domainDiscover' || value.kind === 'domainReview' || value.kind === 'prepare' || value.kind === 'teardown' || (value.actionId === 'deployments.rollback') === (value.input.deploymentId !== undefined)));
 });
 export type DeploymentChildRoutingV1 = z.infer<typeof DeploymentChildRoutingV1Schema>;
 
@@ -74,6 +75,14 @@ export function projectDeploymentChildRoutingV1(job: DeploymentChildRpcV1): Depl
         return routing;
     }
     if (job.kind === 'domainDiscover') { const { telemetryApp: _privateApp, ...routing } = job; return routing; }
+    if (job.kind === 'domainReview') {
+        const { content: _content, ...input } = 'content' in job.input ? job.input : { ...job.input, content: undefined };
+        const admitted = projectDeploymentNativeAdmissionV1(job.actionId, job.input);
+        if (!isDeploymentDomainNativeAdmissionV1(admitted)) throw new Error('Missing Domain review operand digest');
+        return { v: job.v, kind: job.kind, actionId: job.actionId, machineId: job.machineId, installationId: job.installationId,
+            input, inputDigest: admitted.inputDigest,
+            ...(job.telemetryMachineId ? { telemetryMachineId: job.telemetryMachineId } : {}) };
+    }
     if (job.kind === 'prepare') return { v: job.v, kind: job.kind, actionId: job.actionId,
         machineId: job.machineId, installationId: job.installationId, input: {
             serverId: job.input.serverId, environmentId: job.input.environmentId, targetLinkId: job.input.targetLinkId },

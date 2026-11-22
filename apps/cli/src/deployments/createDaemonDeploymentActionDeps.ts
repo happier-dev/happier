@@ -1754,7 +1754,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (isDeploymentDomainChildActionIdV1(request.actionId)) {
                 try { return await prepareContributedDomain(request, observed => prepareOwnServerDomainReviewedChildren(request, {
                     storage, open, dispatch: sendChild, readEnvironment: targetHostReaders.readEnvironment,
-                    readReceipt: targetHostReaders.readReceipt, readInstallation,
+                    readReceipt: targetHostReaders.readReceipt, readInstallation, readTelemetryCollectorPlacement,
+                    reviewNativeSetup: sendChild,
                 }, observed)); }
                 catch (error) { return failure(request.context.signal?.aborted ? 'cancelled' : errorCode(error), error); }
             }

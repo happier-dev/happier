@@ -87,6 +87,24 @@ const restart = {
 } as const;
 
 describe('native confirmation of a carried executor review', () => {
+  it('shows each reviewed Domain setup Machine and one administrator access remedy', async () => {
+    const { preloadTranslations, setPreferredLanguageFromSettings, t } = await import('@/text');
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const { ActionConfirmationReviewFacts } = await import('./ActionConfirmationReview');
+    const screen = await renderScreen(<ActionConfirmationReviewFacts actionId="deployments.domains.add"
+      actionArgs={{}} serverId="home" testID="actions.confirmation-review"
+      preview={{ hostReviewedContent: { domainNativeSetup: [
+        { machineId: 'origin-fixture', status: 'accessRequired' },
+        { machineId: 'consumer-fixture', status: 'authorized' },
+      ] } }} />);
+    expect(screen.getTextContent()).toContain('origin-fixture');
+    expect(screen.getTextContent()).toContain('consumer-fixture');
+    expect(screen.getTextContent()).toContain(t('machineDetailPage.security.admin.title'));
+    expect(screen.findByTestId('actions.confirmation-review.domain-setup.origin-fixture')?.props.onPress).toBeTypeOf('function');
+    expect(screen.findByTestId('actions.confirmation-review.domain-setup.consumer-fixture')?.props.onPress).toBeUndefined();
+    await screen.unmount();
+  });
   it.each([
     { source: { kind: 'installed', pluginId: 'acme.example' } },
     { source: { kind: 'marketplace', sourceId: 'marketplace:fixture', pluginId: 'acme.example', version: '1.1.0', packageName: 'acme-example' } },

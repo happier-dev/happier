@@ -243,7 +243,7 @@ function nativeDocker(input: ContainerInput, options: NativeOptions) {
 /** Admission-time observation only. Docker start remains the final binding
  * authority if another process acquires a port after this finite review. */
 export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySetupInput, 'dockerHost' | 'containerName' | 'publicBindings'>,
-    options: NativeOptions & { readLocalListeners?(): Promise<readonly { address: string; port: number }[]> } = {}) {
+    options: NativeOptions & Pick<Parameters<typeof checkCaddyPublishedPortConflicts>[1], 'readLocalListeners'> = {}) {
     if (!input.publicBindings?.length) return { status: 'ready' as const };
     const run = nativeDocker(input, options);
     const owned = await inspectOwnedContainer(input, run);

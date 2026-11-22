@@ -15,7 +15,7 @@ export type DeploymentReadScopeV1 = Readonly<{
   requireEnvironmentRevision: boolean;
   childMayMaterializeDomainUse: boolean;
   childReadOnly: boolean;
-  childMetadataReads: Readonly<Partial<Record<'dataRole' | 'domain' | 'domainDiscover' | 'domainDns', readonly DeploymentChildMetadataReadV1[]>>>;
+  childMetadataReads: Readonly<Partial<Record<'dataRole' | 'domain' | 'domainDiscover' | 'domainReview' | 'domainDns', readonly DeploymentChildMetadataReadV1[]>>>;
 }>;
 
 export const DEPLOYMENT_DATA_ROLE_CHILD_METADATA_READS_V1 = {
@@ -27,7 +27,7 @@ const domainMetadataReads = [environmentMetadataRead, {
 }] as const satisfies readonly DeploymentChildMetadataReadV1[];
 
 export const DEPLOYMENT_DOMAIN_DISCOVERY_CHILD_METADATA_READS_V1 = {
-  domain: domainMetadataReads, domainDiscover: [environmentMetadataRead],
+  domain: domainMetadataReads, domainDiscover: [environmentMetadataRead], domainReview: [environmentMetadataRead],
 } as const satisfies DeploymentReadScopeV1['childMetadataReads'];
 
 export const DEPLOYMENT_DOMAIN_DNS_CHILD_METADATA_READS_V1 = {

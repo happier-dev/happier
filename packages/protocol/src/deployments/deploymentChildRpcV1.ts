@@ -23,7 +23,7 @@ import { DeploymentTemplateInstantiateInputV1Schema, readDeploymentTemplateDeplo
 import { DeploymentPromoteInputV1Schema, DeploymentPromoteIntentInputV1Schema } from './deploymentPromoteIntentV1.js';
 import { DeploymentBackupRestoreConfirmInputV1Schema, DeploymentNativeSnapshotOfferV1Schema } from './deploymentBackupRestoreV1.js';
 import { DeploymentTeardownInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownStepV1Schema } from './deploymentTeardownRequestV1.js';
-import { matchesDeploymentDomainPreparedInputV1,
+import { matchesDeploymentDomainPreparedInputV1, DeploymentDomainNativeAdmissionV1Schema, computeDeploymentDomainAuthoredMetadataDigestV1,
     isDeploymentDomainNativeAdmissionV1, projectDeploymentNativeAdmissionV1 } from './deploymentCandidatePublicationV1.js';
 export { isDeploymentChildRootActionIdV1, isDeploymentChildEffectActionIdV1, deploymentOperationForRootActionV1, deploymentChildEffectActionIdForRootV1,
     isDeploymentDomainChildActionIdV1, isDeploymentDomainAddActionIdV1, isDeploymentDomainRemoveActionIdV1,
@@ -95,6 +95,31 @@ export const DeploymentDomainDiscoverChildRpcV1Schema = lazyZodSchema(() => {
     return z.discriminatedUnion('actionId', [z.safeExtend(add, privatePlacement), z.safeExtend(remove, privatePlacement)]);
 });
 export type DeploymentDomainDiscoverChildRpcV1 = z.infer<typeof DeploymentDomainDiscoverChildRpcV1Schema>;
+const domainReviewPlacement = () => ({ ...placement, kind: z.literal('domainReview'),
+    actionId: z.literal(DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1), telemetryMachineId: z.optional(id) });
+export const DeploymentDomainReviewChildRpcV1Schema = lazyZodSchema(() => z.strictObject({
+    ...domainReviewPlacement(), input: DeploymentDomainAddInputV1Schema, telemetryApp: z.optional(DeploymentDomainTelemetryAppV1Schema),
+}));
+export type DeploymentDomainReviewChildRpcV1 = z.infer<typeof DeploymentDomainReviewChildRpcV1Schema>;
+export const DeploymentDomainReviewChildRoutingV1Schema = lazyZodSchema(() => z.strictObject({
+    ...domainReviewPlacement(),
+    input: z.union([DeploymentDomainAddPreparedInputV1Schema, z.omit(z.strictObject(DeploymentDomainAddPreparedInputV1Schema.shape), {
+        contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true, provider: true,
+    })]),
+    inputDigest: DeploymentDomainNativeAdmissionV1Schema.shape.inputDigest,
+}));
+export function matchesDeploymentDomainReviewRoutingV1(routing: z.infer<typeof DeploymentDomainReviewChildRoutingV1Schema>,
+    binding: ExternalActionExecutionAuthorizationBindingV1): boolean {
+    const native = binding.deploymentNativeAdmission;
+    if (binding.actionId !== routing.actionId || !isDeploymentDomainNativeAdmissionV1(native) || native.actionId !== routing.actionId
+        || binding.serverIdentityId !== routing.input.serverId || native.environmentId !== routing.input.environmentId
+        || native.domainId !== routing.input.domainId || native.inputDigest !== routing.inputDigest) return false;
+    if (native.authoredMetadataDigest !== undefined) return !('contentArtifactId' in routing.input)
+        && computeDeploymentDomainAuthoredMetadataDigestV1(routing.input) === native.authoredMetadataDigest;
+    if (!('contentArtifactId' in routing.input)) return false;
+    const projected = projectDeploymentNativeAdmissionV1(routing.actionId, routing.input);
+    return isDeploymentDomainNativeAdmissionV1(projected) && projected.inputDigest === native.inputDigest;
+}
 const job = lazyZodSchema(() => z.union([
     z.strictObject({ ...placement, kind: z.literal('review') }),
     z.strictObject({ ...placement, kind: z.literal('build'), deploymentId: id, actionOperationId: id }),
@@ -114,7 +139,7 @@ export const DeploymentChildRpcV1Schema = lazyZodSchema(() => z.union([
     DeploymentSnapshotChildRpcV1Schema,
     DeploymentDataRoleChildRpcV1Schema,
     DeploymentTeardownReviewChildRpcV1Schema,
-    DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema, DeploymentDomainDnsChildRpcV1Schema,
+    DeploymentDomainChildRpcV1Schema, DeploymentDomainDiscoverChildRpcV1Schema, DeploymentDomainDnsChildRpcV1Schema, DeploymentDomainReviewChildRpcV1Schema,
     z.strictObject({ ...placement, kind: z.literal('teardown'), actionId: z.literal('deployments.teardown'),
         input: DeploymentTeardownInputV1Schema, deploymentId: id, actionOperationId: id,
         step: DeploymentTeardownStepV1Schema, mode: z.enum(['observe', 'execute']) }),
@@ -133,6 +158,19 @@ export function doesDeploymentChildInputMatchRootV1(input: Readonly<{
     rootPreparationAdmission?: DeploymentPreparationAdmissionV1; reviewedChild?: ReviewedActionChildHttpProofV1;
 }>): boolean {
     const child = input.child;
+    if (child.kind === 'domainReview') {
+        if (input.rootActionId !== child.actionId) return false;
+        const binding = input.rootBinding;
+        if (binding) {
+            const projected = projectDeploymentNativeAdmissionV1(child.actionId, child.input);
+            const native = binding.deploymentNativeAdmission;
+            return binding.actionId === child.actionId && binding.serverIdentityId === child.input.serverId
+                && isDeploymentDomainNativeAdmissionV1(native) && native.actionId === child.actionId
+                && isDeploymentDomainNativeAdmissionV1(projected) && projected.inputDigest === native.inputDigest;
+        }
+        const original = DeploymentDomainAddInputV1Schema.safeParse(input.rootInput);
+        return original.success && sameStrictJsonValue(original.data, child.input);
+    }
     if (child.kind === 'domain' && child.observeTopology) {
         if (deploymentChildEffectActionIdForRootV1(input.rootActionId ?? '', input.rootPreparationAdmission, child.actionId) !== child.actionId) return false;
         const binding = input.rootBinding;

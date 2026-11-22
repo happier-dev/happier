@@ -31,11 +31,14 @@ it('detects a foreign host listener before producing native Caddy effects', asyn
     const result = await checkNativeCaddyPortAvailability({ ...f.input, publicBindings: [{
         ...nativeCaddyProfile.publicPortRequirements[0], requirementId: nativeCaddyProfile.publicPortRequirements[0].id,
         hostAddress: '127.0.0.1', hostPort: address.port,
-    }] }, { run: async () => ok('') });
+    }] }, { run: async () => ok(''), readLocalListeners: async port => [
+        { address: '127.0.0.1', port: port ?? address.port, name: 'local-proxy' },
+    ] });
     expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
         failure: { reason: 'port_in_use', port: address.port },
     } });
     if (result.status !== 'unavailable') throw new Error('Expected port conflict');
+    expect(result.details?.remedy).toContain('local-proxy');
     expect(result.details?.remedy).toMatch(/Tunnel/);
     expect(result.details?.remedy).toMatch(/stop/);
     expect(f.commands).toEqual([]);
@@ -53,15 +56,16 @@ it('detects Docker publications without relying on a host docker-proxy listener 
     const result = await checkNativeCaddyPortAvailability(input, { run: async command => {
         expect(command.args).not.toContain('create');
         expect(command.args).not.toContain('start');
-        if (command.args.includes('{{json .NetworkSettings.Ports}}')) return ok(JSON.stringify({
-            '8080/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }],
-            '8443/tcp': [{ HostIp: '::', HostPort: '443' }],
-        }));
+        const format = command.args.find(arg => arg.includes('.NetworkSettings.Ports'));
+        if (format) {
+            const ports = { '8080/tcp': [{ HostIp: '0.0.0.0', HostPort: '80' }], '8443/tcp': [{ HostIp: '::', HostPort: '443' }] };
+            return ok(JSON.stringify(format.includes('.Name') ? { name: '/foreign-proxy', ports } : ports));
+        }
         if (command.args.includes('--all')) return ok('');
         return ok('"foreign-proxy"\n');
     } });
     expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
-        failure: { reason: 'port_in_use', port: 80 },
+        failure: { reason: 'port_in_use', port: 80 }, remedy: expect.stringContaining('Docker container foreign-proxy'),
     } });
     await f.setup();
     expect(await ensureNativeCaddyContainer(input, f.options())).toMatchObject({ status: 'ready' });
@@ -93,9 +97,10 @@ it('uses one native listener snapshot when privileged bind probes are denied', a
         run: async () => ok(''), readLocalListeners,
     });
     expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
-        failure: { reason: 'port_in_use', port: 443 }, remedy: expect.stringContaining('Tunnel'),
+        failure: { reason: 'port_in_use', port: 443 },
+        remedy: expect.stringMatching(/Identify .* listener.*Tunnel/),
     } });
-    expect(readLocalListeners).toHaveBeenCalledTimes(1);
+    expect(readLocalListeners.mock.calls).toEqual([[], [443]]);
 });
 
 it.skipIf(process.platform === 'win32')('prepares Caddy on a non-systemd fresh host with no Happier state parent and remains idempotent', async () => {

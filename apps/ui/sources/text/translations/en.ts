@@ -23403,6 +23403,13 @@ const enProjects = {
       productionHint: "Marked as production wherever it appears.",
       review: {
         whatTitle: "What deploys",
+        domainSetupTitle: "Domain setup",
+        domainSetup: {
+          authorized: "Administrator access is ready for setup.",
+          accessRequired: "Set up administrator access to add this domain.",
+          attendanceRequired: "Setup requires the administrator's password.",
+          unavailable: "Setup requirements could not be checked.",
+        },
         decisionDeploy: ({ version, environment }: { version: string; environment: string }) => `Deploy ${version} to ${environment}`,
         decisionPromote: ({ version, environment }: { version: string; environment: string }) => `Promote ${version} to ${environment}`,
         decisionRollback: ({ version, environment }: { version: string; environment: string }) => `Roll back ${environment} to ${version}`,

@@ -7855,14 +7855,15 @@ describe('deployment children retain their controller Action authority', () => {
 
     it.each([
         ['plain', 'domainDiscover'], ['e2ee', 'domainDiscover'],
+        ['plain', 'domainReview'], ['e2ee', 'domainReview'],
         ['plain', 'domain'], ['e2ee', 'domain'],
     ] as const)('reads the prepared %s %s Machine through real HTTP authentication', async (mode, kind) => {
-        const { f, input, envelope, target, authorization, receiver } = await domainRootFixture(mode, false, false, kind === 'domainDiscover');
+        const { f, input, envelope, target, authorization, receiver } = await domainRootFixture(mode, false, false, kind !== 'domain');
         const actionOperationId = crypto.randomUUID();
         const created = kind === 'domain' ? await inTx(tx => createDeploymentDomainInTx(tx, f.account.id,
             { ...input, actionOperationId, requestId: envelope.requestId }, {}, authorization.binding)) : null;
         if (created && !created.ok) throw new Error(created.error);
-        const job = DeploymentChildRpcV1Schema.parse(kind === 'domainDiscover'
+        const job = DeploymentChildRpcV1Schema.parse(kind !== 'domain'
             ? { v: 1, kind, actionId: 'deployments.domains.add', input,
                 machineId: receiver.id, installationId: receiver.installationId }
             : { v: 1, kind, actionId: 'deployments.domains.add',
@@ -7896,7 +7897,7 @@ describe('deployment children retain their controller Action authority', () => {
             const response = await openMachine();
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ machine: { id: receiver.id, installationId: receiver.installationId } });
-            if (kind === 'domainDiscover') {
+            if (kind !== 'domain') {
                 // The approved Add still names the Link revision from before the baseline Deploy.
                 await db.deploymentTargetLink.update({ where: { id: input.targetLinkId }, data: { revision: { increment: 1 } } });
                 const stale = await openMachine();

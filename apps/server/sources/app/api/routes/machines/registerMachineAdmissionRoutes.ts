@@ -107,7 +107,8 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                     : reply.code(403).send({ error: 'access_denied' });
             }
             const child = verified.deploymentChildAdmission;
-            if (child && child.routing.kind !== 'prepare' && child.routing.kind !== 'review' && child.routing.kind !== 'domainDiscover'
+            if (child && child.routing.kind !== 'prepare' && child.routing.kind !== 'review'
+                && child.routing.kind !== 'domainDiscover' && child.routing.kind !== 'domainReview'
                 && (child.routing.kind !== 'domain' || child.routing.actionId !== 'deployments.domains.verify')) {
                 // This exact job was already admitted above. The receiver proves
                 // its own installation; the original requester is attribution.

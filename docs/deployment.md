@@ -4906,6 +4906,12 @@ the app never sends a public intent directly to the placement-required storage
 route. Domain get/list remain Home reads. Controller refusals, such as a mismatched
 target or unavailable native placement, retain their typed reason.
 
+Before confirming native Domain Add, the controller asks the selected installed
+Machines which Caddy placements need administrator setup. The review lists those
+Machines and links the ones without administrator access to their Security
+settings. The read-only child observes existing Caddy and Machine policy.
+Domain Add prepares infrastructure only after admission.
+
 In unreleased 0.3 source, Caddy setup preserves the elevation owner's typed
 `native_protocol_invalid`, `native_check_unavailable`, `native_check_unsupported`
 and `native_effect_failed` failures, optional closed native reason and existing

@@ -191,6 +191,13 @@ export const DeploymentDomainAddInputV1Schema = lazyZodSchema(() => z.union([
         z.refine(input => (input.membershipDeploymentId === undefined) === (input.membershipMachines === undefined),
             { message: 'Membership reconciliation requires its accepted receipt and desired installations.' })),
 ]));
+const deploymentDomainNativeSetupStatus = lazyZodSchema(() =>
+    z.enum(['authorized', 'accessRequired', 'attendanceRequired', 'unavailable']));
+export const DeploymentDomainNativeSetupReviewV1Schema = lazyZodSchema(() =>
+    z.strictObject({ domainNativeSetup: z.array(z.strictObject({ machineId: id, status: deploymentDomainNativeSetupStatus })) }));
+export type DeploymentDomainNativeSetupReviewV1 = z.infer<typeof DeploymentDomainNativeSetupReviewV1Schema>;
+export const DeploymentDomainNativeSetupObservationV1Schema = lazyZodSchema(() =>
+    z.strictObject({ status: z.union([deploymentDomainNativeSetupStatus, z.literal('notNeeded')]) }));
 export const DeploymentDomainAddAdmissionInputV1Schema = lazyZodSchema(() => z.safeExtend(DeploymentDomainAddPreparedInputV1Schema, {
     actionOperationId: id, requestId: id, placements: z.nonoptional(DeploymentDomainAddPreparedInputV1Schema.shape.placements),
     provider: z.optional(z.literal(true)),

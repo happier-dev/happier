@@ -6,6 +6,8 @@ import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { HandoffTargetReplacementApprovalV1Schema, type HandoffTargetReplacementApprovalV1 } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
 import { DeploymentEnvironmentCreationReviewV1Schema, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentTemplateInstantiationReviewV1Schema, type DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
+import { DeploymentDomainNativeSetupReviewV1Schema, type DeploymentDomainNativeSetupReviewV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
+import { DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 import { ArtifactEditProposalReview } from '@/components/artifacts/ArtifactEditProposal';
 import { renderDeploymentCreationDefaultsRows } from '@/components/projects/deployments/DeploymentCreationDefaultsRows';
@@ -22,6 +24,9 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { DeploymentAddPortsFacts } from './DeploymentAddPortsFacts';
 import { useServerScopedMachine } from '@/sync/domains/state/storage';
 import { t } from '@/text';
@@ -76,6 +81,11 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     [actionId, actionArgs, preview, props.status, props.execution]);
   const deployment = React.useMemo(() => readDeploymentReviewApproval(request), [request]);
   const template = React.useMemo(() => readDeploymentTemplateApprovalReview(preview), [preview]);
+  const domainSetup = React.useMemo(() => {
+    if (actionId !== DEPLOYMENT_DOMAIN_ADD_ACTION_ID_V1) return null;
+    const parsed = DeploymentDomainNativeSetupReviewV1Schema.safeParse(readRecord(preview).hostReviewedContent);
+    return parsed.success ? parsed.data.domainNativeSetup : null;
+  }, [actionId, preview]);
   const creation = React.useMemo(() => {
     const parsed = DeploymentEnvironmentCreationReviewV1Schema.safeParse(readRecord(preview).deploymentReview);
     return parsed.success ? parsed.data : null;
@@ -104,6 +114,10 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {visual ? <ApprovalVisualPreview preview={visual} artifactId={props.artifactId ?? testID} serverId={serverId} testID={`${testID}.visual`} /> : null}
     {deployment ? <DeploymentReviewApprovalFacts approval={deployment} serverId={serverId}
       testID={`${testID}.deployment-review`} decided={props.decided} /> : null}
+    {domainSetup?.length ? <ItemGroup title={t('projects.deployments.review.domainSetupTitle')}>
+      {domainSetup.map(machine => <DomainSetupMachineRow key={machine.machineId} machine={machine}
+        serverId={serverId} testID={`${testID}.domain-setup.${machine.machineId}`} />)}
+    </ItemGroup> : null}
     {template ? <DeploymentTemplateFacts review={template} serverId={serverId ?? null} testID={`${testID}.template`} /> : null}
     {creation ? <DeploymentCreationReviewFacts review={creation} serverId={serverId} testID={`${testID}.creation-review`} /> : null}
     {computer ? <ItemGroup title={t('computerUse.approval.sectionTitle')}><SectionContentRow>
@@ -123,6 +137,22 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
     {reboot.kind === 'machineReboot' ? <PreparedMachineRebootFacts review={reboot} serverId={serverId} testID={`${testID}.reboot`} /> : null}
     <ApprovalIncludedSteps preview={preview} serverId={serverId} testID={`${testID}.included-steps`} />
   </>;
+}
+
+function DomainSetupMachineRow({ machine, serverId, testID }: Readonly<{
+  machine: DeploymentDomainNativeSetupReviewV1['domainNativeSetup'][number];
+  serverId: string | null;
+  testID: string;
+}>) {
+  const router = useRouter();
+  const door = useMachinesDoor();
+  const name = useServerScopedMachineLabel(serverId, machine.machineId) ?? machine.machineId;
+  const blocked = machine.status === 'accessRequired';
+  return <Item testID={testID} title={name} subtitle={t(`projects.deployments.review.domainSetup.${machine.status}`)}
+    detail={blocked ? t('machineDetailPage.security.admin.title') : undefined}
+    onPress={blocked ? () => router.push(machinePageHref({ door,
+      target: { machineId: machine.machineId, ...(serverId ? { serverId } : {}) }, tab: { id: 'security' },
+    })) : undefined} />;
 }
 
 function PreparedHandoffTargetFacts(props: Readonly<{ approval: HandoffTargetReplacementApprovalV1; actionArgs: unknown; serverId: string | null }>) {

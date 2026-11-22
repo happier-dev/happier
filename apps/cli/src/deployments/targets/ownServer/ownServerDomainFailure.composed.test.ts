@@ -15,7 +15,7 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
-import { createOwnServerDomainActions, createOwnServerDomainContentWriter } from './ownServerDomainActions';
+import { createOwnServerDomainActions, createOwnServerDomainContentWriter, prepareOwnServerDomainReviewedChildren } from './ownServerDomainActions';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { readDeploymentEnvironmentForHost } from '@/deployments/readEnvironmentForHost';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -27,6 +27,32 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { handleActionsCommand } from '@/cli/commands/actions';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); process.exitCode = undefined; });
+
+it('reviews every native Machine needing Domain setup and names the one without administrator access', async () => {
+    const environment = createDeploymentEnvironmentDetailV1();
+    const link = environment.targetLinks[0].targetLink;
+    link.members = ['origin', 'consumer', 'ready'].map(machineId => ({ machineId, installationId: machineId, state: 'active' }));
+    const input = DeploymentActionInputSchemasV1['deployments.domains.add'].parse({ serverId: environment.environment.serverId,
+        environmentId: environment.environment.id, domainId: 'domain', targetLinkId: link.id, requestKey: 'request',
+        expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision,
+        content: { hostname: 'test.example', target: { service: 'app', containerPort: 80 } } });
+    const result = await prepareOwnServerDomainReviewedChildren({ actionId: 'deployments.domains.add', input,
+        context: { authority: 'present_user' } }, {
+        readEnvironment: async () => environment,
+        storage: async () => { throw new Error('Inline Domain review has no storage effect'); },
+        open: async () => { throw new Error('Inline Domain review has no content reference'); },
+        readReceipt: async () => { throw new Error('Active members have no joining receipt'); },
+        readInstallation: async () => { throw new Error('No other destination'); },
+        dispatch: async () => { throw new Error('Domain review has no native setup effect'); },
+        async reviewNativeSetup(job) {
+            expect(job).toMatchObject({ kind: 'domainReview', actionId: 'deployments.domains.add', input });
+            return { status: job.machineId === 'origin' ? 'accessRequired' : job.machineId === 'consumer' ? 'authorized' : 'notNeeded' };
+        },
+    });
+    expect(result).toEqual({ children: [], approvalPreview: { domainNativeSetup: [
+        { machineId: 'origin', status: 'accessRequired' }, { machineId: 'consumer', status: 'authorized' },
+    ] } });
+});
 
 it.each(['service', 'missing_artifact', 'root_verify'] as const)('preserves native Domain %s diagnostics through the public CLI', async scenario => {
     await withConfiguredDaemonTestHome({ prefix: 'domain-service-failure-' }, async () => {

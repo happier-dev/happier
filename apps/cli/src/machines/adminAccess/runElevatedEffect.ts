@@ -76,6 +76,20 @@ function resolvePromptlessElevation(policy: MachineAdminAccessV1, observation: M
     return observation.passwordlessSudoToRoot === 'allowed' ? 'sudo' : null;
 }
 
+function classifyMachineElevation(policy: MachineAdminAccessV1, observation: MachineAdminAccessObservationV1) {
+    if (observation.reasonCode === 'platformUnsupported') return { kind: 'platform_unsupported' as const };
+    if (policy.mode === 'ask') return { kind: 'ask' as const };
+    const elevation = resolvePromptlessElevation(policy, observation);
+    return elevation ? { kind: 'authorized' as const, elevation } : { kind: 'not_preauthorized' as const };
+}
+
+/** Read the same Machine policy and native authority used by elevation, without preparing an effect. */
+export async function readMachineElevationReadiness(deps: Pick<MachineElevationDependencies, 'readPolicy' | 'observe'>) {
+    const policy = await deps.readPolicy();
+    if (policy.mode === 'none') return 'mode_none' as const;
+    return classifyMachineElevation(policy, await deps.observe()).kind;
+}
+
 /** Retention consumes the same daemon policy/native privilege decision as ordinary elevation.
  * Preparation has no OS effect; None/Ask or missing native permission keeps provider API Stop available. */
 export async function prepareMachinePoweroff(dependencies: Pick<MachineElevationDependencies, 'readPolicy' | 'observe' | 'spawn'>,
@@ -333,9 +347,9 @@ async function runElevatedProcessInternal(input: Pick<RunElevatedEffectInput, 'm
             recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } }
         : refused('mode_none');
     const observation = transitionObservation ?? await dependencies.observe();
-    if (observation.reasonCode === 'platformUnsupported') return refused('platform_unsupported');
-    const elevation = resolvePromptlessElevation(policy, observation);
-    if (policy.mode === 'preauthorized' && !elevation) return refused('not_preauthorized');
+    const readiness = classifyMachineElevation(policy, observation);
+    if (readiness.kind === 'platform_unsupported' || readiness.kind === 'not_preauthorized') return refused(readiness.kind);
+    const elevation = readiness.kind === 'authorized' ? readiness.elevation : null;
     const ask = policy.mode === 'ask';
     if (ask) {
         if (!observation.daemonUsername) return nativeRefused(rememberNativeFailure('native_check_unavailable',
