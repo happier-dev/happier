@@ -17,6 +17,7 @@ export function reviewRowFact(item: ReviewRow): Readonly<{ label: string; tone: 
     const glance = projectHappierReviewGlance(undefined, item, {
         running: '', failed: '',
         noFindings: t('reviewWalkthrough.detail.glanceNoFindings'),
+        partialNoFindings: t('reviewWalkthrough.detail.glancePartialNoFindings'),
         allDecided: t('reviewWalkthrough.detail.glanceAllDecided'),
         requestedFromYou: t('reviewWalkthrough.detail.requestedFromYou'),
         toDecide: count => t('reviewWalkthrough.detail.glanceToDecide', { count }),

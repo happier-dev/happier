@@ -74,6 +74,7 @@ function HappierReviewSummaryHost({ reviewId, leadsPage, reviewedAt }, ref) {
     running: text('happier.plugin-ui.review.glance.running', 'Reviewing…'),
     failed: text('happier.plugin-ui.review.glance.failed', 'The review couldn’t finish'),
     noFindings: text('happier.plugin-ui.review.glance.noFindings', 'Nothing to fix'),
+    partialNoFindings: text('happier.plugin-ui.review.glance.partialNoFindings', 'Didn’t finish · no findings yet'),
     allDecided: text('happier.plugin-ui.review.glance.allDecided', 'Every finding is decided'),
     toDecide: count => text(`happier.plugin-ui.review.glance.toDecide.${count === 1 ? 'one' : 'other'}`,
       count === 1 ? '1 finding to decide' : '{count} findings to decide', { count }),

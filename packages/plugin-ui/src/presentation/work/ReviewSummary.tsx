@@ -27,11 +27,12 @@ export type HappierReviewGlance = Readonly<{
 /** The Review row's single fact, shared by collection rows and both native and plugin glances. */
 function projectHappierReviewFact(
   review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }>; needsYou?: Readonly<{ requestedVerdict: boolean }> }>,
-  words: Readonly<{ noFindings: string; allDecided: string; requestedFromYou: string; toDecide: (count: number) => string }>,
+  words: Readonly<{ noFindings: string; partialNoFindings: string; allDecided: string; requestedFromYou: string; toDecide: (count: number) => string }>,
 ): Readonly<{ label: string; tone: 'attention' | 'secondary' }> | null {
   if (review.counts.needsDecision > 0) return { label: words.toDecide(review.counts.needsDecision), tone: 'attention' };
   if (review.needsYou?.requestedVerdict) return { label: words.requestedFromYou, tone: 'attention' };
   if (review.state !== 'completed' && review.state !== 'partial') return null;
+  if (review.state === 'partial' && review.counts.total === 0) return { label: words.partialNoFindings, tone: 'secondary' };
   return { label: review.counts.total === 0 ? words.noFindings : words.allDecided, tone: 'secondary' };
 }
 
@@ -40,7 +41,7 @@ export function projectHappierReviewGlance(
   round: Readonly<{ state: string; summary?: string }> | undefined,
   review: Readonly<{ state: string; counts: Readonly<{ total: number; needsDecision: number }>; needsYou?: Readonly<{ requestedVerdict: boolean }> }> | null,
   words: Readonly<{
-    running: string; failed: string; noFindings: string; allDecided: string; requestedFromYou: string;
+    running: string; failed: string; noFindings: string; partialNoFindings: string; allDecided: string; requestedFromYou: string;
     toDecide: (count: number) => string;
     /** The total as a fact; omitted where the counts live elsewhere (the Review page's filter chips). */
     findingsCount?: (count: number) => string;

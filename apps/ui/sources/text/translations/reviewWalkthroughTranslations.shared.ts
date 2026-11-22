@@ -200,6 +200,7 @@ export type ReviewWalkthroughTranslations = {
         qualityShowLess: string;
         glanceAllDecided: string;
         glanceNoFindings: string;
+        glancePartialNoFindings: string;
         findingsEmpty: string;
         findingNoDetails: string;
         findingNoDetailsAt: (params: Readonly<{ location: string }>) => string;
@@ -490,6 +491,7 @@ export const en: ReviewWalkthroughTranslations = {
         qualityShowLess: 'Show less',
         glanceAllDecided: 'Every finding is decided',
         glanceNoFindings: 'Nothing to fix',
+        glancePartialNoFindings: 'Didn’t finish · no findings yet',
         findingsEmpty: 'No findings in this round',
         findingNoDetails: 'A finding has no details',
         findingNoDetailsAt: ({ location }) => `The finding at ${location} has no details`,

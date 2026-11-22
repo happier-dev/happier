@@ -16,7 +16,8 @@ export function projectReviewGlance(round: ReviewArtifactV1['rounds'][number] | 
   const glance = projectHappierReviewGlance(round, review ? { ...review, needsYou: options?.needsYou } : null, {
     running: t('reviewWalkthrough.detail.glanceRunning'), failed: t('reviewWalkthrough.detail.glanceFailed'),
     requestedFromYou: t('reviewWalkthrough.detail.requestedFromYou'),
-    noFindings: t('reviewWalkthrough.detail.glanceNoFindings'), allDecided: t('reviewWalkthrough.detail.glanceAllDecided'),
+    noFindings: t('reviewWalkthrough.detail.glanceNoFindings'),
+    partialNoFindings: t('reviewWalkthrough.detail.glancePartialNoFindings'), allDecided: t('reviewWalkthrough.detail.glanceAllDecided'),
     toDecide: count => t('reviewWalkthrough.detail.glanceToDecide', { count }),
     ...(options?.countsOnChips ? {} : { findingsCount: (count: number) => t('reviewWalkthrough.detail.findingsCount', { count }) }),
   });
