@@ -1,6 +1,7 @@
 import type { SupportedLanguage } from '../_all';
 
 const en = {
+  imageDistribution: "Each server fetches the images for its platform before rollout. Builds run on the build Machine, natively or with slower emulation. A registry with push and pull access distributes images; otherwise servers copy them directly from the build Machine.",
   migrationTitle: 'Migrations',
   migrationBody: 'Run one command in the candidate service before it starts serving. Rollback never runs it again.',
   migrationService: 'Service',
@@ -28,6 +29,7 @@ export type DeploymentOperationalTranslations = { [K in keyof typeof en]: string
 export const deploymentOperationalTranslations = {
   en,
   ru: {
+    imageDistribution: "Перед обновлением каждый сервер получает образы для своей платформы. Машина сборки использует нативную сборку или более медленную эмуляцию. Образы передаются через реестр с доступом на отправку и загрузку либо напрямую с машины сборки.",
     migrationTitle: 'Миграции', migrationBody: 'Одна команда выполняется в новом сервисе перед запуском. Откат не запускает её повторно.',
     migrationService: 'Сервис', migrationCommand: 'Команда миграции', migrationArgumentsBody: 'По одному аргументу на строку, начиная с исполняемого файла. Аргументы передаются без оболочки.',
     migrationPending: 'Проверка ожидающих миграций', migrationPendingBody: 'Необязательная команда, по аргументу на строку. Код 0 пропускает миграцию, ненулевой код означает наличие изменений.',
@@ -37,6 +39,7 @@ export const deploymentOperationalTranslations = {
     registryTarget: 'Цель', registryOrigin: 'Адрес реестра', registryAccess: 'Доступ к реестру', registryPull: 'Только загрузка', registryPushPull: 'Отправка и загрузка', registryNone: 'Нет данных доступа к реестру',
   },
   pl: {
+    imageDistribution: "Przed wdrożeniem każdy serwer pobiera obrazy dla swojej platformy. Maszyna budująca używa natywnego środowiska lub wolniejszej emulacji. Obrazy trafiają przez rejestr z prawem wysyłania i pobierania albo bezpośrednio z maszyny budującej.",
     migrationTitle: 'Migracje', migrationBody: 'Uruchom jedno polecenie w nowej usłudze przed jej udostępnieniem. Wycofanie go nie powtarza.',
     migrationService: 'Usługa', migrationCommand: 'Polecenie migracji', migrationArgumentsBody: 'Jeden argument w wierszu, zaczynając od programu. Argumenty są przekazywane dosłownie, bez powłoki.',
     migrationPending: 'Sprawdzenie oczekujących migracji', migrationPendingBody: 'Opcjonalne polecenie, jeden argument w wierszu. Kod 0 pomija migrację, kod inny niż 0 oznacza oczekujące zmiany.',
@@ -45,6 +48,7 @@ export const deploymentOperationalTranslations = {
     registryTitle: 'Rejestry kontenerów', registryBody: 'Użyj zapisanego sekretu dla prywatnych obrazów. Dane dostępu dotyczą tylko wybranego celu i adresu rejestru.', registryTarget: 'Cel', registryOrigin: 'Adres rejestru', registryAccess: 'Dostęp do rejestru', registryPull: 'Tylko pobieranie', registryPushPull: 'Wysyłanie i pobieranie', registryNone: 'Brak danych dostępu do rejestru',
   },
   es: {
+    imageDistribution: "Cada servidor obtiene las imágenes de su plataforma antes del despliegue. La máquina de compilación las genera de forma nativa o con emulación, más lenta. Se distribuyen mediante un registro con acceso de subida y descarga, o directamente desde la máquina de compilación.",
     migrationTitle: 'Migraciones', migrationBody: 'Ejecuta un comando en el servicio candidato antes de publicar. La reversión no lo repite.',
     migrationService: 'Servicio', migrationCommand: 'Comando de migración', migrationArgumentsBody: 'Un argumento por línea, empezando por el ejecutable. Se pasan literalmente, sin intérprete de comandos.', migrationPending: 'Comprobar migraciones pendientes',
     migrationPendingBody: 'Comando opcional, un argumento por línea. El código 0 omite la migración; un código distinto de 0 indica trabajo pendiente.', migrationBackup: 'Hacer una copia de la base de datos antes de migrar', migrationRecovery: 'Si un despliegue falla después de la migración', migrationAsk: 'Preguntarme', migrationRestore: 'Restaurar copia y revertir código', migrationCode: 'Revertir solo el código',
@@ -52,6 +56,7 @@ export const deploymentOperationalTranslations = {
     registryTitle: 'Registros de contenedores', registryBody: 'Usa un secreto guardado para imágenes privadas. Las credenciales solo se aplican al destino y origen del registro seleccionados.', registryTarget: 'Destino', registryOrigin: 'Origen del registro', registryAccess: 'Acceso al registro', registryPull: 'Solo descargar', registryPushPull: 'Subir y descargar', registryNone: 'Sin credenciales del registro',
   },
   fr: {
+    imageDistribution: "Chaque serveur reçoit les images de sa plateforme avant le déploiement. La machine de compilation utilise le mode natif ou une émulation plus lente. Un registre avec accès en publication et téléchargement distribue les images ; sinon, les serveurs les copient directement depuis cette machine.",
     migrationTitle: 'Migrations', migrationBody: 'Exécutez une commande dans le service candidat avant sa mise en ligne. Un retour arrière ne la relance jamais.', migrationService: 'Service', migrationCommand: 'Commande de migration',
     migrationArgumentsBody: 'Un argument par ligne, en commençant par l’exécutable. Les arguments sont transmis littéralement, sans interpréteur.', migrationPending: 'Vérifier les migrations en attente', migrationPendingBody: 'Commande facultative, un argument par ligne. Le code 0 ignore la migration ; un code non nul indique un travail en attente.',
     migrationBackup: 'Sauvegarder la base avant la migration', migrationRecovery: 'Si un déploiement échoue après sa migration', migrationAsk: 'Me demander', migrationRestore: 'Restaurer la sauvegarde et le code', migrationCode: 'Revenir au code précédent seulement',
@@ -59,6 +64,7 @@ export const deploymentOperationalTranslations = {
     registryTitle: 'Registres de conteneurs', registryBody: 'Utilisez un secret enregistré pour les images privées. Les identifiants ne concernent que la cible et l’origine du registre choisies.', registryTarget: 'Cible', registryOrigin: 'Origine du registre', registryAccess: 'Accès au registre', registryPull: 'Télécharger seulement', registryPushPull: 'Publier et télécharger', registryNone: 'Aucun identifiant de registre',
   },
   it: {
+    imageDistribution: "Ogni server riceve le immagini per la sua piattaforma prima del rilascio. La macchina di compilazione usa la modalità nativa o un’emulazione più lenta. Le immagini passano da un registro con accesso in invio e download, oppure direttamente dalla macchina di compilazione.",
     migrationTitle: 'Migrazioni', migrationBody: 'Esegui un comando nel servizio candidato prima di pubblicarlo. Il ripristino del codice non lo ripete.', migrationService: 'Servizio', migrationCommand: 'Comando di migrazione',
     migrationArgumentsBody: 'Un argomento per riga, iniziando dall’eseguibile. Gli argomenti sono passati letteralmente, senza shell.', migrationPending: 'Verifica migrazioni in attesa', migrationPendingBody: 'Comando facoltativo, un argomento per riga. Il codice 0 salta la migrazione; un codice diverso da 0 indica lavoro in attesa.',
     migrationBackup: 'Esegui il backup del database prima della migrazione', migrationRecovery: 'Se un deploy fallisce dopo la migrazione', migrationAsk: 'Chiedimi', migrationRestore: 'Ripristina backup e codice', migrationCode: 'Ripristina solo il codice',
@@ -66,6 +72,7 @@ export const deploymentOperationalTranslations = {
     registryTitle: 'Registri di container', registryBody: 'Usa un segreto salvato per le immagini private. Le credenziali valgono solo per la destinazione e l’origine del registro scelte.', registryTarget: 'Destinazione', registryOrigin: 'Origine del registro', registryAccess: 'Accesso al registro', registryPull: 'Solo download', registryPushPull: 'Invio e download', registryNone: 'Nessuna credenziale del registro',
   },
   pt: {
+    imageDistribution: "Cada servidor recebe as imagens da sua plataforma antes da implantação. A máquina de compilação usa execução nativa ou emulação, mais lenta. As imagens passam por um registro com acesso de envio e download ou diretamente da máquina de compilação.",
     migrationTitle: 'Migrações', migrationBody: 'Execute um comando no serviço candidato antes de publicar. Reverter o código não o executa novamente.', migrationService: 'Serviço', migrationCommand: 'Comando de migração',
     migrationArgumentsBody: 'Um argumento por linha, começando pelo executável. Os argumentos são passados literalmente, sem shell.', migrationPending: 'Verificar migrações pendentes', migrationPendingBody: 'Comando opcional, um argumento por linha. O código 0 ignora a migração; um código diferente de 0 indica trabalho pendente.',
     migrationBackup: 'Fazer backup do banco antes de migrar', migrationRecovery: 'Se uma implantação falhar após a migração', migrationAsk: 'Perguntar', migrationRestore: 'Restaurar backup e reverter código', migrationCode: 'Reverter apenas o código',
@@ -73,26 +80,31 @@ export const deploymentOperationalTranslations = {
     registryTitle: 'Registros de contêineres', registryBody: 'Use um segredo salvo para imagens privadas. As credenciais valem apenas para o destino e a origem do registro selecionados.', registryTarget: 'Destino', registryOrigin: 'Origem do registro', registryAccess: 'Acesso ao registro', registryPull: 'Apenas baixar', registryPushPull: 'Enviar e baixar', registryNone: 'Sem credenciais do registro',
   },
   ca: {
+    imageDistribution: "Cada servidor rep les imatges de la seva plataforma abans del desplegament. La màquina de compilació les genera de manera nativa o amb emulació, més lenta. Es distribueixen mitjançant un registre amb accés de pujada i baixada, o directament des de la màquina de compilació.",
     migrationTitle: 'Migracions', migrationBody: 'Executa una ordre al servei candidat abans de publicar. La reversió no la repeteix.', migrationService: 'Servei', migrationCommand: 'Ordre de migració', migrationArgumentsBody: 'Un argument per línia, començant per l’executable. Es passen literalment, sense intèrpret.',
     migrationPending: 'Comprova migracions pendents', migrationPendingBody: 'Ordre opcional, un argument per línia. El codi 0 omet la migració; un codi diferent de 0 indica feina pendent.', migrationBackup: 'Fes una còpia de la base abans de migrar', migrationRecovery: 'Si un desplegament falla després de la migració', migrationAsk: 'Pregunta-m’ho', migrationRestore: 'Restaura la còpia i reverteix el codi', migrationCode: 'Reverteix només el codi',
     migrationWarning: 'La recuperació automàtica no demana una altra confirmació. Restaurar la còpia perd els canvis posteriors; revertir només el codi conserva la base migrada.', migrationNone: 'Sense ordre de migració',
     registryTitle: 'Registres de contenidors', registryBody: 'Utilitza un secret desat per a imatges privades. Les credencials només s’apliquen a la destinació i l’origen del registre seleccionats.', registryTarget: 'Destinació', registryOrigin: 'Origen del registre', registryAccess: 'Accés al registre', registryPull: 'Només baixa', registryPushPull: 'Puja i baixa', registryNone: 'Sense credencials del registre',
   },
   de: {
+    imageDistribution: "Vor der Bereitstellung erhält jeder Server die Images für seine Plattform. Die Build-Maschine erstellt sie nativ oder mit langsamerer Emulation. Ein Registry mit Push- und Pull-Zugriff verteilt die Images; andernfalls kopieren die Server sie direkt von der Build-Maschine.",
     migrationTitle: 'Migrationen', migrationBody: 'Ein Befehl läuft im neuen Dienst, bevor er Anfragen bedient. Ein Rollback führt ihn nicht erneut aus.', migrationService: 'Dienst', migrationCommand: 'Migrationsbefehl', migrationArgumentsBody: 'Ein Argument pro Zeile, zuerst die ausführbare Datei. Argumente werden wörtlich und ohne Shell übergeben.',
     migrationPending: 'Ausstehende Migrationen prüfen', migrationPendingBody: 'Optionaler Befehl, ein Argument pro Zeile. Exitcode 0 überspringt die Migration; ein anderer Code bedeutet ausstehende Arbeit.', migrationBackup: 'Datenbank vor der Migration sichern', migrationRecovery: 'Wenn ein Deployment nach seiner Migration fehlschlägt', migrationAsk: 'Mich fragen', migrationRestore: 'Backup wiederherstellen und Code zurücksetzen', migrationCode: 'Nur Code zurücksetzen',
     migrationWarning: 'Automatische Wiederherstellung fragt nicht erneut. Ein Backup verwirft spätere Schreibvorgänge; ein reines Code-Rollback behält die migrierte Datenbank.', migrationNone: 'Kein Migrationsbefehl',
     registryTitle: 'Container-Registrys', registryBody: 'Verwende ein gespeichertes Secret für private Images. Zugangsdaten gelten nur für das gewählte Ziel und die Registry-Origin.', registryTarget: 'Ziel', registryOrigin: 'Registry-Origin', registryAccess: 'Registry-Zugriff', registryPull: 'Nur herunterladen', registryPushPull: 'Hoch- und herunterladen', registryNone: 'Keine Registry-Zugangsdaten',
   },
   'zh-Hans': {
+    imageDistribution: "部署前，每台服务器会获取适合其平台的镜像。构建机器采用原生构建或较慢的模拟构建。镜像通过具有推送和拉取权限的镜像仓库分发；否则，服务器直接从构建机器复制镜像。",
     migrationTitle: '迁移', migrationBody: '在候选服务开始提供请求前运行一次命令。回滚不会重新运行。', migrationService: '服务', migrationCommand: '迁移命令', migrationArgumentsBody: '每行一个参数，第一行是可执行文件。参数按原样传递，不经过 shell。', migrationPending: '待迁移检查', migrationPendingBody: '可选命令，每行一个参数。退出码 0 跳过迁移；非零表示有待处理工作。',
     migrationBackup: '迁移前备份数据库', migrationRecovery: '部署在迁移后失败时', migrationAsk: '询问我', migrationRestore: '恢复备份并回滚代码', migrationCode: '仅回滚代码', migrationWarning: '自动恢复不会再次询问。恢复备份会丢失备份后的写入；仅回滚代码会保留迁移后的数据库。', migrationNone: '未设置迁移命令', registryTitle: '容器注册表', registryBody: '为私有镜像使用已保存的密钥。凭据仅适用于所选目标和注册表来源。', registryTarget: '目标', registryOrigin: '注册表来源', registryAccess: '注册表访问', registryPull: '仅拉取', registryPushPull: '推送和拉取', registryNone: '没有注册表凭据',
   },
   'zh-Hant': {
+    imageDistribution: "部署前，每台伺服器會取得適合其平台的映像檔。建置機器採用原生建置或較慢的模擬建置。映像檔透過具有推送及提取權限的登錄庫分發；否則，伺服器直接從建置機器複製映像檔。",
     migrationTitle: '遷移', migrationBody: '在候選服務開始處理請求前執行一次命令。回復版本不會重新執行。', migrationService: '服務', migrationCommand: '遷移命令', migrationArgumentsBody: '每行一個引數，第一行是可執行檔。引數按原樣傳遞，不經過 shell。', migrationPending: '待遷移檢查', migrationPendingBody: '選用命令，每行一個引數。結束碼 0 會跳過遷移；非零表示有待處理工作。',
     migrationBackup: '遷移前備份資料庫', migrationRecovery: '部署在遷移後失敗時', migrationAsk: '詢問我', migrationRestore: '還原備份並回復程式碼', migrationCode: '僅回復程式碼', migrationWarning: '自動復原不會再次詢問。還原備份會遺失備份後的寫入；僅回復程式碼會保留遷移後的資料庫。', migrationNone: '未設定遷移命令', registryTitle: '容器登錄庫', registryBody: '為私人映像檔使用已儲存的密鑰。憑證僅適用於所選目標和登錄庫來源。', registryTarget: '目標', registryOrigin: '登錄庫來源', registryAccess: '登錄庫存取', registryPull: '僅提取', registryPushPull: '推送和提取', registryNone: '沒有登錄庫憑證',
   },
   ja: {
+    imageDistribution: "公開前に各サーバーが自分のプラットフォーム用のイメージを取得します。ビルドマシンではネイティブ、または低速なエミュレーションでビルドします。プッシュとプルが可能なレジストリで配布し、利用しない場合はビルドマシンから直接コピーします。",
     migrationTitle: 'マイグレーション', migrationBody: '候補サービスの公開前にコマンドを1回実行します。ロールバックでは再実行しません。', migrationService: 'サービス', migrationCommand: 'マイグレーションコマンド', migrationArgumentsBody: '実行ファイルから始めて、1行に1つの引数を入力します。シェルを使わず、そのまま渡します。', migrationPending: '未適用の確認', migrationPendingBody: '任意のコマンド。1行に1引数。終了コード0は移行を省略し、0以外は未適用の処理を示します。',
     migrationBackup: '移行前にデータベースをバックアップ', migrationRecovery: '移行後にデプロイが失敗した場合', migrationAsk: '確認する', migrationRestore: 'バックアップを復元しコードを戻す', migrationCode: 'コードのみ戻す', migrationWarning: '自動復旧では再確認しません。バックアップの復元では、その後の書き込みが失われます。コードのみ戻す場合、移行済みデータベースは維持されます。', migrationNone: 'マイグレーションコマンドなし', registryTitle: 'コンテナレジストリ', registryBody: 'プライベートイメージに保存済みシークレットを使います。認証情報は選択したターゲットとレジストリのオリジンにのみ適用されます。', registryTarget: 'ターゲット', registryOrigin: 'レジストリのオリジン', registryAccess: 'レジストリアクセス', registryPull: 'プルのみ', registryPushPull: 'プッシュとプル', registryNone: 'レジストリ認証情報なし',
   },
