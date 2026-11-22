@@ -14,6 +14,9 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import nacl from 'tweetnacl';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { openExternalActionRequesterAccountContextV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 afterEach(() => vi.restoreAllMocks());
 const workspace = { serverId: 'home', workspaceId: 'workspace', machineId: 'machine', rootPath: '/repo' };
@@ -42,6 +45,86 @@ function executor() {
     owner.execute(actionId, input, signedContext(actionId, input, context)) };
 }
 describe('Project finite Actions through exact Machine transport', () => {
+  it('admits original member ports reassignment through Home like Inspect, preserving the accepted checkout', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'ports-member', tokenEpoch: 1,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
+    const checkout = { ...workspace, workspaceId: 'ts-wave-b-member-existing1122',
+      rootPath: '/srv/happier/members/member/ts-wave-b-member-existing1122' };
+    let reviewDigest: string | undefined;
+    let portsRequestId: string | undefined;
+    let portsRequesterContext: unknown;
+    const machine = ExternalActionMachineBootstrapV1Schema.parse({ id: checkout.machineId, installationId: 'ports-installation',
+      kind: 'persistent', active: true, revokedAt: null, replacedByMachineId: null,
+      access: { custodian: { accountId: 'ports-owner', displayName: 'Owner' }, role: 'use', resourceMode: 'plain', accessState: 'ready' } });
+    const reply = (data: unknown) => ({ status: 200, data, statusText: 'OK', headers: {}, config: { headers: new AxiosHeaders() } });
+    vi.spyOn(axios, 'request').mockImplementation(async config => {
+      expect(config.url).toBe(`https://home.test${AUTOMATION_ACTION_INDEX_HTTP_PATH_V1}`);
+      return reply({ v: 1, rows: [] });
+    });
+    // Only Home HTTP and daemon RPC are substituted; original Account admission,
+    // envelope binding and the CLI Action/confirmation owners remain real.
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url.endsWith('/v1/account/encryption')) return reply({ mode: 'plain', updatedAt: 1 });
+      if (url.endsWith('/v1/machines')) return reply([machine]);
+      if (url.endsWith(`/v1/machines/${machine.id}`)) return reply({ machine: { ...machine,
+        installationPublicKey: Buffer.from(installation.publicKey).toString('base64') } });
+      throw new Error(`Unexpected ports Home read: ${url}`);
+    });
+    const posts = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      expect(config?.headers).toMatchObject({ Authorization: `Bearer ${token}` });
+      const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.envelope);
+      const actionId = url.includes('projects.worktree.ports.reassign') ? 'projects.worktree.ports.reassign' : 'projects.inspect';
+      expect(envelope).toMatchObject({ target: { kind: 'machine', machineId: checkout.machineId }, input: { workspace: checkout } });
+      if (url === `https://home.test${bindExternalActionExecutionAuthorizationHttpPathV1(actionId)}`) return reply(
+        ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-ports', binding: {
+          accountId: 'ports-member', custodianAccountId: 'ports-owner', authentication: { kind: 'account', tokenEpoch: 1 },
+          serverIdentityId: 'srv_finite_home', machineId: machine.id, installationId: machine.installationId,
+          accountEncryptionMode: 'plain', actionId, requestId: envelope.requestId, target: envelope.target,
+          requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        } }));
+      expect(url).toBe(`https://home.test/v1/actions/${actionId}`);
+      expect(request.executionAuthorization?.binding).toMatchObject({ actionId, accountId: 'ports-member', machineId: machine.id });
+      if (actionId === 'projects.worktree.ports.reassign') {
+        portsRequestId = envelope.requestId;
+        portsRequesterContext = openExternalActionRequesterAccountContextV1({ authorization: request.executionAuthorization!,
+          installationPrivateKey: installation.secretKey, purpose: { kind: 'external_action' }, machineId: machine.id,
+          installationId: machine.installationId, serverIdentityId: 'srv_finite_home', includeInvocation: true });
+      }
+      return reply(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId, requestId: envelope.requestId,
+        execution: { ok: true, result: actionId === 'projects.inspect' ? {
+          definition: { basis: { kind: 'absent' }, document: null },
+          detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+        } : { kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active' } } }));
+    });
+    const raw = vi.spyOn(machineTransport, 'callExactMachineRpc').mockResolvedValue({ ok: false, errorCode: 'RPC_FORBIDDEN',
+      error: 'Forbidden', failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'custodian_only', httpStatus: 403 } });
+    const owner = createCliActionExecutor({ token, credentials, serverIdentityId: 'srv_finite_home', sessionId: 'cli-global',
+      mode: 'plain', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+      onRequesterSessionCredentialDisclosure: async () => true,
+      actionsSettingsProvider: { getActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1 }) } });
+    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+      runtimeAccountId: 'ports-member', serverId: 'home', serverIdentityId: 'srv_finite_home', actionRequestId: 'ports-cut20-replay' };
+    const inspected = await owner.execute('projects.inspect', { workspace: checkout }, context);
+    expect(inspected, JSON.stringify(inspected)).toMatchObject({ ok: true, result: { definition: { basis: { kind: 'absent' } } } });
+    const input = { workspace: checkout };
+    const review = await owner.execute('projects.worktree.ports.reassign', input,
+      bindPresentUserActionConfirmationV1('projects.worktree.ports.reassign', input, context, 'A'.repeat(43)));
+    expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+    if (review.ok) throw new Error('Expected exact ports review');
+    const digest = readRecord(review.details).reviewDigest;
+    if (typeof digest !== 'string') throw new Error('Expected ports review digest');
+    reviewDigest = digest;
+    expect(await owner.execute('projects.worktree.ports.reassign', input,
+      bindPresentUserActionConfirmationV1('projects.worktree.ports.reassign', input, context, reviewDigest)))
+      .toEqual({ ok: true, result: { kind: 'unavailable', code: 'project_worktree_ports_active', reason: 'active' } });
+    expect(portsRequestId).toBe('ports-cut20-replay');
+    expect(portsRequesterContext).toMatchObject({ invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user',
+      presentUserConfirmation: { actionId: 'projects.worktree.ports.reassign', requestId: 'ports-cut20-replay', reviewDigest } } });
+    expect(posts.mock.calls.filter(([url]) => url === 'https://home.test/v1/actions/projects.worktree.ports.reassign')).toHaveLength(1);
+    expect(raw).not.toHaveBeenCalled();
+  });
   it('preserves a narrower runtime-only CLI Ask without borrowing the Account approval carrier', async () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'requester', tokenEpoch: 1,
       provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;

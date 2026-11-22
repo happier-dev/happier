@@ -1066,7 +1066,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
       ...(context.signal ? { signal: context.signal } : {}) });
   };
 
-  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, actionOperationAction: machineDeps.actionOperationAction!, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
+  const projectDeps = createCliProjectActionDeps(params, { readAdmittedProjectRows, actionOperationAction: machineDeps.actionOperationAction!, callMachineAction, dispatchOriginalAccountMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome });
   const dispatchDeploymentBackupTarget = (
     actionId: Parameters<typeof dispatchOriginalDeploymentRoot>[0],
     input: Readonly<{ serverId: string; machineId: string }>,

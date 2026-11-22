@@ -1,8 +1,9 @@
 import type { CliActionDepsParams } from './types';
-import type { CliMachineActionCall, CliMachineActionServerScopeCurrent } from './machineTransport';
+import type { CliMachineActionCall, CliMachineActionServerScopeCurrent, CliOriginalAccountMachineActionDispatch } from './machineTransport';
 import type { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS, PROJECT_DEFINITION_ACTION_OUTPUT_SCHEMAS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { isRequesterProjectDefinitionActionIdV1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { ProjectWorkerActionInputSchemasV1, ProjectWorkerActionOutputSchemasV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { updatePersonalProjectContextV1 } from '@happier-dev/protocol/projects/projectContextV1';
@@ -45,10 +46,11 @@ function isOrganizationPayload(payload: ProjectAccountRowPayloadV1): payload is 
 }
 export function createCliProjectActionDeps(
   params: Pick<CliActionDepsParams, 'serverId' | 'credentials' | 'isCredentialCurrent' | 'machineActionDirectTargetTransport' | 'onRequesterSessionCredentialDisclosure' | 'projectAction' | 'projectWorkerAccountAction' | 'projectDefinitionAction' | 'serverHttpBaseUrl' | 'serverIdentityId' | 'token'>,
-  { readAdmittedProjectRows, actionOperationAction, callMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
+  { readAdmittedProjectRows, actionOperationAction, callMachineAction, dispatchOriginalAccountMachineAction, isMachineActionServerScopeCurrent, executionRunActionFailure, isExecutionRunActionAbort, projectHomeAdmission, projectAccountAdmission, projectRowsAuthority, readProjectRows, resolveProjectHomeIdentity, withProjectHome, admitProjectRows, readProjectRequesterArtifact, projectHomeId, widgetHomeId, homeAccountId, todoHomeBaseUrl, todoHomeServerId, approvalsStore, exactHome }: Readonly<{
     readAdmittedProjectRows: CliAdmittedProjectRowsReader;
     actionOperationAction: NonNullable<ActionExecutorDeps['actionOperationAction']>;
     callMachineAction: CliMachineActionCall;
+    dispatchOriginalAccountMachineAction: CliOriginalAccountMachineActionDispatch;
     isMachineActionServerScopeCurrent: CliMachineActionServerScopeCurrent;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => CliProjectAdmissionFailure;
     isExecutionRunActionAbort: (error: unknown, signal?: AbortSignal) => boolean;
@@ -530,14 +532,14 @@ export function createCliProjectActionDeps(
         ? params.machineActionDirectTargetTransport.machineId === workspace.machineId
         : !context.externalActionTarget || context.externalActionTarget.kind === 'machine'
           && context.externalActionTarget.machineId === workspace.machineId;
-      const originalAccountInspection = actionId === 'projects.inspect' && params.credentials
+      const originalAccountDefinition = isRequesterProjectDefinitionActionIdV1(actionId) && params.credentials
         && !readHostAdmittedReviewedRootV1(context)
         && (!params.machineActionDirectTargetTransport || context.surface === 'cli' || context.surface === 'mcp')
         && !context.externalActionCredential && !context.externalActionExecutionAuthorization
         && !context.rpcSessionAuthorization && (!context.actionCaller || context.actionCaller.kind === 'host');
       // The installed executor already admitted this Action. A Session's public
       // authorization need not carry the private requester-context facet.
-      if (!originalAccountInspection && params.projectDefinitionAction && localDefinition) {
+      if (!originalAccountDefinition && params.projectDefinitionAction && localDefinition) {
         return await params.projectDefinitionAction({ actionId, input: parsed.data, context });
       }
       if (!await isMachineActionServerScopeCurrent({ serverId: workspace.serverId, machineId: workspace.machineId, context, signal: context.signal })
@@ -557,7 +559,13 @@ export function createCliProjectActionDeps(
         return { ok: false, errorCode: 'not_authenticated', error: 'not_authenticated' };
       }
       context.signal?.throwIfAborted();
-      if (originalAccountInspection) {
+      if (originalAccountDefinition) {
+        if (getActionSpec(actionId).sideEffectClass === 'write') {
+          const execution = await dispatchOriginalAccountMachineAction({ actionId, input: parsed.data,
+            machineId: workspace.machineId, context, ...(context.signal ? { signal: context.signal } : {}) });
+          if (!execution) return executionRunActionFailure('admission_unavailable');
+          return execution.ok ? execution.result : execution;
+        }
         // This new Home admission owns its request identity; an enclosing host
         // operation id can be longer than the external Action wire permits.
         const execution = await dispatchOriginalAccountAction({ actionId, input: parsed.data,
