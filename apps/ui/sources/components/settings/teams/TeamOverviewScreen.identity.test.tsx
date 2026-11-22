@@ -126,6 +126,12 @@ describe('TeamOverviewScreen Team identity', () => {
         expect(ids.includes('team-overview-shared:sessions')).toBe(viewTeam);
         expect(ids.includes('team-overview-members')).toBe(viewTeam);
         expect(ids.includes('team-overview-groups')).toBe(viewTeam);
+        expect(ids.includes('team-overview-member-setup')).toBe(viewTeam);
+        if (viewTeam) {
+            const { teamSetupPath } = await import('./teamsRoutes');
+            await screen.pressByTestIdAsync('team-overview-member-setup');
+            expect(routerPush).toHaveBeenCalledWith(teamSetupPath({ serverId, teamId: 'team-1' }));
+        }
         expect(ids).not.toContain('team-overview-setup');
         const { t } = await import('@/text');
         expect(screen.getTextContent().includes(t('teams.overview.teamSection'))).toBe(viewTeam);

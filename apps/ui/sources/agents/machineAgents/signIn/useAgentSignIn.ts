@@ -2,6 +2,7 @@ import * as React from 'react';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { readPublishedDaemonProjectionFamily } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
 import { machineAgentSignInTerminalKey, type AgentSignInStatusResponse, type MachinesAgentsSignInStartOutput, type MachinesAgentsSignInCancelOutput } from '@happier-dev/protocol/daemon/agentSignIn';
 import type { DaemonTerminalStreamEventUrl } from '@happier-dev/protocol/daemon/terminal';
@@ -276,36 +277,40 @@ const EMPTY_CLI_SIGN_INS: readonly MachineCliSignInRow[] = Object.freeze([]);
 type CliSignInsSnapshot = Readonly<{ items: readonly MachineCliSignInRow[]; pending: boolean }>;
 const EMPTY_CLI_SIGN_INS_SNAPSHOT: CliSignInsSnapshot = Object.freeze({ items: EMPTY_CLI_SIGN_INS, pending: false });
 const CLI_SIGN_IN_SECTIONS = ['agentsById', 'familiesById.systemTools'] as const;
+const SYSTEM_TOOL_SIGN_IN_SECTIONS = ['familiesById.systemTools'] as const;
 
 /** A demanded Machine catalog, with state produced by the existing sign-in Actions and shared process owner. */
 export function useMachineCliSignIns(target: Readonly<{
   serverId?: string | null; machineId: string | null; presented: boolean;
+  connectedServiceKey?: string | null;
 }>) {
   const activeServer = useActiveServerSnapshot(!target.serverId);
   const serverId = target.serverId?.trim() || activeServer.serverId;
   const { binding, execute } = useMountedActionExecution(serverId);
+  const serviceKey = target.connectedServiceKey;
   const projection = useDaemonMergedProjectionInputs({ accountLifetime: binding, serverId, machineId: target.machineId,
-    enabled: target.presented, sections: CLI_SIGN_IN_SECTIONS });
+    enabled: target.presented, sections: serviceKey == null ? CLI_SIGN_IN_SECTIONS : SYSTEM_TOOL_SIGN_IN_SECTIONS });
   const rows = React.useMemo(() => {
     const inputs = projection.inputs;
     if (!binding || !target.machineId || !inputs) return [];
-    const agents = Object.entries(inputs.pluginProjectionV2?.agentsById ?? {}).map(([id, agent]) => ({
+    const agents = Object.entries(serviceKey == null ? inputs.pluginProjectionV2?.agentsById ?? {} : {}).map(([id, agent]) => ({
       id, title: agent.title ?? id, kind: 'agent' as const,
     }));
     const tools = Object.values(readPublishedDaemonProjectionFamily(inputs, 'systemTools')?.entriesById ?? {})
       .filter(tool => tool.definition.authentication)
-      .map(tool => {
+      .flatMap(tool => {
         const launch = tool.definition.connectedAccountLaunch;
         const service = !launch ? null : typeof launch.service === 'string'
           ? { pluginId: tool.pluginId, localId: launch.service } : launch.service;
-        return { id: tool.id, title: resolvePluginLocalizedStringV2Text(tool.definition.title), kind: 'systemTool' as const,
+        if (serviceKey != null && (!service || buildQualifiedPluginContributionKey(service) !== serviceKey)) return [];
+        return [{ id: tool.id, title: resolvePluginLocalizedStringV2Text(tool.definition.title), kind: 'systemTool' as const,
           ...(launch && service ? { connectedLaunch: { service,
-            purpose: { consumer: { pluginId: tool.pluginId, localId: tool.definition.id }, purpose: launch.purpose } } } : {}) };
+            purpose: { consumer: { pluginId: tool.pluginId, localId: tool.definition.id }, purpose: launch.purpose } } } : {}) }];
       });
     return [...agents, ...tools].map(row => ({ ...row,
       entry: getEntry(serverAccountScopedResourceKey(binding.scope, 'agent-sign-in', target.machineId!, row.id)),
     }));
-  }, [binding, projection.inputs, serverId, target.machineId]);
+  }, [binding, projection.inputs, serverId, serviceKey, target.machineId]);
   const held = React.useRef<CliSignInsSnapshot>(EMPTY_CLI_SIGN_INS_SNAPSHOT);
   const subscribe = React.useCallback((listener: () => void) => {
     if (!target.presented || !binding) return () => {};

@@ -83,9 +83,11 @@ it('says the repositories are ready only when the batch completed its work', asy
   const { t } = await import('@/text');
   const ready = t('teams.join.setupPage.repositoriesReady', { machine: 'devbox' });
   const screen = await renderScreen(view({ run: { kind: 'done', operationId: 'op-1', completed: false }, canRun: false }));
+  expect(screen.findByTestId('team-setup-partial')).not.toBeNull();
   expect(screen.getTextContent()).not.toContain(ready);
   await screen.update(view({ run: { kind: 'done', operationId: 'op-1', completed: true }, canRun: false }));
   expect(screen.getTextContent()).toContain(ready);
+  expect(screen.findByTestId('team-setup-partial')).toBeNull();
   expect(screen.getTextContent()).not.toContain(t('teams.join.setupPage.repositoriesDescription', { machine: 'devbox' }));
 });
 

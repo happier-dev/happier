@@ -66,13 +66,18 @@ export async function prepareTeamSetupPlan(params: Readonly<{
     }) : null;
     if (machine && !machine.ok) return machine;
     if (params.preset && !machine) return null;
-    return { ok: true, plan: {
-        target: params.target,
-        machine,
-        repositories: params.repositories.map(repository => ({ id: repository.id, input: {
-            ...repository.input, serverId: params.target.serverId, machineId: params.target.machineId,
-        } })),
-    } };
+    return { ok: true, plan: buildTeamSetupPlan(params.target, machine, params.repositories) };
+}
+
+/** Attach the person's repository choices to the Machine plan already shown in review. */
+export function buildTeamSetupPlan(
+    target: TeamSetupTarget,
+    machine: TeamSetupPlan['machine'],
+    repositories: readonly TeamSetupRepository[],
+): TeamSetupPlan {
+    return { target, machine, repositories: repositories.map(repository => ({ id: repository.id, input: {
+        ...repository.input, serverId: target.serverId, machineId: target.machineId,
+    } })) };
 }
 
 function decodeOwnerResult<T>(result: ActionExecuteResult, parse: (value: unknown) => T): TeamSetupOwnerResult<T> {

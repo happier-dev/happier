@@ -99,7 +99,7 @@ function canStartNativeSignIn(row: MachineCliSignInRow): boolean {
   const status = row.authentication;
   return (
     status !== null &&
-    status.status !== 'signedIn' &&
+    (status.status !== 'signedIn' || status.credentialSource === 'connectedAccount') &&
     status.nativeLogin === 'login_terminal' &&
     row.signIn.phase !== 'opening' &&
     row.signIn.phase !== 'waiting'
@@ -119,12 +119,14 @@ export const MachineSignInsSection = React.memo(function MachineSignInsSection(
     machineName: string;
     presented: boolean;
     editable: boolean;
+    connectedServiceKey?: string;
   }>,
 ) {
   const signIns = useMachineCliSignIns({
     serverId: props.serverId,
     machineId: props.machineId,
     presented: props.presented,
+    connectedServiceKey: props.connectedServiceKey,
   });
   const terminalHost = useAgentSignInTerminalHost();
   const execution = useMountedActionExecution(props.serverId);

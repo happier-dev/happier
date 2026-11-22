@@ -73,13 +73,19 @@ it('previews the member page from the same Team reads, with nothing to run and a
     },
   });
   homes.answer(serverId, '/v1/projects/sources', {
-    body: { ok: true, sources: [web], coverage: { complete: true, nextCursor: null } },
+    body: { ok: true, sources: [web, ProjectSourceListItemV1Schema.parse({
+      ...web, id: 'source-group', name: 'Group source', audience: [
+        { principal: { kind: 'group', teamId: team.id, groupId: 'engineering' }, level: 'view' },
+      ],
+    })], coverage: { complete: true, nextCursor: null } },
   });
   const screen = await renderScreen(<TeamSetupScreen serverId={serverId} teamId={team.id} preview />);
   try {
     await waitForHomeGovernance(() =>
       expect(screen.findByTestId('team-setup-repository:source-web'), screen.getTextContent()).not.toBeNull());
     const text = screen.getTextContent();
+    expect(screen.findByTestId('team-setup-repository:source-group')).toBeNull();
+    expect(screen.findByTestId('team-setup-preview-audience')).not.toBeNull();
     expect(text).toContain(t('teams.join.setupPage.previewLead', { team: 'Acme' }));
     expect(text).toContain(t('teams.join.setupPage.previewMachine'));
     expect(screen.findByTestId('team-setup-run')).toBeNull();

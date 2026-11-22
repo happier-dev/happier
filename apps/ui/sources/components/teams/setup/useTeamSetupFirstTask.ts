@@ -24,12 +24,12 @@ export function useTeamSetupFirstTask(
     sources: readonly ProjectSourceV1[];
     enabled: boolean;
   }>,
-): ProjectSourceOnboardingTaskSelectionV1['task'] {
+): ProjectSourceOnboardingTaskSelectionV1 | null {
   const { execute, context, sources, enabled } = input;
   const { serverId, expectedAccountId } = context;
   const [selection, setSelection] = React.useState<{
     key: string;
-    task: ProjectSourceOnboardingTaskSelectionV1['task'];
+    value: ProjectSourceOnboardingTaskSelectionV1;
   } | null>(null);
   const key = enabled
     ? JSON.stringify([
@@ -68,7 +68,7 @@ export function useTeamSetupFirstTask(
       },
     }).then(
       (selection) => {
-        if (!signal.aborted) setSelection({ key, task: selection.task });
+        if (!signal.aborted) setSelection({ key, value: selection });
       },
       () => {},
     );
@@ -77,5 +77,5 @@ export function useTeamSetupFirstTask(
       dispose();
     };
   }, [context, execute, expectedAccountId, key, serverId]);
-  return selection?.key === key ? selection.task : null;
+  return selection?.key === key ? selection.value : null;
 }

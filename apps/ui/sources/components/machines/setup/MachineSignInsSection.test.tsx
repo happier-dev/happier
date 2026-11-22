@@ -107,6 +107,7 @@ describe('Machine sign-ins (E U4)', () => {
         'machine-setup-sign-in-connected:happier.scm.forge.github/gh',
       ),
     ).toBeNull();
+    expect(using.findByTestId('machine-setup-sign-in-start:happier.scm.forge.github/gh')).not.toBeNull();
     await using.unmount();
   });
 });

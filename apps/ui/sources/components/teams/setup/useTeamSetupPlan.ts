@@ -12,6 +12,7 @@ export type TeamSetupBatchSelection = Readonly<{
     team: TeamAddress;
     lifetime: ServerAccountScopeLifetime;
     sources: readonly ProjectSourceIdentityV1[];
+    retireOffer?: boolean;
 }>;
 export type TeamSetupBatch = Readonly<{
     selection: Readonly<{
@@ -28,6 +29,7 @@ export type TeamSetupBatch = Readonly<{
 /** Hoist one controller to the Home/Account workspace owner; native operations own all execution status. */
 export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context: TeamSetupActionContext) {
     const [batch, setBatch] = React.useState<TeamSetupBatch | null>(null);
+    const completion = React.useRef<{ selection: TeamSetupBatch['selection']; pending: Set<string>; retireOffer: boolean; submitted: boolean } | null>(null);
     React.useEffect(() => {
         if (!batch) return;
         const retire = () => setBatch(current => current?.selection === batch.selection ? null : current);
@@ -39,7 +41,24 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
         setBatch(current => current && (current.selection.lifetime.scope.serverId !== context.serverId
             || current.selection.lifetime.scope.accountId !== context.expectedAccountId) ? null : current);
     }, [context.serverId, context.expectedAccountId]);
-    const actions = React.useMemo(() => ({
+    const actions = React.useMemo(() => {
+        const complete = (selection: TeamSetupBatch['selection'], requestId?: string) => {
+            const candidate = completion.current;
+            if (!candidate || candidate.selection !== selection || !selection.lifetime.isCurrent()) return false;
+            if (requestId) candidate.pending.delete(requestId);
+            else candidate.pending.clear();
+            if (candidate.pending.size !== 0) return false;
+            if (candidate.retireOffer && !candidate.submitted) {
+                candidate.submitted = true;
+                void executeAction('home.hub.layout.update', {
+                    intent: { kind: 'setup_visibility', stepId: teamSetupStepId(selection.lifetime.scope, selection.team), hidden: true },
+                }, context).catch(() => {
+                    // The Home offer can still be dismissed manually if its update fails.
+                });
+            }
+            return true;
+        };
+        return { complete,
         prepare: (input: Omit<Parameters<typeof prepareTeamSetupPlan>[0], 'executeAction' | 'context'>) =>
             prepareTeamSetupPlan({ ...input, executeAction, context }),
         run: async (input: Omit<Parameters<typeof runTeamSetupPlan>[0], 'executeAction' | 'context' | 'repositoryRequestIds'>
@@ -61,6 +80,12 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             const selection: TeamSetupBatch['selection'] = {
                 team: selected.team, lifetime: selected.lifetime, target: run.plan.target, repositories,
             };
+            completion.current = {
+                selection,
+                pending: new Set(repositories.map(repository => repository.requestId)),
+                retireOffer: selected.retireOffer !== false && repositories.length === selected.sources.length,
+                submitted: false,
+            };
             setBatch({ selection, dispatched: new Set(), running: true, settlement: null });
             let settlement: TeamSetupRunResult | null = null;
             try {
@@ -73,13 +98,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                         run.onRepositoryOpening?.(id);
                     },
                 });
-                if (settlement.completed && repositories.length === selected.sources.length && selected.lifetime.isCurrent()) {
-                    void executeAction('home.hub.layout.update', {
-                        intent: { kind: 'setup_visibility', stepId: teamSetupStepId(selected.lifetime.scope, selected.team), hidden: true },
-                    }, context).catch(() => {
-                        // The settled setup remains available and the offer can still be dismissed manually.
-                    });
-                }
+                if (settlement.completed) complete(selection);
                 return settlement;
             } finally {
                 setBatch(current => current?.selection === selection ? { ...current, running: false, settlement } : current);
@@ -87,7 +106,8 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
         },
         openFirstTask: (input: Omit<Parameters<typeof openTeamSetupFirstTask>[0], 'executeAction' | 'context'>) =>
             openTeamSetupFirstTask({ ...input, executeAction, context }),
-    }), [executeAction, context]);
+        };
+    }, [executeAction, context]);
     return React.useMemo(() => ({ ...actions, batch }), [actions, batch]);
 }
 

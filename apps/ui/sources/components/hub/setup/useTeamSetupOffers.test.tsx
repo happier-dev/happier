@@ -115,6 +115,23 @@ it('offers the latest eligible join per Home and retires it after an Action dism
             expect(result.repositories).toMatchObject([{ result: { ok: true, result: { kind: 'opened', setup: 'prepared' } } }]);
         });
         expect(await agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({ ok: true, result: { hiddenSetupStepIds: [b.stepId] } });
+        const pending = plan.getCurrent().batch;
+        if (!pending) throw new Error('Prepared repository has no selected batch');
+        const beforeNativeSettlement = homes.requests.filter(request => request.method !== 'GET' && /\/artifacts(?:\/|$)/.test(request.path)).length;
+        await act(async () => {
+            expect(plan.getCurrent().complete(pending.selection, 'unrelated-request')).toBe(false);
+            const requestId = pending.selection.repositories[0].requestId;
+            expect(plan.getCurrent().complete(pending.selection, requestId)).toBe(true);
+            expect(plan.getCurrent().complete(pending.selection, requestId)).toBe(true);
+        });
+        await expect.poll(() => agent.execute('home.hub.layout.get', {}, agentContext)).toMatchObject({
+            ok: true, result: { hiddenSetupStepIds: expect.arrayContaining([a.stepId, b.stepId]) },
+        });
+        expect(homes.requests.filter(request => request.method !== 'GET' && /\/artifacts(?:\/|$)/.test(request.path)))
+            .toHaveLength(beforeNativeSettlement + 1);
+        await act(async () => { await agent.execute('home.hub.layout.update', {
+            intent: { kind: 'setup_visibility', stepId: a.stepId, hidden: false },
+        }, agentContext); });
         setup = 'notRequired';
         await act(async () => {
             const result = await plan.getCurrent().run(run);

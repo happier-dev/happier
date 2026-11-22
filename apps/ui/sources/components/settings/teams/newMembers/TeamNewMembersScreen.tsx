@@ -1,7 +1,11 @@
 import * as React from 'react';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { machinePresetCollectionHref } from '@/components/settings/machines/collection/machineCollectionModel';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
+import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 
 import { TeamSection } from '../TeamSection';
@@ -23,6 +27,7 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
     serverId: string;
     teamId: string;
 }>) {
+    const router = useRouter();
     return (
         <TeamSection
             serverId={props.serverId}
@@ -31,8 +36,13 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
             description={t('teams.newMembers.description')}
             renderHeaderActions={(context) => context.archived ? null : <PreviewAsMemberAction context={context} />}
         >
-            {(context) => context.archived ? null : (
-                <>
+            {(context) => {
+                if (context.archived) return null;
+                const placement = context.team.policy.managedDefaults?.team?.placement;
+                const serverId = context.scope.serverId;
+                const presetHref = placement?.kind === 'preset' && placement.homeId === getServerProfileById(serverId)?.serverIdentityId
+                    ? machinePresetCollectionHref({ serverId, presetId: placement.presetId }) : null;
+                return <>
                     <TeamMemberDefaultsSection
                         testID="team-new-members-defaults"
                         context={context}
@@ -40,12 +50,18 @@ export const TeamNewMembersScreen = React.memo(function TeamNewMembersScreen(pro
                         access={memberDefaultsAccess(TEAM_DEFAULTS_SCOPE, context.team.capabilities)}
                         writable={context.canMutate}
                     />
+                    {presetHref ? (
+                        <ItemGroup>
+                            <Item testID="team-new-members-declared-agents" title={t('teams.newMembers.declaredAgents')}
+                                onPress={() => router.push(presetHref)} />
+                        </ItemGroup>
+                    ) : null}
                     <TeamNewMembersSources
                         context={context}
                         renderKeys={(sources) => <TeamNewMembersKeys context={context} sources={sources} />}
                     />
-                </>
-            )}
+                </>;
+            }}
         </TeamSection>
     );
 });

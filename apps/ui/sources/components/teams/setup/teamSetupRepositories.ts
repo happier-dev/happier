@@ -45,13 +45,13 @@ export function buildTeamSetupRepository(
     checkouts: [],
   };
   let state: ProjectOpenChoiceState;
-  if (checkout) {
-    state = { ...base, use: 'existing', checkoutId: checkout.id, checkouts: [checkout] };
-  } else if (adoptedPath) {
+  if (adoptedPath && adoptedPath !== checkout?.rootPath) {
     state = selectProjectOpenDiscoveredClone(base, {
       rootPath: adoptedPath,
       repositoryIdentity: readSourceIdentity(source)!,
     });
+  } else if (checkout) {
+    state = { ...base, use: 'existing', checkoutId: checkout.id, checkouts: [checkout] };
   } else {
     const destination = suggestProjectOpenDestination(base);
     if (!destination) return null;
@@ -76,14 +76,14 @@ function readSourceIdentity(source: Pick<ProjectSourceV1, 'repository'>) {
 export function matchTeamSetupDiscoveredClones(
   sources: readonly Pick<ProjectSourceV1, 'id' | 'repository'>[],
   matches: readonly ScmRepositoryDiscoverMatch[],
-): ReadonlyMap<string, string> {
-  const adopted = new Map<string, string>();
+): ReadonlyMap<string, readonly string[]> {
+  const pathsBySource = new Map<string, readonly string[]>();
   for (const source of sources) {
     const identity = readSourceIdentity(source);
-    const match = matches.find((candidate) =>
+    const paths = matches.filter((candidate) =>
       sameScmHostingRepositoryIdentity(identity, candidate.repositoryIdentity),
-    );
-    if (match) adopted.set(source.id, match.rootPath);
+    ).map(match => match.rootPath);
+    if (paths.length > 0) pathsBySource.set(source.id, paths);
   }
-  return adopted;
+  return pathsBySource;
 }

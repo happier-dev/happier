@@ -46,11 +46,13 @@ it.each([false, true])('observes the captured Account prompt read policy (enable
     const inputs = { execute: observeExecution, context, sources: [source], enabled: true };
     const hook = await renderHook(() => useTeamSetupFirstTask(inputs));
     onTestFinished(hook.unmount);
-    if (enabled) await expect.poll(() => hook.getCurrent()).toMatchObject({ title: 'Cart badge', markdown: 'Fix the cart badge' });
+    if (enabled) await expect.poll(() => hook.getCurrent()).toMatchObject({ task: { title: 'Cart badge', markdown: 'Fix the cart badge' }, unavailable: [] });
     else {
         // A policy refusal must settle before any request for private prompt content.
         await expect(settled.promise).resolves.toBe('action-settled');
-        expect(hook.getCurrent()).toBeNull();
+        await expect.poll(() => hook.getCurrent()).toMatchObject({ task: null, unavailable: [
+            { sourceId: 'cart', result: { errorCode: 'action_disabled' } },
+        ] });
         expect(home.requests.filter(({ path }) => path.startsWith('/v1/artifacts'))).toEqual([]);
     }
 });

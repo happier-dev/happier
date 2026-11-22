@@ -45,6 +45,7 @@ import {
   teamGroupsPath,
   teamInvitationsPath,
   teamMembersPath,
+  teamSetupPath,
   teamSettingsPath,
 } from './teamsRoutes';
 import { resolveTeamOverviewDestinationIds } from './teamOverviewDestinations';
@@ -390,6 +391,14 @@ const TeamOverviewBody = React.memo(function TeamOverviewBody(
               : t('teams.overview.managedBy')
         }
       >
+        {!context.archived ? (
+          <Item
+            testID="team-overview-member-setup"
+            icon={<Icon name="desktop" />}
+            title={t('homeSetup.teamSetupTitle', { team: team.name })}
+            onPress={() => router.push(teamSetupPath(address))}
+          />
+        ) : null}
         {shown('members') ? (
           <Item
             testID="team-overview-members"

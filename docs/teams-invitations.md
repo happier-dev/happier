@@ -183,6 +183,11 @@ continues. Its setup continuation uses `teamSetupPath` to open the registered
 available separately; an existing member continues to the Team. Neither accepting
 the invitation nor rendering Joined applies Machine setup or opens repositories.
 
+Team overview also links to that Home-qualified setup route. For a batch
+observed on the open setup page, native Project readiness retires the offer
+for that Team through the existing Home Hub layout intent. A Project that is
+prepared and still needs Trust review or execution remains pending.
+
 In unreleased 0.3, unauthenticated preview keeps unknown and malformed bearers generic.
 For a known bearer, its existing `unavailable` outcome may carry an optional typed
 `reason`: `expired`, `revoked`, `used`, `team_archived`, or `teams_disabled`. The join

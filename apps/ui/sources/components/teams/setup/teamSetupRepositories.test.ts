@@ -60,9 +60,13 @@ describe('Team setup repositories', () => {
           rootPath: '/home/mara/code/dotfiles',
           repositoryIdentity: identity('mara/dotfiles'),
         },
+        {
+          rootPath: '/home/mara/code/acme-web-feature',
+          repositoryIdentity: identity('acme/web'),
+        },
       ],
     );
-    expect([...matches]).toEqual([['acme-web', '/home/mara/code/acme-web']]);
+    expect([...matches]).toEqual([['acme-web', ['/home/mara/code/acme-web', '/home/mara/code/acme-web-feature']]]);
   });
 });
 

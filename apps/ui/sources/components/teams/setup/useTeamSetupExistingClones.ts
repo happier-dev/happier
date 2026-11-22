@@ -16,6 +16,8 @@ export type TeamSetupExistingClones = Readonly<{
   searching: boolean;
   folder: string | null;
   adopted: ReadonlyMap<string, string>;
+  matches?: ReadonlyMap<string, readonly string[]>;
+  onChoose?: (sourceId: string, path: string) => void;
   failure: string | null;
   /** The last search finished without a match in its folder. */
   noneFound: boolean;
@@ -26,10 +28,12 @@ type SearchState = Readonly<{
   folder: string;
   searching: boolean;
   adopted: ReadonlyMap<string, string>;
+  matches: ReadonlyMap<string, readonly string[]>;
   failure: string | null;
 }>;
 
 const NONE: ReadonlyMap<string, string> = new Map();
+const NO_MATCHES: ReadonlyMap<string, readonly string[]> = new Map();
 
 /**
  * Find existing clones (plan D-F4): one person-chosen folder, one `scm.repository.discover` read of its immediate
@@ -64,6 +68,7 @@ export function useTeamSetupExistingClones(
       folder,
       searching: true,
       adopted: NONE,
+      matches: NO_MATCHES,
       failure: null,
     });
     const settle = (
@@ -83,26 +88,31 @@ export function useTeamSetupExistingClones(
       { ...context, externalActionTarget: { kind: 'machine', machineId } },
     );
     if (!result.ok) {
-      settle({ adopted: NONE, failure: result.error });
+      settle({ adopted: NONE, matches: NO_MATCHES, failure: result.error });
       return;
     }
     const parsed = ScmRepositoryDiscoverResponseSchema.safeParse(result.result);
     if (!parsed.success) {
-      settle({ adopted: NONE, failure: t('common.unavailable') });
+      settle({ adopted: NONE, matches: NO_MATCHES, failure: t('common.unavailable') });
       return;
     }
     if (!parsed.data.success) {
-      settle({ adopted: NONE, failure: parsed.data.error });
+      settle({ adopted: NONE, matches: NO_MATCHES, failure: parsed.data.error });
       return;
     }
+    const matches = matchTeamSetupDiscoveredClones(sourcesRef.current, parsed.data.matches);
     settle({
-      adopted: matchTeamSetupDiscoveredClones(
-        sourcesRef.current,
-        parsed.data.matches,
-      ),
+      adopted: new Map([...matches].flatMap(([sourceId, paths]) =>
+        paths.length === 1 ? [[sourceId, paths[0]!] as const] : [])),
+      matches,
       failure: null,
     });
   }, [context, current?.folder, execute, homeDir, machineId]);
+  const onChoose = React.useCallback((sourceId: string, path: string) => {
+    setSearch(previous => previous?.machineId === machineId && previous.matches.get(sourceId)?.includes(path)
+      ? { ...previous, adopted: new Map(previous.adopted).set(sourceId, path) }
+      : previous);
+  }, [machineId]);
   return React.useMemo(
     () => ({
       onFind: machineId
@@ -113,9 +123,11 @@ export function useTeamSetupExistingClones(
       searching: current?.searching ?? false,
       folder: current?.folder ?? null,
       adopted: current?.adopted ?? NONE,
+        matches: current?.matches ?? NO_MATCHES,
+        onChoose,
       failure: current?.failure ?? null,
-      noneFound: !!current && !current.searching && !current.failure && current.adopted.size === 0,
+        noneFound: !!current && !current.searching && !current.failure && current.matches.size === 0,
       }),
-    [current, machineId, onFind],
+    [current, machineId, onChoose, onFind],
   );
 }
