@@ -229,7 +229,7 @@ const healthCheckSummary = (id: string, enabled = true) => createAutomationDefin
         eventRef: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' }, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
         sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null }] } as never);
 
-async function healthCheckDetail(id: string, enabled = true, encryption?: Readonly<{ secret: Uint8Array }>) {
+async function healthCheckDetail(id: string, enabled = true, encryption?: Readonly<{ secret: Uint8Array }>, notificationsOnly = false) {
     const { sealAutomationTriggerDefinitionStoredEnvelopeV1 } = await import('@happier-dev/protocol/automations/automationTriggerDefinitionStoredContent');
     const { AutomationDefinitionDetailSchema } = await import('@happier-dev/protocol/automations/automationApiV3');
     const summary = healthCheckSummary(id, enabled);
@@ -244,9 +244,10 @@ async function healthCheckDetail(id: string, enabled = true, encryption?: Readon
             binding: { v: 1, automationId: summary.id, triggerId: trigger.id, triggerRevision: trigger.revision,
                 triggerKind: 'pluginEvent', eventRef: trigger.eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse(trigger.sourceSelectorId) },
             definition: { v: 1, sourceInstanceId: `health:shop:${id}`, displayLabel: 'Shop availability',
-                sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: [{ checkId: 'readiness',
+                sourceConfig: { v: 1, subject: { kind: 'environment', environmentId: 'shop' }, checks: notificationsOnly ? [] : [{ checkId: 'readiness',
                     kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'http' }, binding: { kind: 'healthCheck' },
-                    config: { endpoint: 'https://shop.example/ready', expectStatus: 204 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 1 }] },
+                    config: { endpoint: 'https://shop.example/ready', expectStatus: 204 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 1 }],
+                    ...(notificationsOnly ? { alerts: { channels: [], phases: ['open', 'recovered'] } } : {}) },
                 filter: null, maximumObservationAgeMs: null },
         })) }] });
 }
@@ -271,6 +272,21 @@ it('lists each attached preset as Setup on its Machine, including one that has n
     expect(presentInventoryRow(row, query).home.href).toBe(machinePageHref({ door: 'rail', target: { serverId: scope.serverId, machineId: 'setup-machine' }, tab: { id: 'setup' } }));
     expect(hook.getCurrent().rows.some(candidate => candidate.kind === 'setup')).toBe(true);
     expect(rpc.state.requests).toHaveLength(0);
+});
+
+it('omits a settled environment notification source that has no checks', async () => {
+    const automations = await Promise.all([healthCheckDetail('a'), healthCheckDetail('b', true, undefined, true)]);
+    await account.restore({ serverIdentityId: 'srv_inventory_checks', machines: [], httpAnswers: {
+        'POST /v3/automations/query': { body: { automations, nextCursor: null } },
+    } });
+    const scope = storage.getState().settingsScope!;
+    await act(async () => { storage.setState({ automations: { a: healthCheckSummary('a'), b: healthCheckSummary('b') },
+        isDataReady: true, automationDefinitionNextCursor: null }); });
+    const hook = await renderHook(() => useManagedInventory({ scope, machine: null, projectKey: null, presented: true, kinds: ['configuredCheck'] }),
+        { wrapper: Boundary });
+    await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.coverage).toEqual({ partial: 'health_result_unavailable' }));
+    expect(hook.getCurrent().operationalFamilies.configuredCheck.rows.map(row => row.automationId)).toEqual(['a']);
+    await hook.unmount();
 });
 
 it('lists saved Checks from Automation summaries, keeps never-run and off subjects, and does not place them on a selected Machine', async () => {
@@ -470,9 +486,9 @@ it.each(['plain', 'e2ee'] as const)('reads never-observed Check definition facts
         intentReads: [{ pluginId: plugin.manifest.id, response: { ...response, intent: null, release: null } }],
         materializations: [peer, materialization], snapshots: [peer, materialization].map(row => ({
             serverIdentityId: row.serverIdentityId, machineId: row.machineId, materializations: [row] })) } }));
-    // No observer has been assigned yet; another Machine's descriptor cannot name this source.
+    // No observer has been assigned yet; neither its source label nor another Machine declares its check kind.
     await vi.waitFor(() => expect(hook.getCurrent().operationalFamilies.configuredCheck.rows[0]).toMatchObject({
-        definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'readiness', name: 'Shop availability' }] },
+        definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'readiness', name: null }] },
     }));
     await act(async () => storage.setState({ automations: { a: createAutomationDefinitionFromDetail({ ...detail,
         triggers: detail.triggers.map(trigger => trigger.kind === 'pluginEvent' ? { ...trigger,

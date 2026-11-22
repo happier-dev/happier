@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/database-protocol';
 import type { TriageFailureSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
+import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/presentation';
 
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
@@ -149,7 +150,7 @@ export function serviceCheckAutomationExecutionContext(settings: ServiceCheckSet
 
 export type ServiceCheckDefinitionFacts = Readonly<{
   checkId: string;
-  name: string;
+  name: string | null;
   targetLabel: string | null;
   periodMs: number;
   domainId: string | null;
@@ -180,7 +181,7 @@ function keyFlowTargetLabel(config: TelemetryKeyFlowConfigV1): string | null {
 
 /** Saved definition facts are independent of results. Domain targets come from the current Domain projection. */
 export function readServiceCheckDefinitions(
-  saved: Readonly<{ sourceConfig: unknown; displayLabel: string }>,
+  saved: Readonly<{ sourceConfig: unknown }>,
   options: ServiceCheckDefinitionReadOptions = {},
 ): readonly ServiceCheckDefinitionFacts[] | null {
   const parsed = storedHealthSource.safeParse(saved.sourceConfig);
@@ -207,7 +208,7 @@ export function readServiceCheckDefinitions(
     const labelUrl = target ? new URL(target.url) : null;
     if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
     return {
-      checkId: check.checkId, name: options.kindName?.(check.kind) ?? saved.displayLabel,
+      checkId: check.checkId, name: options.kindName?.(check.kind) ?? null,
       targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
         : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
       periodMs: check.periodMs, domainId, address,
@@ -568,12 +569,16 @@ export function formatServiceCheckPeriod(ms: number): string {
  * check by what it checks (a host, a path, routes), else its saved name. `identifier` says the title is an address.
  */
 export function serviceCheckTitle(
-  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'keyFlow'> | null,
+  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'keyFlow' | 'name'> | null,
   savedName: string,
 ): Readonly<{ title: string; identifier: boolean }> {
   const name = definition?.keyFlow?.name;
-  return name ? { title: name, identifier: false }
-    : definition?.targetLabel != null ? { title: definition.targetLabel, identifier: true } : { title: savedName, identifier: false };
+  if (name) return { title: name, identifier: false };
+  if (definition?.targetLabel != null) return { title: definition.targetLabel, identifier: true };
+  return {
+    title: workflowTriggerDisplayNameV1({ name: savedName }) ?? definition?.name ?? t('projects.deployments.services.checkPageTitle'),
+    identifier: false,
+  };
 }
 
 type ListedCheck = Readonly<{
@@ -644,7 +649,7 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
   const newest = recent?.results[0]?.observedAt;
   const collectorTrend = keyFlow && observerMachineId !== null && newest !== undefined
     ? { collectorMachineId: observerMachineId, config: keyFlow, until: newest } : null;
-  const named = serviceCheckTitle(definition ? { targetLabel: definition.targetLabel, keyFlow } : null, row.native.name);
+  const named = serviceCheckTitle(definition ? { ...definition, keyFlow } : null, row.native.name);
   return {
     title: named.title,
     titleIdentifier: named.identifier,

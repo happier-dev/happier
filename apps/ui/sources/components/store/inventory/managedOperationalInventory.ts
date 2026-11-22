@@ -231,6 +231,7 @@ export function useManagedConfiguredChecks(input: StoreInstalledInput, demand: S
             const lastResults = !healthResults ? CONFIGURED_HEALTH_LOADING : 'kind' in healthResults.value ? healthResults.value
                 : configuredHealthResultsForTrigger(healthResults.value, native.id, trigger);
             const definitionFacts = definitions.byTrigger.get(configuredCheckDefinitionKey(native.id, trigger.id)) ?? CONFIGURED_CHECK_DEFINITION_LOADING;
+            if (definitionFacts.kind === 'available' && definitionFacts.checks.length === 0) return [];
             return [retained?.native === native && retained.lastResults === lastResults && retained.definitionFacts === definitionFacts ? retained
                 : { kind: 'configuredCheck', key, scope, automationId: native.id, triggerId: trigger.id, native, lastResults, definitionFacts }];
         }));

@@ -520,7 +520,7 @@ function checkBylineEmpty(row: ManagedConfiguredCheckRow, facts: ServiceCheckLis
   const failing = row.native.enabled && (facts.status === 'down' || (facts.status === 'degraded' && facts.causeText !== null));
   if (failing) return !facts.causeText && facts.failingSince === null;
   const slow = row.native.enabled && facts.status === 'degraded' && facts.latencyMs !== null && facts.usualMs !== null;
-  return !slow && !facts.kind && facts.title === row.native.name && !facts.every;
+  return !slow && !facts.kind && !facts.every;
 }
 
 /**
@@ -544,7 +544,6 @@ const CheckByline = React.memo(function CheckByline(
     props.scope?.serverId ?? null,
     facts.observerMachineId,
   );
-  const named = facts.title !== row.native.name ? row.native.name : null;
   const every = facts.every
     ? observer
       ? t(`${k}.checkEvery`, { period: facts.every, machine: observer })
@@ -578,7 +577,7 @@ const CheckByline = React.memo(function CheckByline(
               latency: formatServiceCheckLatency(facts.latencyMs!),
               usual: formatServiceCheckLatency(facts.usualMs!),
             })
-          : [facts.kind, named, every].filter(Boolean).join(' · ') || null;
+          : [facts.kind, every].filter(Boolean).join(' · ') || null;
   const meta = {
     ...Typography.variant('meta'),
     color: theme.colors.text.secondary,

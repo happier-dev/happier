@@ -1,5 +1,6 @@
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { workflowTriggerDisplayNameV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import type {
   SavedHealthCheckOptionV1,
   SavedHealthChecksListResultV1,
@@ -44,14 +45,15 @@ export function projectSavedServiceCheckOptions(
         const detail = access
           ? readPluginEventAutomationPrivateDetail(native, trigger.id, access)
           : null;
-        const definition = detail
-          ? (readServiceCheckDefinitions(detail.storedDefinition)?.[0] ?? null)
-          : null;
+        const definitions = detail ? readServiceCheckDefinitions(detail.storedDefinition) : null;
+        if (definitions?.length === 0) return [];
+        const definition = definitions?.[0] ?? null;
         const named = serviceCheckTitle(definition, native.name);
+        const savedName = workflowTriggerDisplayNameV1(native);
         const description = definition?.keyFlow
           ? definition.targetLabel
-          : named.title !== native.name
-            ? native.name
+          : named.title !== savedName
+            ? savedName
             : null;
         return [
           {

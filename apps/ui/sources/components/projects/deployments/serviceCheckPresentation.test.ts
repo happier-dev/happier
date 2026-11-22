@@ -359,12 +359,12 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
     expect(facts.observerMachineId).toBe('m1');
   });
 
-  it('keeps the saved name and says nothing it cannot read while the definition is loading or unavailable', async () => {
+  it('hides the automation container name while a check definition is loading or unavailable', async () => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
     for (const kind of ['loading', 'unavailable'] as const) {
       const facts = serviceCheckListFacts({ native: { name: 'Workflow triggers' }, definitionFacts: { kind },
         lastResults: { kind: 'neverObserved' } } as never);
-      expect(facts).toMatchObject({ title: 'Workflow triggers', kind: null, every: null, lastResult: null, lastTone: null });
+      expect(facts).toMatchObject({ title: 'Check', kind: null, every: null, lastResult: null, lastTone: null });
     }
   });
 });
@@ -476,7 +476,7 @@ describe('a Key flow check names its routes and reads its trend from the collect
   });
 
   it('names the flow by its routes and keeps its saved selection', () => {
-    const [definition] = readServiceCheckDefinitions({ sourceConfig: source, displayLabel: 'Checkout' })!;
+    const [definition] = readServiceCheckDefinitions({ sourceConfig: source })!;
     expect(definition).toMatchObject({ checkId: 'Checkout', targetLabel: 'POST /checkout, GET /api/cart', keyFlow });
   });
 
