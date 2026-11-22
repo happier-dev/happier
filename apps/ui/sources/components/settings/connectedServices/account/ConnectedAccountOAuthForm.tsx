@@ -10,6 +10,7 @@ import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { fieldBoxShapeStyle } from '@/components/ui/forms/fieldBox';
 import { Icon } from '@/components/ui/icons/Icon';
 import { IconButton } from '@/components/ui/buttons/IconButton';
+import { resolveConnectedServiceSettingsErrorMessage } from '../connectedServiceSettingsErrors';
 import { ConnectedServiceSetupFlowActions } from '../setup/ConnectedServiceSetupFlowBody';
 import { ConnectedAccountFormSection } from './ConnectedAccountFormSection';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -109,11 +110,6 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
     const [validationFailed, setValidationFailed] = React.useState(false);
     const [openFailed, setOpenFailed] = React.useState(false);
     const [opened, setOpened] = React.useState(false);
-    const callbackInvalidFieldIds = validationFailed ? ['callback'] : [];
-    const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
-        invalidFieldIds: callbackInvalidFieldIds,
-        announcement: t('connectedServices.oauthPaste.invalidConfig'),
-    });
     const authorizationState = React.useMemo(() => {
         try { return new URL(props.authorizationUrl).searchParams.get('state') || null; }
         catch { return null; }
@@ -124,8 +120,16 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
         allowRawAuthorizationCode: props.allowRawAuthorizationCode,
     }), [callbackInput, props.callbackUrl, props.allowRawAuthorizationCode]);
     const returnedState = parsed.rawAuthorizationCode ? authorizationState : parsed.state;
-    const shapeOk = Boolean(parsed.code && returnedState && !parsed.error
-        && (!authorizationState || returnedState === authorizationState));
+    const stateMismatch = Boolean(parsed.code && returnedState && authorizationState
+        && returnedState !== authorizationState && !parsed.error);
+    const shapeOk = Boolean(parsed.code && returnedState && !parsed.error && !stateMismatch);
+    const validationMessage = stateMismatch
+        ? resolveConnectedServiceSettingsErrorMessage({ code: 'connect_oauth_state_mismatch' })
+        : t('connectedServices.oauthPaste.invalidConfig');
+    const registerInvalidFieldTarget = useConnectedAccountInvalidFieldFocus({
+        invalidFieldIds: validationFailed ? ['callback'] : [],
+        announcement: validationMessage,
+    });
 
     const submit = React.useCallback(async () => {
         if (!shapeOk || !parsed.code || !returnedState) {
@@ -181,9 +185,9 @@ function ConnectedAccountOAuthFormBody(props: ConnectedAccountOAuthFormProps) {
                         testID="connected-account-oauth:callback"
                         ref={registerInvalidFieldTarget('callback')}
                         accessibilityLabel={validationFailed
-                            ? `${callbackLabel}: ${t('connectedServices.oauthPaste.invalidConfig')}`
+                            ? `${callbackLabel}: ${validationMessage}`
                             : callbackLabel}
-                        error={validationFailed ? t('connectedServices.oauthPaste.invalidConfig') : null}
+                        error={validationFailed ? validationMessage : null}
                         value={callbackInput}
                         onChangeText={(value) => {
                             setCallbackInput(value);

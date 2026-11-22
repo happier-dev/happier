@@ -5210,6 +5210,7 @@ localTailscale: {
       generic: '接続サービスの操作に失敗しました。更新して再試行してください。',
       accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
       accountSharedMachineUnavailable: "共有マシンではアカウントを接続できません。自分のマシンを使うか、サービスが対応している場合はマシンを必要としないアカウントのサインイン方法を選んでください。",
+      oauthCompletionNotSent: "Happier はサインインリクエストを送信できませんでした。接続を確認して、もう一度お試しください。",
       accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
       browserSignInMachineUnavailable: "ブラウザーでこのサインインを行うには、自分のマシンが1台オンラインになっている必要があります。マシンをオンラインにするか、Happierのスマートフォンまたはデスクトップアプリでサインインしてください。",
       browserSignInMachineUpdateRequired: "このサインインに使うマシンの Happier を更新するか、スマートフォンまたはデスクトップの Happier アプリでサインインしてください。",

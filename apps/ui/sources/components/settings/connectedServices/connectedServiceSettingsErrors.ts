@@ -93,7 +93,8 @@ function readAuthenticationCauseMessage(errorLike: ErrorLike): string | null {
 export type ConnectedServiceSettingsErrorContext =
     | Readonly<{ phase: 'load'; serviceName: string }>
     /** `usage`: reading or refreshing an account's usage; an unexplained failure says usage couldn't refresh. */
-    | Readonly<{ phase: 'usage' }>;
+    | Readonly<{ phase: 'usage' }>
+    | Readonly<{ phase: 'oauthCompletion' }>;
 
 export function resolveConnectedServiceSettingsErrorMessage(error: unknown, context?: ConnectedServiceSettingsErrorContext): string {
     const errorLike = asErrorLike(error);
@@ -155,12 +156,15 @@ export function resolveConnectedServiceSettingsErrorMessage(error: unknown, cont
         case 'connected_account_runtime_generation_changed':
         case 'connected_account_producer_result_stale':
             return t('connectedServices.errors.accountRuntimeChanged');
+        case RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE:
+            return context?.phase === 'oauthCompletion'
+                ? t('connectedServices.errors.oauthCompletionNotSent')
+                : t('connectedServices.errors.accountMachineUnavailable');
         case 'connected_account_daemon_unavailable':
         case 'connected_account_daemon_owner_unavailable':
         case 'connected_account_daemon_runtime_unavailable':
         case 'connected_account_runtime_unavailable':
         case 'connected_account_peer_operation_admission_unavailable':
-        case RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE:
             return t('connectedServices.errors.accountMachineUnavailable');
         case 'connected_account_app_service_unavailable':
         case 'artifact_source_unavailable':

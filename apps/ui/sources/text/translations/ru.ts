@@ -4600,6 +4600,7 @@ export const ru: TranslationStructure = {
       generic: 'Действие подключённого сервиса не выполнено. Обновите данные и повторите попытку.',
       accountRuntimeChanged: 'The connection service changed while this action was running. Refresh this page to load the current service before continuing.',
       accountSharedMachineUnavailable: "Подключение аккаунта на общей Машине недоступно. Используйте свою Машину или, если сервис это поддерживает, способ входа в Аккаунт, не требующий Машины.",
+      oauthCompletionNotSent: "Happier не смог отправить запрос на вход. Проверьте подключение и повторите попытку.",
       accountMachineUnavailable: 'The selected machine cannot handle this connection right now. Check that it is online and Happier is running, then refresh this page.',
       browserSignInMachineUnavailable: "Для этого входа в браузере одна из ваших машин должна быть в сети. Подключите машину к сети или войдите через приложение Happier на телефоне или компьютере.",
       browserSignInMachineUpdateRequired: "Обновите Happier на Машине, которую хотите использовать для этого входа, или войдите через приложение Happier на телефоне или компьютере.",

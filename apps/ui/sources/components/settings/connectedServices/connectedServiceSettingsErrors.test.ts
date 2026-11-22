@@ -538,6 +538,14 @@ describe('connected-service settings errors', () => {
     }
   });
 
+  it('explains whether OAuth completion was sent using the attempt transport disposition', () => {
+    const context = { phase: 'oauthCompletion' } as const;
+    expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private diagnostic', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), context))
+      .toBe(t('connectedServices.errors.oauthCompletionNotSent'));
+    expect(resolveConnectedServiceSettingsErrorMessage(new RpcError('private diagnostic', RPC_ERROR_CODES.OUTCOME_UNKNOWN), context))
+      .toBe(t('connectedServices.errors.accountStateUncertain'));
+  });
+
   it('keeps unknown account failures generic even when they carry an HTTP status', () => {
     expect(resolveConnectedServiceSettingsErrorMessage({
       code: 'connected_account_future_failure',

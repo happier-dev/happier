@@ -385,12 +385,12 @@ const ConnectedAccountServiceController = React.memo(
         : reconnectDirectMode;
     const accountDirectIdRef = React.useRef<string | null>(null);
     const [busy, setBusy] = React.useState(false);
-    // Whether the failure came from loading the sign-in (nothing changed) or from a change: one copy owner reads it.
+    // Presentation reads which step failed so it can explain what the person can safely do next.
     const [{ code: errorCode, phase: errorPhase, requestId: errorRequestId, detailsCode: errorDetailsCode }, setError] = React.useState<{
-        code: string | null; phase: 'load' | 'change'; requestId?: string; detailsCode?: string;
+        code: string | null; phase: 'load' | 'change' | 'oauthCompletion'; requestId?: string; detailsCode?: string;
     }>({ code: null, phase: 'change' });
-    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' = 'change', requestId?: string, detailsCode?: string) => {
-        setError(previous => phase === 'load' && code !== null && previous.code !== null && previous.phase === 'change'
+    const setErrorCode = React.useCallback((code: string | null, phase: 'load' | 'change' | 'oauthCompletion' = 'change', requestId?: string, detailsCode?: string) => {
+        setError(previous => phase === 'load' && code !== null && previous.code !== null && previous.phase !== 'load'
             ? previous : { code, phase, requestId, detailsCode });
     }, []);
     const panelRef = React.useRef(controllerProps.panel);
@@ -1105,7 +1105,8 @@ const ConnectedAccountServiceController = React.memo(
         } catch (error) {
             if (!isControllerCurrent()) return false;
             setErrorCode(readConnectedServiceSettingsErrorCode(error) ?? 'connected_account_daemon_unavailable',
-                command.operation === 'beginConnect' || command.operation === 'beginReconnect' ? 'load' : 'change',
+                command.operation === 'beginConnect' || command.operation === 'beginReconnect' ? 'load'
+                    : command.operation === 'completeOAuth' ? 'oauthCompletion' : 'change',
                 readConnectedServiceSettingsErrorRequestId(error));
             return false;
         } finally {
@@ -1766,7 +1767,9 @@ const ConnectedAccountServiceController = React.memo(
             kind="error"
             // ONE owner turns a daemon error code into copy, so this
             // screen never re-decides which failures are explainable.
-            title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load' ? { phase: 'load', serviceName: title } : undefined)}
+            title={resolveConnectedServiceSettingsErrorMessage(setupError, errorPhase === 'load'
+                ? { phase: 'load', serviceName: title }
+                : errorPhase === 'oauthCompletion' ? { phase: 'oauthCompletion' } : undefined)}
             action={retry ? {
                 label: resolveConnectedServiceSettingsErrorRecovery(setupError) === 'edit' ? t('common.edit') : t('common.retry'),
                 testID: 'connected-account:error:retry',

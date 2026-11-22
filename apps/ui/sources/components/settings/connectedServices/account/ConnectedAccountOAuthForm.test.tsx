@@ -94,7 +94,7 @@ describe('ConnectedAccountOAuthForm', () => {
         { label: 'foreign callback', input: 'https://foreign.example.test/callback?code=synthetic-code&state=attempt-state', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
         { label: 'callback missing returned state', input: 'https://antigravity.google/oauth-callback?code=synthetic-code', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
         { label: 'code with another returned state', input: 'synthetic-code#another-attempt', allowRawAuthorizationCode: true, authorizationState: 'attempt-state', accepted: false },
-    ])('validates $label before completion effects', async ({ input, allowRawAuthorizationCode, authorizationState, accepted }) => {
+    ])('validates $label before completion effects', async ({ label, input, allowRawAuthorizationCode, authorizationState, accepted }) => {
         const onSubmit = vi.fn();
         const { ConnectedAccountOAuthForm } = await import('./ConnectedAccountOAuthForm');
         const authorizationUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -119,6 +119,10 @@ describe('ConnectedAccountOAuthForm', () => {
             });
         } else {
             expect(onSubmit).not.toHaveBeenCalled();
+            if (label === 'code with another returned state') {
+                expect(tree.find(node => node.type === ('TextInput' as never) && node.props.testID === 'connected-account-oauth:callback')
+                    .props.accessibilityLabel).toContain('connectedServices.errors.accountAuthenticationRestartRequired');
+            }
         }
     });
 
