@@ -17,6 +17,7 @@ import { Modal } from '@/modal';
 import { captureActiveServerAccountScopeLifetime, type ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { t } from '@/text';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
+import { PluginPresentedExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { PluginEventAutomationComposerContent } from './PluginEventAutomationComposerContent';
 import { buildPluginEventAutomationTriggerInput } from './pluginEventAutomationDraft';
 import type { PluginEventAutomationSetupFailure } from './pluginEventAutomationSetup';
@@ -283,8 +284,12 @@ export function PluginEventAutomationEditor(props: Readonly<{
         const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp' || applying
             || (newSetup ? model.sourceStatus === 'idle' && nativeWatcherId !== null && nativeSetupStarted.current !== setupKey
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
-        if (waiting) return <SurfaceStateCard size="line" kind="loading"
-            title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />;
+        if (waiting) return <>
+            {newSetup && model.nativeSetupProjectionTargets &&
+                <PluginPresentedExecutionOriginProjectionDemand targets={model.nativeSetupProjectionTargets} />}
+            <SurfaceStateCard size="line" kind="loading"
+                title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />
+        </>;
         if (model.sourceStatus === 'configured') return null;
         return setup.renderUnavailable(retrySetup, setupMachineName, model.sourceFailure);
     }

@@ -40,11 +40,18 @@ import { useDeviceType } from '@/utils/platform/responsive';
 
 export type NativeSetupWatcherChoice = Readonly<{ machineId: string; selected: boolean }>;
 
-type SetupSurfaceWatcherSelection = Readonly<{
-    watcherChoices?: readonly NativeSetupWatcherChoice[];
-    /** The composer validates whether this Machine still owns a usable origin. */
-    canChooseWatcher?: (machineId: string) => boolean;
+export type NativeSetupWatcherSelection = Readonly<{
+    getSnapshot: () => readonly NativeSetupWatcherChoice[];
+    subscribe: (listener: () => void) => () => void;
+    canChoose: (machineId: string) => boolean;
 }>;
+
+type SetupSurfaceWatcherSelection = Readonly<{
+    watcherSelection?: NativeSetupWatcherSelection;
+}>;
+
+const noWatcherChoices = () => undefined;
+const subscribeToNoWatcherChoices = () => () => {};
 
 export type PluginEventAutomationSetupSurfaceSettlement = PluginUiEphemeralInputSettlementV1
     | Readonly<{ kind: 'superseded'; machineId: string; draft: unknown }>;
@@ -121,7 +128,7 @@ type SetupSurfaceModalProps = Readonly<{
     serverId: string | null;
     accountLifetime: ActiveServerAccountScopeLifetime;
     onSettle: (settlement: PluginEventAutomationSetupSurfaceSettlement) => void;
-    watcherChoices?: readonly NativeSetupWatcherChoice[];
+    watcherSelection?: NativeSetupWatcherSelection;
     chooseWatcher?: (machineId: string, draft: unknown) => boolean;
 }> & CustomModalInjectedProps;
 
@@ -154,6 +161,9 @@ function PluginEventAutomationSetupSurfaceModal(
     // card's edge; until then, and for forms without one, the card keeps its Cancel (PAGE-ACCEPT-176 R11-D1).
     const footerSlot = usePluginModalCardFooterSlot();
     const hasDraft = React.useSyncExternalStore(footerSlot.subscribe, footerSlot.hasDraft, footerSlot.hasDraft);
+    const readWatchers = props.watcherSelection?.getSnapshot ?? noWatcherChoices;
+    const watcherChoices = React.useSyncExternalStore(
+        props.watcherSelection?.subscribe ?? subscribeToNoWatcherChoices, readWatchers, readWatchers);
     const chooseWatcher = (machineId: string) => {
         if (settledRef.current) return false;
         const draft = footerSlot.captureDraft();
@@ -207,7 +217,7 @@ function PluginEventAutomationSetupSurfaceModal(
     const host = <PluginSurfaceHost ephemeralMount={ephemeralMount} machineId={props.machineId} serverId={props.serverId}
         launchInput={props.launchInput} />;
     const origin = props.originLabel ? <SetupOriginRow label={props.originLabel} machineId={props.machineId}
-        serverId={props.serverId} watcherChoices={hasDraft ? props.watcherChoices : undefined}
+        serverId={props.serverId} watcherChoices={hasDraft ? watcherChoices : undefined}
         chooseWatcher={chooseWatcher} /> : null;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
@@ -272,7 +282,7 @@ type EphemeralInputSurfaceParams = Readonly<{
     commandBridge?: BaseModalConfig['commandBridge'];
 }>;
 
-export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & { canChooseWatcher?: never }):
+export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & { watcherSelection?: never }):
     Promise<PluginUiEphemeralInputSettlementV1>;
 export function presentPluginEphemeralInputSurface(params: EphemeralInputSurfaceParams & SetupSurfaceWatcherSelection):
     Promise<PluginEventAutomationSetupSurfaceSettlement>;
@@ -333,9 +343,9 @@ export async function presentPluginEphemeralInputSurface(params: EphemeralInputS
                 serverId: params.serverId,
                 accountLifetime: params.accountLifetime,
                 onSettle: finish,
-                watcherChoices: params.watcherChoices,
+                watcherSelection: params.watcherSelection,
                 chooseWatcher: (machineId: string, draft: unknown) => {
-                    if (settled || !params.canChooseWatcher?.(machineId) || !PluginUiJsonValueV1Schema.safeParse(draft).success) return false;
+                    if (settled || !params.watcherSelection?.canChoose(machineId) || !PluginUiJsonValueV1Schema.safeParse(draft).success) return false;
                     finish({ kind: 'superseded', machineId, draft });
                     return true;
                 },

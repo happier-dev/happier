@@ -44,6 +44,7 @@ import type { PluginContributedActionDispatch } from '@/components/plugins/actio
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-services/src/manifest';
 import { renderSurface } from '@happier-dev/plugins-machine-services/happier-plugin-ui/health-setup';
 import { createPluginEventAutomationSetupSurfaceBinding } from './presentPluginEventAutomationSetupSurface';
+import type { NativeSetupWatcherSelection } from './presentPluginEventAutomationSetupSurface';
 
 type SetupForm = ActionInputForm<ActionInputFormSubmissionResult, string, string>;
 
@@ -1237,8 +1238,9 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
     }
 });
 
-// PAGE-ACCEPT-176 R10-D1: Add check is one surface. Its Save writes one observation-only trigger; Cancel writes nothing.
+// The alternate Machine can finish its first origin read after the native form opens.
 it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
     const { subjectStarterEventSeed } = await import('@/components/workflows/triggers/subjectTriggerStarters');
@@ -1296,20 +1298,27 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         checks: [{ checkId: 'http', kind: { pluginId, localId: 'http' }, binding: { kind: 'healthCheck' },
             config: { endpoint: 'https://production.example.test/health', expectStatus: 200 },
             periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 }] });
-    const sourceFacts = readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
-        members: [{ machineId, inputs }, ...(peer ? [peer] : [])].map(member => ({
+    const readSourceFacts = (members: readonly { machineId: string; inputs: typeof inputs }[]) =>
+        readPluginUiExecutionOriginCandidates({ pluginId, projection: inputs.pluginUiProjection,
+        members: members.map(member => ({
             machineId: member.machineId, serverId: connection.serverId, serverIdentityId,
             projection: member.inputs.pluginUiProjection, phase: 'current', interactionEnabled: true,
         })) });
-    if (peer) expect(sourceFacts.sourceCandidates).toEqual(expect.arrayContaining([expect.objectContaining({
-        source: expect.objectContaining({ origin: peer.fresh.origin }), validation: { kind: 'admitted' },
-    })]));
+    let sourceFacts = readSourceFacts([{ machineId, inputs }]);
+    const projectionListeners = new Set<() => void>();
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
-        id => id === pluginId ? sourceFacts : null);
+        id => id === pluginId ? sourceFacts : null, listener => {
+            projectionListeners.add(listener);
+            return () => { projectionListeners.delete(listener); };
+        });
+    const alternateProjection = createDeferred<void>();
+    const describeMachines = new Set<string>();
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
             const selected = peer?.machineId === request.machineId ? peer : { projection, event };
-            return { protocolVersion: 1, projection: selected.projection, automationEligibleEvents: [selected.event] };
+            if (request.machineId) describeMachines.add(request.machineId);
+            const response = { protocolVersion: 1, projection: selected.projection, automationEligibleEvents: [selected.event] };
+            return selected === peer ? alternateProjection.promise.then(() => response) : response;
         }
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
             return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
@@ -1335,18 +1344,33 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
         expect(modal.mock.calls[0]?.[0].props).toMatchObject({ launchInput: { observerMachineId: machineId, initialInput: { subject } } });
         if (peer) {
             const props = modal.mock.calls[0]?.[0].props;
-            expect(props).toMatchObject({ watcherChoices: expect.arrayContaining([
-                { machineId, selected: true }, { machineId: peer.machineId, selected: false },
-            ]) });
+            const selection = Reflect.get(Object(props), 'watcherSelection') as NativeSetupWatcherSelection;
+            expect(selection.getSnapshot()).toEqual([{ machineId, selected: true }]);
+            const onChoicesChanged = vi.fn();
+            const unsubscribe = selection.subscribe(onChoicesChanged);
+            try {
+                await waitForHomeGovernance(() => expect(describeMachines).toContain(peer.machineId));
+                await act(async () => {
+                    alternateProjection.resolve();
+                    sourceFacts = readSourceFacts([{ machineId, inputs }, peer]);
+                    projectionListeners.forEach(listener => listener());
+                });
+                expect(selection.getSnapshot()).toEqual(expect.arrayContaining([
+                    { machineId, selected: true }, { machineId: peer.machineId, selected: false },
+                ]));
+                expect(onChoicesChanged).toHaveBeenCalledTimes(1);
+                expect(modal).toHaveBeenCalledTimes(1);
+            } finally {
+                unsubscribe();
+            }
             const chooseWatcher: unknown = Reflect.get(Object(props), 'chooseWatcher');
             if (typeof chooseWatcher !== 'function') throw new Error('Expected to switch the open native form');
             const draft = { check: { kind: 'http', endpoint: 'https://production.example.test/health', expectStatus: '20' } };
             await act(async () => { chooseWatcher(peer.machineId, draft); });
             await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(2));
+            expect(Reflect.get(Object(modal.mock.calls[1]?.[0].props), 'watcherSelection')?.getSnapshot())
+                .toEqual(expect.arrayContaining([{ machineId, selected: false }, { machineId: peer.machineId, selected: true }]));
             expect(modal.mock.calls[1]?.[0].props).toMatchObject({
-                watcherChoices: expect.arrayContaining([
-                    { machineId, selected: false }, { machineId: peer.machineId, selected: true },
-                ]),
                 launchInput: { observerMachineId: peer.machineId, initialInput: { subject, rendererDraft: draft } },
             });
             expect(rpc.hostActions).toEqual([]);
@@ -1371,6 +1395,7 @@ it.each(['submitted', 'cancelled', 'switched'] as const)('Add check writes once 
             })]);
         }
     } finally {
+        alternateProjection.resolve();
         await screen?.unmount();
         modal.mockRestore();
         disposeProjection();

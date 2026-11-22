@@ -44,7 +44,7 @@ import {
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 import { EVENT_OBSERVER_BINDING_UNAVAILABLE, resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
-import { presentPluginEventAutomationSetupSurface, type NativeSetupWatcherChoice, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import { presentPluginEventAutomationSetupSurface, type NativeSetupWatcherSelection, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
@@ -245,8 +245,7 @@ function resolveCurrentSetupSnapshot(params: Readonly<{
 export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     nativeSetupDraft?: Readonly<Record<string, unknown>>;
-    watcherChoices?: readonly NativeSetupWatcherChoice[];
-    canChooseWatcher?: (machineId: string) => boolean;
+    watcherSelection?: NativeSetupWatcherSelection;
     requireNativeRenderer?: boolean;
     /** The host's name for the native setup surface; the Event's own title otherwise. */
     surfaceHeading?: SetupSurfaceHeading;
@@ -376,8 +375,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             serverId: initial.origin.machineTarget.serverId,
                             accountLifetime: params.accountLifetime,
                             commandBridge: params.commandBridge,
-                            watcherChoices: params.watcherChoices,
-                            canChooseWatcher: params.canChooseWatcher,
+                            watcherSelection: params.watcherSelection,
                             launchInput: {
                                 observerMachineId: initial.origin.machineTarget.target.machineId,
                                 ...(initialInput?.success ? { initialInput: initialInput.data } : {}),

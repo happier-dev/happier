@@ -1,6 +1,8 @@
 import * as React from 'react';
-import type { SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import type { NativeSetupWatcherChoice, SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
+import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -163,6 +165,7 @@ export type PluginEventAutomationComposerModel = Readonly<{
     refreshWebhookEndpoint: (() => void) | null;
     webhookEndpointRefreshing: boolean;
     watcherCandidates: readonly PluginExecutionOriginCandidateV1[];
+    nativeSetupProjectionTargets?: readonly MachineAdministrationTargetV1[];
     /** Sole row failure/remedy facts. Consumers match origin; they never re-derive from candidates. */
     watcherFailures?: readonly (PluginEventAutomationWatcherFailure & Readonly<{ origin: PluginMachineExecutionOriginV1 }>)[];
     selectedWatcherOrigin: PluginMachineExecutionOriginV1 | null;
@@ -627,17 +630,26 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         if (selectedEventRef.current === null) chooseEvent(matches[0], true);
     }, [chooseEvent, eligibleEvents, eventCatalogStatus, initialEditSeed, initialEventLocalId, initialEventPluginId]);
 
-    const selectableNativeWatchers = React.useMemo(() => {
-        if (!params.newSourceSetup || !selectedWatcherOrigin) return [];
+    const nativeSetupProjectionTargets = React.useMemo(() => {
+        if (!params.newSourceSetup || !params.serverId) return undefined;
+        const home = machineSnapshots.find(snapshot => snapshot.kind === 'resolved'
+            && areServerProfileIdentifiersEquivalent(snapshot.profileId, params.serverId));
+        if (home?.kind !== 'resolved') return undefined;
+        return (home.executionEligibleMachineIds ?? []).filter(machineId => machineId !== initialSetupSeed?.monitoringMachineId)
+            .map(machineId => ({ serverIdentityId: home.serverIdentityId, machineId }));
+    }, [initialSetupSeed?.monitoringMachineId, machineSnapshots, params.newSourceSetup, params.serverId]);
+
+    const nativeWatchersById = React.useMemo(() => {
+        const watchers = new Map<string, PluginExecutionOriginCandidateV1 | null>();
+        if (!params.newSourceSetup || !selectedWatcherOrigin) return watchers;
         const { serverIdentityId } = selectedWatcherOrigin;
-        const byMachine = new Map<string, PluginExecutionOriginCandidateV1 | null>();
         for (const candidate of executionOriginCandidates) {
             const origin = getPluginExecutionOriginCandidateOrigin(candidate);
             if (origin.serverIdentityId !== serverIdentityId || readPluginEventAutomationWatcherFailure(candidate, null)) continue;
             const { machineId } = getPluginMachineExecutionOriginRef(origin);
-            byMachine.set(machineId, byMachine.has(machineId) ? null : candidate);
+            watchers.set(machineId, watchers.has(machineId) ? null : candidate);
         }
-        return Array.from(byMachine.values()).filter(candidate => candidate !== null);
+        return watchers;
     }, [executionOriginCandidates, params.newSourceSetup, selectedWatcherOrigin]);
     const selectWatcher = React.useCallback((candidate: PluginExecutionOriginCandidateV1) => {
         const selected = selectedEventRef.current;
@@ -647,8 +659,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             !pluginId || (!selected && !initialEventLocalId)
             || accountLifetime?.isCurrent() !== true
             || getPluginMachineExecutionOriginRef(origin).pluginId !== pluginId
-            || ![...selectableWatchers, ...selectableNativeWatchers].some(value =>
+            || (!selectableWatchers.some(value =>
                 arePluginMachineExecutionOriginsEqual(getPluginExecutionOriginCandidateOrigin(value), origin))
+                && nativeWatchersById.get(getPluginMachineExecutionOriginRef(origin).machineId) !== candidate)
         ) {
             return false;
         }
@@ -662,7 +675,37 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setWebhookEndpoint(null);
         advanceRevision();
         return true;
-    }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, selectableNativeWatchers, selectableWatchers]);
+    }, [accountLifetime, availabilityReader, classifyRelease, initialEventLocalId, initialEventPluginId, readWatcherFacts, nativeWatchersById, selectableWatchers]);
+
+    // Modal props survive the composer render that opened the form. Publish only
+    // choice changes so a late origin answer updates the field in place.
+    const [nativeWatcherChoices] = React.useState(() => {
+        let choices: readonly NativeSetupWatcherChoice[] = [];
+        const listeners = new Set<() => void>();
+        return {
+            getSnapshot: () => choices,
+            subscribe(listener: () => void) {
+                listeners.add(listener);
+                return () => { listeners.delete(listener); };
+            },
+            publish(next: readonly NativeSetupWatcherChoice[]) {
+                if (next.length === choices.length && next.every((choice, index) =>
+                    choice.machineId === choices[index]?.machineId && choice.selected === choices[index]?.selected)) return;
+                choices = next;
+                listeners.forEach(listener => listener());
+            },
+        };
+    });
+    React.useLayoutEffect(() => {
+        const selectedId = selectedWatcherOrigin ? getPluginMachineExecutionOriginRef(selectedWatcherOrigin).machineId : null;
+        nativeWatcherChoices.publish([...nativeWatchersById].flatMap(([machineId, candidate]) => candidate
+            ? [{ machineId, selected: machineId === selectedId }]
+            : []));
+    }, [nativeWatcherChoices, nativeWatchersById, selectedWatcherOrigin]);
+    const selectNativeWatcher = useEventCallback((machineId: string) => {
+        const candidate = nativeWatchersById.get(machineId);
+        return candidate ? selectWatcher(candidate) : false;
+    });
 
     // New Events and direct saved-source moves start on the surface's Machine when it can watch.
     // A new Event with a bound monitoring Machine starts there instead.
@@ -919,10 +962,6 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             const setupHeading = (params.newSourceSetup ?? params.savedSourceSetup)?.heading;
             const selectedMachineId = selectedWatcherOrigin
                 ? getPluginMachineExecutionOriginRef(selectedWatcherOrigin).machineId : null;
-            const nativeWatchersById = new Map(selectableNativeWatchers.map(candidate =>
-                [getPluginMachineExecutionOriginRef(getPluginExecutionOriginCandidateOrigin(candidate)).machineId, candidate]));
-            const canChooseWatcher = (machineId: string) => machineId !== selectedMachineId
-                && !setupScope.signal.aborted && nativeWatchersById.has(machineId);
             const resume = nativeSetupResume && nativeSetupResume.machineId === selectedMachineId ? nativeSetupResume : null;
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
@@ -942,9 +981,12 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                         ? { ...initialSetupSeed, monitoringMachineId: resume.machineId } : initialSetupSeed } : {}),
                 ...(params.newSourceSetup ? {
                     nativeSetupDraft: resume?.input,
-                    watcherChoices: Array.from(nativeWatchersById.keys(), machineId =>
-                        ({ machineId, selected: machineId === selectedMachineId })),
-                    canChooseWatcher,
+                    watcherSelection: {
+                        getSnapshot: nativeWatcherChoices.getSnapshot,
+                        subscribe: nativeWatcherChoices.subscribe,
+                        canChoose: machineId => !setupScope.signal.aborted && nativeWatcherChoices.getSnapshot()
+                            .some(choice => choice.machineId === machineId && !choice.selected),
+                    },
                 } : {}),
                 observationTransport: effectiveObservationTransport,
                 filter: filter.value,
@@ -968,8 +1010,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 return;
             }
             if (configured.kind === 'superseded') {
-                const candidate = nativeWatchersById.get(configured.machineId);
-                if (candidate && selectWatcher(candidate)) {
+                if (selectNativeWatcher(configured.machineId)) {
                     setNativeSetupResume({ machineId: configured.machineId, input: configured.input });
                 } else {
                     if (selectedMachineId) setNativeSetupResume({ machineId: selectedMachineId, input: configured.input });
@@ -1025,9 +1066,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         maximumObservationAgeMs.value,
         resolveExecutionOrigin,
         nativeSetupResume,
-        selectableNativeWatchers,
+        nativeWatcherChoices,
         selectedWatcherOrigin,
-        selectWatcher,
+        selectNativeWatcher,
         setupScope,
         sourceStatus,
         sourceFailure,
@@ -1172,6 +1213,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         refreshWebhookEndpoint: webhookEndpointId === null ? null : refreshWebhookEndpoint,
         webhookEndpointRefreshing,
         watcherCandidates,
+        nativeSetupProjectionTargets,
         watcherFailures,
         selectedWatcherOrigin,
         selectWatcher,
@@ -1233,6 +1275,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         setFilterClauseOperator,
         setFilterClauseValueText,
         watcherCandidates,
+        nativeSetupProjectionTargets,
         watcherFailures,
     ]);
 }
