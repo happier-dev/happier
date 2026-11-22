@@ -179,7 +179,7 @@ type LiveEventProps = Readonly<{
 /** The expanded row's body: what the event carries (the Session it can match), then its actions unless a bar has them. */
 const LiveEventBody = React.memo(function LiveEventBody(props: LiveEventProps & Readonly<{ barred: boolean }>) {
   const fact = useWorkflowEventFact(props.projection, props.eventKey);
-  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active);
+  const presentation = useWorkflowEventPresentation(fact, props.scope, props.retainedRuns, props.active, true);
   const match = useWorkflowEventMatch(presentation, props.scope, props.picked);
   if (presentation === null) return null;
   const automatable = props.active && readWorkflowEventDraftIntent(presentation.fact) !== null;

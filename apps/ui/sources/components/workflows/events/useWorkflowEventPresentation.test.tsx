@@ -205,6 +205,14 @@ it('keeps one checked subject when moving between Session, Machine and Project r
       relationships: [], organizations: [], revisionsByPhysicalKey: {},
     });
   });
+  expect(hook.getCurrent().projectLine).toBeNull();
+  await act(async () => {
+    if (!session.metadata) throw new Error('Expected Session metadata');
+    const metadata = { ...session.metadata, projectId: 'payments' };
+    const attached = buildSessionListRenderableFromSession({ ...session, metadata, metadataVersion: session.metadataVersion + 1 }, undefined, []);
+    if (!attached) throw new Error('Expected the attached Session row');
+    store.getState().applyServerScopedSessionListRows(lifetime.scope.serverId, [attached], { source: 'rowOnly', mode: 'append' });
+  });
   expect(hook.getCurrent().projectLine).toMatchObject({ value: 'Payments' });
   await act(async () => { hook.getCurrent().toggle('session'); });
   expect(hook.getCurrent().match?.subject).toMatchObject({ kind: 'session', sessionId: fact.sessionId });

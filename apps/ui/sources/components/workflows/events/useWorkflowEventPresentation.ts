@@ -23,6 +23,7 @@ import type { WorkflowActivityProjection } from '@/sync/engine/workflows/workflo
 import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { formatWorkflowMachineEventTitle, readWorkflowEventStartedRuns } from './workflowEventFacts';
 import { createMachineExecutionRunRoute, createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
+import { useSessionContentDemand } from '@/sync/domains/session/useSessionContentDemand';
 import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { readSessionRowPresentationAgentId as readSessionRowAgentId } from '@/sync/domains/session/presentation/readSessionPresentationAgentId';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
@@ -88,12 +89,17 @@ export function useWorkflowEventPresentation(
   scope: ServerAccountScope | null,
   retainedRuns?: readonly WorkflowRunSummaryV1[],
   active = false,
+  showDetails = false,
 ): WorkflowEventPresentation | null {
   const lifetime = useActiveServerAccountScopeLifetime();
   const serverId = scope?.serverId ?? null;
   const executionSource = fact?.coverage === 'retained_cause' && fact.evidence.source.kind === 'execution_run' ? fact.evidence.source : null;
   // A retained native cause is about its Session and Machine: the row names them, as a live Session event does.
   const sessionId = fact?.kind === 'session' ? fact.sessionId : executionSource?.sessionId ?? '';
+  useSessionContentDemand(serverId && sessionId ? [{ serverId, sessionId }] : [], {
+    tag: 'workflow-event-details', hydrate: 'viewport', contentDemand: 'list-display',
+    active: active && showDetails && areServerAccountScopesEqual(scope, lifetime?.scope),
+  });
   const selectName = React.useCallback(
     (row: SessionListRenderableSession | null) =>
       row === null ? null : getSessionName(row, serverId),

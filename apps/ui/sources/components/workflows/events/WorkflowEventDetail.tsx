@@ -20,7 +20,6 @@ import { WorkflowSentenceBuilder } from '@/components/workflows/sentence/Workflo
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useProjectAccountRows, useSessionListRowSelector } from '@/sync/store/hooks';
 import { projectGroupIdentityKey, readProjectBaselineRef } from '@/sync/domains/workspaces/projectGroupDisplay';
-import { resolveWorkspacePathBasenameV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import type { SessionListRenderableSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -128,7 +127,8 @@ export type WorkflowEventMatchState = Readonly<{
 }>;
 
 function readEventSessionProjectKey(row: SessionListRenderableSession | null): string | null {
-  return row?.projectKey ?? null;
+  // A Session may be grouped by its folder without belonging to a Project.
+  return row?.metadata?.projectId ?? null;
 }
 
 /** One picked subject per event, shared when the companion renders the actions apart from the sheet. */
@@ -151,7 +151,7 @@ export function useWorkflowEventMatch(
     const named = rows.organizations.find(row => projectGroupIdentityKey(row.key) === key)?.value.label;
     if (named) return named;
     const baseline = readProjectBaselineRef(rows.workspaceRefs, project);
-    return baseline ? baseline.label ?? resolveWorkspacePathBasenameV1(baseline.rootPath) : null;
+    return baseline?.label ?? null;
   }, projectKey !== null);
   const sessionName = presentation?.lines.find((line) => line.key === 'session')?.value;
   const machineName = presentation?.lines.find((line) => line.key === 'machine')?.value;
@@ -296,7 +296,7 @@ export const WorkflowEventDetailPage = React.memo(
     const presented = useLayoutPresentationActive();
     const { feed, scope } = useWorkflowEventsFeed(presented);
     const fact = useWorkflowEventFact(feed.projection, props.eventKey);
-    const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs, presented);
+    const presentation = useWorkflowEventPresentation(fact, scope, feed.retained?.runs, presented, true);
     const router = useRouter();
     const picked = useWorkflowEventMatch(presentation, scope);
     const automate = useWorkflowEventIntents(presentation, presented, { match: picked.match });
