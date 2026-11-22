@@ -88,6 +88,37 @@ const SESSION_VIEWER_LAYER = 20;
 type Size = Readonly<{ width: number; height: number }>;
 type Point = Readonly<{ x: number; y: number }>;
 
+/**
+ * A frame resting inside the reading area keeps its place relative to that area: the same corner and the same
+ * distances from its edges when the area moves or narrows (a Details pane opening beside the Session column), so it
+ * never ends up over the pane's chrome. A narrower area narrows it (the height follows the picture's aspect) and the
+ * person's own width comes back when the area grows. A frame the person put outside the area (over the sidebar or a
+ * pane) is theirs and stays where it is: null.
+ */
+function followReadingArea(
+  rect: FrameRect,
+  preferredWidth: number,
+  previous: FrameRect,
+  next: FrameRect,
+  heightFor: (width: number) => number,
+): FrameRect | null {
+  const inside = rect.x >= previous.x - 1 && rect.y >= previous.y - 1
+    && rect.x + rect.width <= previous.x + previous.width + 1 && rect.y + rect.height <= previous.y + previous.height + 1;
+  if (!inside) return null;
+  const left = rect.x - previous.x;
+  const right = previous.x + previous.width - (rect.x + rect.width);
+  const top = rect.y - previous.y;
+  const bottom = previous.y + previous.height - (rect.y + rect.height);
+  const width = Math.max(0, Math.min(preferredWidth, next.width - Math.min(left, right)));
+  const height = heightFor(width);
+  return {
+    x: left <= right ? next.x + left : next.x + next.width - right - width,
+    y: top <= bottom ? next.y + top : next.y + next.height - bottom - height,
+    width,
+    height,
+  };
+}
+
 function offsetRect(rect: FrameRect, origin: Point): FrameRect {
   return {
     x: rect.x + origin.x,
@@ -262,19 +293,24 @@ function MountedSessionViewerHost(
   // Open, viewport, aspect and footer changes revalidate the settled placement at the one geometry
   // owner: it clamps to the area and shrinks a frame the area cannot hold. The height always follows
   // the width through the picture's aspect.
+  const previousReadingRef = React.useRef<FrameRect | null>(null);
   React.useEffect(() => {
     if (!floating || !areaRect || !readingRect || areaRect.width <= 0 || areaRect.height <= 0) return;
+    const previousReading = previousReadingRef.current;
+    previousReadingRef.current = readingRect;
     const kept = committedRect !== null && placedRef.current !== null ? committedRect : null;
     const width = placedRef.current?.width ?? defaultWidth;
     const sized = { width, height: resolveFloatingFrameHeight(width, aspectRatio, { footer }) };
+    const followed = kept ? followReadingArea(kept, sized.width, previousReading ?? readingRect, readingRect,
+      (frameWidth) => resolveFloatingFrameHeight(frameWidth, aspectRatio, { footer })) : null;
     const corner = resolveFloatingFrameCornerRect('br', sized, readingRect);
-    const desired = kept
+    const desired = followed ?? (kept
       ? { ...kept, ...sized }
       : (() => {
           // The default fits the reading area when it can; the area clamp below is then a no-op.
           const fitted = resolveFloatingFrameRect({ rect: corner, availableRect: readingRect, aspectRatio, chromeHeight, minWidth });
           return fitted.fits ? fitted.rect : corner;
-        })();
+        })());
     const placement = resolveFloatingFrameRect({
       rect: desired,
       availableRect: areaRect,

@@ -451,6 +451,55 @@ describe('SessionViewerHost', () => {
     } finally { await result.unmount(); }
   });
 
+  it('keeps a frame resting in the reading area inside it when the Session column narrows, clear of the pane beside it (DESIGN-ACCEPT-142 19)', async () => {
+    // A 1440 x 900 window; the Session column starts at x 300, 700 wide, then a Details pane opens beside it and
+    // the column narrows to 420. A frame left in the reading corner must not end up over the pane's chrome.
+    const layer = { present: (node: React.ReactNode) => node, measure: () => ({ x: 0, y: 0, width: 1440, height: 900 }) };
+    const column = { x: 300, y: 40, width: 700, height: 860 };
+    const harness: Harness = { controller: null };
+    const result = await renderWithAppProviders(
+      <RetainedPresentationFloatingLayerContext.Provider value={layer}>
+        <Tree harness={harness} presence={AGENT_PRESENCE} />
+      </RetainedPresentationFloatingLayerContext.Provider>,
+      {
+        createNodeMock: (element) => element.props.testID === 'session-viewer-host'
+          ? { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) =>
+            callback(column.x, column.y, column.width, column.height) }
+          : null,
+      },
+    );
+    const layout = async () => act(async () => {
+      invokeTestInstanceHandler(result.tree.root.findByProps({ testID: 'session-viewer-host' }), 'onLayout',
+        { nativeEvent: { layout: { x: 0, y: 0, width: column.width, height: column.height } } });
+    });
+    try {
+      await act(async () => { harness.controller!.port.apply({ kind: 'viewer.open', source: 'computer' }); });
+      await layout();
+      const opened = harness.controller!.state.rect as FrameRect;
+      expect(opened.x + opened.width).toBeLessThanOrEqual(300 + 700 - SESSION_VIEWER_EDGE);
+      // The frame now holds a placement of its own (a settle, or a host remounted after a window resize).
+      const frame = () => result.tree.root.findByType(FloatingFrame);
+      // Wider than the column will be (as in the reviewer's frame: 452 in a 420 column), right edge where it opened.
+      const wide = { ...opened, x: opened.x + opened.width - 500, width: 500 };
+      await act(async () => { frame().props.onRectChange(wide, { kind: 'settle' }); });
+      column.width = 420;
+      await layout();
+      const rect = harness.controller!.state.rect as FrameRect;
+      expect(rect.x).toBeGreaterThanOrEqual(300 + SESSION_VIEWER_EDGE);
+      expect(rect.x + rect.width).toBeLessThanOrEqual(300 + 420 - SESSION_VIEWER_EDGE);
+      // It keeps the corner it rested in (bottom right of the reading area), and stays there on later revalidations.
+      expect(rect.x + rect.width).toBe(300 + 420 - SESSION_VIEWER_EDGE);
+      await act(async () => { harness.controller!.port.apply({ kind: 'viewer.open', source: 'computer' }); });
+      await layout();
+      const settled = harness.controller!.state.rect as FrameRect;
+      expect(settled.x + settled.width).toBeLessThanOrEqual(300 + 420 - SESSION_VIEWER_EDGE);
+      // The person's width comes back when the column grows again.
+      column.width = 700;
+      await layout();
+      expect((harness.controller!.state.rect as FrameRect).width).toBe(500);
+    } finally { await result.unmount(); }
+  });
+
   it('gives the controls the glyph-only switch while the frame is narrower than their labelled row, and the labels back when it is wide again', async () => {
     const { result, frame } = await mountOpen(AGENT_PRESENCE, { width: 1200, height: 800 });
     const switchLabels = () => result.tree.root.findAll(
