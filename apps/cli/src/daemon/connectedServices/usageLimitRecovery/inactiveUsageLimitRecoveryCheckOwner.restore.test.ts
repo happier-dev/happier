@@ -6,9 +6,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { createAccountEncryptionCurrentnessFixture, createCompactSessionListRowFixture, createSessionReadBatchResponseFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { installAxiosRequestMethodAdapter } from '@/testkit/http/axiosAdapter';
 import { createPendingSessionActivationRecovery } from '../../sessions/pendingSessionActivationRecovery';
-import { UsageLimitRecoveryScheduler } from './UsageLimitRecoveryScheduler';
 import { createInactiveUsageLimitRecoveryCheckOwner } from './inactiveUsageLimitRecoveryCheckOwner';
-import { resolveInactiveUsageLimitRecoverySchedulerResult } from './resolveInactiveUsageLimitRecoverySchedulerResult';
 
 const sessionId = 'c123456789012345678901234';
 const pending = (): SessionUsageLimitRecoveryV1 => ({ v: 1, status: 'waiting', issueFingerprint: 'limit', armedAtMs: 100,
@@ -75,11 +73,7 @@ function fixture(options: Readonly<{ unrelatedRows?: number }> = {}) {
   });
   const owner = createInactiveUsageLimitRecoveryCheckOwner();
   let nowMs = 1_000;
-  const scheduler = new UsageLimitRecoveryScheduler({ nowMs: () => nowMs,
-    recover: async (_intent, context) => {
-      const result = await owner.run(context.sessionId);
-      return resolveInactiveUsageLimitRecoverySchedulerResult({ result });
-    } });
+  const scheduler = owner.createScheduler({ nowMs: () => nowMs });
   const restoreInput = () => ({
     credentials: { token: 'fixture-token', encryption: null } as const, machineId: 'machine-1', scheduler,
     currentMachineHost: 'worker', currentMachineHomeDir: '/users/worker', isCurrent: () => current,

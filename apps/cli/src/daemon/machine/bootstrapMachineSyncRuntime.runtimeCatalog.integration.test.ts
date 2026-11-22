@@ -1347,7 +1347,7 @@ describe('bootstrapMachineSyncRuntime', () => {
      * attempt could still wake a probe and stage durable session work after a replacement
      * attempt hydrated the same durable store.
      */
-    it('stops the retired attempt from waking inactive usage-limit recovery', async () => {
+    it('paces inactive usage-limit recovery and stops waking it on retirement', async ({ onTestFinished }) => {
         const storedRecoveryIntents = new Map<string, unknown>();
         const inactiveUsageLimitRecoveryStore = {
             read: (sessionId: string) => storedRecoveryIntents.get(sessionId) ?? null,
@@ -1427,17 +1427,18 @@ describe('bootstrapMachineSyncRuntime', () => {
                 }) => Promise<void> | void;
             }
         ).scheduleInactiveSessionUsageLimitRecoveryCheck;
-        const armRecovery = async (sessionId: string, runCheckNow: () => Promise<unknown>) => {
+        onTestFinished(() => runtime.disposeInactiveSessionUsageLimitRecovery());
+        const armRecovery = async (sessionId: string, resetAtMs: number, runCheckNow: () => Promise<unknown>) => {
             await scheduleInactiveCheck?.({
                 sessionId,
                 recovery: {
                     v: 1,
-                    issueFingerprint: `limit:${sessionId}`,
+                    issueFingerprint: `usage-limit:codex:${sessionId}:100:${resetAtMs}`,
                     status: 'waiting',
                     resumePromptMode: 'off',
                     armedAtMs: Date.now(),
-                    resetAtMs: Date.now() + 40,
-                    nextCheckAtMs: Date.now() + 40,
+                    resetAtMs,
+                    nextCheckAtMs: resetAtMs,
                     attemptCount: 0,
                     maxAttempts: 3,
                     lastProbeError: null,
@@ -1447,15 +1448,22 @@ describe('bootstrapMachineSyncRuntime', () => {
             });
         };
 
-        // The armed timer genuinely wakes a probe while the attempt still owns the scheduler.
-        const beforeRetirement = vi.fn(async () => ({ ok: true, status: 'ready' }));
-        await armRecovery('sess-before-retirement', beforeRetirement);
-        await vi.waitFor(() => expect(beforeRetirement).toHaveBeenCalled());
+        const startTimes: number[] = [];
+        const probe = async () => {
+            startTimes.push(Date.now());
+            return { ok: true, status: 'resumed' };
+        };
+        const resetAtMs = Date.now() + 40;
+        for (const id of ['sess-1', 'sess-2', 'sess-3']) await armRecovery(id, resetAtMs, probe);
+        await vi.waitFor(() => expect(startTimes).toHaveLength(3), { timeout: 5_000 });
+        expect(startTimes[0]).toBeGreaterThanOrEqual(resetAtMs);
+        expect(startTimes[1] - startTimes[0]).toBeGreaterThanOrEqual(950);
+        expect(startTimes[2] - startTimes[1]).toBeGreaterThanOrEqual(950);
 
         await retireMachineSyncRuntimeAttempt(runtime);
 
         const afterRetirement = vi.fn(async () => ({ ok: true, status: 'ready' }));
-        await armRecovery('sess-after-retirement', afterRetirement);
+        await armRecovery('sess-after-retirement', Date.now() + 40, afterRetirement);
         await new Promise((resolve) => setTimeout(resolve, 200));
 
         expect(afterRetirement).not.toHaveBeenCalled();

@@ -567,6 +567,11 @@ also drains failure reports in process through the HTTP route's same
 authorization, intake and report-ID custody. Machine bootstrap likewise re-arms
 inactive usage-limit waits after installing their runners. Hydration only arms
 the existing durable timers; recovery never runs synchronously during it.
+The inactive recovery owner spaces automatic probe admissions on each daemon by
+native service, connected profile, or connected group. A saved native wait
+without a service id uses the agent id from its issue fingerprint. The durable
+scheduler carries the delay on its existing retry timer. Explicit Check now and
+Resume controls use their direct paths.
 
 A scheduler retry for an inactive failed pool member observes the current
 member's quota through the existing probe owner without selecting another

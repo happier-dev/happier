@@ -143,12 +143,8 @@ import { createDaemonSpawnToolResolutionContext } from '../spawnHooks';
 import { createProviderLocalCatalogFallbackRunner, type ProviderLocalCommandRunner } from '@/providers/probe/localCommand';
 import type { createAgentProviderCatalogObservationService } from '@/providers/probe/agentCatalogObservation';
 import { resolveDaemonSpawnSessionByNonce } from '../controlClient';
-import {
-  UsageLimitRecoveryScheduler,
-  type UsageLimitRecoveryIntent,
-} from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
+import type { UsageLimitRecoveryIntent } from '../connectedServices/usageLimitRecovery/UsageLimitRecoveryScheduler';
 import { createInactiveUsageLimitRecoveryCheckOwner } from '../connectedServices/usageLimitRecovery/inactiveUsageLimitRecoveryCheckOwner';
-import { resolveInactiveUsageLimitRecoverySchedulerResult } from '../connectedServices/usageLimitRecovery/resolveInactiveUsageLimitRecoverySchedulerResult';
 import { createPendingResetStartRecoveryPorts } from '../connectedServices/usageLimitRecovery/createPendingResetStartRecoveryPorts';
 import {
   createDaemonSessionMutationCustody,
@@ -1036,7 +1032,7 @@ export async function bootstrapMachineSyncRuntime(
       release: demand => connectedApiMachine.releasePendingResetStart(demand),
       onError: error => logger.warn('[DAEMON RUN] Pending reset start remains held', error),
     }) : null;
-  const inactiveUsageLimitRecoveryScheduler = new UsageLimitRecoveryScheduler({
+  const inactiveUsageLimitRecoveryScheduler = inactiveUsageLimitRecoveryCheckOwner.createScheduler({
     nowMs: () => Date.now(),
     ...(pendingResetStartPorts ? { pendingResetStarts: pendingResetStartPorts } : {}),
     store: params.inactiveUsageLimitRecoveryStore ?? createRecoveryIntentFileStore(join(
@@ -1044,19 +1040,6 @@ export async function bootstrapMachineSyncRuntime(
       'connected-services',
       'inactive-usage-limit-recovery.json',
     )),
-    recover: async (_intent, context) => {
-      if (!inactiveUsageLimitRecoveryCheckOwner.hasRunner(context.sessionId)) {
-        return {
-          status: 'wait',
-          nextCheckAtMs: null,
-          lastProbeError: 'usage_limit_recovery_runner_unavailable',
-        };
-      }
-      const result = await inactiveUsageLimitRecoveryCheckOwner.run(context.sessionId);
-      return resolveInactiveUsageLimitRecoverySchedulerResult({
-        result,
-      });
-    },
   });
   disposeInactiveSessionUsageLimitRecovery = () => inactiveUsageLimitRecoveryScheduler.dispose();
   inactiveUsageLimitRecoveryScheduler.hydratePassive();

@@ -325,6 +325,10 @@ Agent supports a quota check. Without reliable timing, the wait stays active
 until recovery is reported or you choose **Check now**. Temporary check failures
 keep the wait active without starting a periodic check loop.
 
+When several inactive sessions on one machine are due to check the same native
+service, connected profile, or connected group, Happier spaces their automatic
+checks about a second apart. You can still choose **Check now** at any time.
+
 Happier sends the configured continuation prompt, not a replay of your original
 request. Once the continuation is accepted into Pending, its normal queue and
 delivery status take over from the usage-limit wait. A queued prompt does not

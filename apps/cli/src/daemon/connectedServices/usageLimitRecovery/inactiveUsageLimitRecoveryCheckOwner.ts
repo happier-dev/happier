@@ -11,11 +11,24 @@ import type { RawSessionListRow } from '@/session/transport/http/sessionsHttp';
 import { readSessionOwnerLocality, tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveMachineControlLocalityProof } from '@/session/machineControlLocality';
 import { hasSameUsageLimitRecoveryIdentity, isPendingUsageLimitRecoveryStatus } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
+import { readUsageLimitIssueFingerprintAgentId } from '@/session/usageLimitRecoveryControls/readUsageLimitIssueFingerprintAgentId';
 
 import {
   type UsageLimitRecoveryCancelExactResult,
   UsageLimitRecoveryScheduler,
 } from './UsageLimitRecoveryScheduler';
+import { resolveInactiveUsageLimitRecoverySchedulerResult } from './resolveInactiveUsageLimitRecoverySchedulerResult';
+
+const WAKE_COALESCE_WINDOW_MS = 1_000;
+
+function resolveWakeKey(recovery: SessionUsageLimitRecoveryV1): string | null {
+  const auth = recovery.selectedAuth;
+  if (auth.kind === 'native') {
+    const nativeId = auth.serviceId ?? readUsageLimitIssueFingerprintAgentId(recovery.issueFingerprint);
+    return nativeId ? [nativeId, 'native'].join('\0') : null;
+  }
+  return [auth.serviceId, auth.kind, auth.kind === 'profile' ? auth.profileId : auth.groupId].join('\0');
+}
 
 type RestoreSessionCommonInput = Readonly<{
   credentials: StoredCredentials;
@@ -156,6 +169,32 @@ export function createInactiveUsageLimitRecoveryCheckOwner() {
     run: async (sessionId: string): Promise<unknown | null> => {
       const runner = runnersBySessionId.get(sessionId);
       return runner ? await runner.runCheckNow() : null;
+    },
+    createScheduler: (deps: Omit<ConstructorParameters<typeof UsageLimitRecoveryScheduler>[0], 'gate' | 'recover'>): UsageLimitRecoveryScheduler => {
+      const nextOpenAtMsByAuthKey = new Map<string, number>();
+      return new UsageLimitRecoveryScheduler({
+        ...deps,
+        gate: ({ sessionId, intent }) => {
+          // Missing runners still park until reconnect rather than scheduling a retry.
+          if (!runnersBySessionId.has(sessionId)) return { status: 'open' };
+          const key = resolveWakeKey(intent);
+          if (key === null) return { status: 'open' };
+          const nowMs = deps.nowMs();
+          const retryAtMs = nextOpenAtMsByAuthKey.get(key);
+          if (retryAtMs !== undefined && nowMs < retryAtMs) {
+            return { status: 'delayed', retryAtMs, reason: 'usage_limit_recovery_wake_coalesced' };
+          }
+          nextOpenAtMsByAuthKey.set(key, nowMs + WAKE_COALESCE_WINDOW_MS);
+          return { status: 'open' };
+        },
+        recover: async (_intent, { sessionId }) => {
+          if (!owner.hasRunner(sessionId)) {
+            return { status: 'wait', nextCheckAtMs: null, lastProbeError: 'usage_limit_recovery_runner_unavailable' };
+          }
+          const result = await owner.run(sessionId);
+          return resolveInactiveUsageLimitRecoverySchedulerResult({ result });
+        },
+      });
     },
     schedule,
     /** Reconnect uses its canonical owner-only inventory and one Account witness. */

@@ -8,6 +8,7 @@ import type { SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { buildUsageLimitIssueFingerprint } from '@happier-dev/protocol/sessions/state/valueSchemas/usageLimitRecovery';
+import { readUsageLimitIssueFingerprintAgentId } from '@/session/usageLimitRecoveryControls/readUsageLimitIssueFingerprintAgentId';
 import { hasSameUsageLimitRecoveryIdentity } from '@/session/usageLimitRecoveryControls/mergeUsageLimitRecoveryIntent';
 import { readLatestUsageLimitFailureIssue } from '@/session/usageLimitRecoveryControls/readLatestUsageLimitFailureIssue';
 import { resolveUsageLimitRecoverySelectedAuthFromIssue } from '@/session/usageLimitRecoveryControls/usageLimitRecoverySelectedAuth';
@@ -125,8 +126,7 @@ export async function continueSessionAfterUsageLimitReset(input: Readonly<{
   const failedAuth = resolveUsageLimitRecoverySelectedAuthFromIssue({ issue, connectedServices: input.metadata.connectedServices ?? null });
   if (!failedAuth || !matchesAuth(failedAuth, recovery.selectedAuth)) return { status: 'superseded' };
 
-  const fallbackAgentId = recovery.issueFingerprint.startsWith('usage-limit:')
-    ? recovery.issueFingerprint.split(':', 3)[1] : undefined;
+  const fallbackAgentId = readUsageLimitIssueFingerprintAgentId(recovery.issueFingerprint);
   const fingerprint = buildUsageLimitIssueFingerprint(issue, fallbackAgentId);
   const owned = Boolean(recovery.runtimeAuthRecoveryAttemptId);
   if (issue.occurredAt > recovery.armedAtMs || (!owned && fingerprint !== recovery.issueFingerprint)) return { status: 'superseded' };
