@@ -25,7 +25,7 @@ import { normalizeServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/clie
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { type AdmittedRequesterSessionBootstrap } from "./requesterSessionCredentials";
-import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { bindRequesterSessionCredentialScope, decodeStoredCredentials, encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { bootstrapAccountSettingsContext } from "@/settings/accountSettings/bootstrapAccountSettingsContext";
 import { resolvePublishedMachineEncryptionContext } from '@/api/machine/machineDataEncryptionKey';
@@ -330,7 +330,7 @@ async function projectAdmittedAccountCustody(
         try {
         const sealed = sealExternalActionRequesterAccountContextV1({ ...request,
           ...(input.invocation ? { invocation: input.invocation } : {}),
-            credentials: { ...encodeStoredCredentials(bootstrap.credentials), token: bootstrap.credentials.token },
+            credentials: encodeRequesterCredentials(bootstrap.credentials),
             randomBytes: length => new Uint8Array(randomBytes(length)) });
           return await isCurrent() ? sealed : null;
         } catch (error) { refuseExternalActionPhase('requester_custody_seal', stamp.machineId, error); rethrowRequesterHomeReadFailure(error); return null; }

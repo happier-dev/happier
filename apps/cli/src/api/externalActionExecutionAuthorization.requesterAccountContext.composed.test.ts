@@ -1791,6 +1791,46 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     });
   });
 
+  it.each(['historical', 'active'] as const)('seals a plain Account requester bearer-only and keeps %s keys on this computer', async custody => {
+    await withTempDir('happier-own-remote-recovered-plain-', async taskDir => {
+      const originalConfiguration = { serversDir: configuration.serversDir };
+      Object.assign(configuration, { serversDir: join(taskDir, 'servers') });
+      try {
+        const events: string[] = [];
+        // An Account converted to plain keeps its old key bytes here; only this computer's custody marker differs.
+        const credentials: StoredCredentials = { token: token('terminal'), credentialProvenance: 'stored_session',
+          encryption: { type: 'legacy', secret: new Uint8Array(32).fill(23) },
+          ...(custody === 'historical' ? { accountE2eeCustody: 'historical' as const } : {}) };
+        await writeStoredCredentialsForServerId('home', credentials);
+        const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: 'agents.models.list',
+          authenticationKind: 'terminal' });
+        const executor = createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+          readCredentials: () => readStoredCredentialsForServerId('home'),
+          serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: 'alice-machine',
+          actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) },
+          onRequesterSessionCredentialDisclosure: async () => { throw new Error('Own Account work must not disclose private custody'); } });
+        const execution = executor.execute('agents.models.list', ownMachineInput, { surface: 'cli', actionRequestId: 'request-1' });
+        if (custody === 'active') {
+          // A plain report beside active keys stays the Account mode owner's typed refusal.
+          expect(await execution).toMatchObject({ ok: false, errorCode: 'account_mode_downgrade_unverified' });
+          expect(events).not.toContain('dispatch');
+          return;
+        }
+        expect(await execution).toEqual({ ok: true, result: ownMachineResult });
+        const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+        expect(received.executionAuthorization?.binding.accountEncryptionMode).toBe('plain');
+        const opened = openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+          purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
+          serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey, includeInvocation: true });
+        expect(opened?.credentials).toEqual({ token: credentials.token });
+        expect(events).toEqual(['home-authorized', 'dispatch']);
+        const retained = await readStoredCredentialsForServerId('home');
+        expect(retained?.accountE2eeCustody).toBe('historical');
+        expect(retained?.encryption).toEqual(credentials.encryption);
+      } finally { Object.assign(configuration, originalConfiguration); }
+    });
+  });
+
   it.each([
     { separateHome: false, legacy: false, legacyState: false },
     { separateHome: true, legacy: false, legacyState: false },

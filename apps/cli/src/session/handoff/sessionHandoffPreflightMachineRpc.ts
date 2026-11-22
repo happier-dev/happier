@@ -7,7 +7,7 @@ import { createRpcCallError, isRpcMethodNotAvailableError, isRpcMethodNotFoundEr
 
 import { prepareExternalActionHandoffPreflightAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
 
@@ -49,7 +49,7 @@ export function createSessionHandoffPreflightMachineRpc(deps: Readonly<{
       if (requester && !await requester.isCurrent()) return unavailable();
       const root = input.context?.externalActionExecutionAuthorization;
       if (input.context?.callerInputAuthorization && !root) return unavailable();
-      const requesterBootstrap = { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(input.credentials) } as const;
+      const requesterBootstrap = { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(input.credentials) } as const;
       const request = input.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_EXISTING_STATE_CHECK_V3
         ? SessionRequesterHandoffPreflightBootstrapRpcRequestV1Schema.parse({
             kind: 'requester_session_handoff_preflight_bootstrap_v1', input: input.request, requesterBootstrap,

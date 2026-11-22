@@ -12,7 +12,7 @@ import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executo
 import { SessionHandoffWorkspaceCaptureResultV3Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 
-import { encodeStoredCredentials, type StoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, type StoredCredentials } from '@/persistence';
 import { resolveMachineRpcExternalActionEffectV1 } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { prepareExternalActionHandoffContinuationAuthorization, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import type { createSessionHandoffSourceExportStore } from '@/session/handoff/state/sessionHandoffSourceExportStore';
@@ -582,7 +582,7 @@ export function createTrackedSessionHandoffCoordinator(deps: CoordinatorDeps) {
         RPC_METHODS.DAEMON_SESSION_HANDOFF_PREPARE_TARGET_V3,
         requester || hostInput.context?.externalActionExecutionAuthorization ? {
           kind: 'requester_session_handoff_bootstrap_v1', input: { ...request, sessionId },
-          requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeStoredCredentials(credentials) },
+          requesterBootstrap: { v: 1, disposition: 'ordinary_requester', credentials: encodeRequesterCredentials(credentials) },
         } : request,
         signal,
       ),

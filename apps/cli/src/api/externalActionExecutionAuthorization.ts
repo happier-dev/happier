@@ -114,7 +114,7 @@ import { z } from 'zod/mini';
 import { ExternalActionMachineBootstrapV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { projectExternalActionRequesterInvocationContextV1, projectRequesterSessionCredentialDisclosure, sealExternalActionRequesterAccountContextV1, sealManagedCreationActionCodecV1, type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, encodeStoredCredentials, readAccountE2eeCustody } from '@/persistence';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { isMachineTerminalActionId } from '@happier-dev/protocol/actions/specs/machineTerminal';
@@ -1444,7 +1444,7 @@ async function prepareOriginalAccountAction(
             ...(input.invocation ? { invocation: input.invocation } : {}),
             installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes })
           : sealExternalActionRequesterAccountContextV1({ authorization: minted.authorization, executorKeyPin,
-          credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token },
+          credentials: encodeRequesterCredentials(input.credentials),
           purpose: { kind: 'external_action' }, installationPublicKey: decodeBase64(installed.installationPublicKey), randomBytes });
         if (!await isCurrent()) return fail('target_unavailable', 'dispatch.workflow_authorization.currentness');
         body = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1,
@@ -1515,7 +1515,8 @@ async function prepareOriginalAccountAction(
       if (kind === 'account' && input.authority === 'account_automation'
         || input.credentials.credentialProvenance === 'api_token') return fail('requester_account_material_unavailable');
       if (!input.onRequesterSessionCredentialDisclosure) return fail('requester_credential_disclosure_required');
-      if (mode.mode === 'plain' && input.credentials.encryption !== null) return fail('content_unavailable');
+      // Ask nothing the sealer must refuse: a plain Account's requester carries no active keys.
+      if (mode.mode === 'plain' && readAccountE2eeCustody(input.credentials) === 'active') return fail('content_unavailable');
       let confirmed: boolean | void;
       try {
         confirmed = await input.onRequesterSessionCredentialDisclosure(projectRequesterSessionCredentialDisclosure({
@@ -1561,7 +1562,7 @@ async function prepareOriginalAccountAction(
           const executorKeyPin = foreign || !installedPublication ? undefined
             : readOwnInstalledExecutorKeyPin(installedPublication, input.credentials, mode.mode);
           authorization = sealExternalActionRequesterAccountContextV1({ authorization, executorKeyPin,
-            credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'external_action' },
+            credentials: encodeRequesterCredentials(input.credentials), purpose: { kind: 'external_action' },
             ...(invocation ? { invocation } : {}),
             installationPublicKey: decodeBase64(installed.installationPublicKey, scopedController ? 'base64url' : 'base64'), randomBytes });
         }
@@ -1576,7 +1577,7 @@ async function prepareOriginalAccountAction(
             if (refusal) return refusal;
           }
           authorization = sealExternalActionRequesterAccountContextV1({ authorization,
-            credentials: { ...encodeStoredCredentials(input.credentials), token: input.credentials.token }, purpose: { kind: 'managed_finite_wake', target: wake.target },
+            credentials: encodeRequesterCredentials(input.credentials), purpose: { kind: 'managed_finite_wake', target: wake.target },
             installationPublicKey: decodeBase64(wake.installationPublicKey, 'base64url'), randomBytes });
         }
         admittedBody = ExternalActionExecutionAuthorizationRequestV1Schema.parse({ v: 1, machineId: destinationId, envelope,

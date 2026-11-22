@@ -866,6 +866,16 @@ export function encodeStoredCredentials(credentials: StoredCredentials): z.infer
       : { token: credentials.token };
 }
 
+/**
+ * Requester credentials this computer hands to another Machine: the bearer plus
+ * active Account E2EE material only. Historical keys and their device-local
+ * marker stay here; the sealer or the receiving daemon matches the result to the
+ * Home-signed Account mode.
+ */
+export function encodeRequesterCredentials(credentials: StoredCredentials): Omit<ReturnType<typeof encodeStoredCredentials>, 'custody'> {
+  return readAccountE2eeCustody(credentials) === 'active' ? encodeStoredCredentials(credentials) : { token: credentials.token };
+}
+
 export class CliReloginRequiredError extends Error {
   readonly code = 'cli_relogin_required';
 
