@@ -21444,6 +21444,11 @@ const es = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "Happier no ha podido restaurar el acceso a este enlace de sincronización. Comprueba que usas la cuenta original o pide a un administrador de la máquina que revise el acceso.",
         ownFolderOnly: "Con acceso de uso, solo puedes sincronizar en una carpeta nueva de tu propio espacio en esa máquina. Elige una carpeta allí o pide al propietario acceso de gestión.",
         manageRequired: "Esto requiere acceso de gestión a la máquina de destino. Pide ese acceso al propietario.",
+        projectWorkspaceChanged: "Esa carpeta pertenece a otro proyecto. Elige una carpeta nueva o usa el proyecto al que ya pertenece.",
+        provenanceConflict: "Estas carpetas ya se sincronizan con otro propósito. Elige otra carpeta.",
+        notWorkerCopy: "Esta carpeta no se creó como copia de trabajo, así que Happier la dejó donde estaba. No se eliminó nada.",
+        workspaceUnavailable: "Esa carpeta ya no está disponible para esta sincronización. Actualiza la sincronización y vuelve a intentarlo.",
+        reviewedFolderChanged: "La carpeta cambió después de que la revisaras. Revísala de nuevo para continuar.",
         needsAttention: 'La sincronización del espacio de trabajo necesita atención. Actualiza su estado y vuelve a intentarlo.',
     },
     start: { blocked: {

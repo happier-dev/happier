@@ -21565,6 +21565,11 @@ const fr = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "Happier n’a pas pu rétablir l’accès à ce lien de synchronisation. Vérifiez que vous utilisez le compte d’origine ou demandez à un gestionnaire de la machine de vérifier l’accès.",
         ownFolderOnly: "Avec un accès Utilisation, vous ne pouvez synchroniser que dans un nouveau dossier de votre propre espace sur cette machine. Choisissez-y un dossier ou demandez au propriétaire un accès Gestion.",
         manageRequired: "Cette action nécessite un accès Gestion à la machine de destination. Demandez-le à son propriétaire.",
+        projectWorkspaceChanged: "Ce dossier appartient à un autre projet. Choisissez un nouveau dossier ou utilisez le projet auquel il appartient déjà.",
+        provenanceConflict: "Ces dossiers sont déjà synchronisés pour un autre usage. Choisissez un autre dossier.",
+        notWorkerCopy: "Ce dossier n’a pas été créé comme copie de travail : Happier l’a laissé en place. Rien n’a été supprimé.",
+        workspaceUnavailable: "Ce dossier n’est plus disponible pour cette synchronisation. Actualisez la synchronisation, puis réessayez.",
+        reviewedFolderChanged: "Le dossier a changé après votre vérification. Vérifiez-le à nouveau pour continuer.",
         needsAttention: 'La synchronisation de l’espace de travail nécessite ton attention. Actualise son état, puis réessaie.',
     },
     start: { blocked: {

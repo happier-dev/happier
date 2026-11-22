@@ -21532,6 +21532,11 @@ const pl = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "Nie udało się przywrócić dostępu do tego połączenia synchronizacji w Happier. Sprawdź, czy używasz pierwotnego konta, lub poproś administratora maszyny o sprawdzenie dostępu.",
         ownFolderOnly: "Z dostępem do używania możesz synchronizować tylko do nowego folderu we własnej przestrzeni na tej maszynie. Wybierz tam folder lub poproś właściciela o dostęp do zarządzania.",
         manageRequired: "Wymaga to dostępu do zarządzania maszyną docelową. Poproś właściciela o ten dostęp.",
+        projectWorkspaceChanged: "Ten folder należy do innego projektu. Wybierz nowy folder lub użyj projektu, do którego już należy.",
+        provenanceConflict: "Te foldery są już synchronizowane w innym celu. Wybierz inny folder.",
+        notWorkerCopy: "Ten folder nie został utworzony jako kopia robocza, więc Happier go zostawił. Nic nie zostało usunięte.",
+        workspaceUnavailable: "Ten folder nie jest już dostępny dla tej synchronizacji. Odśwież synchronizację i spróbuj ponownie.",
+        reviewedFolderChanged: "Folder zmienił się po Twoim przejrzeniu. Przejrzyj go ponownie, aby kontynuować.",
         needsAttention: 'Synchronizacja obszaru roboczego wymaga uwagi. Odśwież jej stan i spróbuj ponownie.',
     },
     start: { blocked: {

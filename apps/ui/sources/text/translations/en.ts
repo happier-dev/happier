@@ -15174,6 +15174,16 @@ const enWorkspaceSync = {
       "With Can use access, you can sync only into a new folder in your own space on that machine. Choose a folder there, or ask its owner for Manage access.",
     manageRequired:
       "This needs Manage access to the destination machine. Ask its owner for Manage access.",
+    projectWorkspaceChanged:
+      "That folder belongs to another Project. Pick a new folder, or use the Project it already belongs to.",
+    provenanceConflict:
+      "These folders are already synced for a different purpose. Pick another folder.",
+    notWorkerCopy:
+      "This folder wasn’t created as a worker copy, so Happier left it in place. Nothing was removed.",
+    workspaceUnavailable:
+      "That folder isn’t available for this sync any more. Refresh the sync, then try again.",
+    reviewedFolderChanged:
+      "The folder changed after you reviewed it. Review it again to continue.",
   },
   start: {
     blocked: {

@@ -48,6 +48,11 @@ export type WorkspaceSyncErrorTranslationKey =
     | 'workspaceSync.error.requesterAccessUnavailable'
     | 'workspaceSync.error.ownFolderOnly'
     | 'workspaceSync.error.manageRequired'
+    | 'workspaceSync.error.projectWorkspaceChanged'
+    | 'workspaceSync.error.provenanceConflict'
+    | 'workspaceSync.error.notWorkerCopy'
+    | 'workspaceSync.error.workspaceUnavailable'
+    | 'workspaceSync.error.reviewedFolderChanged'
     | 'sessionHandoff.failure.partialLinked'
     | 'workspaceSync.error.needsAttention';
 
@@ -79,6 +84,11 @@ export function presentWorkspaceSyncFailure(error: unknown, placement?: Workspac
     const causeKey = failureCause?.errorCode ? resolveWorkspaceSyncErrorTranslationKey(failureCause.errorCode) : null;
     const shownCode = causeKey && failureCause?.errorCode ? failureCause.errorCode : code;
     let key = causeKey ?? resolveWorkspaceSyncErrorTranslationKey(code);
+    // A reviewed target that no longer matches what the person reviewed names why in its native reason; the
+    // reason stays on the carried error, and reviewing again is what fixes it.
+    if (!key && code === 'approval_stale' && failureCause && !('kind' in failureCause) && failureCause.nativeErrorReason) {
+        key = 'workspaceSync.error.reviewedFolderChanged';
+    }
     if (key === 'workspaceSync.error.ownFolderOnly' && placement !== 'destination_open') key = 'workspaceSync.error.needsAttention';
     const message = key ? t(key) : presentActionExecutionFailure({ ok: false, errorCode: code, details: record.details,
         ...(failureCause ? { failureCause } : {}) }).reason;
@@ -154,6 +164,15 @@ export function resolveWorkspaceSyncErrorTranslationKey(value: unknown): Workspa
             return 'workspaceSync.error.ownFolderOnly';
         case 'machine_manage_required':
             return 'workspaceSync.error.manageRequired';
+        // The relationship owner's refusals, carried by the RPC mapping since 51a0fa64abf.
+        case 'project_workspace_changed':
+            return 'workspaceSync.error.projectWorkspaceChanged';
+        case 'relationship_provenance_conflict':
+            return 'workspaceSync.error.provenanceConflict';
+        case 'workspace_copy_not_worker':
+            return 'workspaceSync.error.notWorkerCopy';
+        case 'workspace_unavailable':
+            return 'workspaceSync.error.workspaceUnavailable';
         case 'engine_problems':
         case 'relationship_not_ready':
         case 'workspace_root_in_use':

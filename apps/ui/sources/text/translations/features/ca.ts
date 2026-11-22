@@ -21522,6 +21522,11 @@ const ca = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "Happier no ha pogut restaurar l’accés a aquest enllaç de sincronització. Comprova que fas servir el compte original o demana a un gestor de la màquina que revisi l’accés.",
         ownFolderOnly: "Amb accés d’ús, només pots sincronitzar en una carpeta nova del teu propi espai en aquesta màquina. Tria-hi una carpeta o demana al propietari accés de gestió.",
         manageRequired: "Això requereix accés de gestió a la màquina de destinació. Demana al propietari accés de gestió.",
+        projectWorkspaceChanged: "Aquesta carpeta pertany a un altre projecte. Tria una carpeta nova o fes servir el projecte al qual ja pertany.",
+        provenanceConflict: "Aquestes carpetes ja estan sincronitzades amb un altre propòsit. Tria una altra carpeta.",
+        notWorkerCopy: "Aquesta carpeta no es va crear com a còpia de treball, així que Happier l’ha deixat on era. No s’ha eliminat res.",
+        workspaceUnavailable: "Aquesta carpeta ja no està disponible per a aquesta sincronització. Actualitza la sincronització i torna-ho a provar.",
+        reviewedFolderChanged: "La carpeta ha canviat després que la revisessis. Revisa-la de nou per continuar.",
         needsAttention: 'La sincronització de l’espai de treball necessita atenció. Actualitza’n l’estat i torna-ho a provar.',
     },
     start: { blocked: {

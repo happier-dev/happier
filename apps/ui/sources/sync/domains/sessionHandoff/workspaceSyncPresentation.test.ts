@@ -141,6 +141,28 @@ describe('workspaceSyncPresentation', () => {
         })).toBe('workspaceSync.state.loading');
     });
 
+    // The relationship owner's carried refusals (51a0fa64abf) each say what happened and the one thing to do.
+    it.each([
+        ['project_workspace_changed', 'workspaceSync.error.projectWorkspaceChanged'],
+        ['relationship_provenance_conflict', 'workspaceSync.error.provenanceConflict'],
+        ['workspace_copy_not_worker', 'workspaceSync.error.notWorkerCopy'],
+        ['workspace_unavailable', 'workspaceSync.error.workspaceUnavailable'],
+    ] as const)('explains the carried %s refusal in words', (code, key) => {
+        const presented = presentWorkspaceSyncFailure(new RpcError('Private owner diagnostic', code));
+        expect(presented).toBe(`${t(key)} (${code})`);
+        expect(presented).not.toContain('Private owner diagnostic');
+    });
+
+    it('tells a person whose reviewed folder changed to review it again, keeping the reason out of the sentence', () => {
+        const error = Object.assign(new RpcError('approval stale', 'approval_stale'), { failureCause: {
+            phase: 'workspace_sync.target_bootstrap', errorClass: 'Error', errorCode: 'approval_stale', httpStatus: null,
+            nativeErrorReason: 'root_fingerprint.absence_vs_presence',
+        } });
+        const presented = presentWorkspaceSyncFailure(error);
+        expect(presented).toBe(`${t('workspaceSync.error.reviewedFolderChanged')} (approval_stale)`);
+        expect(presented).not.toContain('root_fingerprint');
+    });
+
     it('settles a completed observation with no engine session as unavailable', () => {
         expect(resolveWorkspaceSyncRelationshipStateLabel({
             enabled: true, statusState: null, errorCode: null,

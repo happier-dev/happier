@@ -21002,6 +21002,11 @@ const de = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "Happier konnte den Zugriff auf diese Synchronisierungsverknüpfung nicht wiederherstellen. Prüfe, ob du das ursprüngliche Konto verwendest, oder bitte einen Maschinenverwalter, den Zugriff zu prüfen.",
         ownFolderOnly: "Mit Nutzungszugriff kannst du nur in einen neuen Ordner in deinem eigenen Bereich auf dieser Maschine synchronisieren. Wähle dort einen Ordner oder bitte den Eigentümer um Verwaltungszugriff.",
         manageRequired: "Dafür ist Verwaltungszugriff auf die Zielmaschine nötig. Bitte den Eigentümer um Verwaltungszugriff.",
+        projectWorkspaceChanged: "Dieser Ordner gehört zu einem anderen Projekt. Wähle einen neuen Ordner oder nutze das Projekt, zu dem er bereits gehört.",
+        provenanceConflict: "Diese Ordner werden bereits für einen anderen Zweck synchronisiert. Wähle einen anderen Ordner.",
+        notWorkerCopy: "Dieser Ordner wurde nicht als Arbeitskopie erstellt, daher hat Happier ihn belassen. Es wurde nichts entfernt.",
+        workspaceUnavailable: "Dieser Ordner ist für diese Synchronisierung nicht mehr verfügbar. Aktualisiere die Synchronisierung und versuche es erneut.",
+        reviewedFolderChanged: "Der Ordner hat sich geändert, nachdem du ihn geprüft hast. Prüfe ihn erneut, um fortzufahren.",
         needsAttention: 'Die Arbeitsbereichssynchronisierung benötigt Aufmerksamkeit. Aktualisiere den Status und versuche es erneut.',
     },
     start: { blocked: {

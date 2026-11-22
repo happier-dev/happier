@@ -21494,6 +21494,11 @@ const pt = completeWorkspaceSyncTranslation({
         requesterAccessUnavailable: "O Happier não conseguiu restaurar o acesso a este vínculo de sincronização. Verifique se está usando a conta original ou peça a um administrador da máquina para verificar o acesso.",
         ownFolderOnly: "Com acesso de uso, você só pode sincronizar para uma nova pasta no seu próprio espaço nessa máquina. Escolha uma pasta lá ou peça ao proprietário acesso de gestão.",
         manageRequired: "Isso exige acesso de gestão à máquina de destino. Peça esse acesso ao proprietário.",
+        projectWorkspaceChanged: "Essa pasta pertence a outro projeto. Escolha uma pasta nova ou use o projeto ao qual ela já pertence.",
+        provenanceConflict: "Estas pastas já são sincronizadas para outra finalidade. Escolha outra pasta.",
+        notWorkerCopy: "Esta pasta não foi criada como cópia de trabalho, então o Happier a manteve no lugar. Nada foi removido.",
+        workspaceUnavailable: "Essa pasta não está mais disponível para esta sincronização. Atualize a sincronização e tente novamente.",
+        reviewedFolderChanged: "A pasta mudou depois que você a revisou. Revise-a novamente para continuar.",
         needsAttention: 'A sincronização do espaço de trabalho requer atenção. Atualiza o estado e tenta novamente.',
     },
     start: { blocked: {
