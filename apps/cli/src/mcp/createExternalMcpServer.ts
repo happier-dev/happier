@@ -288,23 +288,10 @@ export function createExternalMcpServer(params: Readonly<{
               ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input, context?.actionCaller, toolSurface) : null;
             const controlControllerTarget = await resolveManagedControlControllerTarget({ actionId, rawInput: input,
               credentials: params.credentials, serverHttpBaseUrl, ...(context?.signal ? { signal: context.signal } : {}) });
-            if (!builtInActionId.success || (
-              executionPlacement !== 'client'
-              && !hasDeclaredActionDaemonIngress(getActionSpec(builtInActionId.data), 'cli')
-              && !requiresManagedMachineDaemonIngress(builtInActionId.data, executionPlacement, controlControllerTarget)
-              && !REGISTRY_ACTION_IDS_V1.some(id => id === builtInActionId.data)
-            )) {
-              return await pluginExecutor.execute(...args);
-            }
-            // Delegate before local admission: this exact Home's daemon owns
-            // client delivery and the admitted plugin registry occurrence.
-            if (daemonControlTarget === null) return daemonRelayUnavailable(actionId, 'target_absent');
-            const admittedActionId = SignedRootActionIdSchema.safeParse(actionId);
-            if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
             const sessionId = context?.defaultSessionId && context.defaultSessionId !== 'cli-global'
               ? context.defaultSessionId : null;
             let requestedTarget = context?.externalActionTarget ?? controlControllerTarget ?? undefined;
-            if (actionId === 'workflow.run.start' && sessionId
+            if ((actionId === 'workflow.run.start' || actionId === 'machines.command.run') && sessionId
               && !(requestedTarget?.kind === 'machine' && requestedTarget.project)) {
               // Focus supplies placement only; it never authenticates the MCP
               // caller as this Session or grants present-user authority.
@@ -315,9 +302,26 @@ export function createExternalMcpServer(params: Readonly<{
                   resolveSessionTransportContext({ reason: 'session-action', credentials: params.credentials, idOrPrefix,
                     serverFeaturesSnapshot: await resolveServerFeaturesSnapshot(), ...(signal ? { signal } : {}) })),
               });
-              if (!focusedTarget) return { ok: false as const, errorCode: 'target_unavailable', error: 'target_unavailable' };
+              if (!focusedTarget) {
+                const errorCode = actionId === 'machines.command.run' ? 'command_target_required' : 'target_unavailable';
+                return { ok: false as const, errorCode, error: errorCode };
+              }
               requestedTarget = focusedTarget;
             }
+            if (!builtInActionId.success || (
+              executionPlacement !== 'client'
+              && !hasDeclaredActionDaemonIngress(getActionSpec(builtInActionId.data), 'cli')
+              && !requiresManagedMachineDaemonIngress(builtInActionId.data, executionPlacement, controlControllerTarget)
+              && !REGISTRY_ACTION_IDS_V1.some(id => id === builtInActionId.data)
+            )) {
+              return await pluginExecutor.execute(actionId, input, actionId === 'machines.command.run' && requestedTarget
+                ? { ...context, externalActionTarget: requestedTarget } : context);
+            }
+            // Delegate before local admission: this exact Home's daemon owns
+            // client delivery and the admitted plugin registry occurrence.
+            if (daemonControlTarget === null) return daemonRelayUnavailable(actionId, 'target_absent');
+            const admittedActionId = SignedRootActionIdSchema.safeParse(actionId);
+            if (!admittedActionId.success) return { ok: false as const, errorCode: 'unsupported_action', error: 'unsupported_action' };
             const reconciliation = reconcileExternalActionTarget({
               actionId: admittedActionId.data,
               rawInput: input,

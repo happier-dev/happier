@@ -2,7 +2,7 @@ import { buildApprovalOriginFailure } from '../../approvals/approvalStaleReason.
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './types.js';
 import { getActionSpec } from '../actionSpecs.js';
-import type { ApprovalRequest } from '../../approvals/approvalRequestV1.js';
+import type { ApprovalExecutionOriginV1, ApprovalRequest, ApprovalRequestV2 } from '../../approvals/approvalRequestV1.js';
 import type { ApprovalRequestPublicRead } from '../../approvals/approvalRequestPublicRead.js';
 import type { TargetActionApprovalRequestV1 } from '../../approvals/targetActionApprovalRequestV1.js';
 import { resolveApprovalExecutor } from '../../approvals/resolveApprovalExecutor.js';
@@ -22,8 +22,19 @@ import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } 
 import { rejectUnavailableSessionInputV1, SessionInputAdmissionResultV1Schema, type SessionInputAdmissionResultV1 } from '../../sessions/messages/sessionInputAdmission.js';
 import { SessionInputAdmissionRejectionCodeV1Schema } from '../../sessions/messages/sessionInputAdmissionRejectionV1.js';
 
+/** Deferred requests formed by a Session send their settlement back to that Session. */
+export function hasDeferredApprovalSessionResult(request: ApprovalRequest): request is ApprovalRequestV2 & {
+  executionOriginV1: ApprovalExecutionOriginV1 & {
+    caller: Extract<ApprovalExecutionOriginV1['caller'], { kind: 'session' }>;
+  };
+} {
+  return request.v === 2 && request.approval?.flow === 'deferred'
+    && (request.executionOriginV1.surface === 'agent' || request.executionOriginV1.surface === 'mcp')
+    && request.executionOriginV1.caller.kind === 'session' && !request.executionOriginV1.discussionReplyReturn;
+}
+
 /**
- * Delivery of an approved result to its asking Session is a fact separate from
+ * Delivery of an approval result to its asking Session is a fact separate from
  * the run. Every outcome of that delivery is the Session sender's own receipt:
  * a refusal keeps its typed code and sanitized cause, and an unproven one stays
  * outcome-unknown under the result's retry identity.

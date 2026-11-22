@@ -78,7 +78,8 @@ import { deploymentMoveToRepositoryChildRoleV1 } from '../scm/repositoryFilesPul
 import { DeploymentEnvironmentCreationReviewV1Schema } from '../deployments/deploymentActionsV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
-import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
+import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, hasDeferredApprovalSessionResult, projectSettledApprovalExecution, projectApprovalResultDeliveryV1, projectThrownApprovalResultDeliveryV1, withApprovalResultDeliveryV1 } from './executor/approvalResults.js';
+import { isApprovalRequestV2TerminalStatus } from '../approvals/approvalRequestStatus.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, readDeploymentApprovalSemanticInput, readDeploymentRolloutSemanticInput, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
@@ -1524,14 +1525,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (isHistoricalPublishApprovalRequestV2(request)) {
       return { ok: false, effectAttempted: false, errorCode: 'approval_stale', error: 'approval_stale' };
     }
-    if (request.v === 2 && request.approval?.flow === 'deferred' && isApprovalRequestExecutionApproved(request)) {
+    if (hasDeferredApprovalSessionResult(request)) {
       const origin = request.executionOriginV1;
-      if ((origin.surface === 'agent' || origin.surface === 'mcp') && origin.caller.kind === 'session'
-        && !origin.discussionReplyReturn) {
+      if (origin.caller.kind === 'session') {
         // A signed effect receiver returns its receipt to the deciding Account;
         // that scoped root cannot authorize an unrelated Session input.
         if (context.externalActionExecutionAuthorization) return null;
-        if (request.status === 'approved' && !request.execution) {
+        if (request.status === 'approved' && !request.execution && isApprovalRequestExecutionApproved(request)) {
           // Accepted/blocking replays can still be waiting on another approval.
           // Only an execution acknowledgement warrants observing its receipt.
           if (!replayAcknowledgement?.ok || !readRecord(replayAcknowledgement.result).execution) return null;
@@ -1542,8 +1542,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             observe: observed => settleApprovalExecutionPublication(artifactId, observed, context),
           });
         }
-        if (!request.execution || (request.status !== 'executed' && request.status !== 'failed'
-          && request.status !== 'outcome_unknown')) return null;
+        if (!isApprovalRequestV2TerminalStatus(request.status)) return null;
         // The destination is the admitted caller, never an Action operand or the
         // deciding person's current Session. Keep the receiving Account/Home.
         if (!origin.accountId || context.runtimeAccountId !== origin.accountId
@@ -2469,15 +2468,17 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     return finishExecution(nextExecuted, settledExec);
   }
 
-  /**
-   * Exact-daemon replay capability. Unlike `approval.request.decide`, this
-   * entrypoint owns no decision authority: it can only consume an Artifact
-   * whose canonical owner has already committed an approve decision.
-   */
+  async function publishApprovalDecisionResult(artifactId: string, request: ApprovalRequest, context: ActionExecutorContext) {
+    const settled = await settleApprovalExecutionPublication(artifactId, request, context);
+    if (settled && 'ok' in settled) return settled;
+    return withApprovalResultDeliveryV1(buildApprovalDecisionResult(request), settled?.delivery);
+  }
+
   const resolveBlockingDecisionIfClaimed = createBlockingApprovalDecisionResolver(deps);
+  /** Exact-daemon replay observes terminal decisions and can only execute an already approved request. */
   const replayApprovedApprovalRequest = createApprovalReplay({
     approvalsGet: deps.approvalsGet, approvalsUpdate: deps.approvalsUpdate,
-    requireDiscussionDraftReviewAuthority, settleApprovalExecutionPublication,
+    requireDiscussionDraftReviewAuthority, publishApprovalDecisionResult,
     resumeAutomaticApproval: async (artifactId, request, context) => {
       if (request.v !== 2 || !request.automaticChecks) return request;
       const continued = await automaticApproval.resume(artifactId, request, automaticContinuationContext(request, context));
@@ -7764,7 +7765,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(triggerConsent ? { triggerConsent } : {}),
             ...(narrowsInput ? { narrowedInput: projectNativeJsonValueForTransport(narrowedActionArgs) } : {}) });
           if ('ok' in settled) return settled;
-          if (settled.refused || settled.request.status === 'open') return buildApprovalDecisionResult(settled.request);
+          if (settled.refused || settled.request.status === 'open') return publishApprovalDecisionResult(artifactId, settled.request, ctx);
           existing = settled.request;
         }
         if (triggerConsent && (existing.v !== 2 || !existing.automaticChecks)) return { ok: false,
@@ -7839,22 +7840,21 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         if (decision === 'reject' && existing.status === 'rejected' && existing.decision?.kind === 'reject') {
           const settlementFailure = await settleDiscussionReview?.();
           if (settlementFailure) return settlementFailure;
-          return buildApprovalDecisionResult(existing);
+          return publishApprovalDecisionResult(artifactId, existing, ctx);
         }
         if (decision === 'cancel' && (existing.status === 'canceled'
           || existing.status === 'failed' && existing.execution?.errorCode === 'approval_canceled'
             && existing.v === 2 && existing.execution.effectAttempted === false)) {
           const settlementFailure = await settleDiscussionReview?.();
-          return settlementFailure ?? buildApprovalDecisionResult(existing);
+          return settlementFailure ?? publishApprovalDecisionResult(artifactId, existing, ctx);
         }
 
         if (decision === 'approve'
           && (existing.status === 'approved' || existing.status === 'executed' || existing.status === 'failed' || existing.status === 'outcome_unknown')
-          && isApprovalRequestExecutionApproved(existing)
+          && (isApprovalRequestExecutionApproved(existing)
+            || hasDeferredApprovalSessionResult(existing) && existing.automaticChecks?.phase === 'refused')
           && !isRecoverableApproved) {
-          const settled = await settleApprovalExecutionPublication(artifactId, existing, ctx);
-          if (settled && 'ok' in settled) return settled;
-          return withApprovalResultDeliveryV1(buildApprovalDecisionResult(existing), settled?.delivery);
+          return publishApprovalDecisionResult(artifactId, existing, ctx);
         }
 
         if (existing.status !== 'open' && !isRecoverableApproved && !isCancelableApproved) {
@@ -7882,7 +7882,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const updated = await deps.approvalsUpdate({ artifactId, request: nextFailed, serverId: effectiveServerId, context: ctx });
             const updateFailure = readActionFailureEnvelope(updated);
             if (updateFailure) return updateFailure;
-            return buildApprovalDecisionResult(nextFailed);
+            return publishApprovalDecisionResult(artifactId, nextFailed, ctx);
           }
           const nextCanceled: ApprovalRequest = { ...settleApprovalRequestReplayInputs(existing), status: 'canceled',
             updatedAtMs: Math.max(now, existing.updatedAtMs) };
@@ -7892,7 +7892,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           if (existing.v === 2 && existing.automaticChecks) await automaticApproval.cancel(existing, ctx);
           // Blocking waiters observe the persisted canceled Artifact through their
           // existing cancellation branch; no approval/rejection authority is minted.
-          return buildApprovalDecisionResult(nextCanceled);
+          return publishApprovalDecisionResult(artifactId, nextCanceled, ctx);
         }
 
         if (decision === 'reject') {
@@ -7926,7 +7926,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               serverId: effectiveServerId,
             });
           }
-          return buildApprovalDecisionResult(nextRejected);
+          return publishApprovalDecisionResult(artifactId, nextRejected, ctx);
         }
 
         if (isHistoricalPublishApprovalRequestV2(existing)) {

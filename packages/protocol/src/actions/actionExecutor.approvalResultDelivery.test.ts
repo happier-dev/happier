@@ -27,14 +27,25 @@ const cause = materializeActionRequestAttributionV1({
 async function askAndDecide(
   options: Readonly<{
     deliver: (args: DeliveryArgs) => ReturnType<Delivery>;
-    decision?: 'approve' | 'reject';
+    decision?: 'approve' | 'reject' | 'cancel';
     effectFails?: boolean;
+    checkFailsWith?: 'refuse' | 'ask';
   }>,
 ) {
   let stored: ApprovalRequest | null = null;
   const effects: string[] = [];
   const deliveries: DeliveryArgs[] = [];
   const executor = createActionExecutor({
+    ...(options.checkFailsWith ? { actionAutomations: {
+      select: async () => ({ status: 'ready' as const, subjects: [], after: [], before: [{
+        automationId: 'review', triggerId: 'before', triggerRevision: 1, workflowId: 'workflow',
+        workflowRevision: 1, ownerAccountId: 'account', actionIds: ['session.title.set'],
+        phase: 'before' as const, mode: 'wait' as const, onFailure: options.checkFailsWith!,
+      }] }),
+      start: async () => ({ runs: [{ automationId: 'review', triggerId: 'before', runId: 'failed-check' }], notices: [] }),
+      wait: async () => ({ state: 'failed' as const, errorCode: 'command_failed' }),
+      settle: async () => {},
+    } } : {}),
     approvalsCreate: async ({ request }) => {
       stored = ApprovalRequestV2Schema.parse(
         JSON.parse(JSON.stringify(request)),
@@ -93,12 +104,12 @@ async function askAndDecide(
     ),
   ).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
   // The deciding person is focused on another Session; delivery still targets the asking one.
-  const decide = async () =>
+  const decide = async (decision = options.decision ?? 'approve') =>
     await executor.execute(
       'approval.request.decide',
       {
         artifactId: 'title-proposal',
-        decision: options.decision ?? 'approve',
+        decision,
       },
       {
         surface: 'ui',
@@ -231,7 +242,7 @@ describe('approval result delivery is a receipt beside the run record', () => {
     },
   );
 
-  it('reports a run that failed as failed and a rejection as rejected, unchanged', async () => {
+  it('delivers a failed execution to the requesting Session', async () => {
     const failed = await askAndDecide({
       effectFails: true,
       deliver: async (input) => ({
@@ -241,19 +252,41 @@ describe('approval result delivery is a receipt beside the run record', () => {
     });
     expect(await failed.decide()).toMatchObject({
       ok: true,
-      result: { status: 'failed', execution: { ok: false } },
+      result: { status: 'failed', execution: { ok: false }, delivery: { status: 'accepted' } },
     });
     expect(failed.effects).toEqual([]);
-    const rejected = await askAndDecide({
-      decision: 'reject',
-      deliver: async (input) => ({
-        status: 'accepted',
-        localId: input.localId,
-      }),
+  });
+
+  it.each([['reject', 'rejected'], ['cancel', 'canceled']] as const)(
+    'delivers a %s decision to the requesting Session without executing the action',
+    async (decision, status) => {
+      const flow = await askAndDecide({
+        decision,
+        deliver: async (input) => ({ status: 'accepted', localId: input.localId }),
+      });
+      for (let attempt = 0; attempt < 2; attempt++) {
+        expect(await flow.decide()).toMatchObject({ ok: true, result: { status, delivery: { status: 'accepted' } } });
+      }
+      expect(flow.effects).toEqual([]);
+      expect(flow.deliveries.map(({ sessionId, localId, message }) => ({ sessionId, localId, payload: JSON.parse(message) })))
+        .toEqual(Array.from({ length: 2 }, () => ({ sessionId: 'origin-session', localId: 'approval-result:title-proposal',
+          payload: { artifactId: 'title-proposal', actionId: 'session.title.set', ok: true, status } })));
     });
-    const answer = await rejected.decide();
-    expect(answer).toMatchObject({ ok: true, result: { status: 'rejected' } });
-    expect(rejected.effects).toEqual([]);
-    expect(rejected.deliveries).toEqual([]);
+
+  it.each([['refuse', 'failed'], ['ask', 'rejected']] as const)(
+    'delivers terminal %s check settlement to the requesting Session', async (onFailure, status) => {
+      const flow = await askAndDecide({ checkFailsWith: onFailure,
+        deliver: async input => ({ status: 'accepted', localId: input.localId }) });
+      if (onFailure === 'ask') {
+        expect(await flow.decide()).toMatchObject({ ok: true, result: { status: 'open' } });
+        expect(flow.deliveries).toEqual([]);
+      }
+      expect(await flow.decide(onFailure === 'ask' ? 'reject' : 'approve')).toMatchObject({
+        ok: true, result: { status, delivery: { status: 'accepted' } },
+      });
+      expect(flow.effects).toEqual([]);
+      expect(flow.deliveries).toEqual([expect.objectContaining({ sessionId: 'origin-session',
+        localId: 'approval-result:title-proposal' })]);
+      expect(JSON.parse(flow.deliveries[0]!.message)).toMatchObject({ status });
   });
 });

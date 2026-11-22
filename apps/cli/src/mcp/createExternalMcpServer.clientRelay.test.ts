@@ -32,13 +32,76 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
   createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ed25519 } from '@noble/curves/ed25519';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 
 const credentials = { token: 'mcp-test-token', encryption: null, credentialProvenance: 'stored_session' } as const;
 const workspace = { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'main', focusedGroupId: 'main', maximizedGroupId: null };
 
 describe('standalone MCP client Action admission', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it('binds a standalone MCP command to the workspace of its Session before requesting approval', async () => {
+    const sessionId = 'cmcpcommandbound1234567890';
+    const machineId = 'command-machine';
+    const directory = '/owned/command-workspace';
+    const requests: ReturnType<typeof ApprovalRequestV2Schema.parse>[] = [];
+    const artifacts = new Map<string, object>();
+    const home = createServer(async (request, response) => {
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      response.setHeader('content-type', 'application/json');
+      if (path === '/v1/account/encryption/currentness') response.end(JSON.stringify({
+        mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
+      }));
+      else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (path === `/v2/sessions/${sessionId}`) response.end(JSON.stringify(V2SessionByIdResponseSchema.parse({
+        session: { id: sessionId, seq: 1, createdAt: 1, updatedAt: 1, active: true, activeAt: 1,
+          encryptionMode: 'plain', metadataVersion: 1, metadata: JSON.stringify({ machineId, path: directory }),
+          dataEncryptionKey: null, agentState: null, agentStateVersion: 1 },
+      })));
+      else if (request.method === 'POST' && path === '/v1/artifacts') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const artifact = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        const content = decodePlainArtifactStoredContent(artifact.body);
+        if (!content || typeof content !== 'object' || !('body' in content) || typeof content.body !== 'string') {
+          response.statusCode = 400; response.end('{}'); return;
+        }
+        requests.push(ApprovalRequestV2Schema.parse(JSON.parse(content.body)));
+        const stored = { ...artifact, ownerAccountId: 'mcp-test-account', access: 'owner', encryptionMode: 'plain',
+          dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+          seq: 1, createdAt: 1, updatedAt: 1 };
+        artifacts.set(artifact.id, stored);
+        response.end(JSON.stringify(stored));
+      } else if (request.method === 'GET' && artifacts.has(path.slice('/v1/artifacts/'.length))
+        && path.startsWith('/v1/artifacts/')) {
+        response.end(JSON.stringify(artifacts.get(path.slice('/v1/artifacts/'.length))));
+      } else { response.statusCode = 404; response.end('{}'); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const address = home.address();
+    if (!address || typeof address === 'string') throw new Error('Missing test address');
+    const { mcp } = runWithServerHttpBaseUrl(`http://127.0.0.1:${address.port}`, () => createExternalMcpServer({
+      credentials, machineId, defaultSessionId: sessionId,
+      daemonControlTarget: null,
+      serverFeaturesSnapshot: { status: 'ready', features: FeaturesResponseSchema.parse({ features: {}, capabilities: {} }) },
+    }));
+    const client = new Client({ name: 'bound-command', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const input = { command: 'cat', stdin: { fixture: 'bound workspace' } };
+      const response = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'machines.command.run', input } }));
+      const content = response.content.find(entry => entry.type === 'text');
+      expect(content?.type === 'text' ? JSON.parse(content.text) : null)
+        .toMatchObject({ kind: 'approval_request_created', artifactId: expect.any(String) });
+      expect(requests).toEqual([expect.objectContaining({ actionId: 'machines.command.run', actionArgs: input,
+        executionOriginV1: expect.objectContaining({ target: { kind: 'machine', machineId, project: { machineId, directory } } }) })]);
+    } finally {
+      await client.close(); await mcp.close();
+      home.closeAllConnections(); await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
 
   it('reads Workflow triggers through the authenticated exact-Home feature resolver', async () => {
     const features = FeaturesResponseSchema.parse({ features: { workflows: { enabled: true } }, capabilities: {} });
