@@ -103,7 +103,8 @@ export function RemoteViewerControlBar(props: RemoteViewerControlBarProps) {
                     checked={actions.modifiers[modifier] === 'locked' ? 'mixed' : actions.modifiers[modifier] !== 'off'}
                     selected={actions.modifiers[modifier] !== 'off'} disabled={!props.enabled}
                     onPress={() => tapModifier(modifier)} testID={`${testID}-modifier-${modifier}`} />) : null}
-                {panel === 'arrows' ? REMOTE_VIEWER_KEYS.filter(key => key !== 'Escape').map(key => <IconButton key={key}
+                {/* Escape is a key like the others: it sits in this panel, so the bar's row holds one control style. */}
+                {panel === 'arrows' ? REMOTE_VIEWER_KEYS.map(key => <IconButton key={key}
                     variant="plain" icon={<KeyHint label={key} />} accessibilityLabel={key} disabled={!props.enabled} onPress={() => { actions.sendKey(key); }}
                     testID={`${testID}-key-${key}`} />) : null}
                 {panel === 'clipboard' ? <>
@@ -120,9 +121,7 @@ export function RemoteViewerControlBar(props: RemoteViewerControlBarProps) {
                     { id: 'arrows' as const, label: props.labels.arrows },
                     { id: 'clipboard' as const, label: props.labels.clipboard },
                 ]} activeTabId={panel} onSelectTab={selectPanel} testIDPrefix={`${testID}-tabs`} compact />
-                <IconButton variant="plain" icon={<KeyHint label="Escape" />} accessibilityLabel="Escape"
-                    disabled={!props.enabled} onPress={() => { actions.sendKey('Escape'); }} testID={`${testID}-escape`} />
-                <IconButton iconName="keyboard" accessibilityLabel={actions.keyboard?.focused
+                <IconButton variant="plain" iconName="keyboard" accessibilityLabel={actions.keyboard?.focused
                     ? props.labels.hideKeyboard : props.labels.showKeyboard}
                     selected={actions.keyboard?.focused} disabled={!props.enabled || !actions.keyboard?.available}
                     preserveFocusOnPress

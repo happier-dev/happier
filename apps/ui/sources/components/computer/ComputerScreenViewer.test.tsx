@@ -201,7 +201,8 @@ describe('ComputerScreenViewer', () => {
     // reserved space. Actual browser hit testing remains a loaded-runtime QA check.
     expect(stage.findAllByType(BrowserPresenceCapsule).length).toBe(0);
     expect(screen.root.findByType(BrowserPresenceCapsule).props.placement).toBe('inline');
-    expect(screen.findByTestId('v-input-controls-escape')?.props.disabled).toBe(false);
+    // Escape is one of the keys in the open keys panel; the bar's row keeps one control style.
+    expect(screen.findByTestId('v-input-controls-key-Escape')?.props.disabled).toBe(false);
     expect(screen.findByTestId('v-input-controls-keyboard')?.props.disabled).toBe(false);
 
     // The floating/Session host owns its own footer, so the embedded body must not add another.
@@ -252,9 +253,10 @@ describe('ComputerScreenViewer', () => {
     expect(screen.findByTestId('v-input-controls')).not.toBeNull();
     await screen.pressByTestIdAsync('v-input-controls-tabs:modifiers');
     await screen.pressByTestIdAsync('v-input-controls-modifier-control');
-    await screen.pressByTestIdAsync('v-input-controls-escape');
-    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'keyboard_key', key: 'Escape', modifiers: ['control'] }));
+    // A held modifier waits across panels for the next key: Escape is in the keys panel.
     await screen.pressByTestIdAsync('v-input-controls-tabs:arrows');
+    await screen.pressByTestIdAsync('v-input-controls-key-Escape');
+    expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'keyboard_key', key: 'Escape', modifiers: ['control'] }));
     await screen.pressByTestIdAsync('v-input-controls-key-ArrowLeft');
     expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ kind: 'keyboard_key', key: 'ArrowLeft' }));
     await screen.pressByTestIdAsync('v-input-controls-tabs:clipboard');
