@@ -28,6 +28,11 @@ import type { PluginSurfaceTargetKind } from '@/sync/domains/plugins/ui/surfaceP
 import type { PluginSurfaceTargetUndeclaredReason } from '@/sync/domains/plugins/ui/scope/resolveResourceScope';
 
 import { usePluginUiTheme } from './pluginUiThemeProjection';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
+import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getEnabledAgentIds } from '@/agents/catalog/enabled';
+import { readLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { readProjectRepositoryIdentityV1, type ProjectScmContextSnapshotV1, type ProjectSurfaceTargetV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { useActiveServerAccountScopeLifetime, useSessionProjectScmSummarySnapshot } from '@/sync/domains/state/storage';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -360,6 +365,22 @@ export function usePluginSurfaceEnvironment(
 }
 
 /**
+ * The Agent a new Session starts with for this Account, as the New Session default owner resolves it
+ * (`resolvePreferredBackendTarget` over the remembered selection, the same call `agents.backends.list` makes for its
+ * `defaultTargetKey`), named by the Agent catalog's static title. No daemon read: a plugin control names it from first
+ * paint, and the catalog read confirms the same Agent later.
+ */
+function readPluginSurfacePreferredAgent(scope: ActiveServerAccountScopeLifetime['scope'] | null): NonNullable<SurfaceContext['preferredAgent']> | null {
+    const target = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(scope) });
+    if (target === null) return null;
+    const targetKey = buildBackendTargetKeyV2(target);
+    const entry = getResolvedBackendCatalogEntries({ enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: undefined }) })
+        .find(candidate => buildBackendTargetKeyV2(candidate.backendTarget) === targetKey);
+    const label = entry?.title.trim();
+    return label ? Object.freeze({ targetKey, label }) : null;
+}
+
+/**
  * Compose the public snapshot from the host-stamped public mount fact. The
  * physical mount binding derives destination mounts from the admitted Registry
  * binding; embedded mounts enter through their own normalized producer.
@@ -392,6 +413,7 @@ export function createPluginSurfaceContext(input: Readonly<{
                 ...(input.environment.pageNavigation ? { navigation: input.environment.pageNavigation } : {}) }) }
             : {}),
         ...(input.environment.openedFrom ? { openedFrom: input.environment.openedFrom } : {}),
+        preferredAgent: readPluginSurfacePreferredAgent(input.accountLifetime?.isCurrent() === true ? input.accountLifetime.scope : null),
         accountEncryptionMode: input.accountEncryptionMode,
         platform: input.environment.platform,
         locale: input.environment.locale,

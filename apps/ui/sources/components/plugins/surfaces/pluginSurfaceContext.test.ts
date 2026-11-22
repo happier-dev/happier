@@ -7,6 +7,9 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { storage } from '@/sync/domains/state/storage';
 
 import { createPluginSurfaceContext, getPluginSurfaceTargetAuthorityKey, resolvePluginSurfaceTarget, usePluginSurfaceEnvironment } from './pluginSurfaceContext';
+import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
+import { readLastUsedBackendSelection, rememberLastUsedBackendSelection } from '@/sync/domains/state/newSessionTargetUiState';
 import { readProjectWidgetAreaContextV1 } from '@/sync/domains/widgets/projectWidgetAreaContext';
 import { WorkspaceRefV1Schema } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -43,6 +46,20 @@ describe('createPluginSurfaceContext', () => {
         expect(getPluginSurfaceTargetAuthorityKey(resolution.target)).not.toBe(getPluginSurfaceTargetAuthorityKey({
             ...resolution.target, homeId: 'replacement-home' }));
         expect(resolvePluginSurfaceTarget({ targetKind: 'services' })).toEqual({ resolved: true, target: { kind: 'services' } });
+    });
+    it('names the Account\'s preferred Agent from the New Session default owner, without a catalog read (F10)', () => {
+        const fixture = createPluginSurfaceContextFixture();
+        const scope = { serverId: 'home-preferred', accountId: 'viewer-preferred' };
+        const input = { mount: fixture.mount, target: fixture.target, accountEncryptionMode: fixture.accountEncryptionMode,
+            environment: { ...fixture, columnVisible: false }, translations: fixture.translations,
+            accountLifetime: { scope, isCurrent: () => true } };
+        rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: null, lastUsedAgent: 'codex' });
+        onTestFinished(() => { rememberLastUsedBackendSelection(scope, { lastUsedBackendTarget: null, lastUsedAgent: null }); });
+        const preferred = resolvePreferredBackendTarget({ ...readLastUsedBackendSelection(scope) });
+        const published = PluginUiHostApiSurfaceContextV1Schema.parse(createPluginSurfaceContext(input));
+        // The same key `agents.backends.list` publishes as its default, and the catalog's name for it.
+        expect(published.preferredAgent?.targetKey).toBe(buildBackendTargetKeyV2(preferred));
+        expect(published.preferredAgent?.label).toMatch(/codex/iu);
     });
     it('publishes only the admitted current Account lifetime scope, never a global or retired identity', () => {
         const fixture = createPluginSurfaceContextFixture();

@@ -304,6 +304,55 @@ describe('the mounted configured entry action controls', () => {
     expect(row()).toEqual(settledRow);
   });
 
+  it('names the Account\'s preferred Agent from first paint, unchanged when the catalog read lands (F10)', async () => {
+    // A cold document: the host's surface context already names the preferred Agent, so the primary draws
+    // "Review with Codex" before `agents.backends.list` answers, and the same words after.
+    const held: Array<() => void> = [];
+    const surface = defineUiSurface(() => (
+      <TriageEntryActionControls
+        target={{ kind: 'entry', sectionId: 'open', entryRef: testkitEntryRef({ entryId: 'pr-preferred', kindId: 'pull-request' }),
+          sourceInstanceId: '11111111-1111-4111-8111-111111111111' }}
+        // A repository no earlier entry in this document settled, so no last-known default answers for it.
+        repository={{ kind: 'github', deployment: 'github.com', repository: 'acme/preferred-agent' }}
+        actions={TRIAGE_DEFAULT_ACTIONS_V1}
+        workflowSubject="pullRequest"
+        viewerIsAuthor={false}
+        reviewPreparation="ready"
+        onAction={() => null}
+      />
+    ));
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'fixture-instance-preferred', mountNonce: 'fixture-mount-preferred' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface,
+      surfaceContext: createSurfaceContextFixture({ preferredAgent: { targetKey: 'backend:codex', label: 'Codex' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: { executeAction: async ({ action }) => {
+        const id = typeof action === 'string' ? action : action.localId;
+        await new Promise<void>((resolve) => { held.push(resolve); });
+        if (id === 'agents.backends.list') return { defaultTargetKey: 'backend:codex', items: [{
+          targetKey: 'backend:codex', label: 'Codex', enabled: true,
+          identity: { pluginId: 'happier.codex', localId: 'codex' },
+        }] } as never;
+        if (id === 'projects.list') return { items: [], truncated: false } as never;
+        throw new Error(`Unexpected Action ${id}`);
+      } },
+    });
+    mounted.push(fixture);
+    const row = () => Array.from(document.querySelectorAll('button, [role="button"]'))
+      .map((node) => node.getAttribute('aria-label') ?? node.textContent ?? '').filter((name) => name !== '');
+    await act(async () => { await new Promise<void>((resolve) => setTimeout(resolve, 0)); });
+    const firstPaint = row();
+    expect(firstPaint).toContain('Review with Codex');
+    await act(async () => {
+      for (const release of held.splice(0)) release();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      for (const release of held.splice(0)) release();
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+    expect(row()).toEqual(firstPaint);
+  });
+
   it('leads the wide row with Ask and ⋯, so the primary grows into free space when its agent lands (F10)', async () => {
     // A cold document reads the default agent after first paint: the primary draws "Review" and then names its
     // agent. Ask and ⋯ come first, so that growth moves neither of them; the primary ends the row as the lab's write does.

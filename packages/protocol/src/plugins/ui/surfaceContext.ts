@@ -336,6 +336,15 @@ export const PluginUiHostApiSurfaceContextV1Schema = lazyZodSchema(() => z.stric
   machineExecutionReady: z.optional(z.boolean()),
   /** Read-only requester-origin admission, independent of any callee or selected Machine. */
   requesterExecutionReady: z.optional(z.boolean()),
+  /**
+   * The Agent a new Session starts with by default for this mount's Account: the host's own preferred-target
+   * owner and the Agent catalog's label, so a control can name it from first paint. Presentation only; the
+   * launch still resolves its Agent at its own owner. `null` when no Agent resolves.
+   */
+  preferredAgent: z.optional(z.nullable(z.strictObject({
+    targetKey: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    label: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+  }))),
   accountEncryptionMode: z.enum(['plain', 'e2ee']),
   platform: PluginUiPlatformV1Schema,
   locale: PluginUiHostApiSurfaceNonBlankStringV1Schema,

@@ -1,7 +1,7 @@
 import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
-import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
 import {
     readTriageEntrySessionStartTargetV1, readTriageRecentSessionsV1,
@@ -81,8 +81,12 @@ export function useTriageEntrySessionStartChoices(
             .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
         return () => lifetime.abort();
     }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
+    // An action without a profile starts with the Account's preferred Agent, which the host names in the surface
+    // context from first paint (the same target the catalog read later resolves as its default): no "Fix" that grows.
+    const preferredAgentLabel = useSurfaceContext().preferredAgent?.label;
     // Not read yet (idle on the first frame, then loading): the settled agent for this action's profile holds the label.
     const settlingAgentLabel = defaultTarget.status === 'loading' || (defaultTarget.status === 'idle' && profileId !== undefined)
-        ? LAST_DEFAULT_AGENT_LABELS.get(agentLabelKey(profileId)) : undefined;
+        ? (profileId === null ? preferredAgentLabel : undefined) ?? LAST_DEFAULT_AGENT_LABELS.get(agentLabelKey(profileId))
+        : undefined;
     return { defaultTarget, recentSessions, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
 }
