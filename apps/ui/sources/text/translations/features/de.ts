@@ -20148,6 +20148,8 @@ const de = translated(workflowValueReferenceTranslations.de, {
         namePlaceholder: 'Workflow-Name',
         agentRuntime: 'Agent-Laufzeit',
         sessionType: 'Sitzungstyp',
+        terminalDefaultChip: 'Standard-Terminal',
+        sessionTypeHappierChip: 'Happier-Sitzung',
         approvalProfile: "Freigabeprofil",
         firstPromptTitle: 'Was soll zuerst passieren?',
         firstPromptBody: 'Ein einzelner Prompt ist bereits ein Workflow. Füg Schritte hinzu, wenn du sie brauchst.',

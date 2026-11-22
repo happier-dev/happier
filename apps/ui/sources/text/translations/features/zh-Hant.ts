@@ -20529,6 +20529,8 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         namePlaceholder: '工作流程名稱',
         agentRuntime: '智慧代理執行環境',
         sessionType: '工作階段類型',
+        terminalDefaultChip: '預設終端機',
+        sessionTypeHappierChip: 'Happier 工作階段',
         approvalProfile: "核准設定檔",
         firstPromptTitle: '第一步要做什麼？',
         firstPromptBody: '一個提示詞就是一個工作流程。需要時再加入步驟。',

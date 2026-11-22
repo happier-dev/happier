@@ -20668,6 +20668,8 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         namePlaceholder: 'Nom del flux de treball',
         agentRuntime: 'Entorn d’execució de l’agent',
         sessionType: 'Tipus de sessió',
+        terminalDefaultChip: 'Terminal predeterminat',
+        sessionTypeHappierChip: 'Sessió de Happier',
         approvalProfile: "Perfil d’aprovació",
         firstPromptTitle: 'Què ha de passar primer?',
         firstPromptBody: 'Un sol prompt ja és un flux de treball. Afegeix passos quan els necessitis.',

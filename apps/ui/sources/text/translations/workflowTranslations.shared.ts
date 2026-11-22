@@ -417,6 +417,9 @@ export const en = {
         agentRuntime: 'Agent runtime',
         /** A Session's type (Happier or direct) as an authoring field's label. */
         sessionType: 'Session type',
+        /** A chip's words for an inherited value that alone would not name its field. */
+        terminalDefaultChip: 'Default terminal',
+        sessionTypeHappierChip: 'Happier session',
         approvalProfile: "Approval profile",
         firstPromptTitle: 'What should happen first?',
         firstPromptBody: 'One prompt is a workflow. Add steps when you need them.',

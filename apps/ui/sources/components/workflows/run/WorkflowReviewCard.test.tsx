@@ -194,6 +194,18 @@ describe('WorkflowReviewCard', () => {
         expect(order.indexOf('Published')).toBeLessThan(order.indexOf('workflows.review.useResult'));
         expect(order.indexOf('workflows.review.useResult')).toBeLessThan(order.indexOf('workflows.review.generate'));
     });
+    it('heads a held value with its source and Copy, or, with no source, with the Result header as a settled one (FIN-DESIGN-ACCEPT-4 B)', async () => {
+        const sourceless = await mount();
+        // No empty band over the value: Copy and Expand join the Result header, one result anatomy.
+        expect(sourceless.screen.findByTestId('review-value-head')).toBeFalsy();
+        expect(sourceless.screen.getTextContent()).toContain('workflows.review.title');
+        expect(sourceless.screen.findByTestId('review-copy')).toBeTruthy();
+        await sourceless.screen.update(<></>);
+        const sourced = await mount({ resultSourceLabel: 'Answered by Ana' });
+        expect(sourced.screen.findByTestId('review-value-head')).toBeTruthy();
+        expect(sourced.screen.getTextContent()).toContain('Answered by Ana');
+        expect(sourced.screen.getTextContent()).not.toContain('workflows.review.title');
+    });
     it('reads declared result fields in schema order while keeping undeclared output values', async () => {
         const { screen } = await mount({ contract: { kind: 'json', schema: { type: 'object', properties: {
             version: { type: 'string', title: 'Version' }, summary: { type: 'string', title: 'Summary' },

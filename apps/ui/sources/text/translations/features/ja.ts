@@ -20589,6 +20589,8 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         namePlaceholder: 'ワークフロー名',
         agentRuntime: 'エージェントランタイム',
         sessionType: 'セッションの種類',
+        terminalDefaultChip: 'デフォルトのターミナル',
+        sessionTypeHappierChip: 'Happier セッション',
         approvalProfile: "承認プロファイル",
         firstPromptTitle: '最初に何をしますか？',
         firstPromptBody: 'プロンプト 1 つでもワークフローです。必要になったらステップを追加してください。',

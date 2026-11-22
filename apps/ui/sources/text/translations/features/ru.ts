@@ -20679,6 +20679,8 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         namePlaceholder: 'Название рабочего процесса',
         agentRuntime: 'Среда выполнения агента',
         sessionType: 'Тип сессии',
+        terminalDefaultChip: 'Терминал по умолчанию',
+        sessionTypeHappierChip: 'Сессия Happier',
         approvalProfile: "Профиль подтверждения",
         firstPromptTitle: 'Что должно произойти первым?',
         firstPromptBody: 'Один промпт — уже рабочий процесс. Добавляйте шаги, когда они понадобятся.',

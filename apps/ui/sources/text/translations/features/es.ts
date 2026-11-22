@@ -20590,6 +20590,8 @@ const es = translated(workflowValueReferenceTranslations.es, {
         namePlaceholder: 'Nombre del flujo de trabajo',
         agentRuntime: 'Entorno de ejecución del agente',
         sessionType: 'Tipo de sesión',
+        terminalDefaultChip: 'Terminal predeterminada',
+        sessionTypeHappierChip: 'Sesión de Happier',
         approvalProfile: "Perfil de aprobación",
         firstPromptTitle: '¿Qué debería ocurrir primero?',
         firstPromptBody: 'Un solo prompt ya es un flujo de trabajo. Añade pasos cuando los necesites.',

@@ -177,6 +177,16 @@ it('keeps missing declared choices distinct from ordinary literal Action values'
     expect(screen.getTextContent()).toContain('common.unavailable');
 });
 
+it('reads a goal status by its option name, as other choice fields read (FIN-DESIGN-ACCEPT-4 D)', async () => {
+    const harness = await loadHarness();
+    const draft = buildDraft(harness, [{ kind: 'action', id: 'goal', actionId: 'session.goal.set',
+        input: { status: { kind: 'literal', value: 'complete' } } }]);
+    const screen = await renderList(harness, { draft, presentation: { editable: false } });
+    const text = screen.getTextContent();
+    expect(text).toContain('Complete');
+    expect(text).not.toMatch(/\bcomplete\b/u);
+});
+
 it('reads unconditional Run branches and distinguishes an untaken branch from future work', async () => {
     const { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
     const { WorkflowProgressEnvelopeV1Schema } = await import('@happier-dev/protocol/workflows/workflowProgressV1');

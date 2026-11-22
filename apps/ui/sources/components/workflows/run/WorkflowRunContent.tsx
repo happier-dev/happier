@@ -985,6 +985,10 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const failureChoices = failurePresentation == null ? null : resolveWorkflowRecoveryChoices(failurePresentation.recovery, props);
     const failureRecoveryInstruction = (failureStepBeside ? null : failurePresentation?.recovery.usageLimitWait ?? failureChoices?.waitLine)
         ?? (failureChoices?.noChoices === true && primaryAction === 'stop' ? t('workflows.recovery.nextStop') : null);
+    // That line already names the away Machine and when choices appear, so the page does not say contact was lost
+    // a second time beside it (FIN-DESIGN-ACCEPT-4 G).
+    const failureSaysReconnect = failureRecoveryInstruction != null && failurePresentation?.recovery.usageLimitWait == null
+        && failureRecoveryInstruction === failureChoices?.waitLine;
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
         workflowCustodyState: props.run.workflowCustodyState,
@@ -1410,6 +1414,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 {/* Contact loss is all that is known; resume choices come from
                     the recovery owner once the current state is. */}
                 {props.machineReachable === false && (!props.machineStatus || props.machineStatus.bucket === 'offline') && !isTerminalWorkflowRunState(props.run.state)
+                    && !failureSaysReconnect
                     // A selected step that stopped says when its choices appear, in its recovery card (DESIGN-17 R1).
                     && !(selectedInvocation?.lifecycle === 'failed' || selectedInvocation?.lifecycle === 'outcome_uncertain') ? (
                     <Text testID={`${testIDPrefix}-machine-unavailable`} style={styles.provenance}>

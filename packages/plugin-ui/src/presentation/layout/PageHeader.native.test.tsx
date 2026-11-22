@@ -208,3 +208,35 @@ describe('page header facts line', () => {
     expect(renderer.toJSON()).toBeNull();
   });
 });
+
+describe('page header status without actions', () => {
+  it('gives a lone status its own line under the summary at every title width, not a block beside the title', () => {
+    // FIN-DESIGN-ACCEPT-4 A: on a phone the actions leave for the navigation bar; "Saved" floated beside a short
+    // title and under a long one. It sits in one place, under the summary.
+    for (const title of ['Plan', 'Prepare the 0.3 release and share the update']) {
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(<HappierPageHeader testID="header" title={<Text testID="title">{title}</Text>}
+          description="When you press Run now → run the selected Review steps"
+          status={<Text testID="status">Saved</Text>} />);
+      });
+      try {
+        const root = renderer.root;
+        const views = () => root.findAllByType('View');
+        deliverLayout(views().find(node => node.props.testID === 'header')!, 390, 120);
+        deliverLayout(measuringAncestor(root.findByProps({ testID: 'title' })), 120, 32);
+        const split = views().find(node => node.props.onLayout && node.props.style?.flexBasis === HAPPIER_PAGE_METRICS.sectionTextMinWidthPx)!;
+        deliverLayout(split, 326, 80);
+        // In the identity column, after the summary: the status's line comes after the description's.
+        const lineIn = (node: ReactTestInstance): ReactTestInstance => node.parent === split ? node : lineIn(node.parent!);
+        const lines = split.children as ReactTestInstance[];
+        const descriptionLine = lineIn(root.findAll(node => node.props.children === 'When you press Run now → run the selected Review steps')[0]!);
+        const statusLine = lineIn(root.findByProps({ testID: 'status' }));
+        expect(lines.indexOf(statusLine)).toBeGreaterThan(lines.indexOf(descriptionLine));
+        expect(root.findAll(node => node.props.testID === 'header-actions-below')).toHaveLength(0);
+      } finally {
+        act(() => renderer.unmount());
+      }
+    }
+  });
+});

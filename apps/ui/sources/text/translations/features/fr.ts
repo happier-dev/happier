@@ -20711,6 +20711,8 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         namePlaceholder: 'Nom du flux de travail',
         agentRuntime: 'Environnement d’exécution de l’agent',
         sessionType: 'Type de session',
+        terminalDefaultChip: 'Terminal par défaut',
+        sessionTypeHappierChip: 'Session Happier',
         approvalProfile: "Profil d’approbation",
         firstPromptTitle: 'Que doit-il se passer en premier ?',
         firstPromptBody: 'Un seul prompt est déjà un flux de travail. Ajoute des étapes quand tu en as besoin.',

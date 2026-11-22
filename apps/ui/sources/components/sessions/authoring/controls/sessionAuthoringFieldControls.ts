@@ -55,6 +55,8 @@ export const SESSION_AUTHORING_NONE_OPTION_ID = '__none__';
 export type SessionAuthoringFieldOption = Readonly<{
     id: string;
     label: string;
+    /** An inherited chip's words where the value alone does not name its field ("Default terminal"). */
+    chipLabel?: string;
     subtitle?: string;
     disabled?: boolean;
 }>;
@@ -406,6 +408,7 @@ function buildTranscriptStorageOptions(): readonly SessionAuthoringFieldOption[]
         {
             id: 'persisted',
             label: t('sessionsList.storagePersistedTab'),
+            chipLabel: t('workflows.editor.sessionTypeHappierChip'),
             subtitle: t('settingsSession.defaultStorage.persistedSubtitle'),
         },
         {
@@ -740,7 +743,7 @@ export function resolveSessionAuthoringFieldControl(params: Readonly<{
                 kind: 'options',
                 title: fieldTitle,
                 options: [
-                    { id: SESSION_AUTHORING_NONE_OPTION_ID, label: t('common.default') },
+                    { id: SESSION_AUTHORING_NONE_OPTION_ID, label: t('common.default'), chipLabel: t('workflows.editor.terminalDefaultChip') },
                     {
                         id: 'tmux',
                         label: t('common.on'),

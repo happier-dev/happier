@@ -24,7 +24,7 @@ import { ActionIdSchema } from '../../actionIds.js';
 import { type ActionInputOption } from '../../actionInputHints.js';
 import { ProviderConnectionIdSchema } from '../../../providers/ids.js';
 import { SESSION_PERMISSION_INTENT_INPUTS, SessionPermissionModeInputSchema } from '../../../sessions/metadata/sessionPermissionModes.js';
-import { SessionTasksSetInputV1Schema, SessionWorkStateStatusV1Schema } from '../../../sessions/work/state/sessionWorkStateV1.js';
+import { SessionTasksSetInputV1Schema, SessionWorkStateStatusV1Schema, type SessionWorkStateStatusV1 } from '../../../sessions/work/state/sessionWorkStateV1.js';
 import { SESSION_RPC_METHODS } from '../../../rpc/methods.js';
 import { SessionSectionSetInputV1Schema, SessionSectionSetResultV1Schema } from '../../sessionSections.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../../teams/credentials/resourceV1.js';
@@ -119,6 +119,22 @@ export const SESSION_VIEW_INPUT_OPTION_LABELS: Readonly<Record<SessionListViewV1
  * the awareness contract that owns them. A spec listing its own literals would drift the moment
  * that enum changes.
  */
+/** A goal's status in words, keyed by the work-state owner's statuses so a new status cannot go unnamed. */
+const SESSION_GOAL_STATUS_OPTION_LABELS: Readonly<Record<SessionWorkStateStatusV1, string>> = {
+  pending: 'Pending',
+  active: 'Active',
+  paused: 'Paused',
+  blocked: 'Blocked',
+  complete: 'Complete',
+  cancelled: 'Cancelled',
+  unknown: 'Unknown',
+};
+
+/** The statuses a goal can be set to, read by their names (a reported "unknown" is not one a writer chooses). */
+const SESSION_GOAL_STATUS_INPUT_OPTIONS: ActionInputOption[] = lazyActionSpecArray(() => SessionWorkStateStatusV1Schema.options
+  .filter((status) => status !== 'unknown')
+  .map((status) => ({ value: status, label: SESSION_GOAL_STATUS_OPTION_LABELS[status] })));
+
 export const SESSION_VIEW_INPUT_OPTIONS: ActionInputOption[] = lazyActionSpecArray(() => SessionListViewV1Schema.options.map((view) => ({
   value: view,
   label: SESSION_VIEW_INPUT_OPTION_LABELS[view],
@@ -689,7 +705,7 @@ function createSessionStateActionSpecs() {
       fields: [
         { path: 'sessionId', title: 'Session id', prompt: 'Which session?', widget: 'text', required: true },
         { path: 'objective', title: 'Objective', widget: 'textarea' },
-        { path: 'status', title: 'Status', widget: 'text' },
+        { path: 'status', title: 'Status', widget: 'select', options: SESSION_GOAL_STATUS_INPUT_OPTIONS },
         { path: 'tokenBudget', title: 'Token budget', widget: 'text' },
         { path: 'resumeInactiveWithInitialGoal', title: 'Resume inactive session with goal', widget: 'boolean' },
       ],

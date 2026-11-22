@@ -1047,6 +1047,23 @@ describe('WorkflowRunContent', () => {
     expect(open.getTextContent()).toContain(reconnect);
   });
 
+  it('says a live Run lost its Machine once, not as a reconnect line and a lost-contact line (FIN-DESIGN-ACCEPT-4 G)', async () => {
+    const invocation = createWorkflowInvocationIndexFixture({ id: 'failed', parentRecordId: 'root', lifecycle: 'failed' });
+    const progress = WorkflowProgressEnvelopeV1Schema.parse({ kind: 'happier.workflow-progress.v1',
+      invocationPath: { blockId: 'analyze', scope: [] }, blockKind: 'step', attempt: '0', logicalInvocationRecordId: invocation.id,
+      reason: { code: 'machine_unavailable', message: 'The target Machine was offline.' } });
+    viewport.window = { width: 1440, height: 900 };
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ state: 'running' }),
+      machineName: 'MacBook Pro', machineReachable: false, invocations: [invocation],
+      invocationProgressById: new Map([[invocation.id, progress]]), firstFailedInvocationId: invocation.id,
+      firstFailedInvocationResolution: 'resolved' as const, selectedInvocationId: null,
+    });
+    const lines = ['workflow-run-failure-next', 'workflow-run-machine-unavailable']
+      .filter(testID => screen.findByTestId(testID) !== null);
+    expect(lines).toHaveLength(1);
+  });
+
   it('names the failed step the Map marks while the first-failure lookup is still settling (LABPARITY-ACCEPT-F fix 2)', async () => {
     // The Run's pages land before its separate first-failure lookup: the Map already marks step 1 failed,
     // so the headline reads that same row instead of saying no step finished.

@@ -266,9 +266,11 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const plan = !props.waitForYou && props.contract?.kind === 'json' && shown !== undefined ? readWorkflowPlanResult(shown) : null;
     const planValue = plan !== null && valid ? shown : undefined;
     const issues = validation && !validation.ok ? validation.issues ?? [] : [];
-    // A held result needs no title: the state line says what this is, and the value is what it shows.
+    // A held result whose source is known is headed by that source (lab 1105 R1); without one it reads under the
+    // settled result's own header, its Copy beside "Result", so there is one result anatomy (FIN-DESIGN-ACCEPT-4 B).
+    const sourceHeadsValue = held && !props.waitForYou && !editing && Boolean(props.resultSourceLabel);
     const title = props.waitForYou ? props.waitIdentity ? props.waitIdentity.title : t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
-        : plan ? t('workflows.review.planTitle') : !valid ? t('workflows.review.noValue') : held ? undefined : t('workflows.review.title');
+        : plan ? t('workflows.review.planTitle') : !valid ? t('workflows.review.noValue') : sourceHeadsValue ? undefined : t('workflows.review.title');
     const updateText = (text: string, rawTextValues?: Readonly<Record<string, string>>) => {
         if (props.draft?.text === text && rawTextValues === props.draft?.rawTextValues) return;
         props.onChangeDraft({ text, contentRevision: revision, editedAt: Date.now(), ...(rawTextValues ? { rawTextValues } : {}) });
@@ -390,15 +392,15 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
         <Text variant="body" style={styles.secondary}>{t('workflows.review.heldConsequence')}</Text>
     </View> : null;
     // The value's own head row (lab 1105 R1): where it came from, with Copy and Expand, inside the sheet it heads.
-    const valueHead = heldReading && (props.resultSourceLabel || headerActions) ? <SectionContentRow testID={`${prefix}-value-head`}>
+    const valueHead = sourceHeadsValue ? <SectionContentRow testID={`${prefix}-value-head`}>
         <View style={styles.valueHead}>
-            <Text testID={`${prefix}-source`} variant="meta" numberOfLines={1} style={styles.valueSource}>{props.resultSourceLabel ?? ''}</Text>
+            <Text testID={`${prefix}-source`} variant="meta" numberOfLines={1} style={styles.valueSource}>{props.resultSourceLabel}</Text>
             {headerActions}
         </View>
     </SectionContentRow> : null;
     // Contained: the sheet shares its edges with the state line and the decision above and below it.
     const body = <ListPresentationProvider value="page" pageInsets="contained">{stateLine}<ItemGroup constrainToContentWidth={false} {...(title === undefined ? { header: 'none' as const } : { title })}
-            {...(heldReading ? {} : { action: headerActions })} description={props.waitForYou
+            {...(sourceHeadsValue ? {} : { action: headerActions })} description={props.waitForYou
             ? props.waitIdentity ? props.waitIdentity.title === undefined ? undefined
                 : props.waitIdentity.waitingLabel ?? [props.waitIdentity.subtitle, t('workflows.review.waitTitle')].filter(Boolean).join(' · ') : t('workflows.review.waitBody')
             : editing ? t('workflows.review.editsBody') : undefined}>

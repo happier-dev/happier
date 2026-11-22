@@ -102,8 +102,10 @@ export type HappierPageHeaderProps = Readonly<{
   /**
    * A status line under the actions ("Unsaved changes · Save · Ready"). It is the actions' own row:
    * as wide as the actions above it, wrapping within them and ending on their edge, so its changing
-   * words never take width from the title. The slot reserves two normal text
-   * lines so a one-to-two-line readout does not move the document beneath it.
+   * words never take width from the title. Without actions (a phone's navigation bar took them) it has
+   * no row to hang from and takes its own line under the summary, so it stands in one place whatever the
+   * title's width. The slot reserves two normal text lines so a one-to-two-line readout does not move
+   * the document beneath it.
    */
   status?: ReactNode;
   /**
@@ -396,6 +398,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   // purpose read as one block and whatever comes after (tabs, chips, the count) starts a group of its own
   // (OWNER-UI-1115B A1: a line gap here read as more space than the step to the controls).
   const titleToDescriptionGapPx = 0;
+  // Reserve the normal two-line readout before its words change. Longer/scaled content can still grow instead of being clipped.
+  const statusReserveStyle = { minHeight: HAPPIER_PAGE_TEXT.meta.lineHeight * metricScale * 2 + HAPPIER_PAGE_METRICS.pageHeaderLineGapPx };
+  // A status with no actions has no actions row to sit under: it closes the identity's text instead (FIN-DESIGN-ACCEPT-4 A).
+  const statusUnderIdentity = Boolean(props.status) && !props.actions && !centered;
   const textBelowTitleContent = (
     <>
       {props.description ? (
@@ -418,6 +424,11 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
           spaced={!props.details && Boolean(props.description)}
         />
       ) : null}
+      {statusUnderIdentity ? (
+        <View style={[{ marginTop: HAPPIER_PAGE_METRICS.pageHeaderLineGapPx, alignItems: 'flex-start' }, statusReserveStyle]}>
+          {props.status}
+        </View>
+      ) : null}
     </>
   );
   const textBelowTitle = wrapPart ? wrapPart('supporting', textBelowTitleContent) : textBelowTitleContent;
@@ -429,7 +440,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const titleOnControlLine = splitTitleLine || (showTitle && hangsFromTitle);
   // Only actions still drawn wrap beneath: a remembered wrap never reserves room for actions that left
   // (a phone's navigation chrome takes Save and Cancel when the window narrows).
-  const actionsBelowIdentity = splitTitleLine && Boolean(props.actions || props.status)
+  const actionsBelowIdentity = splitTitleLine && Boolean(props.actions)
     && actionsWrapWidthPx !== null && splitWidthPx !== null && splitWidthPx <= actionsWrapWidthPx;
   const columnContentWidthPx = paneWidthPx === null ? splitWidthPx
     : Math.max(0, Math.min(paneWidthPx, columnMaxWidthPx) - textInsetPx * 2 - contentInsetPx);
@@ -442,7 +453,7 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
   const wrappedActionsTopPx = Math.max(sharedLeadingHeightPx, identityHeightPx) - identityOffsetTopPx + 12
     + (markOnTitleRow ? textBelowRowHeightPx : 0);
   const wrappedActionsWidthPx = splitWidthPx === null ? undefined : splitWidthPx + leadingInsetPx;
-  const actionsContent = props.actions || props.status ? (
+  const actionsContent = props.actions ? (
             <View
               onLayout={splitTitleLine || hangsFromTitle ? (event: HappierLayoutChangeEvent) => {
                 handleActionsNaturalLayout(event);
@@ -463,15 +474,10 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
                   {props.actions}
                 </View>
               ) : null}
-              {props.status ? (
+              {props.status && !statusUnderIdentity ? (
                 // Zero intrinsic width, then the actions' width: the status wraps under them and never
                 // widens the group the title shares its row with.
-                <View style={[
-                  props.actions ? { width: 0, minWidth: '100%', alignItems: 'flex-end' } : { alignItems: 'flex-end' },
-                  // Reserve the normal two-line readout before its words change.
-                  // Longer/scaled content can still grow instead of being clipped.
-                  { minHeight: HAPPIER_PAGE_TEXT.meta.lineHeight * metricScale * 2 + HAPPIER_PAGE_METRICS.pageHeaderLineGapPx },
-                ]}>
+                <View style={[{ width: 0, minWidth: '100%', alignItems: 'flex-end' }, statusReserveStyle]}>
                   {props.status}
                 </View>
               ) : null}

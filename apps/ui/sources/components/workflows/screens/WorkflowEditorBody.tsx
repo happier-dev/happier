@@ -1521,8 +1521,9 @@ export function WorkflowEditorBody(props: WorkflowEditorBodyProps): React.ReactE
                 // The save line is the header's status slot: wide, it sits under the actions at their width, its
                 // two lines reserved, so "Saved" against "Unsaved changes · Save" or a conflict sentence never
                 // changes the title's wrap or drops the controls off the title's line (FIN-DESIGN-ACCEPT-2 F5).
-                // On a phone the actions live in the navigation bar, so the line sits beside the name
-                // (owner 25). A page without a save line (a built-in's Duplicate) still says what to fix.
+                // On a phone the actions live in the navigation bar (owner 25), so the line takes its own line
+                // under the summary, in one place whatever the name's width (FIN-DESIGN-ACCEPT-4 A). A page
+                // without a save line (a built-in's Duplicate) still says what to fix.
                 ...(!hasPageCommands ? {} : { status: headerStatus }),
                 alwaysShowTitle: true,
                 // Beside a companion the header is measured against the main column it shares (F5):

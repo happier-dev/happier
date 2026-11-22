@@ -83,6 +83,10 @@ const styles = StyleSheet.create((theme) => ({
         // this width, so a long value truncates inside its chip instead of running past the card edge (C24).
         maxWidth: '100%',
     },
+    /** A set of chips wraps as one flow: its lines sit closer than the chips sit apart (lab 1116b A, FIN-DESIGN-ACCEPT-4 E). */
+    chipsFlow: {
+        rowGap: theme.space.s4,
+    },
     fields: {
         alignSelf: 'stretch',
     },
@@ -224,13 +228,16 @@ function SessionAuthoringOptionChip(props: Readonly<{
     if (props.presentation === 'chips') {
         // Quiet while inherited, the canonical bordered "Field: Value" chip once this subject sets it, so the row
         // (a step card's foot, the header's Where and Triggers chips) reads as one set (lab E1). The chooser stays this
-        // field's own picker, anchored to the chip.
+        // field's own picker, anchored to the chip. Quiet, a value that alone would not name its field says which
+        // field it is ("Default terminal"), from its option (FIN-DESIGN-ACCEPT-4 F); changed, the chip names it itself.
+        const chipLabel = props.changed === true || props.valueLabel !== undefined ? undefined
+            : props.options.find((option) => option.id === props.selectedOptionId)?.chipLabel;
         return (
             <>
                 <SessionAuthoringChipTrigger
                     anchorRef={anchorRef}
                     title={props.title}
-                    label={currentLabel}
+                    label={chipLabel ?? currentLabel}
                     {...(props.leading === undefined ? {} : { leading: props.leading })}
                     changed={props.changed === true}
                     {...(props.changed === true && props.changedAccessibilityHint !== undefined
@@ -764,7 +771,8 @@ export function SessionAuthoringControls(props: SessionAuthoringControlsProps): 
         <View
             ref={overlayAnchorRef}
             testID={testIDPrefix}
-            style={presentation === 'fields' || props.renderFieldRow !== undefined ? styles.fields : styles.root}
+            style={presentation === 'fields' || props.renderFieldRow !== undefined ? styles.fields
+                : presentation === 'chips' ? [styles.root, styles.chipsFlow] : styles.root}
         >
             {props.fields.map((field) => {
                 if (field === 'approvalProfileId') return inRow(field, withReset(field, <SessionAuthoringApprovalProfileField key={field}

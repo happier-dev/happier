@@ -544,6 +544,26 @@ describe('SessionAuthoringControls', () => {
     await screen.unmount();
   });
 
+  it('names its field on an inherited chip whose value alone would not, and keeps the value in a field row (FIN-DESIGN-ACCEPT-4 F)', async () => {
+    const chips = await renderControls({
+      fields: ['transcriptStorage', 'terminal'],
+      facts: { agentTargets: [directCapableClaude()] },
+    });
+    const text = chips.screen.getTextContent();
+    expect(text).toContain('workflows.editor.sessionTypeHappierChip');
+    expect(text).toContain('workflows.editor.terminalDefaultChip');
+    await chips.screen.unmount();
+    const fields = await renderControls({
+      fields: ['transcriptStorage', 'terminal'],
+      facts: { agentTargets: [directCapableClaude()] },
+      presentation: 'fields',
+    });
+    const rows = fields.screen.getTextContent();
+    expect(rows).toContain('sessionsList.storagePersistedTab');
+    expect(rows).not.toContain('workflows.editor.sessionTypeHappierChip');
+    await fields.screen.unmount();
+  });
+
   it('presents one field model as chips or as labelled field rows, and marks a changed field', async () => {
     const chips = await renderControls({
       fields: ['permissionMode', 'transcriptStorage'],

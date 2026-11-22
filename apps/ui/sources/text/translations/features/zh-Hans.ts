@@ -20529,6 +20529,8 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         namePlaceholder: '工作流名称',
         agentRuntime: '智能体运行时',
         sessionType: '会话类型',
+        terminalDefaultChip: '默认终端',
+        sessionTypeHappierChip: 'Happier 会话',
         approvalProfile: "审批配置",
         firstPromptTitle: '第一步要做什么？',
         firstPromptBody: '一个提示词就是一个工作流。需要时再添加步骤。',
