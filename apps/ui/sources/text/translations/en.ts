@@ -4,6 +4,7 @@ import { simulatorViewerTranslations } from './simulatorViewerTranslations';
 import { simulatorDeviceToolsTranslations } from './simulatorDeviceToolsTranslations';
 import { deploymentMoveTranslations } from './deploymentMoveTranslations';
 import { deploymentMonitoringTranslations } from './deploymentMonitoringTranslations';
+import type { SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import type { AgentIsolationLaunchMaterialFailureCode, AgentStartupFailureCode, RequesterSessionRuntimeRefusalCode, SESSION_PREPARATION_FAILURE_PREVIEWS } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { SessionUsageLimitRecoveryOperationResultErrorStatusV1 } from '@happier-dev/protocol/sessions/control/sessionUsageLimitRecoveryOperationResultV1';
 import { projectReadinessTranslations } from './projectReadinessTranslations';
@@ -10034,6 +10035,23 @@ const enSession = {
     } satisfies Record<AgentStartupFailureCode | RequesterSessionRuntimeRefusalCode
       | Exclude<keyof typeof SESSION_PREPARATION_FAILURE_PREVIEWS,
         'agent_isolation_unavailable' | 'filesystem_identity_custody_unavailable' | AgentIsolationLaunchMaterialFailureCode>, string> & Record<string, string>,
+    /** Why a Team credential binding was refused, by its closed reason; the reused reasons keep the start-failure cause. */
+    teamCredentialBinding: {
+      invalid_input: "This session’s Team model choice couldn’t be read. Choose the Team model again.",
+      feature_disabled: "This Home doesn’t offer Team models. Choose another model.",
+      session_missing: "The session was removed before its Team model was set up. Start a new session.",
+      session_owner_mismatch: "This session belongs to another account, so its Team model can’t be set up from here. Start a new session.",
+      resource_missing: "This Team model is no longer shared. Choose another model.",
+      resource_changed: "The Team’s shared model was updated. Choose it again for a new session.",
+      access_removed: "You no longer have access to this Team model. Choose another model.",
+      disabled: "This Team model is turned off. Choose another model.",
+      source_owner_required: "Only the person who shared this Team model can use it here. Choose another model.",
+      source_replaced_or_missing: "This Team model’s connection was replaced or removed. Ask the person who shared it to set it up again.",
+      team_context_required: "This Team model works only in sessions that belong to its Team. Start the session in that Team.",
+      team_visibility_required: "This Team model works only in sessions its Team can see. Share the session with the Team, then try again.",
+      authentication_required: "This Team asks you to sign in before you use its models. Sign in to the Team, then try again.",
+      authentication_unavailable: "This Team’s sign-in policy couldn’t be checked. Try again in a moment.",
+    } satisfies Record<Exclude<SessionTeamCredentialBindingRejectionV1, 'connected_service_credential_reconnect_required' | 'broker_unavailable' | 'resource_corrupt' | 'update_required'>, string>,
   },
   agentAuthRequired: {
     /** What failed, before the step that fixes it, on the transcript's failure line. */

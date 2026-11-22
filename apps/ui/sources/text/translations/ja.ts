@@ -8925,6 +8925,22 @@ localTailscale: {
         provider_incompatible_with_agent: "このエージェントは、選択した認証情報の種類またはブローカー経由の Team ソースに対応していません。ネイティブ専用のエージェントでは自分のログインを使うか、ブローカー経由のプロバイダーに対応したエージェントを選んでください。",
         teamCredential: "共有された Team の認証情報がリクエストを拒否しました。",
       },
+      teamCredentialBinding: {
+        invalid_input: "このセッションで選んだ Team モデルを読み取れませんでした。Team モデルをもう一度選んでください。",
+        feature_disabled: "この Home では Team モデルを利用できません。別のモデルを選んでください。",
+        session_missing: "Team モデルを設定する前にセッションが削除されました。新しいセッションを開始してください。",
+        session_owner_mismatch: "このセッションは別のアカウントのものなので、ここでは Team モデルを設定できません。新しいセッションを開始してください。",
+        resource_missing: "この Team モデルは共有されなくなりました。別のモデルを選んでください。",
+        resource_changed: "Team の共有モデルが更新されました。新しいセッションでもう一度選んでください。",
+        access_removed: "この Team モデルへのアクセス権がなくなりました。別のモデルを選んでください。",
+        disabled: "この Team モデルはオフになっています。別のモデルを選んでください。",
+        source_owner_required: "この Team モデルをここで使えるのは、共有した本人だけです。別のモデルを選んでください。",
+        source_replaced_or_missing: "この Team モデルの接続は置き換えられたか削除されました。共有した人にもう一度設定するよう依頼してください。",
+        team_context_required: "この Team モデルは、その Team に属するセッションでのみ使えます。その Team でセッションを開始してください。",
+        team_visibility_required: "この Team モデルは、その Team が見られるセッションでのみ使えます。セッションを Team と共有してから、もう一度お試しください。",
+        authentication_required: "この Team のモデルを使うにはサインインが必要です。Team にサインインしてから、もう一度お試しください。",
+        authentication_unavailable: "この Team のサインインポリシーを確認できませんでした。しばらくしてからもう一度お試しください。",
+      },
     },
     agentAuthRequired: {
       /** What failed, before the step that fixes it, on the transcript's failure line. */

@@ -8,7 +8,9 @@ import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approva
 import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { SessionCreationCurrentnessFailureV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
-import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
+import { SPAWN_SESSION_ERROR_DETAIL_KINDS, type SpawnSessionErrorDetail } from '@happier-dev/protocol/spawnSession';
+
+import { presentSessionStartupFailureCause, presentSessionStartupFailureRecovery, presentSessionTeamCredentialBindingRejection } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
@@ -179,9 +181,19 @@ export function resolvePendingDeliveryFailureMessage(failure: PendingDeliveryFai
     return diagnostic ? label + '\n' + (presentSessionStartupFailureCause(diagnostic.code) ?? t(diagnostic.bodyKey)) : label;
 }
 
+/** A creator refusal carried as a spawn error detail (a Fork) reads the same words as a refused Session start. */
+export function resolveSessionSpawnErrorDetailFailureMessage(detail: SpawnSessionErrorDetail | undefined): string | null {
+    return detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED
+        ? resolveSessionSpawnNewResultFailureMessage({ type: 'error', code: detail.code, reason: detail.reason, retryable: false })
+        : null;
+}
+
 function resolveSessionSpawnNewResultFailureBody(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
 ): string {
+    if (result.type === 'error' && result.code === 'session_team_credential_binding_rejected') {
+        return presentSessionTeamCredentialBindingRejection(result.reason);
+    }
     if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.pluginCodeRefusal) {
         return t(result.launchError.pluginCodeRefusal.remedy.kind === 'ask_machine_manager'
             ? 'errors.pluginCodeUnreadableAskManager' : 'errors.pluginCodeUnreadableOpenSecurity');

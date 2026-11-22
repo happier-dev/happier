@@ -13,6 +13,7 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { randomUUID } from '@/platform/randomUUID';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { actionOperationPresentationCoordinator } from '@/components/inbox/actionOperations/actionOperationPresentationRuntime';
+import { resolveSessionSpawnErrorDetailFailureMessage } from '@/sync/ops/actions/sessionSpawnFailurePresentation';
 
 import { completeSessionForkNavigation } from './completeSessionForkNavigation';
 import {
@@ -250,7 +251,9 @@ export function useSessionForkStrategyFlow(params: Readonly<{
                 return;
             }
             if (mountedRef.current) {
-                setFailure({ route, kind: outcome.kind, message: outcome.message,
+                // A creator refusal reads the refused-start sentence, never the daemon's diagnostic text.
+                setFailure({ route, kind: outcome.kind,
+                    message: resolveSessionSpawnErrorDetailFailureMessage(outcome.errorDetail) ?? outcome.message,
                     ...(outcome.errorDetail ? { errorDetail: outcome.errorDetail } : {}) });
             }
             applyPhase({ type: 'choosing' });

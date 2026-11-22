@@ -7128,6 +7128,22 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               provider_incompatible_with_agent: "此代理程式不支援所選的憑證類型或經代理的 Team 來源。對於僅支援原生登入的代理程式，請使用你自己的登入，或選擇支援經代理供應商的代理程式。",
               teamCredential: "共用的 Team 憑證拒絕了該請求。",
             },
+            teamCredentialBinding: {
+              invalid_input: "無法讀取此工作階段選擇的 Team 模型。請重新選擇 Team 模型。",
+              feature_disabled: "此 Home 不提供 Team 模型。請選擇其他模型。",
+              session_missing: "工作階段在設定 Team 模型之前已被移除。請開始新的工作階段。",
+              session_owner_mismatch: "此工作階段屬於另一個帳戶，因此無法在這裡設定它的 Team 模型。請開始新的工作階段。",
+              resource_missing: "此 Team 模型已不再共用。請選擇其他模型。",
+              resource_changed: "Team 的共用模型已更新。請在新工作階段中重新選擇它。",
+              access_removed: "你已無權存取此 Team 模型。請選擇其他模型。",
+              disabled: "此 Team 模型已關閉。請選擇其他模型。",
+              source_owner_required: "只有共用此 Team 模型的人才能在這裡使用它。請選擇其他模型。",
+              source_replaced_or_missing: "此 Team 模型的連線已被取代或移除。請共用它的人重新設定。",
+              team_context_required: "此 Team 模型只能用於屬於其 Team 的工作階段。請在該 Team 中開始工作階段。",
+              team_visibility_required: "此 Team 模型只能用於其 Team 看得到的工作階段。請先與 Team 共用工作階段，然後重試。",
+              authentication_required: "此 Team 要求先登入才能使用其模型。請登入 Team，然後重試。",
+              authentication_unavailable: "無法檢查此 Team 的登入原則。請稍後重試。",
+            },
           },
           agentAuthRequired: {
             /** What failed, before the step that fixes it, on the transcript's failure line. */

@@ -381,6 +381,9 @@ describe('default Action executor Session lifecycle contracts', () => {
     const { harness, navigate } = await mountForkFlow();
     await act(async () => { await harness.getCurrent().submit('replay'); });
     expect(harness.getCurrent().failure).toMatchObject({ route: 'replay', kind: 'error', errorDetail });
+    // The person reads the refused-start sentence for that reason, never the daemon's diagnostic text.
+    const { t } = await import('@/text');
+    expect(harness.getCurrent().failure?.message).toBe(t('session.startFailure.teamCredentialBinding.team_context_required'));
     expect(navigate).not.toHaveBeenCalled();
   });
 

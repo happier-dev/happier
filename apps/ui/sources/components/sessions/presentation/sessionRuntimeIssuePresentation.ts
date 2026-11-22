@@ -24,6 +24,7 @@ import { readSessionModelTransitionFailureStatus } from '@happier-dev/protocol/s
 import { ExecutionRunErrorSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readHappierActionToolPayload } from '@happier-dev/protocol/actions/happierActionToolResult';
 import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
+import type { SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { presentProviderConnectionIdentity } from '@/providers/connection/presentation';
 import type { ProviderConnectionReviewRecovery } from '@/providers/connection/recovery';
 
@@ -168,6 +169,23 @@ function resolveSessionStartupFailureCause(
     return isTeamCredentialRefusal(preparation)
         ? t('session.startFailure.cause.teamCredential')
         : t(`session.startFailure.cause.${preparation}`);
+}
+
+/**
+ * The one sentence for a refused Team credential binding, read by a refused Session start and a refused Fork. The
+ * reasons the startup-cause presenter already says keep its words; every other reason of the closed set names its
+ * own key, so a reason Protocol adds fails the type check until it has a sentence.
+ */
+export function presentSessionTeamCredentialBindingRejection(reason: SessionTeamCredentialBindingRejectionV1): string {
+    switch (reason) {
+        case 'connected_service_credential_reconnect_required':
+        case 'broker_unavailable':
+        case 'resource_corrupt':
+        case 'update_required':
+            return resolveSessionStartupFailureCause(reason) ?? t('session.startFailure.cause.teamCredential');
+        default:
+            return t(`session.startFailure.teamCredentialBinding.${reason}`);
+    }
 }
 
 export function presentSessionStartupFailureCause(
