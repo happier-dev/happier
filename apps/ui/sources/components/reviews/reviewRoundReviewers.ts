@@ -19,6 +19,8 @@ export type ReviewRoundReviewerOutcome =
 export type ReviewRoundReviewer = Readonly<{
   reviewerId: string;
   name: string;
+  /** The round recorded a name for it; false when `name` is only its place ("Reviewer 2"). */
+  named: boolean;
   /** The Agent its recorded name is, for its mark; null for an engine or a model name that is not an Agent. */
   agentId: AgentId | null;
   /** Settled result, open-round execution progress, or unknown for older rounds without individual results. */
@@ -67,18 +69,18 @@ function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ bas
  * ran them in different steps ("Claude · step 2"), else by their order ("Claude 2"). The positional id
  * ("step-1-reviewer-1") is an internal key and is never shown.
  */
-export function reviewRoundReviewerIdentity(round: NamedRound, reviewerId: string): Readonly<{ name: string; agentId: AgentId | null }> {
+export function reviewRoundReviewerIdentity(round: NamedRound, reviewerId: string): Readonly<{ name: string; named: boolean; agentId: AgentId | null }> {
   const { base, agentId } = recordedReviewer(round, reviewerId);
   if (!base) {
     const index = round.reviewerIds.indexOf(reviewerId);
-    return { name: t('reviewWalkthrough.detail.reviewerRun', { count: index >= 0 ? index + 1 : 1 }), agentId };
+    return { name: t('reviewWalkthrough.detail.reviewerRun', { count: index >= 0 ? index + 1 : 1 }), named: false, agentId };
   }
   const namesakes = round.reviewerIds.filter(id => recordedReviewer(round, id).base === base);
   const position = namesakes.indexOf(reviewerId);
-  if (namesakes.length < 2 || position < 0) return { name: base, agentId };
+  if (namesakes.length < 2 || position < 0) return { name: base, named: true, agentId };
   const steps = namesakes.map(id => readReviewReviewerSlotV1(id)?.stepIndex);
   const byStep = steps.every(step => step !== undefined) && new Set(steps).size === steps.length;
-  return { agentId, name: byStep
+  return { agentId, named: true, name: byStep
     ? t('reviewWalkthrough.detail.reviewerInStep', { name: base, step: steps[position]! + 1 })
     : t('reviewWalkthrough.detail.reviewerOrdinal', { name: base, count: position + 1 }) };
 }

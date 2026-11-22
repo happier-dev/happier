@@ -13165,7 +13165,6 @@ const zhHant: ReviewWalkthroughTranslations = {
         qualityShowReason: '顯示原因',
         qualityNoScore: '無評分',
         qualityPartial: '並非所有審閱者都已完成',
-        qualityReviewerFallback: ({ n }) => `審閱者 ${n}`,
         qualityShowLess: '收合',
         glanceAllDecided: '所有發現皆已決定',
         glanceNoFindings: '無需修正',

@@ -196,7 +196,6 @@ export type ReviewWalkthroughTranslations = {
         qualityShowReason: string;
         qualityNoScore: string;
         qualityPartial: string;
-        qualityReviewerFallback: (params: Readonly<{ n: number }>) => string;
         qualityShowLess: string;
         glanceAllDecided: string;
         glanceNoFindings: string;
@@ -478,7 +477,6 @@ export const en: ReviewWalkthroughTranslations = {
         qualityShowReason: 'Show reason',
         qualityNoScore: 'No score',
         qualityPartial: 'Not every reviewer finished',
-        qualityReviewerFallback: ({ n }) => `Reviewer ${n}`,
         qualityShowLess: 'Show less',
         glanceAllDecided: 'Every finding is decided',
         glanceNoFindings: 'Nothing to fix',

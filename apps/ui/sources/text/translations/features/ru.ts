@@ -13301,7 +13301,6 @@ const ru: ReviewWalkthroughTranslations = {
         qualityShowReason: 'Показать причину',
         qualityNoScore: 'Нет оценки',
         qualityPartial: 'Не все рецензенты закончили',
-        qualityReviewerFallback: ({ n }) => `Рецензент ${n}`,
         qualityShowLess: 'Свернуть',
         glanceAllDecided: 'По всем замечаниям есть решение',
         glanceNoFindings: 'Нечего исправлять',

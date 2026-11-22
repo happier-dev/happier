@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { HappierBodyEdgeContext } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
@@ -80,6 +81,18 @@ export const ScmComparisonHeader = React.memo(function ScmComparisonHeader(props
         </View>
     );
 });
+
+/**
+ * A line that stands under the header on its content edge (Hide viewed's "N viewed files hidden · Show"): the header's
+ * own horizontal inset, so the line's glyph lines up with the facts above it.
+ */
+export function ScmComparisonHeaderEdge(props: Readonly<{ stacked?: boolean; children: React.ReactNode }>) {
+    return (
+        <View style={props.stacked ? styles.edgeStacked : styles.edge}>
+            <HappierBodyEdgeContext.Provider value>{props.children}</HappierBodyEdgeContext.Provider>
+        </View>
+    );
+}
 
 /**
  * The source fact of a comparison ("9 files · 14 changes · +118 −21"): what changes exist, independent
@@ -200,6 +213,8 @@ const styles = StyleSheet.create((theme) => ({
         borderBottomWidth: StyleSheet.hairlineWidth,
         borderBottomColor: theme.colors.border.default,
     },
+    edge: { paddingHorizontal: theme.space.s24 },
+    edgeStacked: { paddingHorizontal: theme.space.s16 },
     headerStacked: {
         paddingHorizontal: theme.space.s16,
         paddingTop: 14,

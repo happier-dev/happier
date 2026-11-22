@@ -170,7 +170,11 @@ it('says "No score" for a partial round and names each reviewer under Show all',
     expect(screen.findHostByTestId('review-detail:quality-basis')).toBeNull();
     expect(textOf(screen, 'review-detail:partial')).toContain('Not every reviewer finished');
     await screen.pressByTestIdAsync('review-detail:quality-each');
-    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toContain('Codex 4/5');
+    // The score leads in its own column, then the name, so "Reviewer 1" never runs into "1/5" (REVIEW-PAGE-DELTA-1122 C).
+    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toMatch(/^4\/5/);
+    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toContain('Codex');
+    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-2')).toMatch(/^2\/5/);
+    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-2')).toContain('Reviewer 2');
     // A reviewer without a recorded name gets the generic label, never its positional id.
     expect(textOf(screen, 'review-detail:quality')).not.toContain('step-1-reviewer');
   } finally {

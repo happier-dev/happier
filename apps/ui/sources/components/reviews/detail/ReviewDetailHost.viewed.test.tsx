@@ -246,17 +246,15 @@ it('says what Hide viewed hid when it hid every file, instead of an empty list',
   }
 });
 
-it('names each reviewer of the round by its place when the round recorded no names (U8 R3 B2)', async () => {
+it('draws no names row when the round recorded no names and no reviewer has an outcome (REVIEW-PAGE-DELTA-1122 B)', async () => {
   const screen = await renderReview();
   const { Item } = await import('@/components/ui/lists/Item');
-  const { t } = await import('@/text');
   try {
     await vi.waitFor(() => expect(screen.findAllByType(Item)
       .some((item) => item.props.testID === 'review-detail:group:reviewers')).toBe(true));
-    // Reviewer ids carry no labels, so each reads "Reviewer N", never its positional id.
-    expect(screen.findByTestId('review-detail:group:reviewers')?.findAll(node => typeof node.type === 'string')
-      .flatMap(node => node.children).filter((child): child is string => typeof child === 'string').join(' '))
-      .toContain(t('reviewWalkthrough.detail.reviewerRun', { count: 1 }));
+    // "Reviewer 1 · Reviewer 2" would only repeat "N reviewers"; places stay in Show all, where rows must be told apart.
+    const reviewers = screen.findAllByType(Item).find((item) => item.props.testID === 'review-detail:group:reviewers');
+    expect(reviewers?.props.bottomElement).toBeUndefined();
   } finally {
     await screen.unmount();
   }

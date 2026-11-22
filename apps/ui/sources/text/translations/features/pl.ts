@@ -13301,7 +13301,6 @@ const pl: ReviewWalkthroughTranslations = {
         qualityShowReason: 'Pokaż uzasadnienie',
         qualityNoScore: 'Brak oceny',
         qualityPartial: 'Nie wszyscy recenzenci skończyli',
-        qualityReviewerFallback: ({ n }) => `Recenzent ${n}`,
         qualityShowLess: 'Pokaż mniej',
         glanceAllDecided: 'Wszystkie ustalenia są rozstrzygnięte',
         glanceNoFindings: 'Nic do poprawienia',

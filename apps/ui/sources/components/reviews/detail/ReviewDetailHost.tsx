@@ -40,7 +40,7 @@ import { formatElapsedDuration } from '@/components/machines/durationWords';
 import { resolveExecutionRunAgentMarkId } from '@/components/sessions/runs/resolveExecutionRunBackendLabel';
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ICON_SIZE } from '@/components/ui/icons/Icon';
-import { isReviewRoundReviewerUnfinished, projectReviewRoundReviewers, reviewCommentEngineName, reviewRoundReviewerOutcomeLabel,
+import { isReviewRoundReviewerUnfinished, projectReviewRoundReviewers, reviewCommentEngineName, reviewRoundReviewerIdentity, reviewRoundReviewerOutcomeLabel,
   reviewRoundReviewerRowCount, type ReviewRoundReviewer, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
 import type { ReviewRetriedReviewer } from './useReviewNewRound';
 import { joinList } from '@/utils/text/joinList';
@@ -129,6 +129,9 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
   if (round.reviewerIds.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
   const reviewers = projectReviewRoundReviewers(round, reads);
   if (reviewers.length === 0) return { ordinal: round.ordinal, state: round.state, groups: [] };
+  // Places alone ("Reviewer 1 · Reviewer 2") repeat the count above them; the row names reviewers only when the round
+  // recorded a name or a reviewer has an outcome to say.
+  const saysMore = reviewers.some(reviewer => reviewer.named || reviewer.outcome !== null);
   return {
     ordinal: round.ordinal,
     state: round.state,
@@ -144,7 +147,7 @@ export function projectRound(round: ReviewRecordRound, reads?: ReadonlyMap<strin
             : round.state === 'failed' || round.state === 'partial'
               ? 'failed'
               : 'done',
-        participants: reviewers.map(reviewer => ({
+        participants: !saysMore ? [] : reviewers.map(reviewer => ({
           id: reviewer.reviewerId,
           label: reviewer.name,
           mark: reviewer.run || reviewer.agentId ? <ReviewerMark reviewer={reviewer} /> : null,
@@ -304,6 +307,12 @@ export function ReviewDetailHost(props: Readonly<{
   const round = record?.rounds.find((item) => item.ordinal === selectedRound) ?? record?.rounds.at(-1);
   const qualityAggregation = useSetting('reviewQualityAggregation');
   const roundQuality = React.useMemo(() => describeReviewRoundQualityV1(round, qualityAggregation), [round, qualityAggregation]);
+  // Show all names each scored reviewer through the round section's name owner (`reviewRoundReviewerIdentity`): its
+  // recorded name, else the name the score kept, else its place ("Reviewer 2").
+  const qualityReviewers = React.useMemo(() => round ? roundQuality.reviewers.map(reviewer => {
+    const identity = reviewRoundReviewerIdentity(round, reviewer.reviewerId);
+    return { ...reviewer, displayName: identity.named ? identity.name : reviewer.displayName ?? identity.name };
+  }) : roundQuality.reviewers, [round, roundQuality.reviewers]);
   const capture = round?.comparisonCapture ?? null;
   const tabs = React.useMemo((): readonly ReviewDetailTab[] => [
     { id: 'findings' },
@@ -600,7 +609,7 @@ export function ReviewDetailHost(props: Readonly<{
       glance={projectReviewGlance(round, review, { countsOnChips: true, fixedCount })}
       quality={roundQuality.quality}
       qualityUnavailableReason={roundQuality.unavailableReason}
-      qualityReviewers={roundQuality.reviewers}
+      qualityReviewers={qualityReviewers}
       rounds={rounds}
       selectedRound={selectedRound}
       onSelectRound={ordinal => { void viewCommands.invoke('review.detail.round', { ordinal }); }}

@@ -13225,7 +13225,6 @@ const ja: ReviewWalkthroughTranslations = {
         qualityShowReason: '理由を表示',
         qualityNoScore: 'スコアなし',
         qualityPartial: 'すべてのレビュアーが完了していません',
-        qualityReviewerFallback: ({ n }) => `レビュアー${n}`,
         qualityShowLess: '表示を減らす',
         glanceAllDecided: 'すべての指摘が判断済みです',
         glanceNoFindings: '修正するものはありません',

@@ -77,6 +77,7 @@ import { ChangedFilesReviewMoreMenu, useChangedFilesReviewDisplayMenu } from './
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
 import { useLentHeaderMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
 import { ScmFileViewedFact, ScmFileViewedMark, ScmFilesViewedCount } from '@/components/sessions/files/comparison/ScmFileViewedMark';
+import { ScmComparisonHeaderEdge } from '@/components/sessions/files/comparison/ScmComparisonHeader';
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
@@ -1314,7 +1315,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                         {...(comparisonChrome ? { placement: 'comparisonStream' as const, rootPath: comparisonChrome.rootPath ?? snapshot?.repo.rootPath ?? null } : null)}
                     />
                 ) : null}
-                {headerHiddenViewedLine}
+                {headerHiddenViewedLine ? <ScmComparisonHeaderEdge stacked={phoneFileControl || comparisonChrome?.indexPlacement === 'phone'}>
+                    {headerHiddenViewedLine}</ScmComparisonHeaderEdge> : null}
                 {reviewFiles.length === 0 && !hasMoreFiles && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
                     // Nothing to review is one calm state, like the pane's other empty states, not a caption under a header.
                     props.emptyState ?? <SurfaceStateCard testID="changed-files-review-empty" kind="empty" iconName="git-diff"

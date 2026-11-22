@@ -27,13 +27,13 @@ it('keeps captured historical Review A names without inventing individual result
     backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'default', retentionPolicy: 'resumable',
     runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: round.startedAt });
   expect(projectReviewRoundReviewers(round, new Map([[runId, { run, findingsCount: 99 }]]))).toEqual([
-    { reviewerId: 'step-1-reviewer-1', name: 'Claude', agentId: 'claude', outcome: null, findingsCount: null, run: null },
+    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, findingsCount: null, run: null },
   ]);
   // The older completed neighbor also has no individual facts, even if its execution has since succeeded.
   expect(projectReviewRoundReviewers({ ...round, state: 'completed' }, new Map([[runId, {
     run: { ...run, status: 'succeeded', finishedAtMs: round.finishedAt! }, findingsCount: 99,
   }]]))).toEqual([
-    { reviewerId: 'step-1-reviewer-1', name: 'Claude', agentId: 'claude', outcome: null, findingsCount: null, run: null },
+    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, findingsCount: null, run: null },
   ]);
   // A producer explicitly recording no outcomes is authoritative; only an absent field preserves the older roster.
   expect(projectReviewRoundReviewers({ ...round, reviewerOutcomes: [] }, undefined)).toEqual([]);

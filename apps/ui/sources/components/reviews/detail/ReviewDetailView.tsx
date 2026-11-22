@@ -256,13 +256,16 @@ function ReviewQualityLines(props: Readonly<{
         {disclosure ? <TextLinkButton size="meta" testID="review-detail:quality-each" expanded={expanded} label={disclosure}
           onPress={() => setExpanded(open => !open)} /> : null}
       </View>
-      {expanded ? reviewers.map((reviewer, index) => (
+      {expanded ? reviewers.map(reviewer => (
+        // The score leads in its own tabular column, so a name ending in a number never runs into it.
         <View key={reviewer.reviewerId} style={styles.qualityReviewer} testID={`review-detail:quality-reviewer:${reviewer.reviewerId}`}>
           <Text variant="meta" emphasis="medium" style={styles.qualityReviewerScore}>
-            {reviewer.displayName ?? t('reviewWalkthrough.detail.qualityReviewerFallback', { n: index + 1 })}
-            {' '}{t('reviewWalkthrough.detail.qualityOutOf', { score: reviewer.score })}
+            {t('reviewWalkthrough.detail.qualityOutOf', { score: reviewer.score })}
           </Text>
-          <Text variant="meta" style={styles.qualityReviewerReason}>{reviewer.rationale}</Text>
+          <Text variant="meta" style={styles.qualityReviewerReason}>
+            {reviewer.displayName ? <><Text variant="meta" emphasis="medium" style={styles.qualityReviewerName}>{reviewer.displayName}</Text>{' · '}</> : null}
+            {reviewer.rationale}
+          </Text>
         </View>
       )) : null}
     </View>
@@ -413,6 +416,7 @@ const styles = StyleSheet.create((theme) => ({
     qualityReviewer: { flexDirection: 'row', alignItems: 'baseline', gap: theme.space.s8, minWidth: 0 },
     qualityReviewerScore: { color: theme.colors.text.primary, fontVariant: ['tabular-nums'], flexShrink: 0 },
     qualityReviewerReason: { color: theme.colors.text.secondary, flex: 1, minWidth: 0 },
+    qualityReviewerName: { color: theme.colors.text.primary },
     groupDetail: { color: theme.colors.text.secondary, fontVariant: ['tabular-nums'] },
     participants: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s16, rowGap: theme.space.s4 },
     participant: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, minWidth: 0 },

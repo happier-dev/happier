@@ -13273,7 +13273,6 @@ const ca: ReviewWalkthroughTranslations = {
         qualityShowReason: 'Mostra el motiu',
         qualityNoScore: 'Sense puntuació',
         qualityPartial: 'No tots els revisors han acabat',
-        qualityReviewerFallback: ({ n }) => `Revisor ${n}`,
         qualityShowLess: 'Mostra’n menys',
         glanceAllDecided: 'Totes les troballes estan decidides',
         glanceNoFindings: 'Res a corregir',
