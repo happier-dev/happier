@@ -50,6 +50,49 @@ describe('ApiMachineClient updates', () => {
     vi.resetModules();
   });
 
+  it('publishes the installation key without rewriting a retained Setup source', async () => {
+    const key = new Uint8Array(32).fill(19);
+    // READY196's decrypted shape, with synthetic preset identity and content.
+    const setup = { version: 1, revision: 2, exclusions: [], sources: [
+      { kind: 'direct', setup: {} },
+      { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {} },
+    ] };
+    const metadata = { host: 'worker', platform: 'linux', homeDir: '/home/worker', happyHomeDir: '/home/worker/.happier',
+      happyCliVersion: 'test', setup };
+    const installationPublicKey = Buffer.from(tweetnacl.sign.keyPair.fromSeed(key).publicKey).toString('base64url');
+    const machine = { id: 'worker', encryptionKey: key, encryptionVariant: 'legacy' as const,
+      metadata, metadataVersion: 34, daemonState: null, daemonStateVersion: 0 };
+    const writes: unknown[] = [];
+    const socket = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event !== 'machine-update-metadata') throw new Error(`Unexpected event: ${event}`);
+      const write = MachineUpdateMetadataRequestSchema.parse(payload);
+      writes.push(decrypt(key, 'legacy', decodeBase64(write.metadata)));
+      return { result: 'success', version: write.expectedVersion + 1, metadata: write.metadata };
+    } });
+    const { ApiMachineClient } = await import('./apiMachine');
+    // Stored data predates the current authored Setup type.
+    const client = new ApiMachineClient('token', machine as unknown as ConstructorParameters<typeof ApiMachineClient>[1]);
+    Reflect.set(client, 'socket', socket);
+    const publishKey = () => client.updateMachineMetadata(current => ({ ...current!, installationPublicKey }));
+    try {
+      await expect(publishKey()).resolves.toBe('published');
+      expect(writes).toEqual([{ ...metadata, installationPublicKey }]);
+      await expect(publishKey()).resolves.toBe('unchanged');
+      await expect(client.updateMachineMetadata(current => ({ ...current!, setup: { ...current!.setup!, revision: 3 } })))
+        .rejects.toThrow('Unsupported Machine metadata publication');
+      const { mutateMachineSetupDesiredV1 } = await import('@happier-dev/protocol/machines/setup/machineSetupSourcesV1');
+      await expect(mutateMachineSetupDesiredV1({ expectedDesiredRevision: 2, sources: [
+        { kind: 'direct', setup: {} },
+        { kind: 'accountPreset', presetId: 'saved-preset', presetRevision: 1, setup: {}, contentEncryptionMode: 'e2ee' },
+      ], exclusions: [] }, {
+        read: async () => client.getMachineMetadataSnapshot(),
+        compareAndSwap: input => client.compareAndSwapMachineMetadata(input),
+      })).resolves.toMatchObject({ status: 'applied', policy: { revision: 3, sources: [
+        { kind: 'direct' }, { kind: 'accountPreset', contentEncryptionMode: 'e2ee' },
+      ] } });
+    } finally { await client.shutdown(); }
+  });
+
   it('publishes only changed Agent install facts while preserving newer equal-probe ordering', async () => {
     const key = new Uint8Array(32).fill(19);
     const machine = { id: 'machine-agent-publication', encryptionKey: key, encryptionVariant: 'legacy' as const,

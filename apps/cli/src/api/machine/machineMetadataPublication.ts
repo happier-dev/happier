@@ -58,7 +58,7 @@ export async function publishMachineMetadataUpdate(context: Readonly<{
       const machine = context.getMachine();
       const expectedMetadataVersion = machine.metadataVersion;
       const current = machine.metadata === null ? null : StoredMachinePublishedMetadataV1Schema.parse(machine.metadata);
-      const updated = parseMachinePublishedMetadataV1(handler(current));
+      const updated = handler(current);
       if (isDeepStrictEqual(updated, machine.metadata)) return 'unchanged';
       attempt = { metadata: updated, expectedMetadataVersion };
     }
@@ -85,7 +85,7 @@ export async function publishMachineMetadataOnce(context: MachineMetadataPublica
     const snapshot = readOpenedMachineMetadataSnapshot(machine, true);
     return snapshot.status === 'ready' ? { ...snapshot, status: 'conflict' } : snapshot;
   }
-  const updated = parseMachinePublishedMetadataV1(input.metadata);
+  const updated = parseMachinePublishedMetadataV1(input.metadata, codec.mode === 'e2ee' ? machine.metadata ?? undefined : undefined);
   const answer = MachineUpdateMetadataResponseSchema.parse(await emitSocketWithAck({
     socket: context.socket, event: 'machine-update-metadata', timeoutMs: null, payload: {
       machineId: machine.id, metadata: codec.encodeStored(updated), expectedVersion: input.expectedMetadataVersion,

@@ -1,7 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { sameStrictJsonValue, StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { CliUpdateFactsSchema } from './cliUpdateFacts.js';
 import { MachineInstallationPublicKeySchema } from './identity/installationKeySchemas.js';
@@ -217,10 +217,17 @@ export function isMachinePublishedContentSafeV1(input: Readonly<{
   return daemonState.success && hasCanonicalPublishedShape(input.daemonState, daemonState.data);
 }
 
-/** Write admission rejects unknown nested bags rather than silently projecting them. */
-export function parseMachinePublishedMetadataV1(value: unknown): MachinePublishedMetadataV1 {
-  const parsed = MachinePublishedMetadataV1Schema.safeParse(value);
-  if (!parsed.success || !hasCanonicalPublishedShape(value, parsed.data)) {
+/** Authored fields are strict. An encrypted snapshot CAS can carry forward untouched admitted fields. */
+export function parseMachinePublishedMetadataV1(value: unknown, incumbent?: MachinePublishedMetadataV1): MachinePublishedMetadataV1 {
+  const schema = MachinePublishedMetadataV1Schema;
+  const carried = incumbent && value && typeof value === 'object' && !Array.isArray(value)
+    ? Object.entries(incumbent).filter(([field, previous]) => Object.hasOwn(schema.shape, field)
+      && Object.hasOwn(value, field) && sameStrictJsonValue(Reflect.get(value, field), previous))
+    : [];
+  const snapshot = carried.length ? { ...value as object, ...Object.fromEntries(carried) } : value;
+  const parsed = (carried.length ? z.extend(schema, Object.fromEntries(carried.map(([field]) => [field, z.unknown()]))) : schema)
+    .safeParse(snapshot);
+  if (!parsed.success || !hasCanonicalPublishedShape(snapshot, parsed.data)) {
     throw Object.assign(new Error('Unsupported Machine metadata publication'), { retryable: false });
   }
   return parsed.data;
