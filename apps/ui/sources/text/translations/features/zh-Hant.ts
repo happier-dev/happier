@@ -3507,6 +3507,17 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
                     avatars: '你上傳的圖片',
                     teamLogos: '你擁有的團隊的標誌',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} 個成品 · 文件、看板和檔案`,
+                    artifactOldVersions: ({ count }) => `為 ${count} 個成品保留的歷史`,
+                    pluginArtifacts: ({ count }) => `外掛為你儲存的 ${count} 項內容`,
+                    discussionAttachments: ({ count }) => `你擁有的討論中的 ${count} 個檔案`,
+                    accountPets: ({ count }) => `你匯入的 ${count} 隻寵物`,
+                    pluginCollections: ({ count }) => `${count} 個集合；每個外掛各自管理`,
+                    profilePictures: () => '你公開個人資料上的照片',
+                    avatars: ({ count }) => `你上傳的 ${count} 張圖片`,
+                    teamLogos: ({ count }) => `你擁有的 ${count} 個團隊的標誌`,
+                },
             },
             items: {
                 title: '最大的項目',
@@ -3543,6 +3554,8 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
                     teamLogos: '團隊標誌',
                 },
                 oldVersionsWhere: ({ where }) => `舊版本 · ${where}`,
+                fromAuthor: ({ author }) => `來自 ${author}`,
+                fromYou: '來自你',
             },
             empty: {
                 title: '尚未儲存任何內容',

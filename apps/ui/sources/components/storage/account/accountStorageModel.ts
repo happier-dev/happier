@@ -2,6 +2,12 @@ import { StorageInventoryKindV1Schema, type StorageInventoryItemV1, type Storage
 import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 
 import { projectArtifactBrowserRows, type ArtifactBrowserRow } from '@/components/artifacts/artifactBrowserModel';
+import {
+    discussionStorageMessageKey,
+    readDiscussionAttachmentName,
+    type DiscussionStorageExactMessages,
+    type DiscussionStorageMessage,
+} from '@/components/storage/discussion/discussionStorageMessages';
 import { resolveStorageQuotaState, type StorageQuotaState } from '@/components/storage/storageQuotaState';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 
@@ -19,7 +25,8 @@ const KIND_ORDER: readonly StorageInventoryKindV1[] = [
 ];
 const IMAGE_KINDS: readonly StorageInventoryKindV1[] = ['profilePictures', 'avatars', 'teamLogos'];
 
-export type AccountStorageKind = Readonly<{ id: StorageInventoryKindV1; bytes: number | null }>;
+/** `count` is how many items the kind holds across the whole inventory (unmeasured ones included); `null` when the owner does not say. */
+export type AccountStorageKind = Readonly<{ id: StorageInventoryKindV1; bytes: number | null; count: number | null }>;
 
 /**
  * One row per kind. The ordinary kinds are known before the read lands (their names render while sizes load). With the
@@ -28,19 +35,21 @@ export type AccountStorageKind = Readonly<{ id: StorageInventoryKindV1; bytes: n
  */
 export function projectAccountStorageKinds(inventory: StorageInventoryV1 | null): readonly AccountStorageKind[] {
     const sized = inventory?.kinds;
-    if (inventory === null) return KIND_ORDER.map((id) => ({ id, bytes: null }));
+    if (inventory === null) return KIND_ORDER.map((id) => ({ id, bytes: null, count: null }));
     if (!sized) {
         return [
             ...KIND_ORDER.filter((id): id is AccountStorageMeasuredKind => id in inventory.byKind)
-                .map((id) => ({ id, bytes: inventory.byKind[id] })),
-            ...inventory.unmeasuredKinds.map((id) => ({ id, bytes: null })),
+                .map((id) => ({ id, bytes: inventory.byKind[id], count: null })),
+            ...inventory.unmeasuredKinds.map((id) => ({ id, bytes: null, count: null })),
         ];
     }
+    // The owner counts the whole scope; its filters and cursors narrow only the page.
     return [
         ...KIND_ORDER.filter((id) => sized[id] !== undefined || id in inventory.byKind)
-            .map((id) => ({ id, bytes: sized[id]?.storedSizeBytes ?? (id in inventory.byKind ? inventory.byKind[id as AccountStorageMeasuredKind] : null) })),
+            .map((id) => ({ id, bytes: sized[id]?.storedSizeBytes ?? (id in inventory.byKind ? inventory.byKind[id as AccountStorageMeasuredKind] : null),
+                count: sized[id]?.itemCount ?? null })),
         ...IMAGE_KINDS.filter((id) => sized[id] !== undefined || inventory.unmeasuredKinds.includes(id as StorageInventoryV1['unmeasuredKinds'][number]))
-            .map((id) => ({ id, bytes: sized[id]?.storedSizeBytes ?? null })),
+            .map((id) => ({ id, bytes: sized[id]?.storedSizeBytes ?? null, count: sized[id]?.itemCount ?? null })),
     ];
 }
 
@@ -108,9 +117,9 @@ export function parseAccountStorageItemFilter(value: unknown): AccountStorageIte
     return parsed.success ? parsed.data : 'all';
 }
 
-/** The kinds the list can be narrowed to: those the owner reports holding anything. */
-export function listAccountStorageItemKinds(inventory: StorageInventoryV1 | null): readonly StorageInventoryKindV1[] {
-    return projectAccountStorageKinds(inventory).filter((kind) => kind.bytes !== null && kind.bytes > 0).map((kind) => kind.id);
+/** The kinds the list can be narrowed to (those the owner reports holding anything), each with its count for its chip. */
+export function listAccountStorageItemKinds(inventory: StorageInventoryV1 | null): readonly AccountStorageKind[] {
+    return projectAccountStorageKinds(inventory).filter((kind) => kind.bytes !== null && kind.bytes > 0);
 }
 
 /** One listed item: the owner's item, with its Artifact's opened row when it lives in an Artifact. */
@@ -125,7 +134,9 @@ export type AccountStorageItem = Readonly<{
     location: StorageInventoryItemV1['location'];
     /** The Artifact it lives in, once this device has its header; `null` for other kinds, or while it is read. */
     row: ArtifactBrowserRow<DecryptedArtifact> | null;
-    /** An Artifact item whose header this device has not read yet: its name shimmers. */
+    /** A Discussion file as its message names it (the page's exact read); `null` for other kinds, or where the Home left it out. */
+    discussionFile: AccountStorageDiscussionFile | null;
+    /** An Artifact's header, or a Discussion file's message, this device has not read yet: its name shimmers. */
     pending: boolean;
     /** The personal folder its Artifact is filed in, for "where it lives" (Artifacts › Marketing). */
     folderName: string | null;
@@ -133,6 +144,22 @@ export type AccountStorageItem = Readonly<{
     viewerMayRemove: boolean;
     /** The server admits this viewer clearing the Artifact's old versions (`viewerMayTrim`). */
     viewerMayTrim: boolean;
+}>;
+
+/** Where a Discussion file lives: its name in its message, its Discussion's title and who sent it ("from Mika Tanaka"). */
+export type AccountStorageDiscussionFile = Readonly<{
+    name: string | null;
+    discussionTitle: string | null;
+    from: string;
+    /** The viewer sent its message. */
+    own: boolean;
+}>;
+
+/** The page's Discussion messages (one exact read per page) and how the view says who sent one. */
+export type AccountStorageDiscussionFileSource = Readonly<{
+    exact: DiscussionStorageExactMessages;
+    accountId: string | null;
+    from: (message: DiscussionStorageMessage, own: boolean) => string;
 }>;
 
 const ALL_KINDS = { query: '', kind: 'all', sort: 'size_desc' } as const;
@@ -147,12 +174,16 @@ export function readAccountStorageItemArtifactIds(items: readonly StorageInvento
  * the header, which can be end-to-end encrypted). The key keeps an Artifact's own id and names its old versions apart.
  */
 export function projectAccountStorageItems(items: readonly StorageInventoryItemV1[], artifacts: ReadonlyMap<string, DecryptedArtifact | null>,
-    folders?: PromptFoldersV1 | null): readonly AccountStorageItem[] {
+    folders?: PromptFoldersV1 | null, files?: AccountStorageDiscussionFileSource): readonly AccountStorageItem[] {
     const names = new Map((folders?.folders ?? []).map((folder) => [folder.id, folder.name]));
     return items.map((item) => {
         const artifactId = item.location.kind === 'artifact' ? item.location.artifactId : null;
         const artifact = artifactId === null ? undefined : artifacts.get(artifactId);
         const row = artifact ? projectArtifactBrowserRows([artifact], ALL_KINDS, { folders })[0] ?? null : null;
+        const location = item.location;
+        const messageKey = location.kind === 'discussion' ? discussionStorageMessageKey(location.discussionId, location.messageId) : null;
+        const exact = messageKey === null ? undefined : files?.exact.messages.get(messageKey);
+        const own = exact ? exact.message.authorAccountId !== null && exact.message.authorAccountId === files?.accountId : false;
         return {
             key: item.kind === 'artifacts' ? item.id : `${item.kind}-${item.id}`,
             id: item.id,
@@ -161,7 +192,14 @@ export function projectAccountStorageItems(items: readonly StorageInventoryItemV
             createdAt: item.createdAt,
             location: item.location,
             row,
-            pending: artifactId !== null && artifact === undefined,
+            discussionFile: exact && files && location.kind === 'discussion' ? {
+                name: readDiscussionAttachmentName(exact.message, location.attachmentId ?? item.id),
+                discussionTitle: exact.discussionTitle,
+                from: files.from(exact.message, own),
+                own,
+            } : null,
+            pending: artifactId !== null ? artifact === undefined
+                : messageKey !== null && exact === undefined && files?.exact.reading === true,
             folderName: row?.folderId ? names.get(row.folderId) ?? null : null,
             // Absent on the wire means not admitted: the view offers only what the producer grants.
             viewerMayRemove: item.viewerMayRemove === true,

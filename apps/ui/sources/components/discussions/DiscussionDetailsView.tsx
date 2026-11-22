@@ -159,7 +159,8 @@ import { AgentContentView } from '@/components/sessions/transcript/AgentContentV
 import { ComposerKeyboardScrollInset } from '@/components/sessions/keyboardAvoidance/ComposerKeyboardScrollInset';
 import { useDiscussionRightSidebarHosted, usePublishDiscussionRightSidebarPanels, type DiscussionRightSidebarPanels } from './discussionRightSidebarPanels';
 import { DiscussionDetailsPanel } from './DiscussionDetailsPanel';
-import type { DiscussionStorageMessage, DiscussionStorageSource } from '@/components/storage/discussion/DiscussionStorage';
+import type { DiscussionStorageSource } from '@/components/storage/discussion/DiscussionStorage';
+import type { DiscussionStorageMessage } from '@/components/storage/discussion/discussionStorageMessages';
 import { createDiscussionPassageBadge, createDiscussionReplyBadge } from './discussionComposerContextItems';
 import { useDiscussionDraft } from './useDiscussionDraft';
 import { useDiscussionRepository as useRepository, useNewDiscussionCreate } from './useNewDiscussionCreate';

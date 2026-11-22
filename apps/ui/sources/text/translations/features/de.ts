@@ -3616,6 +3616,17 @@ const artifactsBrowserTranslations = { de: {
                     avatars: 'Bilder, die du hochgeladen hast',
                     teamLogos: 'Logos von Teams, die dir gehören',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count === 1 ? 'Artefakt' : 'Artefakte'} · Dokumente, Boards und Dateien`,
+                    artifactOldVersions: ({ count }) => `Verlauf von ${count} ${count === 1 ? 'Artefakt' : 'Artefakten'}`,
+                    pluginArtifacts: ({ count }) => `${count} von Plugins für dich gespeichert`,
+                    discussionAttachments: ({ count }) => `${count} ${count === 1 ? 'Datei' : 'Dateien'} in Diskussionen, die dir gehören`,
+                    accountPets: ({ count }) => `${count} ${count === 1 ? 'Pet, das' : 'Pets, die'} du importiert hast`,
+                    pluginCollections: ({ count }) => `${count} ${count === 1 ? 'Sammlung' : 'Sammlungen'}; jedes Plugin verwaltet seine eigenen`,
+                    profilePictures: () => 'Das Bild in deinem öffentlichen Profil',
+                    avatars: ({ count }) => `${count} ${count === 1 ? 'Bild, das' : 'Bilder, die'} du hochgeladen hast`,
+                    teamLogos: ({ count }) => `Logos von ${count} ${count === 1 ? 'Team, das dir gehört' : 'Teams, die dir gehören'}`,
+                },
             },
             items: {
                 title: 'Größte Einträge',
@@ -3652,6 +3663,8 @@ const artifactsBrowserTranslations = { de: {
                     teamLogos: 'Team-Logo',
                 },
                 oldVersionsWhere: ({ where }) => `Alte Versionen · ${where}`,
+                fromAuthor: ({ author }) => `von ${author}`,
+                fromYou: 'von dir',
             },
             empty: {
                 title: 'Noch nichts gespeichert',

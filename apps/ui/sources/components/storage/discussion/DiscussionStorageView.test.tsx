@@ -87,6 +87,7 @@ describe('Storage scoped to one Discussion (storage-view lab scene 5 A, scene 3)
       <DiscussionStorageView
         totalBytes={86_400_000}
         accountTotalBytes={1_840_000_000}
+        fileCount={2}
         files={FILES}
         presentation="pane"
         onShowInMessage={vi.fn()}

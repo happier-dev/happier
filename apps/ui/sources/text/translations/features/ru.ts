@@ -3607,6 +3607,17 @@ const artifactsBrowserTranslations = { ru: {
                     avatars: 'Загруженные вами изображения',
                     teamLogos: 'Логотипы ваших команд',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'артефакт' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'артефакта' : 'артефактов'} · документы, доски и файлы`,
+                    artifactOldVersions: ({ count }) => `История ${count} ${count % 10 === 1 && count % 100 !== 11 ? 'артефакта' : 'артефактов'}`,
+                    pluginArtifacts: ({ count }) => `Сохранено плагинами для вас: ${count}`,
+                    discussionAttachments: ({ count }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'файл' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'файла' : 'файлов'} в ваших обсуждениях`,
+                    accountPets: ({ count }) => `Импортировано питомцев: ${count}`,
+                    pluginCollections: ({ count }) => `${count} ${count % 10 === 1 && count % 100 !== 11 ? 'коллекция' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'коллекции' : 'коллекций'}; каждый плагин управляет своими`,
+                    profilePictures: () => 'Фото в вашем публичном профиле',
+                    avatars: ({ count }) => `Загружено изображений: ${count}`,
+                    teamLogos: ({ count }) => `Логотипы ваших команд: ${count}`,
+                },
             },
             items: {
                 title: 'Самые большие элементы',
@@ -3643,6 +3654,8 @@ const artifactsBrowserTranslations = { ru: {
                     teamLogos: 'Логотип команды',
                 },
                 oldVersionsWhere: ({ where }) => `Старые версии · ${where}`,
+                fromAuthor: ({ author }) => `от ${author}`,
+                fromYou: 'от вас',
             },
             empty: {
                 title: 'Пока ничего не хранится',

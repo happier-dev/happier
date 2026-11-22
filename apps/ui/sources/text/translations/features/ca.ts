@@ -3603,6 +3603,17 @@ const artifactsBrowserTranslations = { ca: {
                     avatars: 'Imatges que has pujat',
                     teamLogos: 'Logotips d’equips que són teus',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count === 1 ? 'artefacte' : 'artefactes'} · documents, taulers i fitxers`,
+                    artifactOldVersions: ({ count }) => `Historial desat de ${count} ${count === 1 ? 'artefacte' : 'artefactes'}`,
+                    pluginArtifacts: ({ count }) => `${count} desats per connectors per a tu`,
+                    discussionAttachments: ({ count }) => `${count} ${count === 1 ? 'fitxer' : 'fitxers'} en discussions que són teves`,
+                    accountPets: ({ count }) => `${count} ${count === 1 ? 'pet' : 'pets'} que has importat`,
+                    pluginCollections: ({ count }) => `${count} ${count === 1 ? 'col·lecció' : 'col·leccions'}; cada connector gestiona les seves`,
+                    profilePictures: () => 'La foto del teu perfil públic',
+                    avatars: ({ count }) => `${count} ${count === 1 ? 'imatge' : 'imatges'} que has pujat`,
+                    teamLogos: ({ count }) => `Logotips de ${count} ${count === 1 ? 'equip' : 'equips'} que són teus`,
+                },
             },
             items: {
                 title: 'Elements més grans',
@@ -3639,6 +3650,8 @@ const artifactsBrowserTranslations = { ca: {
                     teamLogos: 'Logotip d’equip',
                 },
                 oldVersionsWhere: ({ where }) => `Versions antigues · ${where}`,
+                fromAuthor: ({ author }) => `de ${author}`,
+                fromYou: 'de tu',
             },
             empty: {
                 title: 'Encara no hi ha res guardat',

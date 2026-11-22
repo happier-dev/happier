@@ -3561,6 +3561,17 @@ const artifactsBrowserTranslations = { ja: {
                     avatars: 'アップロードした画像',
                     teamLogos: '所有するチームのロゴ',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} 件のアーティファクト · ドキュメント、ボード、ファイル`,
+                    artifactOldVersions: ({ count }) => `${count} 件のアーティファクトの保存された履歴`,
+                    pluginArtifacts: ({ count }) => `プラグインが保存した ${count} 件`,
+                    discussionAttachments: ({ count }) => `所有するディスカッションの ${count} 件のファイル`,
+                    accountPets: ({ count }) => `インポートした ${count} 件のペット`,
+                    pluginCollections: ({ count }) => `${count} 件のコレクション。各プラグインが管理`,
+                    profilePictures: () => '公開プロフィールの写真',
+                    avatars: ({ count }) => `アップロードした ${count} 件の画像`,
+                    teamLogos: ({ count }) => `所有する ${count} チームのロゴ`,
+                },
             },
             items: {
                 title: '大きい項目',
@@ -3597,6 +3608,8 @@ const artifactsBrowserTranslations = { ja: {
                     teamLogos: 'チームのロゴ',
                 },
                 oldVersionsWhere: ({ where }) => `古いバージョン · ${where}`,
+                fromAuthor: ({ author }) => `${author} から`,
+                fromYou: '自分から',
             },
             empty: {
                 title: 'まだ何も保存されていません',

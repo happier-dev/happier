@@ -143,6 +143,16 @@ function itemOrder(screen: Awaited<ReturnType<typeof renderScreen>>): string[] {
   return [...new Set(ids)];
 }
 
+/** The kind filter's chips as the view hands them to the shared tab bar. */
+function filterBar(screen: Awaited<ReturnType<typeof renderScreen>>): ReactTestInstance {
+  const bar = screen.findAll((node) => node.props.testIDPrefix === 'storage:filter' && Array.isArray(node.props.tabs)).at(0);
+  if (!bar) throw new Error('No kind filter');
+  return bar;
+}
+function filterTabs(screen: Awaited<ReturnType<typeof renderScreen>>): Array<Readonly<{ id: string; count?: string }>> {
+  return filterBar(screen).props.tabs as Array<Readonly<{ id: string; count?: string }>>;
+}
+
 /** Every storage inventory read the view made, in order (the count contract: one read per page). */
 let inventoryReads: URL[] = [];
 let artifactListReads = 0;
@@ -170,10 +180,60 @@ const PAGE_2 = [
   { id: UNKNOWN, kind: 'artifacts' as const, storedSizeBytes: null, createdAt: 4, location: { kind: 'artifact' as const, artifactId: UNKNOWN } },
 ];
 
-async function serve(limit: number | null) {
+/** Every exact Discussion message read the view made (`POST /v1/discussions/messages/read`), with its request body. */
+let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: string }>>> = [];
+const actor = (accountId: string, name: string) => ({ v: 1 as const, accountId,
+  profile: { name, firstName: null, lastName: null, username: null, avatarUrl: null } });
+const MIKA = actor('mika', 'Mika Tanaka');
+const SELF = actor(ACCOUNT, 'Leeroy');
+/** One message carrying files, as the Home stores it in a plain Discussion. */
+function wireMessage(discussionId: string, id: string, seq: number, author: ReturnType<typeof actor>, files: ReadonlyArray<readonly [string, string]>) {
+  return { id, discussionId, localId: null, seq, authorAccountId: author.accountId, accountActor: author, producerV1: null,
+    content: { t: 'plain', v: { v: 1, parts: files.map(([blobId, name]) => ({ t: 'attachment', attachment: { kind: 'file', id: blobId, name,
+      file: { blobId, mime: 'application/octet-stream', sizeBytes: 1_000, sha256: 'a'.repeat(64) } } })) } },
+    mentionedAccountIds: [], createdAt: 1 };
+}
+const BLOB3 = '33333333-3333-4333-8333-000000000003';
+const BLOB4 = '33333333-3333-4333-8333-000000000004';
+const BLOB5 = '33333333-3333-4333-8333-000000000005';
+const BLOB6 = '33333333-3333-4333-8333-000000000006';
+/** The Discussions the Home holds; `message-2` is not readable by this viewer, so the Home leaves it out. */
+const DISCUSSIONS = [
+  { id: 'discussion-1', title: 'Checkout bug triage', messages: [wireMessage('discussion-1', 'message-1', 1, MIKA, [[BLOB, 'checkout-bug-repro.mov']])] },
+  { id: 'discussion-2', title: 'Release planning', messages: [wireMessage('discussion-2', 'message-3', 1, SELF,
+    [[BLOB3, 'api-trace-export.har'], [BLOB5, 'release-notes.md']])] },
+  { id: 'discussion-3', title: 'Pricing page copy', messages: [wireMessage('discussion-3', 'message-4', 1, MIKA, [[BLOB4, 'pricing-draft.pdf']])] },
+  { id: 'discussion-4', title: 'Onboarding video', messages: [wireMessage('discussion-4', 'message-5', 1, MIKA, [[BLOB6, 'final-cut.mov']])] },
+];
+const file = (id: string, discussionId: string, messageId: string, bytes: number) => ({ id, kind: 'discussionAttachments' as const,
+  storedSizeBytes: bytes, createdAt: 3, location: { kind: 'discussion' as const, discussionId, messageId, attachmentId: id } });
+/** Files from three Discussions on one page (two of them in one message), and one more Discussion on the next page. */
+const NAMED_PAGE_1 = [
+  file(BLOB, 'discussion-1', 'message-1', 64_200_000), file(BLOB3, 'discussion-2', 'message-3', 18_600_000),
+  file(BLOB4, 'discussion-3', 'message-4', 12_000_000), file(OTHER_BLOB, 'discussion-1', 'message-2', 6_000_000),
+  file(BLOB5, 'discussion-2', 'message-3', 2_000_000),
+];
+const NAMED_PAGE_2 = [file(BLOB6, 'discussion-4', 'message-5', 1_000_000)];
+/** Per-kind counts for the full inventory scope (unmeasured items included), as a carrying Home reports them. */
+const COUNTED_KINDS: NonNullable<StorageInventoryV1['kinds']> = {
+  artifacts: { storedSizeBytes: 192_000_000, itemCount: 214 },
+  artifactOldVersions: { storedSizeBytes: 8_000_000, itemCount: 61 },
+  discussionAttachments: { storedSizeBytes: 50_000_000, itemCount: 342 },
+  accountPets: { storedSizeBytes: 10_000_000, itemCount: 6 },
+  pluginCollections: { storedSizeBytes: 5_000_000, itemCount: 4 },
+  pluginArtifacts: { storedSizeBytes: 0, itemCount: 0 },
+  profilePictures: { storedSizeBytes: null, itemCount: 1 },
+};
+
+async function serve(limit: number | null, options: Readonly<{
+  counts?: boolean;
+  pages?: readonly [readonly unknown[], readonly unknown[]];
+}> = {}) {
   inventoryReads = [];
   artifactListReads = 0;
   mutations = [];
+  exactReads = [];
+  const [first, second] = options.pages ?? [PAGE_1, PAGE_2];
   const rows = [...ROWS, ...MANY];
   const served = await serveActionHomes({
     homes: [
@@ -192,8 +252,20 @@ async function serve(limit: number | null) {
       }
       if (request.path === '/v1/artifacts/storage/usage') {
         inventoryReads.push(request.url);
-        const second = request.url.searchParams.get('cursor') === 'page-2';
-        return Response.json({ ...inventory(limit), page: second ? { items: PAGE_2 } : { items: PAGE_1, nextCursor: 'page-2' } });
+        const next = request.url.searchParams.get('cursor') === 'page-2';
+        return Response.json({ ...inventory(limit), ...(options.counts ? { kinds: COUNTED_KINDS } : {}),
+          page: next ? { items: second } : { items: first, nextCursor: 'page-2' } });
+      }
+      if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
+        const asked = (request.body as { messages: Array<{ discussionId: string; messageId: string }> }).messages;
+        exactReads.push(asked);
+        // Grouped by Discussion with its title and key context; a message the viewer cannot read is left out.
+        return Response.json({ discussions: DISCUSSIONS.flatMap((discussion) => {
+          const messages = discussion.messages.filter((message) => asked.some((pair) =>
+            pair.discussionId === discussion.id && pair.messageId === message.id));
+          return messages.length === 0 ? [] : [{ discussionId: discussion.id, titleContent: { t: 'plain', v: { v: 1, title: discussion.title } },
+            keyContext: { encryptionMode: 'plain', keyReadiness: true, dataEncryptionKey: null }, messages }];
+        }) });
       }
       if (request.path === '/v1/artifacts/read' && request.method === 'POST')
         return createArtifactReadBatchHttpResponse(request.body, (artifactId) => {
@@ -376,6 +448,76 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         expect(screen.findHostByTestId('storage:kind:pluginArtifacts')).toBeNull();
         expect(textOf(screen.findHostByTestId('storage:kind:profilePictures'))).toContain('—');
         expect(screen.findHostByTestId('storage:kind:discussionAttachments')).not.toBeNull();
+        // An older Home omits the counts: no chip and no kind row claims one.
+        expect(filterTabs(screen).every((tab) => tab.count === undefined)).toBe(true);
+        expect(textOf(screen.findHostByTestId('storage:kind:artifacts'))).toContain('artifacts.browser.storageView.kinds.facts.artifacts');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it("counts each kind's items for the whole inventory on its chip and in its row, whatever page or filter is shown", async () => {
+    const disconnect = await serve(null, { counts: true });
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(filterTabs(screen).find((tab) => tab.id === 'artifacts')?.count).toBe('214'));
+        const counts = Object.fromEntries(filterTabs(screen).map((tab) => [tab.id, tab.count]));
+        expect(counts).toEqual({ all: undefined, artifacts: '214', artifactOldVersions: '61', discussionAttachments: '342',
+          accountPets: '6', pluginCollections: '4' });
+        // The rows say them as the lab does ("214 Artifacts · documents, boards and files", "History kept in 61 Artifacts").
+        expect(textOf(screen.findHostByTestId('storage:kind:artifacts'))).toContain('artifacts.browser.storageView.kinds.countedFacts.artifacts(count=214)');
+        expect(textOf(screen.findHostByTestId('storage:kind:artifactOldVersions')))
+          .toContain('artifacts.browser.storageView.kinds.countedFacts.artifactOldVersions(count=61)');
+        expect(textOf(screen.findHostByTestId('storage:kind:discussionAttachments')))
+          .toContain('artifacts.browser.storageView.kinds.countedFacts.discussionAttachments(count=342)');
+        // Narrowing the list pages one kind; the counts stay the inventory's.
+        await act(async () => { filterBar(screen).props.onSelectTab('accountPets'); });
+        await vi.waitFor(() => expect(inventoryReads.at(-1)?.searchParams.get('kinds')).toBe('accountPets'));
+        expect(filterTabs(screen).find((tab) => tab.id === 'artifacts')?.count).toBe('214');
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('names every Discussion file on a page from one batched exact read, with no Discussion mounted', async () => {
+    const disconnect = await serve(null, { pages: [NAMED_PAGE_1, NAMED_PAGE_2] });
+    try {
+      const screen = await renderScreen(<AppPaneProvider><StorageSettingsRoute /></AppPaneProvider>);
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        await layOut(screen, 'storage:collection:stage');
+        const row = (id: string) => textOf(screen.findHostByTestId(`storage:item:discussionAttachments-${id}`));
+        await vi.waitFor(() => expect(row(BLOB)).toContain('checkout-bug-repro.mov'));
+        // Where it lives reads after the name: its Discussion, then who sent it.
+        expect(row(BLOB)).toContain('Checkout bug triage · artifacts.browser.storageView.items.fromAuthor(author=Mika Tanaka)');
+        expect(row(BLOB3)).toContain('api-trace-export.har');
+        expect(row(BLOB3)).toContain('Release planning · artifacts.browser.storageView.items.fromYou');
+        expect(row(BLOB5)).toContain('release-notes.md');
+        expect(row(BLOB4)).toContain('pricing-draft.pdf');
+        expect(row(BLOB4)).toContain('Pricing page copy · artifacts.browser.storageView.items.fromAuthor(author=Mika Tanaka)');
+        // The Home left out a message this viewer cannot read: that row keeps the kind's own name and no place.
+        expect(row(OTHER_BLOB)).toContain('artifacts.browser.storageView.items.titles.discussionAttachments');
+        expect(row(OTHER_BLOB)).not.toContain('fromAuthor');
+        // The count contract: one inventory read and ONE message read for three Discussions, each message asked once.
+        expect(inventoryReads).toHaveLength(1);
+        expect(exactReads).toHaveLength(1);
+        expect(new Set(exactReads[0]!.map((pair) => `${pair.discussionId}/${pair.messageId}`))).toEqual(new Set([
+          'discussion-1/message-1', 'discussion-2/message-3', 'discussion-3/message-4', 'discussion-1/message-2']));
+        expect(exactReads[0]).toHaveLength(4);
+
+        // The next page: one more inventory read and one more message read, for its own new message only.
+        await act(async () => { invokeTestInstanceHandler(screen.findHostByTestId('storage:items:more'), 'onPress'); });
+        await vi.waitFor(() => expect(row(BLOB6)).toContain('final-cut.mov'));
+        expect(inventoryReads).toHaveLength(2);
+        expect(exactReads).toHaveLength(2);
+        expect(exactReads[1]).toEqual([{ discussionId: 'discussion-4', messageId: 'message-5' }]);
       } finally {
         await screen.unmount();
       }
@@ -426,8 +568,12 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         await vi.waitFor(() => expect(line(`artifactOldVersions-${SMALL}`)).not.toBe(''));
         expect(line(`artifactOldVersions-${SMALL}`)).toBe(
           'artifacts.browser.storageView.kinds.shortNames.artifactOldVersions · artifacts.browser.storageView.items.where');
-        // A Discussion file's line names its kind once; where it lives joins when the storage read names it.
-        expect(line(`discussionAttachments-${BLOB}`)).toBe('artifacts.browser.storageView.kinds.shortNames.discussionAttachments');
+        // A Discussion file's line names its kind once, then its Discussion and who sent it (lab "Checkout bug triage · from Mika Tanaka").
+        await vi.waitFor(() => expect(line(`discussionAttachments-${BLOB}`)).toBe(
+          'artifacts.browser.storageView.kinds.shortNames.discussionAttachments · Checkout bug triage · '
+          + 'artifacts.browser.storageView.items.fromAuthor(author=Mika Tanaka)'));
+        // A file the Home does not let this viewer read says only its kind.
+        expect(line(`discussionAttachments-${OTHER_BLOB}`)).toBe('artifacts.browser.storageView.kinds.shortNames.discussionAttachments');
       } finally {
         await screen.unmount();
       }

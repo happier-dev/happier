@@ -3615,6 +3615,17 @@ const artifactsBrowserTranslations = { pl: {
                     avatars: 'Przesłane przez ciebie obrazy',
                     teamLogos: 'Logo zespołów, których jesteś właścicielem',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count === 1 ? 'artefakt' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'artefakty' : 'artefaktów'} · dokumenty, tablice i pliki`,
+                    artifactOldVersions: ({ count }) => `Historia przechowywana dla ${count} ${count === 1 ? 'artefaktu' : 'artefaktów'}`,
+                    pluginArtifacts: ({ count }) => `Zapisane dla ciebie przez wtyczki: ${count}`,
+                    discussionAttachments: ({ count }) => `${count} ${count === 1 ? 'plik' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'pliki' : 'plików'} w dyskusjach, których jesteś właścicielem`,
+                    accountPets: ({ count }) => `Zaimportowane pety: ${count}`,
+                    pluginCollections: ({ count }) => `${count} ${count === 1 ? 'kolekcja' : count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14) ? 'kolekcje' : 'kolekcji'}; każda wtyczka zarządza swoimi`,
+                    profilePictures: () => 'Zdjęcie w twoim profilu publicznym',
+                    avatars: ({ count }) => `Przesłane przez ciebie obrazy: ${count}`,
+                    teamLogos: ({ count }) => `Logo zespołów, których jesteś właścicielem: ${count}`,
+                },
             },
             items: {
                 title: 'Największe elementy',
@@ -3651,6 +3662,8 @@ const artifactsBrowserTranslations = { pl: {
                     teamLogos: 'Logo zespołu',
                 },
                 oldVersionsWhere: ({ where }) => `Stare wersje · ${where}`,
+                fromAuthor: ({ author }) => `od ${author}`,
+                fromYou: 'od ciebie',
             },
             empty: {
                 title: 'Nic jeszcze nie zapisano',

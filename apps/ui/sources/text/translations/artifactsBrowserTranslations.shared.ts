@@ -224,6 +224,11 @@ export type ArtifactsBrowserTranslations = Readonly<{
                 avatars: string;
                 teamLogos: string;
             }>;
+            /** A kind's line with its inventory count ("214 Artifacts · documents, boards and files"). */
+            countedFacts: Readonly<Record<
+                'artifacts' | 'artifactOldVersions' | 'pluginArtifacts' | 'discussionAttachments' | 'accountPets'
+                | 'pluginCollections' | 'profilePictures' | 'avatars' | 'teamLogos',
+                (params: Readonly<{ count: number }>) => string>>;
         }>;
         items: Readonly<{
             title: string;
@@ -260,6 +265,9 @@ export type ArtifactsBrowserTranslations = Readonly<{
                 teamLogos: string;
             }>;
             oldVersionsWhere: (params: Readonly<{ where: string }>) => string;
+            /** Who sent a Discussion file's message, after its Discussion ("Checkout bug triage · from Mika Tanaka"). */
+            fromAuthor: (params: Readonly<{ author: string }>) => string;
+            fromYou: string;
         }>;
         empty: Readonly<{
             title: string;
@@ -604,6 +612,17 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                     avatars: 'Pictures you uploaded',
                     teamLogos: 'Logos of Teams you own',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count === 1 ? 'Artifact' : 'Artifacts'} · documents, boards and files`,
+                    artifactOldVersions: ({ count }) => `History kept in ${count} ${count === 1 ? 'Artifact' : 'Artifacts'}`,
+                    pluginArtifacts: ({ count }) => `${count} saved by plugins for you`,
+                    discussionAttachments: ({ count }) => `${count} ${count === 1 ? 'file' : 'files'} in Discussions you own`,
+                    accountPets: ({ count }) => `${count} ${count === 1 ? 'Pet' : 'Pets'} you imported`,
+                    pluginCollections: ({ count }) => `${count} ${count === 1 ? 'collection' : 'collections'}; each plugin manages its own`,
+                    profilePictures: () => 'The picture on your public profile',
+                    avatars: ({ count }) => `${count} ${count === 1 ? 'picture' : 'pictures'} you uploaded`,
+                    teamLogos: ({ count }) => `Logos of ${count} ${count === 1 ? 'Team' : 'Teams'} you own`,
+                },
             },
             items: {
                 title: 'Biggest items',
@@ -640,6 +659,8 @@ export const artifactsBrowserTranslationsEnglish = { en: {
                     teamLogos: 'Team logo',
                 },
                 oldVersionsWhere: ({ where }) => `Old versions · ${where}`,
+                fromAuthor: ({ author }) => `from ${author}`,
+                fromYou: 'from you',
             },
             empty: {
                 title: 'Nothing stored yet',

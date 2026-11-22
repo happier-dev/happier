@@ -3506,6 +3506,17 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
                     avatars: '你上传的图片',
                     teamLogos: '你拥有的团队的标志',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} 个工件 · 文档、看板和文件`,
+                    artifactOldVersions: ({ count }) => `为 ${count} 个工件保留的历史`,
+                    pluginArtifacts: ({ count }) => `插件为你保存的 ${count} 项内容`,
+                    discussionAttachments: ({ count }) => `你拥有的讨论中的 ${count} 个文件`,
+                    accountPets: ({ count }) => `你导入的 ${count} 只宠物`,
+                    pluginCollections: ({ count }) => `${count} 个集合；每个插件各自管理`,
+                    profilePictures: () => '你公开资料上的照片',
+                    avatars: ({ count }) => `你上传的 ${count} 张图片`,
+                    teamLogos: ({ count }) => `你拥有的 ${count} 个团队的标志`,
+                },
             },
             items: {
                 title: '最大的项目',
@@ -3542,6 +3553,8 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
                     teamLogos: '团队标志',
                 },
                 oldVersionsWhere: ({ where }) => `旧版本 · ${where}`,
+                fromAuthor: ({ author }) => `来自 ${author}`,
+                fromYou: '来自你',
             },
             empty: {
                 title: '尚未存储任何内容',

@@ -17,7 +17,7 @@ import {
   type HappierChartPart,
 } from '@happier-dev/plugin-ui/presentation';
 import { readHappierVisibleLayoutWidth } from '@happier-dev/plugin-ui/presentation/pageMetrics';
-import { StorageInventoryKindV1Schema, type StorageInventoryKindV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { StorageInventoryKindV1Schema, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { PET_PACKAGE_LIMITS_V1 } from '@happier-dev/protocol/pets/constants';
 import { STORAGE_TREEMAP_MIN_NODE_PX } from '@happier-dev/protocol/storage/storageV1';
 
@@ -30,6 +30,11 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { confirmTrimOldVersions } from '@/components/storage/storageConfirmations';
 import { useRemoveDiscussionFile } from '@/components/storage/useRemoveDiscussionFile';
+import {
+  useDiscussionStorageAuthorLabel,
+  useDiscussionStorageExactMessages,
+  type DiscussionStorageMessage,
+} from '@/components/storage/discussion/discussionStorageMessages';
 import {
   artifactViewRoute,
   opensInArtifactView,
@@ -141,10 +146,22 @@ export function AccountStorageView(props: Readonly<{ initialFilter: AccountStora
   React.useEffect(() => {
     if (missing) void sync.refreshArtifactsByIds(missing.split('\u0000')).catch(() => {});
   }, [missing]);
+  // A Discussion file's name and where it lives are in its message: one exact read for the page's messages, never one
+  // per file or per Discussion, and no Discussion is opened for it.
+  const scope = useActiveServerAccountScope();
+  const exact = useDiscussionStorageExactMessages(scope, read.items, true);
+  const authorLabel = useDiscussionStorageAuthorLabel(scope);
+  const accountId = scope?.accountId ?? null;
+  const files = React.useMemo(() => ({
+    exact, accountId,
+    from: (message: DiscussionStorageMessage, own: boolean) => own
+      ? t('artifacts.browser.storageView.items.fromYou')
+      : t('artifacts.browser.storageView.items.fromAuthor', { author: authorLabel(message) }),
+  }), [accountId, authorLabel, exact]);
   const items = React.useMemo(() => {
     const opened = new Map(artifactIds.flatMap((id, index) => rows[index] ? [[id, rows[index]!] as const] : []));
-    return projectAccountStorageItems(read.items, opened, folders);
-  }, [artifactIds, folders, read.items, rows]);
+    return projectAccountStorageItems(read.items, opened, folders, files);
+  }, [artifactIds, files, folders, read.items, rows]);
   return (
     <AccountStorageBody inventory={read.inventory} status={read.status} onRetry={read.retry} items={items}
       itemsLoaded={read.inventory !== null} filter={filter} onFilter={setFilter} onMore={read.more} loadingMore={read.loadingMore}
@@ -614,7 +631,7 @@ function AccountStorageKindRow(
       testID={`storage:kind:${kind.id}`}
       icon={props.icon}
       title={t(`artifacts.browser.storageView.kinds.names.${kind.id}`)}
-      facts={t(`artifacts.browser.storageView.kinds.facts.${kind.id}`)}
+      facts={kindFacts(kind)}
       bytes={props.pending ? null : kind.bytes}
       largest={props.largest}
       barColor={props.mark.color}
@@ -635,6 +652,12 @@ function AccountStorageKindRow(
   );
 }
 
+/** A kind's line under its name, with its count where the owner reports one ("214 Artifacts · documents, boards and files"). */
+function kindFacts(kind: AccountStorageKind): string {
+  if (kind.count === null) return t(`artifacts.browser.storageView.kinds.facts.${kind.id}`);
+  return t(`artifacts.browser.storageView.kinds.countedFacts.${kind.id}`, { count: kind.count });
+}
+
 const ItemCommandsContext = React.createContext<Readonly<{
   open: (item: AccountStorageItem) => void;
   changed?: () => void;
@@ -645,8 +668,8 @@ function AccountStorageItems(
   props: Readonly<{
     items: readonly AccountStorageItem[];
     loaded: boolean;
-    /** The kinds the owner reports holding anything: the filter's choices. */
-    kinds: readonly StorageInventoryKindV1[];
+    /** The kinds the owner reports holding anything, with their counts: the filter's choices. */
+    kinds: readonly AccountStorageKind[];
     filter: AccountStorageItemFilter;
     onFilter: (filter: AccountStorageItemFilter) => void;
     shape: 'list' | 'map';
@@ -733,8 +756,9 @@ function AccountStorageItems(
       // An item's name stays on one line, cut at its end, on a phone row as in the table (lab scene 1, 390).
       titleTruncates: true,
       // Where it lives reads quiet after the name in the table (Machines' rows do the same); a phone row's line 2 says it.
-      // Only a filed item says more than "Artifacts", which every row would repeat; the Kind column says the kind.
-      titleSuffix: (item) => (item.folderName ? itemLocation(item) : null),
+      // Only a filed item or a named Discussion file says more than its kind, which every row would repeat; the Kind
+      // column says the kind.
+      titleSuffix: (item) => (item.folderName || item.discussionFile ? itemLocation(item) : null),
       // Line 2 is where it lives; on a phone, which has no Kind column, "Kind · where", the kind said once (lab scene 1).
       byline: (item) => props.compact ? (
         <View style={stylesheet.phoneLine}>
@@ -801,11 +825,13 @@ function AccountStorageItems(
                     id: 'all',
                     label: t('artifacts.browser.storageView.items.all'),
                   },
-                  ...kinds.map((id) => ({
-                    id,
+                  // Each chip counts its kind across the inventory (lab "Artifacts 214"); no count when the owner omits it.
+                  ...kinds.map((kind) => ({
+                    id: kind.id,
                     label: t(
-                      `artifacts.browser.storageView.kinds.shortNames.${id}`,
+                      `artifacts.browser.storageView.kinds.shortNames.${kind.id}`,
                     ),
+                    ...(kind.count === null ? {} : { count: String(kind.count) }),
                   })),
                 ]}
                 activeTabId={props.filter}
@@ -1017,7 +1043,8 @@ function useStorageItemRowActions(item: AccountStorageItem): CollectionRowAction
       onSecondaryAction: (id) => {
         if (id === 'show') commands?.open(item);
         else if (id === 'remove') return removeFile.run({ discussionId: location.discussionId, messageId: location.messageId,
-          blobId: location.attachmentId ?? item.id, name: itemTitle(item), bytes: item.bytes ?? 0, discussionTitle: null, own: false });
+          blobId: location.attachmentId ?? item.id, name: itemTitle(item), bytes: item.bytes ?? 0,
+          discussionTitle: item.discussionFile?.discussionTitle ?? null, own: item.discussionFile?.own === true });
       },
     };
   }
@@ -1092,6 +1119,8 @@ function readItemKey(item: AccountStorageItem): string {
 function itemTitle(item: AccountStorageItem): string {
   const artifact = item.row?.artifact;
   if (artifact) return artifact.isDecrypted === false ? t('artifacts.browser.storageView.items.nameNotReadable') : artifact.title || t('artifacts.untitled');
+  // A Discussion file is named in its message; one the Home left out says what it is.
+  if (item.discussionFile?.name) return item.discussionFile.name;
   // The owner reports no name for these kinds: the row says what it is.
   switch (item.kind) {
     case 'discussionAttachments': case 'accountPets': case 'pluginCollections': case 'profilePictures': case 'avatars': case 'teamLogos':
@@ -1114,10 +1143,12 @@ function itemIcon(item: AccountStorageItem): IconName {
 }
 
 /**
- * Where an item lives, never its kind again: an Artifact and its old versions live in Artifacts (› its folder). A
- * Discussion file's Discussion joins when the storage read names it (STORAGE-1119); until then the row says nothing more.
+ * Where an item lives, never its kind again: an Artifact and its old versions live in Artifacts (› its folder); a
+ * Discussion file in its Discussion, from whoever sent it ("Checkout bug triage · from Mika Tanaka"). A file whose
+ * message the Home left out says nothing more.
  */
 function itemLocation(item: AccountStorageItem): string | null {
+  if (item.discussionFile) return [item.discussionFile.discussionTitle, item.discussionFile.from].filter(Boolean).join(' · ');
   if (item.location.kind !== 'artifact') return null;
   return item.folderName
     ? `${t('artifacts.browser.storageView.items.where')} › ${item.folderName}`

@@ -16,6 +16,11 @@ import { SidePaneBodyProvider } from '@/components/ui/lists/listPresentation';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { t } from '@/text';
 import { confirmRemoveDiscussionFile, confirmTrimOldVersions } from '@/components/storage/storageConfirmations';
+import {
+  discussionStorageMessageKey,
+  type DiscussionStorageExactMessage,
+  type DiscussionStorageMessage,
+} from '@/components/storage/discussion/discussionStorageMessages';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
@@ -59,6 +64,16 @@ const LAB: StorageInventoryV1 = {
     accountPets: 31_600_000,
     pluginCollections: 18_200_000,
   },
+  // The lab's per-kind sizes and counts for the whole Account ("Artifacts 214", "History kept in 61 Artifacts").
+  kinds: {
+    artifacts: { storedSizeBytes: 1_210_000_000, itemCount: 214 },
+    artifactOldVersions: { storedSizeBytes: 412_000_000, itemCount: 61 },
+    discussionAttachments: { storedSizeBytes: 168_000_000, itemCount: 342 },
+    accountPets: { storedSizeBytes: 31_600_000, itemCount: 6 },
+    pluginCollections: { storedSizeBytes: 18_200_000, itemCount: 4 },
+    pluginArtifacts: { storedSizeBytes: 0, itemCount: 0 },
+    profilePictures: { storedSizeBytes: null, itemCount: 1 },
+  },
 };
 const EMPTY: StorageInventoryV1 = {
   totalBytes: 0,
@@ -75,6 +90,18 @@ const EMPTY: StorageInventoryV1 = {
 const NOOP = () => {};
 /** The Details pane's width in the lab's discussion scene (a specimen harness, not a layout). */
 const PANE_WIDTH = 372;
+
+/** A Discussion file's message as the page's exact read opens it (the lab's "Checkout bug triage · from Mika Tanaka"). */
+function specimenFileMessage(id: string, blobId: string, name: string, author: Readonly<{ accountId: string; name: string }>,
+  discussionTitle: string, now: number): DiscussionStorageExactMessage {
+  const message: DiscussionStorageMessage = {
+    id, authorAccountId: author.accountId, createdAt: now - 8 * DAY,
+    accountActor: { v: 1, accountId: author.accountId, profile: { name: author.name, firstName: null, lastName: null, username: null, avatarUrl: null } },
+    content: { v: 1, parts: [{ t: 'attachment', attachment: { kind: 'file', id: blobId, name,
+      file: { blobId, mime: 'application/octet-stream', sizeBytes: 1, sha256: 'a'.repeat(64) } } }] },
+  };
+  return { message, discussionTitle };
+}
 
 function discussionFiles(now: number): readonly DiscussionStorageFile[] {
   const file = (key: string, name: string, author: string, ageDays: number, bytes: number, canRemove: boolean) =>
@@ -113,7 +140,7 @@ function DiscussionPaneSpecimen(props: Readonly<{ now: number }>) {
 function DiscussionPaneStorage(props: Readonly<{ now: number }>) {
   const header = React.useMemo(() => ({ subpage: { title: t('artifacts.browser.storageView.title'), onBack: NOOP } }), []);
   usePaneHeaderSlotContent(header);
-  return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} files={discussionFiles(props.now)}
+  return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} fileCount={8} files={discussionFiles(props.now)}
     presentation="pane" onShowInMessage={NOOP} onRemove={NOOP} />;
 }
 
@@ -202,8 +229,21 @@ export function StorageSpecimen(
         location: { kind: 'artifact', artifactId: 's2' } },
       { id: 'blob-repro', kind: 'discussionAttachments', storedSizeBytes: 64.2 * MB, createdAt: now - 8 * DAY, viewerMayRemove: true,
         location: { kind: 'discussion', discussionId: 'specimen-discussion', messageId: 'specimen-message', attachmentId: 'blob-repro' } },
+      { id: 'blob-trace', kind: 'discussionAttachments', storedSizeBytes: 18.6 * MB, createdAt: now - 13 * DAY, viewerMayRemove: true,
+        location: { kind: 'discussion', discussionId: 'specimen-planning', messageId: 'specimen-trace', attachmentId: 'blob-trace' } },
     ].sort((left, right) => (right.storedSizeBytes ?? -1) - (left.storedSizeBytes ?? -1));
-    return projectAccountStorageItems(page, new Map(artifacts.map((artifact) => [artifact.id, artifact])));
+    // The page's one exact message read, as the binding's would settle it.
+    const exact = new Map([
+      [discussionStorageMessageKey('specimen-discussion', 'specimen-message'),
+        specimenFileMessage('specimen-message', 'blob-repro', 'checkout-bug-repro.mov', { accountId: 'mika', name: 'Mika Tanaka' }, 'Checkout bug triage', now)],
+      [discussionStorageMessageKey('specimen-planning', 'specimen-trace'),
+        specimenFileMessage('specimen-trace', 'blob-trace', 'api-trace-export.har', { accountId: 'specimen-owner', name: 'You' }, 'Release planning', now)],
+    ]);
+    return projectAccountStorageItems(page, new Map(artifacts.map((artifact) => [artifact.id, artifact])), null, {
+      exact: { messages: exact, reading: false }, accountId: 'specimen-owner',
+      from: (message, own) => own ? t('artifacts.browser.storageView.items.fromYou')
+        : t('artifacts.browser.storageView.items.fromAuthor', { author: message.accountActor?.profile?.name ?? '' }),
+    });
   }, [now, props.state]);
   const body = (
     inventory: StorageInventoryV1 | null,
@@ -249,7 +289,7 @@ export function StorageSpecimen(
     case 'discussionPane':
       return <DiscussionPaneSpecimen now={now} />;
     case 'discussionPage':
-      return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} files={discussionFiles(now)}
+      return <DiscussionStorageView totalBytes={86.4 * MB} accountTotalBytes={LAB.totalBytes} fileCount={8} files={discussionFiles(now)}
         presentation="page" onShowInMessage={NOOP} onRemove={NOOP} />;
     case 'deleteVersions':
       return <>{body(LAB)}<ConfirmOnMount open={OPEN_TRIM} /></>;

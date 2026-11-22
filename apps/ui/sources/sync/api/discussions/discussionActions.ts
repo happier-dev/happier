@@ -34,7 +34,9 @@ import { DiscussionSecondOpinionStartInputV1Schema } from '@happier-dev/protocol
 import { DiscussionInitialParticipantsV1Schema, DiscussionParticipantsListResponseV1Schema, type DiscussionInitialParticipantV1 } from '@happier-dev/protocol/discussions/participants';
 import { projectDiscussionSecondOpinionPreviewInputV1 } from '@happier-dev/protocol/actions/executor/discussionSecondOpinion';
 import { DiscussionCandidatesListInputV1Schema, DiscussionCandidatesListResultV1Schema, projectDiscussionInviteCandidatesV1 } from '@happier-dev/protocol/discussions/actions';
-import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DiscussionAttentionResponseV1Schema, type DiscussionAttentionQueryV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1, DiscussionAttentionResponseV1Schema, DiscussionExactMessagesRequestV1Schema,
+    DiscussionExactMessagesResponseV1Schema, type DiscussionAttentionQueryV1, type DiscussionExactMessagesRequestV1 } from '@happier-dev/protocol/discussions/api';
+import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionAttentionResultV1Schema, type DiscussionAttentionResultV1 } from '@happier-dev/protocol/discussions/actions';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionSettingsResponseV1Schema, type DiscussionSettingsV1 } from '@happier-dev/protocol/discussions/settings';
@@ -126,17 +128,22 @@ async function prepareDiscussionRecipients(options: AdapterOptions, row: Discuss
             path(DISCUSSION_HTTP_PATHS_V1.recipientEnvelopes), 'PUT', input, signal, true)),
     });
 }
+/** A Discussion's title opened with its own key; `null` when this device cannot open or read it. */
+async function openTitle(key: ResourceDataKey | null, titleContent: DiscussionSummaryV1['titleContent']): Promise<string | null> {
+    const opened = await openSessionStoredContent(resourceStoredContentContext(key), titleContent);
+    const title = opened.status === 'ready' ? DiscussionTitleV1StoredSchema.safeParse(opened.value) : null;
+    return title?.success ? title.data.title : null;
+}
 async function openSummary(options: AdapterOptions, row: DiscussionSummaryV1, context: Parameters<DiscussionAction>[0]['context'],
     workClass: CryptoWorkerWorkClass = 'interactive', openedKey?: ResourceDataKey | null) {
     const key = openedKey === undefined ? await resourceKey(options, row, workClass) : openedKey;
     const storedContext = resourceStoredContentContext(key);
-    const opened = await openSessionStoredContent(storedContext, row.titleContent);
-    const title = opened.status === 'ready' ? DiscussionTitleV1StoredSchema.safeParse(opened.value) : null;
+    const title = await openTitle(key, row.titleContent);
     const latestOpened = row.latestMessage.content === undefined || hasProtectedDiscussionActionContextV1(context) ? null
         : await openSessionStoredContent(storedContext, row.latestMessage.content);
     const latestContent = latestOpened?.status === 'ready' ? DiscussionMessageContentV1StoredSchema.safeParse(latestOpened.value) : null;
     const { titleContent: _titleContent, firstMessage, ...projection } = row;
-    return DiscussionOpenedSummaryV1Schema.parse({ ...projection, title: title?.success ? title.data.title : null,
+    return DiscussionOpenedSummaryV1Schema.parse({ ...projection, title,
         ...(firstMessage === undefined ? {} : { firstMessage: firstMessage === null || key === null
             ? null : await openMessage(options, key, firstMessage) }),
         latestMessage: { ...row.latestMessage, ...(row.latestMessage.content === undefined ? {}
@@ -479,6 +486,36 @@ export async function readDiscussionAttentionPage(options: AdapterOptions, input
     }
 }
 
+/** Exact messages grouped by Discussion, each group opened with its own key; titles are `null` where unreadable. */
+export type DiscussionExactMessagesResult = Readonly<{
+    discussions: readonly Readonly<{ discussionId: string; title: string | null; messages: readonly DiscussionOpenedMessageV1[] }>[];
+}>;
+
+/**
+ * Batch codec for exact messages across Discussions (`POST /v1/discussions/messages/read`): one request, and each
+ * group's title and messages opened with the key context in the same admitted response. The Home omits messages the
+ * viewer cannot read, so an absent message is the caller's "not named here", never an error.
+ */
+export async function readDiscussionExactMessages(options: AdapterOptions, messages: DiscussionExactMessagesRequestV1['messages'],
+    signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionExactMessagesResult>> {
+    if (options.availability === 'unavailable') return { kind: 'failed', errorCode: 'unsupported_action' };
+    try {
+        const value = DiscussionExactMessagesResponseV1Schema.parse(await readTransportJson(options, DISCUSSION_HTTP_PATHS_V1.exactMessages,
+            'POST', DiscussionExactMessagesRequestV1Schema.parse({ messages }), signal));
+        const discussions = await Promise.all(value.discussions.map(async group => {
+            if (group.messages.some(message => message.discussionId !== group.discussionId)) throw refusal('discussion_invalid_content');
+            const key = await resourceKey(options, group.keyContext, 'bulk');
+            return { discussionId: group.discussionId, title: await openTitle(key, group.titleContent),
+                messages: await Promise.all(group.messages.map(row => openMessage(options, key, row))) };
+        }));
+        signal?.throwIfAborted();
+        return { kind: 'succeeded', value: { discussions } };
+    } catch (error) {
+        return { kind: 'failed', errorCode: signal?.aborted ? 'canceled'
+            : error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'outcome_unknown' };
+    }
+}
+
 type DiscussionApprovalCallbacks<T> = Readonly<{
     onPending: (continuation: ActionApprovalContinuation) => void;
     onSettled: (outcome: DiscussionClientOutcome<T>) => void;
@@ -558,23 +595,30 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             mentionedSessionIds: input.mentionedSessionIds === undefined ? undefined : [...input.mentionedSessionIds], replyTarget: input.replyTarget,
         }, signal, undefined, input.attachmentSources);
     };
+    /** A batch codec read on the captured Account: its requests and encryption stay that Account's for the whole read. */
+    const readOnAccount = async <T,>(signal: AbortSignal | undefined,
+        read: (adapter: AdapterOptions) => Promise<DiscussionClientOutcome<T>>): Promise<DiscussionClientOutcome<T>> => {
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
+        try {
+            account = await captureLazyActionAccountContext(options.scope.serverId, signal);
+            if (account.accountId !== options.scope.accountId) return { kind: 'failed', errorCode: 'discussion_read_denied' };
+            const captured = account;
+            const result = await read({ ...options, encryption: null,
+                request: (path, init) => captured.request(path, init, { retry: 'none' }),
+                resolveEncryption: async () => { captured.assertCurrent(); const value = await captured.resolveAccountEncryption();
+                    captured.assertCurrent(); return value.encryption; } });
+            captured.assertCurrent();
+            return result;
+        } catch { return { kind: 'failed', errorCode: signal?.aborted ? 'canceled' : 'discussion_read_denied' }; }
+        finally { account?.dispose(); }
+    };
     return {
-        async attention(input: DiscussionAttentionQueryV1 = {}, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionAttentionResultV1>> {
-            const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
-            let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
-            try {
-                account = await captureLazyActionAccountContext(options.scope.serverId, signal);
-                if (account.accountId !== options.scope.accountId) return { kind: 'failed', errorCode: 'discussion_read_denied' };
-                const captured = account;
-                const result = await readDiscussionAttentionPage({ ...options, encryption: null,
-                    request: (path, init) => captured.request(path, init, { retry: 'none' }),
-                    resolveEncryption: async () => { captured.assertCurrent(); const value = await captured.resolveAccountEncryption();
-                        captured.assertCurrent(); return value.encryption; } }, input, signal);
-                captured.assertCurrent();
-                return result;
-            } catch { return { kind: 'failed', errorCode: signal?.aborted ? 'canceled' : 'discussion_read_denied' }; }
-            finally { account?.dispose(); }
-        },
+        attention: (input: DiscussionAttentionQueryV1 = {}, signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionAttentionResultV1>> =>
+            readOnAccount(signal, adapter => readDiscussionAttentionPage(adapter, input, signal)),
+        /** One exact read of messages across Discussions (a storage page's files), opened on this device. */
+        exactMessages: (messages: DiscussionExactMessagesRequestV1['messages'], signal?: AbortSignal): Promise<DiscussionClientOutcome<DiscussionExactMessagesResult>> =>
+            readOnAccount(signal, adapter => readDiscussionExactMessages(adapter, messages, signal)),
         secondOpinion: (input: DiscussionActionInputV1ById['discussion.second_opinion.start'], signal?: AbortSignal,
             continuation?: DiscussionApprovalCallbacks<ClientActionResult<'discussion.second_opinion.start'>>) =>
             run('discussion.second_opinion.start', input, signal, undefined, undefined, continuation),

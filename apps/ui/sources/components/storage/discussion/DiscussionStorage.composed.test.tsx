@@ -182,14 +182,33 @@ const MESSAGES = [
   fileMessage('message-2', ACCOUNT, TRACE, 'network-trace.har', 9.8 * MB),
 ];
 
+/** The same messages as the Home stores them in a plain Discussion, for its exact message read. */
+const WIRE_MESSAGES = MESSAGES.map((message, index) => ({
+  ...message,
+  discussionId: DISCUSSION,
+  localId: null,
+  seq: index + 1,
+  accountActor: {
+    v: 1 as const,
+    accountId: message.authorAccountId,
+    profile: { name: message.authorAccountId === ACCOUNT ? 'Leeroy' : 'Mika Tanaka', firstName: null, lastName: null, username: null, avatarUrl: null },
+  },
+  producerV1: null,
+  content: { t: 'plain' as const, v: message.content },
+  mentionedAccountIds: [],
+}));
+
 let scopedReads: URL[] = [];
 let accountReads = 0;
 let removals: string[] = [];
+/** Every exact message read (`POST /v1/discussions/messages/read`), with the pairs it asked for. */
+let exactReads: Array<ReadonlyArray<Readonly<{ discussionId: string; messageId: string }>>> = [];
 
 async function serve() {
   scopedReads = [];
   accountReads = 0;
   removals = [];
+  exactReads = [];
   const served = await serveActionHomes({
     homes: [
       {
@@ -222,10 +241,21 @@ async function serve() {
         const second = request.url.searchParams.get('cursor') === 'page-2';
         return Response.json({
           ...summary(77.6 * MB),
+          // The scope's whole count, across both pages.
+          kinds: { discussionAttachments: { storedSizeBytes: 77.6 * MB, itemCount: 3 } },
           page: second
             ? { items: PAGE_2 }
             : { items: PAGE_1, nextCursor: 'page-2' },
         });
+      }
+      if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
+        const asked = (request.body as { messages: Array<{ discussionId: string; messageId: string }> }).messages;
+        exactReads.push(asked);
+        // `message-9` is not readable by this viewer: the Home leaves it out.
+        const messages = WIRE_MESSAGES.filter((message) => asked.some((pair) => pair.discussionId === DISCUSSION && pair.messageId === message.id));
+        return Response.json({ discussions: messages.length === 0 ? [] : [{ discussionId: DISCUSSION,
+          titleContent: { t: 'plain', v: { v: 1, title: 'Checkout bug triage' } },
+          keyContext: { encryptionMode: 'plain', keyReadiness: true, dataEncryptionKey: null }, messages }] });
       }
       if (
         request.method === 'DELETE' &&
@@ -381,6 +411,10 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         expect(
           textOf(screen.findHostByTestId(`storage:discussion:file:${TRACE}`)),
         ).toContain('network-trace.har');
+        // The sentence counts the scope's files from the read's own count (3), not the page's rows (2).
+        expect(textOf(screen.findHostByTestId('storage:discussion:say'))).toContain(
+          `artifacts.browser.storageView.discussion.say(size=${storage(77.6 * MB)},count=3)`,
+        );
         // Remove is offered only where the server admits it.
         expect(rowMenus(screen).get(VIDEO)).not.toContain('remove');
         expect(rowMenus(screen).get(TRACE)).toContain('remove');
@@ -403,6 +437,8 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
         ).toContain(
           'artifacts.browser.storageView.items.titles.discussionAttachments',
         );
+        // The open Discussion names its files from the messages it already holds: no message read of its own.
+        expect(exactReads).toHaveLength(0);
         expect(rowMenus(screen).get(ORPHAN)).not.toContain('remove');
 
         const traceMenu = screen
@@ -521,6 +557,20 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           ).not.toBeNull(),
         );
         expect(scopedReads).toHaveLength(1);
+        // This device holds no thread for it: one exact read names the page's files, their senders and the Discussion.
+        await vi.waitFor(() => expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain('checkout-bug-repro.mov'));
+        expect(textOf(page.findHostByTestId(`storage:discussion:file:${VIDEO}`))).toContain('Mika Tanaka');
+        expect(textOf(page.findHostByTestId(`storage:discussion:file:${TRACE}`))).toContain('network-trace.har');
+        expect(textOf(page.findHostByTestId('storage:discussion'))).toContain(
+          'artifacts.browser.storageView.discussion.descriptionNamed(title=Checkout bug triage)');
+        expect(exactReads).toEqual([[{ discussionId: DISCUSSION, messageId: 'message-1' }, { discussionId: DISCUSSION, messageId: 'message-2' }]]);
+        // The next page asks only for its own message; the Home leaves it out, so that row keeps the kind's name.
+        await act(async () => { invokeTestInstanceHandler(page.findHostByTestId('storage:discussion:more'), 'onPress'); });
+        await vi.waitFor(() => expect(exactReads).toHaveLength(2));
+        expect(exactReads[1]).toEqual([{ discussionId: DISCUSSION, messageId: 'message-9' }]);
+        await vi.waitFor(() => expect(textOf(page.findHostByTestId(`storage:discussion:file:${ORPHAN}`))).toContain(
+          'artifacts.browser.storageView.items.titles.discussionAttachments'));
+        expect(scopedReads).toHaveLength(2);
         // The phone page has no share of the Account, so it reads nothing else.
         expect(page.findHostByTestId('storage:discussion:share')).toBeNull();
         expect(rowMenus(page).get(VIDEO)).not.toContain('remove');
@@ -556,10 +606,9 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
       try {
         await layOut(page);
         await vi.waitFor(() => expect(page.findHostByTestId(`storage:discussion:file:${TRACE}`)).not.toBeNull());
-        // The bar names where Back returns (a Discussion this device has not loaded goes by its kind).
+        // The bar names where Back returns: a Discussion this device has not loaded is named by the page's exact read.
+        await vi.waitFor(() => expect(textOf(page.findHostByTestId('workspace-destination-header'))).toContain('Checkout bug triage'));
         const bar = page.findHostByTestId('workspace-destination-header');
-        expect(bar).not.toBeNull();
-        expect(textOf(bar)).toContain('session.collaboration.discussion.title');
         const backButton = bar!.findAll((node) => node.props.accessibilityLabel === 'common.back'
           && typeof node.props.onPress === 'function').at(0);
         expect(backButton).toBeDefined();

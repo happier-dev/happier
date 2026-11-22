@@ -2,14 +2,10 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import type { StorageInventoryInputV1, StorageInventoryItemV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
-import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
-import { readDiscussionAttachmentPayloadsV1 } from '@happier-dev/protocol/discussions/content';
 
 import { useLocalSearchParams, useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { useStorageInventoryRead, type StorageInventoryRead } from '@/components/artifacts/artifactActionsClient';
 import { buildDiscussionRouteHref } from '@/components/discussions/discussionRoutes';
-import { resolveDiscussionMessageAuthorLabel } from '@/components/discussions/discussionTimelineProjection';
-import { useShareViewerProfile } from '@/components/sharing/useShareViewerProfile';
 import { useRemoveDiscussionFile } from '@/components/storage/useRemoveDiscussionFile';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -22,17 +18,25 @@ import { useDiscussionComposerSnapshot } from '@/sync/ops/discussions/useDiscuss
 import { t } from '@/text';
 
 import { DiscussionStorageView, type DiscussionStorageFile } from './DiscussionStorageView';
+import {
+    discussionStorageMessageKey,
+    readDiscussionAttachmentName,
+    useDiscussionStorageAuthorLabel,
+    useDiscussionStorageExactMessages,
+    type DiscussionStorageExactMessages,
+    type DiscussionStorageMessage,
+} from './discussionStorageMessages';
 
-/** What a file's row needs from the message that carries it. */
-export type DiscussionStorageMessage = Pick<DiscussionOpenedMessageV1, 'id' | 'content' | 'authorAccountId' | 'accountActor' | 'createdAt'>;
-
-/** The open Discussion as its Details tab (or the phone page) knows it: names come from its loaded messages. */
+/**
+ * The open Discussion as its Details tab (or the phone page) knows it: names come from its loaded messages. `messages`
+ * is `null` when this device has not loaded the Discussion; the page's exact message read names its files then.
+ */
 export type DiscussionStorageSource = Readonly<{
     scope: ServerAccountScope;
     discussionId: string;
     ownerAccountId: string | null;
     title: string | null;
-    messages: readonly DiscussionStorageMessage[];
+    messages: readonly DiscussionStorageMessage[] | null;
     authorLabel: (message: DiscussionStorageMessage) => string;
 }>;
 
@@ -48,37 +52,28 @@ export function useDiscussionStorageRead(scope: ServerAccountScope, discussionId
 }
 
 /**
- * The read owner's files, in its order, each named by the loaded message its triple points at (a folder's file by its
- * path in the folder). A file whose message this device has not loaded keeps the kind's own label; size, date and
- * admission are always the server's.
+ * The read owner's files, in its order, each named by the message its triple points at (a folder's file by its path in
+ * the folder): the Discussion's loaded message, or the page's exact read of it. A file whose message is still being
+ * read shimmers; one the Home left out keeps the kind's own label. Size, date and admission are always the server's.
  */
-export function projectDiscussionStorageFiles(items: readonly StorageInventoryItemV1[], messages: readonly DiscussionStorageMessage[],
-    authorLabel: DiscussionStorageSource['authorLabel']): readonly DiscussionStorageFile[] {
-    const byId = new Map(messages.map((message) => [message.id, message]));
+export function projectDiscussionStorageFiles(items: readonly StorageInventoryItemV1[], messages: readonly DiscussionStorageMessage[] | null,
+    authorLabel: DiscussionStorageSource['authorLabel'], exact: DiscussionStorageExactMessages): readonly DiscussionStorageFile[] {
+    const byId = new Map((messages ?? []).map((message) => [message.id, message]));
     return items.flatMap((item) => {
         if (item.location.kind !== 'discussion') return [];
-        const message = byId.get(item.location.messageId);
+        const key = discussionStorageMessageKey(item.location.discussionId, item.location.messageId);
+        const message = byId.get(item.location.messageId) ?? exact.messages.get(key)?.message;
         const blobId = item.location.attachmentId ?? item.id;
         return [{
             key: item.id,
-            name: (message ? readAttachmentName(message, blobId) : null) ?? t('artifacts.browser.storageView.items.titles.discussionAttachments'),
+            name: (message ? readDiscussionAttachmentName(message, blobId) : null) ?? t('artifacts.browser.storageView.items.titles.discussionAttachments'),
+            pending: message === undefined && exact.reading && !exact.messages.has(key),
             author: message ? authorLabel(message) : null,
             at: item.createdAt,
             bytes: item.storedSizeBytes,
             canRemove: item.viewerMayRemove === true,
         }];
     });
-}
-
-function readAttachmentName(message: DiscussionStorageMessage, blobId: string): string | null {
-    if (!message.content) return null;
-    for (const attachment of readDiscussionAttachmentPayloadsV1(message.content)) {
-        if (attachment.kind === 'file' && attachment.file.blobId === blobId) return attachment.name;
-        if (attachment.kind !== 'folder') continue;
-        const entry = attachment.entries.find((candidate) => candidate.file.blobId === blobId);
-        if (entry) return `${attachment.name}/${entry.relativePath}`;
-    }
-    return null;
 }
 
 /** Details' "Storage · 86.4 MB" row (lab scene 5 A): the scoped read's own total, never a sum of its files. */
@@ -125,18 +120,22 @@ function DiscussionStorage(props: Readonly<{
 }>): React.ReactElement {
     const router = useRouter();
     const { source, read } = props;
-    const files = React.useMemo(() => projectDiscussionStorageFiles(read.items, source.messages, source.authorLabel),
-        [read.items, source.authorLabel, source.messages]);
+    // A Discussion this device holds names its files from its loaded messages; otherwise one exact read per page does.
+    const exact = useDiscussionStorageExactMessages(source.scope, read.items, source.messages === null);
+    const files = React.useMemo(() => projectDiscussionStorageFiles(read.items, source.messages, source.authorLabel, exact),
+        [exact, read.items, source.authorLabel, source.messages]);
+    const title = source.title ?? readExactTitle(exact, source.discussionId);
     const removal = useRemoveDiscussionFile(source.scope, props.onChanged);
     const run = removal.run;
     const remove = React.useCallback((file: DiscussionStorageFile) => {
         const item = read.items.find((candidate) => candidate.id === file.key);
         if (!item || item.location.kind !== 'discussion' || !file.canRemove) return;
         const messageId = item.location.messageId;
-        const author = source.messages.find((message) => message.id === messageId)?.authorAccountId;
+        const author = (source.messages?.find((message) => message.id === messageId)
+            ?? exact.messages.get(discussionStorageMessageKey(item.location.discussionId, messageId))?.message)?.authorAccountId;
         void run({ discussionId: item.location.discussionId, messageId, blobId: item.location.attachmentId ?? item.id,
-            name: file.name, bytes: file.bytes ?? 0, discussionTitle: source.title, own: author === source.scope.accountId });
-    }, [read.items, run, source.messages, source.scope.accountId, source.title]);
+            name: file.name, bytes: file.bytes ?? 0, discussionTitle: title, own: author === source.scope.accountId });
+    }, [exact.messages, read.items, run, source.messages, source.scope.accountId, title]);
     const showInMessage = React.useCallback((file: DiscussionStorageFile) => {
         const item = read.items.find((candidate) => candidate.id === file.key);
         if (!item || item.location.kind !== 'discussion') return;
@@ -146,9 +145,18 @@ function DiscussionStorage(props: Readonly<{
     const failed = read.status === 'failed';
     return (
         <DiscussionStorageView totalBytes={read.inventory?.totalBytes ?? null} accountTotalBytes={props.accountTotalBytes}
-            files={files} presentation={props.presentation} discussionTitle={source.title} onRetry={failed ? read.retry : null} onMore={read.more}
+            fileCount={read.inventory?.kinds?.discussionAttachments?.itemCount ?? null}
+            files={files} presentation={props.presentation} discussionTitle={title} onRetry={failed ? read.retry : null} onMore={read.more}
             loadingMore={read.loadingMore} busy={removal.busy} onShowInMessage={showInMessage} onRemove={remove} />
     );
+}
+
+/** The Discussion's title as the page's exact read opened it, for a Discussion this device has not loaded. */
+function readExactTitle(exact: DiscussionStorageExactMessages, discussionId: string): string | null {
+    for (const [key, entry] of exact.messages) {
+        if (entry?.discussionTitle && key.startsWith(discussionStorageMessageKey(discussionId, ''))) return entry.discussionTitle;
+    }
+    return null;
 }
 
 function readParam(value: string | string[] | undefined): string | null {
@@ -157,7 +165,6 @@ function readParam(value: string | string[] | undefined): string | null {
 }
 
 const NO_SERVER_IDS: readonly string[] = [];
-const NO_MESSAGES: readonly DiscussionStorageMessage[] = [];
 
 /**
  * The phone's Storage page for one Discussion (lab scene 5 A, phone), pushed from the Discussion's "…" or its Details
@@ -176,26 +183,24 @@ export function DiscussionStorageRoute(): React.ReactElement {
     const repository = readRegisteredDiscussionRepository(scope, { serverId: scope.serverId });
     return repository
         ? <DiscussionStorageLoadedPage scope={scope} discussionId={discussionId} repository={repository} />
-        : <DiscussionStoragePage scope={scope} discussionId={discussionId} title={null} messages={NO_MESSAGES} />;
+        : <DiscussionStoragePage scope={scope} discussionId={discussionId} title={null} messages={null} />;
 }
 
-/** The thread this device already holds names the files; the page never reads messages of its own. */
+/** A thread this device already holds names the files; a Discussion it has not loaded is named by the page's exact read. */
 function DiscussionStorageLoadedPage(props: Readonly<{ scope: ServerAccountScope; discussionId: string; repository: DiscussionRepository }>) {
     const thread = useDiscussionComposerSnapshot(props.repository, props.discussionId).thread;
     return <DiscussionStoragePage scope={props.scope} discussionId={props.discussionId} title={thread?.summary?.title ?? null}
-        messages={thread?.messages ?? NO_MESSAGES} />;
+        messages={thread?.messages ?? null} />;
 }
 
 function DiscussionStoragePage(props: Readonly<{
     scope: ServerAccountScope;
     discussionId: string;
     title: string | null;
-    messages: readonly DiscussionStorageMessage[];
+    messages: readonly DiscussionStorageMessage[] | null;
 }>) {
     const read = useDiscussionStorageRead(props.scope, props.discussionId);
-    const profile = useShareViewerProfile(props.scope);
-    const authorLabel = React.useCallback((message: DiscussionStorageMessage) => resolveDiscussionMessageAuthorLabel(message,
-        { serverId: props.scope.serverId, accountId: props.scope.accountId, profile }), [profile, props.scope.accountId, props.scope.serverId]);
+    const authorLabel = useDiscussionStorageAuthorLabel(props.scope);
     const source = React.useMemo((): DiscussionStorageSource => ({ scope: props.scope, discussionId: props.discussionId,
         ownerAccountId: null, title: props.title, messages: props.messages, authorLabel }),
     [authorLabel, props.discussionId, props.messages, props.scope, props.title]);

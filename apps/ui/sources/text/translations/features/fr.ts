@@ -3621,6 +3621,17 @@ const artifactsBrowserTranslations = { fr: {
                     avatars: 'Images que tu as envoyées',
                     teamLogos: 'Logos des équipes que tu possèdes',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count <= 1 ? 'artefact' : 'artefacts'} · documents, tableaux et fichiers`,
+                    artifactOldVersions: ({ count }) => `Historique conservé pour ${count} ${count <= 1 ? 'artefact' : 'artefacts'}`,
+                    pluginArtifacts: ({ count }) => `${count} enregistrés pour toi par des plugins`,
+                    discussionAttachments: ({ count }) => `${count} ${count <= 1 ? 'fichier' : 'fichiers'} des discussions que tu possèdes`,
+                    accountPets: ({ count }) => `${count} ${count <= 1 ? 'pet que tu as importé' : 'pets que tu as importés'}`,
+                    pluginCollections: ({ count }) => `${count} ${count <= 1 ? 'collection' : 'collections'} ; chaque plugin gère les siennes`,
+                    profilePictures: () => 'La photo de ton profil public',
+                    avatars: ({ count }) => `${count} ${count <= 1 ? 'image que tu as envoyée' : 'images que tu as envoyées'}`,
+                    teamLogos: ({ count }) => `Logos de ${count} ${count <= 1 ? 'équipe' : 'équipes'} que tu possèdes`,
+                },
             },
             items: {
                 title: 'Les plus gros éléments',
@@ -3657,6 +3668,8 @@ const artifactsBrowserTranslations = { fr: {
                     teamLogos: 'Logo d’équipe',
                 },
                 oldVersionsWhere: ({ where }) => `Anciennes versions · ${where}`,
+                fromAuthor: ({ author }) => `de ${author}`,
+                fromYou: 'de toi',
             },
             empty: {
                 title: 'Rien de stocké pour l’instant',

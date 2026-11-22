@@ -3597,6 +3597,17 @@ const artifactsBrowserTranslations = { pt: {
                     avatars: 'Imagens que você enviou',
                     teamLogos: 'Logos de equipes que são suas',
                 },
+                countedFacts: {
+                    artifacts: ({ count }) => `${count} ${count === 1 ? 'artefato' : 'artefatos'} · documentos, quadros e arquivos`,
+                    artifactOldVersions: ({ count }) => `Histórico guardado de ${count} ${count === 1 ? 'artefato' : 'artefatos'}`,
+                    pluginArtifacts: ({ count }) => `${count} salvos por plugins para você`,
+                    discussionAttachments: ({ count }) => `${count} ${count === 1 ? 'arquivo' : 'arquivos'} em discussões que são suas`,
+                    accountPets: ({ count }) => `${count} ${count === 1 ? 'pet' : 'pets'} que você importou`,
+                    pluginCollections: ({ count }) => `${count} ${count === 1 ? 'coleção' : 'coleções'}; cada plugin gerencia as suas`,
+                    profilePictures: () => 'A foto do seu perfil público',
+                    avatars: ({ count }) => `${count} ${count === 1 ? 'imagem' : 'imagens'} que você enviou`,
+                    teamLogos: ({ count }) => `Logos de ${count} ${count === 1 ? 'equipe' : 'equipes'} que são suas`,
+                },
             },
             items: {
                 title: 'Maiores itens',
@@ -3633,6 +3644,8 @@ const artifactsBrowserTranslations = { pt: {
                     teamLogos: 'Logo de equipe',
                 },
                 oldVersionsWhere: ({ where }) => `Versões antigas · ${where}`,
+                fromAuthor: ({ author }) => `de ${author}`,
+                fromYou: 'de você',
             },
             empty: {
                 title: 'Nada armazenado ainda',

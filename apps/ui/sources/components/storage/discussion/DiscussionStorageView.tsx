@@ -29,6 +29,8 @@ import { useDeviceType } from '@/utils/platform/responsive';
 export type DiscussionStorageFile = Readonly<{
     key: string;
     name: string;
+    /** Its message is still being read: the name shimmers in place of the kind's own label. */
+    pending?: boolean;
     /** Who sent its message; `null` while the message is not loaded on this device. */
     author: string | null;
     /** When the server stored it; `null` when it does not say. */
@@ -73,6 +75,8 @@ export function DiscussionStorageView(props: Readonly<{
     totalBytes: number | null;
     /** The Account's total (the pane's share row); `null` while it is read. */
     accountTotalBytes: number | null;
+    /** How many files the Discussion holds, across every page, as the scoped read counts them; `null` when it does not. */
+    fileCount?: number | null;
     files: readonly DiscussionStorageFile[];
     presentation: 'pane' | 'page';
     /** The Discussion's title, for the page's Back; `null` while this device has not loaded it. */
@@ -101,6 +105,7 @@ export function DiscussionStorageView(props: Readonly<{
     const anatomy = React.useMemo((): CollectionAnatomy<DiscussionStorageFile> => ({
         glyph: (file) => <Icon name={fileIcon(file.name)} size={16} color={theme.colors.text.secondary} />,
         title: (file) => file.name,
+        titlePending: (file) => file.pending === true,
         // A file's name stays on one line, cut at its end (lab scene 5 A), never broken mid-word in the narrow pane.
         titleTruncates: true,
         byline: (file) => <Text variant="meta" numberOfLines={1} style={stylesheet.byline}>{fileByline(file)}</Text>,
@@ -132,8 +137,11 @@ export function DiscussionStorageView(props: Readonly<{
                     text={t('artifacts.browser.storageView.say.failedBody')}
                     trailing={<TextLinkButton testID="storage:discussion:retry" tone="strong" label={t('common.retry')} onPress={props.onRetry} />} />
             ) : (
+                // The count is the scope's own (every page); a Home that does not count says the size alone.
                 <StorageSaySection testID="storage:discussion:say"
-                    lead={size === null ? null : t('artifacts.browser.storageView.discussion.say', { size, count: String(props.files.length) })}
+                    lead={size === null ? null : props.fileCount === null || props.fileCount === undefined
+                        ? t('artifacts.browser.storageView.say.stored', { size })
+                        : t('artifacts.browser.storageView.discussion.say', { size, count: String(props.fileCount) })}
                     text={t('artifacts.browser.storageView.discussion.sayBody')} />
             )}
             {props.presentation === 'pane' && props.accountTotalBytes !== null ? (
