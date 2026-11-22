@@ -35,7 +35,7 @@ import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions
 import { ComposerAttachmentDraftV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
-import { bindMachineAccessActionHttpRequestV1, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions';
+import { ActionPolicyOutputSchemas, bindMachineAccessActionHttpRequestV1, normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions';
 import { actionSpecToActionDefinitionV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -47,6 +47,7 @@ import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
 import { SessionStopResultSchema, isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
 import { readSessionExplicitStopV1FromMetadata, resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { Modal } from '@/modal';
 
 vi.mock('socket.io-client', async importOriginal =>
   (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -187,11 +188,10 @@ const modes = (agentId: string, currentModeId: string, ids: readonly string[]) =
 });
 const context = () => ({ surface: 'ui' as const, authority: 'present_user' as const, serverId });
 
-function installActionSettings(actions: unknown, voiceCanApproveRequests?: boolean, approvalWaivedSurfaces?: unknown,
-  profiles?: Readonly<{ approvalProfiles?: unknown; machineApprovalProfiles?: unknown }>) {
+function installActionSettings(actions: unknown, voiceCanApproveRequests?: boolean, approvalWaivedSurfaces?: unknown) {
   const current = storage.getState().settings;
   const settings = settingsParse({ ...current, actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions,
-    ...(approvalWaivedSurfaces === undefined ? {} : { approvalWaivedSurfaces }), ...profiles }),
+    ...(approvalWaivedSurfaces === undefined ? {} : { approvalWaivedSurfaces }) }),
     ...(voiceCanApproveRequests === undefined ? {} : normalizeVoiceSettingsLocalDelta({
       voice: { ...current.voice, canApproveRequests: voiceCanApproveRequests },
     }, current)) });
@@ -262,11 +262,22 @@ describe('default Action executor mode and catalog contracts', () => {
 
   it('uses the calling Session approval profile while a present user can change a target Session profile', async () => {
     const sessionId = 'approval-profile-session';
-    // No own choice: the caller Session follows the person's default for its Machine.
-    await installActionSettings({}, undefined, undefined, { machineApprovalProfiles: { 'machine-a': 'careful' },
-      approvalProfiles: [{ id: 'careful', name: 'Careful agent',
-        actions: { 'session.status.set_reason': { approvalRequiredSurfaces: ['agent'] } } }] });
-    const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'claude' });
+    const { createFrontDoorActionExecute } = await import('./frontDoorRuntimeActionExecutor');
+    const confirm = createFrontDoorActionExecute(createDefaultActionExecutor({
+      presentUserActionConfirmation: async () => true,
+    })).confirmed;
+    const created = await confirm('actions.policy.set', { profileChange: { kind: 'create', profile: {
+      name: 'Careful agent',
+      actions: { 'session.status.set_reason': { approvalRequiredSurfaces: ['agent'] } },
+    } } }, context());
+    if (!created.ok) throw new Error(created.errorCode);
+    const profile = ActionPolicyOutputSchemas['actions.policy.set'].parse(created.result);
+    if (!('profileChange' in profile) || profile.profileChange.kind !== 'create') {
+      throw new Error('Expected a created approval profile Artifact');
+    }
+    // Root Session creation captures its inherited default in owner metadata.
+    const read = installSession(sessionId, { machineId: 'machine-a', flavor: 'claude',
+      approvalProfileId: profile.profileChange.id }, serverId, 1);
     const executor = createDefaultActionExecutor();
     const called = await executor.execute('session.status.set_reason', { reason: 'Investigating' }, {
       ...context(), surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId,
@@ -1525,16 +1536,18 @@ describe('default Action executor mode and catalog contracts', () => {
     const input = { receiver: { kind: 'session' as const, sessionId: 'destination' },
       source: { kind: 'session' as const, sessionId: 'source' }, policy: { preset: 'quiet' as const } };
     if (surface === 'ui') {
+      vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
       const { setSessionFollowSource } = await import('@/sync/api/session/sessionFollowSourcesApi');
       expect(await setSessionFollowSource({ serverId, sourceSessionId: 'source', destinationSessionId: 'destination', policy: input.policy }))
-        .toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'approval_request_created' } });
+        .toMatchObject({ kind: 'failed', actionFailure: { errorCode: 'approval_canceled' } });
+      expect(homes.artifacts(serverId).list()).toEqual([]);
     } else {
       const result = await createDefaultActionExecutor().execute('follow.set', input, { ...context(), surface,
         actionCaller: { kind: 'host' }, actionRequestId: 'follow-policy-test' });
       expect(result, JSON.stringify(result))
         .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(homes.artifacts(serverId).list()).toHaveLength(1);
     }
-    expect(homes.artifacts(serverId).list().length).toBeGreaterThan(0);
     expect(homes.requestsFor('/v2/sessions/destination/follows/sessions/source')).toEqual([]);
     expect(outgoing).toEqual([]);
   });
@@ -2265,12 +2278,13 @@ describe('default Action executor mode and catalog contracts', () => {
     if (evidence === 'ambiguous') expect(outgoing.map(request => request.method)).toEqual([`machine-a:${RPC_METHODS.STOP_SESSION}`]);
   });
 
-  it('retains an explicit Ask policy for Stop after removing UI-local confirmation', async () => {
+  it('leaves the Session running when the person declines the explicit Stop review', async () => {
     installSession('stop-ask', { path: '/repo', machineId: 'machine-a', flavor: 'claude' });
     installActionSettings({ 'session.stop': { approvalRequiredSurfaces: ['ui'] } });
+    vi.mocked(Modal.confirm).mockResolvedValueOnce(false);
     const { executeSessionLifecycleAction } = await import('@/components/sessions/actions/sessionActionExecution');
     await expect(executeSessionLifecycleAction('session.stop', 'stop-ask', { serverId }))
-      .resolves.toMatchObject({ success: false, code: 'approval_request_created' });
+      .resolves.toMatchObject({ success: false, code: 'approval_canceled' });
     expect(outgoing).toEqual([]);
   });
   it('retains next-prompt mode in the draft without invoking the immediate Action', async () => {
