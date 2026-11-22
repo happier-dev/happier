@@ -15,11 +15,11 @@ import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/auto
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { SessionResumeRequestV1Schema } from '@happier-dev/protocol/sessions/control/sessionResumeRequestV1';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { buildSessionDetailAccessProjectionQuery } from '@/sync/api/session/sessionDetailAccessProjection';
@@ -41,6 +41,13 @@ import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
+  ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { WORKSPACE_EXECUTION_CONFIG_ROUTE_V1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigRowV1';
+import { deriveWorkspaceSyncRelationshipId } from '@happier-dev/protocol/workspaces/workspaceSyncAdmissionV1';
+import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), segments: [] as string[], sessionId: '' }));
 // The cross-package daemon dispatcher can import Socket before the UI installs
@@ -191,7 +198,7 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
           return { ok: true, result: await receive(JSON.parse(JSON.stringify(payload)), { signal }) };
         },
       }));
-      const caller = createActionExecutor({ clientActionExecute: reverse, readApprovalOwner: () => 'receiver' });
+      const caller = createActionExecutor({ clientActionExecute: reverse });
       const agent = (actionRequestId: string) => caller.execute(actionId, input, {
         surface: 'agent', authority: 'account_automation', runtimeAccountId: 'relay-account',
         defaultSessionId: 'background-session', serverId, actionRequestId, signal,
@@ -206,6 +213,102 @@ describe('admitted app Actions and daemon-to-app continuations', () => {
     } finally {
       review.mockRestore();
     }
+  });
+
+  it('lets the requester App decline or confirm the exact Agent Worker Script through its own Account', async () => {
+    await connection?.dispose();
+    const accountId = 'requester';
+    const serverIdentityId = 'srv_worker_script_review';
+    const serverUrl = 'https://worker-script-review.test';
+    const token = createAccountTokenForTests(accountId, { currentAccount: true });
+    const home = await homes.addHome({ name: 'Script Home', serverUrl, serverIdentityId, accountId, credentials: { token } });
+    installHomeGovernanceBoundaries(homes);
+    connection = await restoreServerAccountForTest({ serverUrl, serverIdentityId, accountId, credentials: { token }, request: homes.request });
+    installHomeGovernanceBoundaries(homes);
+    const source = createPlainMachineRowFixture({ id: 'source-machine', accountId });
+    const { machine: worker } = await answerExternalActionAccountForHome(homes, home, {
+      machineId: 'worker-machine', installationId: 'worker-installation', tokenEpoch: 0,
+      custodian: { accountId: 'worker-custodian', displayName: 'Worker Custodian' }, sharedMachineRole: 'manage',
+      actionId: 'projects.worker.status', requesterInvocation: 'credentials', execute: (_input, { target }) => ({
+        eligible: true, candidate: { serverId: serverIdentityId, machineId: target.machineId },
+        load: { kind: 'unknown' }, explanation: 'load_unknown', lastCleanSyncAtMs: 2_000,
+      }),
+    });
+    const machines = [source, worker];
+    for (const machine of machines) homes.answer(home, `/v1/machines/${machine.id}`, { body: { machine } });
+    homes.answer(home, 'POST /v1/machines/read-batch', { select: async raw => ({
+      body: await createMachineReadBatchResponseFixture(raw, id => machines.find(machine => machine.id === id) ?? null).json(),
+    }) });
+    const input = {
+      workspace: { serverId: serverIdentityId, machineId: source.id, workspaceId: 'source', rootPath: '/source' },
+      selection: { kind: 'named', name: 'qa-one' },
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: worker.id } },
+    };
+    const manifest = { version: 1, scripts: { 'qa-one': { source: { kind: 'command', command: 'echo qa-one' }, execution: 'portable' } } };
+    homes.answer(home, 'POST /v1/actions/projects.inspect', { select: raw => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(raw);
+      return { body: { v: 1, actionId: 'projects.inspect', requestId: request.requestId, execution: { ok: true, result: {
+        definition: { basis: { kind: 'present', hash: 'a'.repeat(64) },
+          document: { status: 'valid', bytes: JSON.stringify(manifest), original: manifest, manifest, diagnostics: [] } },
+        detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+      } } } };
+    } });
+    homes.answer(home, `POST ${WORKSPACE_EXECUTION_CONFIG_ROUTE_V1}/read`, { body: { status: 'present', revision: 1,
+      content: { t: 'plain', v: { enabled: true, destination: input.choice.destination, unavailable: 'fail',
+        allowAdHoc: false, scriptOverrides: {}, services: {} } } } });
+    const roots: unknown[] = [];
+    const runs: unknown[] = [];
+    const operation: ActionOperationSnapshotV1 = { version: 1, actionId: 'projects.script.run', operationId: 'qa-worker-run',
+      state: 'accepted', revision: 1, scope: { accountId, machineId: worker.id }, title: 'QA Script', createdAt: 100, cancellation: 'supported' };
+    homes.answer(home, 'POST /v1/actions/projects.script.run/execution-authorization', { select: raw => {
+      const { machineId, envelope } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+      roots.push({ machineId, input: ExternalActionRequestEnvelopeV1Schema.parse(envelope).input });
+      const requestId = envelope.requestId;
+      if (!requestId) throw new Error('Expected an exact Script envelope request id');
+      return { body: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'requester-script-root', binding: {
+        accountId, authentication: { kind: 'account', tokenEpoch: 0 }, serverIdentityId, machineId, installationId: worker.installationId,
+        custodianAccountId: worker.access.custodian.accountId, accountEncryptionMode: 'plain', actionId: 'projects.script.run', requestId, target: envelope.target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(requestId), sourceWorkspaceRefId: input.workspace.workspaceId,
+          source: { actorAccountId: accountId, custodianAccountId: accountId, machineId: source.id,
+            installationId: source.installationId, role: 'manage', encryptionMode: 'plain' } },
+      } }) };
+    } });
+    homes.answer(home, 'POST /v1/actions/projects.script.run', { select: raw => {
+      const { envelope, executionAuthorization } = ExternalActionExecutionAuthorizationRequestV1Schema.parse(raw);
+      runs.push({ binding: executionAuthorization?.binding, input: ExternalActionRequestEnvelopeV1Schema.parse(envelope).input });
+      return { body: { v: 1, actionId: 'projects.script.run', requestId: envelope.requestId, execution: { ok: true, result: { operation } } } };
+    } });
+    const signal = new AbortController().signal;
+    const receive = createUiClientActionReverseHandler({ serverId: home, accountId, isCurrent: () => true });
+    const reverse = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+      callConnectedClientRpc: async (_method, payload, options) => {
+        options.onIssued();
+        return { ok: true, result: await receive(JSON.parse(JSON.stringify(payload)), { signal }) };
+      },
+    }));
+    const caller = createActionExecutor({ clientActionExecute: reverse });
+    const run = () => caller.execute('projects.script.run', input, {
+      surface: 'agent', authority: 'account_automation', runtimeAccountId: accountId, serverId: serverIdentityId,
+      actionCaller: { kind: 'session', sessionId: 'background-session', starterDepth: 1, turnDepth: 2 },
+      defaultSessionId: 'background-session', signal,
+    });
+    const { Modal } = await import('@/modal');
+    const review = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    try {
+      expect(await run()).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+      expect(roots).toEqual([]);
+      expect(runs).toEqual([]);
+      const accepted = await run();
+      expect(accepted, JSON.stringify({ accepted, actions: homes.requests.filter(({ path }) => path.startsWith('/v1/actions/')).map(({ path }) => path) }))
+        .toMatchObject({ ok: true, result: { operation } });
+      expect(review.mock.calls.map(([, summary]) => summary)).toEqual([
+        expect.stringMatching(/qa-one.*worker-machine/s), expect.stringMatching(/qa-one.*worker-machine/s),
+      ]);
+      expect(roots).toEqual([{ machineId: worker.id, input }]);
+      expect(runs).toMatchObject([{ input, binding: { accountId, machineId: worker.id, actionId: 'projects.script.run' } }]);
+    } finally { review.mockRestore(); }
   });
 
   it('delivers background Agent desktop Actions and acknowledges a native window whose renderer never readies', async () => {

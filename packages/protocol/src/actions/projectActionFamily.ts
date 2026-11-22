@@ -238,8 +238,30 @@ function row<const Id extends ProjectActionIdV1>(id: Id) {
     ...(id === 'projects.prepare' ? { approvalPolicy: { uiConfirmation: 'policy' as const, rpcConfirmation: true as const },
       executionPlacementForInput: (input: unknown) => isProjectSetupTrustRequestV1(id, input) ? 'account' as const : 'machine' as const } : {}),
     ...(id === 'projects.compute.exec' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
+    ...(id === 'projects.script.run' ? {
+      approvalPolicy: { requesterAppReview: (input: unknown, caller: Readonly<{ kind: string }> | undefined) => {
+        if (caller?.kind !== 'session') return false;
+        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].safeParse(input);
+        if (!script.success) return false;
+        const { workspace, selection, choice } = script.data;
+        return selection.kind === 'named' && choice?.kind === 'workers' && choice.destination.kind === 'machine'
+          && choice.destination.machineId !== workspace.machineId;
+      } },
+    } : {}),
     originalExecution: { accountRoot: 'allowed' }, title: PROJECT_ACTION_COPY[id][0],
-    approvalPresentation: { summary: () => PROJECT_ACTION_COPY[id][1] },
+    approvalPresentation: { summary: (input: unknown) => {
+      if (id === 'projects.script.run') {
+        const script = PROJECT_ACTION_INPUT_SCHEMAS_V1[id].safeParse(input);
+        if (script.success) {
+          const { workspace, selection, choice } = script.data;
+          if (selection.kind === 'named' && choice?.kind === 'workers' && choice.destination.kind === 'machine') {
+            return `Run ${JSON.stringify(selection.name)} once on Worker ${JSON.stringify(choice.destination.machineId)}.\n`
+              + `Checkout ${JSON.stringify(workspace.rootPath)} on ${JSON.stringify(workspace.machineId)} (Home ${JSON.stringify(workspace.serverId)}).`;
+          }
+        }
+      }
+      return PROJECT_ACTION_COPY[id][1];
+    } },
     description: clientRead
       ? 'List authorized applicable built-in and plugin pages for the exact accepted Project and Home on the answering client, including user-hidden pages. This reads the existing page catalog without opening a Project, selecting a Machine or loading page content. Open a returned href with workspace.tabs.open; read or change navigation placement through settings.get and settings.set.'
       : id === 'projects.script.run'

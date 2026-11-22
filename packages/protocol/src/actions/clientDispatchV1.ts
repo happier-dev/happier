@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, type ActionId } from './actionIds.js';
-import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
+import { ActionSurfaceSchema, ActionRequiredAuthoritySchema, getActionSpec, requiresRequesterAppReview, resolveActionExecutionPlacementForInput } from './actionSpecs.js';
 import type { ActionExecuteResult, ActionExecutorContext } from './executor/types.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteResultSchema, type ActionExecuteFailure } from './actionExecutionResult.js';
 import { ApiTokenGrantV1Schema } from '../auth/apiTokenGrant.js';
@@ -163,7 +163,9 @@ export const UiActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObjec
 }).check(z.superRefine((request, ctx) => {
   const spec = getActionSpec(request.actionId);
   const input = spec.inputSchema.safeParse(request.input);
-  if (!Object.hasOwn(request, 'input') || !input.success || resolveActionExecutionPlacementForInput(spec, input.data, request.context.actionCaller, request.context.surface) !== 'client') {
+  if (!Object.hasOwn(request, 'input') || !input.success
+    || (resolveActionExecutionPlacementForInput(spec, input.data, request.context.actionCaller, request.context.surface) !== 'client'
+      && !requiresRequesterAppReview(spec, input.data, request.context.actionCaller, request.context.surface))) {
     ctx.addIssue({ code: 'custom', message: 'Invalid client Action', path: ['input'] });
   }
   const children = request.context.admittedHostReviewedChildren;

@@ -543,6 +543,46 @@ describe('daemon Session Account authority', () => {
   });
 
   it.each([
+    undefined, 'mcp',
+  ] as const)('sends an exact Worker Script to the requester App without minting an origin Machine root (%s)', async surface => {
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { session: ownedSessionRecord({}, token) } });
+    const input = {
+      workspace: { serverId: 'alice-home', machineId: 'alice-machine', workspaceId: 'source', rootPath: '/source' },
+      selection: { kind: 'named', name: 'qa-one' },
+      choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'shared-worker' } },
+    };
+    const prepareExternalActionAuthorization = vi.fn(async () => ({
+      ok: false as const, errorCode: 'RPC_FORBIDDEN', error: 'RPC_FORBIDDEN',
+    }));
+    const deliveries: unknown[] = [];
+    const execute = createDaemonSessionAccountActionExecutor({
+      ...plainSessionAdmission(token),
+      serverId: 'alice-home', serverHttpBaseUrl: 'https://alice-home.test', token,
+      machineId: 'alice-machine', prepareExternalActionAuthorization,
+      createExecutor: () => createActionExecutor({
+        clientActionExecute: createClientActionReverseDispatcher(() => ({
+          hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+          callConnectedClientRpc: async (method, request, options) => {
+            deliveries.push({ method, request, principalAccountId: options.principalAccountId });
+            options.onIssued();
+            return { ok: true, result: { v: 1, execution: { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' } } };
+          },
+        })),
+      }),
+    });
+    expect(await execute({ ...operation, actionId: 'projects.script.run', input, ...(surface ? { surface } : {}) },
+      { sessionId: 'bob-session', isCurrent: async () => true }))
+      .toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(prepareExternalActionAuthorization).not.toHaveBeenCalled();
+    // The daemon projects both Agent and Session-scoped MCP as the authenticated Session agent.
+    expect(deliveries).toMatchObject([{ method: RPC_METHODS.UI_ACTION_EXECUTE, principalAccountId: 'alice',
+      request: { actionId: 'projects.script.run', input,
+        context: { surface: 'agent', authority: 'account_automation',
+          actionCaller: { kind: 'session', sessionId: 'bob-session' } } } }]);
+  });
+
+  it.each([
     { label: 'legacy fields', input: { machine: 'machine', directory: '/home/happier', model: 'claude-haiku-4-5',
       instructions: 'Reply with exactly the reading check result.', manager: true } },
     { label: 'malformed inherited choice', input: { directory: { kind: 'path', path: '/tmp' }, agentTarget: null } },

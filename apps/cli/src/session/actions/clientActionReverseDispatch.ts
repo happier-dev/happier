@@ -1,10 +1,9 @@
 import { THEME_ACTION_IDS, isThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS, isWorkflowLibraryViewActionId, isWorkflowRunViewActionId } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
-import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, requiresRequesterAppReview } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   buildUiActionDispatchRequestV1, type UiActionDispatchRequestV1,
   clientActionUnavailable,
@@ -84,8 +83,9 @@ export function createClientActionReverseDispatcher(
     // Voice, Settings and client-wide effects use the answering Account client's owners even when
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
+    const spec = getActionSpec(actionId);
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
-      || actionId === TEAM_SETUP_RUN_ACTION_ID_V1
+      || requiresRequesterAppReview(spec, input, context.actionCaller, context.surface)
       || isSessionClientControlActionId(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
       || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read
@@ -93,7 +93,7 @@ export function createClientActionReverseDispatcher(
       || actionId === 'links.openExternal' || actionId === 'file.view.preference.set'
       || actionId === 'projects.sources.moveToTeam' || actionId === 'session.messages.pins'
       || actionId === 'session.space_membership.set';
-    const sessionPresenter = getActionSpec(actionId).clientPresenter === 'session';
+    const sessionPresenter = spec.clientPresenter === 'session';
     const composerRef = sessionPresenter && input && typeof input === 'object'
       ? Reflect.get(input, 'composerRef') ?? Reflect.get(input, 'ref') : undefined;
     // Standalone CLI adapters also put the resolved destination in this field.
@@ -162,7 +162,7 @@ export function createClientActionReverseDispatcher(
       })
       : null;
     let issued = false;
-    const sideEffectClass = getActionSpec(actionId).sideEffectClass;
+    const sideEffectClass = spec.sideEffectClass;
     const mayHaveEffect = sideEffectClass !== 'read' && sideEffectClass !== 'none';
     const failureWithCause = (reason: 'client_rpc_transport_failure' | 'client_rpc_invalid_response', code?: string, error?: unknown) => {
       const parsedCode = ClientActionRpcFailureCodeV1Schema.safeParse(code);

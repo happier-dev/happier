@@ -1,11 +1,11 @@
 import {
     UiActionDispatchRequestV1Schema,
     parseClientActionDispatchResult,
+    withoutClientActionInput,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
-import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, requiresRequesterAppReview } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/protocol/actions/accountAuthorityRetirement';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchInputV1Schema } from '@happier-dev/protocol/teams';
 import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
 import { createDefaultActionExecutor, withDefaultActionExecuteContext } from './defaultActionExecutor';
 
@@ -37,22 +37,22 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
                 expectedAccountId: binding.accountId,
                 signal: context.signal,
             };
-            const execution = actionId === TEAM_SETUP_RUN_ACTION_ID_V1
+            const execution = spec.approvalPolicy?.requesterAppReview
                 ? await (async () => {
-                    if ((admitted.surface !== 'agent' && admitted.surface !== 'mcp')
+                    if (!requiresRequesterAppReview(spec, input, admitted.actionCaller, admitted.surface)
                         || admitted.authority !== 'account_automation' || admitted.externalActionCredential) {
                         return failure('admission_unavailable').execution;
                     }
-                    // The Machine can propose the exact batch. Only a press on the
+                    // The Machine can propose an exact input. Only a press on the
                     // requester's captured App can originate the reviewed effects.
                     const ownInvocation = { surface: 'ui' as const, serverId: binding.serverId,
                         expectedAccountId: binding.accountId, signal: context.signal };
-                    const { clientId: _answeringApp, ...batch } = TeamSetupBatchInputV1Schema.parse(input);
+                    const reviewedInput = withoutClientActionInput(input);
                     return await withDefaultActionExecuteContext(undefined, ownInvocation, async (ownExecutor, account) => {
                         const local = { ...ownInvocation, runtimeAccountId: account.accountId, serverIdentityId: account.serverIdentityId };
-                        const confirmed = await createActionConfirmationPresenter(account)({ actionId, input: batch, context: local });
+                        const confirmed = await createActionConfirmationPresenter(account)({ actionId, input: reviewedInput, context: local });
                         if (context.signal.aborted || !binding.isCurrent()) return failure('cancelled').execution;
-                        return confirmed ? ownExecutor.executeConfirmed(actionId, batch, local)
+                        return confirmed ? ownExecutor.executeConfirmed(actionId, reviewedInput, local)
                             : failure('approval_canceled').execution;
                     }, actionId);
                 })() : await executor.execute(actionId, input, invocation);

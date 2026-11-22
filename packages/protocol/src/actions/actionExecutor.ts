@@ -398,7 +398,7 @@ import {
   type ActionsSettingsV1,
 } from './actionSettings.js';
 import type { ActionDefinitionSummaryV1 } from './actionDefinitionV1.js';
-import { AgentInventoryProbeInputSchema, DetachedExecutionRunSendInputSchema, ExecutionRunPermissionRespondInputSchema, SessionListActionInputV1Schema, SessionModelSetInputSchema, SessionSendMessageInputSchema, SessionTargetsResolveInputV1Schema, getActionSpec, resolveActionExecutionPlacementForInput, listActionSpecs, isActionSpecSurfacedOn, isPluginActionCallerPolicySatisfied, type ActionRequiredAuthority, type ActionSpec, type PublicActionResultById } from './actionSpecs.js';
+import { AgentInventoryProbeInputSchema, DetachedExecutionRunSendInputSchema, ExecutionRunPermissionRespondInputSchema, SessionListActionInputV1Schema, SessionModelSetInputSchema, SessionSendMessageInputSchema, SessionTargetsResolveInputV1Schema, getActionSpec, requiresRequesterAppReview, resolveActionExecutionPlacementForInput, listActionSpecs, isActionSpecSurfacedOn, isPluginActionCallerPolicySatisfied, type ActionRequiredAuthority, type ActionSpec, type PublicActionResultById } from './actionSpecs.js';
 import {
   SESSION_LIST_AWARENESS_UNSUPPORTED_ERROR_CODE,
   SESSION_LIST_AWARENESS_VIEW_V1,
@@ -2835,12 +2835,15 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (actionId === 'session.roles.apply_to_reports' && ctx.actionCaller?.kind === 'workflowRun') {
       return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
     }
+    const requesterAppReview = !ctx.externalActionExecutionAuthorization && spec.approvalPolicy?.requesterAppReview
+      ? requiresRequesterAppReview(spec, parsed.data, ctx.actionCaller, ctx.surface) : false;
     if (spec.clientActionDomainInputSchema && typeof readRecord(parsed.data).clientId === 'string'
       && resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller, ctx.surface ?? 'ui') !== 'client') {
       return { ok: false, errorCode: 'client_routing_not_applicable', error: 'This input selects an owner other than a UI client' };
     }
     if (ctx.interactivePresentation === 'unavailable'
-        && (actionId === 'approval.request.create' || resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller, ctx.surface ?? 'ui') === 'client')) {
+        && (actionId === 'approval.request.create' || requesterAppReview
+          || resolveActionExecutionPlacementForInput(spec, parsed.data, ctx.actionCaller, ctx.surface ?? 'ui') === 'client')) {
       return { ok: false, errorCode: 'action_interactive_review_required', error: 'action_interactive_review_required' };
     }
     if (isScmActionId(actionId) && sessionTarget?.field === 'sessionId') {
@@ -3858,7 +3861,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         // which applies its centralized default when a host supplies no settings. (F7)
         requiredByPolicy: childReviewRequired ? true : reviewAdmitted ? undefined : context.bypassApprovals ? false
           : visualAdmission?.networkCreationApprovalRequired === true ? true : undefined,
-        ...(deps.readApprovalOwner?.(actionId, context) === 'receiver' ? { approvalOwner: 'receiver' as const } : {}),
+        ...(deps.readApprovalOwner?.(actionId, context) === 'receiver'
+          || requesterAppReview
+          ? { approvalOwner: 'receiver' as const } : {}),
       });
     };
     const workflowRunId = ctx.externalActionExecutionAuthorization?.binding.workflowActionOrigin?.runId
@@ -4517,7 +4522,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         semanticInput,
         ...(legacyMetadataLabel ? { legacyMetadataLabel } : {}),
       };
-      const startActionOperation = spec.operation && !existingAdmission?.operationObserved
+      const startActionOperation = !requesterAppReview && spec.operation && !existingAdmission?.operationObserved
         && ctx.operationAcceptance?.actionId !== actionId ? ctx.runActionOperation ?? deps.runActionOperation : undefined;
       // The repository template continuation performs the write itself and
       // its checkout lifecycle consumes the containing Action operation.
@@ -4569,7 +4574,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ctx.operationOwnerUpdate?.update({ actor });
         ctx = { ...ctx, operationAcceptance: { ...ctx.operationAcceptance, actor } };
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller, ctx.surface ?? 'ui');
+      const executionPlacement = requesterAppReview ? 'client'
+        : resolveActionExecutionPlacementForInput(spec, admittedInput, ctx.actionCaller, ctx.surface ?? 'ui');
       if (actionId === 'inbox.get') {
         const accountId = readNoticeInboxAccountIdV1(ctx);
         if (!accountId) return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
@@ -4614,6 +4620,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
               actionRequestId: deriveWorkflowReplacementId(['action.client_child', parent, actionId, childId, position]),
             } : {}) });
           } });
+        if (requesterAppReview) return delivered;
         // An exact receiver's result cannot retarget to a headless owner.
         if (typeof data.clientId === 'string') return delivered;
         if (actionId === 'inbox.get' && delivered.ok && readRecord(delivered.result).status === 'unavailable' && deps.appShellAction) {
@@ -4643,6 +4650,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         return delivered;
       }
+      if (requesterAppReview) return clientActionUnavailable(actionId);
       if (executionPlacement === 'client' && spec.clientActionDomainInputSchema && Object.hasOwn(data, 'clientId')) {
         const domain = spec.clientActionDomainInputSchema.safeParse(withoutClientActionInput(admittedInput));
         if (!domain.success) return actionInputValidationFailure(domain.error);

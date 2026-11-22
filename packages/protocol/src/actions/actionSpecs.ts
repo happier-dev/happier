@@ -1079,6 +1079,17 @@ export function resolveActionExecutionPlacementForInput(
   return spec.executionPlacementForInput?.(input, caller, surface) ?? spec.executionPlacement;
 }
 
+export function requiresRequesterAppReview(
+  spec: Pick<ActionSpec, 'approvalPolicy'>,
+  input: unknown,
+  caller: Readonly<{ kind: string }> | undefined,
+  surface: keyof ActionSurfaces | undefined,
+): boolean {
+  if (surface !== 'agent' && surface !== 'mcp') return false;
+  const review = spec.approvalPolicy?.requesterAppReview;
+  return review === true || review?.(input, caller) === true;
+}
+
 function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
   const runtimeBacked = !isRuntimeActionIdV1(spec.id) || isRuntimeActionExecutorReal(spec.id);
   const isInternal = isInternalActionId(spec.id);

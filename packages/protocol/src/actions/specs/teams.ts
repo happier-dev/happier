@@ -377,7 +377,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     executionPlacement: 'client', requiredAuthority: 'account_automation', safety: 'danger', sideEffectClass: 'write',
     surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
     inputSchema: TeamSetupBatchInputV1Schema, outputSchema: TeamSetupBatchResultV1Schema,
-    approval: { flow: 'blocking', result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' },
+    approval: { flow: 'blocking', result: 'required' }, approvalPolicy: { uiConfirmation: 'policy', requesterAppReview: true },
     approvalPresentation: { summary: value => {
       const { machineId, homeId, machine, repositories } = TeamSetupBatchInputV1Schema.parse(value);
       return [

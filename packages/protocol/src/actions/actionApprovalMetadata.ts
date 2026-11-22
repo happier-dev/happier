@@ -5,6 +5,9 @@ import { ApprovalProfileResolutionV1Schema } from './approvalProfiles.js';
 
 /** Host-only confirmation ownership; result custody remains in ActionApproval. */
 export const ActionApprovalPolicySchema = lazyZodSchema(() => z.strictObject({
+  /** Agent/MCP proposals that need the requester's own App to confirm and originate the effect. */
+  requesterAppReview: z.optional(z.union([z.literal(true),
+    z.custom<(input: unknown, caller: Readonly<{ kind: string }> | undefined) => boolean>(value => typeof value === 'function')])),
   uiConfirmation: z.optional(z.enum(['policy', 'direct'])),
   uiConfirmationForInput: z.optional(z.custom<(input: unknown) => boolean>((value) => typeof value === 'function')),
   agentDefault: z.optional(z.enum(['egress', 'authority'])),
