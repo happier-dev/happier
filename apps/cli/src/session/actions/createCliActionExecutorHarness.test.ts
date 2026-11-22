@@ -25,13 +25,15 @@ import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { requesterAccountEncryptionMode } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 
-import type { ActionExecutorDeps, ApprovalRequestV1, ApprovalRequestV2 } from '@happier-dev/protocol';
+import type { ActionExecutorContext, ActionExecutorDeps, ApprovalRequestV1, ApprovalRequestV2 } from '@happier-dev/protocol';
 import * as persistence from '@/persistence';
 
 import { consumeDeferredCliApprovalResult, createCliActionExecutorHarness } from './createCliActionExecutorHarness';
 import { createCliApprovalsArtifactStore } from './approvals/artifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { createLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
@@ -83,6 +85,54 @@ const wire = vi.hoisted(() => {
   }) };
 });
 vi.mock('socket.io-client', () => ({ io: wire.io }));
+
+it.each(['happier.scm.forge.github/github', 'github'])(
+  'rejoins a confirmed Project Open after schema normalization while refusing changed intent (%s)', async providerId => {
+  const actionId = 'projects.open';
+  const requestId = 'legacy-provider-open';
+  const target = { kind: 'machine', machineId: 'machine' } as const;
+  const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+  // Captured J-A request shape: the accepted legacy Provider id normalizes at admission.
+  const input = { serverId: 'home', machineId: target.machineId,
+    source: { kind: 'repository', selector: {
+      provider: { id: providerId, kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+      repository: { nameWithOwner: 'octocat/Hello-World', cloneUrl: 'https://github.com/octocat/Hello-World.git' },
+      protocol: 'https' } },
+    materialization: { kind: 'clone', destinationParentPath: '/home/happier', destinationDirectoryName: 'ts-wave-b-member1122' } };
+  const admitted = OpenProjectInputV1Schema.parse(input);
+  const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-proof', binding: {
+    accountId: 'account', custodianAccountId: 'account', authentication: { kind: 'account', tokenEpoch: 0 },
+    accountEncryptionMode: 'plain', serverIdentityId: 'home', actionId, requestId,
+    machineId: target.machineId, installationId: 'installation', target, requestEnvelopeDigest: 'a'.repeat(43),
+  } });
+  const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: target.machineId,
+    resolveAccountId: async () => 'account', generateOperationId: () => 'normalized-open' });
+  const opened = { kind: 'opened', setup: 'prepared', directory: '/fixture/checkout',
+    workspace: { serverId: 'home', machineId: target.machineId, workspaceId: 'checkout', rootPath: '/fixture/checkout' } };
+  let effects = 0;
+  const harness = createCliActionExecutorHarness({ token, credentials: { token, encryption: null },
+    mode: 'plain', ctx: null, sessionId: 'cli-global', serverId: 'home', serverIdentityId: 'home',
+    serverHttpBaseUrl: 'https://home.invalid', actionsSettingsProvider: {
+      getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }), getAccountSettings: () => accountSettingsParse({}),
+    } }, { runActionOperation: operations.runActionOperation,
+    // Authenticated Machine RPC is the effect boundary; admission and receipt identity remain real.
+    projectsOpen: async request => { expect(request).toEqual(admitted); effects++; return opened; },
+  });
+  const context = (value: unknown): ActionExecutorContext => ({ ...bindPresentUserActionConfirmationV1(actionId, value, {
+    surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+    serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account', actionRequestId: requestId,
+    externalActionTarget: target,
+  }), externalActionExecutionAuthorization: authorization, externalActionContinuation: true });
+  expect(await harness.executor.execute(actionId, input, context(input))).toEqual({ ok: true, result: opened });
+  expect(await harness.executor.execute(actionId, admitted, context(admitted))).toEqual({ ok: true, result: opened });
+  expect(effects).toBe(1);
+  const changed = { ...admitted, materialization: { ...admitted.materialization, destinationParentPath: '/another-directory' } };
+  expect(await harness.executor.execute(actionId, changed, context(changed)))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  expect(await harness.executor.execute(actionId, { ...input, machineId: null }, context(input)))
+    .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+  expect(effects).toBe(1);
+});
 
 it('observes a deferred plugin Action execution after approval without replaying it', async () => {
   const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;

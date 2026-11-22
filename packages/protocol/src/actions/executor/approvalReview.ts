@@ -8,6 +8,7 @@ import { readExternalActionBindingAuthority } from '../externalActionBindingAuth
 import { isDeploymentActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { isProjectFiniteActionIdV1 } from '../projectActionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './deploymentHomeAdmission.js';
+import { getActionSpec } from '../actionSpecs.js';
 
 /** Bind a host's completed Confirm to the captured Account, target and normalized intent. */
 export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: unknown, context: ActionExecutorContext,
@@ -16,10 +17,12 @@ export function bindPresentUserActionConfirmationV1(actionId: ActionId, input: u
   if (context.presentUserConfirmation || !isPresentUserHostInvocation(context)
     || !context.runtimeAccountId || !context.actionRequestId || !(context.serverIdentityId ?? context.serverId)) return context;
   const target = context.externalActionTarget;
+  const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
+  const normalizedInput = parsed.success ? parsed.data : input;
   // The executor names the Home before digests; confirmation answers that same admitted intent.
   const home = isDeploymentActionIdV1(actionId) || isProjectFiniteActionIdV1(actionId)
-    ? admitDeploymentHomeInputV1(input, context, undefined) : null;
-  const admittedInput = home && 'input' in home ? home.input : input;
+    ? admitDeploymentHomeInputV1(normalizedInput, context, undefined) : null;
+  const admittedInput = home && 'input' in home ? home.input : normalizedInput;
   const reviewed = reviewedDeploymentInput === undefined ? undefined : StrictJsonValueSchema.safeParse(reviewedDeploymentInput).data;
   return { ...context, authority: 'present_user', actionCaller: { kind: 'host' }, presentUserConfirmation: {
     actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, admittedInput, context.sessionTargetsV1),

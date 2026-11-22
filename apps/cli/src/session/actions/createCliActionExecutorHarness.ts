@@ -583,13 +583,15 @@ export function createCliActionExecutorHarness(
         if (dispatch) return dispatch.run().then(result => consumeDeferredApproval(result, resolved));
         return liveOrigin.run(resolved, async () => {
           if (carriesNativeConfirmation(actionId, resolved)) {
+            const parsed = getActionSpec(actionId).inputSchema.safeParse(input);
+            if (!parsed.success) return await executor.execute(actionId, input, resolved);
             const runActionOperation = resolved.runActionOperation ?? deps.runActionOperation;
             if (!runActionOperation) return { ok: false,
               errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             // The existing request owner consumes or rejoins this invocation
-            // before the common owner can honour its carried confirmation.
-            return await consumeDeferredApproval(await runActionOperation({ actionId, input, context: resolved,
-              execute: owned => executor.execute(actionId, input, owned) }), resolved);
+            // with the same normalized intent used by confirmation and replay.
+            return await consumeDeferredApproval(await runActionOperation({ actionId, input: parsed.data, context: resolved,
+              execute: owned => executor.execute(actionId, parsed.data, owned) }), resolved);
           }
           return await consumeDeferredApproval(await executor.execute(actionId, input, resolved), resolved);
         });
