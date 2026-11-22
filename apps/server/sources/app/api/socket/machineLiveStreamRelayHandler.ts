@@ -56,7 +56,6 @@ type MachineLiveStreamRelayState = {
     queuedFrames: MachineLiveStreamFrameV1[];
     availableWindowFrames: number;
     availableWindowBytes: number;
-    nextSequenceToRelay: number;
     lastAckNextSequence: number;
     awaitingKeyframe: boolean;
     retireAfterSessionAccessChange?: () => void | Promise<void>;
@@ -383,7 +382,6 @@ function createState(input: Readonly<{
         // replenish the window in `applyAckControl`. Metadata shares its byte credit.
         availableWindowFrames: 1,
         availableWindowBytes: input.maxWindowBytes,
-        nextSequenceToRelay: 1,
         lastAckNextSequence: 1,
         awaitingKeyframe: false,
         ...(input.retireAfterSessionAccessChange ? { retireAfterSessionAccessChange: input.retireAfterSessionAccessChange } : {}),
@@ -660,7 +658,6 @@ function drainRelayQueue(input: Readonly<{
         input.state.bytesRelayed = recorded.metering.bytesSent;
         input.state.framesRelayed = recorded.metering.framesSent;
         if (!input.state.awaitingKeyframe && input.state.queuedFrames.length === 0) input.state.bandwidthPressure = false;
-        input.state.nextSequenceToRelay = Math.max(input.state.nextSequenceToRelay, nextFrame.sequence + 1);
     }
 }
 
@@ -673,10 +670,9 @@ function applyAckControl(input: Readonly<{
     nowMs: number;
     onCapFailure: (frame: MachineLiveStreamFrameV1, reasonCode: string) => void;
 }>): boolean {
-    if (
-        input.control.nextSequence < input.state.nextSequenceToRelay
-        || input.control.nextSequence < input.state.lastAckNextSequence
-    ) {
+    // Frames already sent may still be in transit to the viewer. Only an ACK
+    // behind an accepted ACK is stale; metadata delivery must not outrun credit.
+    if (input.control.nextSequence < input.state.lastAckNextSequence) {
         emitError(input.socket, 'stale_live_stream_ack');
         return false;
     }

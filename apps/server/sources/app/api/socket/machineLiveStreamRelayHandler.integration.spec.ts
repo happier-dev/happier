@@ -1829,6 +1829,13 @@ describe('machineLiveStreamRelayHandler', () => {
     });
 
     const targetHandler = getSocketHandler(targetSocket, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    // Establish the accepted ACK frontier without releasing the queued picture.
+    await targetHandler({
+      v: 1,
+      sourceMachineId: 'machine-source',
+      targetMachineId: 'machine-target',
+      message: { kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2, windowFrames: 0 } },
+    });
     await targetHandler({
       v: 1,
       sourceMachineId: 'machine-source',

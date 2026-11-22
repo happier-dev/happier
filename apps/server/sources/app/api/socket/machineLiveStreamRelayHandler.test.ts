@@ -198,6 +198,51 @@ describe('machineLiveStreamRelayHandler observability', () => {
     }
   });
 
+  it('replenishes image credit from a delayed acknowledgement while metadata advances', async () => {
+    const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
+    const source = createFakeSocket({ id: 'metadata-source' });
+    source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-source' };
+    const viewer = createFakeSocket({ id: 'metadata-viewer' });
+    viewer.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
+      machineId: 'machine-target' };
+    const emitted: MachineLiveStreamFrameV1[] = [];
+    const caps = liveStreamCaps({ maxFramesPerSecond: 12, maxTotalBytes: 128_000 });
+    const context = { io: { to: () => ({ emit: (_event: string, raw: unknown) => {
+      const envelope = raw as { message: { kind: string; frame?: MachineLiveStreamFrameV1 } };
+      if (envelope.message.kind === 'frame' && envelope.message.frame) emitted.push(envelope.message.frame);
+    } }) }, resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
+      serverRoutedLiveStreamEnabled: true, relayWindowFrames: 1, relayCaps: { ...relayCaps, ...caps }, relayAuthorizationTrustRoots, nowMs: () => 1_000 };
+    machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, context);
+    machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, context);
+    const send = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const receive = getSocketHandler(viewer, MACHINE_LIVE_STREAM_SOCKET_EVENT);
+    const envelope = (message: unknown) => ({ v: 1, sourceMachineId: 'machine-source', targetMachineId: 'machine-target', message });
+    try {
+      await send(startMessage('stream_1', undefined, caps));
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 1 }) }));
+      expect(emitted.map(value => value.sequence)).toEqual([1]);
+      // Captured phone order: metadata is still delivered while the image ACK
+      // travels back to Home. It must not make that acknowledgement stale.
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 2, payloadKind: 'metadata' }) }));
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 3 }) }));
+      expect(emitted.map(value => value.sequence)).toEqual([1, 2]);
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2 } }));
+      expect(emitted.map(value => value.sequence)).toEqual([1, 2, 3]);
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 4, payloadKind: 'metadata' }) }));
+      await send(envelope({ kind: 'frame', frame: frame({ sequence: 5 }) }));
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 3 } }));
+      expect(emitted.map(value => value.sequence)).toEqual([1, 2, 3, 4, 5]);
+      // Regressing behind an already accepted ACK remains stale.
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2 } }));
+      expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR,
+        expect.objectContaining({ error: 'stale_live_stream_ack' }));
+    } finally {
+      await getSocketHandler(source, 'disconnect')();
+      await getSocketHandler(viewer, 'disconnect')();
+    }
+  });
+
   it('refuses an invalid receipt before reading its routing data', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const socket = createFakeSocket({ emit: vi.fn(), id: 'invalid-receipt-source' });
