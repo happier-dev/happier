@@ -952,6 +952,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     handoffTargetReplacementApproval?: ApprovalRequestV2['handoffTargetReplacementApproval'];
     /** The scope admission's result for this invocation; the Session resource rung keys on it. */
     approvalScope?: ActionApprovalPolicyScopeV1;
+    /** Opened inside the private host-child dispatch; replay re-admits it the same way. */
+    hostChild?: boolean;
   }>): Promise<Readonly<{ ok: true; request: StoredApprovalRequestV2; artifactId: string }> | ActionExecuteFailure> {
     if (!deps.approvalsCreate) return { ok: false, errorCode: 'approvals_not_supported', error: 'approvals_not_supported' };
     const { actionId, input, context: ctx } = args;
@@ -965,7 +967,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     if (!requesterAdmission.ok) return requesterAdmission;
     const { requesterConfirmation } = requesterAdmission;
     const executionOriginV1 = await prepareApprovalExecutionOrigin({ actionId, input: args.actionArgs,
-      admittedInput: input, context: ctx, targetSessionId,
+      admittedInput: input, context: ctx, targetSessionId, hostChild: args.hostChild === true,
       ...(requesterConfirmation ? { requesterConfirmation } : {}) });
     if (!executionOriginV1) {
       const errorCode = requesterConfirmation ? 'approval_requester_unavailable' : 'approval_origin_unavailable';
@@ -2415,8 +2417,10 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             execute: (input, context) => executeCoreTerminal(actionId, input, context, true, undefined, undefined, true,
               undefined, false, sameReplayHome) });
         }
+        // A host child's Ask resumes the same private dispatch that opened it;
+        // an app-owned replay is a fresh invocation by the deciding person.
         return await executeCoreTerminal(actionId, executionInput, executionContext, true, undefined, undefined, true, undefined,
-          false, sameReplayHome);
+          false, sameReplayHome, origin?.success === true && origin.data.hostChild === true && !appOwnedContextReplay);
       } finally {
         await prepared?.dispose?.();
       }
@@ -2774,7 +2778,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ? { ...ctx, approvalOrigin: { ...ctx.approvalOrigin, toolInput: valueFreeInput } } : ctx;
       const created = await createActionApprovalRequest({ actionId, input: valueFreeInput, actionArgs: valueFreeInput,
         preview: { actionId, actionArgs: valueFreeInput, confidentialInputs: { kind: 'action_inputs', paths } },
-        context: promptContext, approval: { flow: 'deferred', result: 'required' },
+        context: promptContext, approval: { flow: 'deferred', result: 'required' }, hostChild: hostInternal,
         sharedRequesterRequest: !delegatesApprovalClassificationToResolvedAction(actionId) && isSharedRequesterActionV1(ctx),
       });
       return created.ok ? { ok: true, result: { kind: 'approval_request_created', artifactId: created.artifactId, actionId } } : created;
@@ -4002,7 +4006,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             const retainsAutomaticInvocation = spec.approvalInputCustody === 'live_only'
               || spec.approvalResultCustody === 'live_only' || retainHostOperationApproval;
             const created = await createActionApprovalRequest({ actionId, input: admittedInput,
-              actionArgs: prepared.actionArgs, preview: prepared.preview, context: ctx, sharedRequesterRequest,
+              actionArgs: prepared.actionArgs, preview: prepared.preview, context: ctx, sharedRequesterRequest, hostChild: hostInternal,
               humanApprovalRequired: false, approval: { flow: retainsAutomaticInvocation ? 'blocking' : 'deferred', result: baseApprovalRouting.result },
               ...(approvalScope ? { approvalScope } : {}) });
             if (!created.ok) return created;
@@ -4180,7 +4184,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         if ('ok' in preparedApproval) return preparedApproval;
         const created = await createActionApprovalRequest({ actionId, input: admittedInput,
-          actionArgs: preparedApproval.actionArgs, preview: preparedApproval.preview, context: ctx,
+          actionArgs: preparedApproval.actionArgs, preview: preparedApproval.preview, context: ctx, hostChild: hostInternal,
           approval: { flow: approvalRouting.flow, result: approvalRouting.result,
             ...(baseApprovalRouting.profile ? { profile: baseApprovalRouting.profile } : {}) }, sharedRequesterRequest,
           ...(discussionDraftReviewRequired ? { discussionDraftReview: true } : {}),

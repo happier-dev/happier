@@ -16,10 +16,11 @@ import { createActionAutomationPortV1 } from './executor/actionAutomationAdmissi
 
 describe('Machine approval replay composition', () => {
   // Each recorded way back that needs approval opens its own Ask; Undo's approval grants it nothing.
-  it.each([
+  it.each(([
     ['machines.terminal.open', false], ['machines.terminal.open', true],
     ['machines.processes.startAgain', false], ['machines.processes.startAgain', true],
-  ] as const)('replays approved signed CLI Guard Undo whose %s way back has policy Ask=%s', async (childActionId, childAsks) => {
+  ] as const).flatMap(([actionId, ask]) => (['cli', 'rpc'] as const).map(surface => [surface, actionId, ask] as const)))(
+  'Guard Undo on %s replays %s with policy Ask=%s', async (surface, childActionId, childAsks) => {
     const actionId = 'machines.guard.activity.undo';
     const input = { serverId: 'home', machineId: 'controller', entryId: 'closed-terminal' };
     const target = { kind: 'machine', machineId: input.machineId } as const;
@@ -36,21 +37,24 @@ describe('Machine approval replay composition', () => {
       signedActions.push(request.actionId);
       return signExternalActionApprovalInputV1({ ...request, authorizationToken: authorization.token, privateKey: keys.secretKey });
     };
-    const context: ActionExecutorContext = { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+    const context: ActionExecutorContext = { surface, authority: 'present_user', actionCaller: { kind: 'host' },
       runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionRequestId: envelope.requestId,
-      externalActionExecutionAuthorization: authorization, externalActionTarget: target, originalActionEnvelope: envelope,
-      signExternalActionApprovalInput: sign,
+      ...(surface === 'cli' ? { externalActionExecutionAuthorization: authorization, externalActionTarget: target,
+        originalActionEnvelope: envelope, signExternalActionApprovalInput: sign } : {
+        defaultSessionMachineId: target.machineId,
+      }),
     };
     let stored = ApprovalRequestV2Schema.parse({ v: 2, status: 'approved', createdAtMs: 1, updatedAtMs: 2,
-      createdBy: { surface: 'cli' }, requestedSurface: 'cli', summary: 'Undo closed terminal',
+      createdBy: { surface: surface === 'cli' ? 'cli' : 'system' }, requestedSurface: surface, summary: 'Undo Guard activity',
       actionId, actionArgs: input, decision: { kind: 'approve', decidedAtMs: 2 },
       executionOriginV1: buildApprovalExecutionOriginV1({ actionId, input, context, targetSessionId: null }),
     });
     const settings = ActionsSettingsV1Schema.parse({ v: 1, ...(childAsks
-      ? { actions: { [childActionId]: { approvalRequiredSurfaces: ['cli'] } } }
-      : { approvalWaivedSurfaces: { [childActionId]: ['cli'] } }) });
-    const childRequests: string[] = [];
-    let terminalEffects = 0;
+      ? { actions: { [childActionId]: { approvalRequiredSurfaces: [surface] } } }
+      : { approvalWaivedSurfaces: { [childActionId]: [surface] } }) });
+    const childRequests: ApprovalRequest[] = [];
+    let effects = 0;
+    const terminalInput = { serverId: input.serverId, machineId: input.machineId, terminalKey: 'closed-terminal' };
     const executor = createActionExecutor({
       actionAutomations: createActionAutomationPortV1({ accountId: 'owner',
         seed: async () => ({ v: 1, rows: [] }), settle: async () => {} }),
@@ -58,10 +62,12 @@ describe('Machine approval replay composition', () => {
       approvalsGet: async () => stored,
       approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
       approvalsCreate: async ({ request }) => {
-        childRequests.push(ApprovalRequestV2Schema.parse(request).actionId);
-        return { artifactId: 'terminal-open-approval' };
+        childRequests.push(ApprovalRequestV2Schema.parse(request));
+        return { artifactId: 'way-back-approval' };
       },
-      isApprovalExecutionOriginCurrent: async ({ origin, request }) => verifyExternalActionApprovalInputV1({
+      isApprovalExecutionOriginCurrent: async ({ origin, request }) => surface === 'rpc'
+        ? origin.accountId === 'owner' && origin.machineId === target.machineId
+        : verifyExternalActionApprovalInputV1({
         authorizationToken: authorization.token, actionId: request.actionId, input: request.actionArgs,
         target, publicKey: keys.publicKey, signature: origin.externalActionInputSignature ?? '',
       }),
@@ -69,29 +75,60 @@ describe('Machine approval replay composition', () => {
         signExternalActionApprovalInput: sign }),
       machineGuardAction: async ({ executeCanonicalAction }) => {
         const childResult = await executeCanonicalAction!(childActionId, childActionId === 'machines.terminal.open'
-          ? { serverId: input.serverId, machineId: input.machineId, terminalKey: 'closed-terminal' }
+          ? terminalInput
           : { serverId: input.serverId, machineId: input.machineId, ref: 'left-behind-process' });
         return childResult.ok ? childResult.result : childResult;
       },
       machineTerminalAction: async () => {
-        terminalEffects++;
+        effects++;
         return { ok: true, terminalId: 'reopened', reused: false };
       },
       machineProcessesAction: async () => {
-        terminalEffects++;
+        effects++;
         return { status: 'started' };
       },
     });
-    const replay = await executor.replayApprovedApprovalRequest({ artifactId: 'guard-undo-approval',
+    if (surface === 'rpc' && childActionId === 'machines.terminal.open') {
+      expect(await executor.execute(childActionId, terminalInput, context))
+        .toMatchObject({ ok: false, errorCode: 'action_disabled', details: { reason: 'unsupported_surface' } });
+      expect(effects).toBe(0);
+    }
+    const replay = (artifactId: string) => executor.replayApprovedApprovalRequest({ artifactId,
       callerAuthority: 'present_user', currentAccount: {
         accountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home', actionsSettings: settings,
       } });
-    const outcome = replay.ok
-      ? { status: stored.status, code: stored.execution?.errorCode, childRequests, terminalEffects }
-      : { code: replay.errorCode, childRequests, terminalEffects };
-    expect(signedActions).toEqual(childAsks ? [actionId, childActionId] : [actionId]);
-    expect(outcome).toMatchObject({ status: 'executed', code: undefined,
-      childRequests: childAsks ? [childActionId] : [], terminalEffects: childAsks ? 0 : 1 });
+    expect(await replay('guard-undo-approval')).toMatchObject({ ok: true, result: { status: 'executed' } });
+    expect(signedActions).toEqual(surface === 'rpc' ? [] : childAsks ? [actionId, childActionId] : [actionId]);
+    expect(childRequests.map(request => request.actionId)).toEqual(childAsks ? [childActionId] : []);
+    expect(effects).toBe(childAsks ? 0 : 1);
+    if (childAsks) {
+      const child = ApprovalRequestV2Schema.parse(childRequests[0]);
+      // Only the executor's private child dispatch marks its Ask; the root Undo is ordinary.
+      expect(child.executionOriginV1.hostChild).toBe(true);
+      const decide = (decision: 'approve' | 'reject' = 'approve') => executor.execute('approval.request.decide', {
+        artifactId: 'way-back-approval', decision,
+      }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        runtimeAccountId: 'owner', serverId: 'home', serverIdentityId: 'srv_home',
+        defaultSessionMachineId: target.machineId });
+      stored = child;
+      expect(await decide('reject')).toMatchObject({ ok: true, result: { status: 'rejected' } });
+      expect(effects).toBe(0);
+      if (surface === 'rpc' && childActionId === 'machines.terminal.open') {
+        // The same request without the marker is an ordinary RPC invocation and stays refused.
+        const { hostChild: _marker, ...ordinaryOrigin } = child.executionOriginV1;
+        stored = ApprovalRequestV2Schema.parse({ ...child, executionOriginV1: ordinaryOrigin });
+        await decide();
+        expect({ status: stored.status, errorCode: stored.execution?.errorCode })
+          .toEqual({ status: 'failed', errorCode: 'action_disabled' });
+        expect(effects).toBe(0);
+      }
+      stored = child;
+      const outcome = await decide();
+      expect(outcome, JSON.stringify({ status: stored.status, errorCode: stored.execution?.errorCode }))
+        .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+      expect(await decide()).toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(effects).toBe(1);
+    }
   });
 
   it.each([false, true])('restores the signed Session requester policy for native children (required=%s)', async required => {

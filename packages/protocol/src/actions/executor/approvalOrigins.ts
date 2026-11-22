@@ -173,6 +173,8 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
   context: ActionExecutorContext;
   targetSessionId: string | null;
   requesterConfirmation?: ApprovalRequesterConfirmationV1;
+  /** The executor's private host-child dispatch admitted this invocation. */
+  hostChild?: boolean;
 }>): ApprovalExecutionOriginV1 | null {
   const authority = params.context.authority ?? 'account_automation';
   const requestedSurface = parseActionSurfaceKey(params.context.surface);
@@ -322,6 +324,7 @@ export function buildApprovalExecutionOriginV1(params: Readonly<{
     ...(params.context.approvalProfileId === undefined ? {} : { approvalProfileId: params.context.approvalProfileId }),
     ...(admittedWorkflowLeafDepth === undefined ? {} : { agentStartWorkDepth: admittedWorkflowLeafDepth }),
     caller,
+    ...(params.hostChild && caller.kind === 'host' ? { hostChild: true as const } : {}),
     ...(caller.kind === 'session' && params.context.reviewCommentPrincipal?.actor
       ? { reviewCommentActor: params.context.reviewCommentPrincipal.actor } : {}),
     serverId,

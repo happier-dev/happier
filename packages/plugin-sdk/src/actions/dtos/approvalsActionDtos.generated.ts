@@ -298,6 +298,7 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                hostChild?: true | undefined;
                 reviewCommentActor?: undefined | {
                     kind: 'agent';
                     agentId: string;
@@ -1238,6 +1239,7 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                hostChild?: true | undefined;
                 reviewCommentActor?: undefined | {
                     kind: 'agent';
                     agentId: string;
@@ -2157,6 +2159,7 @@ export type ApprovalsActionResultById = {
                 callerSurface?: 'foreign_session_html' | undefined;
                 approvalProfileId?: null | string | undefined;
                 agentStartWorkDepth?: number | undefined;
+                hostChild?: true | undefined;
                 reviewCommentActor?: undefined | {
                     kind: 'agent';
                     agentId: string;

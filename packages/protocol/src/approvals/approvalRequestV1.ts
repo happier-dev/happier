@@ -251,6 +251,12 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   /** Host-admitted native Workflow leaf depth, retained through its approval. */
   agentStartWorkDepth: z.optional(SessionWorkDepthV1Schema),
   caller: ApprovalExecutionOriginCallerV1Schema,
+  /**
+   * Opened inside the executor's private host-child dispatch of an admitted
+   * parent (Guard Undo's way back). Replay admits the child exactly as that
+   * dispatch did: settings and policy, not the public surface exposure.
+   */
+  hostChild: z.optional(z.literal(true)),
   /** Host-admitted author identity; request proofs, intent and Workflow scope are not replayable. */
   reviewCommentActor: z.optional(ReviewCommentActorRefV1Schema),
   /** Local profile identifier used to route the replay to its configured Home. */
@@ -284,6 +290,9 @@ export const ApprovalExecutionOriginV1Schema = lazyZodSchema(() => z.strictObjec
   actionId: ActionIdSchema,
   requestId: z.string().check(z.trim(), z.minLength(1)),
 }).check(z.superRefine((value, ctx) => {
+  if (value.hostChild && value.caller.kind !== 'host') {
+    ctx.addIssue({ code: 'custom', path: ['hostChild'], message: 'Only a host caller opens a host child' });
+  }
   const reviewActor = value.reviewCommentActor;
   if (reviewActor && (reviewActor.kind !== 'agent' || value.caller.kind !== 'session'
     || reviewActor.sessionId !== value.caller.sessionId)) {
