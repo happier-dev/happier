@@ -122,8 +122,8 @@ export type LocalServicePublicRuntime = Readonly<{
     admitViewer(input: Readonly<{ exposureId: string; viewerAccountId: string }>): Promise<LocalServicePublicRuntimeAdmissionResult>;
     resolveExposure(exposureId: string): LocalServicePublicExposureV1 | null;
     resolveExposureByHost(hostname: string): LocalServicePublicExposureV1 | null;
-    /** True only for a Service link whose Service binding has ended, asked by its creator or Service owner. */
-    isRetiredExposureEntitled(exposureId: string, accountId: string): boolean;
+    /** True only for a Service link asked about by its creator or its Service owner. */
+    isServiceLinkPerson(exposureId: string, accountId: string): boolean;
     retainConnection(exposureId: string, close: () => void): () => void;
     retireMachineAccess(input: Readonly<{ machineId: string; accountId: string }>): void;
     validateAccess(input: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult;
@@ -546,16 +546,15 @@ export function createLocalServicePublicRuntime(
     }
 
     /**
-     * Once its Service binding ends, current-Service admission can admit no one,
-     * so the link stays known only to the people its changes were published to:
-     * its creator and the Service owner. The link is already unreachable then.
+     * A Service link's own people: its creator and the Service owner, the people its
+     * changes are published to. When current-Service admission admits no one (the
+     * Service stopped or ended), they still settle and see the unreachable link.
      */
-    function isRetiredExposureEntitled(exposureId: string, accountId: string): boolean {
+    function isServiceLinkPerson(exposureId: string, accountId: string): boolean {
         const entry = entries.get(exposureId);
         if (!entry?.preview.serviceTarget) return false;
         const owner = entry.preview.owner;
-        if (accountId !== entry.actorId && !(owner.kind === 'user' && owner.id === accountId)) return false;
-        return !resolveCurrentPreviewForAccess(entry).ok;
+        return accountId === entry.actorId || (owner.kind === 'user' && owner.id === accountId);
     }
 
     function validateAccess(validateInput: LocalServicePublicRuntimeAccessInput): LocalServicePublicRuntimeAccessResult {
@@ -879,7 +878,7 @@ export function createLocalServicePublicRuntime(
         admitViewer,
         resolveExposure,
         resolveExposureByHost,
-        isRetiredExposureEntitled,
+        isServiceLinkPerson,
         retainConnection,
         retireMachineAccess,
         validateAccess,

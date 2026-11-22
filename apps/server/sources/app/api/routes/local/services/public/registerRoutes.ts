@@ -47,8 +47,8 @@ export type RegisterLocalServicePublicRoutesOptions = Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     resolveExposure?: (exposureId: string) => LocalServicePublicExposureV1 | null | undefined;
     resolveExposureByHost?: (hostname: string) => LocalServicePublicExposureV1 | null | undefined;
-    /** The exposure owner's answer for a Service link whose Service binding has ended. */
-    isRetiredExposureEntitled?: (exposureId: string, accountId: string) => boolean;
+    /** The exposure owner's answer: is this account the Service link's creator or Service owner. */
+    isServiceLinkPerson?: (exposureId: string, accountId: string) => boolean;
     authorizeServiceAccess?: (input: Readonly<{
         userId: string;
         preview: LocalServicePreviewResourceV1;
@@ -422,9 +422,9 @@ async function handleGetStatus(
         authorizeSession: sessionId => isSessionAuthorized(request, options, {
             sessionId, machineId: statusRequest.machineId, purpose: 'public_status',
         }),
-        isRetiredExposureEntitled: exposureId => {
+        isServiceLinkPerson: exposureId => {
             const userId = readString(request.userId);
-            return Boolean(userId && options.isRetiredExposureEntitled?.(exposureId, userId));
+            return Boolean(userId && options.isServiceLinkPerson?.(exposureId, userId));
         },
     });
     if (!result.ok) {
@@ -550,9 +550,9 @@ async function handleRevokeExposure(
     const actorId = readString(request.userId);
     if (!(exposure.serviceTarget
         ? preview && preview.machineId === exposure.machineId && isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)
-            ? await isPreviewAuthorized(request, options, preview, 'public_revoke')
-            // An ended Service admits no one; its own people settle the already unreachable link.
-            : Boolean(actorId && options.isRetiredExposureEntitled?.(exposure.exposureId, actorId))
+            && await isPreviewAuthorized(request, options, preview, 'public_revoke')
+            // A stopped or ended Service admits no one; its own people settle the unreachable link.
+            || Boolean(actorId && options.isServiceLinkPerson?.(exposure.exposureId, actorId))
         : exposure.sessionId && await isSessionAuthorized(request, options, {
             sessionId: exposure.sessionId, machineId: exposure.machineId, purpose: 'public_revoke',
         }))) {

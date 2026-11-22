@@ -17,21 +17,21 @@ export async function readLocalServicePublicStatus(input: Readonly<{
     resolvePreview: (previewId: string) => LocalServicePreviewResourceV1 | null | undefined;
     authorizePreview: (preview: LocalServicePreviewResourceV1) => Promise<boolean>;
     authorizeSession: (sessionId: string) => Promise<boolean>;
-    /** The exposure owner's answer for a Service link whose Service binding has ended. */
-    isRetiredExposureEntitled: (exposureId: string) => boolean;
+    /** The exposure owner's answer: is the caller this Service link's creator or Service owner. */
+    isServiceLinkPerson: (exposureId: string) => boolean;
 }>): Promise<StatusResult> {
     const { request } = input;
     const denied = (reasonCode: string): StatusResult => ({ ok: false, statusCode: 403, error: 'public_preview_denied', reasonCode });
+    // A stopped or ended Service's links stay visible only to their own people.
+    const ownLinks = (refusal: StatusResult): StatusResult => {
+        const snapshot = input.getStatus(request);
+        const exposures = snapshot.exposures.filter(exposure => input.isServiceLinkPerson(exposure.exposureId));
+        return exposures.length > 0 ? { ok: true, snapshot: scopeSnapshot(snapshot, exposures) } : refusal;
+    };
     let scopedPreview: LocalServicePreviewResourceV1 | null = null;
     if (request.previewId) {
         const preview = input.resolvePreview(request.previewId);
-        if (!preview) {
-            // An ended Service's links stay visible only to their own people; everyone else sees no preview.
-            const snapshot = input.getStatus(request);
-            const exposures = snapshot.exposures.filter(exposure => input.isRetiredExposureEntitled(exposure.exposureId));
-            return exposures.length > 0 ? { ok: true, snapshot: scopeSnapshot(snapshot, exposures) }
-                : { ok: false, statusCode: 404, error: 'preview_not_found', reasonCode: 'preview_not_found' };
-        }
+        if (!preview) return ownLinks({ ok: false, statusCode: 404, error: 'preview_not_found', reasonCode: 'preview_not_found' });
         if (preview.machineId !== request.machineId || preview.sessionId !== request.sessionId
             || request.serviceTarget && !isDeepStrictEqual(preview.serviceTarget, request.serviceTarget)) {
             return denied('preview_binding_mismatch');
@@ -39,10 +39,12 @@ export async function readLocalServicePublicStatus(input: Readonly<{
         scopedPreview = preview;
     }
 
-    if (scopedPreview || request.sessionId) {
-        const authorized = scopedPreview ? await input.authorizePreview(scopedPreview)
-            : Boolean(request.sessionId && await input.authorizeSession(request.sessionId));
-        return authorized ? { ok: true, snapshot: input.getStatus(request) } : denied('session_not_authorized');
+    if (scopedPreview) {
+        return await input.authorizePreview(scopedPreview) ? { ok: true, snapshot: input.getStatus(request) }
+            : scopedPreview.serviceTarget ? ownLinks(denied('session_not_authorized')) : denied('session_not_authorized');
+    }
+    if (request.sessionId) {
+        return await input.authorizeSession(request.sessionId) ? { ok: true, snapshot: input.getStatus(request) } : denied('session_not_authorized');
     }
 
     if (!input.userId) return denied('machine_not_authorized');
@@ -58,14 +60,14 @@ export async function readLocalServicePublicStatus(input: Readonly<{
         if (exposure.serviceTarget) {
             const preview = input.resolvePreview(exposure.previewId);
             if (!preview || preview.machineId !== exposure.machineId || preview.sessionId !== exposure.sessionId
-                || !isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)) return input.isRetiredExposureEntitled(exposure.exposureId);
+                || !isDeepStrictEqual(preview.serviceTarget, exposure.serviceTarget)) return input.isServiceLinkPerson(exposure.exposureId);
             // Share admission only after each link matches its current canonical preview binding.
             let authorization = previewAuthorizations.get(preview.previewId);
             if (!authorization) {
                 authorization = input.authorizePreview(preview);
                 previewAuthorizations.set(preview.previewId, authorization);
             }
-            return authorization;
+            return await authorization || input.isServiceLinkPerson(exposure.exposureId);
         }
         if (!exposure.sessionId) return false;
         let authorization = sessionAuthorizations.get(exposure.sessionId);

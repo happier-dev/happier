@@ -40,6 +40,8 @@ function servicePreview(previewId: string): LocalServicePreviewResourceV1 {
 async function createHome() {
   const serviceAccess: string[] = [];
   const previews = new Map<string, LocalServicePreviewResourceV1>();
+  // A stopped Service keeps its preview registered; the Machine refuses admission for everyone.
+  const stopped = new Set<string>();
   const app = Fastify({ logger: false });
   // The authenticated caller is a system boundary; the test names it per request.
   app.addHook('onRequest', async (request) => {
@@ -77,24 +79,26 @@ async function createHome() {
     resolveExposure: (exposureId) => runtime.resolveExposure(exposureId),
     revokeExposure: (exposureId, input) =>
       runtime.revokeExposure(exposureId, input),
-    isRetiredExposureEntitled: (exposureId, accountId) =>
-      runtime.isRetiredExposureEntitled(exposureId, accountId),
+    isServiceLinkPerson: (exposureId, accountId) =>
+      runtime.isServiceLinkPerson(exposureId, accountId),
     validateAccess: (input) => runtime.validateAccess(input),
     authorizeServiceAccess: ({ userId, preview }) => {
       serviceAccess.push(userId);
-      return userId === 'owner' && previews.get(preview.previewId) === preview;
+      return (userId === 'owner' || userId === 'guest')
+        && !stopped.has(preview.previewId)
+        && previews.get(preview.previewId) === preview;
     },
   };
   registerLocalServicePublicRoutes(app as never, options);
   await app.ready();
-  const share = (previewId: string) => {
+  const share = (previewId: string, actorId = 'owner') => {
     const preview = servicePreview(previewId);
     previews.set(previewId, preview);
     const created = runtime.createExposure({
       preview,
       requestedMode: 'secret_link',
       requestedTtlMs: 60_000,
-      actorId: 'owner',
+      actorId,
       sessionAuthorized: true,
       dnsTlsValid: true,
       rateLimitProfileId: 'default',
@@ -104,6 +108,7 @@ async function createHome() {
       previewId,
       exposureId: created.exposure.exposureId,
       retire: () => previews.delete(previewId),
+      stop: () => stopped.add(previewId),
     };
   };
   const revoke = (
@@ -175,6 +180,39 @@ describe('revoking a public link after its Service lifetime ended', () => {
       expect((await status('stranger', link)).json()).toMatchObject({
         reasonCode: 'preview_not_found',
       });
+    } finally {
+      await app.close();
+    }
+  });
+
+  it('settles the link of a stopped Service for its creator and Service owner only', async () => {
+    const { app, runtime, share, revoke, status } = await createHome();
+    try {
+      // The creator is a Machine guest; the Service owner stopped the Service.
+      const link = share('preview_stopped', 'creator');
+      const ownerLink = share('preview_stopped_owner');
+      link.stop();
+      ownerLink.stop();
+      for (const user of ['stranger', 'guest']) {
+        expect((await revoke(user, link)).json()).toMatchObject({ reasonCode: 'session_not_authorized' });
+        expect((await status(user, link)).json()).toMatchObject({ reasonCode: 'session_not_authorized' });
+      }
+      expect(runtime.resolveExposure(link.exposureId)?.state).toBe('active');
+
+      expect((await revoke('creator', link)).json()).toEqual({ ok: true });
+      expect((await revoke('owner', ownerLink)).json()).toEqual({ ok: true });
+      for (const [user, settled] of [['creator', link], ['owner', ownerLink]] as const) {
+        const confirmed = await status(user, settled);
+        expect(confirmed.statusCode).toBe(200);
+        expect(confirmed.json().snapshot.exposures).toEqual([
+          expect.objectContaining({ exposureId: settled.exposureId, state: 'revoked', revokedAt: expect.any(Number) }),
+        ]);
+        expect((await revoke(user, settled)).statusCode).toBe(200);
+      }
+      for (const user of ['stranger', 'guest']) {
+        expect((await revoke(user, link)).json()).toMatchObject({ reasonCode: 'session_not_authorized' });
+        expect((await status(user, link)).json()).toMatchObject({ reasonCode: 'session_not_authorized' });
+      }
     } finally {
       await app.close();
     }
