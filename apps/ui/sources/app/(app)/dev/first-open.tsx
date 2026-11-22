@@ -1,11 +1,10 @@
 import React from 'react';
-import { Platform, Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useLocalSearchParams } from 'expo-router';
 
 import { GlyphSurface, type GlyphMotion } from '@/components/atmosphere/glyph/GlyphSurface';
 import { createOpeningTimeline, openingSceneSeconds } from '@/components/onboarding/firstOpen/openingTimeline';
-import { useIsTablet } from '@/utils/platform/responsive';
 
 /** Displays the real scene in the current viewport without consuming this device's first open. */
 export default function FirstOpenDevScreen() {
@@ -13,8 +12,6 @@ export default function FirstOpenDevScreen() {
     const { theme } = useUnistyles();
     const { host, t } = useLocalSearchParams<{ host?: string; t?: string }>();
     const appearance = theme.dark ? 'dark' : 'light';
-    const tablet = useIsTablet();
-    const phone = host ? host === 'phone' : !tablet && Platform.OS !== 'web';
     const desktop = host === 'mac' || host === 'win' || host === 'linux';
     const frameTime = t === undefined ? null : Number(t);
     const held = frameTime !== null && Number.isFinite(frameTime);
@@ -28,8 +25,8 @@ export default function FirstOpenDevScreen() {
             width: previewWidth,
             height: previewHeight,
         } : undefined;
-        return createOpeningTimeline({ width, height, phone, theme: appearance, windowRect });
-    }, [width, height, phone, appearance, desktop]);
+        return createOpeningTimeline({ width, height, theme: appearance, windowRect });
+    }, [width, height, appearance, desktop]);
     // A held frame is the transition already past its end, so every layer samples the same clock time.
     const heldMotion = React.useMemo<GlyphMotion>(() => (held
         ? { kind: 'transition', epoch: 0, durationS: Math.min(openingSceneSeconds, Math.max(0, frameTime)) }

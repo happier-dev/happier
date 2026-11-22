@@ -28,6 +28,8 @@ import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch } from '@/components/o
 
 type WelcomePoseMove = Readonly<{ from: WelcomePlanetGeometry; startS: number }>;
 
+const hiddenUnderOpening = { opacity: 0 };
+
 function sampleWelcomePose(move: WelcomePoseMove, target: WelcomePlanetGeometry, seconds: number) {
   const progress = easeInOutCubic((seconds - move.startS) / stepMotionTiming.forwardS);
   return interpolateWelcomePlanetPose(move.from, target, progress);
@@ -52,7 +54,8 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
   const reducedMotion = useReducedMotionPreference();
   const viewed = useHostActivelyViewed();
   const arrivalEpoch = React.useContext(FirstOpenWelcomeEpoch);
-  const openingPaints = React.useContext(FirstOpenOwnsWelcomePaint);
+  const openingPaint = React.useContext(FirstOpenOwnsWelcomePaint);
+  const replicaPaints = openingPaint !== null && openingPaint.onPainted === undefined;
   const [pane, setPane] = React.useState<Readonly<{
     width: number;
     height: number;
@@ -78,8 +81,9 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
     height: pane.height,
     ...(props.phone && { level: 0.55 }),
   }] : undefined, [pane, props.phone, props.quietColumn]);
-  // The hidden native destination keeps a painted Still frame ready for the swap.
-  const mode = !pane || openingPaints ? 'off' : reducedMotion || !viewed || arrivalEpoch !== null ? 'still' : 'animated';
+  // A destination under the opening (the hidden native window, or under the in-app scene) keeps a painted Still
+  // frame ready for the hand-off.
+  const mode = !pane || replicaPaints ? 'off' : reducedMotion || !viewed || arrivalEpoch !== null ? 'still' : 'animated';
   const { layer: fieldLayer, epoch, readDurationS, settle, stir } = useHomeGlyphField({
     mode,
     arriving: false,
@@ -152,7 +156,7 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
       style={StyleSheet.absoluteFill}
       onLayout={onLayout}
     >
-      {!openingPaints && pane && geometry ? (
+      {!replicaPaints && pane && geometry ? (
         <GlyphSurface
           width={pane.width}
           height={pane.height}
@@ -160,6 +164,9 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
           theme={theme.dark ? 'dark' : 'light'}
           motion={motion}
           warmWhenHidden={arrivalEpoch !== null}
+          onReady={openingPaint?.onPainted}
+          // The in-app opening paints over it until the hand-off.
+          style={openingPaint ? hiddenUnderOpening : undefined}
           testID="welcome-planet"
         />
       ) : null}

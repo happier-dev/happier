@@ -129,10 +129,11 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     const [cornerNote, setCornerNote] = React.useState<ShellCornerNote | null>(null);
     const cornerNoteSlot = isMobile ? null : setCornerNote;
     const pane = React.useRef<View>(null);
-    const readWebChrome = React.useCallback(() => {
+    const readWebChrome = React.useCallback((scope?: 'shell') => {
         const root = pane.current;
         if (typeof HTMLElement === 'undefined' || !(root instanceof HTMLElement)) return [];
-        const welcomeWordmark = isMobile ? ', [data-testid="welcome-mobile-wordmark"]' : '';
+        // A computer keeps the wordmark across steps; the opening still builds it.
+        const welcomeWordmark = isMobile || scope === 'shell' ? ', [data-testid="welcome-mobile-wordmark"]' : '';
         return Array.from(root.querySelectorAll<HTMLElement>(
             `[data-testid="unauth-shell-corner"], [data-testid="unauth-shell-welcome-footer"]${welcomeWordmark}`,
         ));

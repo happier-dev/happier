@@ -4,6 +4,8 @@ import {
 } from '@happier-dev/brand/glyph-scene';
 import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 
+import { unauthShellLayoutFor } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
+
 export const openingSceneSeconds = 3.17;
 export const openingClimbSeconds = 1.85;
 const turnStart = 1.22;
@@ -18,7 +20,6 @@ const greyFloatInk = [126, 120, 134, 125] as const;
 type OpeningGeometry = Readonly<{
     width: number;
     height: number;
-    phone: boolean;
     theme: 'dark' | 'light';
     windowRect?: GlyphRect;
     cursor?: GlyphPoint;
@@ -61,13 +62,20 @@ type Travel = Readonly<{
 }>;
 
 /** Builds the start tables once. Every sample uses the same clock for the mark, travellers and planet. */
-export function createOpeningTimeline({ width, height, phone, theme, windowRect, cursor }: OpeningGeometry):
+export function createOpeningTimeline({ width, height, theme, windowRect, cursor }: OpeningGeometry):
     (seconds: number) => readonly GlyphLayer[] {
+    const target = windowRect ?? { x: 0, y: 0, width, height };
+    // The planet lands on the pose and look the Welcome draws in this window; the in-app compact window is a phone.
+    const compact = unauthShellLayoutFor(target.width) === 'compact';
+    const phone = compact && !windowRect;
     const centre = { x: width / 2, y: height * (phone ? 0.42 : 0.46) };
     const radius = phone ? width * 0.26 : Math.min(width, height) * 0.2;
-    const target = windowRect ?? { x: 0, y: 0, width, height };
-    const rest = welcomePlanetPose('welcome', target, { phone });
+    const rest = welcomePlanetPose('welcome', target, { phone: compact });
     const end = { x: rest.cx + target.x, y: rest.cy + target.y };
+    const fallAt = (time: number) => {
+        const k = cubicOut(progress(time, fallStart, fallEnd) ** 1.5);
+        return { cx: mix(centre.x, end.x, k), cy: mix(centre.y, end.y, k), R: mix(radius, rest.R, k) };
+    };
     const mark = markGlyphLayer({ centre, size: 2 * radius / 1.05, ink: 'sunrise', retypeS: 1.2 });
     // Source cells come from the real brand sampler so the opening never traces a second mark.
     const raster = glyphFrame({ view: { w: width, h: height }, cell, dpr: 1, theme, layers: [mark] });
@@ -130,9 +138,15 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
                 const at = Math.max(1.55, arrival - copy * 0.08 * variation(index, 37));
                 const emit = source.departure <= at - 0.3
                     ? source.departure : Math.max(turnStart, at - 0.3 - 0.25 * variation(index, 36 + copy));
-                const flip = Math.cos(sine(progress(Math.min(emit, source.departure), turnStart, turnEnd)) * 0.9);
+                // It leaves its mark cell where the falling, turning mark held it at that moment.
+                const leaves = Math.min(emit, source.departure);
+                const flip = Math.cos(sine(progress(leaves, turnStart, turnEnd)) * 0.9);
+                const from = fallAt(leaves);
                 travels.push({
-                    origin: { x: mix(centre.x, source.point.x, flip), y: source.point.y },
+                    origin: {
+                        x: from.cx + (source.point.x - centre.x) * flip * from.R / radius,
+                        y: from.cy + (source.point.y - centre.y) * from.R / radius,
+                    },
                     destination: { x: x / radius, y: y / radius }, emit, arrival: at,
                     arc: (variation(index, 17) - 0.5) * 0.5, spread: 0, tone: source.tone, live: true,
                     alpha: 0.92 + 0.08 * variation(index, 19), grey: false,
@@ -196,6 +210,7 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
         out[at++] = tone;
         bucket.offset = at;
     };
+    const ridingCells = new Float32Array(cellTimeline.length);
     const keepOut = (x: number, y: number) => 1 - progress(Math.max(Math.abs(x - centre.x), Math.abs(y - centre.y)) / radius, 1.02, 1.22);
     const impact = [{ ...end, at: contact }];
     return (seconds) => {
@@ -205,22 +220,28 @@ export function createOpeningTimeline({ width, height, phone, theme, windowRect,
             const fadeOut = 1 - sine(progress(seconds, openingClimbSeconds + 0.15, openingSceneSeconds));
             layers.push(fieldDotLayer({ mode: 'animated', strength: 0.85 * fadeIn * fadeOut, ripples: impact }));
         }
+        const { cx, cy, R } = fallAt(seconds);
         if (seconds >= 0.5 && seconds < 1.92) {
+            // The dissolving mark is drawn in the falling planet's frame, so it falls and widens with it.
+            const scale = R / radius;
+            for (let at = 0; at < cellTimeline.length; at += 4) {
+                ridingCells[at] = cx + (cellTimeline[at] - centre.x) * scale;
+                ridingCells[at + 1] = cy + (cellTimeline[at + 1] - centre.y) * scale;
+                ridingCells[at + 2] = cellTimeline[at + 2];
+                ridingCells[at + 3] = cellTimeline[at + 3];
+            }
             layers.push({
-                ...mark, cellTimeline, turn: sine(progress(seconds, turnStart, turnEnd)),
+                ...mark, centre: { x: cx, y: cy }, size: mark.size * scale, cellTimeline: ridingCells,
+                turn: sine(progress(seconds, turnStart, turnEnd)),
             });
         }
-        const k = cubicOut(progress(seconds, fallStart, fallEnd) ** 1.5);
-        const cx = mix(centre.x, end.x, k);
-        const cy = mix(centre.y, end.y, k);
-        const R = mix(radius, rest.R, k);
         if (seconds >= 1.55) {
             const impactSeconds = seconds - contact;
             const dy = impactSeconds >= 0 && impactSeconds < 0.24 ? 1.5 * Math.sin(Math.PI * impactSeconds / 0.24) : 0;
             const glow = impactSeconds >= 0 ? 0.5 * Math.exp(-impactSeconds / 0.12) : 0;
             layers.push(planetGlyphLayer({
                 geometry: { ...rest, cx, cy: cy + dy, R, glow: (rest.glow ?? 1) + glow },
-                digits: true, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
+                digits: true, soft: compact, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
             }));
         }
         for (const bucket of buckets) bucket.offset = 0;

@@ -15,6 +15,7 @@ export { FirstOpenScene } from './FirstOpenScene';
 export { skipFirstOpenDestination } from './FirstOpenScene';
 
 const fadeBand = stepMotionTiming.band;
+const replicaPaint = {};
 const cornerRadius = 10;
 
 export const FirstOpenOverlayReplica: ComponentType<Readonly<{
@@ -59,7 +60,7 @@ export const FirstOpenOverlayReplica: ComponentType<Readonly<{
             maskSize: `100% ${height + fadeBand}px`, maskRepeat: 'no-repeat', maskPosition: `0 -${fadeBand}px`,
         }}>
             <FirstOpenWelcomeEpoch.Provider value={epoch}>
-                <FirstOpenOwnsWelcomePaint.Provider value>
+                <FirstOpenOwnsWelcomePaint.Provider value={replicaPaint}>
                     <UnauthenticatedSplitShell frameWidth={width} stepId="welcome" isWelcomeStep warmStepMotion={false}>
                         <WelcomeEntryView model={welcome} compact={compact} />
                     </UnauthenticatedSplitShell>

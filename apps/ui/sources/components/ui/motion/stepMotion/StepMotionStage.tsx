@@ -331,7 +331,17 @@ function createStepMotionStage(
             if (reversing) {
                 paintOutgoingWeb(web, incoming, leaves?.leaves ?? [], returnTarget instanceof HTMLElement ? returnTarget : undefined);
                 for (const chrome of layer.webChrome?.() ?? []) animate(chrome, frames.map(frame => ({ opacity: frame.chrome })));
-            } else paintIncomingWeb(web, incoming, leaves?.leaves ?? [], focalTarget instanceof HTMLElement ? focalTarget : undefined, true);
+            } else {
+                // The opening's band climbs the whole window, so each element decodes as the band passes it.
+                const built = animation.grammar === 'opening' ? { x: 0, y: 0, width: grid.width, height: grid.height } : incoming;
+                paintIncomingWeb(web, built, leaves?.leaves ?? [], focalTarget instanceof HTMLElement ? focalTarget : undefined, true);
+                // The opening's climb builds the whole shell: its chrome decodes under the same front as the step.
+                if (animation.grammar === 'opening') {
+                    for (const chrome of layer.webChrome?.('shell') ?? []) {
+                        paintIncomingWeb(chrome, built, readStepLeaves(chrome, grid, false).leaves, undefined, true);
+                    }
+                }
+            }
         } else if (!departingHome && !cover) {
             cleanups.push(layer.paintOpacity(frames.map(frame => reversing ? frame.leave : frame.arrive), durationMs, delayMs));
         }
@@ -376,9 +386,9 @@ function createStepMotionStage(
         const skip = () => finish('skipped');
         const openingInput: OpeningInput | undefined = input.interactiveOpening ? {
             web(control) {
-                if (!control || !web?.contains(control) || !revealPositions) return false;
+                if (!control || !revealPositions) return false;
                 const front = openingFront();
-                // Pressable contents can share their painted ancestor's keyframes.
+                // Pressable contents can share their painted ancestor's keyframes; the step and its chrome are built.
                 for (let node: HTMLElement | null = control; node && node !== web; node = node.parentElement) {
                     const at = revealPositions.get(node);
                     if (at !== undefined) return revealed(front, at);

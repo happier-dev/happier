@@ -45,7 +45,8 @@ export type StepMotionLayerHandle = Readonly<{
     compact: boolean;
     warmOnMount: boolean;
     webElement: () => HTMLElement | null;
-    webChrome?: () => readonly HTMLElement[];
+    /** The shell chrome that leaves with a step; `shell` adds what stays across steps, which the opening also builds. */
+    webChrome?: (scope?: 'shell') => readonly HTMLElement[];
     nativeElement: () => View | null;
     focal: (returnTo?: string) => FocusReturnTarget;
     paintOpacity: (values: readonly number[], durationMs: number, delayMs: number) => () => void;

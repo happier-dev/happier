@@ -45,6 +45,17 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
     const wasPresenting = useRef(false);
     const presenting = playing || (replica !== null && !replicaClosed);
     const settle = useCallback(() => setPhase('settled'), []);
+    // The scene holds its last frame until the Welcome's own planet has painted under it (the desktop swap's rule).
+    const welcomePainted = useRef(false);
+    const handOffWhenPainted = useRef(false);
+    const welcomePaint = useMemo(() => ({
+        onPainted: () => {
+            welcomePainted.current = true;
+            if (!handOffWhenPainted.current) return;
+            handOffWhenPainted.current = false;
+            settle();
+        },
+    }), [settle]);
     const fadeToRest = useCallback(() => {
         opacity.setValue(0.65);
         setPhase('still');
@@ -121,8 +132,9 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             void scene.buildFirstOpenDestination(epoch, { interactive: true }).then(outcome => {
                 if (!activePlay.current) return;
                 activePlay.current = false;
-                if (outcome === 'settled') settle();
-                else fadeToRest();
+                if (outcome !== 'settled') fadeToRest();
+                else if (welcomePainted.current) settle();
+                else handOffWhenPainted.current = true;
             }, () => skip());
             return;
         }
@@ -166,7 +178,7 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             <Animated.View style={{ flex: 1, opacity }}>
                 <FirstOpenContentLayout.Provider value={contentLayout}>
                     <FirstOpenWelcomeEpoch.Provider value={typeof phase === 'object' ? phase.epoch : replicaClosed ? null : replica}>
-                        <FirstOpenOwnsWelcomePaint.Provider value={playing}>
+                        <FirstOpenOwnsWelcomePaint.Provider value={playing ? welcomePaint : null}>
                             <FirstOpenWelcomeModelContext.Provider value={waitingForReplica ? publishWelcome : null}>
                                 {children}
                             </FirstOpenWelcomeModelContext.Provider>

@@ -1,6 +1,8 @@
 import { createContext, useContext, useLayoutEffect, useRef } from 'react';
 import type { LayoutChangeEvent } from 'react-native';
 
+import type { GlyphSurfaceReadiness } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
+
 import type { WelcomeEntryViewModel } from '@/components/onboarding/preAuth/WelcomeEntryView';
 
 /** Kept with the other channels so the ordinary shell does not import the opening host. */
@@ -22,8 +24,12 @@ export const FirstOpenWelcomeModelContext = createContext<((model: WelcomeEntryV
 /** Shared phase for the real Welcome and the replica during the native hand-off. */
 export const FirstOpenWelcomeEpoch = createContext<number | null>(null);
 
-/** The opening surface supplies the Welcome backing while it paints this window. */
-export const FirstOpenOwnsWelcomePaint = createContext(false);
+/**
+ * Present while the opening paints this window. The desktop replica draws no planet of its own; with `onPainted`,
+ * the Welcome's planet paints hidden in place and reports that paint, so the scene hands off only to a painted planet.
+ */
+export type FirstOpenWelcomePaint = Readonly<{ onPainted?: (status: GlyphSurfaceReadiness) => void }>;
+export const FirstOpenOwnsWelcomePaint = createContext<FirstOpenWelcomePaint | null>(null);
 
 export function usePublishFirstOpenWelcomeModel(model: WelcomeEntryViewModel | null): void {
     const publish = useContext(FirstOpenWelcomeModelContext);

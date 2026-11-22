@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { Platform, StyleSheet, useWindowDimensions } from 'react-native';
+import { StyleSheet, useWindowDimensions } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { GlyphRect } from '@happier-dev/brand/glyph-scene';
 
@@ -7,7 +7,6 @@ import { GlyphSurface, type GlyphSurfaceReadiness } from '@/components/atmospher
 import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurfaceTypes';
 import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { playBuild, skipStepMotion, useOpeningBuildGlyphs } from '@/components/ui/motion/stepMotion/StepMotionStage';
-import { useIsTablet } from '@/utils/platform/responsive';
 
 import { createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
 
@@ -30,12 +29,11 @@ export function FirstOpenScene(props: Readonly<{
     const { width, height } = props.placement?.overlayFrame ?? viewport;
     const { theme } = useUnistyles();
     const appearance = theme.dark ? 'dark' : 'light';
-    const phone = !useIsTablet() && Platform.OS !== 'web';
     const opening = useMemo(() => createOpeningTimeline({
-        width, height, phone, theme: appearance,
+        width, height, theme: appearance,
         windowRect: props.placement?.windowRect,
         cursor: props.placement?.cursor ? { x: props.placement.cursor[0], y: props.placement.cursor[1] } : undefined,
-    }), [width, height, phone, appearance, props.placement]);
+    }), [width, height, appearance, props.placement]);
     const build = useOpeningBuildGlyphs();
     const { epoch, holding } = props;
     const buildStartS = build && epoch !== null ? (build.animation.epoch - epoch) / 1000 : 0;

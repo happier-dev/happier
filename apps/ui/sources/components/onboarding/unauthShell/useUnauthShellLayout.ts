@@ -8,8 +8,13 @@ export type UnauthShellLayout = 'desktop' | 'compact';
  */
 export const MOBILE_MAX_WIDTH_PX = 720;
 
+/** Which of the two signed-out compositions a frame of this width takes. */
+export function unauthShellLayoutFor(width: number): UnauthShellLayout {
+    return width <= MOBILE_MAX_WIDTH_PX ? 'compact' : 'desktop';
+}
+
 /** Which of the two signed-out compositions the window takes now; it follows the window as it resizes. */
 export function useUnauthShellLayout(frameWidth?: number): UnauthShellLayout {
     const { width } = useWindowDimensions();
-    return (frameWidth ?? width) <= MOBILE_MAX_WIDTH_PX ? 'compact' : 'desktop';
+    return unauthShellLayoutFor(frameWidth ?? width);
 }
