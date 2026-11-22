@@ -293,45 +293,56 @@ export function UsagePlanIdentity(
   }>,
 ) {
   const text = usePlanText();
-  const split = props.column && props.name.primaryLabel && props.name.identity
+  // The name and the identity that tells same-name accounts apart ("Leeroy Brun", "leeroy@batiplus.ch") each keep one
+  // line: in a narrow column the identity goes under the name, elsewhere it follows it on the same line and gives way
+  // first. Cut at its end, an address keeps its local part whole and gives up its domain (acceptance 11-21 #4: a middle
+  // cut left "c…ier.dev", a wrap broke every address at "@").
+  const split = (props.column || props.compact) && props.name.primaryLabel && props.name.identity
     ? { primary: props.name.primaryLabel, identity: props.name.identity } : null;
   const qualifier = [props.name.qualifier, props.detail]
     .filter(Boolean)
     .join(' · ');
-  // A narrow column's name with no space to wrap at (an address standing as the name, "ai3@happier.dev") can only
-  // break mid-word: it keeps one line and gives up its middle, as the split address under a name does (acceptance 11-18 #15).
-  const unbrokenColumnTitle = props.column && !split && !/\s/.test(props.name.title.trim());
+  // A title with an address in it ("we-are@happier.dev", "leeroy@gmail.com's Account") keeps one line for the same
+  // reason; a name of words wraps at a space instead of being cut, so "ChatGPT account 2" never reads as "ChatGPT account".
+  const addressTitle = !split && props.name.title.includes('@');
+  const title = (
+    <ConnectedAccountIdentityText
+      value={split ? split.primary : props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
+      style={[styles.identityTitle, text.title, split && !props.column ? styles.identityLead : null]}
+      numberOfLines={split || addressTitle ? 1 : props.compact ? 3 : 2}
+    />
+  );
+  const mark = (
+    <View style={styles.identityMark}>
+      <ConnectedServiceMark
+        service={props.name.service}
+        legacyServiceId={props.name.legacyServiceId}
+        size="inline"
+      />
+    </View>
+  );
+  if (split && props.column) {
+    // A narrow cell: the mark and the name, then the address on its own line from the cell's edge, so the whole cell
+    // width goes to the part that tells same-name accounts apart.
+    return (
+      <View testID={props.testID} style={styles.identityStack}>
+        <View style={styles.identity}>{mark}<View style={[styles.identityText, styles.identityColumn]}>{title}</View></View>
+        <ConnectedAccountIdentityText value={split.identity} style={[styles.identityQualifier, text.detail]} numberOfLines={1} />
+      </View>
+    );
+  }
   return (
     <View testID={props.testID} style={styles.identity}>
-      <View style={styles.identityMark}>
-        <ConnectedServiceMark
-          service={props.name.service}
-          legacyServiceId={props.name.legacyServiceId}
-          size="inline"
-        />
-      </View>
-      <View style={[styles.identityText, split ? styles.identityColumn : null]}>
-        <ConnectedAccountIdentityText
-          value={split ? split.primary : props.compact ? props.name.title : props.name.primaryLabel ?? props.name.title}
-          style={[styles.identityTitle, text.title]}
-          // In a narrow column (capacity segments, reset rows) a name wraps at a space instead of being cut, so
-          // "ChatGPT account 2" never reads as "ChatGPT account". A compact title also carries the address that tells
-          // same-name accounts apart ("Leeroy · codex3@happier.dev"): it keeps a third line so the address is never
-          // the part that is cut (sweep 1110 #12).
-          numberOfLines={split || unbrokenColumnTitle ? 1 : props.compact ? 3 : 2}
-          {...(unbrokenColumnTitle ? { ellipsize: 'middle' as const } : {})}
-        />
+      {mark}
+      <View style={[styles.identityText, split || addressTitle && (props.column || props.compact) ? styles.identityColumn : null]}>
         {split ? (
-          <ConnectedAccountIdentityText
-            value={split.identity}
-            style={[styles.identityQualifier, text.detail]}
-            // One line that gives up its middle ("codex3@ha…er.dev"): a tail cut read "codex3@…" (R6 #12) and a
-            // two-line wrap broke every address at "@" and floated the rank badge mid-tile (USAGE-ACCEPT #7). The
-            // start that tells same-name accounts apart stays; the cell's accessibility label keeps it whole.
-            numberOfLines={1}
-            ellipsize="middle"
-          />
-        ) : null}
+          <View style={styles.identityLine}>
+            {title}
+            <Text style={[styles.identityTitle, text.title, styles.identitySeparator]}>·</Text>
+            <ConnectedAccountIdentityText value={split.identity} style={[styles.identityTitle, text.title, styles.identityTrail]}
+              numberOfLines={1} />
+          </View>
+        ) : title}
         {qualifier && !props.compact ? (
           <ConnectedAccountIdentityText
             value={qualifier}
@@ -467,6 +478,7 @@ const styles = StyleSheet.create((theme) => ({
     maxWidth: '100%',
   },
   identityMark: { flexShrink: 0 },
+  identityStack: { minWidth: 0, gap: theme.space.s2 },
   identityText: {
     flexShrink: 1,
     minWidth: 0,
@@ -478,6 +490,11 @@ const styles = StyleSheet.create((theme) => ({
   // One stretched, unwrapped column: a wrapping column sizes its line to the widest child, so a one-line address
   // overflowed the cell instead of giving up its middle.
   identityColumn: { flexDirection: 'column', alignItems: 'stretch', flexWrap: 'nowrap' },
+  // The name, then its address on the same line: both one line, the address giving way first.
+  identityLine: { flexDirection: 'row', alignItems: 'baseline', minWidth: 0, columnGap: theme.space.s4 },
+  identityLead: { flexShrink: 1, minWidth: 0 },
+  identitySeparator: { flexShrink: 0 },
+  identityTrail: { flexShrink: 100, minWidth: 0 },
   identityTitle: {
     ...Typography.default('semiBold'),
     color: theme.colors.text.primary,

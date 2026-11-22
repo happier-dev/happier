@@ -493,6 +493,27 @@ it('says once that no plan has anything to compare yet, and keeps every plan one
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.fitNoneEnded'));
 });
 
+it('collapses to one line while no plan has a price, even when ended windows were recorded (acceptance 11-21 #3)', async () => {
+  const now = Date.now();
+  const weekly: Meter = { meterId: 'weekly', label: 'Weekly', usedPct: 30, resetAtMs: now + DAY, windowDurationMs: 7 * DAY };
+  const reads = ['first', 'second'].map((id) => {
+    const base = quotaRead(id, now, [weekly]);
+    return ConnectedServiceQuotaGetResultV1Schema.parse({ ...base, unusedCapacity: { historyStatus: 'returned_page', windows: [{
+      window: { recordId: base.current!.recordId, meterId: 'weekly', resetAtMs: weekly.resetAtMs - 7 * DAY,
+        windowStartAtMs: weekly.resetAtMs - 14 * DAY, windowDurationMs: 7 * DAY },
+      value: { status: 'available', unusedAmount: 0, unusedFraction: 0, unit: 'percent', observedAtMs: now - 5 * DAY,
+        sampleCount: 5, qualification: 'confirmed', method: 'terminal_observation' },
+    }] } });
+  });
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps(reads)} id="usage_plan_fit" testID="fit" />);
+  expect(screen.getTextContent()).toContain(t('usage.board.plans.planNoPriceAll'));
+  expect(screen.findByTestId('fit.plan.first')).toBeFalsy();
+  await screen.pressByTestIdAsync('fit.plans-header');
+  // The plans' own outcomes stay one press away.
+  expect(screen.findByTestId('fit.plan.first.fit')).toBeTruthy();
+});
+
 it('names reset rows as the exact-values path and includes hidden precision without extra focus targets', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30.125,
@@ -1846,6 +1867,8 @@ it("says what a banked reset's expiry means against the natural reset, and count
       />,
     ),
   );
+  // Neither plan has a price, so the rows wait one press away (acceptance 11-21 #3).
+  await fit.pressByTestIdAsync('fit.plans-header');
   const label = fit.findHostByTestId('fit.plan.work.fit')!.props
     .accessibilityLabel as string;
   expect(label).toContain('1');

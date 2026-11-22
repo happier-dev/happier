@@ -49,11 +49,11 @@ const arrangements: Readonly<Record<UsageWidgetPresetId, readonly Arrangement[]>
     // costs a line, never a tall empty cell beside the chart.
     usage: [{ width: 'full', widgets: [w('usage_daily', 'tall'), w('usage_breakdowns', 'tall', { breakdown: ['model'] }),
         w('usage_efficiency', 'wide'), w('usage_flow', 'full'), w('usage_breakdowns', 'full', { breakdown: ['machine'] })] }],
-    // Lab p2sheet-D: Limits leads as a view of its own (large: the pool's cells and its order; a full band elsewhere,
-    // such as Home, is the compact tile), then where each live window lands, what each plan is worth, and the reset
-    // planner across the coming days, each its own band so a short list never leaves its neighbour's column empty.
-    // The burn-up stays with Projections' own-view size: it charts only a window with a witnessed pace.
-    plans: [{ width: 'full', widgets: [w('usage_capacity', 'large'), w('usage_projections', 'full'), w('usage_plan_fit', 'full'),
+    // Lab p2sheet-D, a two-column sheet: Limits leads as a view of its own (large: the pool's cells and its order; a
+    // full band elsewhere, such as Home, is the compact tile), then where each live window lands beside what each plan
+    // is worth (two short lists: Plan fit is one line until a plan has a price), then the reset planner across the
+    // coming days as its own band (acceptance 11-21 #3).
+    plans: [{ width: 'full', widgets: [w('usage_capacity', 'large'), w('usage_projections', 'medium'), w('usage_plan_fit', 'medium'),
         w('usage_resets', 'full')] }],
     coach: [{ width: 'full', widgets: [w('usage_coach', 'large')] }],
     // Lab u3how: Sky of days leads, Steering by Agent takes its own band (its figures column needs the width), then A day in

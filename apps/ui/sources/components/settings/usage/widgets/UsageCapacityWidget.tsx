@@ -55,6 +55,11 @@ import { formatMoment } from '@/utils/datetime/formatMoment';
  * one row each (bar, then name and figure), as the narrow pooled bar lists them (native N2: a seven-account phone).
  */
 const CELL_MIN_WIDTH_PX = 92;
+/**
+ * A cell of the per-account grid at this width holds a name and the start of its address on their own lines
+ * ("leeroy.brun@gm…"); runs narrower than their cells at this width wrap to the next line.
+ */
+const CELL_READABLE_MIN_WIDTH_PX = 132;
 /** Beside other widgets a segment of the one pooled bar keeps this much room for its label beneath it. */
 const POOLED_SEGMENT_MIN_WIDTH_PX = 64;
 /**
@@ -409,7 +414,10 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
             testID={run.pool && isFramedRun(run) ? `${props.testID}.pool.${run.pool.groupId}` : undefined}
             style={[
               isFramedRun(run) ? styles.pool : listed ? styles.list : styles.run,
-              listed ? null : { flexGrow: run.cells.length, flexBasis: 0 },
+              // A run keeps room for every cell's name and address; when the runs cannot all hold it on one line
+              // (nine accounts beside a sidebar) a pool takes the next line instead of cutting each address to a
+              // fragment (acceptance 11-21 #4).
+              listed ? null : { flexGrow: run.cells.length, flexBasis: 0, minWidth: Math.min(run.cells.length * CELL_READABLE_MIN_WIDTH_PX, width ?? Infinity) },
             ]}
           >
             {/* An outline says which pool it holds, so the cells beside it read as accounts outside it. */}
@@ -648,6 +656,8 @@ function CapacityCell(
       {detail}
     </Text>
   );
+  // A left-out account says why in words on its caption line; an unnumbered badge would only repeat it.
+  const rank = cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null;
   return (
     <View
       testID={props.testID}
@@ -684,21 +694,20 @@ function CapacityCell(
       {props.listed ? (
         <View style={styles.listedRow}>
           <View style={styles.listedIdentity}>
-            <View style={styles.cellHead}>
-              <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
-              {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
-            </View>
+            <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
             {props.lone ? null : detailLine}
           </View>
-          {props.lone ? null : valueText}
+          {/* The order badge rides with the figure at the row's end, never against the name (acceptance 11-21 #4). */}
+          {props.lone ? rank : <View style={styles.cellHead}>{valueText}{rank}</View>}
         </View>
       ) : (
         <>
-          {props.lone ? null : <View style={styles.cellHead}>{valueText}</View>}
+          {/* The figure and the order badge share the cell's first line (lab p2pool A1: "69% ①"), so the name and the
+              address under it keep the whole width (acceptance 11-21 #4). */}
+          {props.lone ? null : <View style={[styles.cellHead, styles.cellFigureLine]}>{valueText}{rank}</View>}
           <View style={styles.cellHead}>
             <View style={styles.cellIdentity}><UsagePlanIdentity name={props.name} compact column /></View>
-            {/* A left-out account says why in words on its caption line; an unnumbered badge would only repeat it. */}
-            {cell.rank !== null ? <UsagePlanRank rank={cell.rank} selected={cell.selected} /> : null}
+            {props.lone ? rank : null}
           </View>
           {/* The caption's line is held for every account from the first frame, the one that never answers
               included: "last read" or "used up" arrives into it, and settling never resizes the bar. Under the
@@ -756,6 +765,7 @@ const styles = StyleSheet.create((theme) => ({
     minWidth: 0,
   },
   cellIdentity: { flexShrink: 1, minWidth: 0 },
+  cellFigureLine: { justifyContent: 'space-between' },
   // A phone's list (under the pooled bar, or in place of the per-account grid): a row per account, its figure at the end.
   list: { gap: theme.space.s16 },
   listedRow: { flexDirection: 'row', alignItems: 'flex-start', justifyContent: 'space-between', columnGap: theme.space.s12 },

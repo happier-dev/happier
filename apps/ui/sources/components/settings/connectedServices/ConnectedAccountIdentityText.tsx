@@ -2,7 +2,6 @@ import * as React from 'react';
 import { Platform, type StyleProp, type TextStyle } from 'react-native';
 
 import { Text } from '@/components/ui/text/Text';
-import { MiddleEllipsisText } from '@/components/ui/text/MiddleEllipsisText';
 import { splitMaskedConnectedAccountIdentity } from '@/sync/domains/connectedServices/maskAccountEmail';
 import { t } from '@/text';
 
@@ -18,17 +17,16 @@ export const ConnectedAccountIdentityText = React.memo(function ConnectedAccount
     value: string;
     style?: StyleProp<TextStyle>;
     numberOfLines?: number;
-    /** One line that gives up its middle ("codex3@ha…er.dev"), never a wrap at "@" in a narrow cell. */
-    ellipsize?: 'middle';
     testID?: string;
 }>) {
     const parts = splitMaskedConnectedAccountIdentity(props.value);
     const masked = parts.some((part) => part.masked);
-    if (props.ellipsize === 'middle' && !masked) return <MiddleEllipsisText testID={props.testID} style={props.style} value={props.value} />;
     if (!masked || Platform.OS !== 'web') {
         // An address wraps once, between its name and its domain, never mid-word: the domain is one atomic
-        // inline, which is a soft wrap opportunity on either side of it (the text stays one string).
-        const at = props.value.indexOf('@');
+        // inline, which is a soft wrap opportunity on either side of it (the text stays one string). On one line
+        // it is plain text cut at its end, so the local part that tells accounts apart stays whole and the domain
+        // gives way ("leeroy.brun@gma…"); an atomic domain there would drop out whole with no ellipsis.
+        const at = props.numberOfLines === 1 ? -1 : props.value.indexOf('@');
         return (
             <Text testID={props.testID} style={[props.style, Platform.OS === 'web' ? WORD_WRAP_STYLE : null]} numberOfLines={props.numberOfLines}>
                 {Platform.OS === 'web' && at > 0 && at < props.value.length - 1

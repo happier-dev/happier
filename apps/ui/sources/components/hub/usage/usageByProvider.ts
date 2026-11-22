@@ -63,6 +63,8 @@ export type UsageAccountRow = Readonly<{
     windows: readonly UsageWindowRow[];
     /** Every window was read and has comfortable room left. */
     healthy: boolean;
+    /** A read window has nothing left: the account cannot take work until that window resets. */
+    usedUp: boolean;
 }>;
 
 export type UsageProviderGroup = Readonly<{
@@ -123,6 +125,8 @@ export function groupUsageByProvider(accounts: readonly UsageAccountInput[]): Us
                         healthy: account.state === 'ready'
                             && windows.length > 0
                             && windows.every((window) => window.tone === 'success'),
+                        usedUp: account.meters.some((meter) => meter.remainingPct !== null && Number.isFinite(meter.remainingPct)
+                            && meter.remainingPct <= 0),
                     };
                 }),
             };

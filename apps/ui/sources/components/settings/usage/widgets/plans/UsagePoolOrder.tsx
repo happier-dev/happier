@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
+  HAPPIER_PAGE_METRICS,
   HAPPIER_PRESS_FEEDBACK_V1,
   HappierPressable,
 } from '@happier-dev/plugin-ui/presentation';
@@ -49,6 +50,8 @@ type NameOf = (account: UsagePlanAccount) => UsagePlanAccountName;
 
 /** The popover's reading width; it narrows to the window on a phone. */
 const WHY_POPOVER_WIDTH_PX = 380;
+/** Below this a pool's order takes the row alone; two pools sit side by side from about twice it (lab p2sheet-D). */
+const QUEUE_MIN_WIDTH_PX = 320;
 
 /** One pool member as the selector's read lists it. The order is the read's; nothing is ranked here. */
 export type UsagePoolMember = Readonly<{
@@ -217,15 +220,19 @@ export function UsagePoolQueue(props: PoolOrderProps) {
   const bareTitle = t(bare.length < named.length ? 'usage.board.plans.queueOtherTitle' : 'usage.board.plans.queueTitle');
   return (
     <View testID={props.testID} style={styles.pools}>
-      {named.filter((pool) => !bare.includes(pool)).map((pool) => (
-        <PoolQueue
-          key={pool.key}
-          {...props}
-          pool={pool}
-          causeBelow={sharedCause !== null}
-          testID={`${props.testID}.${pool.groupId}`}
-        />
-      ))}
+      {/* Each pool's order is a reading column (lab p2sheet-D: two pools side by side), so a row's value sits beside its
+          name instead of a page width away (acceptance 11-21 #3). */}
+      <View style={styles.queues}>
+        {named.filter((pool) => !bare.includes(pool)).map((pool) => (
+          <PoolQueue
+            key={pool.key}
+            {...props}
+            pool={pool}
+            causeBelow={sharedCause !== null}
+            testID={`${props.testID}.${pool.groupId}`}
+          />
+        ))}
+      </View>
       {bare.length > 0 ? (
         <View style={styles.bareQueue}>
           {/* One unordered pool is one quiet line; the label stands over the names only for two or more, so the
@@ -334,7 +341,7 @@ function PoolQueue(
   const members = readUsagePoolMembers(props.pool, props.accounts, selection, state.activeAccountRef);
   const nextRank = readUsagePoolQueueNextRank(members);
   return (
-    <View testID={props.testID} style={styles.pool}>
+    <View testID={props.testID} style={[styles.pool, styles.queuePool]}>
       <UsagePlanSectionHead
         title={title}
         meta={[strategy.label, !props.causeBelow && state.refreshError ? unreadText(state.refreshError) : null].filter(Boolean).join(' · ')}
@@ -922,7 +929,10 @@ function WhyRow(
 
 const styles = StyleSheet.create((theme) => ({
   pools: { gap: 18 },
+  queues: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space.s24, rowGap: 18 },
   pool: { gap: theme.space.s6 },
+  // A pool's order in the row of reading columns (only there: in a column, a basis would be a height).
+  queuePool: { flexGrow: 1, flexBasis: QUEUE_MIN_WIDTH_PX, minWidth: 0, maxWidth: HAPPIER_PAGE_METRICS.columnMaxWidthPx.reading },
   bareQueue: { gap: theme.space.s4 },
   bareRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'baseline', columnGap: theme.space.s8 },
   quiet: {

@@ -251,10 +251,13 @@ export function SidebarUsagePopoverView(props: Readonly<{
     const { usage, privacy, session } = props;
     const facts = props.facts ?? NO_FACTS;
     const [widened, setWidened] = React.useState(false);
-    const accounts = React.useMemo(
-        () => groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account }))),
-        [usage.accounts],
-    );
+    // The accounts that can take work lead and the used-up ones follow, each in its own order: five "0% left" rows
+    // before the only usable account pushed it below the fold (acceptance 11-21 #7). Nothing here ranks accounts:
+    // the switching order is the pool selector's, shown on Plans.
+    const accounts = React.useMemo(() => {
+        const all = groupUsageByProvider(usage.accounts).flatMap((provider) => provider.accounts.map((account) => ({ provider, account })));
+        return [...all.filter((entry) => !entry.account.usedUp), ...all.filter((entry) => entry.account.usedUp)];
+    }, [usage.accounts]);
     const now = Date.now();
 
     // Known identity owns the scope even before a usage reading exists. Only an unknown identity

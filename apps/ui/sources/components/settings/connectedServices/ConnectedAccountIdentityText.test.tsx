@@ -63,4 +63,13 @@ describe('ConnectedAccountIdentityText (lab csvc PV: a partial blur that still t
         const plain = await renderScreen(<ConnectedAccountIdentityText value="ChatGPT account 2" />);
         expect(plain.getTextContent()).toBe('ChatGPT account 2');
     });
+
+    it('keeps a one-line address one plain run, so the line is cut in its domain and the local part stays whole (acceptance 11-21 #4)', async () => {
+        platform.os = 'web';
+        const screen = await renderScreen(<ConnectedAccountIdentityText value="leeroy.brun@gmail.com" numberOfLines={1} />);
+        const atomic = screen.findAll((node) => typeof node.type === 'string'
+            && [node.props?.style].flat(Infinity).some((style: { display?: string } | undefined) => style?.display === 'inline-block'));
+        expect(atomic).toHaveLength(0);
+        expect(screen.getTextContent()).toBe('leeroy.brun@gmail.com');
+    });
 });

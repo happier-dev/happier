@@ -108,6 +108,15 @@ describe('the Usage popover header', () => {
 });
 
 describe('SidebarUsagePopoverContent', () => {
+    it('lists the accounts with room before the used-up ones, keeping each group in its order (acceptance 11-21 #7)', async () => {
+        state.summaries = [summary('claude:a', 'Spent one', 0), summary('claude:b', 'Spent two', 0), summary('claude:c', 'Usable', 5),
+            summary('claude:d', 'Roomy', 80)];
+        const screen = await renderContent();
+        const order = screen.findAll(node => typeof node.props.testID === 'string' && /^sidebar-usage-account-claude:[a-d]$/.test(node.props.testID))
+            .map(node => node.props.testID as string).filter((id, index, all) => all.indexOf(id) === index);
+        expect(order).toEqual(['sidebar-usage-account-claude:c', 'sidebar-usage-account-claude:d',
+            'sidebar-usage-account-claude:a', 'sidebar-usage-account-claude:b']);
+    });
     it('folds several accounts with nothing to show into one line after the accounts that answer', async () => {
         state.summaries = [summary('claude:a', null, 73, 'kevin@gmail.com')];
         state.withoutUsage = ['c', 'd', 'e'].map(id => ({

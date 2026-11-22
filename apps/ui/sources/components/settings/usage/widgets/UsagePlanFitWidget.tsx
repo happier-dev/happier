@@ -102,9 +102,9 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
       .find((reason) => reason !== 'none_ended') ?? 'none_ended'
     : noneEndedOnce ? 'none_ended' : null;
   const planFitGaps = readPlanFitGaps(props.slice.planInsights);
-  // A gap more readings cure is one quiet promise; attribution says what it needs.
-  const caveats = [noPriceOnce ? t('usage.board.plans.planNoPriceAll') : null,
-    noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
+  // A gap more readings cure is one quiet promise; attribution says what it needs. (No price anywhere collapses the
+  // widget to its one line below, so it is never a caveat here.)
+  const caveats = [noneEndedOnce ? t('usage.board.plans.fitNoneEndedOnce') : null,
     unreadCount > 0 ? t('usage.board.plans.capacityNotRead', { count: unreadCount }) : null,
     planFitGaps.attribution ? t('usage.board.plans.attributionNote') : null,
     planFitGaps.history ? t('usage.board.plans.moreDetailLater') : null].filter((line): line is string => line !== null);
@@ -136,13 +136,17 @@ export function UsagePlanFitWidget(props: UsageBodyProps) {
     subtitle={t('usage.board.plans.paceTargetLinkSubtitle')}
     icon={<Icon name="speedometer" size={ICON_SIZE.md} color={appTheme.colors.text.secondary} />}
     onPress={() => router.push(SETTINGS_ROUTES.sessionProviderLimits as Parameters<typeof router.push>[0])} />;
-  if (nothingYet) {
+  // Plan fit answers "what does each plan cost"; while no plan has a price, a row per plan only repeats that it has
+  // none (nine rows on a pooled Account, and again on Costs). The widget says so once and keeps every plan, with its
+  // ended windows and its price editor, one press away (acceptance 11-21 #3).
+  if (nothingYet || noPriceOnce) {
     return (
       <View style={styles.body} testID={`${props.testID}.planFit`}>
         <UsageBodyInsufficient testID={`${props.testID}.nothingYet`} replacesContent={false}
-          title={t(sharedFitReason === 'not_loaded' ? 'usage.board.plans.pastCyclesNotLoaded'
-            : sharedFitReason === 'unavailable' ? 'usage.board.plans.pastCyclesUnavailable' : 'usage.board.plans.fitNoneEndedOnce')}
-          reason={t('usage.board.plans.fitNoneEndedReason')} />
+          title={nothingYet ? t(sharedFitReason === 'not_loaded' ? 'usage.board.plans.pastCyclesNotLoaded'
+            : sharedFitReason === 'unavailable' ? 'usage.board.plans.pastCyclesUnavailable' : 'usage.board.plans.fitNoneEndedOnce')
+            : t('usage.board.plans.planNoPriceAll')}
+          {...(nothingYet ? { reason: t('usage.board.plans.fitNoneEndedReason') } : {})} />
         <UsagePlanDisclosure testID={`${props.testID}.plans`} title={t('usage.board.plans.fitPlans', { count: drawn.length })}>
           {planRows}
         </UsagePlanDisclosure>
