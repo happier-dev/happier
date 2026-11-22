@@ -28,6 +28,8 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
     collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
     /** Exact document demand walks only these Sessions' manager ancestry. */
     sessionIds?: readonly string[];
+    /** Effect admission can require that the addressed Session is hosted by this Account. */
+    requireOwnedTarget?: true;
     /** Only list and list-document demand owners request a read of this runtime's own tree. */
     allowSessionRuntimeManagedSubtreeRead?: true;
 }>): Promise<string[]> {
@@ -100,6 +102,7 @@ export async function readSessionManagedSubtreeSessionIdsInTx(tx: Tx, input: Rea
         where: { AND: [access.where, { id: { in: selected ? [...selected].filter(id => reachable.has(id)) : [...reachable] } }] },
         select: withSessionContentSelect({ id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT }),
     }).then(decodeSessionStoredContent);
-    return rows.filter((row) => row.accountId === input.accountId || isSessionTranscriptShareable(row))
+    return rows.filter((row) => row.accountId === input.accountId
+        || !input.requireOwnedTarget && isSessionTranscriptShareable(row))
         .map((row) => row.id);
 }

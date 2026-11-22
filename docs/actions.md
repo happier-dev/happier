@@ -8878,6 +8878,9 @@ In 0.3 development source, `session.turn.cancel` requests cancellation of the
 current turn through the existing `abort` RPC. It keeps the Session process
 available; `session.stop` requests process shutdown. Both the composer Stop
 button and Agent/MCP/CLI requests enter the canonical Action executor.
+For an installed Agent, Home admits a signed turn cancel for its own Session or
+a Session it leads in the same Account, then routes it to that Session's
+current publisher. A current-Session-only caller can cancel its own turn.
 Session Stop is non-consequential and direct by default on UI, Voice and automation
 surfaces; the person can configure Ask through the existing Action settings.
 An embed's Send grant includes current-turn cancellation, and an abort-only

@@ -2271,6 +2271,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const signedSessionTarget = verifiedExternalAction?.sessionRpcTarget
                 ?? (transitionSessionTarget ? { sessionId: transitionSessionTarget.sessionId,
                     machineId: verifiedExternalAction!.binding.machineId } : null);
+            const homeAdmittedAbort = verifiedExternalAction?.sessionRpcTarget?.homeAdmittedAbort === true;
             const decisionMachine = requesterApprovalMachine;
             const targetSpecificGuard = explicitMachineStopRequest
                 ? createExactMachineRpcTargetGuard(explicitMachineStopRequest)
@@ -2388,8 +2389,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callerSocket: params.socket,
                 // Home has verified the controller's signed guest probe. The guest
                 // consumes its own Machine admission and needs no requester custody.
-                ...(sessionActionOrigin && !verifiedExternalAction?.managedGuestActivity ? { sessionActionOrigin } : {}),
-                ...(verifiedExternalAction && externalActionExecution?.success
+                // The native abort consumes the standard Session write context. Home spent its signed proof at admission.
+                ...(sessionActionOrigin && !homeAdmittedAbort && !verifiedExternalAction?.managedGuestActivity ? { sessionActionOrigin } : {}),
+                ...(verifiedExternalAction && externalActionExecution?.success && !homeAdmittedAbort
                     && !verifiedExternalAction.managedGuestActivity && !deploymentReferenceServices
                     ? { createCallerInputAuthorization: async () => externalActionExecution.data.authorization }
                     : {}),

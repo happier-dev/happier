@@ -1,6 +1,6 @@
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
-import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_REGRESSIONS_COMPARE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { MACHINE_REMOVE_ACTION_ID_V1, MACHINE_REPLACEMENT_SET_ACTION_ID_V1, MACHINE_REPLACEMENT_CLEAR_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineConnectionActionIdsV1';
@@ -1143,8 +1143,11 @@ export type WorkspaceSyncSeedAdmission = Readonly<{
 export type VerifiedExternalActionExecutionRequest = Readonly<{
     /** This exact installed seed was admitted at Home ingress. */
     workspaceSyncSeedAdmission?: WorkspaceSyncSeedAdmission;
-    /** Signed Session routing scope; the router admits Session access and the exact publisher. */
-    sessionRpcTarget?: Readonly<{ sessionId: string; machineId: string }>;
+    /** The router selects the publisher and relays Home-admitted aborts as ordinary Session writes. */
+    sessionRpcTarget?: Readonly<
+        { sessionId: string; machineId: string; homeAdmittedAbort?: never }
+        | { sessionId: string; machineId?: never; homeAdmittedAbort: true }
+    >;
     /** One private acquisition admission; HTTP authentication consumes its typed result. */
     machineNpmProfileAdmission?: Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>;
     /** The ordinary child Action's admission, consumed by the RPC router once. */
@@ -2587,14 +2590,18 @@ async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
     return patch.success && (patch.data.mode === 'owner' || patch.data.mode === 'owner_migration');
 }
 
-/** One readable recursive membership owner serves lifecycle operands and selected-lead observation. */
-async function isInstalledSessionSubtreeMember(verified: VerifiedExternalActionExecutionRequest,
-    sessionId: string): Promise<boolean> {
+/** Lifecycle operands, selected-lead observation and abort use the same manager tree. */
+async function isInstalledSessionSubtreeMember(
+    verified: Pick<VerifiedExternalActionExecutionRequest, 'binding' | 'principal' | 'effectiveAuthority'>,
+    sessionId: string,
+    exactOwnedTarget?: true,
+): Promise<boolean> {
     const origin = verified.binding.sessionActionOrigin;
-    if (!origin || !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId)
+    if (!origin || !exactOwnedTarget && !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId)
         && !isSessionListActionId(verified.binding.actionId)) return false;
     const members = await inReadSnapshot(tx => readSessionManagedSubtreeSessionIdsInTx(tx, {
         accountId: verified.binding.accountId, rootSessionId: origin.caller.sessionId,
+        ...(exactOwnedTarget ? { sessionIds: [sessionId], requireOwnedTarget: true as const } : {}),
         authentication: { env: process.env, authority: verified.effectiveAuthority,
             authenticationEvidence: verified.principal.authenticationEvidence,
             ...('authentication' in verified.binding ? { tokenEpoch: verified.binding.authentication.tokenEpoch }
@@ -5750,12 +5757,22 @@ export async function verifyExternalActionMachineRpcExecution(
     // Any Session-routed method spends its own signed root at the addressed
     // Session; the router admits that Session's access and current publisher.
     const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
+    // Abort is a Session effect signed by the lead's installation. Its destination is the child's current publisher.
+    const installedAbortOrigin = 'authentication' in binding && binding.actionId === SESSION_TURN_CANCEL_ACTION_ID_V1
+        ? binding.sessionActionOrigin : undefined;
+    const abortSessionId = installedAbortOrigin && separator > 0
+        && execution.effectActionId === binding.actionId
+        && sessionRule?.actionId === binding.actionId && sessionRule.routeToSessionOwnerDaemon
+        && request.method.slice(separator + 1) === sessionRule.method
+        && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL)
+        ? request.method.slice(0, separator) : null;
     const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
         && sessionRule?.routeToSessionOwnerDaemon
         && (binding.actionId === execution.effectActionId || scmRunStartPurpose)
         && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
         ? request.method.slice(0, separator) : null;
-    const sessionRpcTarget = scopedSessionId ? { sessionId: scopedSessionId, machineId: binding.machineId } : null;
+    const sessionRpcTarget = abortSessionId ? { sessionId: abortSessionId, homeAdmittedAbort: true as const }
+        : scopedSessionId ? { sessionId: scopedSessionId, machineId: binding.machineId } : null;
     const isTransitionRoot = binding.actionId === 'session.agent.transition';
     const transitionPurpose = isTransitionRoot && isSessionAgentTransitionRpcPurpose(binding, execution, request);
     if (isTransitionRoot && !transitionPurpose) return null;
@@ -5830,7 +5847,7 @@ export async function verifyExternalActionMachineRpcExecution(
             : request.method.startsWith(prefix) ? request.method.slice(prefix.length) : request.method;
         // Pending admission has its own signed socket event, not a Machine RPC
         // method. Preserve both existing epochs and their exact carrier name.
-        const effectActionId = workflowSessionTarget
+        const effectActionId = abortSessionId ? SESSION_TURN_CANCEL_ACTION_ID_V1 : workflowSessionTarget
             ? request.method.startsWith(prefix) && (method === binding.actionId
                 || binding.actionId === 'session.roles.apply_to_reports' && method === SESSION_RPC_METHODS.SESSION_ROLES_CONFIGURATION_SET)
                 ? binding.actionId : null
@@ -5890,6 +5907,10 @@ export async function verifyExternalActionMachineRpcExecution(
     if (!credentialAction.success || !readinessPurpose && !await hasCurrentExecutionMachineAdmission(binding, machine)
         || !binding.handoffAdmission && !resolveCredentialActionAdmissionV1({ spec: getActionSpec(credentialAction.data),
             authority: principal.authority, grant: 'grant' in binding ? binding.grant : null }).ok) return null;
+    if (abortSessionId && (execution.target.kind === 'session' && execution.target.sessionId !== abortSessionId
+        || abortSessionId !== installedAbortOrigin?.caller.sessionId && !await isInstalledSessionSubtreeMember({
+            binding, principal, effectiveAuthority: principal.authority,
+        }, abortSessionId, true))) return null;
     const readinessAdmission = readinessPurpose ? await resolveMachineAdmissionInTx(db, {
         actorAccountId: binding.accountId, machineId: binding.machineId, rpcMethod: request.method.slice(separator + 1),
         callerAuthority: principal.authority, executionBinding: binding,

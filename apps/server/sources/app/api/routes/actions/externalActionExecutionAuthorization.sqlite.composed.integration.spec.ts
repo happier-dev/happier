@@ -59,6 +59,7 @@ import {
     type ExternalActionDaemonDispatchRequest,
     type ExternalActionEncryptionBindingV2,
     type ExternalActionExecutionAuthorizationV1,
+    type ExternalActionMachineRpcExecutionV1,
 } from "@happier-dev/protocol/actions";
 import { EXTERNAL_ACTION_ENCRYPTED_REQUEST_WITHOUT_RESET_ADMISSION_MAX_BYTES_V2, ExternalActionExecutionAuthorizationRequestV1Schema,
     createDeploymentCandidatePublicationV1, readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -13620,6 +13621,107 @@ describe("external Action execution authorization", () => {
             expect(delivered).toBeUndefined();
             expect(callback).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         } finally { await currentnessChannel.close(); get.mockRestore(); post.mockRestore(); await app.close(); }
+    });
+
+    it('relays signed turn cancellation only within the installed Session caller’s owned led subtree', async () => {
+        const fixture = await createFixture({ qualifiedPat: false });
+        const accountId = fixture.account.id;
+        const outsider = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const [lead, child, unrelated, foreign] = await Promise.all([accountId, accountId, accountId, outsider.id].map(owner =>
+            db.session.create({ data: { accountId: owner, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } })));
+        const source = { machineId: fixture.machine.id, installationId: fixture.machine.installationId! };
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.id,
+            accountId, createdByAccountId: outsider.id, accessLevel: 'edit' } });
+        const childMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId,
+            metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey } });
+        for (const report of [child, foreign]) {
+            await db.sessionFollowEdge.create({ data: { sourceKey: `session:${report.id}`, sourceSessionId: report.id,
+                destinationSessionId: lead.id, relation: 'manager', managerSourceSessionId: report.id, policyJson: '{}' } });
+        }
+        // Socket.IO room discovery and the publisher's native effect are system boundaries.
+        const presence = createSessionPublisherPresence();
+        const publishers = new Map<string, object>();
+        const cancelled = vi.fn();
+        for (const session of [lead, child, unrelated]) {
+            const machineId = session.id === child.id ? childMachine.id : source.machineId;
+            await db.accessKey.create({ data: { accountId, machineId, sessionId: session.id, data: 'publisher-key' } });
+            const receiver = new RpcHandlerManager({ scopePrefix: session.id, localMachineId: machineId, encryptionMode: 'plain' });
+            receiver.registerHandler('abort', () => { cancelled(session.id); });
+            const publisher = { id: `publisher-${session.id}`, data: {}, timeout: () => ({
+                emitWithAck: (_event: string, request: SocketRpcRequestPayload) => receiver.handleRequest(request, undefined, 'authenticated_home_socket'),
+            }) };
+            const registration = await presence.registerPublisher({ socket: publisher,
+                binding: { accountId, machineId, sessionId: session.id },
+                completeActivitySnapshot: { state: 'active', activeCount: 1 } });
+            expect(registration).toMatchObject({ status: 'registered' });
+            for (const room of [publisher.id, getAccountSessionSocketRoom(session.accountId, session.id),
+                `rpc:${session.accountId}:${session.id}:abort`]) publishers.set(room, publisher);
+        }
+        const io = createSocketRoomDiscoveryHarness(async room => {
+            const publisher = publishers.get(room);
+            return publisher ? [publisher] : [];
+        });
+        const resolvePublisher = (input: Readonly<{ accountId: string; sessionId: string }>) =>
+            resolveCurrentSessionMachineFromServer({ io, presence, ...input });
+        const { app } = await createApp(fixture.team.id, false, resolvePublisher);
+        const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
+        const actionId = 'session.turn.cancel';
+        const target = { kind: 'machine' as const, machineId: source.machineId };
+        const params = { reason: 'Cancel the active turn' };
+        const request = async (packet: Readonly<{ method: string; requestId: string;
+            externalActionExecution?: ExternalActionMachineRpcExecutionV1 }>, currentSessionOnly = false) => {
+            const socket = createAuthenticatedFakeSocket({ data: { userId: accountId, authTokenKind: 'account',
+                authAuthority: currentSessionOnly || packet.externalActionExecution ? 'account_automation' : 'present_user',
+                clientType: currentSessionOnly ? 'session-scoped' : 'user-scoped',
+                ...(currentSessionOnly ? { sessionScopedBinding: { proof: 'machine-access-key',
+                    sessionId: lead.id, machineId: source.machineId } } : {}),
+            } });
+            qualifyCurrentAccountStoredContentSocket(socket);
+            registerSocketRpcHandlers({ userId: accountId, socket: socket as unknown as Socket, io, sessionPublisherPresence: presence });
+            const callback = vi.fn();
+            await getSocketHandler(socket, SOCKET_RPC_EVENTS.CALL)({ ...packet, params,
+                authorization: { kind: 'session.write', sessionId: packet.method.split(':')[0] } }, callback);
+            expect(callback).toHaveBeenCalledOnce();
+            return callback.mock.calls[0]![0];
+        };
+        try {
+            expect(await request({ method: `${child.id}:abort`, requestId: crypto.randomUUID() })).toMatchObject({ ok: true });
+            expect(await request({ method: `${lead.id}:abort`, requestId: crypto.randomUUID() }, true)).toMatchObject({ ok: true });
+            expect(cancelled.mock.calls).toEqual([[child.id], [lead.id]]);
+            cancelled.mockClear();
+
+            const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+                caller: { kind: 'session', sessionId: lead.id, starterDepth: 0, turnDepth: 0 },
+                sourceTurnId: 'active-source-turn', callerPermissionMode: 'default', requestId: crypto.randomUUID() });
+            const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: origin.requestId,
+                target, input: { sessionId: child.id } });
+            const installationProof = signMachineInstallationProof({ privateKey: fixture.keyPair.secretKey,
+                payload: { version: 1, accountId, ...source, externalActionOrigin: {
+                    homeId: await getOrCreateServerIdentityId(), actionId, requestId: origin.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } });
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: source.machineId, envelope,
+                    sessionActionOrigin: origin, sessionActionSource: source, installationProof } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const packet = (sessionId: string) => {
+                const method = `${sessionId}:abort`;
+                const requestId = crypto.randomUUID();
+                return { method, requestId, externalActionExecution: { v: 1 as const, authorization, effectActionId: actionId,
+                    target, installationId: source.installationId,
+                    machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                        effectActionId: actionId, target, installationId: source.installationId, method, requestId, params,
+                        privateKey: fixture.keyPair.secretKey }) } };
+            };
+            expect(await request(packet(child.id), true)).toMatchObject({ ok: false, error: 'Forbidden' });
+            for (const denied of [unrelated, foreign]) {
+                expect(await request(packet(denied.id))).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN,
+                    failureCause: { phase: 'rpc.admission.execution' }, effectAttempted: false });
+            }
+            expect(cancelled).not.toHaveBeenCalled();
+            expect(await request(packet(child.id))).toMatchObject({ ok: true });
+            expect(cancelled.mock.calls).toEqual([[child.id]]);
+        } finally { await app.close(); }
     });
 
     it('lets native Account Delete prepare only its owned Session snapshot', async () => {
