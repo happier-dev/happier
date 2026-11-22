@@ -174,6 +174,7 @@ import {
 } from './telemetry';
 import type { NormalizedProviderUsageLimitDetailsV1 } from '../connectedServices/mapClaudeRateLimitEventToUsageDetails';
 import { logger } from '@/ui/logger';
+import { runnerTerminationSignals, type RunnerTerminationSignal } from '@/agent/runtime/runnerTerminationOutcome';
 import {
   clearSessionMarkerTerminalHostHealth,
   publishSessionMarkerTerminalHostHealth,
@@ -198,10 +199,9 @@ type ClaudeUnifiedTerminalAcceptedInput<Mode> =
   ClaudeUnifiedTerminalQueuedInput<Mode> & ClaudeUnifiedPromptAcceptance;
 
 type ClaudeUnifiedTerminalHostPreference = ClaudeUnifiedTerminalHost;
-type ClaudeUnifiedProcessSignal = 'SIGINT' | 'SIGTERM';
 type ClaudeUnifiedProcessSignals = Readonly<{
-  once(event: ClaudeUnifiedProcessSignal, listener: () => void): unknown;
-  removeListener(event: ClaudeUnifiedProcessSignal, listener: () => void): unknown;
+  once(event: RunnerTerminationSignal, listener: () => void): unknown;
+  removeListener(event: RunnerTerminationSignal, listener: () => void): unknown;
 }>;
 
 export class ClaudeUnifiedTerminalHostUnavailableError extends Error {
@@ -799,12 +799,11 @@ function bindProcessSignalCleanup(params: Readonly<{
     });
   };
 
-  params.processSignals.once('SIGINT', onSignal);
-  params.processSignals.once('SIGTERM', onSignal);
+  const signals = runnerTerminationSignals();
+  for (const signal of signals) params.processSignals.once(signal, onSignal);
 
   return () => {
-    params.processSignals.removeListener('SIGINT', onSignal);
-    params.processSignals.removeListener('SIGTERM', onSignal);
+    for (const signal of signals) params.processSignals.removeListener(signal, onSignal);
   };
 }
 

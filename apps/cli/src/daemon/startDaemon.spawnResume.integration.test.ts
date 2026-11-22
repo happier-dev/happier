@@ -4176,6 +4176,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
           params.onExitObserved?.(pid, exit);
           params.pidToTrackedSession.delete(pid);
         });
+        return true;
       });
     const persistence = await import('@/persistence');
     vi.mocked(persistence.readSettings).mockResolvedValue({
@@ -4606,6 +4607,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         .mockImplementation(async (params: any) => {
           params.onExitObserved?.(6480, { reason: 'process-missing', code: null, signal: null });
           params.pidToTrackedSession.delete(6480);
+          return true;
         });
 
       const stopSessionModule = await import('./sessions/stopSession');

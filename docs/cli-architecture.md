@@ -1802,6 +1802,12 @@ deadlines and cancellation remain available. A guarded refusal to signal never
 authorizes an unsafe kill: Stop rechecks positive runner exit before deciding
 that termination is incomplete. Transport timeout or disconnect still does not
 prove physical termination.
+When a hosted launch reports a separate runner PID, Stop and planned restart
+use that runner's own process witness for signaling and exit observation. The
+launcher remains the tracking key until exit or promotion, so cleanup settles
+the original tracked session. On POSIX, a terminal hangup now enters the runner's
+existing shutdown path, giving it a chance to close its publisher before the
+terminal host forcibly terminates the process.
 In current 0.2 development source, Stop actions retain the original tool caller
 through approval replay and carry optional diagnostic source fields to the daemon.
 The authenticated HTTP and machine-RPC receivers record their own transport;

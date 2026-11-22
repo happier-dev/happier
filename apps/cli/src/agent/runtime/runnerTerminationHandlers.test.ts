@@ -198,6 +198,22 @@ describe('registerRunnerTerminationHandlers', () => {
     }
   });
 
+  it.runIf(process.platform !== 'win32')('runs termination cleanup once when a terminal hangup precedes SIGTERM', async () => {
+    const fakeProcess = createFakeProcess();
+    const exit = vi.fn();
+    const onTerminate = vi.fn();
+    const handlers = registerRunnerTerminationHandlers({ process: fakeProcess, exit, onTerminate });
+    try {
+      fakeProcess.emit('SIGHUP');
+      fakeProcess.emit('SIGTERM');
+      await expect(handlers.whenTerminated).resolves.toMatchObject({ event: { kind: 'signal', signal: 'SIGHUP' } });
+      expect(onTerminate).toHaveBeenCalledTimes(1);
+      expect(exit).toHaveBeenCalledWith(1);
+    } finally {
+      handlers.dispose();
+    }
+  });
+
   it('still exits when onTerminate throws synchronously', async () => {
     const fakeProcess = createFakeProcess();
     const exit = vi.fn();
