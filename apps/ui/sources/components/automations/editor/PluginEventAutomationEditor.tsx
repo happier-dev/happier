@@ -19,6 +19,7 @@ import { t } from '@/text';
 import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { PluginEventAutomationComposerContent } from './PluginEventAutomationComposerContent';
 import { buildPluginEventAutomationTriggerInput } from './pluginEventAutomationDraft';
+import type { PluginEventAutomationSetupFailure } from './pluginEventAutomationSetup';
 import {
     pluginEventAutomationEditSeedFromCurrentInput,
     pluginEventAutomationEditSeedFromDraftInput,
@@ -37,6 +38,14 @@ type PluginEventDefinitionInput = Extract<
 
 export type PluginEventAutomationEditorIntent = Readonly<{ observationOnly?: Readonly<{ kind: 'observationOnly' }>; payloadSchema?: PluginJsonSchemaV2 | null }>;
 type PluginEventEditorCompletion = (definition: PluginEventDefinitionInput, intent?: PluginEventAutomationEditorIntent) => void;
+type NativeSetupPresentation = Readonly<{
+    renderUnavailable: (
+        retry: () => void,
+        machineName: string | null,
+        failure: PluginEventAutomationSetupFailure | null,
+    ) => React.ReactNode;
+    waitingTitle?: (machineName: string | null, phase: 'opening' | 'applying') => string;
+}>;
 
 type PluginEventEditorObservationPlacement = Readonly<{
     kind: 'checkpointedPull';
@@ -160,17 +169,9 @@ export function PluginEventAutomationEditor(props: Readonly<{
     initialEventRef?: Readonly<{ pluginId: string; localId: string }> | null;
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     /** Open the native setup form for a saved source as soon as its exact editor restores it. */
-    savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & Readonly<{
-        renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
-        /** What the wait is for, named with the setup Machine, so it never reads as a bare spinner. */
-        waitingTitle?: (machineName: string | null) => string;
-    }>;
+    savedSourceSetup?: NonNullable<Parameters<typeof usePluginEventAutomationComposer>[0]['savedSourceSetup']> & NativeSetupPresentation;
     /** Open the seeded native form directly and settle an observation without a workflow target. */
-    newSourceSetup?: NewNativeSourceSetup & Readonly<{
-        renderUnavailable: (retry: () => void, machineName: string | null) => React.ReactNode;
-        /** What the wait is for, named with the setup Machine, so it never reads as a bare spinner. */
-        waitingTitle?: (machineName: string | null) => string;
-    }>;
+    newSourceSetup?: NewNativeSourceSetup & NativeSetupPresentation;
     observationOnly?: PluginEventAutomationEditorIntent['observationOnly'];
     authoringMachineId: string | null;
     serverId: string | null;
@@ -257,11 +258,12 @@ export function PluginEventAutomationEditor(props: Readonly<{
                 setCatalogRefresh(current => current + 1);
             }
         };
-        if (chooseWatcher && model.sourceStatus !== 'settingUp') {
+        const applying = model.sourceStatus === 'applying';
+        if (chooseWatcher && model.sourceStatus !== 'settingUp' && !applying) {
             return <View style={styles.content}>
                 <PluginEventAutomationComposerContent model={model} watcherOnly />
                 {model.selectedWatcherOrigin && (model.sourceStatus === 'unavailable' || model.eventCatalogStatus === 'unavailable')
-                    ? setup.renderUnavailable(retrySetup, setupMachineName)
+                    ? setup.renderUnavailable(retrySetup, setupMachineName, model.sourceFailure)
                     : model.selectedWatcherOrigin && model.eventCatalogStatus === 'loading'
                         ? <SurfaceStateCard size="line" kind="loading" title={t('common.loading')} /> : null}
                 <View style={styles.footer}>
@@ -273,12 +275,13 @@ export function PluginEventAutomationEditor(props: Readonly<{
                 </View>
             </View>;
         }
-        const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp'
+        const waiting = model.eventCatalogStatus === 'loading' || model.sourceStatus === 'settingUp' || applying
             || (newSetup ? readyToOpen && !nativeSetupStarted.current
                 : !chooseWatcher && model.eventCatalogStatus === 'ready' && model.sourceStatus === 'idle');
-        if (waiting) return <SurfaceStateCard size="line" kind="loading" title={setup.waitingTitle?.(setupMachineName) ?? t('common.loading')} />;
+        if (waiting) return <SurfaceStateCard size="line" kind="loading"
+            title={setup.waitingTitle?.(setupMachineName, applying ? 'applying' : 'opening') ?? t('common.loading')} />;
         if (model.sourceStatus === 'configured') return null;
-        return setup.renderUnavailable(retrySetup, setupMachineName);
+        return setup.renderUnavailable(retrySetup, setupMachineName, model.sourceFailure);
     }
     return (
         <InlinePluginEventEditor

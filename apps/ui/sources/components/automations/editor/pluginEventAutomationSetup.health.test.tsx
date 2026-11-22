@@ -1065,7 +1065,8 @@ it.each([
     }
 });
 
-it('settles a new native Add check as one observation-only trigger', async () => {
+it.each(['configured', 'refused'] as const)('settles native Add check after showing setup progress (%s)', async outcome => {
+    const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { PluginEventAutomationEditor } = await import('./PluginEventAutomationEditor');
     const { Modal } = await import('@/modal');
     const { subjectStarterEventSeed } = await import('@/components/workflows/triggers/subjectTriggerStarters');
@@ -1119,13 +1120,16 @@ it('settles a new native Add check as one observation-only trigger', async () =>
             projection: inputs.pluginUiProjection, phase: 'current', interactionEnabled: true }] });
     const disposeProjection = publishCommittedAppShellPluginUiProjection(() => inputs.pluginUiProjection,
         id => id === pluginId ? sourceFacts : null);
+    const actionResponse = createDeferred<void>();
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
             return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE)
-            return { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
-                sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
-                displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } };
+            return actionResponse.promise.then(() => outcome === 'refused'
+                ? { ok: false, code: 'deployment_unavailable' }
+                : { ok: true, result: { v: 1, sourceInstanceId, sourceContractVersion: 1,
+                    sourceConfig: HealthCheckSetupInputV1ProtocolSchema.parse(Reflect.get(Object(request.payload), 'input')),
+                    displayLabel: 'Production Health', observationOnly: { kind: 'observationOnly' } } });
         return undefined;
     };
     const modal = vi.spyOn(Modal, 'show').mockImplementation(config => {
@@ -1134,6 +1138,8 @@ it('settles a new native Add check as one observation-only trigger', async () =>
         return 'native-add-check';
     });
     const onSettled = vi.fn();
+    type NativeSetup = NonNullable<React.ComponentProps<typeof PluginEventAutomationEditor>['newSourceSetup']>;
+    const renderUnavailable = vi.fn<NativeSetup['renderUnavailable']>(() => null);
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
     try {
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
@@ -1143,13 +1149,25 @@ it('settles a new native Add check as one observation-only trigger', async () =>
         if (!seed) throw new Error('Expected the Environment Add check seed');
         screen = await renderScreen(<PluginEventAutomationEditor automationId="new" clientId="add-check" value={null}
             seed={null} serverId={connection.serverId} authoringMachineId={machineId} onComplete={vi.fn()} onCancel={vi.fn()}
-            newSourceSetup={{ seed, onSettled, renderUnavailable: () => null }} />);
+            newSourceSetup={{ seed, onSettled, renderUnavailable, waitingTitle: (_machine, phase) =>
+                phase === 'applying' ? 'Saving this check' : 'Opening this check' }} />);
         await waitForHomeGovernance(() => expect(modal).toHaveBeenCalledTimes(1));
         expect(rpc.hostActions).toEqual([]);
         expect(onSettled).not.toHaveBeenCalled();
         const settle: unknown = Reflect.get(Object(modal.mock.calls[0]?.[0].props), 'onSettle');
         if (typeof settle !== 'function') throw new Error('Expected native setup settlement');
         await act(async () => { settle({ kind: 'submitted', input: setupInput }); });
+        await waitForHomeGovernance(() => expect(rpc.hostActions).toHaveLength(1));
+        expect(screen.getTextContent()).toContain('Saving this check');
+        expect(onSettled).not.toHaveBeenCalled();
+        await act(async () => { actionResponse.resolve(); });
+        if (outcome === 'refused') {
+            await waitForHomeGovernance(() => expect(renderUnavailable.mock.lastCall?.[2]).toMatchObject({
+                reason: 'deployment_unavailable', requestId: expect.any(String),
+            }));
+            expect(onSettled).not.toHaveBeenCalled();
+            return;
+        }
         await waitForHomeGovernance(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith({
             kind: 'configured',
             trigger: expect.objectContaining({ kind: 'pluginEvent', sourceInstanceId,
@@ -1158,6 +1176,7 @@ it('settles a new native Add check as one observation-only trigger', async () =>
         }));
         expect(rpc.hostActions).toHaveLength(1);
     } finally {
+        actionResponse.resolve();
         await screen?.unmount();
         modal.mockRestore();
         disposeProjection();

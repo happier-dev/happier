@@ -6,6 +6,7 @@ import type { PluginDiagnosticRemediationV1 } from '@happier-dev/protocol/daemon
 import { PluginUiJsonValueV1Schema, reconstructPluginUiSelectedActionInput } from '@happier-dev/protocol/plugins/ui';
 import { readInputPath, writeInputPath } from '@happier-dev/protocol/inputs';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { MutableRefObject } from 'react';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 
@@ -20,6 +21,7 @@ import {
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { presentActionInputForm } from '@/components/plugins/actions/presentActionInputForm';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
+import { randomUUID } from '@/platform/randomUUID';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import {
@@ -47,6 +49,10 @@ import { presentPluginEventAutomationSetupSurface } from './presentPluginEventAu
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
     reason: string;
+    requestId?: string;
+    message?: string;
+    failureCause?: ActionFailureCauseV1;
+    effectAttempted?: boolean;
     retryable?: boolean;
     remediation?: PluginDiagnosticRemediationV1;
 }>;
@@ -263,6 +269,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     resolveConnectedAccountOptions?: PluginContributedActionConnectedAccountOptionsTransport;
     present?: typeof presentActionInputForm;
     presentSetupSurface?: typeof presentPluginEventAutomationSetupSurface;
+    onApplying?: () => void;
     commandBridge?: Parameters<typeof presentPluginEventAutomationSetupSurface>[0]['commandBridge'];
     dispatch?: PluginContributedActionDispatch;
 }>): Promise<SetupOutcome> {
@@ -379,6 +386,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
                             selection.form.cancel();
                             return { kind: 'unavailable', reason: 'invalid_input' } as const;
                         }
+                        params.onApplying?.();
                         selection.form.replaceInput(candidate);
                         const submitted = await selection.form.submit();
                         if (submitted.kind !== 'settled' || !submitted.outcome.ok) {
@@ -440,8 +448,10 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         const input = reconstructPluginUiSelectedActionInput(settled);
         if (!input || operationScope.signal.aborted) return { kind: 'unavailable' };
         const dispatch = params.dispatch ?? dispatchPluginSurfaceAction;
+        const requestId = randomUUID();
         const outcome = await dispatch({
             action: current.event.setupAction.identity,
+            actionRequestId: requestId,
             input,
             resolveContributedAction: current.actionSnapshot.resolveContributedAction,
             contributedAction: {
@@ -455,8 +465,12 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
         if (!outcome.ok) {
             return {
                 kind: 'unavailable',
-                code: outcome.reason,
+                code: outcome.code,
                 reason: outcome.reason,
+                requestId: outcome.requestId ?? requestId,
+                ...(outcome.message === undefined ? {} : { message: outcome.message }),
+                ...(outcome.failureCause === undefined ? {} : { failureCause: outcome.failureCause }),
+                ...(outcome.effectAttempted === undefined ? {} : { effectAttempted: outcome.effectAttempted }),
                 ...(outcome.retryable === undefined ? {} : { retryable: outcome.retryable }),
                 ...(outcome.remediation === undefined ? {} : { remediation: outcome.remediation }),
             };

@@ -73,6 +73,7 @@ import {
 export type PluginEventAutomationComposerSourceStatus =
     | 'idle'
     | 'settingUp'
+    | 'applying'
     | 'configured'
     | 'unavailable';
 
@@ -895,6 +896,9 @@ export function usePluginEventAutomationComposer(params: Readonly<{
                 requireNativeRenderer: params.newSourceSetup !== undefined,
                 ...(params.newSourceSetup?.heading ? { surfaceHeading: params.newSourceSetup.heading } : {}),
                 savedSourceRendererInput: params.savedSourceSetup?.input,
+                ...(params.savedSourceSetup || params.newSourceSetup ? {
+                    onApplying: () => { if (!setupScope.signal.aborted) setSourceStatus('applying'); },
+                } : {}),
                 eligibleEvent: currentEvent,
                 ...(configuredSetup && arePluginContributionIdentitiesEqual(configuredSetup.draft.eventRef, currentEvent.event.identity)
                     ? { initialSource: configuredSetup.draft.source }
@@ -932,12 +936,7 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             if (configured.kind !== 'configured') {
                 setWebhookEndpoint(null);
                 setSourceFailure(configured.kind === 'unavailable' && configured.code && configured.reason
-                    ? {
-                        code: configured.code,
-                        reason: configured.reason,
-                        ...(configured.retryable === undefined ? {} : { retryable: configured.retryable }),
-                        ...(configured.remediation === undefined ? {} : { remediation: configured.remediation }),
-                    }
+                    ? { ...configured, code: configured.code, reason: configured.reason }
                     : null);
                 setSourceStatus('unavailable');
                 return;
