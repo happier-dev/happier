@@ -10,6 +10,7 @@ import { runPermissionModePromptLoop } from './runPermissionModePromptLoop';
 import { createRuntimeOverrideSynchronizers, createRuntimeOverrideTarget } from './createRuntimeOverrideSynchronizers';
 import { createNativeAgentSessionOperations } from './registry/engineRegistry/nativeAgentSession';
 import { createNativeAgentSessionEffectBoundaryError } from './registry/engineRegistry/nativeAgentSessionBoundaryError';
+import { classifyPrimarySessionRuntimeIssue } from './session/errors/classifyPrimarySessionRuntimeIssue';
 import type { PermissionMode } from '@/api/types';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { once } from 'node:events';
@@ -443,11 +444,16 @@ describe('native prompt loop non-admission recovery', () => {
     );
 });
 
-it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
+it.each(['admission', 'runtime_event', 'clear', 'daemon_restart', 'daemon_restart_reopen_refused', 'daemon_restart_stale_again'] as const)('reopens the retained Team broker job after two turns, withdrawal and restoration (%s)', async (recoveryPath) => {
     const refusalDelivery = recoveryPath === 'runtime_event' ? 'runtime_event' : 'admission';
+    const daemonRestart = recoveryPath.startsWith('daemon_restart');
     // A daemon identity restart keeps access but ends the predecessor's
     // broker endpoint; its successor refuses the retained runtime typed.
     let daemonRestartedWithoutReopen = false;
+    // Home's fresh binding admission is the boundary the in-request reopen crosses.
+    let reopenRefused = false;
+    let reopenStaysStale = false;
+    let bindingAdmissions = 0;
     const abort = new AbortController();
     const agentId = 'acme-team-recovery';
     const contributions = createExternalContributionFixtures(agentId);
@@ -491,8 +497,11 @@ it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reo
         // Daemon RPC is the process boundary. A fresh open uses its current catalog,
         // while each external Agent below retains the signed job it received.
         prepareTeamCredentialProviderBinding: async () => {
+            bindingAdmissions++;
             if (!available) throw new Error('resource_forbidden');
-            daemonRestartedWithoutReopen = false;
+            if (reopenRefused) throw new SessionTurnPublicationRejectedError({
+                code: 'session_team_credential_binding_rejected', reason: 'access_removed' });
+            if (!reopenStaysStale) daemonRestartedWithoutReopen = false;
             admittedRevisions.push(revision);
             return { providerBinding: { source: { kind: 'team_resource', resourceId: 'resource', resourceRevision: revision },
                 model: { id: 'model', name: 'Model' }, materialization: { v: 1, kind: 'spawnEnv' },
@@ -549,9 +558,19 @@ it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reo
             messageBuffer: new MessageBuffer(), shouldExit: () => abort.signal.aborted, getAbortSignal: () => abort.signal,
             keepAlive() {}, setThinking() {}, sendReady() {
                 index++;
-                if (index === 2 && recoveryPath === 'daemon_restart') daemonRestartedWithoutReopen = true;
-                else if (index === 2) { revision = 5; available = false; }
-                if (index === 3 && recoveryPath !== 'daemon_restart') { revision = 6; available = true; }
+                if (index === 2 && daemonRestart) {
+                    daemonRestartedWithoutReopen = true;
+                    reopenRefused = recoveryPath === 'daemon_restart_reopen_refused';
+                    reopenStaysStale = recoveryPath === 'daemon_restart_stale_again';
+                    bindingAdmissions = 0;
+                } else if (index === 2) { revision = 5; available = false; }
+                if (index === 3 && daemonRestart) {
+                    // The post-restart input settled after exactly one in-request reopen.
+                    expect(bindingAdmissions).toBe(1);
+                    reopenRefused = false;
+                    reopenStaysStale = false;
+                }
+                if (index === 3 && !daemonRestart) { revision = 6; available = true; }
                 const prompts = recoveryPath === 'clear'
                     ? ['first', 'second', 'withdrawn', '/clear', 'restored']
                     : ['first', 'second', 'withdrawn', 'restored'];
@@ -562,10 +581,34 @@ it.each(['admission', 'runtime_event', 'clear', 'daemon_restart'] as const)('reo
             formatPromptErrorMessage: String, registerProviderAcceptedEffect: () => undefined,
             onPromptFailure: async error => { failures.push(error); },
         });
-        expect(completed).toEqual(['first', 'second', 'restored']);
-        expect(admittedRevisions).toEqual(recoveryPath === 'daemon_restart' ? [4, 4] : [4, 6]);
-        // A runtime diagnostic is already surfaced; an admission throw is published by the loop.
-        expect(failures).toHaveLength(refusalDelivery === 'admission' ? 1 : 0);
-        expect(opens).toEqual(['create', recoveryPath === 'clear' ? 'create' : 'resume']);
+        if (recoveryPath === 'daemon_restart') {
+            // A stale endpoint is refused before any effect: the same input is
+            // admitted through one fresh binding, with no failed turn.
+            expect(completed).toEqual(['first', 'second', 'withdrawn', 'restored']);
+            expect(failures).toHaveLength(0);
+            expect(admittedRevisions).toEqual([4, 4]);
+            expect(opens).toEqual(['create', 'resume']);
+        } else if (daemonRestart) {
+            // A refused or still-stale reopen settles the input once, as its own cause.
+            expect(completed).toEqual(['first', 'second', 'restored']);
+            expect(failures).toHaveLength(1);
+            const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failures[0], startupPhase: 'turn_start' });
+            expect(issue.code).not.toBe('native_agent_privileged_effect_authority_unavailable');
+            if (recoveryPath === 'daemon_restart_stale_again') {
+                expect(issue.code).toBe('team_credential_binding_not_current');
+                // One in-request reopen, then the next input's ordinary reopen.
+                expect(opens).toHaveLength(3);
+                expect(opens.slice(0, 2)).toEqual(['create', 'resume']);
+            } else {
+                expect(issue.failureCause?.code).toBe('session_team_credential_binding_rejected');
+                expect(opens).toHaveLength(2);
+            }
+        } else {
+            expect(completed).toEqual(['first', 'second', 'restored']);
+            expect(admittedRevisions).toEqual([4, 6]);
+            // A runtime diagnostic is already surfaced; an admission throw is published by the loop.
+            expect(failures).toHaveLength(refusalDelivery === 'admission' ? 1 : 0);
+            expect(opens).toEqual(['create', recoveryPath === 'clear' ? 'create' : 'resume']);
+        }
     } finally { abort.abort(); await created.operations.resetOrDisposeRuntime(); }
 });

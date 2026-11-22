@@ -90,6 +90,11 @@ export type RuntimeTurnPromptMeta = Readonly<{
   causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1;
   /** Host-private admission facts, never projected into the Agent's send request. */
   agentStartCaller?: import('@happier-dev/protocol').AgentStartSessionCallerV1;
+  /**
+   * The host reopens the runtime once when new-turn admission refuses a stale
+   * brokered Team endpoint, so that refusal leaves Queue custody with the host.
+   */
+  hostReopensStaleTeamEndpoint?: true;
 }>;
 
 /**

@@ -135,12 +135,16 @@ once whether a Session's brokered endpoint is still a current binding: a runner
 reattached after a daemon restart, or a binding whose stream refresh Home
 refused `resource_changed` (the resource moved past its pinned revision), is
 refused `team_credential_binding_not_current` before the input reaches the
-Agent. That retryable refusal makes the next input reopen the runtime, which
-opens a new binding at the catalog's current revision through ordinary Home
-admission; a withdrawn share still answers `resource_forbidden`. The refused
-input stays visible and is not retried automatically. A successful refresh for
-the same turn supersedes an earlier refusal in the Session's denial evidence.
-No timer, retry or extra read is added.
+Agent. The prompt loop answers that refusal inside the same request: it reopens
+the runtime once through its next-input recovery path, which opens a new binding
+at the catalog's current revision through ordinary Home admission under the
+Session requester's own account context, and admits the same input on the new
+runtime. If the reopen is refused (a withdrawn share still answers
+`resource_forbidden`, withdrawn access `access_removed`) or admission refuses
+the new runtime again, the input settles once as a failed turn that reads as its
+own cause, and the next input reopens as before. A successful refresh for the
+same turn supersedes an earlier refusal in the Session's denial evidence. No
+timer, retry budget or extra read is added.
 
 The same development resource update Action accepts a custodian-only
 `replacement.custodian` containing the source, disclosure ceiling and broker

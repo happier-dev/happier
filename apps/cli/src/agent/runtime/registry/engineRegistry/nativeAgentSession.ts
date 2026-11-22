@@ -278,6 +278,7 @@ import {
 } from '@/session/shared/spawnSessionContract';
 import {
     classifyNativeAgentSessionEffectBoundaryError,
+    isStaleTeamEndpointAdmissionRefusal,
     projectNativeAgentSessionHostServiceError,
     sanitizeNativeAgentSessionBoundaryError,
 } from './nativeAgentSessionBoundaryError';
@@ -3805,6 +3806,8 @@ export function createNativeAgentSessionOperations(
                     if (
                         classifyNativeAgentSessionEffectBoundaryError(error)
                         === 'authority_unavailable_before_effect'
+                        // The host keeps Queue custody while it reopens once.
+                        && !(meta?.hostReopensStaleTeamEndpoint && isStaleTeamEndpointAdmissionRefusal(error))
                     ) {
                         emitDeliveryOutcome({
                             type: 'input-rejected-before-provider',

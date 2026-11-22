@@ -622,8 +622,13 @@ export function classifyPrimarySessionRuntimeIssue(
   const startupFailureCode = (!teamCredentialDenial && input.cause === 'session_error'
     && errorCode.kind === 'string' ? readAgentStartupFailureCode(errorCode.value) : null)
     ?? (nativeConstructionFailure?.code === 'agent_startup_model_reconciliation_failed' ? nativeConstructionFailure.code : null);
+  // The effect-boundary code only says a refusal came before any effect; a
+  // closed cause it carries is what the person can act on.
+  const carriedPreparationCode = errorCode.kind === 'string'
+    && errorCode.value === 'native_agent_privileged_effect_authority_unavailable' && failureCause.success
+    ? readSessionPreparationFailureCode(failureCause.data.code) : null;
   const sessionPreparationFailureCode = !teamCredentialDenial && input.cause === 'session_error'
-    && errorCode.kind === 'string' ? brokerStartupCode
+    && errorCode.kind === 'string' ? brokerStartupCode ?? carriedPreparationCode
       ?? (brokerCode?.success ? null : readSessionPreparationFailureCode(errorCode.value)) : null;
   const missingCli = !teamCredentialDenial
     && errorCode.kind === 'string'

@@ -14,6 +14,7 @@ import {
 } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
 import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
+import { TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 
 export const NATIVE_AGENT_SESSION_EFFECT_AUTHORITY_UNAVAILABLE_CODE =
     'native_agent_privileged_effect_authority_unavailable';
@@ -67,6 +68,16 @@ export function classifyNativeAgentSessionEffectBoundaryError(
         === NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE
     ) return 'outcome_unknown_after_dispatch';
     return null;
+}
+
+/**
+ * New-turn admission refused only because the runtime's brokered Team endpoint
+ * is not held by the current daemon (a restart or a moved resource). Decided
+ * before any effect; a fresh binding through Home admission serves the input.
+ */
+export function isStaleTeamEndpointAdmissionRefusal(error: unknown): boolean {
+    return classifyNativeAgentSessionEffectBoundaryError(error) === 'authority_unavailable_before_effect'
+        && readSessionRuntimeFailureCause(error)?.code === TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT;
 }
 
 /**

@@ -213,6 +213,7 @@ describe('runPermissionModePromptLoop Session reference dispatch', () => {
       {
         localId: 'local-session-reference',
         localIds: ['local-session-reference'],
+        hostReopensStaleTeamEndpoint: true,
         structuredInput: { v: 1 },
       },
     );

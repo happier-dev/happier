@@ -60,6 +60,7 @@ import type { UnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/u
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
 import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import { TURN_ADMISSION_TEAM_CREDENTIAL_BINDING_NOT_CURRENT } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { isStaleTeamEndpointAdmissionRefusal } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import {
   createSessionProviderInputConsumer,
@@ -919,6 +920,21 @@ export async function runPermissionModePromptLoop(opts: {
     runtimeNeedsTeamBindingRecovery = false;
   };
 
+  /** Reopens the runtime for recovery through a fresh open and its fresh Team binding admission. */
+  const reopenRuntimeForRecovery = async (): Promise<void> => {
+    const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
+    const intent: RuntimeTurnSessionOpenIntent = providerSessionId
+      ? { kind: 'resume', providerSessionId, importHistory: false }
+      : { kind: 'create' };
+    await replaceRuntimeForPrompt(intent, 'runtime_recovery');
+    wasStarted = false;
+    nextSessionIsFresh = intent.kind === 'create';
+    if (nextSessionIsFresh) lastDeliveredSessionSystemPrompt = null;
+    pendingSessionSystemPromptDelivery = null;
+    runtimePermissionModeApplied = null;
+    pendingFreshSessionSystemPrompt = false;
+  };
+
   try {
     if ((opts.startRuntimeBeforeFirstPrompt === true || normalizedResumeId.length > 0) && !wasStarted) {
       if (!snapshotFreshForNextPromptBoundary) {
@@ -1259,17 +1275,7 @@ export async function runPermissionModePromptLoop(opts: {
         // A failed replacement can leave the previous native lifetime closed.
         // Reopen only for new input, also giving a refused Team binding fresh
         // admission without retrying the failed input or renewing withdrawn authority.
-        const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
-        const intent: RuntimeTurnSessionOpenIntent = providerSessionId
-          ? { kind: 'resume', providerSessionId, importHistory: false }
-          : { kind: 'create' };
-        await replaceRuntimeForPrompt(intent, 'runtime_recovery');
-        wasStarted = false;
-        nextSessionIsFresh = intent.kind === 'create';
-        if (nextSessionIsFresh) lastDeliveredSessionSystemPrompt = null;
-        pendingSessionSystemPromptDelivery = null;
-        runtimePermissionModeApplied = null;
-        pendingFreshSessionSystemPrompt = false;
+        await reopenRuntimeForRecovery();
       }
       const promptDeliveryIdentity = readQueuedPromptDeliveryIdentity(message.message);
       const localIds = [...promptDeliveryIdentity.localIds];
@@ -1306,6 +1312,19 @@ export async function runPermissionModePromptLoop(opts: {
           })
         ).status;
       };
+      const applyMessagePermissionMode = async (): Promise<void> => {
+        opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
+        if (runtimePermissionModeApplied === message.mode.permissionMode) return;
+        const outcome = await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
+        if (causalAuthority && !isRuntimeConfigUpdateOutcomeApplied(outcome)) {
+          throw new PreTurnPromptFailure({
+            code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false,
+            reason: 'runtime_config_blocked',
+            ...(outcome?.diagnostic ? { diagnostic: outcome.diagnostic } : {}),
+          });
+        }
+        runtimePermissionModeApplied = message.mode.permissionMode;
+      };
       const transitionAndDispatchProviderInput = async (
         dispatch: () => Promise<void>,
       ): Promise<'dispatched' | 'cancelled'> => {
@@ -1314,18 +1333,7 @@ export async function runPermissionModePromptLoop(opts: {
         const dispatchGrantedInput = async (): Promise<void> => {
           const failure = readCallerInputFailure();
           if (failure) throw new PreTurnPromptFailure(failure);
-          opts.permissionHandler.setPermissionMode(message.mode.permissionMode);
-          if (runtimePermissionModeApplied !== message.mode.permissionMode) {
-            const outcome = await opts.runtime.updateSessionRuntimeConfig({ permissionMode: message.mode.permissionMode });
-            if (causalAuthority && !isRuntimeConfigUpdateOutcomeApplied(outcome)) {
-              throw new PreTurnPromptFailure({
-                code: 'permission_mode_not_granted', message: 'permission_mode_not_granted', retryable: false,
-                reason: 'runtime_config_blocked',
-                ...(outcome?.diagnostic ? { diagnostic: outcome.diagnostic } : {}),
-              });
-            }
-            runtimePermissionModeApplied = message.mode.permissionMode;
-          }
+          await applyMessagePermissionMode();
           await dispatch();
         };
         const requestedSelection = readRequestedModelSelection();
@@ -1892,14 +1900,35 @@ export async function runPermissionModePromptLoop(opts: {
         recordPreparationPhase('native_send_entered');
         const providerSend = Object.keys(promptDeliveryMeta).length === 0
           ? opts.runtime.sendTurnPrompt(dispatchPrompt)
-          : opts.runtime.sendTurnPrompt(dispatchPrompt, promptDeliveryMeta);
+          : opts.runtime.sendTurnPrompt(dispatchPrompt, localId === null ? promptDeliveryMeta
+            : { ...promptDeliveryMeta, hostReopensStaleTeamEndpoint: true });
         void preparedDispatch.retainComposition({ deliveryKind: 'newTurn', observedAtMs: Date.now(),
           turnId: null });
         // Runtime adapters update exact steerability synchronously when provider dispatch
         // acquires a live turn. Re-check only at that lifecycle edge; no cadence or inferred
         // turn-in-flight state is allowed to start the Pending pump.
         startActiveTurnPendingPump();
-        await providerSend;
+        try {
+          await providerSend;
+        } catch (error) {
+          if (localId === null || !isStaleTeamEndpointAdmissionRefusal(error)) throw error;
+          // The endpoint the daemon refused belonged to its predecessor. Reopen
+          // once through the next-input recovery path and admit this same input;
+          // a second refusal settles in the runtime as before.
+          try {
+            await reopenRuntimeForRecovery();
+            await applyMessagePermissionMode();
+          } catch (reopenError) {
+            // Nothing reached the provider; settle this input as the runtime would have.
+            await observePreTurnFailureSettlement({ session: opts.session, message: message.message,
+              error: reopenError instanceof PreTurnPromptFailure ? reopenError.settlement : {
+                code: 'daemon_turn_admission_unavailable', message: 'daemon_turn_admission_unavailable',
+                retryable: true, reason: 'provider_unavailable_before_acceptance' } });
+            throw reopenError;
+          }
+          opts.runtime.beginTurnLifecycle();
+          await opts.runtime.sendTurnPrompt(dispatchPrompt, promptDeliveryMeta);
+        }
         recordPreparationPhase('native_send_returned');
         // Provider transport custody alone cannot settle replay or Follow effects. The
         // mandatory localId-correlated delivery outcome port owns that exact decision.
