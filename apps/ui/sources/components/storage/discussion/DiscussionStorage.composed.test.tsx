@@ -302,12 +302,13 @@ function HeaderProbe(
   return null;
 }
 
-function source(): DiscussionStorageSource {
+function source(ownerAccountId = ACCOUNT): DiscussionStorageSource {
   const scope = getActiveServerAccountScope();
   if (!scope) throw new Error('No active Account');
   return {
     scope,
     discussionId: DISCUSSION,
+    ownerAccountId,
     title: 'Checkout bug triage',
     messages: MESSAGES,
     authorLabel: (message) =>
@@ -427,6 +428,38 @@ describe('Storage from a Discussion’s Details (storage-view lab scene 5 A)', (
           ).not.toBeNull(),
         );
         expect(screen.findHostByTestId('storage:discussion')).toBeNull();
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it('shows shared Discussion bytes without treating them as part of the participant’s Account', async () => {
+    const disconnect = await serve();
+    try {
+      const shared = source('another-account');
+      const screen = await renderScreen(
+        <AppPaneProvider>
+          <SurfaceStateSizeProvider size="pane">
+            <DiscussionDetailsPanel actions={[]} storage={shared} />
+          </SurfaceStateSizeProvider>
+        </AppPaneProvider>,
+      );
+      try {
+        await act(async () => {
+          invokeTestInstanceHandler(
+            screen.findHostByTestId('discussion-details-storage'),
+            'onPress',
+          );
+        });
+        await vi.waitFor(() =>
+          expect(textOf(screen.findHostByTestId('storage:discussion'))).toContain(storage(77.6 * MB)),
+        );
+        expect(screen.findHostByTestId('storage:discussion:share-figure')).toBeNull();
+        expect(accountReads).toBe(0);
+        expect(scopedReads).toHaveLength(1);
       } finally {
         await screen.unmount();
       }

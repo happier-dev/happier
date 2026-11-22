@@ -1004,8 +1004,8 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
     const storageAuthorLabel = React.useCallback((message: DiscussionStorageMessage) => resolveAccountLabel(message.authorAccountId)
         ?? resolveDiscussionMessageAuthorLabel(message, viewer), [resolveAccountLabel, viewer]);
     const storageSource = React.useMemo<DiscussionStorageSource | null>(() => discussionId ? { scope: props.scope, discussionId,
-        title: discussion?.title ?? null, messages, authorLabel: storageAuthorLabel } : null,
-    [discussion?.title, discussionId, messages, props.scope, storageAuthorLabel]);
+        ownerAccountId: discussion?.ownerAccountId ?? null, title: discussion?.title ?? null, messages, authorLabel: storageAuthorLabel } : null,
+    [discussion?.ownerAccountId, discussion?.title, discussionId, messages, props.scope, storageAuthorLabel]);
     const displayMessages = React.useMemo<readonly DiscussionDisplayMessage[]>(() => {
         if (!discussionId || !mutation?.content || mutation.status === 'observed_success' || messages.some((message) => message.localId === mutation.localId)) return messages;
         return [...messages, {

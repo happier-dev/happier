@@ -30,6 +30,7 @@ export type DiscussionStorageMessage = Pick<DiscussionOpenedMessageV1, 'id' | 'c
 export type DiscussionStorageSource = Readonly<{
     scope: ServerAccountScope;
     discussionId: string;
+    ownerAccountId: string | null;
     title: string | null;
     messages: readonly DiscussionStorageMessage[];
     authorLabel: (message: DiscussionStorageMessage) => string;
@@ -97,6 +98,14 @@ export function DiscussionStorageRow(props: Readonly<{ read: StorageInventoryRea
 
 /** The Discussion's Storage in the Details pane: its scoped read (shared with the row) and the Account's total for the share. */
 export function DiscussionStoragePane(props: Readonly<{ source: DiscussionStorageSource; read: StorageInventoryRead }>): React.ReactElement {
+    if (props.source.ownerAccountId !== props.source.scope.accountId) {
+        return <DiscussionStorage source={props.source} read={props.read} presentation="pane"
+            accountTotalBytes={null} onChanged={props.read.retry} />;
+    }
+    return <OwnedDiscussionStoragePane {...props} />;
+}
+
+function OwnedDiscussionStoragePane(props: Readonly<{ source: DiscussionStorageSource; read: StorageInventoryRead }>): React.ReactElement {
     const accountSelection = React.useMemo(() => ({ home: props.source.scope, followStorageRevision: false }), [props.source.scope]);
     const account = useStorageInventoryRead(accountSelection);
     const retryAccount = account.retry;
@@ -188,7 +197,8 @@ function DiscussionStoragePage(props: Readonly<{
     const authorLabel = React.useCallback((message: DiscussionStorageMessage) => resolveDiscussionMessageAuthorLabel(message,
         { serverId: props.scope.serverId, accountId: props.scope.accountId, profile }), [profile, props.scope.accountId, props.scope.serverId]);
     const source = React.useMemo((): DiscussionStorageSource => ({ scope: props.scope, discussionId: props.discussionId,
-        title: props.title, messages: props.messages, authorLabel }), [authorLabel, props.discussionId, props.messages, props.scope, props.title]);
+        ownerAccountId: null, title: props.title, messages: props.messages, authorLabel }),
+    [authorLabel, props.discussionId, props.messages, props.scope, props.title]);
     return <DiscussionStorage source={source} read={read} presentation="page" accountTotalBytes={null} onChanged={read.retry} />;
 }
 

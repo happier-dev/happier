@@ -126,14 +126,13 @@ export function DiscussionStorageView(props: Readonly<{
                     lead={size === null ? null : t('artifacts.browser.storageView.discussion.say', { size, count: String(props.files.length) })}
                     text={t('artifacts.browser.storageView.discussion.sayBody')} />
             )}
-            {props.presentation === 'pane' ? (
+            {props.presentation === 'pane' && props.accountTotalBytes !== null ? (
                 <ItemGroup>
                     <StorageCapacityRow testID="storage:discussion:share" title={t('artifacts.browser.storageView.discussion.ofAccount')}
-                        figure={{ strong: size ?? '', rest: props.accountTotalBytes === null ? ''
-                            : t('artifacts.browser.storageView.discussion.ofAccountFigure', { total: formatBytes(props.accountTotalBytes) }) }}
-                        label={props.accountTotalBytes === null ? t('artifacts.browser.storageView.discussion.ofAccount')
-                            : t('artifacts.browser.storageView.account.barLabel', { size: formatBytes(props.accountTotalBytes) })}
-                        total={Math.max(1, props.accountTotalBytes ?? 1)} barSegments={share} legendSegments={NO_SEGMENTS} formatValue={formatBytes} />
+                        figure={{ strong: size ?? '',
+                            rest: t('artifacts.browser.storageView.discussion.ofAccountFigure', { total: formatBytes(props.accountTotalBytes) }) }}
+                        label={t('artifacts.browser.storageView.account.barLabel', { size: formatBytes(props.accountTotalBytes) })}
+                        total={Math.max(1, props.accountTotalBytes)} barSegments={share} legendSegments={NO_SEGMENTS} formatValue={formatBytes} />
                 </ItemGroup>
             ) : null}
             {/* The files are their own sheet, a section step under the sentence or the share, as in the Account's view. */}
