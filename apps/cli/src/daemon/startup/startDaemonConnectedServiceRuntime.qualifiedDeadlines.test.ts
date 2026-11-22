@@ -186,7 +186,9 @@ describe('qualified Connected Account deadline composition', () => {
         const deadlineTick = new Promise<void>(resolve => {
           const release = runtime!.connectedServiceQuotasLoopHandle!.subscribeAfterTick(() => { release(); resolve(); });
         });
-        await vi.advanceTimersByTimeAsync(61_000);
+        const resetAt = quotaWrites.at(-1)?.snapshot?.meters[0]?.resetsAt;
+        if (resetAt == null) throw new Error('Expected a reset deadline in the published observation');
+        await vi.advanceTimersByTimeAsync(resetAt - Date.now());
         await deadlineTick;
         expect(fixture.readCredential.mock.calls.length).toBeGreaterThan(initialCredentialReads);
         expect(requests.mock.calls.length).toBeGreaterThan(initialProviderReads);
@@ -292,17 +294,20 @@ describe('qualified Connected Account deadline composition', () => {
         expect(healthWrites).toHaveLength(1);
         const beforeOptIn = requests.mock.calls.length;
         const beforeOptInCredentialReads = fixture.readCredential.mock.calls.length;
+        const beforeOptInListings = listings;
         const optInSettled = new Promise<void>(resolve => {
           const release = runtime!.connectedServiceQuotasLoopHandle!.subscribeAfterTick(() => { release(); resolve(); });
         });
         clock += 61_000;
         vi.setSystemTime(clock);
-        // A real Account Settings publication, not a coordinator-private wake,
-        // makes an opted-in background notification an observation consumer.
+        // A settings publication wakes the coordinator. Without a running pool
+        // Session, the accepted observation remains valid until its reset.
         setActiveAccountSettingsSnapshot({ ...getActiveAccountSettingsSnapshot()!, source: 'network', settings: accountSettingsParse({ usageQuotaNotificationsV1: { pace: true, depletion: true } }),
           settingsVersion: getActiveAccountSettingsSnapshot()!.settingsVersion + 1, loadedAtMs: clock, settingsSecretsReadKeys });
-        await vi.waitFor(() => expect(requests.mock.calls.length).toBeGreaterThan(beforeOptIn));
+        await vi.waitFor(() => expect(listings).toBeGreaterThan(beforeOptInListings));
         await optInSettled;
+        expect(requests.mock.calls).toHaveLength(beforeOptIn);
+        expect(fixture.readCredential.mock.calls).toHaveLength(beforeOptInCredentialReads);
         expect(healthWrites).toHaveLength(1);
         console.info('[c217 quota cost]', { initialCredentialReads: idleCredentialReads, idleSeconds: 61,
           idleDemands: 25, inventoryWakes: 25, extraIdleCredentialReads: 0,
@@ -342,7 +347,7 @@ describe('qualified Connected Account deadline composition', () => {
       expect(invalidations.size).toBe(0);
       const stoppedReads = reads.mock.calls.length;
       setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}),
-        settingsVersion: getActiveAccountSettingsSnapshot()!.settingsVersion + 1,
+        settingsVersion: (getActiveAccountSettingsSnapshot()?.settingsVersion ?? 0) + 1,
         loadedAtMs: clock, settingsSecretsReadKeys, scopeKey: resolveAccountSettingsScopeKey(fixture.credentials) });
       if (useFakeLoopClock) await vi.advanceTimersByTimeAsync(20);
       else await new Promise(resolve => setTimeout(resolve, 20));
