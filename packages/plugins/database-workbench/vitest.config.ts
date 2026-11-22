@@ -25,34 +25,36 @@ const reactNativeWebAliases = [
 // reloading the full SDK graph or resolving stale workspace dist exports.
 function sqliteWorkerFixture(): Plugin {
     const sourceRoot = normalizePath(resolve(root, 'src'));
-    let fixture: Promise<{ directory: string; entry: string }> | undefined;
+    let directory: string | undefined;
     return {
         name: 'database-workbench-sqlite-worker-fixture',
         enforce: 'pre',
-        async resolveId(source, importer) {
-            if (source !== './sqlite.js' || !importer?.startsWith(`${sourceRoot}/`)) return;
-            fixture ??= (async () => {
-                const directory = await mkdtemp(resolve(tmpdir(), 'happier-workbench-worker-'));
-                try {
-                    await build({
-                        configFile: false, root, publicDir: false, logLevel: 'error',
-                        ssr: { noExternal: true, resolve: { conditions: ['happier-source', 'node'] } },
-                        build: {
-                            ssr: resolve(sourceRoot, 'sqlite.ts'), outDir: directory, emptyOutDir: false,
-                            rollupOptions: { output: { format: 'es', entryFileNames: 'sqlite.mjs' } },
-                        },
-                    });
-                    return { directory, entry: normalizePath(resolve(directory, 'sqlite.mjs')) };
-                } catch (error) {
-                    await rm(directory, { recursive: true, force: true });
-                    throw error;
-                }
-            })();
-            return (await fixture).entry;
+        async configureServer() {
+            // Some tests first import the connection from inside an Action.
+            // Finish compiling before Vitest starts timing any test.
+            const output = await mkdtemp(resolve(tmpdir(), 'happier-workbench-worker-'));
+            try {
+                await build({
+                    configFile: false, root, publicDir: false, logLevel: 'error',
+                    ssr: { noExternal: true, resolve: { conditions: ['happier-source', 'node'] } },
+                    build: {
+                        ssr: resolve(sourceRoot, 'sqlite.ts'), outDir: output, emptyOutDir: false,
+                        rollupOptions: { output: { format: 'es', entryFileNames: 'sqlite.mjs' } },
+                    },
+                });
+                directory = output;
+            } catch (error) {
+                await rm(output, { recursive: true, force: true });
+                throw error;
+            }
+        },
+        resolveId(source, importer) {
+            if (directory && source === './sqlite.js' && importer?.startsWith(`${sourceRoot}/`)) {
+                return normalizePath(resolve(directory, 'sqlite.mjs'));
+            }
         },
         async closeBundle() {
-            const built = await fixture?.catch(() => undefined);
-            if (built) await rm(built.directory, { recursive: true, force: true });
+            if (directory) await rm(directory, { recursive: true, force: true });
         },
     };
 }
