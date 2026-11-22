@@ -85,8 +85,9 @@ it.skipIf(process.platform !== 'linux')('keeps lazy private dotenv reads inside 
         expect(await createProjectDotenvPreparation(root).read(['DECLARED']))
             .toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
         boundary.phases.length = 0;
-        mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'accepted', serverId: 'home',
-            machineId: 'machine', rootPath: root, createdAtMs: 1 })]);
+        const workspace = { id: 'accepted', serverId: 'home', machineId: 'machine', rootPath: root,
+            createdAtMs: 1, projectKey: 'project' };
+        mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow(workspace)]);
         const snapshot = { enabled: true, memberProvisioning: 'linuxUsersV1' as const,
             status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [] };
         const runtime = { credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.signature`, encryption: null },
@@ -100,7 +101,7 @@ it.skipIf(process.platform !== 'linux')('keeps lazy private dotenv reads inside 
                     } }) },
             }) } };
         const prepared = createProjectRuntimeDotenvPreparation({ runtime, ingress: { signal: new AbortController().signal },
-            workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+            workspace,
             context: {}, originalEnvironment: {} });
         expect(await prepared.read([])).toMatchObject({ kind: 'ready', environment: {} });
         expect(boundary.phases).toEqual([]);

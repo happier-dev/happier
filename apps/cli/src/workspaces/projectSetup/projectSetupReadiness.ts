@@ -22,6 +22,8 @@ import { readProjectAsMember } from '@/workspaces/activation/memberProjectInspec
 import { createProjectDotenvPreparation } from './projectDotenv';
 import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 
 /** The requester Account and native invocation supply the accepted checkout's filesystem facts. */
 export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
@@ -57,11 +59,12 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
 
 /** A lazy dotenv snapshot owns its member reader until the complete file family settles. */
 export function createProjectRuntimeDotenvPreparation(input: Readonly<Pick<Parameters<typeof withProjectMemberWorkspaceSource>[0],
-    'runtime' | 'ingress' | 'workspace' | 'context'> & { originalEnvironment: ProcessEnvInput }>) {
-    return createProjectDotenvPreparation(input.workspace.rootPath, input.originalEnvironment,
+    'runtime' | 'ingress' | 'context'> & { workspace: ProjectDefinitionWorkspace | WorkspaceRefV1; originalEnvironment: ProcessEnvInput }>) {
+    const workspace = 'id' in input.workspace ? workspaceAddressFromRefV1(input.workspace) : input.workspace;
+    return createProjectDotenvPreparation(workspace.rootPath, input.originalEnvironment,
         input.runtime.requesterIdentity?.kind === 'isolated' && resolveHostRequesterAgentPlacementForHost({
             identity: input.runtime.requesterIdentity, snapshot: input.runtime.agentIsolation?.read() }) === 'member'
-            ? read => withProjectMemberWorkspaceSource({ ...input, read }) : undefined);
+            ? read => withProjectMemberWorkspaceSource({ ...input, workspace, read }) : undefined);
 }
 
 /** Demand-only definition read under the same admitted requester and accepted checkout as setup. */
