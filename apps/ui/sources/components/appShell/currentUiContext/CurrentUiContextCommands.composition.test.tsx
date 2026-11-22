@@ -124,6 +124,49 @@ afterEach(async () => {
 });
 
 describe('mounted current-context descendant commands', () => {
+    it('publishes focused host commands and withdraws them with only the focus commits', async () => {
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://focused-commands.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(home.homes.a!.serverUrl))!;
+        let commits = 0;
+        function Controls() {
+            useCurrentUiContextLocalCommands([
+                { key: 'open', title: 'Open details', invoke: () => true },
+                { key: 'close', title: 'Close details', invoke: () => true },
+            ]);
+            return null;
+        }
+        const tree = (focused: boolean) => <React.Profiler id="Session commands" onRender={() => { commits += 1; }}>
+            <InjectedAuthProvider credentials={credentials}>
+                <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider>
+                    <ObserveReader />
+                    <PluginSurfaceFocusEligibilityProvider active={focused} currentUiContextActive={focused}>
+                        <Controls />
+                    </PluginSurfaceFocusEligibilityProvider>
+                </CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+            </InjectedAuthProvider>
+        </React.Profiler>;
+        const screen = await renderScreen(tree(false));
+        const current = reader!;
+        const publications: string[][] = [];
+        const unsubscribe = current.subscribe(() => {
+            publications.push(current.readCurrentUiContext()?.commands.map(({ title }) => title) ?? []);
+        });
+        commits = 0;
+        await screen.update(tree(true));
+        const admitted = current.readCurrentUiContext()!.commands;
+        expect(admitted.map(({ title }) => title)).toEqual(['Open details', 'Close details']);
+        const mounted = current.resolveCurrentUiCommand(admitted[0]!.id);
+        expect(mounted).not.toBeNull();
+        await screen.update(tree(false));
+        expect(current.resolveCurrentUiCommand(admitted[0]!.id)).toBeNull();
+        expect(mounted?.retirementSignal.aborted).toBe(true);
+        expect(publications).toEqual([['Open details', 'Close details'], []]);
+        expect(commits).toBe(2);
+        unsubscribe();
+    });
+
     it('lets an Agent leave an approval review through its mounted Back command', async () => {
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://approval-back.test', accountId: 'account-a', currentAccount: true }],
             route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });

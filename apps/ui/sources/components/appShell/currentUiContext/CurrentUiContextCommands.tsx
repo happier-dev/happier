@@ -52,8 +52,44 @@ type CommandComposition = Readonly<{
     focus(owner: object, commands: ComposedCommands, onRetire: () => void): () => void;
 }>;
 const EMPTY_COMMANDS: ComposedCommands = Object.freeze([]);
+type CommandInventory = Readonly<{
+    read(): ComposedCommands;
+    subscribe(listener: () => void): () => void;
+}>;
+const EMPTY_COMMAND_INVENTORY: CommandInventory = { read: () => EMPTY_COMMANDS, subscribe: () => () => {} };
 const CompositionContext = React.createContext<CommandComposition | null>(null);
-const CommandsContext = React.createContext<ComposedCommands>(EMPTY_COMMANDS);
+const CommandsContext = React.createContext<CommandInventory>(EMPTY_COMMAND_INVENTORY);
+
+function createCommandRegistry(isCurrent: () => boolean) {
+    const entries = new Map<object, ComposedCommands>();
+    const listeners = new Set<() => void>();
+    let combined: ComposedCommands | null = null;
+    const notify = () => { for (const listener of [...listeners]) listener(); };
+    const changed = () => { combined = null; notify(); };
+    return {
+        read: (): ComposedCommands => {
+            if (!isCurrent() || entries.size === 0) return EMPTY_COMMANDS;
+            return combined ??= Array.from(entries.values()).flat();
+        },
+        subscribe: (listener: () => void) => {
+            listeners.add(listener);
+            return () => { listeners.delete(listener); };
+        },
+        register: (owner: object, commands: ComposedCommands) => {
+            if (commands.length === 0) return () => {};
+            // A refocused owner moves to its current place in the inventory.
+            entries.delete(owner);
+            entries.set(owner, commands);
+            changed();
+            return () => {
+                if (entries.get(owner) !== commands) return;
+                entries.delete(owner);
+                changed();
+            };
+        },
+        notify,
+    };
+}
 
 /** Descendant controls retain their placement in the existing root command registry. */
 export function CurrentUiContextWorkspaceCommandsBoundary(props: React.PropsWithChildren): React.ReactElement {
@@ -65,12 +101,6 @@ export function CurrentUiContextWorkspaceCommandsBoundary(props: React.PropsWith
             commands.map(command => ({ ...command, workspaceHosted: true as const })), onRetire),
     }), [parent]);
     return <CompositionContext.Provider value={composition}>{props.children}</CompositionContext.Provider>;
-}
-
-// React keeps the last reducer on its dispatch queue. It must not capture a
-// provider render and its obsolete composed command inventory in Hermes.
-function advanceCommandRevision(current: number): number {
-    return current + 1;
 }
 
 /** Reparent modal commands into the existing root composer, retaining its Account lifetime and reader. */
@@ -113,20 +143,15 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     const modalOwner = parentComposition?.modalOwner ?? parentComposition;
     const { execute, executeForCaller, binding } = useMountedActionExecution(props.authority?.scope);
     const execution = React.useMemo(() => ({ execute, executeForCaller, binding }), [execute, executeForCaller, binding]);
-    const entries = React.useRef<Map<object, ComposedCommands> | null>(null);
-    if (entries.current === null) entries.current = new Map();
-    const registry = entries.current;
-    const [revision, invalidate] = React.useReducer(advanceCommandRevision, 0);
-    const latest = React.useRef(props);
-    latest.current = props;
+    const latest = React.useRef({ authority: props.authority, active: props.active });
+    latest.current = { authority: props.authority, active: props.active };
     const mounted = React.useRef(true);
+    const committedAuthority = React.useRef(props.authority);
     React.useLayoutEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-    const register = React.useCallback((owner: object, commands: ComposedCommands) => {
-        registry.delete(owner);
-        registry.set(owner, commands);
-        invalidate();
-        return () => { registry.delete(owner); invalidate(); };
-    }, [registry]);
+    const [registry] = React.useState(() => createCommandRegistry(() => mounted.current
+        && latest.current.active !== false && committedAuthority.current === latest.current.authority
+        && committedAuthority.current?.isCurrent() === true));
+    const { register } = registry;
     const focused = React.useRef<(() => void) | null>(null);
     const focus = React.useCallback((owner: object, commands: ComposedCommands, onRetire: () => void) => {
         focused.current?.();
@@ -149,29 +174,26 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
         register,
         focus,
     }), [props.authority, execution, modalOwner, register, focus]);
-    const [retired, setRetired] = React.useState<ServerAccountScopeLifetime | null>(null);
     React.useLayoutEffect(() => {
-        const authority = props.authority;
-        if (!authority) return;
-        const subscription = authority.onRetire(() => setRetired(authority));
-        return () => subscription.dispose();
-    }, [props.authority]);
-    const commands = React.useMemo(() => {
-        if (!composition.isCurrent() || retired === props.authority) return EMPTY_COMMANDS;
-        const combined: ComposedCommands[number][] = [];
-        for (const commands of registry.values()) {
-            for (const command of commands) combined.push(command);
-        }
-        return combined;
-    }, [composition, registry, revision, props.active, retired]);
+        committedAuthority.current = props.authority;
+        const subscription = props.authority?.onRetire(registry.notify);
+        registry.notify();
+        return () => subscription?.dispose();
+    }, [props.authority, props.active, registry]);
     return <CompositionContext.Provider value={composition}>
-        <CommandsContext.Provider value={commands}>{props.children}</CommandsContext.Provider>
+        <CommandsContext.Provider value={registry}>{props.children}</CommandsContext.Provider>
     </CompositionContext.Provider>;
 }
 
-/** The page appends these definitions to its own enrichment; descendants never publish competing mounts. */
-export function useCurrentUiContextComposedCommands(): ComposedCommands {
+/** Imperative publishers can follow committed registration without re-rendering a screen. */
+export function useCurrentUiContextCommandInventory(): CommandInventory {
     return React.useContext(CommandsContext);
+}
+
+/** A page appends these definitions to its own enrichment. */
+export function useCurrentUiContextComposedCommands(): ComposedCommands {
+    const inventory = useCurrentUiContextCommandInventory();
+    return React.useSyncExternalStore(inventory.subscribe, inventory.read, inventory.read);
 }
 
 /** Focus selects one field's commands without replacing the current page's entity or commands. */

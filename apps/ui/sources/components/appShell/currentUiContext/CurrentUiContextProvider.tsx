@@ -26,7 +26,7 @@ import { usePluginSurfaceCurrentUiContextEligibility } from '@/components/ui/pre
 import { normalizeSessionId } from '@/sync/domains/session/normalizeSessionId';
 import { useFocusedSessionId } from '@/sync/domains/session/sessionSurfaceVisibility';
 import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
-import { CurrentUiContextCommandsProvider, CurrentUiContextWorkspaceCommandsBoundary, useCurrentUiContextComposedCommands } from './CurrentUiContextCommands';
+import { CurrentUiContextCommandsProvider, CurrentUiContextWorkspaceCommandsBoundary, useCurrentUiContextCommandInventory } from './CurrentUiContextCommands';
 import { readVoicePrivacySettings } from '@/sync/domains/settings/readVoicePrivacySettings';
 import { useMachine, useSessionDisplayNameSource, useSetting } from '@/sync/store/hooks';
 import { projectParameterFreeRoute } from '@/track/parameterFreeRouteProjection';
@@ -74,23 +74,12 @@ type CurrentUiContextMountRecord = Readonly<{
     }>[];
 }>;
 
-type CurrentUiContextMountAction =
-    | Readonly<{ kind: 'replace'; record: CurrentUiContextMountRecord }>
-    | Readonly<{ kind: 'activate'; record: CurrentUiContextMountRecord }>
-    | Readonly<{ kind: 'clear'; owner: CurrentUiContextMountOwner }>;
-
-function reduceCurrentUiContextMount(
-    current: CurrentUiContextMountRecord | null,
-    action: CurrentUiContextMountAction,
-): CurrentUiContextMountRecord | null {
-    if (action.kind === 'clear') {
-        return current?.owner === action.owner ? null : current;
-    }
-    // The ref below decides the slot synchronously. Keep the reducer fenced as
-    // well so a queued retired mount update cannot replace a newer record.
-    if (action.kind === 'replace' && current !== null && current.owner !== action.record.owner) return current;
-    return action.record;
-}
+type CurrentUiContextLocation = Readonly<{
+    navigation: CurrentUiContextSnapshotV1['navigation'];
+    sessionId: string | null;
+    visibleModalId: string | null;
+    modalVisible: boolean;
+}>;
 
 export type CurrentUiContextMountPublication = Readonly<{
     publish: (enrichment: CurrentUiContextMountedEnrichment | null) => boolean;
@@ -296,9 +285,8 @@ const selectRouteEntityId = (params: Readonly<Record<string, string | string[] |
 const selectFocusedDetailsWorkspace = (value: AppPaneContextValue) => hasActiveDetailsWorkspace(value.state);
 
 function CurrentUiContextProviderContent(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
-    const localCommands = useCurrentUiContextComposedCommands();
-    const localCommandsRef = React.useRef(localCommands);
-    localCommandsRef.current = localCommands;
+    const localCommands = useCurrentUiContextCommandInventory();
+    const publishedLocalCommands = React.useRef<ReturnType<typeof localCommands.read> | null>(null);
     const localOwner = React.useRef(Object.freeze({})).current;
     const mountLifecycleActive = useCurrentUiContextMountLifecycleActive();
     const routeSegments = useCurrentRouteSegments();
@@ -356,15 +344,11 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         })?.label ?? null;
     }, [pluginPages, pluginRouteIdentity.localId, pluginRouteIdentity.pluginId, route.segments]);
 
-    const [mountRecord, dispatchMountRecord] = React.useReducer(reduceCurrentUiContextMount, null);
     const currentMountRecordRef = React.useRef<CurrentUiContextMountRecord | null>(null);
-    const committedSnapshotRef = React.useRef<Readonly<{
+    const committedSnapshotRef = React.useRef<(CurrentUiContextLocation & Readonly<{
         snapshot: CurrentUiContextSnapshotV1;
-        sessionId: string | null;
         mountRecord: CurrentUiContextMountRecord | null;
-        visibleModalId: string | null;
-        modalVisible: boolean;
-    }> | null>(null);
+    }>) | null>(null);
     const readerListenersRef = React.useRef(new Set<() => void>());
     const providerCurrentRef = React.useRef(true);
     const notifyReaderListeners = React.useCallback(() => {
@@ -374,23 +358,53 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
     }, []);
     const composeRecord = React.useCallback((owner: object, enrichment: CurrentUiContextMountedEnrichment) => {
         const commands = enrichment.commands ?? [];
+        const local = localCommands.read();
+        publishedLocalCommands.current = local;
         const record = createMountRecord({ owner, enrichment: { ...enrichment, commands: [
-            ...commands, ...localCommandsRef.current.filter(local => !commands.some(entry => entry.command === local.command)),
+            ...commands, ...local.filter(command => !commands.some(entry => entry.command === command.command)),
         ] }, previous: currentMountRecordRef.current, nextCommandId: () => `current-ui-command:${randomUUID()}` });
         return Object.freeze({ ...record, enrichment });
-    }, []);
-    React.useLayoutEffect(() => {
+    }, [localCommands]);
+    const replaceMountRecord = React.useCallback((record: CurrentUiContextMountRecord | null) => {
         const previous = currentMountRecordRef.current;
-        // Keep host controls in the same private record as a plugin page's author commands.
-        // A core page needs no separate publisher merely to lend its mounted controls.
-        const author = mountLifecycleActive && previous?.owner !== localOwner ? previous : null;
-        const enrichment = author?.enrichment ?? {};
-        const record = mountLifecycleActive && (author || localCommands.length) ? composeRecord(author?.owner ?? localOwner, enrichment) : null;
-        retireCurrentUiContextMountRecord(previous, record);
         currentMountRecordRef.current = record;
-        if (record) dispatchMountRecord({ kind: 'activate', record });
-        else if (previous) dispatchMountRecord({ kind: 'clear', owner: previous.owner });
-    }, [composeRecord, localCommands, localOwner, mountLifecycleActive]);
+        retireCurrentUiContextMountRecord(previous, record);
+    }, []);
+    const syncLocalCommands = React.useCallback(() => {
+        if (!readCurrentUiContextMountLifecycleActive()) return;
+        const commands = localCommands.read();
+        if (publishedLocalCommands.current === commands) return;
+        publishedLocalCommands.current = commands;
+        // Host commands share the current page's one record, including any author commands.
+        const previous = currentMountRecordRef.current;
+        const author = previous?.owner !== localOwner ? previous : null;
+        if (!author && !previous && commands.length === 0) return;
+        const record = author || commands.length ? composeRecord(author?.owner ?? localOwner, author?.enrichment ?? {}) : null;
+        replaceMountRecord(record);
+    }, [composeRecord, localCommands, localOwner, replaceMountRecord]);
+    const publishSnapshot = React.useCallback((location: CurrentUiContextLocation) => {
+        const mountRecord = currentMountRecordRef.current;
+        const { navigation, visibleModalId, modalVisible } = location;
+        const snapshot = composeCurrentUiContextSnapshotFromNavigation(navigation,
+            currentMountProjection(mountRecord, navigation.area, visibleModalId, modalVisible));
+        committedSnapshotRef.current = { ...location, mountRecord, snapshot };
+        notifyReaderListeners();
+    }, [notifyReaderListeners]);
+    const publicationPending = React.useRef(false);
+    const schedulePublication = React.useCallback(() => {
+        if (publicationPending.current) return;
+        publicationPending.current = true;
+        // Several descendant layout effects can change the same inventory. Publish against the
+        // committed navigation after the commit, without forcing another React root render.
+        queueMicrotask(() => {
+            publicationPending.current = false;
+            const committed = committedSnapshotRef.current;
+            if (!providerCurrentRef.current || !committed) return;
+            syncLocalCommands();
+            if (committed.mountRecord !== currentMountRecordRef.current) publishSnapshot(committed);
+        });
+    }, [publishSnapshot, syncLocalCommands]);
+    React.useLayoutEffect(() => localCommands.subscribe(schedulePublication), [localCommands, schedulePublication]);
     React.useInsertionEffect(() => {
         // StrictMode replays descendant layout publishers without recreating
         // this provider. Keep the provider gate in the insertion lifetime so
@@ -400,6 +414,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             providerCurrentRef.current = false;
             retireCurrentUiContextMountRecord(currentMountRecordRef.current);
             currentMountRecordRef.current = null;
+            publishedLocalCommands.current = null;
             committedSnapshotRef.current = null;
         };
     }, []);
@@ -412,20 +427,12 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         readerListenersRef.current.clear();
     }, [notifyReaderListeners]);
 
-    React.useLayoutEffect(() => {
-        if (mountLifecycleActive) return;
-        const record = currentMountRecordRef.current;
-        if (record === null) return;
-        retireCurrentUiContextMountRecord(record);
-        currentMountRecordRef.current = null;
-        dispatchMountRecord({ kind: 'clear', owner: record.owner });
-    }, [mountLifecycleActive]);
-
     // Reads withdraw while nobody views the host; readers learn of it from the host itself, not a provider render.
     React.useLayoutEffect(() => subscribeToHostActivelyViewed(notifyReaderListeners), [notifyReaderListeners]);
 
     const readCurrentUiContext = React.useCallback((): CurrentUiContextSnapshotV1 | null => {
-        if (!readHostActivelyViewed()) return null;
+        if (!providerCurrentRef.current || !readHostActivelyViewed()) return null;
+        syncLocalCommands();
         const committedSnapshot = committedSnapshotRef.current?.snapshot ?? null;
         if (committedSnapshot === null) return null;
         // An invalid-context fallback intentionally omits every optional surface
@@ -446,7 +453,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
             committedSnapshot.navigation,
             mountEnrichment,
         );
-    }, []);
+    }, [syncLocalCommands]);
 
     const reader = React.useMemo<CurrentUiContextReader>(() => Object.freeze({
         readCurrentUiContext,
@@ -495,19 +502,15 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         const clearCurrent = (): void => {
             const record = currentMountRecordRef.current;
             if (record?.owner !== owner) return;
-            const local = localCommandsRef.current.length ? composeRecord(localOwner, {}) : null;
-            retireCurrentUiContextMountRecord(record, local);
-            currentMountRecordRef.current = local;
-            if (providerCurrentRef.current) {
-                if (local) dispatchMountRecord({ kind: 'activate', record: local });
-                else dispatchMountRecord({ kind: 'clear', owner });
-            }
+            const local = readCurrentUiContextMountLifecycleActive() && localCommands.read().length
+                ? composeRecord(localOwner, {}) : null;
+            replaceMountRecord(local);
+            if (providerCurrentRef.current) schedulePublication();
         };
-        const replaceCurrent = (enrichment: CurrentUiContextMountedEnrichment, kind: 'replace' | 'activate') => {
+        const replaceCurrent = (enrichment: CurrentUiContextMountedEnrichment) => {
             const record = composeRecord(owner, enrichment);
-            retireCurrentUiContextMountRecord(currentMountRecordRef.current, record);
-            currentMountRecordRef.current = record;
-            dispatchMountRecord({ kind, record });
+            replaceMountRecord(record);
+            schedulePublication();
             return record;
         };
 
@@ -520,7 +523,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
                 }
                 if (!readCurrentUiContextMountLifecycleActive()) return false;
                 if (!acquire()) return false;
-                replaceCurrent(enrichment, 'replace');
+                replaceCurrent(enrichment);
                 return true;
             },
             activateCurrent(enrichment, signal): Promise<boolean> {
@@ -529,7 +532,7 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
                     || !canActivateCurrentUiContextMount(snapshot)) return Promise.resolve(false);
                 const current = currentMountRecordRef.current;
                 const record = current?.owner === owner && current.enrichment === enrichment
-                    ? current : replaceCurrent(enrichment, 'activate');
+                    ? current : replaceCurrent(enrichment);
                 // Effect callers wait for the same composer's commit, rather than
                 // treating a newly written private record as a public descriptor.
                 return new Promise(resolve => {
@@ -564,38 +567,33 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
                 clearCurrent();
             },
         });
-    }, [composeRecord, localOwner, readCurrentUiContext]);
+    }, [composeRecord, localCommands, localOwner, readCurrentUiContext, replaceMountRecord, schedulePublication]);
     const mountPublisher = React.useMemo<CurrentUiContextMountPublisher>(() => Object.freeze({
         createMount,
     }), [createMount]);
 
-    const snapshot = React.useMemo(() => {
-        const baseline = composeCurrentUiContextSnapshot({
-            route,
-            visibleModalKind,
-            focusedDetailsWorkspace,
-            ...(settingsTitle ? {
-                settings: {
-                    title: settingsTitle,
-                    ...(pluginSettingsPage ? { pluginSettingsPage: true } : {}),
-                },
-            } : {}),
-            ...(pluginPageLabel ? { pluginPage: { label: pluginPageLabel } } : {}),
-            sessionActive,
-            session,
-            machineActive,
-            machine,
-            privacy: voicePrivacy,
-            mobileTab: activeTab,
-        });
-        return composeCurrentUiContextSnapshotFromNavigation(baseline.navigation,
-            currentMountProjection(mountRecord, baseline.navigation.area, visibleModalId, visibleModalKind !== null));
-    }, [
+    const navigation = React.useMemo(() => composeCurrentUiContextSnapshot({
+        route,
+        visibleModalKind,
+        focusedDetailsWorkspace,
+        ...(settingsTitle ? {
+            settings: {
+                title: settingsTitle,
+                ...(pluginSettingsPage ? { pluginSettingsPage: true } : {}),
+            },
+        } : {}),
+        ...(pluginPageLabel ? { pluginPage: { label: pluginPageLabel } } : {}),
+        sessionActive,
+        session,
+        machineActive,
+        machine,
+        privacy: voicePrivacy,
+        mobileTab: activeTab,
+    }).navigation, [
         activeTab,
         focusedDetailsWorkspace,
         machineActive,
         machine,
-        mountRecord,
         pluginSettingsPage,
         pluginPageLabel,
         route,
@@ -603,15 +601,19 @@ function CurrentUiContextProviderContent(props: Readonly<{ children: React.React
         sessionActive,
         settingsTitle,
         visibleModalKind,
-        visibleModalId,
         voicePrivacy,
     ]);
 
     React.useLayoutEffect(() => {
-        committedSnapshotRef.current = { snapshot, sessionId: sessionActive ? sessionRouteId : null, mountRecord,
-            visibleModalId, modalVisible: visibleModalKind !== null };
-        notifyReaderListeners();
-    }, [mountRecord, notifyReaderListeners, sessionActive, sessionRouteId, snapshot, visibleModalId, visibleModalKind]);
+        if (mountLifecycleActive) syncLocalCommands();
+        else {
+            publishedLocalCommands.current = null;
+            replaceMountRecord(null);
+        }
+        publishSnapshot({ navigation, sessionId: sessionActive ? sessionRouteId : null,
+            visibleModalId, modalVisible: visibleModalKind !== null });
+    }, [mountLifecycleActive, navigation, publishSnapshot, replaceMountRecord, sessionActive, sessionRouteId,
+        syncLocalCommands, visibleModalId, visibleModalKind]);
 
     return (
         <CurrentUiContextBridge publisher={mountPublisher} reader={reader}>
