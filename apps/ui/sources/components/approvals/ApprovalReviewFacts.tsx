@@ -293,14 +293,14 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
 /** Render the host's copy facts with the same labels used by the deployment pages. */
 function deploymentCopyReviewLabel(value: string): string {
   const exportedService = /^serviceExport:(.+)$/u.exec(value)?.[1];
-  if (exportedService !== undefined) return exportedService;
+  if (exportedService !== undefined) return t('projects.deployments.copy.reviewServiceExport', { name: exportedService });
   const rollbackCount = /^retainPreviousDeployments:copy:(\d+)$/u.exec(value)?.[1];
-  if (rollbackCount !== undefined) return `${t('projects.deployments.keptForRollback')} · ${rollbackCount}`;
+  if (rollbackCount !== undefined) return t('projects.deployments.copy.reviewRetained', { count: Number(rollbackCount) });
   switch (value) {
     case 'definition:stored': return t('newApp.deploy.plan.runsCompose');
     case 'definition:repository': return t('projects.sources.repositoryTitle');
     case 'retainPreviousDeployments:copy': return t('projects.deployments.keptForRollback');
-    case 'ownServer': return t('projects.deployments.platformLink.onMachine');
+    case 'ownServer': return t('projects.deployments.copy.reviewOwnServer');
   }
   // Binding review facts carry the stored identity followed by the reviewed choice.
   // Keep the full identity as the row key, and use the variable name or registry origin as its title.

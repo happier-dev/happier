@@ -633,7 +633,10 @@ export const DeploymentEnvironmentDraft = React.memo(
               onChangeText: setName,
               onCommit: () => setName((current) => current.trim()),
             }}
-            description={stepReview?.summary ?? t(partial ? 'projects.deployments.partialProgressBody' : props.copyFrom ? 'projects.deployments.copy.description' : 'projects.deployments.draftDescription')}
+            description={stepReview?.summary ?? t(partial ? 'projects.deployments.partialProgressBody' : props.copyFrom
+              // Choose only where the copy offers a choice (PAGE-ACCEPT-176 R12-D6).
+              ? copyChoices?.secrets.length || copyChoices?.data.length ? 'projects.deployments.copy.description' : 'projects.deployments.copy.descriptionNoChoice'
+              : 'projects.deployments.draftDescription')}
             {...(props.phone ? {} : { primaryAction: saveAction })}
             cancelAction={partial ? {
               title: t('common.close'), onPress: props.onDiscard, testID: 'project-deployments.draft.close',

@@ -6,6 +6,12 @@ export type DeploymentCopyTranslations = Readonly<{
   preparePrompt: (params: { name: string; sourceId: string; environmentId: string }) => string;
   title: string;
   description: string;
+  /** A copy with no references to choose: the header promises no choice. */
+  descriptionNoChoice: string;
+  /** The Review's items, each named for what it is. */
+  reviewOwnServer: string;
+  reviewServiceExport: (params: { name: string }) => string;
+  reviewRetained: (params: { count: number }) => string;
   bindings: string;
   same: string;
   choose: string;
@@ -43,6 +49,10 @@ export const deploymentCopyTranslations = {
     menu: "Duplicate environment…",
     title: "Duplicate environment",
     description: "Copies the deployment definition. Choose the references to keep; nothing deploys until you choose to deploy.",
+    descriptionNoChoice: "Copies the deployment definition; nothing deploys until you choose to deploy.",
+    reviewOwnServer: "Rollout and restore settings",
+    reviewServiceExport: ({ name }) => `Private share: ${name}, on the Happier network`,
+    reviewRetained: ({ count }) => `Keeps ${count} previous ${count === 1 ? 'version' : 'versions'} for rollback`,
     bindings: "What comes along",
     same: "Same reference",
     choose: "Choose another…",

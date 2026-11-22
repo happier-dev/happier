@@ -148,7 +148,7 @@ describe('native confirmation of a carried executor review', () => {
         sources: { controllerMachineId: 'project', buildMachineId: 'account', retainPreviousDeployments: 'project' } },
       creationDefaultsBasis: { projectSourceId: 'source-app', sourceRevision: 7, projectDefaultsRevision: 3, content: null },
       copy: { sourceEnvironmentId: 'staging', sourceRevision: 3,
-        included: ['definition:repository', 'retainPreviousDeployments:copy', 'ownServer', 'app settings',
+        included: ['definition:repository', 'retainPreviousDeployments:copy:1', 'ownServer', 'serviceExport:database', 'app settings',
           'binding:["variable","runtime","QA_SWEEP_197_172"]:include',
           'binding:["variable","runtime","QA_SWEEP_PRIVATE_URL"]:include'],
         omitted: ['production database', 'binding:["variable","runtime","OLD_URL"]'] },
@@ -167,8 +167,11 @@ describe('native confirmation of a carried executor review', () => {
       expect(screen.findByTestId('actions.confirmation-review.creation-review.defaults.retention')).not.toBeNull();
       const copyReview = screen.getTextContent();
       expect(copyReview).toContain('Repository');
-      expect(copyReview).toContain('Kept for rollback');
-      expect(copyReview).toContain('A machine');
+      // Each item says what it is (PAGE-ACCEPT-176 R12-D6: "Kept for rollback · 1 · A machine · database").
+      expect(copyReview).toContain('Keeps 1 previous version for rollback');
+      expect(copyReview).toContain('Rollout and restore settings');
+      expect(copyReview).toContain('Private share: database, on the Happier network');
+      expect(copyReview).not.toContain('A machine');
       expect(copyReview).toContain('app settings');
       expect(copyReview).toContain('production database');
       expect(copyReview).toContain('QA_SWEEP_197_172');
@@ -281,7 +284,7 @@ describe('native confirmation of a carried executor review', () => {
       await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
       const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome;
       const visible = `${chrome?.kind === 'card' ? chrome.subtitle ?? '' : ''} ${screen.getTextContent()}`;
-      expect(chrome).toMatchObject({ title: 'Deploy Compose file, revision 2 to Production website' });
+      expect(chrome).toMatchObject({ title: 'Deploy ccccccc to Production website' });
       expect(screen.getTextContent()).toContain(t('projects.deployments.review.whatTitle'));
       expect(visible).toContain('Reviewed runtime host');
       expect(visible).toContain('reviewed-website');
