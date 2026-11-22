@@ -47,6 +47,7 @@ import { readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapsho
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from '@/session/actions/clientActionReverseDispatch';
+import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
 type SessionActionAuthority = Readonly<{ sessionId: string; isCurrent(): Promise<boolean>; signal?: AbortSignal;
@@ -471,14 +472,18 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       && external.authorization.binding.requestId === operation.requestId
       && sameStrictJsonValue(external.authorization.binding.sessionActionOrigin, sessionActionOrigin)
       ? external.authorization.binding.sessionActionSource : undefined;
-    const outcome = await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.execute',
-      () => executor.execute(operation.actionId, operation.input, {
+    const executionContext: RpcActionExecutorContext = {
       ...context,
       ...(source ? { defaultSessionMachineId: source.machineId } : {}),
       ...(external ? { externalActionExecutionAuthorization: external.authorization, externalActionTarget: external.target } : {}),
-      ...(external?.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: external.verifyMachineAdmissionCurrent } : {}),
+      ...(external?.verifyMachineAdmissionCurrent ? {
+        verifyMachineAdmissionCurrent: external.verifyMachineAdmissionCurrent,
+        sessionActionOrigin: external.authorization.binding.sessionActionOrigin,
+      } : {}),
       ...(external?.originalActionEnvelope ? { originalActionEnvelope: external.originalActionEnvelope } : {}),
-    }));
+    };
+    const outcome = await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.execute',
+      () => executor.execute(operation.actionId, operation.input, executionContext));
     if (!outcome.ok && outcome.errorCode === 'target_unavailable') {
       const scopeFailure = ActionCurrentSessionScopeFailureDetailsV1Schema.safeParse(outcome.details);
       // Only closed Workflow codes/reasons enter the existing diagnostic.

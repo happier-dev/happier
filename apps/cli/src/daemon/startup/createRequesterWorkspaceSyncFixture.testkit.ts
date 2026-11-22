@@ -37,7 +37,7 @@ import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionApprova
 import { ExternalActionMachineRpcExecutionV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema,
   ExternalActionDaemonDispatchRequestSchema, ExternalActionMachineBootstrapV1Schema, parseExternalActionDaemonDispatchResult,
   EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, type ExternalActionRequestEnvelope,
-  type ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
+  type ExternalActionExecutionAuthorizationV1, type ExternalActionExecutionAuthorizationRequestV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/socketRpc';
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
   MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
@@ -54,12 +54,12 @@ import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
-import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext, projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
   doesWorkspaceSyncTargetRequestMatchRouting, readWorkspaceSyncTargetMethod,
   doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting } from '@/api/machine/machineRpcAuthorization';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeStoredCredentials, readStoredCredentialsForServerId, writeStoredCredentialsForServerId } from '@/persistence';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { dispatchOriginalAccountAction, projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
@@ -93,6 +93,8 @@ import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { createDaemonSessionAccountActionExecutor } from '../agentRuntime/createDaemonSessionAccountActionExecutor';
+import { createDaemonSessionAccountActionAuthorizationPreparer } from './createDaemonSessionAccountActionAuthorizationPreparer';
 
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
 export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
@@ -309,13 +311,14 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     requesterRoots.set(wire.token, wire);
     return wire;
   };
-  const createHomeAuthorization = (envelope: ExternalActionRequestEnvelope, token = 'member-sync-root') => {
+  const createHomeAuthorization = (envelope: ExternalActionRequestEnvelope, token = 'member-sync-root', session?:
+    Pick<ExternalActionExecutionAuthorizationRequestV1, 'sessionActionOrigin' | 'sessionActionSource'>) => {
     return adoptHomeAuthorization({ v: 1, token, binding: {
       accountId: 'member-a', custodianAccountId: sourceCustodianAccountId, serverIdentityId: installed.homeServerIdentityId,
       machineId: installed.machineId, installationId: installed.installation.installationId,
       actionId: 'workspace.sync.relationship.create', accountEncryptionMode: accountMode, admittedMachineRole: role,
-      authentication: { kind: 'account', tokenEpoch: 0 }, requestId: envelope.requestId,
-      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target } });
+      authentication: { kind: session ? 'terminal' : 'account', tokenEpoch: 0 }, requestId: envelope.requestId,
+      requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target, ...session } });
   };
   // Authenticated Home forwards the verified source root beside its physical
   // receiving admission. Keep that network projection, including its signature.
@@ -519,8 +522,23 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       if (options.originalActionHomeHttp && (artifactPath === '/v1/actions/workspace.sync.relationship.create/execution-authorization'
         || artifactPath === '/v1/actions/workspace.sync.relationship.create')) {
         const request = ExternalActionExecutionAuthorizationRequestV1Schema.parse(body);
-        if (artifactPath.endsWith('/execution-authorization')) return { status: 200,
-          data: createHomeAuthorization(request.envelope, `member-sync-root-${request.envelope.requestId}`) };
+        if (artifactPath.endsWith('/execution-authorization')) {
+          const { sessionActionOrigin, sessionActionSource, installationProof } = request;
+          const session = sessionActionOrigin && sessionActionSource ? { sessionActionOrigin, sessionActionSource } : undefined;
+          if (session) {
+            const valid = request.machineId === installed.machineId && session.sessionActionSource.machineId === installed.machineId
+              && session.sessionActionSource.installationId === installed.installation.installationId
+              && session.sessionActionOrigin.caller.kind === 'session' && session.sessionActionOrigin.caller.sessionId === agentSessionId
+              && installationProof !== undefined
+              && verifyMachineInstallationProof({ publicKey: installed.installation.publicKey, proof: installationProof,
+                payload: { version: 1, machineId: installed.machineId, installationId: installed.installation.installationId,
+                  accountId: sourceCustodianAccountId, externalActionOrigin: { homeId: installed.homeServerIdentityId,
+                    actionId: 'workspace.sync.relationship.create', requestId: request.envelope.requestId,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope), origin: session.sessionActionOrigin } } });
+            if (!valid) return { status: 403, data: { error: 'access_denied' } };
+          }
+          return { status: 200, data: createHomeAuthorization(request.envelope, `member-sync-root-${request.envelope.requestId}`, session) };
+        }
         const dispatch = ExternalActionDaemonDispatchRequestSchema.parse({ actionId: 'workspace.sync.relationship.create',
           envelope: request.envelope, executionAuthorization: request.executionAuthorization,
           principal: { accountId: 'member-a', authentication: { kind: 'account', tokenEpoch: 0 },
@@ -860,7 +878,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     installed.machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No Session spawn expected'); },
       stopSession: async () => true, requestShutdown() {} }, { externalActionIngressOwner: ingressOwner });
     registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: diagnosticRegistrarFor(installed.rpcHandlerManager), service: fixture.parent.workspaceSync });
-    return { prepareRequesterAccountContext };
+    return { prepareRequesterAccountContext, createExecutor, resolveOrigin };
   };
   let actionIngress: ReturnType<typeof initializeActionIngress> | undefined;
   const prepareActionIngress = () => actionIngress ??= initializeActionIngress();
@@ -898,47 +916,39 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     const { executor, context } = await prepareExecutorContext(invocation);
     return executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
   };
-  // An Agent's Action in a Session: Home mints a Session-origin root and the
-  // Session host projects it through the real issuer projection, which attaches
-  // requester transport custody only. The person's decision keeps the ingress.
-  const askAsSessionAgent = async (invocation: PreparedInvocation, context: Awaited<ReturnType<typeof prepareExecutorContext>>['context']) => {
-    const sessionActionOrigin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: agentSessionId, starterDepth: 0, turnDepth: 0 },
-      sourceTurnId: 'agent-turn', callerPermissionMode: 'default' as const, requestId: invocation.request.operationId };
-    // Home mints a Session root; it carries no sealed ingress requester box.
-    const { requesterAccountContext: _ingressBox, ...homeRoot } = invocation.authorization;
-    const wire = adoptHomeAuthorization({ ...homeRoot, token: 'member-sync-session-root',
-      binding: { ...invocation.authorization.binding, sessionActionOrigin,
-        sessionActionSource: { machineId: installed.machineId, installationId: installed.installation.installationId } } });
-    const root = await projectRequesterAccountActionAuthorization({ authorization: wire, serverIdentityId: installed.homeServerIdentityId,
-      bootstrap: { credentials, serverHttpBaseUrl: installed.serverHttpBaseUrl, isCurrent: async () => installed.isHomeCurrent(),
-        getBoundSessionId: () => agentSessionId,
-        attribution: { serverId: installed.serverId, accountId: wire.binding.accountId, machineId: installed.machineId,
-          installationId: installed.installation.installationId } } });
-    if (!root) throw new Error('Session issuer projection refused');
-    // A running daemon loaded its installed Account's Settings at startup; approval
-    // replay reads the Agent spawn policy the asking Session was admitted under from them.
+  const askAsSessionAgent = async (request: WorkspaceSyncRelationshipCreateRpcRequestV1) => {
+    const { createExecutor, resolveOrigin } = await prepareActionIngress();
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: sourceCustodianAccountId, tokenEpoch: 0,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
+    await writeStoredCredentialsForServerId(installed.serverId, { ...installed.bootstrap.credentials, token });
+    const sessionCredentials = await readStoredCredentialsForServerId(installed.serverId);
+    if (!sessionCredentials) throw new Error('Expected the installed Session Account sign-in');
     await runWithServerHttpBaseUrl(installed.serverHttpBaseUrl, () => bootstrapAccountSettingsContext({
-      credentials: installed.bootstrap.credentials, mode: 'blocking' }));
-    return { ...context, externalActionExecutionAuthorization: root, callerInputAuthorization: root,
-      authority: 'account_automation' as const, surface: 'agent' as const, actionCaller: sessionActionOrigin.caller,
-      defaultSessionId: agentSessionId, approvalProfileId: null, approvalProfileTeamOrGroupDerived: false,
-      callerPermissionMode: sessionActionOrigin.callerPermissionMode, causalPermissionAuthority: null,
-      sessionInputSource: { sourceSessionId: agentSessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' as const },
-      signExternalActionApprovalInput: (({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
-        signExternalActionApprovalInputV1({ authorizationToken: root.token, actionId, input, target,
-          privateKey: installed.installation.privateKey, ...(requesterConfirmation ? { requesterConfirmation } : {}),
-          ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) })) satisfies NonNullable<import('@happier-dev/protocol').ActionExecutorContext['signExternalActionApprovalInput']> };
+      credentials: sessionCredentials, mode: 'blocking' }));
+    const isCurrent = async () => installed.isHomeCurrent();
+    const execute = createDaemonSessionAccountActionExecutor({ machineId: installed.machineId, serverId: installed.serverId,
+      serverHttpBaseUrl: installed.serverHttpBaseUrl, token: sessionCredentials.token, credentials: sessionCredentials,
+      readAccountEncryptionMode: async () => accountMode,
+      createExecutor: (getCurrentTurnWorkDepth, isCallerCurrent) => createExecutor(sessionCredentials, getCurrentTurnWorkDepth, isCallerCurrent),
+      prepareExternalActionAuthorization: createDaemonSessionAccountActionAuthorizationPreparer({ credentials: sessionCredentials,
+        requesterRuntime: null, serverHttpBaseUrl: installed.serverHttpBaseUrl, serverId: installed.serverId, machineId: installed.machineId,
+        externalActionAccountId: sourceCustodianAccountId, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+        isSessionCallerCurrent: async ({ caller }) => caller.sessionId === agentSessionId,
+        isRuntimeCurrent: () => installed.isHomeCurrent(), readTrackedSessionAttribution: () => undefined }),
+    });
+    return execute({ kind: 'action.execute', actionId: 'workspace.sync.relationship.create', input: request.actionInput,
+      requestId: request.operationId, surface: 'agent', witness: { turnId: 'agent-turn', inputId: 'agent-input',
+        userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0, callerPermissionMode: 'default',
+        agentStartCaller: { kind: 'session', sessionId: agentSessionId, starterDepth: 0, turnDepth: 0 } } },
+    { sessionId: agentSessionId, isCurrent });
   };
-  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization },
-    options?: Readonly<{ askedBy?: 'session_agent'; beforeDecision?: (artifactId: string) => Promise<void> }>) => {
+  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization }) => {
     const { executor, context } = await prepareExecutorContext(invocation);
-    const asked = options?.askedBy === 'session_agent' ? await askAsSessionAgent(invocation, context) : context;
     const result = await executor.execute('workspace.sync.relationship.create', invocation.request.actionInput,
-      { ...asked, actionRequestId: invocation.request.operationId });
+      { ...context, actionRequestId: invocation.request.operationId });
     if (result.ok && result.result && typeof result.result === 'object' && 'kind' in result.result
       && result.result.kind === 'approval_request_created' && 'artifactId' in result.result
       && typeof result.result.artifactId === 'string') {
-      await options?.beforeDecision?.(result.result.artifactId);
       const decision = await executor.execute('approval.request.decide', { artifactId: result.result.artifactId, decision: 'approve' }, context);
       if (decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result) {
         return ApprovalExecutionV2Schema.parse(decision.result.execution);
@@ -977,7 +987,7 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       registerMachineWorkspaceSyncRpcHandlers({ rpcHandlerManager: targetRpc, service: fixture.targetParent.workspaceSync });
     },
     sourcePath, targetPath, sourceRef: fixture.sourceRef, targetRef,
-    request, account, authorization, credentials, wire, envelope, prepareInvocation, prepareActionIngress, executeRelationshipAction, executeNativeRelationshipAction, executeApprovalDecision, homeActionRequests, adoptHomeAuthorization, rpc, targetRpc, targetMachine, targetInstallation, targetResource, sourceResource, sourceResourceMode, accountMode,
+    request, account, authorization, credentials, wire, envelope, prepareInvocation, prepareActionIngress, askAsSessionAgent, executeRelationshipAction, executeNativeRelationshipAction, executeApprovalDecision, homeActionRequests, adoptHomeAuthorization, rpc, targetRpc, targetMachine, targetInstallation, targetResource, sourceResource, sourceResourceMode, accountMode,
     memberReads: () => memberReads, requesterProjectionReads: () => requesterProjectionReads, requesterRowRequests, requesterMachineAuthorityReads, requesterAdmissionReads, rpcDiagnostics, targetRpcDiagnostics, approvalArtifacts,
     targetAccountRows, targetAccountRowRequests, seedRequests, authorizeSourceRequest };
 }

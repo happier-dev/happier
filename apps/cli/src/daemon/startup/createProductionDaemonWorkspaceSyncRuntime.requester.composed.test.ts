@@ -1234,6 +1234,7 @@ it.skipIf(process.platform !== 'linux')('reads requester rows at the SOURCE pref
 it.skipIf(process.platform !== 'linux').each([
   { asker: 'session_agent', target: 'unchanged', worker: 'member-a' },
   { asker: 'session_agent', target: 'changed', worker: 'member-a' },
+  { asker: 'session_agent', target: 'awaiting approval', worker: 'requester' },
   { asker: 'person', target: 'unchanged', worker: 'requester' },
 ] as const)('asks a worker clean copy with the destination inspection in its approval ($asker, $worker Worker, target $target before approval)', async ({ asker, target, worker }) => {
   executionBoundary.member = false;
@@ -1242,40 +1243,42 @@ it.skipIf(process.platform !== 'linux').each([
   // As live: the Worker folder does not exist yet.
   await rm(setup.targetPath, { recursive: true });
   const requesterReadsBeforeAsk = setup.requesterProjectionReads();
-  let asked: unknown;
-  const beforeDecision = async (artifactId: string) => {
-    // The Agent's ask reads no requester rows; the person's ingress does.
-    if (asker === 'session_agent') expect(setup.requesterProjectionReads()).toBe(requesterReadsBeforeAsk);
-    const stored = decodePlainArtifactStoredContent(String(setup.approvalArtifacts.get(artifactId)?.body));
-    asked = ApprovalRequestV2Schema.parse(JSON.parse(String((stored as { body?: unknown } | null)?.body)));
-    if (target === 'changed') {
-      await mkdir(setup.targetPath, { recursive: true });
-      await writeFile(join(setup.targetPath, 'worker-local.txt'), 'appeared after the ask');
-    }
-  };
   const askAsPerson = async () => {
     // The person's own request through the Home-signed API host, as in the API-host test.
     await setup.prepareActionIngress();
-    const ask = await dispatchOriginalAccountAction({ actionId: 'workspace.sync.relationship.create',
+    return dispatchOriginalAccountAction({ actionId: 'workspace.sync.relationship.create',
       input: setup.request.actionInput, requestId: setup.request.operationId, target: setup.envelope.target,
       credentials: setup.credentials, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
       serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
       invocation: { surface: 'api', authority: 'present_user', caller: { kind: 'host' } },
       onRequesterSessionCredentialDisclosure: () => true });
-    if (!ask.ok || !ask.result || typeof ask.result !== 'object' || !('artifactId' in ask.result)
-      || typeof ask.result.artifactId !== 'string') return ask;
-    await beforeDecision(ask.result.artifactId);
-    const decision = await setup.executeApprovalDecision(ask.result.artifactId, {
-      request: setup.request, envelope: setup.envelope, authorization: setup.authorization });
-    return decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result
-      ? decision.result.execution : decision;
   };
-  const result = asker === 'person' ? await askAsPerson()
-    : await setup.executeRelationshipAction(undefined, { askedBy: asker, beforeDecision });
-  expect(asked, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics })).toMatchObject({
+  const ask = asker === 'person' ? await askAsPerson() : await setup.askAsSessionAgent(setup.request);
+  if (!ask.ok || !ask.result || typeof ask.result !== 'object' || !('artifactId' in ask.result)
+    || typeof ask.result.artifactId !== 'string') {
+    throw new Error(`Expected the Worker copy approval: ${JSON.stringify({ ask, diagnostics: setup.targetRpcDiagnostics })}`);
+  }
+  if (asker === 'session_agent') expect(setup.requesterProjectionReads()).toBe(requesterReadsBeforeAsk);
+  const artifactId = ask.result.artifactId;
+  const stored = decodePlainArtifactStoredContent(String(setup.approvalArtifacts.get(artifactId)?.body));
+  const asked = ApprovalRequestV2Schema.parse(JSON.parse(String((stored as { body?: unknown } | null)?.body)));
+  expect(asked).toMatchObject({
     actionId: 'workspace.sync.relationship.create', handoffTargetReplacementApproval: {
       consequences: ['delete_target_only_files_during_exact_mirror'], machineId: setup.request.actionInput.targetMachineId,
       operationId: setup.request.operationId } });
+  expect(setup.approvalArtifacts.size).toBe(1);
+  if (target === 'awaiting approval') {
+    await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    return;
+  }
+  if (target === 'changed') {
+    await mkdir(setup.targetPath, { recursive: true });
+    await writeFile(join(setup.targetPath, 'worker-local.txt'), 'appeared after the ask');
+  }
+  const decision = await setup.executeApprovalDecision(artifactId, {
+    request: setup.request, envelope: setup.envelope, authorization: setup.authorization });
+  const result = decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result
+    ? decision.result.execution : decision;
   if (target === 'unchanged') {
     expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics })).toMatchObject({ ok: true, result: { created: true } });
     expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
@@ -1283,7 +1286,6 @@ it.skipIf(process.platform !== 'linux').each([
     expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics })).toMatchObject({ ok: false, errorCode: 'approval_stale' });
     expect(await readdir(setup.targetPath)).toEqual(['worker-local.txt']);
   }
-  expect(setup.approvalArtifacts.size).toBe(1);
 });
 
 it.skipIf(process.platform !== 'linux')('reports a Home refusal before a Session can ask to link a worker copy', async () => {
@@ -1311,9 +1313,9 @@ it.skipIf(process.platform !== 'linux')('reports a Home refusal before a Session
   });
 
   const requestId = 'b6a04b9a-f5a7-4d42-8e6d-2e99953186a0';
-  const invocation = await setup.prepareInvocation({ ...setup.request, operationId: requestId });
-  const result = await setup.executeRelationshipAction(invocation, { askedBy: 'session_agent' });
-  expect(refused).toHaveBeenCalledExactlyOnceWith(requestId);
+  const result = await setup.askAsSessionAgent({ ...setup.request, operationId: requestId,
+    actionInput: { ...setup.request.actionInput, mode: 'keep_synced' } });
+  expect(refused, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics })).toHaveBeenCalledExactlyOnceWith(requestId);
   expect(setup.approvalArtifacts.size).toBe(0);
   await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
   const failureCause = { phase: 'workspace_sync.target_preflight.home_admission', errorCode: 'peer_unavailable',
