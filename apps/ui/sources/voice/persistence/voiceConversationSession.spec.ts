@@ -53,6 +53,7 @@ import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fi
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { forgetDaemonProjectionSectionStore } from '@/sync/ops/machineProjectionSectionStore';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { storage } from '@/sync/domains/state/storage';
@@ -696,6 +697,7 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
   });
 
   it.each(['session', 'codex', 'external'] as const)('reads only Agent projection bodies for a %s Voice carrier while preserving native-auth creation', async selection => {
+    await forgetDaemonProjectionSectionStore({ serverId: homeId, accountId: 'account-1' });
     const externalIdentity = { pluginId: 'acme.voice', localId: 'agent' };
     if (selection !== 'session') {
       const agent = state.settings.voice.providers.local_conversation.config.agent;
@@ -910,25 +912,30 @@ describe('ensureVoiceConversationSessionForVoiceHome', () => {
     }
   });
 
-  it.each(['profile', 'group', 'native', 'default'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
+  it.each(['profile', 'group', 'native', 'default', 'stale'] as const)('uses the persisted Local Voice %s selection for a fresh Home carrier', async selection => {
     const agent = state.settings.voice.providers.local_conversation.config.agent;
     agent.agentSource = 'agent';
     agent.agentId = 'codex';
     if (selection !== 'default') agent.connectedServices = selection === 'native' ? null : { v: 2, bindingsByServiceId: {
-      'happier.agent.codex/openai-codex': selection === 'profile'
-        ? { source: 'connected', selection, profileId: 'voice-account' }
-        : { source: 'connected', selection, groupId: 'voice-pool' },
+      ...(selection === 'stale' ? {
+        'happier.agent.claude/claude-subscription': { source: 'team_resource', resourceId: 'outgoing-account', deliveryMode: 'brokered' },
+      } : {
+        'happier.agent.codex/openai-codex': selection === 'profile'
+          ? { source: 'connected', selection, profileId: 'voice-account' }
+          : { source: 'connected', selection, groupId: 'voice-pool' },
+      }),
     } };
     purposeBindings = { v: 1, bindings: [{ purpose: {
       consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary',
     }, target: { kind: 'group', service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, groupId: 'account-default-pool' } }] };
     const { ensureVoiceConversationSessionForVoiceHome } = await loadConversationSession();
     await expect(ensureVoiceConversationSessionForVoiceHome()).resolves.toBe('voice-home-session');
-    const expected = selection === 'default' ? { v: 2, bindingsByServiceId: {
+    const usesDefault = selection === 'default' || selection === 'stale';
+    const expected = usesDefault ? { v: 2, bindingsByServiceId: {
       'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'account-default-pool' },
     } } : agent.connectedServices ?? { v: 2, bindingsByServiceId: {} };
     expect(spawnRequests).toHaveBeenCalledWith(expect.objectContaining({ connectedServices: expected }));
-    expect(purposeCatalogReads).toBe(selection === 'default' ? 1 : 0);
+    expect(purposeCatalogReads).toBe(usesDefault ? 1 : 0);
   });
 
   it.each(['brokered', 'vendor-native'] as const)('carries the configured exact Team model into a fresh Home carrier (%s)', async deliveryMode => {

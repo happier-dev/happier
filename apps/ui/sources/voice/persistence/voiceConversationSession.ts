@@ -25,13 +25,12 @@ import {
 } from '@happier-dev/agents';
 
 import { projectVoiceDefaultAgentSelection } from '@/voice/agent/projectVoiceAgentSelection';
-import { resolveBackendTargetOperationalAgentId, resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
-import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import { createAbortRacer } from '@/voice/agent/voiceAgentAbort';
 import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
-import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
+import { resolveVoiceConfiguredAgentTarget, resolveVoiceExecutionAgentCatalogEntry } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -318,26 +317,18 @@ async function resolveVoiceConversationDefaultBindings(params: Readonly<{
     signal?: AbortSignal;
 }>): Promise<ConnectedServiceBindingsV2 | undefined> {
     const configuredAgent = readLocalConversationVoiceSettings(readCanonicalVoiceSettingsFromState(storage.getState())).agent;
-    const configuredBindings = projectVoiceAgentConnectedServices(configuredAgent);
-    if (configuredBindings !== undefined) return configuredBindings;
-    const projection = await loadDaemonMergedProjectionInputs({ machineId: params.machineId,
-        serverId: params.accountLifetime.scope.serverId, signal: params.signal,
-        sections: ['agentsById', 'installedPackagesById'] });
+    const explicitBindings = projectVoiceAgentConnectedServices(configuredAgent);
+    if (explicitBindings && Object.keys(explicitBindings.bindingsByServiceId).length === 0) return explicitBindings;
+    const resolved = await resolveVoiceExecutionAgentCatalogEntry({ backendTarget: params.backendTarget, machineId: params.machineId,
+        serverId: params.accountLifetime.scope.serverId, signal: params.signal });
     assertVoiceConversationAccountCurrent(params.accountLifetime);
-    const operationalTarget = resolveOperationalBackendTargetForAgentSelection({
-        backendTarget: params.backendTarget,
-        mergedProviderProjectionById: projection?.mergedProviderProjectionById,
-    });
-    if (!operationalTarget) {
+    if (!resolved) {
         throw Object.assign(new Error('voice_agent_selection_unavailable'), { code: 'VOICE_AGENT_SELECTION_UNAVAILABLE' });
     }
-    const agentId = projection?.mergedBackendProjectionById[operationalTarget.backendId]?.agentId
-        ?? operationalTarget.backendId;
-    const agent = resolveAgentCatalogProjection(agentId, {
-        enabledAgentIds: [],
-        mergedProviderProjectionById: projection?.mergedProviderProjectionById,
-        mergedBackendProjectionById: projection?.mergedBackendProjectionById,
-    });
+    const { agentId, entry: agent } = resolved;
+    const configuredBindings = projectVoiceAgentConnectedServices(configuredAgent,
+        agent.identity ? agent.connectedAccounts : undefined);
+    if (configuredBindings !== undefined) return configuredBindings;
     if (!agent.identity || agent.connectedAccounts.length === 0) return undefined;
     const account = await captureLazyActionAccountContext(params.accountLifetime.scope.serverId, params.signal);
     try {

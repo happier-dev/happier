@@ -52,6 +52,11 @@ does not select a coding Agent.
 
 ## Local Voice Agent functions (0.3 development)
 
+Voice keeps one fixed Agent selection. Switching targets clears its explicit
+model and Connected Account choices. Start and carrier creation project
+older saved bindings against the destination Agent's declared services before
+execution. The persisted settings shape stays the same.
+
 Legacy Voice Chat imports use the shared resolved Agent catalog for selection.
 The existing Provider model picker admission decides whether both imported
 models can be used with that exact Agent target. Voice preserves the selected

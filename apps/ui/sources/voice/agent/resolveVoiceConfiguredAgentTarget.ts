@@ -1,5 +1,7 @@
 import { getEnabledAgentIds } from '@/agents/catalog/enabled';
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries, resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
+import type { PersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -17,6 +19,31 @@ import {
 
 export { VOICE_AGENT_SELECTION_UNAVAILABLE_ERROR_CODE } from './projectVoiceConfiguredAgentTarget';
 export type { VoiceConfiguredAgentSelection, ResolvedVoiceConfiguredAgentTarget } from './projectVoiceConfiguredAgentTarget';
+
+/** Catalog declarations for the selected carrier, shared by Voice Session creation and Run startup. */
+export async function resolveVoiceExecutionAgentCatalogEntry(params: Readonly<{
+    backendTarget: PersistedBackendTargetRefV2;
+    machineId: string | null | undefined;
+    serverId: string;
+    signal?: AbortSignal;
+}>) {
+    const projection = await loadDaemonMergedProjectionInputs({
+        machineId: params.machineId, serverId: params.serverId, signal: params.signal,
+        sections: ['agentsById', 'installedPackagesById'],
+    });
+    const operationalTarget = resolveOperationalBackendTargetForAgentSelection({
+        backendTarget: params.backendTarget, mergedProviderProjectionById: projection?.mergedProviderProjectionById,
+    });
+    if (!operationalTarget) return null;
+    const agentId = projection?.mergedBackendProjectionById[operationalTarget.backendId]?.agentId
+        ?? operationalTarget.backendId;
+    const entry = resolveAgentCatalogProjection(agentId, {
+        enabledAgentIds: [],
+        mergedProviderProjectionById: projection?.mergedProviderProjectionById,
+        mergedBackendProjectionById: projection?.mergedBackendProjectionById,
+    });
+    return { agentId, entry };
+}
 
 /**
  * The ONE resolver that turns the user's configured Voice Agent selection into

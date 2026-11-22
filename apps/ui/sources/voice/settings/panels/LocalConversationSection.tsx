@@ -63,7 +63,7 @@ import { VoiceGlobalConnectedServicesBindingField } from '@/voice/settings/panel
 import { VoiceAgentModelPicker } from '@/voice/settings/panels/VoiceAgentModelPicker';
 import { isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/connectedServices/qualifiedConnectedAccountServiceOptions';
-import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
+import { projectVoiceAgentConnectedServices, VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { presentActionApproval } from '@/components/approvals/actionApprovalPresentation';
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -216,6 +216,9 @@ export function LocalConversationSection(props: {
   const connectedServiceIds = React.useMemo(() => resolveProjectedConnectedAccountServiceKeys(
     selectedAgentEntry?.connectedAccounts ?? [],
   ), [selectedAgentEntry]);
+  const projectedBindings = React.useMemo(() => cfg.agent.connectedServices
+    ? projectVoiceAgentConnectedServices({ connectedServices: cfg.agent.connectedServices }, selectedAgentEntry?.connectedAccounts)
+    : undefined, [cfg.agent.connectedServices, selectedAgentEntry]);
   const selectedAgentIdLabel = React.useMemo(() => {
     const raw = String(cfg.agent.agentId ?? '').trim();
     if (!raw) return t('settingsVoice.local.notSet');
@@ -260,7 +263,7 @@ export function LocalConversationSection(props: {
   const modelProbeContext = selectedAgentTarget?.ok ? resolveNewSessionModelCapabilityProbeContext({
     backendTarget: selectedAgentTarget.backendTarget, runtimeCarrierAgentId: selectedAgentIdForModelOptions,
     machineId: preflightMachineId, accountScope: voiceSettingsScope, settings: agentRuntimeSettings,
-    connectedServices: cfg.agent.connectedServices?.v === 2 ? cfg.agent.connectedServices : null,
+    connectedServices: projectedBindings ?? null,
   }) : null;
   const preflightModels = useNewSessionPreflightModelsState({
     // This settings page has no admitted Session target. The session source is

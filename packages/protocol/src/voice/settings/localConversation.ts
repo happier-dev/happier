@@ -2,9 +2,10 @@ import * as zMini from '../../zodRuntimePolicy.js';
 import { DEFAULT_AGENT_ID } from '../../agents/defaultAgent.js';
 import { AGENT_PERMISSION_INTENTS_V1 as PERMISSION_INTENTS, parseAgentPermissionIntentV1Alias as parsePermissionIntentAlias } from '../../runtime/permissionIntentV1.js';
 import { BackendTargetKeyV2Schema } from '../../backends/targets/backendTargetRefV2.js';
-import { PluginContributionIdentityV1Schema } from '../../plugins/contributionIdentity.js';
+import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../../plugins/contributionIdentity.js';
 import { ProviderBoundModelRefSchema } from '../../providers/selection/v1.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
+import { readAgentConnectedAccountServiceKeysV1 } from '../../teams/credentials/teamCredentialModelCatalogV1.js';
 import { ProviderConnectionIdSchema } from '../../providers/ids.js';
 import { ConnectedServiceBindingsV2Schema, type ConnectedServiceBindingsV2 } from '../../connect/connectedServiceBindings.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -145,8 +146,18 @@ export type VoiceLocalConversationSettings = z.infer<typeof VoiceLocalConversati
 /** An explicit native choice must suppress Account defaults at daemon launch. */
 export function projectVoiceAgentConnectedServices(
   agent: Pick<VoiceLocalConversationSettings['agent'], 'connectedServices'>,
+  connectedAccounts?: readonly Readonly<{ service: PluginContributionIdentityV1 }>[],
 ): ConnectedServiceBindingsV2 | undefined {
-  return agent.connectedServices === null ? { v: 2, bindingsByServiceId: {} } : agent.connectedServices;
+  const bindings = agent.connectedServices;
+  if (bindings === null) return { v: 2, bindingsByServiceId: {} };
+  if (!bindings || !connectedAccounts) return bindings;
+  const entries = Object.entries(bindings.bindingsByServiceId);
+  if (entries.length === 0) return bindings;
+  const declared = new Set<string>(readAgentConnectedAccountServiceKeysV1(connectedAccounts));
+  const applicable = entries.filter(([serviceId]) => declared.has(serviceId));
+  if (applicable.length === entries.length) return bindings;
+  // A stale-only map cannot stand in for an explicit native sign-in choice.
+  return applicable.length ? { v: 2, bindingsByServiceId: Object.fromEntries(applicable) } : undefined;
 }
 
 export function stripLegacyLocalConversationOwnership(

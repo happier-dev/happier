@@ -114,14 +114,14 @@ const registryDescribe = vi.hoisted(() => vi.fn<
   typeof import('@/sync/ops/machineContributionRegistryProjection').machineContributionRegistryProjectionDescribe
 >());
 
-function serveBundledCodexAgent() {
+function serveBundledVoiceAgents(agentIds: readonly ('claude' | 'codex')[] = ['codex']) {
   registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
-    v: 2, generation: 7, familiesById: {}, agentsById: {
-      codex: {
-        id: 'codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, title: 'Codex',
+    v: 2, generation: 7, familiesById: {}, agentsById: Object.fromEntries(agentIds.map(id => [
+      id, {
+        id, identity: { pluginId: `happier.agent.${id}`, localId: id }, title: id === 'codex' ? 'Codex' : 'Claude',
         capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, functionTools: true } },
       },
-    },
+    ])),
   }) });
 }
 
@@ -419,7 +419,7 @@ async function loadLocalConversationSection() {
 
 describe('LocalConversationSection', () => {
   it('uses the shared Session model picker and keeps an exact Provider choice when its model id matches a native model', async () => {
-    serveBundledCodexAgent();
+    serveBundledVoiceAgents();
     const LocalConversationSection = await loadLocalConversationSection();
     const { SessionModelPicker } = await import('@/components/sessions/modelPicker/SessionModelPicker');
     const setVoice = vi.fn();
@@ -880,8 +880,43 @@ describe('LocalConversationSection', () => {
     })).resolves.toMatchObject({ ok: false, errorCode: 'voice_agent_selection_unavailable' });
   });
 
+  it('switches Voice Agents without taking the outgoing Team model or connected account along', async () => {
+    serveBundledVoiceAgents(['claude', 'codex']);
+    const LocalConversationSection = await loadLocalConversationSection();
+    const setVoice = vi.fn();
+    const modelId = 'muse-spark-1.3-contributor';
+    const voice = createLocalConversationVoice({ conversationMode: 'agent', agent: {
+      agentSource: 'agent', agentId: 'codex', agentTargetKey: 'agent:happier.agent.codex/codex',
+      chatModelSource: 'custom', chatModelId: modelId,
+      chatModelSelection: { kind: 'team_credential_provider_model', teamId: 'voice-team', resourceId: 'voice-model',
+        agentTargetKey: 'agent:happier.agent.codex/codex', deliveryMode: 'brokered', expectedResourceRevision: 3, modelId },
+      connectedServices: { v: 2, bindingsByServiceId: {
+        'happier.agent.codex/openai-codex': { source: 'team_resource', resourceId: 'voice-account', deliveryMode: 'brokered' },
+      } },
+    } });
+    const render = (current: VoiceSettings) => <LocalConversationSection voice={current} setVoice={setVoice} />;
+    const screen = await renderSettingsView(render(voice));
+    const title = t('settingsVoice.pages.conversations.agentTitle');
+    await waitForTestEvent(screen.subscribe, () => {
+      const items: DropdownMenuItem[] = findDropdownByItemTriggerTitle(screen, title)?.props.items ?? [];
+      return ['agent:happier.agent.claude/claude', 'agent:happier.agent.codex/codex']
+        .every(key => items.some(item => item.id === key));
+    }, available => available === true);
+    await selectDropdownOption(screen, title, 'dropdown-option-agent_happier_agent_claude_claude');
+    const switched = setVoice.mock.lastCall![0] as VoiceSettings;
+    const claude = readLocalConversationVoiceSettings(switched).agent;
+    expect(claude).toMatchObject({ agentId: 'claude', chatModelId: 'default', chatModelSelection: null });
+    expect(claude.connectedServices).toBeUndefined();
+
+    await screen.update(render(switched));
+    await selectDropdownOption(screen, title, 'dropdown-option-agent_happier_agent_codex_codex');
+    const codex = readLocalConversationVoiceSettings(setVoice.mock.lastCall![0]).agent;
+    expect(codex).toMatchObject({ agentId: 'codex', chatModelId: 'default', chatModelSelection: null });
+    expect(codex.connectedServices).toBeUndefined();
+  });
+
   it('persists the exact backend target key of a bundled Agent selection', async () => {
-    serveBundledCodexAgent();
+    serveBundledVoiceAgents();
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
@@ -1300,7 +1335,7 @@ describe('LocalConversationSection', () => {
   });
 
   it('renders the fixed Agent dropdown when agentSource=agent', async () => {
-    serveBundledCodexAgent();
+    serveBundledVoiceAgents();
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({

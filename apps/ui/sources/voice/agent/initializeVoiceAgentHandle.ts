@@ -70,7 +70,7 @@ import { resolveVoiceSessionModelSelection } from '@/voice/agent/resolveVoiceSes
 import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
 import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
+import { resolveVoiceConfiguredAgentTarget, resolveVoiceExecutionAgentCatalogEntry } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { projectVoiceAgentConnectedServices } from '@happier-dev/protocol/voice/settings/localConversation';
@@ -572,8 +572,19 @@ export async function initializeVoiceAgentHandle({
             || isVoiceConversationSystemSessionMetadata(sessionOwnerMetadata))
             ? resolveVoiceSessionConnectedServices(sessionOwnerMetadata, resolvedBackendTarget)
             : undefined;
-        if (agentSource === 'agent') {
-            connectedServices = projectVoiceAgentConnectedServices(agentCfg) ?? connectedServices;
+        if (agentSource === 'agent' && operationalTarget) {
+            const bindings = agentCfg.connectedServices === undefined ? connectedServices : agentCfg.connectedServices;
+            let connectedAccounts;
+            if (bindings && Object.keys(bindings.bindingsByServiceId).length > 0) {
+                const catalog = await resolveVoiceExecutionAgentCatalogEntry({
+                    backendTarget: operationalTarget,
+                    machineId: readVoiceSessionOwnerMetadataFromState(storage.getState(), nextRpcSessionId)?.machineId,
+                    serverId: accountLifetime.scope.serverId, signal,
+                });
+                assertAccountCurrent();
+                connectedAccounts = catalog?.entry.identity ? catalog.entry.connectedAccounts : undefined;
+            }
+            connectedServices = projectVoiceAgentConnectedServices({ connectedServices: bindings }, connectedAccounts);
         }
         if (agentSource === 'session' && resolvedAgentId && operationalTarget && targetAddress
             && targetAddress.sessionId !== nextRpcSessionId
