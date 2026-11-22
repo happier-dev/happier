@@ -6,7 +6,7 @@ import { defineEntityFilterFieldV1, defineEntityFilterUnknownFieldsV1, type Enti
 import { createPluginListFilterFieldRegistryV1, type AdmittedPluginListFilterFieldV1, type PluginListFilterFactsV1 } from '../../collections/filter/pluginListFilterFieldV1.js';
 import { createEntityFilterConditionCodecV1 } from '../../collections/filter/fieldConditionsV1.js';
 
-export const WorkflowListFilterViewV1Schema = lazyZodSchema(() => z.enum(['all', 'triggered', 'running']));
+export const WorkflowListFilterViewV1Schema = lazyZodSchema(() => z.enum(['all', 'triggered', 'running', 'hunts']));
 export const WorkflowListFilterV1Schema = lazyZodSchema(() => z.strictObject({
     view: WorkflowListFilterViewV1Schema,
     extensions: z.optional(z.record(z.string(), ExtensionSelectionV1Schema)),
@@ -16,9 +16,9 @@ export const WorkflowListFilterPatchV1Schema = lazyZodSchema(() => z.partial(Wor
 export const WorkflowListFilterV1StoredSchema = lazyZodSchema(() => createEntityListFilterStoredReadSchemaV1(WorkflowListFilterV1Schema));
 defineStoredReadProjection(WorkflowListFilterV1Schema, () => WorkflowListFilterV1StoredSchema);
 export const DEFAULT_WORKFLOW_LIST_FILTER_V1: WorkflowListFilterV1 = Object.freeze({ view: 'all' });
-export type WorkflowListFilterFactsV1 = PluginListFilterFactsV1 & Readonly<{ triggered?: boolean; running?: boolean }>;
+export type WorkflowListFilterFactsV1 = PluginListFilterFactsV1 & Readonly<{ triggered?: boolean; running?: boolean; hunts?: boolean }>;
 
-const view = defineEntityFilterFieldV1<WorkflowListFilterV1, WorkflowListFilterFactsV1, 'triggered' | 'running'>({
+const view = defineEntityFilterFieldV1<WorkflowListFilterV1, WorkflowListFilterFactsV1, Exclude<WorkflowListFilterV1['view'], 'all'>>({
     id: 'view', kind: 'domain', evaluators: ['list'],
     readSelection: filter => filter.view === 'all' ? undefined : filter.view,
     replaceSelection: (filter, selection) => ({ ...filter, view: selection ?? 'all' }),

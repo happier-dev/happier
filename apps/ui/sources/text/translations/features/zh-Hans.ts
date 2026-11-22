@@ -19657,6 +19657,7 @@ const zhHans: WorkflowsDestinationTranslations = {
     views: {
         all: '全部',
         triggered: '有触发器',
+        hunts: '巡查',
         active: '进行中',
         needsYou: '需要你处理',
         libraryAccessibility: '要显示的工作流',

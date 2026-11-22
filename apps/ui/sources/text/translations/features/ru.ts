@@ -19807,6 +19807,7 @@ const ru: WorkflowsDestinationTranslations = {
     views: {
         all: 'Все',
         triggered: 'С триггером',
+        hunts: 'Поиски',
         active: 'Активные',
         needsYou: 'Ждёт вас',
         libraryAccessibility: 'Какие рабочие процессы показывать',

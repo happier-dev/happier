@@ -19657,6 +19657,7 @@ const zhHant: WorkflowsDestinationTranslations = {
     views: {
         all: '全部',
         triggered: '有觸發條件',
+        hunts: '巡查',
         active: '進行中',
         needsYou: '需要你處理',
         libraryAccessibility: '要顯示的工作流程',

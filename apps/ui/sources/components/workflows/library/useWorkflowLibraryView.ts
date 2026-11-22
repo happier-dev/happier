@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows';
 import { getBuiltinWorkflowCatalogV1, type BuiltinWorkflowCatalogEntryV1 } from '@happier-dev/protocol/workflows/builtins/catalog';
+import { workflowDefinitionPreviewReviewScopesV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 import { hasWorkingWorkflowLibraryRun } from './workflowRunStrip';
 import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from './workflowLibraryReads';
 import { useWorkflowLibrarySummaries, useWorkflowAutomationSummaries, type WorkflowLibraryRunSummary } from './useWorkflowLibrarySummaries';
@@ -32,16 +33,21 @@ export const workflowLibraryRowTitle = (row: WorkflowLibraryRow) => row.group ==
 /** Adapt only facts already admitted by the library and its shared summary owner. */
 export function workflowLibraryRowFilterFacts(row: WorkflowLibraryRow | Readonly<{ key: string; group: 'library' | 'sharedWithYou'; definition: WorkflowLibraryDefinition }>, summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null): WorkflowListFilterFactsV1 {
     // Plugin and built-in workflows carry no Account triggers or library runs.
-    if (row.group === 'fromPlugins' || row.group === 'builtin') return { triggered: false, running: false };
+    if (row.group === 'fromPlugins' || row.group === 'builtin') return { triggered: false, running: false,
+        hunts: workflowDefinitionPreviewReviewScopesV1((row.group === 'builtin' ? row.entry : row.plugin).definition.blocks).includes('repository') };
     if ('accountTrigger' in row) {
         const lastRun = row.lastRunSummary?.lastRun;
         return {
             triggered: row.accountTrigger.triggers.length > 0,
+            ...(row.accountTrigger.target?.kind === 'inline'
+                ? { hunts: workflowDefinitionPreviewReviewScopesV1(row.accountTrigger.target.definition.blocks).includes('repository') } : {}),
             ...(row.lastRunSummary ? { running: hasWorkingWorkflowLibraryRun({ recent: lastRun ? [{ ...lastRun, runId: lastRun.id }] : [] }) } : {}),
         };
     }
     const summary = summaries?.get(row.definition.definitionId);
     return {
+        ...(row.definition.contentStatus === 'available' && row.definition.previewReviewScopes !== undefined
+            ? { hunts: row.definition.previewReviewScopes.includes('repository') } : {}),
         ...(row.definition.contentStatus === 'available' && row.definition.triggerSummaryErrorCode === undefined
             ? { triggered: row.definition.triggers.length > 0 } : {}),
         ...(summary ? { running: hasWorkingWorkflowLibraryRun(summary) } : {}),
@@ -51,12 +57,14 @@ export function workflowLibraryRowFilterFacts(row: WorkflowLibraryRow | Readonly
 function resolveLibraryViews(rows: readonly WorkflowLibraryRow[], summaries: ReadonlyMap<string, WorkflowLibraryRunSummary> | null) {
     let triggered = false;
     let running = false;
+    let hunts = false;
     for (const row of rows) {
         const facts = workflowLibraryRowFilterFacts(row, summaries);
         triggered ||= facts.triggered === true;
         running ||= facts.running === true;
+        hunts ||= facts.hunts === true;
     }
-    return ['all', ...(triggered ? ['triggered' as const] : []), ...(running ? ['running' as const] : [])] satisfies WorkflowLibraryView[];
+    return ['all', ...(triggered ? ['triggered' as const] : []), ...(running ? ['running' as const] : []), ...(hunts ? ['hunts' as const] : [])] satisfies WorkflowLibraryView[];
 }
 
 const ACCOUNT_ALL = { scope: 'account_all' } as const;

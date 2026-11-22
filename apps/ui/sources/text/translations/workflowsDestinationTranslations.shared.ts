@@ -73,6 +73,7 @@ export const en = {
     views: {
         all: 'All',
         triggered: 'Has triggers',
+        hunts: 'Hunts',
         active: 'Active',
         needsYou: 'Needs you',
         libraryAccessibility: 'Which workflows to show',

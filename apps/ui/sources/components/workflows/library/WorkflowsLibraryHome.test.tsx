@@ -434,6 +434,11 @@ describe('workflow library page anatomy', () => {
         expect(workflowLibraryRowFilterFacts({ key: definition.definitionId, group: 'library', definition }, null).triggered).toBeUndefined();
         expect(workflowLibraryRowFilterFacts({ key: definition.definitionId, group: 'library',
             definition: { ...definition, triggerSummaryErrorCode: undefined } }, null).triggered).toBe(false);
+        expect(workflowLibraryRowFilterFacts({ key: definition.definitionId, group: 'library', definition }, null).hunts).toBeUndefined();
+        expect(workflowLibraryRowFilterFacts({ key: definition.definitionId, group: 'library',
+            definition: { ...definition, previewReviewScopes: [] } }, null).hunts).toBe(false);
+        expect(workflowLibraryRowFilterFacts({ key: definition.definitionId, group: 'library',
+            definition: { ...definition, previewReviewScopes: ['repository'] } }, null).hunts).toBe(true);
     });
     it('keeps readable rows and shows unavailable summaries when the selected trigger query fails', async () => {
         windowSize.width = 1440;
@@ -1414,6 +1419,7 @@ describe('workflow library summaries and filter', () => {
                 kind: 'workflow-definition.v1', definitionId, revision: { headerVersion: 1, bodyVersion: 1 },
                 metadata: { title: index === 0 ? 'Release notes' : 'Dependency review' }, ownerAccountId: 'account-a', access: 'owner',
                 contentStatus: 'available', stepCount: 2, nextRunAt: null,
+                previewReviewScopes: index === 0 ? ['repository'] : ['changes'],
                 triggers: index === 0 ? [{ kind: 'schedule', schedule: { kind: 'interval', everyMs: 3_600_000, scheduleExpr: null, timezone: null } }] : [],
             })) } };
             if (actionId === 'workflow.run.summaries') return { ok: true, result: { remainingSourceArtifactIds: [], summaries: ids.map((sourceArtifactId, index) => ({
@@ -1426,16 +1432,24 @@ describe('workflow library summaries and filter', () => {
         const { getBuiltinWorkflowCatalogV1 } = await import('@happier-dev/protocol/workflows/builtins/catalog');
         const builtinIds = getBuiltinWorkflowCatalogV1().map(entry => entry.id);
         await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { offeredViews: ['all', 'triggered', 'running'] } }));
+            result: { offeredViews: ['all', 'triggered', 'running', 'hunts'] } }));
         // Built-ins are filter rows like the others (R8-7); the home has no view pills of its own.
         expect(screen.findAll(node => /^workflows-home:filter:/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { view: 'all', searchQuery: '', offeredViews: ['all', 'triggered', 'running'], visibleKeys: [...ids, ...builtinIds] } });
+            result: { view: 'all', searchQuery: '', offeredViews: ['all', 'triggered', 'running', 'hunts'], visibleKeys: [...ids, ...builtinIds] } });
         const { invokeScopeAction } = await import('@/sync/ops/actions/scopeActionFamily');
         expect(await invokeScopeAction('workflow.library.view.get', {}, { ...context, runtimeAccountId: 'account-b' }))
             .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
         expect(await invokeScopeAction('workflow.library.view.set', { searchQuery: 'foreign' }, { serverId: 'another-home' }))
             .toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
+        await screen.pressByTestIdAsync('workflows-home-space-title');
+        await vi.waitFor(() => expect(screen.findByTestId('workflows-home-space-menu-facet:view:"hunts"')).not.toBeNull());
+        await screen.pressByTestIdAsync('workflows-home-space-menu-facet:view:"hunts"');
+        expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
+            result: { view: 'hunts', visibleKeys: expect.arrayContaining([ids[0], 'builtin:repository-review']) } });
+        expect(screen.findHostByTestId(`workflows-home:row:${ids[0]}`)).not.toBeNull();
+        expect(screen.findHostByTestId(`workflows-home:row:${ids[1]}`)).toBeNull();
+        expect(execute.mock.calls.map(([id]) => id)).not.toContain('workflow.definition.get');
         await act(async () => {
             expect(await action.execute('workflow.library.view.set', { filters: { view: 'triggered' } }, context)).toEqual({ ok: true, result: { ok: true } });
         });
@@ -1472,7 +1486,7 @@ describe('workflow library summaries and filter', () => {
                 .toEqual({ ok: true, result: { ok: true } });
         });
         expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { view: 'running', filters: { view: 'running' }, searchQuery: 'atomic', offeredViews: ['all'], visibleKeys: [] } });
+            result: { view: 'running', filters: { view: 'running' }, searchQuery: 'atomic', offeredViews: ['all', 'hunts'], visibleKeys: [] } });
     });
 
     it('retires Library Actions on retained destination blur and Account lifetime replacement', async () => {
@@ -1542,7 +1556,7 @@ describe('workflow library summaries and filter', () => {
         const context = { surface: 'agent' as const, serverId: storage.getState().profileScope!.serverId };
         // No saved workflow has a trigger, so that view stays away; Running is offered on its own.
         await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { offeredViews: ['all', 'running'] } }));
+            result: { offeredViews: ['all', 'running', 'hunts'] } }));
         await act(async () => { await action.execute('workflow.library.view.set', { filters: { view: 'running' } }, context); });
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000011')).not.toBeNull();
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000012')).toBeNull();
@@ -1627,7 +1641,7 @@ describe('workflow library summaries and filter', () => {
             await act(async () => { await action.execute('workflow.library.view.set', { filters: { view } }, context); });
         };
         await vi.waitFor(async () => expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true,
-            result: { offeredViews: ['all', 'triggered'] } }));
+            result: { offeredViews: ['all', 'triggered', 'hunts'] } }));
         const manual = screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003');
         expect(manual).not.toBeNull();
         const copy = manual!.findAll((node) => typeof node.props.children === 'string').map((node) => node.props.children).join('\n');
@@ -1665,7 +1679,7 @@ describe('workflow library summaries and filter', () => {
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).not.toBeNull();
         await setView('triggered');
         await deleteWithConsent('10000000-0000-4000-8000-000000000004');
-        expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true, result: { offeredViews: ['all'] } });
+        expect(await action.execute('workflow.library.view.get', {}, context)).toMatchObject({ ok: true, result: { offeredViews: ['all', 'hunts'] } });
         expect(screen.tree.findHostByTestId('workflows-home:row:10000000-0000-4000-8000-000000000003')).toBeNull();
     });
 });

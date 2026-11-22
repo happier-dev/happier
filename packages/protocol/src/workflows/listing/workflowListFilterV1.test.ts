@@ -3,6 +3,13 @@ import { createStoredReadSchema } from '../../json/storedReadSchema.js';
 import { compileWorkflowListFilterV1, WorkflowListFilterV1Schema } from './workflowListFilterV1.js';
 
 describe('Workflow definition list filters', () => {
+    it('narrows Hunts using the admitted repository-review fact and preserves unknown headers', () => {
+        const hunts = compileWorkflowListFilterV1(WorkflowListFilterV1Schema.parse({ view: 'hunts' }));
+        expect(hunts({ hunts: true })).toBe('match');
+        expect(hunts({ hunts: false })).toBe('miss');
+        expect(hunts({})).toBe('unavailable');
+    });
+
     it('preserves unavailable source facts instead of broadening a saved Running or Triggered view', () => {
         const running = compileWorkflowListFilterV1({ view: 'running' });
         expect(running({ triggered: true })).toBe('unavailable');

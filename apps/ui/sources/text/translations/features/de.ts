@@ -19276,6 +19276,7 @@ const de: WorkflowsDestinationTranslations = {
     views: {
         all: 'Alle',
         triggered: 'Mit Auslöser',
+        hunts: 'Jagden',
         active: 'Aktiv',
         needsYou: 'Braucht dich',
         libraryAccessibility: 'Welche Workflows angezeigt werden',

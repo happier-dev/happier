@@ -19796,6 +19796,7 @@ const ca: WorkflowsDestinationTranslations = {
     views: {
         all: 'Tots',
         triggered: 'Amb activador',
+        hunts: 'Caceres',
         active: 'Actives',
         needsYou: 'Et necessita',
         libraryAccessibility: 'Quins fluxos de treball mostrar',

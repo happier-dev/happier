@@ -6,31 +6,27 @@ import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCo
 import { t } from '@/text';
 import { usePluginSurfaceFocusEligibility } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
-import type { WorkflowLibraryViewController } from './useWorkflowLibraryView';
+import type { WorkflowLibraryView, WorkflowLibraryViewController } from './useWorkflowLibraryView';
 import { workflowLibraryRowFilterFacts } from './useWorkflowLibraryView';
 
-/** The Workflow fields' words in the shared condition editor (R9): what a definition is doing. */
+/** The Workflow views' words in the shared condition editor. */
 function buildWorkflowConditionBindings(): CollectionConditionBindings {
+  const views = {
+    triggered: t('workflows.destination.views.triggered'),
+    running: t('workflows.destination.sections.running'),
+    hunts: t('workflows.destination.views.hunts'),
+  } satisfies Record<Exclude<WorkflowLibraryView, 'all'>, string>;
   return {
     fields: {
       view: {
-        label: t('sessionsList.filtersStatus'),
-        valueOptions: [
-          {
-            value: 'triggered',
-            label: t('workflows.destination.views.triggered'),
-          },
-          {
-            value: 'running',
-            label: t('workflows.destination.sections.running'),
-          },
-        ],
+        label: t('workflows.destination.columns.view'),
+        valueOptions: Object.entries(views).map(([value, label]) => ({ value, label })),
       },
     },
   };
 }
 const WORKFLOW_SPACE_ICON = { kind: 'icon', name: 'list' } as const;
-/** The Workflows registry's field marks in the filter editor (Status: triggered or running). */
+/** The Workflows registry's field mark in the filter editor. */
 const WORKFLOW_FILTER_FIELD_ICONS = Object.freeze({ view: 'circle-half' } as const);
 
 /**
@@ -45,7 +41,7 @@ export function useWorkflowLibrarySpaceHeader(
 ) {
   const focusEligible = usePluginSurfaceFocusEligibility();
   const bindings = React.useMemo(buildWorkflowConditionBindings, []);
-  // The field's own choices, in its own words: a Workflow is running or was triggered, one press away in the title menu.
+  // The field's own choices, in its own words, one press away in the title menu.
   const facets = React.useMemo(() => (bindings.fields?.view?.valueOptions ?? []).map((option) => ({
     fieldId: 'view', value: option.value, label: option.label ?? String(option.value),
   })), [bindings]);

@@ -131,6 +131,7 @@ export function createWorkflowActionHttpTransport(params: Readonly<{
                     header: encodePlainArtifactStoredContent('contentUnavailableReason' in item && item.contentUnavailableReason === 'invalid_header'
                         ? { kind: item.kind } : { kind: item.kind, definitionId: item.definitionId,
                             revision: item.revision, metadata: item.metadata,
+                            ...(item.previewReviewScopes === undefined ? {} : { previewReviewScopes: item.previewReviewScopes }),
                             // A current writer's header carries its step labels; an unavailable fixture row keeps a
                             // legacy header so the library opens its unreadable body and reports why.
                             ...(item.contentStatus === 'available' ? { previewSteps: workflowDefinitionPreviewStepsV1(definition.blocks) } : {}) }),

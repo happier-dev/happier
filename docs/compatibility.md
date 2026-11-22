@@ -4283,6 +4283,12 @@ stays inside the existing encrypted Artifact header for E2EE Accounts. Matching
 Protocol, host and generated SDK readers update together under the unpublished
 0.3 direct cut; no migration or reverse-development reader adapter is added.
 
+The library's existing Workflow list-filter `view` also accepts `hunts`. Its
+canonical row facts match an explicit `repository` scope, preserving absent
+legacy header facts as unavailable. Built-in, plugin and inline Account
+Workflows use the same scope projector on their already-admitted definitions;
+selecting Hunts never opens saved Workflow bodies or follows references.
+
 Workflow start adds the closed source arm `{ kind: 'repo_file', path }`;
 accepted snapshots and Run detail retain `{ kind: 'repo_file', path, commit }`,
 and Discussion capture preserves that provenance. It uses the existing

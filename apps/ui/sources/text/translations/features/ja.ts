@@ -19717,6 +19717,7 @@ const ja: WorkflowsDestinationTranslations = {
     views: {
         all: 'すべて',
         triggered: 'トリガーあり',
+        hunts: 'ハント',
         active: '実行中',
         needsYou: 'あなたの対応待ち',
         libraryAccessibility: '表示するワークフロー',

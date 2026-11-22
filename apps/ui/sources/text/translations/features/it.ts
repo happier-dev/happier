@@ -19782,6 +19782,7 @@ const it: WorkflowsDestinationTranslations = {
     views: {
         all: 'Tutti',
         triggered: 'Con attivatore',
+        hunts: 'Ricerche',
         active: 'Attive',
         needsYou: 'Ti aspetta',
         libraryAccessibility: 'Quali flussi di lavoro mostrare',
