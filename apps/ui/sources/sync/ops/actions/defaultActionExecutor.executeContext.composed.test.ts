@@ -1,12 +1,14 @@
 // Real Server event producer→UI consumer composition is not a package-local compiler root.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRecordV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createScmCapabilities } from '@happier-dev/protocol/scm';
 import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildUpdateArtifactUpdate } from '../../../../../server/sources/app/events/artifactEventPayloadBuilders';
 
@@ -1441,6 +1443,59 @@ describe('withDefaultActionExecuteContext', () => {
             payload: expect.objectContaining({ directory: '/managed/session-a', approvedNewDirectoryCreation: true }),
         }));
         expect(openSession).not.toHaveBeenCalled();
+    });
+
+    it.each([true, false])('resumes configured ACP only when the owning catalog declares load support (%s)', async (supportsLoadSession) => {
+        await loadSyncSingletonForTests();
+        const serverId = await addHome({ collaboration: true });
+        const backendId = 'resume-stub';
+        const record = AcpCatalogRecordV1Schema.parse({ v: 1, definitions: [{
+            id: backendId, name: backendId, title: 'Resume stub', createdAt: 1, updatedAt: 1,
+            launch: { kind: 'command', command: 'acp-stub', args: [] },
+            capabilities: { supportsLoadSession },
+        }] });
+        harness.answer(serverId, ACP_CATALOG_ROWS_ROUTE_V1, { body: {
+            status: 'present', revision: 1, content: { t: 'plain', v: record },
+        } });
+        const machine = createHydratedPlainMachineFixture({ id: 'machine-a', accountId: ACCOUNT_ID,
+            machine: { activeAt: Date.now(), managedMachineRef: null } });
+        await publishMachineInventoryForTest({ serverId, accountId: ACCOUNT_ID }, [machine]);
+        const row = createPlainMachineRowFixture({ id: machine.id, accountId: ACCOUNT_ID, machine });
+        harness.answer(serverId, '/v1/machines', { body: [row] });
+        harness.answer(serverId, '/v1/machines/machine-a', { body: { machine: row } });
+        harness.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+        } });
+        harness.answer(serverId, '/v2/sessions/session-a?accessProjectionVersion=1', { body: { session: {
+            id: 'session-a', createdAt: 1, updatedAt: 2, seq: 1, active: false, activeAt: 2,
+            encryptionMode: 'plain', dataEncryptionKey: null, metadataVersion: 1,
+            metadata: JSON.stringify({ machineId: 'machine-a', path: '/managed/session-a', host: 'host-a',
+                acpConfiguredBackendV1: { v: 1, updatedAt: 1, backendId, title: 'Resume stub' } }),
+            agentStateVersion: 1, agentState: null, share: null,
+            effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+                capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) },
+            responsibleAccountId: null, responsibleAccount: null,
+        } } });
+        rpc.machine.mockResolvedValue({ type: 'success', sessionId: 'session-a' });
+        const { createDefaultActionExecutor } = await loadExecutor();
+
+        const outcome = await createDefaultActionExecutor().execute('session.open', {
+            sessionId: 'session-a', intent: 'resume',
+        }, { serverId, surface: 'ui' });
+        const spawns = rpc.machine.mock.calls.map(([call]) => call).filter(call =>
+            call.method === RPC_METHODS.SPAWN_HAPPY_SESSION || call.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE);
+
+        if (supportsLoadSession) {
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { status: 'opened', sessionId: 'session-a' } });
+            expect(spawns).toEqual([expect.objectContaining({
+                machineId: 'machine-a', payload: expect.objectContaining({
+                    sessionId: 'session-a', backendTarget: { kind: 'backend', backendId, configuredBackendId: backendId, sourceKind: 'configured' },
+                }),
+            })]);
+        } else {
+            expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: false, errorCode: 'unsupported_action' });
+            expect(spawns).toEqual([]);
+        }
     });
 
     it('lets a mounted host supply one complete-corpus resolver and carries its exact address to open', async () => {

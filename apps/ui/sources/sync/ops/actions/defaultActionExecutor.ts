@@ -362,6 +362,7 @@ import {
     resumeSession,
 } from '@/sync/ops/sessions';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
+import { resolveConfiguredAcpBackendId } from '@/agents/runtime/resumeCapabilities';
 import { buildResumeCapabilityOptionsFromUiState, buildResumeSessionExtrasFromUiState } from '@/agents/registry/registryUiBehavior';
 import { getPermissionModeOverrideForSpawn } from '@/sync/domains/permissions/permissionModeOverride';
 import { applyPermissionModeSelectionEffect } from '@/sync/domains/permissions/permissionModeApply';
@@ -2845,6 +2846,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
           accountSettings: settings, signal,
         });
+        const acpCatalogSnapshot = resolveConfiguredAcpBackendId({ metadata: readSessionOwnerMetadataView(session) })
+          ? await readAccountAcpCatalog({ signal })
+          : undefined;
         accountContext.assertCurrent();
         const base = buildResumeSessionBaseOptionsFromSession({
           sessionId, session,
@@ -2855,6 +2859,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
           resumeTargetOverride: machineTarget ? { machineId: machineTarget.machineId, directory: machineTarget.basePath } : null,
           resumeCapabilityOptions: {
             ...buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
+            acpCatalogSnapshot,
             currentAgentCapabilities: opts?.currentAgentCapabilities,
           },
         });
