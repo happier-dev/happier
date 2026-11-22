@@ -25,6 +25,7 @@ import { formatHappierDuration } from '@happier-dev/plugin-ui/presentation';
 import type { ConfiguredHealthResultsState } from '@/components/store/inventory/configuredHealthResults';
 import type { ConfiguredCheckDefinitionFacts } from '@/components/store/inventory/useConfiguredCheckDefinitions';
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
+import { BUNDLED_PLUGIN_UI_APP_DECLARATIONS } from '@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts';
 import { getPreferredLanguage, t } from '@/text';
 import { formatMoment } from '@/utils/datetime/formatMoment';
 import { formatDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -221,9 +222,13 @@ export function readServiceCheckDefinitions(
       else if (source.subject.kind === 'machineService') titleTarget = { kind: 'service', label: source.subject.serviceId };
       else titleTarget = { kind: 'environment', id: source.subject.environmentId };
     }
+    const name = options.kindName?.(check.kind)
+      ?? BUNDLED_PLUGIN_UI_APP_DECLARATIONS.find(plugin => plugin.pluginId === check.kind.pluginId)
+        ?.healthCheckKindTitles?.find(kind => kind.id === check.kind.localId)?.title
+      ?? null;
     return {
       titleTarget,
-      checkId: check.checkId, name: options.kindName?.(check.kind) ?? null,
+      checkId: check.checkId, name,
       targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
         : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
       periodMs: check.periodMs, domainId, address,

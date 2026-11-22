@@ -1,4 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
+import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
+
+import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
+import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
+import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 
 import {
   readServiceCheckFacts,
@@ -284,6 +289,36 @@ describe('the Check detail names what it checks from the inventory’s definitio
 });
 
 describe('Services → Checks rows (lab svcChk: named by what they check, Every, Last result)', () => {
+  it.each([
+    { localId: 'uptime-kuma', config: { monitorId: '7' }, title: 'Uptime Kuma' },
+    { localId: 'gatus', config: { endpointGroup: 'apps', endpointName: 'shop' }, title: 'Gatus' },
+    { localId: 'http', config: { endpoint: 'http://127.0.0.1:33237/health', expectStatus: 200 },
+      title: 'HTTP · QA 202 Review source' },
+  ])('names a saved $localId check with only the bundled first-paint declaration', async ({ localId, config, title }) => {
+    const declaration = await projectBundledPluginUiDeclaration({
+      packageName: '@happier-dev/plugins-machine-services',
+      packageVersion: bundledMachineServices.version,
+      manifest: bundledMachineServices as unknown,
+      artifactGraphs: [],
+    });
+    if (!declaration) throw new Error('Expected the bundled Machine services declaration');
+    onTestFinished(installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiFirstPaintDeclaration(declaration)]));
+    const checks = readServiceCheckDefinitions({ sourceConfig: {
+      v: 1, subject: { kind: 'environment', environmentId: 'review' }, checks: [{
+        checkId: 'c1', kind: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId }, binding: { kind: 'healthCheck' },
+        config, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 2,
+      }],
+    } });
+    if (!checks) throw new Error('Expected the saved Check definition');
+    const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    expect(serviceCheckListFacts({
+      native: { name: 'Event observation' },
+      definitionFacts: { kind: 'available', observerMachineId: null, checks,
+        environmentNames: new Map([['review', 'QA 202 Review source']]) },
+      lastResults: { kind: 'neverObserved' },
+    }).title).toBe(title);
+  });
+
   it('retains an explicit gap between measured responses and keeps a measured zero', () => {
     const evidence = { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'Health check' },
       author: { kind: 'process' as const }, text: 'Observed response' }] };

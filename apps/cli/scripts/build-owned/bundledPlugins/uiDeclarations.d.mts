@@ -37,5 +37,6 @@ export declare function projectBundledPluginUiFirstPaintDeclaration(
   declaration: BundledPluginUiDeclaration,
 ): Promise<Omit<BundledPluginUiDeclaration, 'normalizedManifest'> & {
   presentationManifest: PluginPortableReleaseManifestV1;
+  healthCheckKindTitles?: readonly Readonly<{ id: string; title: string }>[];
   targetedPluginIds: string[];
 }>;

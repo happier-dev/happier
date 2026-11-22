@@ -21,6 +21,8 @@ export type PluginHostBundledUiDeclaration = Readonly<{
     hasMachineProvisioners?: boolean;
     hasDeploymentTargets?: boolean;
     hasMachineRecipes?: boolean;
+    /** Authored Check titles for presentation before full declarations load. */
+    healthCheckKindTitles?: readonly Readonly<{ id: string; title: string }>[];
     entriesById: PluginDeclaredUiEntriesV1;
     /** Validated authored facts retained by the existing bundled declaration producer. */
     normalizedManifest?: PluginPortableReleaseManifestV1;

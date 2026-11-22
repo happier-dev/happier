@@ -35,6 +35,7 @@ export async function projectBundledPluginUiDeclaration({ packageName, packageVe
 export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
   const { PluginPortableReleaseManifestV1Schema } = await import('@happier-dev/protocol/plugins/availability');
   const { derivePluginContributionRegistrationRights } = await import('@happier-dev/protocol/plugins/contributions/catalog');
+  const { resolvePluginLocalizedStringV2Text } = await import('@happier-dev/protocol/plugins/contributions/public-types');
   const { normalizedManifest, entriesById, ...identity } = declaration;
   const contributes = normalizedManifest.contributes;
   const clientFamilies = new Set(derivePluginContributionRegistrationRights(contributes)
@@ -44,6 +45,8 @@ export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
     runtime: { apiVersion: 1 }, contributes: {} }).contributes.ui;
   const actions = (contributes.actions ?? []).filter(action => action.execution.target === 'account')
     .map(({ inputSchema, resultSchema, ...descriptor }) => descriptor);
+  const healthCheckKindTitles = (contributes.healthCheckKinds ?? []).map(({ id, title }) =>
+    ({ id, title: resolvePluginLocalizedStringV2Text(title) }));
   const presentationManifest = { ...normalizedManifest, contributes: {
     ...Object.fromEntries(Object.entries(contributes).filter(([key]) => key !== 'ui')
       .map(([key, value]) => [key, Array.isArray(value) && !clientFamilies.has(key) ? [] : value])),
@@ -81,5 +84,6 @@ export async function projectBundledPluginUiFirstPaintDeclaration(declaration) {
       .map(([locale, bundle]) => [locale, Object.fromEntries(Object.entries(bundle).filter(([key]) => keys.has(key)))])) } : {}) };
   }
   return { ...identity, entriesById: entries, presentationManifest,
+    ...(healthCheckKindTitles.length > 0 ? { healthCheckKindTitles } : {}),
     targetedPluginIds: [...new Set((contributes.targetedPluginContributions ?? []).map(row => row.target.pluginId))].sort() };
 }
