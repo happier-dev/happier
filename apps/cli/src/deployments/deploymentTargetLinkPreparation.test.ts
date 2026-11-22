@@ -85,11 +85,16 @@ it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (
     const provider = { credentialPrincipal: fixture.credentialPrincipal, providerIdentity: {
         providerAccountId: 'native-owner', providerResourceId: 'created-native-id', providerEnvironment: 'production' },
         providerEnvironment: { kind: 'native', selection: { kind: 'production' } }, preparedNative: { projectName: 'created-name' } };
+    // The Environment's protected content (its name) is readable on the Account, as on a real Home.
+    const environmentContent = await createCredentialedAccountArtifactStore(fixture.host.credentials).create({
+        header: { kind: 'deployment-environment.v1', title: environment.content.name }, body: JSON.stringify(environment.content) });
+    const environmentHeader = { ...environment.environment, contentArtifactId: environmentContent.artifactId,
+        contentHeaderVersion: environmentContent.revision.headerVersion, contentBodyVersion: environmentContent.revision.bodyVersion };
     let associations = 0;
     vi.spyOn(axios, 'request').mockImplementation(async request => {
         const path = new URL(request.url!).pathname;
         if (request.method === 'GET') return { status: 200,
-            data: { ok: true, environment: environment.environment, targetLinks: [] } };
+            data: { ok: true, environment: environmentHeader, targetLinks: [] } };
         if (path === '/v1/deployments/targets/list') return { status: 200,
             data: { ok: true, items: [], nextCursor: null, coverage: 'complete' } };
         if (path.endsWith('/targets')) {
@@ -106,6 +111,9 @@ it.each(['upload', 'gitIntegration'] as const)('completes titled native Create (
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
     const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.targets.link', input, context: {} });
     if (!plan || 'ok' in plan) throw new Error('Expected native Create review');
+    // The reviewed decision names the Happier Environment the new resource joins (RAILWAY-VISUAL-ACCEPT2 N1).
+    expect(plan.approvalPreview).toMatchObject({ deploymentReview: { platformCreate: {
+        environment: { id: environment.environment.id, name: environment.content.name }, resourceName: 'reviewed-name' } } });
     const native = fastify();
     let creates = 0;
     // Native execution is the external boundary; preparation, association and operation settlement stay real.
@@ -279,6 +287,8 @@ it.each([false, true])('retains a native create acknowledgment before a failed H
         resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }) });
     const plan = await deps.prepareHostReviewedChildren!({ actionId: 'deployments.targets.link', input: request, context: {} });
     if (!plan || 'ok' in plan) throw new Error('Expected reviewed native create plan');
+    // Review preparation may read the Environment's name; the contract below is about Home follow-ups after the create.
+    home.mockClear();
     const app = fastify();
     // Native child execution is an HTTP boundary; declarations, reviewed-child policy and host flow stay real.
     app.post('/child', async () => {

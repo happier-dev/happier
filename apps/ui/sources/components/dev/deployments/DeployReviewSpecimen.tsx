@@ -50,14 +50,16 @@ const VERCEL_CREATE_ARGS = {
 
 /** What the host's create preparation attaches (`runtimeTargetCreateForHost`): the summary, then the typed review. */
 function buildCreateReview(variant: 'railway-create' | 'vercel-create') {
+  const environment = { id: 'env-production-api', name: 'Production API' };
   if (variant === 'vercel-create') {
-    return { deploymentReview: { platformCreate: { platformName: 'Vercel', resourceName: VERCEL_CREATE_ARGS.providerCreate.resourceName } } };
+    return { deploymentReview: { platformCreate: { environment, platformName: 'Vercel',
+      resourceName: VERCEL_CREATE_ARGS.providerCreate.resourceName } } };
   }
   const { resourceName, productionBranch, repository } = RAILWAY_CREATE_ARGS.providerCreate;
   const summary = describeDeploymentTargetGitCreateV1({ guarantee: 'exactCommit', create: 'branchHead' }, 'Railway', {
     resourceName, productionBranch, repository: repository.repository,
   })!;
-  return { summary, deploymentReview: { summary, platformCreate: { platformName: 'Railway', resourceName,
+  return { summary, deploymentReview: { summary, platformCreate: { environment, platformName: 'Railway', resourceName,
     repository: repository.repository, productionBranch, followsBranch: true as const } } };
 }
 

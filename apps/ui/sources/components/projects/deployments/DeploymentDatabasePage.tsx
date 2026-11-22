@@ -336,9 +336,16 @@ export function DeploymentDatabasePage(
       : null;
 
   const providerConsole = database.kind === 'managed' ? database.link.content.data?.providerConsole : undefined;
-  // A managed database names its platform by the target's title; its target kind is an identifier, never a name.
+  const managedTarget = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
+    && targetDeclarations.state.status === 'ready' ? (() => {
+      const source = database.link.targetLink.source.contribution;
+      return managedDataTargets(targetDeclarations.state.declarations)
+        .find(target => target.pluginId === source.pluginId && target.targetId === source.localId) ?? null;
+    })() : null;
+  // A managed database names its platform by the target's title (a runtime platform's, else its data target's);
+  // its target kind is an identifier, never a name.
   const managedPlatform = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
-    ? platformTitle(database.link.targetLink.source) : null;
+    ? platformTitle(database.link.targetLink.source) ?? managedTarget?.title ?? null : null;
   const managedResource = database.kind === 'managed' ? readPlatformResourceName(database.link.content) : null;
   const title =
     database.kind === 'selfHosted'
@@ -476,12 +483,6 @@ export function DeploymentDatabasePage(
   const openManaged = database.kind === 'managed' && lifetime && actions && detail.environment.capabilities.manage
     ? () => showManagedDataSheet({ detail, lifetime, actions, linked: database.link,
       onApproval: props.review.request }) : null;
-  const managedTarget = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
-    && targetDeclarations.state.status === 'ready' ? (() => {
-      const source = database.link.targetLink.source.contribution;
-      return managedDataTargets(targetDeclarations.state.declarations)
-        .find(target => target.pluginId === source.pluginId && target.targetId === source.localId) ?? null;
-    })() : null;
   // The removal owner decides which choices exist and where the review starts (created: Delete; linked: Unlink).
   const openRemoval = database.kind === 'managed' && managedTarget && disposition.canDelete ? () => {
     const link = database.link;

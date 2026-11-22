@@ -131,6 +131,8 @@ function isPlatformCreate(review: DeploymentReviewApproval['review']): review is
 function describeCreateFields(create: DeploymentPlatformCreateReviewV1): ApprovalFieldsPresentation {
   const source = joinHappierFacts(create.repository ?? null, create.productionBranch ?? null) || null;
   return { rows: [
+    // Where in Happier it links leads, as the deploy review leads with its Environment.
+    ...field('create.environment', t('projects.deployments.review.environment'), create.environment?.name),
     ...field('create.where', t('projects.deployments.review.whereTitle'), create.platformName),
     ...field('create.name', t('projects.deployments.review.createName'), create.resourceName),
     ...field('create.source', t('projects.deployments.review.createSource'), source, {

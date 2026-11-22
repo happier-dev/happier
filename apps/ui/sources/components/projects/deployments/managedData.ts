@@ -56,6 +56,8 @@ export function managedDataLinkContent(credentialPrincipal: unknown, value: unkn
   if (!isRecord(value) || value.status === 'outcome_unknown' || value.status === 'unavailable' || value.status === 'adoption_required') return null;
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse({ credentialPrincipal,
     providerIdentity: value.providerIdentity, providerEnvironment: value.providerEnvironment,
+    // The provider's own name for the resource (a Railway service), where its id is opaque; the resource-name reader prefers it.
+    ...(typeof value.serviceName === 'string' && value.serviceName ? { preparedNative: { projectName: value.serviceName } } : {}),
     ...(typeof value.engine === 'string' ? { data: { engine: value.engine,
       ...(typeof value.engineVersion === 'number' || typeof value.engineVersion === 'string' ? { version: String(value.engineVersion) }
         : typeof value.version === 'string' ? { version: value.version } : {}),

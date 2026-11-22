@@ -184,6 +184,8 @@ export const DeploymentApprovalReviewV1Schema = z.union([
   z.strictObject({
     summary: z.optional(z.string()),
     platformCreate: z.strictObject({
+      /** The Happier Environment the new resource joins; the host reads its name from the Environment owner. */
+      environment: z.optional(environmentReview),
       platformName: z.string(),
       resourceName: z.string(),
       repository: z.optional(z.string()),

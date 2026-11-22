@@ -1741,7 +1741,13 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 if (!input.success) return failure('invalid_parameters');
                 const enrollment = await failureEnrollment.prepare(input.data, request.context);
                 if (!('providerCreate' in input.data)) return enrollment;
-                const creation = prepareRuntimeTargetCreateForHost(input.data, await readRuntimeLinkTarget(input.data.source));
+                // The Environment's name is review display data: an unreadable name leaves it out of the review rather
+                // than becoming a second requirement for the create.
+                const [target, environment] = await Promise.all([readRuntimeLinkTarget(input.data.source),
+                    targetHostReaders.readEnvironment({ environmentId: input.data.environmentId, context: request.context })
+                        .catch(() => { request.context.signal?.throwIfAborted(); return null; })]);
+                const creation = prepareRuntimeTargetCreateForHost(input.data, target,
+                    environment ? { id: environment.environment.id, name: environment.content.name } : undefined);
                 return { ...creation, children: [...creation.children, ...(enrollment?.children ?? [])] };
             }
             if (request.actionId === 'deployments.environments.update') {

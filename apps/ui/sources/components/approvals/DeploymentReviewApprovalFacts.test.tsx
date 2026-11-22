@@ -48,6 +48,7 @@ describe('DeploymentReviewApprovalFacts', () => {
   it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {
     const preview = { actionId: 'deployments.targets.link', hostReviewedContent: { summary: 'Create service checkout-api.',
       deploymentReview: { summary: 'Create service checkout-api.', platformCreate: { platformName: 'Railway', resourceName: 'checkout-api',
+        environment: { id: 'env-production-api', name: 'Production API' },
         repository: 'acme/checkout', productionBranch: 'release', followsBranch: true } } } };
     const approval = readDeploymentReviewApproval({ preview });
     if (!approval) throw new Error('Expected a typed create review');
@@ -60,6 +61,10 @@ describe('DeploymentReviewApprovalFacts', () => {
     );
     const text = screen.getTextContent();
     expect(text).toContain('projects.deployments.review.createWhatTitle');
+    // The Happier Environment the new resource joins leads the facts, by name (RAILWAY-VISUAL-ACCEPT2 N1).
+    expect(text).toContain('projects.deployments.review.environment');
+    expect(text).toContain('Production API');
+    expect(text).not.toContain('env-production-api');
     expect(text).toContain('Railway');
     expect(text).toContain('checkout-api');
     expect(text).toContain('acme/checkout');

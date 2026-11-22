@@ -43,7 +43,8 @@ const RAILWAY_LINK = {
 } as const;
 const RAILWAY_DATA_TARGET = { pluginId: 'happier.deploy.railway-data', localId: 'postgresql' };
 const RAILWAY_DATA_LINK_ID = 'railway-orders';
-const RAILWAY_DATA_SELECTION = { ...RAILWAY_LINK.providerEnvironment.selection, serviceId: 'orders-service' };
+// Railway names a service by an opaque UUID: the page must read the link's service name, never this id.
+const RAILWAY_DATA_SELECTION = { ...RAILWAY_LINK.providerEnvironment.selection, serviceId: '3f2a9c1e-7b4d-4e8a-9f10-2c6d5b8e1a47' };
 const railwayTabs = (tabs: string | undefined) => tabs === 'railway-domains' || tabs === 'railway-database';
 const SPECIMEN_COLLECTOR_ID = 'machine-collector';
 const HOUR = 3_600_000;
@@ -512,7 +513,9 @@ function transportFor(
         credentialPrincipal: { ...RAILWAY_LINK.credentialPrincipal,
           purpose: { consumer: { pluginId: RAILWAY_DATA_TARGET.pluginId, localId: 'postgresql-link' }, purpose: 'cloud-api' } },
         data: { engine: 'postgres', providerConsole: { label: 'Open in Railway',
-          url: 'https://railway.com/project/shop-project/service/orders-service?environmentId=shop-staging' } },
+          url: 'https://railway.com/project/shop-project/service/3f2a9c1e-7b4d-4e8a-9f10-2c6d5b8e1a47?environmentId=shop-staging' } },
+        // What `managedDataLinkContent` stores from the link result's service name.
+        preparedNative: { projectName: 'orders-db' },
       },
     }],
   } : staging;
@@ -754,7 +757,7 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
       defaultChoice: 'unlink' , role: 'data' } },
   'railway-database': { subject: { kind: 'target', targetLinkId: RAILWAY_DATA_LINK_ID }, name: 'Staging', machine: null,
     provider: 'Railway PostgreSQL', running: false, hasRetainedAssociations: true, canRemove: true,
-    providerResource: { name: 'Orders', consequence: 'Delete this Railway database and its data?', defaultChoice: 'unlink', role: 'data' } },
+    providerResource: { name: 'orders-db', consequence: 'Delete this Railway database and its data?', defaultChoice: 'unlink', role: 'data' } },
   machine: { subject: { kind: 'target', targetLinkId: 'link-machine' }, name: 'Production', machine: 'vps-fra-1',
     running: true, services: ['web', 'worker', 'postgres'], hasRetainedAssociations: true, canRemove: true },
 };
@@ -790,9 +793,11 @@ export function DeploymentsSpecimen(
   const preview = React.useMemo(() => createSpecimenPreview(props.preview), [props.preview]);
   const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore, props.tabs),
     ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, props.tabs, preview]);
-  // Preview specimens use the signed-in Account's installed deployment-target declarations; the Railway tabs keep the
-  // specimen's own current Account, like every sibling, so the fixture source stays theirs.
-  const { binding } = useServerCredentialAccountScopeBinding(preview ? getActiveServerId() : null);
+  // Preview and Railway database specimens use the signed-in Account's installed deployment-target declarations; the
+  // other Railway tabs keep the specimen's own current Account, like every sibling, so the fixture source stays theirs.
+  // The database tab names its platform and offers Unlink or delete from the installed Railway declarations.
+  const declarations = preview || props.tabs === 'railway-database';
+  const { binding } = useServerCredentialAccountScopeBinding(declarations ? getActiveServerId() : null);
   const cancellable = props.cancellable === 'true' ? true : props.cancellable === 'false' ? false : undefined;
   const receiptState = (
     [
@@ -840,7 +845,7 @@ export function DeploymentsSpecimen(
       demand={SHOWN}
       accountId={ACCOUNT}
       serverId="home"
-      lifetime={props.state === 'reader' ? null : preview ? binding : SPECIMEN_LIFETIME as never}
+      lifetime={props.state === 'reader' ? null : declarations ? binding : SPECIMEN_LIFETIME as never}
       sourceId="source-app"
     />
   );

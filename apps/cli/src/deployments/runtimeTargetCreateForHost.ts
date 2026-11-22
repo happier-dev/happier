@@ -17,8 +17,12 @@ export class RuntimeTargetCreationCheckpointError extends Error {
     }
 }
 
-/** The target declaration owns create capability and its qualified Action identity. */
-export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCreateIntentInputV1, target: DeploymentTargetV1 | null) {
+/**
+ * The target declaration owns create capability and its qualified Action identity. `environment` is the Happier
+ * Environment the resource joins, as the approval names it; provider placement stays ids-only in the operand.
+ */
+export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCreateIntentInputV1, target: DeploymentTargetV1 | null,
+    environment?: Readonly<{ id: string; name: string }>) {
     if (target?.role !== 'runtime' || target.actions.create?.kind !== 'plugin') throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
     const action = parseQualifiedPluginActionId(target.actions.create.actionId);
     if (!action) throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
@@ -33,7 +37,8 @@ export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCre
     const summary = describeDeploymentTargetGitCreateV1(target.gitSource, platformName, source);
     // The approval reads as the reviewed decision (what gets created, where, from what); provider ids stay in the input.
     const deploymentReview = normalizeStrictJsonValue(DeploymentApprovalReviewV1Schema.parse({ ...(summary ? { summary } : {}),
-        platformCreate: { platformName, ...source, ...(summary ? { followsBranch: true } : {}) } }));
+        platformCreate: { ...(environment ? { environment: { id: environment.id, name: environment.name } } : {}),
+            platformName, ...source, ...(summary ? { followsBranch: true } : {}) } }));
     return { children: [{ action, role: 'create', input: normalizeStrictJsonValue(operand) }],
         approvalPreview: { ...(summary ? { summary } : {}), deploymentReview } };
 }

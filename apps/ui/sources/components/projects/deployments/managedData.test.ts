@@ -1,5 +1,6 @@
 import { expect, it } from 'vitest';
 import { managedDataConnections, managedDataLinkContent, managedDataTargets } from './managedData';
+import { readPlatformResourceName } from './platformTargetLink';
 import { definePlugin, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/plugin-sdk';
 import type { DeploymentTargetCredentialPrincipalV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -74,4 +75,17 @@ it('captures produced database presentation on the existing protected link witho
   expect(managedDataLinkContent(principal, produced)).toMatchObject({ data: { engine: 'postgres', version: '17', providerConsole: produced.providerConsole } });
   expect(managedDataLinkContent(principal, { ...produced, engineVersion: undefined, providerConsole: undefined })).toMatchObject({ data: { engine: 'postgres' } });
   expect(managedDataLinkContent(principal, { ...produced, engine: undefined })).not.toHaveProperty('data');
+});
+
+// RAILWAY-VISUAL-ACCEPT2 N2: a provider whose resource id is opaque (a Railway service UUID) names the link by the
+// name its link result returns, through the field the resource-name reader already prefers.
+it('keeps the linked service name so an opaque provider id never becomes the database name', () => {
+  const uuid = '3f2a9c1e-7b4d-4e8a-9f10-2c6d5b8e1a47';
+  const linked = { serviceName: 'orders-db', engine: 'postgres',
+    providerIdentity: { providerAccountId: 'shop-project', providerResourceId: uuid, providerEnvironment: 'staging-id' },
+    providerEnvironment: { kind: 'native', selection: { projectId: 'shop-project', environmentId: 'staging-id', serviceId: uuid } } };
+  const content = managedDataLinkContent(principal, linked);
+  expect(content).toMatchObject({ preparedNative: { projectName: 'orders-db' } });
+  expect(readPlatformResourceName(content ?? undefined)).toBe('orders-db');
+  expect(managedDataLinkContent(principal, { ...linked, serviceName: undefined })).not.toHaveProperty('preparedNative');
 });

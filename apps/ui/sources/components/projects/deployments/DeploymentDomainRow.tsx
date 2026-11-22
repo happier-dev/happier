@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Status, useHappierCollection, type CollectionAnatomy, type HappierCollectionGrouping } from '@happier-dev/plugin-ui';
 import {
@@ -21,6 +21,7 @@ import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { useItemSubtitleTextStyle } from '@/components/ui/lists/ItemSubtitleText';
 import { StatusWord, type StatusPillVariant } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
+import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { Typography } from '@/constants/Typography';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
@@ -439,6 +440,8 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
   const { item, context } = props;
   const facts = useDomainRowFacts(item, context);
   const { attention, state, failure } = facts;
+  // A phone-width window gives the investigation its own line (the threshold the investigation's own buttons stack at).
+  const narrowWindow = useWindowDimensions().width < PAGE_LIST_METRICS.rowStackBelowWidthPx;
   const id = `project-deployments.environment.domains.${item.domain.id}`;
   const verify = context.actions?.verify;
   const failureDetails: unknown = failure?.details;
@@ -476,7 +479,9 @@ function DomainRowControls(props: Readonly<{ item: DomainRowItem; context: Domai
     {adoptTunnel}
     {addRecords}
     {checkAgain}
-    {investigate}
+    {/* The investigation can say why it has no actions in a sentence: on a phone it takes its own line and wraps
+        there, never running past the edge beside Check again. */}
+    {investigate ? <View style={narrowWindow ? styles.investigateLine : styles.investigate}>{investigate}</View> : null}
   </View> : null;
   // Details open beneath the row's actions, never beside them: an open disclosure is a block, not a control.
   return <View style={styles.controlStack}>
@@ -600,5 +605,7 @@ const styles = StyleSheet.create((theme) => ({
   rowEnd: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s4 },
   menuSlot: { width: HAPPIER_ICON_BUTTON_SIZE },
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8 },
+  investigate: { flexShrink: 1, minWidth: 0, maxWidth: '100%' },
+  investigateLine: { flexBasis: '100%', minWidth: 0 },
   controlStack: { gap: theme.space.s4 },
 }));
