@@ -34,6 +34,7 @@ import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
 import {
   PluginChangePendingReviewResultSchema,
   type PluginChangePendingReviewResult,
@@ -203,6 +204,7 @@ export type ApprovalActionReference =
   | Readonly<{ kind: 'team'; id: string }>
   | Readonly<{ kind: 'group'; id: string; teamId: string }>
   | Readonly<{ kind: 'teamMembership'; id: string; teamId: string }>
+  | Readonly<{ kind: 'approvalProfile'; id: string }>
   | Readonly<{ kind: 'setting'; id: string }>
   | Readonly<{ kind: 'providerConnection'; id: string; displayName?: string; catalogSourceKey?: string; agentTargetKey?: string }>
   | Readonly<{ kind: 'providerModel'; id: string; connectionId: string; agentTargetKey: string; catalogSourceKey?: string }>
@@ -775,6 +777,16 @@ function describeApprovalConnectedServices(value: unknown): readonly ApprovalStr
   return entries.length > 0 ? entries : undefined;
 }
 
+/** The stored Group map uses ids as keys; readable details give each id its own reference row. */
+function teamDefaultsForApprovalDetails(value: unknown): unknown {
+  if (!isRecord(value) || !isRecord(value.groups)) return value;
+  const groups = Object.entries(value.groups);
+  return groups.length === 0 ? value : {
+    ...value,
+    groups: groups.map(([teamGroupId, defaults]) => ({ teamGroupId, defaults })),
+  };
+}
+
 /** Readable entries for one structured JSON value; scalars and flat lists read fine as they are. */
 function describeApprovalStructuredValue(values: readonly unknown[], widgetStructure = false,
   references?: ApprovalStructuredReferences): readonly ApprovalStructuredValueEntry[] | undefined {
@@ -1088,7 +1100,8 @@ export function describeApprovalActionFields(input: Readonly<{
         label: field.title, value: String(value), depth: 0,
         reference: describeApprovalReference(input.actionId, field, [value], presentationInput, review?.referenceForField),
       }))
-      : field.widget === 'json' && !reference && !place?.success ? describeApprovalStructuredValue(values,
+      : field.widget === 'json' && !reference && !place?.success ? describeApprovalStructuredValue(
+        input.actionId === TEAM_POLICY_SET_ACTION_ID_V1 && field.path === 'managedDefaults' ? values.map(teamDefaultsForApprovalDetails) : values,
         input.actionId.startsWith('widgets.') && (['instance', 'group', 'fragment', 'definition'].includes(field.path)
           || ['surface', 'ref', 'to'].includes(field.path)
             && readWidgetActionSurfaceV1(input.actionArgs)?.owner.kind === 'pluginArea'),

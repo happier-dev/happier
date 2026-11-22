@@ -1,4 +1,5 @@
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 import { readContributedActionReviewV1 } from '@happier-dev/protocol/actions/contributedActionReviewV1';
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { ActionIdSchema, REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
@@ -94,6 +95,8 @@ export function readActionApprovalSubject(input: ActionApprovalPresentationInput
     const references = describeApprovalActionFields({ ...input, actionArgs: input.actionArgs }).rows.flatMap(row => row.kind === 'value'
         ? [...(row.reference ? [row.reference] : []), ...(row.entries?.flatMap(entry => entry.reference ? [entry.reference] : []) ?? [])]
         : []);
+    // Policy is set on the Team. Groups and profiles name the defaults inside that policy.
+    if (input.actionId === TEAM_POLICY_SET_ACTION_ID_V1) return references.find(reference => reference.kind === 'team');
     // A workspace-sync request is titled by its Action; its controller machine and linked folders read in Details.
     if (input.actionId.startsWith('workspace.sync.')) return undefined;
     if (input.actionId === 'scm.diffSummary.result.clear' && input.executionOriginV1?.machineId) {

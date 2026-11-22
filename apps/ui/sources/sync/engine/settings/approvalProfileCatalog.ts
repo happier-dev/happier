@@ -183,6 +183,11 @@ function readDescriptor(artifact: Awaited<ReturnType<Account['readArtifactHeader
     return target.kind === 'approval_profile' ? { id: artifact.id, name: artifact.title } : null;
 }
 
+/** The review reads the same profile descriptor through the approver's current Artifact access. */
+export async function readApprovalProfileDescriptor(account: Account, id: string, signal?: AbortSignal): Promise<ApprovalProfileDescriptor | null> {
+    return readDescriptor(await account.readArtifactHeader(id, { signal, fresh: true }));
+}
+
 /** A collapsed stored selection asks only for its existing Artifact display header. */
 export async function requestApprovalProfileDescriptors(binding: ServerCredentialAccountScopeBinding, ids: readonly string[]): Promise<void> {
     if (ids.length === 0) return;

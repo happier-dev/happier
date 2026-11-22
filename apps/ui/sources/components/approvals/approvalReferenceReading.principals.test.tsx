@@ -8,6 +8,11 @@ import { describeApprovalActionFields } from '@happier-dev/protocol/actions/acti
 import * as React from 'react';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { ActionConfirmationReviewFacts } from './ActionConfirmationReview';
+import { ApprovalReviewFacts } from './ApprovalReviewFacts';
+import { t } from '@/text';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 
 installApprovalCommonModuleMocks({ text: () => vi.importActual<typeof import('@/text')>('@/text') });
 const harness = createHomeGovernanceHarness();
@@ -18,6 +23,81 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 describe('approval principal names', () => {
     beforeEach(async () => { standardCleanup(); await harness.reset(); });
     afterEach(() => standardCleanup());
+
+    const teamId = 'team-design';
+    const groupId = 'de0eca2f-c893-4266-bba0-877279be8b25';
+    const profileId = '45f0584c-d64a-4916-9382-00aeb6f9d7fb';
+    const profileName = 'Deployment review';
+    const groupName = 'Release reviewers';
+    const team = { kind: 'team', teamId, name: 'Design studio' };
+    const group = { kind: 'group', teamId, groupId,
+        name: { kind: 'available', label: { content: { t: 'plain', v: groupName }, recipientEnvelope: null } },
+        teamName: team.name };
+
+    function savedProfile(title: string, accountId: string) {
+        const header = { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: title, title };
+        return createPlainArtifactHttpFixture({
+            id: profileId, title, isDecrypted: true, header, rawHeader: header,
+            headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            body: JSON.stringify({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: { name: title } }),
+        }, accountId);
+    }
+
+    it.each([
+        { operation: 'Team default', change: { managedDefaults: { team: { approvalProfileId: profileId }, groups: {} } }, names: [profileName] },
+        { operation: 'Group override', change: { managedGroupDefaults: { teamGroupId: groupId, defaults: { approvalProfileId: profileId } } },
+            names: [groupName, profileName] },
+        { operation: 'Group clear', change: { managedGroupDefaults: { teamGroupId: groupId, defaults: null } }, names: [groupName] },
+        { operation: 'Team defaults with a Group override',
+            change: { managedDefaults: { team: {}, groups: { [groupId]: { approvalProfileId: profileId } } } },
+            names: [groupName, profileName] },
+    ])('names the operands in a $operation approval from its Home', async ({ change, names }) => {
+        const accountId = 'viewer';
+        const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://team-policy-review.test', accountId });
+        harness.answer(home, 'POST /v1/session-access/principals/resolve', {
+            select: input => ({ body: { v: 1, principals: (input as { subjects: { kind: string }[] }).subjects
+                .map(subject => subject.kind === 'group' ? group : team) } }),
+        });
+        harness.artifacts(home).replaceStoredRow(savedProfile(profileName, 'profile-author'));
+        harness.artifacts(home).seedAccountGrant(profileId, accountId, 'view');
+        await harness.addHome({ name: 'Focused Home', serverUrl: 'https://other-policy-review.test', accountId: 'other' });
+        const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_POLICY_SET_ACTION_ID_V1}
+            actionArgs={{ v: 1, teamId, ...change }} preview={null} status="open" serverId={home} testID="team-policy-review" />);
+        try {
+            await vi.waitFor(() => {
+                const text = screen.getTextContent();
+                expect(text).toContain(team.name);
+                for (const name of names) expect(text).toContain(name);
+                expect(text).not.toContain(profileId);
+                expect(text).not.toContain(groupId);
+            });
+            const reads = harness.requestsFor('/v1/artifacts/read');
+            expect(reads.map(read => ({ serverId: read.serverId, input: read.input }))).toEqual(
+                names.includes(profileName) ? [{ serverId: home, input: { artifactIds: [profileId], projection: 'headers' } }] : []);
+        } finally { await screen.unmount(); }
+    });
+
+    it('uses Unavailable for Group and profile names the approver cannot read', async () => {
+        const home = await harness.addHome({ name: 'Approval Home', serverUrl: 'https://private-policy-review.test', accountId: 'viewer' });
+        harness.answer(home, 'POST /v1/session-access/principals/resolve', {
+            select: input => ({ body: { v: 1, principals: (input as { subjects: { kind: string }[] }).subjects
+                .flatMap(subject => subject.kind === 'team' ? [team] : []) } }),
+        });
+        harness.artifacts(home).replaceStoredRow(savedProfile('Unshared profile', 'profile-author'));
+        const focusedHome = await harness.addHome({ name: 'Focused Home', serverUrl: 'https://other-policy-review.test', accountId: 'other' });
+        harness.artifacts(focusedHome).replaceStoredRow(savedProfile('Other Home profile', 'other'));
+        const screen = await renderScreen(<ApprovalReviewFacts actionId={TEAM_POLICY_SET_ACTION_ID_V1}
+            actionArgs={{ v: 1, teamId, managedGroupDefaults: { teamGroupId: groupId, defaults: { approvalProfileId: profileId } } }}
+            preview={null} status="open" serverId={home} testID="unavailable-policy-review" />);
+        try {
+            await vi.waitFor(() => {
+                const text = screen.getTextContent();
+                expect(text).toContain(team.name);
+                expect(text.split(t('common.unavailable'))).toHaveLength(3);
+                for (const hidden of [groupId, profileId, 'Unshared profile', 'Other Home profile']) expect(text).not.toContain(hidden);
+            });
+        } finally { await screen.unmount(); }
+    });
 
     it('renders the grant recipient name in confirmation and approval Details instead of principal JSON', async () => {
         const home = await harness.addHome({ name: 'Home', serverUrl: 'https://grant-details.test',

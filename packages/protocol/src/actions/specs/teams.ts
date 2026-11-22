@@ -626,6 +626,16 @@ function createTeamActionSpecs(): TeamActionSpecs {
     approvalPolicy: { uiConfirmation: 'direct' },
     approvalPresentation: {
       inputHints: TEAM_POLICY_INPUT_HINTS,
+      referenceForField: (path, value, input) => {
+        if (typeof value !== 'string' || !value.trim()) return undefined;
+        if (path === 'managedDefaults.team.approvalProfileId' || path === 'managedGroupDefaults.defaults.approvalProfileId'
+          || path === 'managedDefaults.groups.[].defaults.approvalProfileId') return { kind: 'approvalProfile', id: value };
+        if (path === 'managedGroupDefaults.teamGroupId' || path === 'managedDefaults.groups.[].teamGroupId') {
+          const teamId = readRecord(input).teamId;
+          if (typeof teamId === 'string' && teamId.trim()) return { kind: 'group', id: value, teamId };
+        }
+        return undefined;
+      },
       summary: input => {
         const change = readRecord(input);
         const groupChange = readRecord(change?.managedGroupDefaults);

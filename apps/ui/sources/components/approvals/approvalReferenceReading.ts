@@ -21,7 +21,9 @@ import { BUILT_IN_REGISTRY_SOURCES_V1 } from '@happier-dev/protocol/registries';
 import type { ApprovalActionReference } from '@happier-dev/protocol/actions/actionApprovalPresentation';
 import { describeUnnamedApprovalSession, resolveApprovalHomeName, resolveApprovalHomeSentenceName } from './approvalRequesterLabels';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
-import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
+import { readApprovalProfileDescriptor } from '@/sync/engine/settings/approvalProfileCatalog';
+import { useScopedSharingRead } from '@/components/sharing/sharePrincipalNames';
 import { readMcpServerCatalogInContext } from '@/sync/api/account/apiMcpServerCatalog';
 import { projectMcpServerCatalogSnapshot } from '@/sync/store/settings/mcpServerCatalogSnapshot';
 import { getPromptLibraryCatalogValue } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
@@ -97,6 +99,14 @@ export async function readApprovalReferenceForConfirmation(reference: ApprovalRe
     };
     sources.principalName = await readApprovalPrincipalName(reference, scope, signal, () => { account.assertCurrent(); return true; });
     if (sources.principalName !== null) account.assertCurrent();
+    if (reference.kind === 'approvalProfile') {
+        try {
+            sources.approvalProfileName = (await readApprovalProfileDescriptor(account, reference.id, signal))?.name;
+        } catch {
+            // Missing display metadata does not change what may be approved.
+        }
+        account.assertCurrent();
+    }
     if (reference.kind === 'artifact' || reference.kind === 'skill') {
         sources.artifact = await account.fetchArtifact(reference.id, { signal });
         account.assertCurrent();
@@ -193,11 +203,24 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     // A Saved Secret reads by its name from the Account's catalog on its own Home; another Home's catalog is not read.
     const savedSecret = useSavedSecretCatalogName(reference?.kind === 'savedSecret' ? reference.id : null, ownHome ? viewer : null);
     const principal = useApprovalPrincipalName(reference, approvalServerId);
+    const profileId = reference?.kind === 'approvalProfile' ? reference.id : null;
+    const profile = useScopedSharingRead(profileId, approvalServerId, async (scope, signal) => {
+        if (profileId === null) return null;
+        const account = await captureLazyActionAccountContext(scope.serverId, signal);
+        try {
+            if (account.accountId !== scope.accountId) return null;
+            return await readApprovalProfileDescriptor(account, profileId, signal);
+        } finally {
+            account.dispose();
+        }
+    });
     const discussion = useApprovalDiscussionTitle(reference, approvalServerId);
     return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
-        syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving, principalName: principal.name, principalResolving: principal.resolving });
+        syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving,
+        principalName: principal.name, principalResolving: principal.resolving,
+        approvalProfileName: profile.value?.name, approvalProfileResolving: profile.resolving });
 }
 
 const NO_DISCUSSION_IDS: readonly string[] = Object.freeze([]);
@@ -248,6 +271,8 @@ type ApprovalReferenceSources = {
     serverId: string | null;
     principalName?: string | null;
     principalResolving?: boolean;
+    approvalProfileName?: string;
+    approvalProfileResolving?: boolean;
     connectedAccount?: { accessibilityLabel: string };
     savedSecret?: Readonly<{ name: string | null; resolving: boolean }>;
     sessionReading: Pick<ReturnType<typeof useApprovalSessionReading>, 'name' | 'machineId' | 'status'>;
@@ -406,8 +431,15 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
         const own = viewer !== null && viewer.accountId === reference.id && areServerProfileIdentifiersEquivalent(viewer.serverId, approvalServerId);
         if (own) return { text: t('accountDisplay.yours'), named: true };
     }
+    if (reference?.kind === 'approvalProfile') {
+        const label = t('teams.settings.memberDefaults.approvalProfile');
+        if (sources.approvalProfileName) return { text: sources.approvalProfileName, named: true, label };
+        if (sources.approvalProfileResolving) return { text: t('common.loading'), named: false, resolving: true, label };
+        return { text: t('common.unavailable'), named: false, label };
+    }
     if (sources.principalName) return { text: sources.principalName, named: true };
     if (sources.principalResolving) return { text: t('common.loading'), named: false, resolving: true };
+    if (reference?.kind === 'group') return { text: t('common.unavailable'), named: false };
     return { text: literal, named: false };
 }
 
