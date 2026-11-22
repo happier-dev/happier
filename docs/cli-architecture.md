@@ -1698,6 +1698,8 @@ Herdr-specific transport lives in `integrations/herdr`. The adapter uses direct 
 launch, styled screen capture, input, process inspection, and terminal attachment.
 Runtime detection requires a stable Herdr release at or after `0.9.2`, and attach
 and startup also verify the running server's version before using it.
+In development source, Stop and liveness checks for an existing Herdr pane use the
+recorded socket and terminal ID independently of executable detection.
 In the development source, standalone Claude unified uses the default Herdr server,
 matching `happier herdr`; recovery of a retained attachment keeps its recorded server namespace. Daemon
 requests retain their explicitly selected namespace. Generated agent names label

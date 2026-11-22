@@ -245,7 +245,7 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
   return await createStopSession({
     pidToTrackedSession,
     loadTerminalHostAdapters: async () => await (
-      terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry()
+      terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry({ forExistingAttachments: true })
     ),
     logPidReuseRefusal: (message) => logger.debug(message),
     logWarning: (message, ...args) => logger.debug(message, ...args),

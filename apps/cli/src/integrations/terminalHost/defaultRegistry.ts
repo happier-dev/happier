@@ -18,6 +18,8 @@ export function resolveDefaultTerminalHostStartupTimeoutMs(): number {
 }
 
 export async function createDefaultTerminalHostRegistry(options: Readonly<{
+  /** Recorded Herdr sockets can be controlled without admitting a new runtime. */
+  forExistingAttachments?: boolean;
   promptSubmitVerification?: TerminalPromptSubmitVerificationPolicy;
   zellijBinary?: string | null;
   zellijDefaultShell?: string;
@@ -29,7 +31,7 @@ export async function createDefaultTerminalHostRegistry(options: Readonly<{
   const zellijBinary = options.zellijBinary === undefined
     ? await resolveZellijRuntimeBinary().catch(() => null)
     : options.zellijBinary;
-  const herdrBinary = await resolveHerdrRuntimeBinary({
+  const herdrBinary = options.forExistingAttachments ? null : await resolveHerdrRuntimeBinary({
     actionTimeoutMs: configuration.claudeUnifiedTerminalHostActionTimeoutMs,
   });
   return createTerminalHostRegistry([
@@ -48,7 +50,7 @@ export async function createDefaultTerminalHostRegistry(options: Readonly<{
         }),
       ]
       : []),
-    ...(herdrBinary
+    ...(herdrBinary || options.forExistingAttachments
       ? [createHerdrTerminalHostAdapter({
         binary: herdrBinary,
         sessionName: options.herdrSessionName,

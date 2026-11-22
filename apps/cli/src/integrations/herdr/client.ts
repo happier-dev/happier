@@ -156,7 +156,7 @@ function request(socketPath: string, method: string, params: JsonRecord, timeout
 }
 
 export function createHerdrClient(params: Readonly<{
-  binary: string;
+  binary: string | null;
   sessionName: string;
   socketPath?: string;
   actionTimeoutMs: number;
@@ -166,8 +166,13 @@ export function createHerdrClient(params: Readonly<{
 
   type StartupContext = Readonly<{ env: NodeJS.ProcessEnv; socketPath: string; sessionDir: string }>;
 
+  function requireBinary(): string {
+    if (params.binary === null) throw new HerdrApiError('binary_unavailable');
+    return params.binary;
+  }
+
   async function listSessions(env?: NodeJS.ProcessEnv): Promise<readonly Readonly<{ name: string; socketPath: string; sessionDir: string | null; running: boolean }>[]> {
-    const { stdout } = await execFileAsync(params.binary, ['session', 'list', '--json'], {
+    const { stdout } = await execFileAsync(requireBinary(), ['session', 'list', '--json'], {
       timeout: params.actionTimeoutMs,
       windowsHide: true,
       ...(env ? { env } : {}),
@@ -223,7 +228,7 @@ export function createHerdrClient(params: Readonly<{
     const args = context || params.sessionName === 'default'
       ? ['server']
       : ['--session', params.sessionName, 'server'];
-    const server = spawn(params.binary, args, {
+    const server = spawn(requireBinary(), args, {
       detached: true,
       stdio: 'ignore',
       windowsHide: true,

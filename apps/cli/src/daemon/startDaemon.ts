@@ -2375,7 +2375,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const physicallyRetiredTerminalAttachmentIdBySessionId = new Map<string, string>();
         let terminalHostAdaptersPromise: ReturnType<typeof createDefaultTerminalHostRegistry> | null = null;
         const loadTerminalHostAdapters = async () => await (
-          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry()
+          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry({ forExistingAttachments: true })
         );
         const retireTerminalControlServiceabilityForCurrentAccount = async (
           input: Omit<Parameters<typeof retireExactTerminalControlServiceability>[0], 'credentials'>,

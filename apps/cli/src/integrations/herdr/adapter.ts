@@ -65,7 +65,7 @@ function failedInjection(
 }
 
 export function createHerdrTerminalHostAdapter(params: Readonly<{
-  binary: string;
+  binary: string | null;
   actionTimeoutMs: number;
   startupTimeoutMs: number;
   sessionName?: string;
