@@ -21,6 +21,10 @@ export function RepositoryTreeRootErrorState(props: Readonly<{
     if (props.kind === 'unavailable' && reachability.unreachable) {
         return <CheckoutUnreachableState reachability={reachability} returns={t('projects.checkouts.filesReturn')} testID="repository-tree-unreachable" />;
     }
+    // A cold controller has not answered presence yet, so no listing was attempted.
+    if (props.kind === 'unavailable' && (props.machineScope ?? announcedMachine) && reachability.runtime.status === 'unknown') {
+        return <SurfaceStateCard testID="repository-tree-root-loading" kind="loading" title={t('common.loading')} />;
+    }
     // A stopped workspace is not a listing failure: it names the workspace and its one next step (lab project-stoppedCold).
     if (props.kind !== 'unavailable' && props.error === MANAGED_POWER_REQUIRED) {
         return <ManagedWorkspaceStoppedState testID="repository-tree-root-error" workspaceName={props.machineName ?? null}

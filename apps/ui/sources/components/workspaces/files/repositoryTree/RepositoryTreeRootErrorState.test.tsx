@@ -8,6 +8,7 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHo
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { createManagedControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 
 const home = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(home);
@@ -29,6 +30,21 @@ afterEach(async () => {
 });
 
 describe('RepositoryTreeRootErrorState recovery', () => {
+    it('waits for controller presence before a first read, then preserves a confirmed offline state', async () => {
+        const serverId = await home.addHome({ name: 'Cold controller', serverUrl: 'https://cold-controller.test',
+            serverIdentityId: 'cold-controller', accountId: 'owner', currentAccount: true });
+        const scope = { serverId, machineId: 'cold-controller' };
+        const screen = await renderScreen(<RepositoryTreeRootErrorState kind="unavailable" machineScope={scope} />);
+        expect(screen.findAllByTestId('repository-tree-root-loading').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('repository-tree-root-error')).toHaveLength(0);
+
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+            createMachineFixture({ id: scope.machineId, active: false, activeAt: 1 }),
+        ]);
+        await waitForHomeGovernance(() => expect(screen.findAllByTestId('repository-tree-unreachable').length).toBeGreaterThan(0));
+        expect(screen.findAllByTestId('repository-tree-root-loading')).toHaveLength(0);
+    });
+
     it('shows the isolation reason without a retry that cannot fix it', async () => {
         const screen = await renderScreen(<RepositoryTreeRootErrorState error="agent_isolation_unavailable" onRetry={vi.fn()} />);
         expect(screen.getTextContent()).toContain(t('errors.agentIsolationUnavailable'));
