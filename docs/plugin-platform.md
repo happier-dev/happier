@@ -1855,6 +1855,16 @@ immutable built-in registry for bundled declarations. Installed-plugin discovery
 still runs on each merged read; it cannot overwrite that built-in snapshot or
 retain an installed generation across reloads.
 
+In 0.3 development source, a daemon-free managed Workspace Sync worker inherits
+the controller's admitted SCM selection and contribution projection. Bundled
+plugin paths resolve through the executing guest CLI's existing source owner,
+and the admitted child loader loads those bytes under the guest's own packaged
+or development custody. Controller filesystem paths are not portable guest paths.
+Only bundled plugins enter this managed packet; other contributions retain
+their declarations and settle unsupported through their existing SCM owners.
+Same-filesystem children keep their exact admitted source. This placement does
+not discover guest Account state, carry credentials or create a grant.
+
 Managed guests place installed plugin code under their external managed-tools
 root selected by `HAPPIER_FIRST_PARTY_INSTALL_HOME`. Generation directories and
 code are member-readable; registry state, credentials and configuration remain

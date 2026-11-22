@@ -185,7 +185,8 @@ export async function executePrivateProjectSyncEffect(effect: WorkspaceNativeSyn
     snapshot = next;
   };
   replaceSnapshot(snapshot);
-  const registry = await createWorkspaceEffectScmRegistry(checkout, context);
+  const registry = await createWorkspaceEffectScmRegistry(checkout, { ...context,
+    managedGuestHome: configuration.localManagedTarget ? effect.memberHome : undefined });
   const nativeResolutionExport = network.requestNativeResolutionExport;
   const requestResolutionExport: WorkspaceSyncTargetAuthorityDependencies['requestResolutionExport'] = nativeResolutionExport
     ? async request => {

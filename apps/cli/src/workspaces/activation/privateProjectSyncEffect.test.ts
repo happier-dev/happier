@@ -142,9 +142,8 @@ it.each([false, true])('reuses a committed native finite seed across admitted ch
             socketDirectory: parent, home: parent, platform: { os: 'linux', arch: 'x64', home: parent },
             exec: async () => ({ status: 0, stdout: '', stderr: '' }), putFile: async () => undefined,
             ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }), openChannel: () => new PassThrough() }),
-          projectFiles: { sessionId: baselineRequest.sessionId, primarySocketPath: join(parent, 'primary.sock'),
-            origin: { sourceWorkspace: { serverId: 'home', workspaceId: 'source', machineId: 'remote', rootPath: '/remote/source' },
-              targetWorkspace: baselineRequest.targetWorkspace, contentPolicyDigest: contentPolicy.policyDigest },
+          workspace: { sessionId: baselineRequest.sessionId, primarySocketPath: join(parent, 'primary.sock'),
+            roots: { hostRoot: '/remote/source', targetRoot: root },
             readBaseline: signal => runtime.readManagedProjectFilesBaseline({ ...baselineRequest, contentPolicyDigest: contentPolicy.policyDigest, signal }) } });
         try {
           expect(releaseRelay).toBeTypeOf('function');

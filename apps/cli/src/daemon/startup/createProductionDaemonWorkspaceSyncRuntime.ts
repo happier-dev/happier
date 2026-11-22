@@ -67,6 +67,8 @@ import { isManagedWorkspaceRefV2, type ManagedWorkspaceRefV2 } from '@happier-de
 import { workspaceAddressFromRefV2 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { ManagedWorkspaceSyncTarget } from '@/machines/managed/acquire';
 import { startPrivateProjectSyncChannel } from '@/workspaces/activation/privateProjectCheckoutProcess';
+import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
+import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import type { PrivateProjectNativeSync, PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceNativeCopyBaselineEffect } from '@/workspaces/activation/privateProjectSyncEffect';
 import { runWorkspaceEffectChannel } from '@/workspaces/activation/workspaceEffectProcess';
@@ -1059,22 +1061,26 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     network: PrivateProjectSyncNetwork;
     createParent: boolean;
   }>) => {
-    const installed = await request.target.ensureWorkspaceRuntime();
-    const root = dirname(request.workspace.rootPath);
-    // The admitted managed platform is POSIX. Paths remain argv operands.
-    const launch = request.createParent ? 'mkdir -p -- "$1" && cd "$1" && exec "$2" workspace-effect'
-      : 'cd "$1" && exec "$2" workspace-effect';
-    const channel = request.target.openChannel(['sh', '-c', launch, 'workspace-sync', root, installed.binaryPath], request.signal);
-    return await factories.startManagedSyncChannel({ channel, signal: request.signal, memberHome: request.target.home,
-      effect: { request: { serverId: semanticServerId, machineId: input.localMachineId,
-        source: { kind: 'workspace', workspaceId: request.counterpartWorkspaceRefId },
-        materialization: { kind: 'sync', targetPath: request.workspace.rootPath,
-          workspaceAction: { kind: 'relationship', relationshipId: request.operationId, flushBeforeCommit: false } } },
-        workspaceRefId: request.workspace.id, workspaceRoot: root, existingRootPath: request.workspace.rootPath,
-        generation: 0, plugins: [], contributions: {} },
-      configuration: { serverId: semanticServerId, machineId: input.localMachineId, accountId: request.accountId,
-        snapshot: request.snapshot, localManagedTarget: { managedId: request.workspace.managedId, controller: request.workspace.controller },
-        agent: { releaseChannel: input.releaseChannel } }, network: request.network, onEffectsIssued() {} });
+    const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+    try {
+      const admitted = await prepareAdmittedScmEffect({ registry: lease.registry, managedGuest: true });
+      const installed = await request.target.ensureWorkspaceRuntime();
+      const root = dirname(request.workspace.rootPath);
+      // The admitted managed platform is POSIX. Paths remain argv operands.
+      const launch = request.createParent ? 'mkdir -p -- "$1" && cd "$1" && exec "$2" workspace-effect'
+        : 'cd "$1" && exec "$2" workspace-effect';
+      const channel = request.target.openChannel(['sh', '-c', launch, 'workspace-sync', root, installed.binaryPath], request.signal);
+      return await factories.startManagedSyncChannel({ channel, signal: request.signal, memberHome: request.target.home,
+        effect: { request: { serverId: semanticServerId, machineId: input.localMachineId,
+          source: { kind: 'workspace', workspaceId: request.counterpartWorkspaceRefId },
+          materialization: { kind: 'sync', targetPath: request.workspace.rootPath,
+            workspaceAction: { kind: 'relationship', relationshipId: request.operationId, flushBeforeCommit: false } } },
+          workspaceRefId: request.workspace.id, workspaceRoot: root, existingRootPath: request.workspace.rootPath,
+          ...admitted.effect },
+        configuration: { serverId: semanticServerId, machineId: input.localMachineId, accountId: request.accountId,
+          snapshot: request.snapshot, localManagedTarget: { managedId: request.workspace.managedId, controller: request.workspace.controller },
+          agent: { releaseChannel: input.releaseChannel } }, network: request.network, onEffectsIssued() {} });
+    } finally { await lease.release(); }
   };
 
   const openManagedSyncAgent = (target: ManagedWorkspaceSyncTarget, native: PrivateProjectNativeSync, rootPath: string,

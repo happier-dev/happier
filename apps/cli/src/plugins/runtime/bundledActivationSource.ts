@@ -5,13 +5,16 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
-import { defaultCanImportFirstPartyPluginSource } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
+import { defaultCanImportFirstPartyPluginSource, resolveAuthoritativePackagedRuntimeCustody,
+    type AuthoritativePackagedRuntimeCustody } from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { projectPathFromModuleUrl } from '@/projectPath';
 import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
 import { readBundledPluginManifest, loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { ingestBundledPluginManifest } from '@/plugins/projection/registry/builtIn/manifestFile';
 import type { LoadedPlugin } from '@/plugins/discovery/load/installed';
 import type { CanonicalPluginManifest } from '@/plugins/manifest/types';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
+    BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 
 import {
     normalizeBundledWorkspaceNameFromPackageName,
@@ -292,6 +295,32 @@ export function resolveSourceDevelopmentBundledPackageNames(params: Readonly<{
         }
     }
     return sourceDevelopmentPackageNames;
+}
+
+/** Resolve admitted bundled identities in the executing runtime's filesystem.
+ * Both the daemon and its managed guest use the same packaged source owner. */
+export function createRuntimeBundledActivationSourceResolver(params: Readonly<{
+    activationTargets: readonly BundledExecutablePluginTarget[];
+    bundledDeclarations?: readonly LoadedPlugin[];
+    signal?: AbortSignal;
+    packagedRuntime?: AuthoritativePackagedRuntimeCustody | null;
+    resolveDevelopmentSourceAuthority?: Parameters<typeof createBundledActivationSourceResolver>[0]['resolveDevelopmentSourceAuthority'];
+}>) {
+    const runtime = params.packagedRuntime === undefined ? resolveAuthoritativePackagedRuntimeCustody() : params.packagedRuntime;
+    const paths = runtime ? resolvePackagedBundledActivationPaths({
+        runtimeRoot: runtime.root, activationTargets: params.activationTargets,
+        metadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA, locators: BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
+    }) : null;
+    return createBundledActivationSourceResolver({
+        bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
+        bundledDeclarations: params.bundledDeclarations,
+        signal: params.signal,
+        immutableArtifactPackageNames: paths ? [...paths.entryPathsByPackageName.keys()] : [],
+        ...(paths ? { immutableArtifactEntryPathsByPackageName: paths.entryPathsByPackageName,
+            immutableArtifactRootPathsByPackageName: paths.rootPathsByPackageName } : {}),
+        resolveDevelopmentSourceAuthority: params.resolveDevelopmentSourceAuthority,
+        ...(runtime ? { packagedRuntime: runtime.packagedRuntime, packagedRuntimeRoot: runtime.root } : {}),
+    });
 }
 
 export function createBundledActivationSourceResolver(params: Readonly<{

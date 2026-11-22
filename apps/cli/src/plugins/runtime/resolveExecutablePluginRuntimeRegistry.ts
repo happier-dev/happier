@@ -82,9 +82,7 @@ import type { AutomationEventSourcesListTransportV1 } from '@happier-dev/protoco
 import { attestRetainedManagedProvider } from './composition/retainedProviderAssembly';
 import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authoring/sourceModule';
 import {
-    BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
     BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
-    BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
 } from '../projection/registry/sources/generatedBundledPluginManifests';
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
@@ -151,8 +149,8 @@ import {
 } from './lifecycle/manager';
 import {
     createBundledActivationSourceResolver,
+    createRuntimeBundledActivationSourceResolver,
     resolveBundledActivationSourceRepoRoot,
-    resolvePackagedBundledActivationPaths,
 } from './bundledActivationSource';
 import { createPluginScmBackendRegistryFromRuntimeRegistry } from '../../scm/pluginBackends/runtimeRegistry';
 import { createPluginActivationSourceResolver } from './pluginActivationSource';
@@ -730,40 +728,14 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(params.servingPluginOccurrences?.keys() ?? []),
         ]);
     const packagedRuntimeRoot = resolveAuthoritativePackagedRuntimeCustody();
-    const packagedActivationPaths = packagedRuntimeRoot
-        ? resolvePackagedBundledActivationPaths({
-            runtimeRoot: packagedRuntimeRoot.root,
-            activationTargets: contributes.activationTargets.filter((target) => (
-                scopedCandidatePluginIds === undefined || scopedCandidatePluginIds.has(target.pluginId)
-            )),
-            metadata: BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
-            locators: BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS,
-        })
-        : null;
-    const resolveBundledActivationSource = createBundledActivationSourceResolver({
-        bundledPackageNames: BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES,
+    const resolveBundledActivationSource = createRuntimeBundledActivationSourceResolver({
+        activationTargets: contributes.activationTargets.filter((target) => (
+            scopedCandidatePluginIds === undefined || scopedCandidatePluginIds.has(target.pluginId)
+        )),
         bundledDeclarations: contributes.pluginDeclarations,
-        ...(params?.signal ? { signal: params.signal } : {}),
-        immutableArtifactPackageNames: packagedActivationPaths
-            ? [...packagedActivationPaths.entryPathsByPackageName.keys()]
-            : [],
-        ...(packagedActivationPaths
-            ? {
-                immutableArtifactEntryPathsByPackageName:
-                    packagedActivationPaths.entryPathsByPackageName,
-                immutableArtifactRootPathsByPackageName:
-                    packagedActivationPaths.rootPathsByPackageName,
-            }
-            : {}),
-        ...(params?.resolveDevelopmentSourceAuthority
-            ? { resolveDevelopmentSourceAuthority: params.resolveDevelopmentSourceAuthority }
-            : {}),
-        ...(packagedRuntimeRoot
-            ? {
-                packagedRuntime: packagedRuntimeRoot.packagedRuntime,
-                packagedRuntimeRoot: packagedRuntimeRoot.root,
-            }
-            : {}),
+        signal: params?.signal,
+        resolveDevelopmentSourceAuthority: params?.resolveDevelopmentSourceAuthority,
+        packagedRuntime: packagedRuntimeRoot,
     });
     const activatedManifestAuthorityByPluginId = new Map<
         string,

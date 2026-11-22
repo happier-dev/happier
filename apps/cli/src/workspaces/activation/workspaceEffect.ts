@@ -6,6 +6,8 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import type { ResolvedContributionInputs } from '@/plugins/projection/registry/types';
 import { loadAdmittedPluginProcessRegistrations } from '@/plugins/runtime/lifecycle/activation/admittedProcessPlugins';
 import type { AdmittedBackgroundServicePlugin } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessSource';
+import { createRuntimeBundledActivationSourceResolver } from '@/plugins/runtime/bundledActivationSource';
+import { createDaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/developmentRoots';
 import type { StablePluginConnectedAccountsOwner } from '@/plugins/runtime/invocation/services/connectedAccounts';
 import { createPluginScmBackendRegistryFromRuntimeRegistry } from '@/scm/pluginBackends/runtimeRegistry';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -65,6 +67,7 @@ export type AdmittedScmEffect = Pick<WorkspaceCheckoutEffect, 'generation' | 'pl
 export async function prepareAdmittedScmEffect(input: Readonly<{
   registry: ResolvedExecutablePluginRuntimeRegistry;
   providerId?: string;
+  managedGuest?: boolean;
 }>): Promise<Readonly<{ effect: AdmittedScmEffect; assertCurrent(): void }>> {
   await activateScmRuntimeContributionsOnDemand(input.registry);
   const contributes = input.registry.contributes;
@@ -74,7 +77,12 @@ export async function prepareAdmittedScmEffect(input: Readonly<{
   const scmBackends = (contributes.scmBackends ?? []).filter(entry => entry.pluginId && admittedBackendPlugins.has(entry.pluginId));
   const pluginIds = [...new Set([...scmBackends, ...scmHostingProviders].flatMap(entry => entry.pluginId ? [entry.pluginId] : []))];
   if (!input.registry.readAdmittedBackgroundServicePlugins) throw privateProjectCheckoutRefusal();
-  const plugins = input.registry.readAdmittedBackgroundServicePlugins(pluginIds);
+  // Only bundled code has an executing-runtime placement on a managed guest.
+  // Retain contribution definitions so their existing owners settle missing
+  // registrations as unavailable without blocking unrelated folder transfers.
+  const placedPluginIds = input.managedGuest ? pluginIds.filter(pluginId => contributes.activationTargets.some(target =>
+    target.pluginId === pluginId && target.sourceSpec.kind === 'bundled')) : pluginIds;
+  const plugins = input.registry.readAdmittedBackgroundServicePlugins(placedPluginIds);
   const assertCurrent = () => {
     if (!plugins.every(plugin => input.registry.isPluginOccurrenceCurrent(plugin.target.pluginId, plugin.occurrenceId))) {
       throw privateProjectCheckoutRefusal('workspace_private_checkout_retired');
@@ -90,17 +98,31 @@ export async function prepareAdmittedScmEffect(input: Readonly<{
 
 /** The admitted plugin projection is loaded once in the member process for
  * checkout or retained Sync; SCM never falls back to daemon-owned discovery. */
-export async function createWorkspaceEffectScmRegistry(input: AdmittedScmEffect, context: Pick<WorkspaceCheckoutEffectContext, 'connectedAccounts'>) {
+export async function createWorkspaceEffectScmRegistry(input: AdmittedScmEffect,
+  context: Pick<WorkspaceCheckoutEffectContext, 'connectedAccounts'> & Readonly<{ managedGuestHome?: string }>) {
   const contributes = createResolvedContributionRegistry(input.contributions);
+  // No initialize(): the existing owner admits only this runtime's exact
+  // first-party roots lazily. No guest Account discovery or watcher starts.
+  const developmentRoots = context.managedGuestHome === undefined ? undefined : createDaemonPluginDevelopmentRootsOwner({
+    happyHomeDir: context.managedGuestHome,
+    submitObservation: async () => { throw privateProjectCheckoutRefusal(); },
+  });
+  const bundled = developmentRoots ? createRuntimeBundledActivationSourceResolver({
+    activationTargets: input.plugins.map(plugin => plugin.target),
+    resolveDevelopmentSourceAuthority: developmentRoots.resolveDevelopmentSourceAuthority,
+  }) : undefined;
   const loaded = await loadAdmittedPluginProcessRegistrations(input.plugins, input.generation,
-    async () => { throw privateProjectCheckoutRefusal(); }, contributes);
+    async () => { throw privateProjectCheckoutRefusal(); }, contributes,
+    bundled ? { resolveBundledActivationSource: bundled } : undefined)
+    .catch(async error => { await developmentRoots?.stop(); throw error; });
+  const dispose = async () => { try { await loaded.dispose(); } finally { await developmentRoots?.stop(); } };
   try {
     const projected = createPluginScmBackendRegistryFromRuntimeRegistry({ contributes,
       scmBackendsById: loaded.scmBackendsById, scmBackendRegistrations: loaded.scmBackendRegistrations,
       scmHostingProvidersById: loaded.scmHostingProvidersById, envAllowedNamesByPluginId: loaded.envAllowedNamesByPluginId,
       resolveConnectedAccountPurposeBindingOwner: () => context.connectedAccounts ?? null });
-    return { registry: createScmBackendRegistry(projected.backends), dispose: () => loaded.dispose() };
-  } catch (error) { await loaded.dispose(); throw error; }
+    return { registry: createScmBackendRegistry(projected.backends), dispose };
+  } catch (error) { await dispose(); throw error; }
 }
 
 /** Native child only. The SAME trusted checkout owner performs reservation,

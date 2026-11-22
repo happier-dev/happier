@@ -22,6 +22,11 @@ import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffec
 import { logger } from '@/ui/logger';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { seedTestServerProfile } from '@/testkit/serverProfiles';
+import { runScmExecutable } from '@/testkit/scm/scmBackendContractFixtures';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { admitRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { createPlainProjectAccountRefRow, createProjectAccountRowsHttpBoundary, projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
@@ -68,9 +73,20 @@ it('routes admitted native Project Open through retained requester custody befor
   expect(rows).toEqual([]);
 });
 
-it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a controller workspace through the native source', async entry => {
-  const scmRuntime = await acquireWorkspaceSyncTestScmRuntime();
-  onTestFinished(async () => { await scmRuntime.release(); });
+it.each(['workspace', 'admitted Source', 'plain folder with external hosting'] as const)('copies a managed %s into a controller workspace through the native source', async entry => {
+  const plainFolder = entry === 'plain folder with external hosting';
+  if (plainFolder) {
+    const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController, coldStart: true,
+      plugins: [{ manifest: createPluginManifestV2Fixture({ id: 'acme.controller-forge', contributes: {
+        scmHostingProviders: [{ id: 'forge', kind: 'github', title: 'Controller forge', capabilities: ['detect'] }],
+      } }), files: { 'daemon.mjs': 'export function activate(api) { api.scm.registerHostingProvider("forge", { adapter: { routing: { detect: async () => null } } }); }' } }],
+      resolveContributes: happyHomeDir => resolveMergedContributionRegistry({ happyHomeDir }),
+    });
+    onTestFinished(() => fixture.dispose());
+  } else {
+    const scmRuntime = await acquireWorkspaceSyncTestScmRuntime();
+    onTestFinished(async () => { await scmRuntime.release(); });
+  }
   const diagnose = vi.spyOn(logger, 'warnLocalFile');
   onTestFinished(() => { diagnose.mockRestore(); });
   const directory = await mkdtemp(join(tmpdir(), 'managed-project-copy-'));
@@ -82,6 +98,15 @@ it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a c
   await Promise.all([mkdir(sourcePath, { recursive: true }), mkdir(home, { recursive: true }), mkdir(dirname(targetPath))]);
   const bytes = Buffer.from([0, 255, 17, 0, 10]);
   await writeFile(join(sourcePath, 'guest-only.bin'), bytes);
+  let sourceHead: string | undefined;
+  if (!plainFolder) {
+    await writeFile(join(sourcePath, '.gitignore'), 'ignored.env\n');
+    runScmExecutable(sourcePath, 'git', ['init', '-q']);
+    runScmExecutable(sourcePath, 'git', ['add', '.']);
+    runScmExecutable(sourcePath, 'git', ['-c', 'user.name=Happier Test', '-c', 'user.email=test@example.com', 'commit', '-qm', 'Guest source']);
+    sourceHead = runScmExecutable(sourcePath, 'git', ['rev-parse', 'HEAD']).trim();
+    await writeFile(join(sourcePath, 'ignored.env'), 'guest secret excluded from Copy');
+  }
   await seedTestServerProfile({ id: serverId, homeId: serverId, serverUrl: serverHttpBaseUrl });
   const controller = { machineId: 'host', installationId: 'installation' };
   const source: ManagedWorkspaceRefV2 = { v: 2, kind: 'managed', id: 'source', managedId: 'sandbox',
@@ -124,12 +149,22 @@ it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a c
           ensureWorkspaceRuntime: async () => ({ binaryPath: '/guest/happier' }),
           openChannel: (argv, signal) => {
             if (argv[0] === 'sh') {
+              let retireControllerEntry: Promise<void> | undefined;
+              if (plainFolder) {
+                // The controller's admitted install is absent from the guest filesystem.
+                // Remove only this fixture's entry after controller activation/projection.
+                const lease = pluginReloadController.tryAcquireRuntimeRegistry();
+                if (!lease) throw new Error('Controller runtime is unavailable');
+                const external = lease.registry.readAdmittedBackgroundServicePlugins?.(['acme.controller-forge'])[0];
+                if (!external) throw new Error('External hosting selection was not admitted');
+                retireControllerEntry = rm(external.processEntry.entryPath).finally(() => lease.release());
+              }
               expect(argv.slice(-2)).toEqual([dirname(sourcePath), '/guest/happier']);
               const input = new PassThrough();
               const output = new PassThrough();
               const channel = Duplex.from({ readable: output, writable: input });
               channel.once('close', () => { input.destroy(); output.destroy(); });
-              const worker = runWorkspaceEffectWorker([], { input, output, signal, currentDirectory: () => dirname(sourcePath) })
+              const worker = Promise.resolve(retireControllerEntry).then(() => runWorkspaceEffectWorker([], { input, output, signal, currentDirectory: () => dirname(sourcePath) }))
                 .finally(() => { output.end(); });
               workers.push(worker);
               void worker.catch(error => channel.destroy(error));
@@ -160,7 +195,7 @@ it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a c
     repository: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://forge.invalid' },
       repository: { nameWithOwner: 'group/repo' }, protocol: 'https' } } satisfies ProjectSourceV1;
   const request: OpenProjectInputV1 = { serverId, machineId: controller.machineId,
-    source: entry === 'workspace' ? { kind: 'workspace', workspaceId: source.id, checkout }
+    source: entry !== 'admitted Source' ? { kind: 'workspace', workspaceId: source.id, checkout }
       : { kind: 'source', id: projectSource.id, revision: projectSource.revision, selector: projectSource.repository, checkout },
     materialization: { kind: 'sync', targetPath, workspaceAction: { kind: 'copy_once',
       contentPolicy } } };
@@ -196,6 +231,8 @@ it.each(['workspace', 'admitted Source'] as const)('copies a managed %s into a c
   const opened = await openProject(request, projectRuntime, ingress);
   expect(opened, JSON.stringify({ opened, diagnostics: diagnose.mock.calls })).toMatchObject({ kind: 'opened', directory: targetPath });
   expect(await readFile(join(targetPath, 'guest-only.bin'))).toEqual(bytes);
+  if (sourceHead) expect(runScmExecutable(targetPath, 'git', ['rev-parse', 'HEAD']).trim()).toBe(sourceHead);
+  await expect(readFile(join(targetPath, 'ignored.env'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await readFile(join(sourcePath, 'guest-only.bin'))).toEqual(bytes);
   expect(guestLifetimes).toHaveLength(1);
   expect(guestLifetimes[0]?.aborted).toBe(true);

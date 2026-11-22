@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import * as fileSystem from 'node:fs';
 import * as fileSystemPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -14,9 +14,17 @@ import {
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
+import { ingestCanonicalPluginManifest } from '@/plugins/manifest/ingest';
+import { projectActivationTarget } from './lifecycle/activation/targets';
+import { projectAdmittedBackgroundServicePlugin } from './lifecycle/contributions/backgroundServiceProcessSource';
+import { loadAdmittedPluginProcessRegistrations } from './lifecycle/activation/admittedProcessPlugins';
+import { bindPluginRuntimeSourceAuthority, resolvePluginSourceCustody } from './sourceAuthority';
+import { createPluginRuntimeOccurrenceId } from './runtimeSlots';
+import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, BUNDLED_FIRST_PARTY_PLUGIN_METADATA } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
 
 import {
   createBundledActivationSourceResolver,
+  createRuntimeBundledActivationSourceResolver,
   resolvePackagedBundledActivationPaths,
   resolveBundledActivationSourceRepoRoot,
   resolveSourceDevelopmentBundledPackageNames,
@@ -101,6 +109,72 @@ afterEach(async () => {
 });
 
 describe('createBundledActivationSourceResolver', () => {
+  it('places an admitted bundled child in the guest runtime while retaining an external exact source', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-guest-bundled-source-'));
+    tempDirs.push(root);
+    const pluginId = 'happier.scm.backend.git';
+    const metadata = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(entry => entry.pluginId === pluginId);
+    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(entry => entry.pluginId === pluginId);
+    if (!metadata || !locator) throw new Error('Git bundled source declaration is unavailable');
+    const runtimeRoot = join(root, 'guest-runtime');
+    const manifest = createPluginManifestV2Fixture({ id: pluginId });
+    const manifestPath = join(runtimeRoot, locator.manifestRelativePath);
+    await mkdir(dirname(manifestPath), { recursive: true });
+    await writeFile(manifestPath, JSON.stringify(manifest));
+    const guestRoot = join(runtimeRoot, 'node_modules', metadata.packageName);
+    await mkdir(guestRoot, { recursive: true });
+    const marker = join(root, 'activated');
+    await writeFile(join(guestRoot, 'daemon.mjs'), `
+      import { appendFile } from 'node:fs/promises';
+      export async function activate() { await appendFile(${JSON.stringify(marker)}, 'guest\\n'); }
+    `);
+    const admitted = await Promise.all([pluginId, 'acme.external'].map(async id => {
+      const bundled = id === pluginId;
+      const pluginRoot = join(root, bundled ? 'controller-bundled' : 'controller-external');
+      await mkdir(pluginRoot);
+      const entryPath = join(pluginRoot, 'daemon.mjs');
+      await writeFile(entryPath, `
+        import { appendFile } from 'node:fs/promises';
+        export async function activate() { await appendFile(${JSON.stringify(marker)}, 'external\\n'); }
+      `);
+      const parsed = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({ id }), {
+        sourceProvenance: 'registryCustodied', ...(bundled ? { manifestAuthority: 'bundled_first_party' } : {}),
+      });
+      if (!parsed.ok) throw new Error(parsed.diagnostics.map(entry => entry.message).join('\n'));
+      const sourceAuthority = bindPluginRuntimeSourceAuthority({ custody: { kind: 'development', registeredRootId: pluginRoot },
+        resolvedRoot: pluginRoot, observedRevision: 1 });
+      const plugin = projectAdmittedBackgroundServicePlugin({
+        target: projectActivationTarget({ pluginId: id, provenance: bundled ? 'first_party' : 'external',
+          source: { kind: bundled ? 'bundled' : 'path' }, manifest: parsed.manifest,
+          manifestPath: join(pluginRoot, 'plugin.json'), daemonEntryPath: bundled ? metadata.packageName : entryPath,
+          sourceSpec: bundled ? { kind: 'bundled', locator: metadata.packageName }
+            : { kind: 'path', locator: pluginRoot, trustPolicy: 'local_trusted', installPolicy: 'link' } }),
+        occurrenceId: createPluginRuntimeOccurrenceId(id), sourceCustody: resolvePluginSourceCustody(sourceAuthority),
+        source: bundled ? { kind: 'bundled', moduleId: metadata.packageName, sourceAuthority,
+          processEntry: { entryPath, rootPath: pluginRoot, loadMode: 'immutable-js' }, load: async () => ({}) }
+          : { kind: 'file_backed', sourceAuthority, entryPath },
+      });
+      // The guest cannot read the controller's bundled module. External code
+      // remains at its admitted path and must not be replaced by bundled code.
+      if (bundled) await rm(entryPath);
+      return plugin;
+    }));
+    const packagedRuntime = { kind: 'pinned_runner_snapshot', snapshotId: 'guest-runtime' } as const;
+    const resolveBundledActivationSource = createRuntimeBundledActivationSourceResolver({
+      activationTargets: admitted.map(plugin => plugin.target),
+      packagedRuntime: { root: runtimeRoot, packagedRuntime, provenance: 'packaged-snapshot' },
+    });
+    const registry = await loadAdmittedPluginProcessRegistrations(admitted, 1,
+      async () => { throw new Error('No Account service is available in the guest'); }, undefined,
+      { resolveBundledActivationSource });
+    try {
+      expect([...registry.activatedPluginIds].sort()).toEqual([pluginId, 'acme.external'].sort());
+      expect((await readFile(marker, 'utf8')).trim().split('\n').sort()).toEqual(['external', 'guest']);
+      expect(registry.readPluginSourceCustody(pluginId)).toEqual({ kind: 'bundled_first_party', packagedRuntime });
+      expect(registry.readPluginOccurrenceId(pluginId)).toBe(admitted[0]?.occurrenceId);
+      expect(registry.readPluginSourceCustody('acme.external')).toEqual(admitted[1]?.sourceCustody);
+    } finally { await registry.dispose(); }
+  });
   it('resolves packaged activation metadata when an unrelated contribution is skipped', () => {
     const packageName = '@happier-dev/plugins-tolerant-fixture';
     const pluginId = 'happier.tolerant-fixture';
