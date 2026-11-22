@@ -408,6 +408,7 @@ function daemonProjection(input: Readonly<{
     refreshAvailable?: boolean;
     secondPlugin?: boolean;
     generation?: number;
+    localArtifactDigest?: `sha256:${string}`;
     /** Simulates the plugin being uninstalled while its page is selected. */
     omitPage?: boolean;
     /** The catalog row states the plugin declares no contribution points. */
@@ -417,15 +418,17 @@ function daemonProjection(input: Readonly<{
 }> = {}) {
     const generation = input.generation ?? 9;
     fixtureDaemonGeneration.value = generation;
-    const sourceCustody = { kind: 'bundled_first_party',
+    const sourceCustody = input.localArtifactDigest ? { kind: 'development', registeredRootId: 'plugin-app-page-fixture-root' } as const
+        : { kind: 'bundled_first_party',
         packagedRuntime: { kind: 'cli_version_root', versionRootId: 'plugin-app-page-fixture-root' } } as const;
+    const artifactDigest = input.localArtifactDigest ?? PAGE_ARTIFACT_DIGEST;
     const serverIdentityId = getServerProfileById(pluginSurfaceAccountLifetime.value!.scope.serverId)?.serverIdentityId;
     const packageEntry = (pluginId: string) => ({
         id: pluginId,
         displayName: pluginId === NOTES_PLUGIN_ID ? 'Notes' : 'Journal',
         version: '1.0.0',
         enabled: true,
-        source: { kind: 'bundled', locator: pluginId },
+        source: input.localArtifactDigest ? { kind: 'localPath', locator: '/fixture' } : { kind: 'bundled', locator: pluginId },
         // The package owner is the sole source of this target identity. It is
         // deliberately distinct from the aggregate projection generation.
         immutableGenerationId: `${pluginId}-generation-${generation}`,
@@ -475,6 +478,7 @@ function daemonProjection(input: Readonly<{
         contributionKind: 'reactNativeBundle',
         contributionId: 'notes-renderer',
         generatedV2: true,
+        ...(input.localArtifactDigest ? { artifactSelectionOwner: 'daemonProjection' } : {}),
         hostApi: { minVersion: '1.0.0', methods: ['context', ...(input.reviewCompanion ? ['setPageNavigation'] : []),
             ...(input.connectionResource ? ['readResource'] : [])] },
         // This fixture exercises a daemon-backed page (its refresh Action is
@@ -490,7 +494,7 @@ function daemonProjection(input: Readonly<{
                 digest: PAGE_FILE_DIGEST,
                 byteSize: PAGE_ARTIFACT_BYTES.byteLength,
             }],
-            digest: PAGE_ARTIFACT_DIGEST,
+            digest: artifactDigest,
             builtWith: { bundler: 'esbuild', version: '0.27.2' },
             executable: { exports: ['renderSurface'] },
             hostUiApiRange: '^1.0.0',
@@ -499,7 +503,7 @@ function daemonProjection(input: Readonly<{
             decision: { state: 'load', reason: 'compatible', diagnostics: [] },
             loadPolicy: { source: 'installedArtifact' },
             cacheKey: `${pluginId}-page-cache-key`,
-            cacheIdentity: { artifactDigest: PAGE_ARTIFACT_DIGEST },
+            cacheIdentity: { artifactDigest },
         },
     });
     const entries: Record<string, unknown> = {
@@ -904,6 +908,45 @@ afterEach(async () => {
 });
 
 describe('plugin app page host route (EU-5b)', () => {
+    it('loads a qualified local page renderer from the Machine that provides its Actions', async () => {
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const fallback = { ...storage.getState().machines['machine-1']!, activeAt: Date.now() };
+        const addressed = createMachineFixture({ id: 'machine-a', installationId: 'installation-a', activeAt: Date.now() });
+        await publishMachineInventoryForTest(pluginSurfaceAccountLifetime.value!.scope, [fallback, addressed]);
+        storage.setState({ settings: { ...storage.getState().settings, machineAdministrationTargetsLocalV1: {
+            [`plugin.runOn:${NOTES_PLUGIN_ID}`]: { serverIdentityId: 'srv_account_one', machineId: fallback.id },
+        } } });
+        const addressedDigest = `sha256:${'c'.repeat(64)}` as const;
+        const projectionFor = (machineId: string) => daemonProjection({
+            machineId, connectionResource: true, withoutContributionPoints: true,
+            generation: machineId === addressed.id ? 9 : 10,
+            localArtifactDigest: machineId === addressed.id ? addressedDigest : PAGE_ARTIFACT_DIGEST,
+        });
+        contributionProjectionDescribeMock.mockImplementation(async machineId => ({
+            protocolVersion: 1, projection: projectionFor(machineId),
+        }));
+        const resourceMachines: string[] = [];
+        preparationRpc.answer = async (method, _payload, machineId) => {
+            if (method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) throw new Error(`Unexpected Resource RPC: ${method}`);
+            resourceMachines.push(machineId);
+            return { ok: true, resource: { pluginId: NOTES_PLUGIN_ID, localId: 'connection' }, kind: 'config',
+                contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' };
+        };
+        const { parsePluginAppPageRoutePath } = await import('@/components/plugins/pages/pluginPageRoute');
+        const route = `${NOTES_PAGE_PATH}/~run-on/srv_account_one/${addressed.id}/installation-a`;
+        const location = parsePluginAppPageRoutePath(route);
+        if (!location) throw new Error('Expected an App page route');
+        const render = await createPageRenderer({ ...location, machineId: null, serverId: null });
+        await renderScreen(render(composeAppProjection(projectionFor(fallback.id), 'server-1', projectionFor(addressed.id))));
+
+        await vi.waitFor(() => expect(readRenderContext().surface.machineExecutionReady).toBe(true));
+        await expect(readRenderContext().hostApi.readResource('connection', { input: { operation: 'describe' } }))
+            .resolves.toMatchObject({ contentType: 'application/json' });
+        expect(resourceMachines).toEqual([addressed.id]);
+        const renderer = reactNativeSurfaceProps.at(-1) as { loadedRuntimeIdentity?: { artifactDigest: string } };
+        expect(renderer.loadedRuntimeIdentity?.artifactDigest).toBe(addressedDigest);
+    });
+
     it.each([
         { name: 'the addressed Machine', installationId: 'installation-a', revoked: false, ready: true },
         { name: 'a replaced installation', installationId: 'replaced-installation', revoked: false, ready: false },

@@ -271,5 +271,6 @@ export function usePluginSurfaceExecutionOrigin(params: Readonly<{
         for (const target of targets) publishMachineContributionRegistryProjectionInvalidation(target, 'refresh');
     }, [accountLifetime, selection.candidates]);
     return { selection, selectedSupply, loading, unverified, retry, isExecutionOriginCurrent,
+        machineProjection: projectionDemand.inputs?.pluginUiProjection ?? null,
         machineActionsById: projectionDemand.phase === 'ready' ? projectionDemand.inputs?.pluginUiProjection?.actionsById ?? null : null };
 }

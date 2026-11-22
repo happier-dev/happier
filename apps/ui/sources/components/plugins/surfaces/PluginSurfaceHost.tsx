@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { PluginCompanionOpenedFromContext } from '@/components/plugins/pages/pluginPageNavigationContext';
+import { resolveQualifiedPluginPageArtifact } from '@/components/plugins/pages/pluginPages';
 import { pluginSurfacePageOwnsMachineChip } from './pluginSurfaceMachineChip';
 import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -3733,6 +3734,31 @@ function PluginSurfaceHostMount(props: Readonly<(
         return renderWithTargetedSurfaceBoundary(renderStaticModel());
     };
 
+    const resolveRendererArtifact = (
+        projectedContribution: Readonly<Record<string, unknown>> | null,
+        rendererKind: 'hostedWeb' | 'reactNative',
+    ) => {
+        const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
+            accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
+        if (contribution?.artifactSelectionOwner !== 'daemonProjection' || !descriptor
+            || !needsMachineExecution || selectedSurfaceBinding?.container !== 'appPage'
+            || props.contextualExecutionTarget?.installationId === undefined) {
+            return { contribution, exactSelectionMissing: false };
+        }
+        const exactContribution = resolveQualifiedPluginPageArtifact({
+            projection: pluginExecution.machineProjection,
+            pagePlacementId: descriptor.id,
+            pluginId: descriptor.pluginId,
+            occurrenceId: pluginExecution.selectedSupply?.occurrenceId ?? null,
+            executionOrigin,
+            rendererKind,
+        });
+        return { contribution: exactContribution, exactSelectionMissing: exactContribution === null };
+    };
+    const renderMissingPageArtifact = () => machineConnectionPending || pluginExecution.loading
+        ? renderUnavailable('plugin_ui_declaration_pending', 'loading')
+        : renderUnavailable('artifact_not_current');
+
     const renderHostedWebPane = (
         contributionId: string,
         projectedContribution: Readonly<Record<string, unknown>> | null,
@@ -3740,8 +3766,8 @@ function PluginSurfaceHostMount(props: Readonly<(
         inlineDocumentNetworkOrigins?: readonly string[],
         inlineDocumentNetwork?: 'none' | 'open',
     ) => {
-        const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
-            accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
+        const { contribution, exactSelectionMissing } = resolveRendererArtifact(projectedContribution, 'hostedWeb');
+        if (exactSelectionMissing) return renderMissingPageArtifact();
         if (!accountEncryptionMode) {
             return renderAccountEncryptionModeReadiness();
         }
@@ -3999,8 +4025,8 @@ function PluginSurfaceHostMount(props: Readonly<(
             : contributionId
                 ? props.pluginUiProjection?.reactNativeBundlesById[contributionId] ?? null
                 : null;
-        const contribution = resolveBundledPluginUiRendererArtifact(projectedContribution,
-            accountLifetime ? readCurrentPluginUiRendererProjection(accountLifetime.scope) : null);
+        const { contribution, exactSelectionMissing } = resolveRendererArtifact(projectedContribution, 'reactNative');
+        if (exactSelectionMissing) return renderMissingPageArtifact();
         const runtime = readReactNativeRuntimeState(
             contribution ?? null,
             props.platform === 'ios' || props.platform === 'android' ? props.platform : 'web',

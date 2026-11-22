@@ -5,6 +5,10 @@ import {
     normalizePluginUiSubPathV1,
     type PluginUiDestinationReferenceV1,
 } from '@happier-dev/protocol/plugins/ui';
+import {
+    arePluginMachineExecutionOriginsEqual,
+    type PluginMachineExecutionOriginV1,
+} from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 
 import {
     buildPluginSurfaceDestinationId,
@@ -19,6 +23,8 @@ import type {
 } from '@/sync/domains/plugins/ui/projection';
 import { selectPluginSurfacePlacementsForBinding } from '@/sync/domains/plugins/ui/surfacePlacementSelectors';
 import { reconcilePluginUiProjectionValue } from '@/sync/domains/plugins/ui/projection';
+import { readPluginUiProjectionEntryOrPackageExecutionOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
+import { resolvePluginUiProjectionContributionId } from '@/sync/domains/plugins/ui/projectionRefs';
 import { buildPluginPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
 export type { PluginPageTarget } from './pluginPageRoute';
 export { buildPluginAppPageRoutePath, PLUGIN_APP_PAGE_ROUTE_PREFIX } from './pluginPageRoute';
@@ -201,6 +207,30 @@ export function resolvePluginPageForRoute(input: Readonly<{
         return null;
     }
     return input.pages.find((page) => page.pluginId === pluginId && page.localId === localId) ?? null;
+}
+
+/** Resolve a Machine-owned page's executable from the same admitted occurrence as its host API. */
+export function resolveQualifiedPluginPageArtifact(input: Readonly<{
+    projection: PluginUiProjectionModel | null;
+    pagePlacementId: string;
+    pluginId: string;
+    occurrenceId: string | null;
+    executionOrigin: PluginMachineExecutionOriginV1 | null | undefined;
+    rendererKind: 'hostedWeb' | 'reactNative';
+}>): Readonly<Record<string, unknown>> | null {
+    const { projection, executionOrigin, occurrenceId } = input;
+    if (!projection || !executionOrigin || !occurrenceId) return null;
+    const page = projection.surfacePlacementsById[input.pagePlacementId];
+    if (page?.occurrenceId !== occurrenceId || page.renderer.kind !== input.rendererKind) return null;
+    const family = input.rendererKind === 'reactNative' ? 'reactNativeBundle' : 'hostedWeb';
+    const entriesById = family === 'reactNativeBundle' ? projection.reactNativeBundlesById : projection.hostedWebById;
+    const id = resolvePluginUiProjectionContributionId({
+        family, pluginId: input.pluginId, contributionId: page.renderer.contributionId, entriesById,
+    });
+    const artifact = id ? entriesById[id] : undefined;
+    if (artifact?.artifactSelectionOwner !== 'daemonProjection' || artifact.occurrenceId !== occurrenceId) return null;
+    const artifactOrigin = readPluginUiProjectionEntryOrPackageExecutionOrigin(projection, artifact);
+    return artifactOrigin && arePluginMachineExecutionOriginsEqual(artifactOrigin, executionOrigin) ? artifact : null;
 }
 
 /** A declared view supplies the page's presentation while the route retains its base page. */
