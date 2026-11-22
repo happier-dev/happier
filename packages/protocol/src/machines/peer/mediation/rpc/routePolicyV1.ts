@@ -25,6 +25,7 @@ import { CONNECTED_SERVICES_CATALOG_LIST_ACTION_ID_V1 } from '../../../../connec
 import { isApprovalDecisionReviewerBindingV1 } from '../../../../actions/externalActionBindingAuthority.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../../../bots/templates/botTemplateActionIdsV1.js';
 import { isProviderActionIdV1, resolveProviderActionRpcEffectV1 } from '../../../../providers/providerActionIdsV1.js';
+import { PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '../../../../actions/specs/projectWorkersActionIdsV1.js';
 
 const WORKFLOW_RUN_START_METHOD = 'workflow.run.start' satisfies WorkflowActionIdV1;
 
@@ -1320,6 +1321,14 @@ export function resolveMachineRpcExternalActionEffectV1(method: string,
       && 'authentication' in binding && binding.authentication.kind === 'terminal'
       && isApprovalWithdrawalDecisionV1(binding.approvalDecisionAdmission?.decision);
     return reviewer || withdrawal ? 'approval.request.decide' : null;
+  }
+  if (method === PROJECT_WORKER_STATUS_ACTION_ID_V1) {
+    // Home admits the original Session root using the Worker status Action policy.
+    // The unsigned RPC does not carry that authority.
+    return binding?.actionId === method && binding.sessionActionOrigin && binding.sessionActionSource
+      && binding.target.kind === 'machine' && binding.target.machineId === binding.machineId
+      && (!selectedTarget || selectedTarget.machineId === binding.machineId && selectedTarget.installationId === binding.installationId)
+      ? binding.actionId : null;
   }
   const declared = resolveMachineRpcRoutePolicy(method).actionSpecId;
   if (declared) return declared;

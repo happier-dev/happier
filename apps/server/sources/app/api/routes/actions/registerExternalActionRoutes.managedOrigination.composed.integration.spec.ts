@@ -5,7 +5,16 @@ import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { readRequesterActionOperationV1 } from '@happier-dev/protocol/actions/operations/requesterReadV1';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
-import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
+import { SessionActionRpcOriginV1Schema, SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
+import { PROJECT_WORKER_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/projectWorkersActionIdsV1';
+import { sealExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { buildAccountStoredContentCompatibilitySocketAuthV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { createAuthenticatedFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
+import { createSessionPublisherPresence } from '@/app/presence/sessionPublisherPresence';
+import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { resolveCurrentSessionMachineFromServer } from '@/app/api/socket/externalActionDispatcher';
+import { createExternalActionSourceMachineRpcExecution } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
     openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -16,7 +25,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
-import type { Server } from 'socket.io';
+import type { Server, Socket } from 'socket.io';
 import tweetnacl from 'tweetnacl';
 import { decodeBase64 } from 'privacy-kit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -454,6 +463,103 @@ describe('composed CLI managed Action origination', () => {
             restoreHttp();
             await instance.close();
         }
+    });
+
+    it.each(['use', 'manage'] as const)('relays Worker status from a current installed Session with shared Machine %s access', async role => {
+        const owner = await fixture(true);
+        const requester = await fixture(true);
+        const { machineId, installationId } = owner.controller;
+        const actionId = PROJECT_WORKER_STATUS_ACTION_ID_V1;
+        const target = { kind: 'machine' as const, machineId };
+        const requestId = crypto.randomUUID();
+        const input = { workspace: { serverId: homeId, refId: 'requester-workspace' },
+            destination: target, purpose: 'finite' };
+        const envelope = { v: 1 as const, requestId, target, input };
+        const session = await db.session.create({ data: { accountId: requester.account.id,
+            tag: crypto.randomUUID(), metadata: JSON.stringify({ t: 'plain', v: {} }), encryptionMode: 'plain' } });
+        await db.accessKey.create({ data: { accountId: requester.account.id,
+            machineId: requester.controller.machineId, sessionId: session.id, data: 'opaque-session-key' } });
+        const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+            caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 1 },
+            sourceTurnId: 'worker-status-turn', callerPermissionMode: 'read-only', requestId,
+            causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'read-only' } });
+        const token = await auth.createToken(requester.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        const compatibility = evaluateAccountStoredContentSocketCompatibility(
+            buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)).evaluation;
+        const presence = createSessionPublisherPresence();
+        const publisher = createAuthenticatedFakeSocket({ id: 'worker-status-source-session', data: {
+            clientType: 'session-scoped', userId: requester.account.id,
+            machineId: requester.controller.machineId, sessionId: session.id,
+        } });
+        expect(await presence.registerPublisher({ socket: publisher,
+            binding: { accountId: requester.account.id, machineId: requester.controller.machineId, sessionId: session.id },
+            completeActivitySnapshot: { state: 'active', activeCount: 1 } })).toMatchObject({ status: 'registered' });
+        const method = `${machineId}:${actionId}`;
+        const status = { eligible: true, candidate: { serverId: homeId, machineId },
+            load: { kind: 'unknown' }, explanation: 'load_unknown' };
+        // Only the Socket.IO boundary is replaced. Home mints and verifies the
+        // Session proof, then forwards to the exact installed receiver.
+        const receive = vi.fn(async (_event: string, _packet: SocketRpcRequestPayload) => status);
+        const receiver = createAuthenticatedFakeSocket({ id: 'worker-status-receiver', data: {
+            clientType: 'machine-scoped', userId: owner.account.id, machineId,
+            verifiedMachineInstallationId: installationId, accountStoredContentCompatibility: compatibility,
+        }, timeout: () => ({ emitWithAck: receive }) });
+        const io = createSocketRoomDiscoveryHarness(async room => {
+            if (room === `session:${session.id}:${requester.account.id}`) return [publisher];
+            return room === receiver.id || room === `rpc:${owner.account.id}:${method}` ? [receiver] : [];
+        });
+        const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'worker-status-source-client', data: {
+            clientType: 'user-scoped', userId: requester.account.id, authTokenKind: 'terminal',
+            authAuthority: 'account_automation', tokenEpoch: requester.account.tokenEpoch, accountStoredContentCompatibility: compatibility,
+        } }), { handshake: { auth: { token } } });
+        registerSocketRpcHandlers({ userId: requester.account.id, socket: caller as unknown as Socket, io,
+            sessionPublisherPresence: presence });
+        const instance = await app(async () => { throw new Error('Only the Session socket may deliver this Action'); },
+            http => { http.resolveCurrentSessionMachine = request => resolveCurrentSessionMachineFromServer({ io, presence, ...request }); }, []);
+        try {
+            const grantData = { machineId, createdByAccountId: owner.account.id } as const;
+            const team = role === 'manage' ? await db.team.create({ data: { name: 'Shared Worker managers' } }) : undefined;
+            if (team) await db.teamMembership.create({ data: { teamId: team.id, accountId: requester.account.id, role: 'member' } });
+            const grant = await db.machineGrant.create({ data: team
+                ? { ...grantData, principalKind: 'team', teamId: team.id, accessLevel: 'admin' }
+                : { ...grantData, principalKind: 'account', accountId: requester.account.id, accessLevel: 'view' } });
+            const issue = () => instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId, envelope,
+                    sessionActionOrigin: origin, sessionActionSource: requester.controller,
+                    installationProof: signMachineInstallationProof({ privateKey: requester.keys.secretKey,
+                        payload: { version: 1, accountId: requester.account.id, ...requester.controller,
+                            externalActionOrigin: { homeId, actionId, requestId,
+                                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }),
+                } });
+            const issued = await issue();
+            expect(issued.statusCode, issued.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(root.binding).toMatchObject({ admittedMachineRole: role, sessionActionSource: requester.controller });
+            const authorization = sealExternalActionRequesterAccountContextV1({ authorization: root, credentials: { token },
+                purpose: { kind: 'machine_rpc', method: actionId, params: input },
+                installationPublicKey: owner.keys.publicKey, randomBytes: tweetnacl.randomBytes });
+            const signed = createExternalActionSourceMachineRpcExecution({ authorization, effectActionId: actionId, target,
+                sourceMachineId: requester.controller.machineId, sourceInstallationId: requester.controller.installationId,
+                method, requestId, params: input, privateKey: requester.keys.secretKey });
+            expect(signed).not.toBeNull();
+            const invoke = async (execution?: typeof signed) => {
+                const callback = vi.fn();
+                await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, requestId, params: input,
+                    ...(execution ? { externalActionExecution: execution } : {}) }, callback);
+                return callback.mock.calls[0]?.[0];
+            };
+            expect(await invoke()).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN',
+                failureCause: { phase: 'rpc.admission.machine', errorCode: 'custodian_only' } });
+            expect(await invoke(signed)).toEqual({ ok: true, result: status });
+            expect(receive).toHaveBeenCalledExactlyOnceWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
+                sessionActionOrigin: origin, callerInputAuthorization: authorization,
+                machineAdmission: expect.objectContaining({ actorAccountId: requester.account.id, role, machineId, installationId }),
+            }));
+            await db.machineGrant.delete({ where: { id: grant.id } });
+            const refused = await issue();
+            expect(refused.statusCode, refused.body).toBe(409);
+            expect(refused.json()).toMatchObject({ code: 'target_unavailable' });
+        } finally { await instance.close(); }
     });
 
     it('lets only the admitted requester stop and observe an exact received operation after the grant ends', async () => {

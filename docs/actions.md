@@ -4890,9 +4890,10 @@ Status carries the qualified source workspace, exact candidate Machine, purpose
 and optional reviewed memory demand. Its eligibility and load are separate facts;
 eligible unknown load remains unknown. Reading status never starts work or pumps
 the accepted queue, and target acceptance rechecks current authority and policy.
-In 0.3 development, the CLI uses signed requester admission to read status for
-a shared Worker. A direct or Team Use grant is sufficient. The receiving
-daemon uses the requester's Account to read the Project rows.
+In 0.3 development, the Account CLI and installed Session agents use the same
+signed requester admission to read status for a shared Worker. A direct or Team
+Use grant is sufficient. The receiving daemon uses the requester's Account to
+read the Project rows.
 
 A too-small refusal can carry `observedMemory` with the total and available bytes
 from the same validated admission sample. The explanation compares the reviewed
