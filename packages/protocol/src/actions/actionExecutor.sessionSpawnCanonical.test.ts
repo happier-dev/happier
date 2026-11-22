@@ -86,6 +86,53 @@ function createExternalSpawnApprovalContext(requestId: string) {
 }
 
 describe('session.spawn_new canonical execution', () => {
+  it.each(['captured', 'captured ref', 'explicit model', 'Automatic', 'selected Project', 'selected Source'] as const)(
+    'preserves the %s model at attached native Session birth', async choice => {
+      const target = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.muse', localId: 'muse' } };
+      const model = (modelId: string) => ({ v: 1 as const, updatedAt: 0,
+        ref: { agentTargetKey: buildBackendTargetKeyV2(target), providerConnectionId: null, modelId } });
+      const capturedModel = model('meta/muse-spark-1.3-contributor');
+      const selectedModel = model('meta/muse-spark-1.2-contributor');
+      const sessionSpawnNew = vi.fn<ActionExecutorDeps['sessionSpawnNew']>(async () => ({
+        type: 'pending', retryWithSameCreationKey: true, outcome: 'accepted',
+      }));
+      const executor = createActionExecutor({ sessionSpawnNew });
+      const result = await executor.execute('session.spawn_new', {
+        ...canonicalInput, agentTarget: target,
+        ...(choice === 'explicit model' ? { modelSelection: selectedModel } : {}),
+        ...(choice === 'Automatic' ? { configuration: {
+          model: { value: null, updatedAtMs: 1, selectionSource: 'explicit' },
+          mode: { value: null, updatedAtMs: 1 }, permissionIntent: { value: null, updatedAtMs: 1 }, options: {},
+        } } : {}),
+        ...(choice === 'selected Project' ? {
+          projectContext: { projectRef: { serverId: 'server-1', projectKey: 'selected-project' } },
+        } : {}),
+        ...(choice === 'selected Source' ? {
+          projectContext: { sourceRef: { serverId: 'server-1', sourceId: 'selected-source' } },
+        } : {}),
+      }, {
+        surface: 'agent', authority: 'account_automation', serverId: 'server-1', runtimeAccountId: 'account-1',
+        defaultSessionId: 'parent-session', actionCaller: agentStartContext.caller,
+        agentStartContext: { ...agentStartContext, baseline: { machineId: 'machine-1',
+          directory: canonicalInput.directory.path, configuration: { agentTarget: target,
+            modelSelection: choice === 'captured ref' ? capturedModel.ref : capturedModel } } },
+        callerPermissionMode: 'default',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' },
+        sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } }),
+      });
+      expect(result).toMatchObject({ ok: true, result: { type: 'pending' } });
+      const birth = sessionSpawnNew.mock.calls[0]?.[0];
+      const expectedModel = choice === 'captured' || choice === 'captured ref' ? capturedModel
+        : choice === 'explicit model' ? selectedModel : undefined;
+      expect(birth?.modelSelection).toEqual(expectedModel);
+      expect(birth?.admittedInput?.modelSelection).toEqual(expectedModel);
+      if (choice === 'Automatic') expect(birth?.configuration?.model).toEqual({
+        value: null, updatedAtMs: 1, selectionSource: 'explicit',
+      });
+    },
+  );
+
   it.each([
     { managed: 'read-only', ceiling: 'default' },
     { managed: 'default', ceiling: 'read-only' },

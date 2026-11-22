@@ -25,7 +25,7 @@ import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ConnectedServicesDefaultUnavailableError, materializeSessionSpawnConnectedServicesDefaults, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
-import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
+import { readSessionSpawnModelChoice } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 
 type SpawnDefaultSelections = Pick<SessionSpawnNewInputV2,

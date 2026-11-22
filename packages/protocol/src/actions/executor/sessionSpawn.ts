@@ -12,6 +12,56 @@ import { resolveInheritedApprovalProfileIdV1 } from '../approvalProfiles.js';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../../bots/templates/botTemplateActionIdsV1.js';
 import { deriveDeploymentPrepareSessionCreationIdentityV1 } from '../../sessions/creation/sessionCreationAuthorizationV1.js';
+import { buildBackendTargetKeyV2, type PersistedBackendTargetRefV2 } from '../../backends/targets/backendTargetRefV2.js';
+import { readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
+import { createPersonalSessionModelSelection, type SessionModelSelection } from '../../providers/selection/v2.js';
+import type { AgentStartContextV1 } from '../../account/settings/admitAgentStartV1.js';
+
+type SpawnConfigurationInput = Pick<SessionSpawnNewActionInputV2,
+  'sourceContext' | 'configuration' | 'projectContext' | 'roleId' | 'discussionParticipant'>;
+
+function selectsNewSessionProject(input: SpawnConfigurationInput): boolean {
+  return (input.projectContext?.projectRef !== undefined || input.projectContext?.sourceRef !== undefined)
+    && input.sourceContext === undefined && input.configuration?.providerSessionResume === undefined;
+}
+
+/** Retained and ordinary attached Sessions consume captured choices, rather than current defaults. */
+export function readSessionSpawnConfigurationSource(
+  input: SpawnConfigurationInput, parentSessionId?: string | null,
+): 'retained' | 'parent' | 'defaults' {
+  if (input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined) return 'retained';
+  return parentSessionId && !selectsNewSessionProject(input) && !input.roleId && !input.discussionParticipant ? 'parent' : 'defaults';
+}
+
+/** An omitted choice can inherit. Automatic and an authored model slot both occupy the model facet. */
+export function readSessionSpawnModelChoice(
+  input: Pick<SessionSpawnNewActionInputV2, 'modelSelection' | 'configuration' | 'teamCredentialBindings'>,
+  agentTarget: PersistedBackendTargetRefV2,
+): SessionModelSelection | null | undefined {
+  const selection = readAuthoredSessionModelSelection({ ...input, agentTarget });
+  if (selection) return selection;
+  const model = input.configuration?.model;
+  if (model?.value) return { v: 1, updatedAt: model.updatedAtMs,
+    ref: { agentTargetKey: buildBackendTargetKeyV2(agentTarget), providerConnectionId: null, modelId: model.value } };
+  if (model?.value === null && model.selectionSource !== 'inherited') return null;
+  if (input.teamCredentialBindings?.some(intent => intent.slot.kind === 'provider_model')) return null;
+  return undefined;
+}
+
+/** Freeze the current applied parent model into the admitted operand, including Machine RPC replay. */
+export function projectCapturedSessionSpawnModel(
+  input: Readonly<Record<string, unknown>> & SpawnConfigurationInput & Pick<SessionSpawnNewActionInputV2,
+    'modelSelection' | 'teamCredentialBindings' | 'agentTarget'>,
+  context: AgentStartContextV1,
+): Readonly<Record<string, unknown>> {
+  const parent = context.caller.kind === 'session' ? context.caller.sessionId : undefined;
+  const captured = context.baseline.configuration?.modelSelection;
+  const target = input.agentTarget;
+  if (readSessionSpawnConfigurationSource(input, parent) !== 'parent' || !captured || !target
+    || readSessionSpawnModelChoice(input, target) !== undefined) return input;
+  const selection = 'ref' in captured ? captured : createPersonalSessionModelSelection(captured, 0);
+  return selection.ref.agentTargetKey === buildBackendTargetKeyV2(target) ? { ...input, modelSelection: selection } : input;
+}
 
 function resolveSessionSpawnNewCreationKey(
   data: Readonly<Record<string, unknown>>,
@@ -116,8 +166,7 @@ export function buildSessionSpawnNewArgs(
   const sessionCreationTag = ctx.managedContinuationSessionCreationTag ?? prepareIdentity?.sessionCreationTag ?? workflowCreationTag ?? (callerCreationNamespace
     ? deriveSessionCreationTagV1({ callerCreationNamespace, creationKey }) : null);
   if (!sessionCreationTag) return null;
-  const selectsNewProject = (data.projectContext?.projectRef !== undefined || data.projectContext?.sourceRef !== undefined)
-    && data.sourceContext === undefined && data.configuration?.providerSessionResume === undefined;
+  const selectsNewProject = selectsNewSessionProject(data);
   const args: Record<string, unknown> = {
     ...data,
     // A new Project launch selects its own defaults. Ordinary attached or

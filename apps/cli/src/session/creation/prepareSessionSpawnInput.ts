@@ -1,5 +1,7 @@
 import { DEFAULT_AGENT_ID } from '@happier-dev/agents';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import { isAgentCaller } from '@happier-dev/protocol/actions/executor/callerContext';
+import { readSessionSpawnConfigurationSource, readSessionSpawnModelChoice } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { loadManagedSessionDefaultsContextV1 } from '@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1';
 import { getOrganizationPolicySessionDefaults } from '@happier-dev/protocol/organizationPolicy/organizationPolicyV1';
@@ -22,7 +24,6 @@ import { canReadPrivateSessionDefaults, createCliManagedSessionDefaultsContextLo
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
-import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 import { readSessionCreationAgentTarget, type ReadMachineAgentProjection } from './resolveSessionCreationAgentTarget';
 import { prepareOriginalAccountManagedPresetAcquire } from '@/api/managedPresetOrigination';
 import type { ManagedAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -74,7 +75,8 @@ export function createPrepareSessionSpawnInput(params: CliActionDepsParams, home
       serverIdentityId: params.serverIdentityId, externalActionMachineInstallationId: params.externalActionMachineInstallationId,
       externalActionMachineRequestPrivateKey: params.externalActionMachineRequestPrivateKey,
       ...(context.signal ? { signal: context.signal } : {}) });
-    const retained = input.sourceContext !== undefined || input.configuration?.providerSessionResume !== undefined;
+    const retained = readSessionSpawnConfigurationSource(input,
+      isAgentCaller(context) ? context.defaultSessionId : undefined) !== 'defaults';
     const captured = retained ? { context: buildManagedSessionDefaultsContext({}), unavailableDefaults: undefined }
       : await loadManagedSessionDefaultsContextV1({ ...input.projectContext,
       primaryTeamId: input.primaryTeamId,

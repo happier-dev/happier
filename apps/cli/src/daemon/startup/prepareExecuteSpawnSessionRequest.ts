@@ -34,7 +34,7 @@ import { resolvePreparedSessionDirectory } from './resolvePreparedSessionDirecto
 import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemoryCeiling';
 import { resolveSessionRuntimeSnapshot } from '../sessions/runtimeSnapshot/resolveSessionRuntimeSnapshot';
 import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
-import { readSessionSpawnModelChoice } from '@/session/creation/readSessionSpawnModelChoice';
+import { readSessionSpawnModelChoice } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import {
     ConnectedServicesDefaultUnavailableError,

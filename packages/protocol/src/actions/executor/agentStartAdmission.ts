@@ -18,6 +18,7 @@ import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { readActionCallerLedSubtreeSessionIds } from './sessionLedSubtree.js';
 import { findSpawnConfigOptionAliasConflicts, mergeSpawnConfigOptionAliases } from '../sessionSpawnConfigOptions.js';
 import { SpawnConfigOptionValueSchema } from '../sessionSpawnConfigOptions.js';
+import { projectCapturedSessionSpawnModel } from './sessionSpawn.js';
 import { resolveExecutionBackendTargetSelectionForValue } from '../resolveActionBackendTargetSelection.js';
 import { TeamCredentialProviderModelSelectionV1Schema } from '../../teams/credentials/resourceV1.js';
 import { findAssignedProviderModelCredentialBinding, readAuthoredSessionModelSelection } from '../../teams/credentials/sessionBindingIntentV1.js';
@@ -626,9 +627,10 @@ export function stampAgentStartSelectionV1(input: Readonly<Record<string, unknow
     ok: true;
 }>['stamped'], kind: 'spawn_new' | 'execution_run', context: AgentStartContextV1): Record<string, unknown> {
     const baseline = context.caller.kind === 'session' ? context.baseline : { machineId: context.baseline.machineId, directory: context.baseline.directory };
-    const selected = stamped.roleId && stamped.engine
+    const roleSelection = stamped.roleId && stamped.engine
         ? projectAgentStartSelectionV1(input, { ...stamped, engine: stamped.engine }, kind, baseline)
         : input;
+    const selected = kind === 'spawn_new' ? projectCapturedSessionSpawnModel(roleSelection, context) : roleSelection;
     const target = readAgentStartTargetV1(kind === 'spawn_new' ? selected.agentTarget : selected.backendTarget);
     const profileField = kind === 'spawn_new' ? 'profileId' : 'launchProfileId';
     const machineId = kind === 'spawn_new' && selected.executionTarget && typeof selected.executionTarget === 'object'

@@ -23,6 +23,31 @@ import * as machineRpc from '@/session/transport/rpc/machineRpc';
 // HTTP is the boundary. Preparation, context loading, custody and precedence stay real.
 afterEach(() => vi.restoreAllMocks());
 
+it('does not load fresh defaults while preparing an ordinary attached Session', async () => {
+  const credentials = { token: 'requester-token', encryption: null, credentialProvenance: 'stored_session' as const };
+  const readDefaults = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { homeDefaults: null } });
+  const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://home.test',
+    isCurrent: async () => true, snapshot: { settings: accountSettingsParse({}), settingsVersion: 0,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], source: 'network',
+      scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) } });
+  const prepare = createPrepareSessionSpawnInput({ credentials, token: credentials.token, mode: 'plain',
+    sessionId: 'parent-session', ctx: null, serverId: 'home', serverHttpBaseUrl: 'https://home.test',
+    savedSecretOperationContext: operation,
+  }, { serverId: 'home', serverHttpBaseUrl: 'https://home.test' }, {
+    spawnConnectedServicesList: async () => { throw new Error('no connected-services intent'); },
+  });
+  const input = { executionTarget: { serverId: 'home', machineId: 'machine' },
+    agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.muse', localId: 'muse' } },
+    directory: { kind: 'path' as const, path: '/repo' } };
+  const context = { surface: 'agent' as const, authority: 'account_automation' as const,
+    defaultSessionId: 'parent-session',
+    actionCaller: { kind: 'session' as const, sessionId: 'parent-session', starterDepth: 0, turnDepth: 0 } };
+  await expect(prepare(input, context)).resolves.toMatchObject({ input });
+  expect(readDefaults).not.toHaveBeenCalled();
+  await prepare({ ...input, projectContext: { projectRef: { serverId: 'home', projectKey: 'selected' } } }, context);
+  expect(readDefaults).toHaveBeenCalled();
+});
+
 it.each([true, false])('uses the receiving Machine catalog to prepare a contributed Agent (listed: %s)', async listed => {
   const credentials = { token: 'requester-token', encryption: null, credentialProvenance: 'stored_session' as const };
   const home = { serverId: 'home', serverHttpBaseUrl: 'https://home.test' };
