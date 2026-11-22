@@ -123,7 +123,7 @@ const runtime = installSessionPaneRuntimeTestHarness({ sessionId: 'session-a',
     features: () => createRootLayoutFeaturesResponse({ features: {
         browser: { enabled: true, viewTargets: { enabled: true } },
         localServices: { enabled: true, inventory: { enabled: true }, managed: { enabled: true },
-            launcher: { enabled: true }, actions: { enabled: true }, preview: { enabled: true } },
+            launcher: { enabled: true }, actions: { enabled: true, terminate: { enabled: false } }, preview: { enabled: true } },
     } }),
     request: async (input, init) => {
         const path = new URL(String(input)).pathname;
