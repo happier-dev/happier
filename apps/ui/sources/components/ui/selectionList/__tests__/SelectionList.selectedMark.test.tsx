@@ -195,7 +195,7 @@ describe('SelectionList current-choice mark', () => {
 
     // The ⌘K palette draws its commands as menu rows (inset, rounded); the row the keyboard is on
     // still shows the ↵ that runs it (Find lab G1).
-    it('keeps the ↵ mark on menu-presentation rows', async () => {
+    it('paints the Enter row after typing, then clears a pointer cursor when the pointer leaves', async () => {
         stubHardwareKeyboard();
         const screen = await renderScreen(
             <SelectionList
@@ -211,5 +211,20 @@ describe('SelectionList current-choice mark', () => {
         );
         expect(screen.findByTestId('sl:root:option-enter-mark:macbook')).toBeTruthy();
         expect(screen.findByTestId('sl:root:option-enter-mark:devbox')).toBeFalsy();
+        const filledRows = () => new Set(screen.tree.root.findAll((node) => (
+            typeof node.type !== 'string' && typeof node.props?.title === 'string'
+            && ((node.props?.selected === true && node.props?.selectedFill !== false) || node.props?.focused === true)
+        )).map((node) => node.props.title as string));
+        expect(filledRows()).toEqual(new Set());
+
+        await act(async () => { screen.findByTestId('sl:header:input')!.props.onChangeText('dev'); });
+        expect(screen.findByTestId('sl:root:option-enter-mark:devbox')).toBeTruthy();
+        expect(filledRows()).toEqual(new Set(['devbox']));
+
+        const root = screen.findAllByTestId('sl').find((node) => typeof node.props?.onMouseMove === 'function')!;
+        const row = screen.findAllByTestId('sl:root:option:devbox').find((node) => typeof node.props?.onHoverIn === 'function')!;
+        await act(async () => { root.props.onMouseMove(); row.props.onHoverIn(); });
+        await act(async () => { row.props.onHoverOut(); });
+        expect(filledRows()).toEqual(new Set());
     });
 });

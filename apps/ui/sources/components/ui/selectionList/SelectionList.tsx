@@ -657,6 +657,15 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     const scrollFollowOptionIdRef = React.useRef<string | null>(null);
     const pointerMovedRef = React.useRef(false);
     const pointerHoveredOptionIdRef = React.useRef<string | null>(null);
+    // Typing aims the visible cursor at the search result without granting the separate
+    // Arrow-only row intent that lets Tab activate it.
+    const [searchCursorStepId, setSearchCursorStepId] = React.useState<string | null>(null);
+    const handleSearchInputChange = React.useCallback((next: string) => {
+        pointerFocusedOptionIdRef.current = null;
+        pointerMovedRef.current = false;
+        if (inputMode === 'search') setSearchCursorStepId(currentStep.id);
+        setUiInputValue(next);
+    }, [currentStep.id, inputMode, setUiInputValue]);
     // Pointer events consume the current list; they do not publish a new context value per key/focus.
     const pointerFocusInputsRef = React.useRef({ focus, flatVisibleOptionIds, virtualizedOptionSource });
     pointerFocusInputsRef.current = { focus, flatVisibleOptionIds, virtualizedOptionSource };
@@ -675,6 +684,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         if (optionId !== null && pointerMovedRef.current) applyPointerFocus(optionId);
         // A cursor the pointer put there leaves with the pointer, like a hover; the keyboard resumes from its row.
         if (optionId === null) {
+            setSearchCursorStepId(null);
             const { focus } = pointerFocusInputsRef.current;
             if (focus.hasExplicitRowFocus && focus.focusedOptionId === pointerFocusedOptionIdRef.current) focus.clearExplicitRowFocus();
         }
@@ -1417,7 +1427,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
                 testID={selectionListTestId(resolvedTestId, 'header')}
                 inputTestID={props.inputTestID}
                 value={inputValue}
-                onChangeText={setUiInputValue}
+                onChangeText={handleSearchInputChange}
                 placeholder={currentStep.inputPlaceholder ?? ''}
                 inputReadOnly={currentStep.inputReadOnly}
                 inputAccessibilityLabel={currentStep.inputReadOnly ? currentStep.title ?? t('tools.names.search') : undefined}
@@ -1583,7 +1593,7 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         <ListPresentationProvider value="grouped">
         <SelectionListInputAttentionContext.Provider value={requestInputAttention}>
         <SelectionListPointerFocusContext.Provider value={focusOptionFromPointer}>
-        <SelectionListExplicitRowFocusContext.Provider value={focus.hasExplicitRowFocus}>
+        <SelectionListExplicitRowFocusContext.Provider value={focus.hasExplicitRowFocus || searchCursorStepId === currentStep.id}>
         <SelectionListOptionTabBehaviorContext.Provider value={showSearchHeader ? 'input-owned' : 'roving'}>
         <View
             testID={resolvedTestId}
