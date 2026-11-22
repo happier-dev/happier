@@ -1,4 +1,5 @@
 import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
+import { createOpenCodeChildTranscriptText } from './childTranscriptText.js';
 import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
 import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs, resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
 import { parseTimestampMs, PluginError } from '@happier-dev/plugin-sdk';
@@ -1678,34 +1679,29 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
   };
 
   const providerNativeChildSessions = new Map<string, Readonly<{ info: Record<string, unknown>; status: OpenCodeNativeChildStatus; attentionAbortController: AbortController }>>();
-  const childTextParts = new Map<string, { sessionId: string; messageId: string; partId: string; partType: string; text: string }>();
   const childToolEventKeys = new Set<string>();
   // Released V2 separates tool name, input and result across native frames.
   const nativeToolParts = new Map<string, OpenCodeToolPart>();
   const retireNativeChildren = (): void => {
     for (const child of providerNativeChildSessions.values()) child.attentionAbortController.abort('OpenCode child scope closed');
     providerNativeChildSessions.clear();
-    childTextParts.clear();
+    childTranscriptText.clear();
     childToolEventKeys.clear();
     nativeToolParts.clear();
     state.currentTurnPublishedToolCallKeys.clear();
     state.currentTurnPublishedToolResultKeys.clear();
   };
 
-  const flushChildText = (childSessionId: string, messageId?: string): void => {
-    for (const [key, part] of childTextParts) {
-      if (part.sessionId !== childSessionId || (messageId && part.messageId !== messageId) || !part.text) continue;
-      childTextParts.delete(key);
-      if (liveMessageProjectionById.get(part.messageId) === 'suppressed' || livePartTypes.get(part.partId) === 'suppressed') continue;
-      publishRuntimeEvent({
-        kind: 'transcript-agent-message-committed', ...projectOpenCodeRuntimeScope(params.scope),
-        emittedAtMs: Date.now(), agentId: 'opencode',
-        localId: `opencode:child:${JSON.stringify([childSessionId, part.messageId, part.partId])}`,
-        body: { type: part.partType === 'reasoning' ? 'thinking' : 'message', message: part.text, sidechainId: childSessionId },
-        meta: { importedFrom: 'acp-sidechain', remoteSessionId: childSessionId, sidechainId: childSessionId },
-      });
-    }
-  };
+  const childTranscriptText = createOpenCodeChildTranscriptText({
+    isSuppressed: part => liveMessageProjectionById.get(part.messageId) === 'suppressed' || livePartTypes.get(part.partId) === 'suppressed',
+    publish: (childSessionId, part) => publishRuntimeEvent({
+      kind: 'transcript-agent-message-committed', ...projectOpenCodeRuntimeScope(params.scope),
+      emittedAtMs: Date.now(), agentId: 'opencode',
+      localId: `opencode:child:${JSON.stringify([childSessionId, part.messageId, part.partId])}`,
+      body: { type: part.partType === 'reasoning' ? 'thinking' : 'message', message: part.text, sidechainId: childSessionId },
+      meta: { importedFrom: 'acp-sidechain', remoteSessionId: childSessionId, sidechainId: childSessionId },
+    }),
+  });
 
   const handleProviderNativeChildEvent = async (type: string, properties: Record<string, unknown>, childSessionId: string): Promise<void> => {
     const child = providerNativeChildSessions.get(childSessionId);
@@ -1719,14 +1715,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     if (type === 'permission.asked') { await handlePermissionAsked(properties); return; }
     const outcome = properties.executionOutcome;
     if (outcome === 'succeeded' || outcome === 'failed' || (outcome === 'interrupted' && properties.interruptionReason !== 'shutdown')) {
-      flushChildText(childSessionId);
+      childTranscriptText.flush(childSessionId, { kind: 'child-end' });
       await observeProviderNativeChildSession(child.info, outcome === 'succeeded' ? 'completed' : outcome === 'failed' ? 'failed' : 'aborted');
       return;
     }
     if (type === 'session.idle' || (type === 'session.status' && readStatusType(properties.status) === 'idle')) {
       const messages = await client.sessionMessages({ sessionId: childSessionId });
       const status = readOpenCodeNativeChildOutcome(messages);
-      if (status) { flushChildText(childSessionId); await observeProviderNativeChildSession(child.info, status); }
+      if (status) { childTranscriptText.flush(childSessionId, { kind: 'child-end' }); await observeProviderNativeChildSession(child.info, status); }
       else params.ctx.logger.warn('opencode_child_outcome_unproven', { childSessionId });
       return;
     }
@@ -1738,7 +1734,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         liveMessageProjectionById.set(projection.messageId, projection.kind === 'assistant_transcript' ? 'assistant' : 'suppressed');
       }
       const status = readOpenCodeNativeChildOutcome([{ info }]);
-      if (status) { flushChildText(childSessionId); await observeProviderNativeChildSession(child.info, status); }
+      if (status) { childTranscriptText.flush(childSessionId, { kind: 'child-end' }); await observeProviderNativeChildSession(child.info, status); }
       return;
     }
     if (type === 'message.part.updated' || type === 'message.part.created') {
@@ -1749,6 +1745,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
           const key = JSON.stringify([childSessionId, tool.callID, phase]);
           if (childToolEventKeys.has(key)) continue;
           childToolEventKeys.add(key);
+          if (phase === 'call') childTranscriptText.flush(childSessionId, { kind: 'tool' });
           publishRuntimeEvent({ kind: 'transcript-agent-message-committed', ...projectOpenCodeRuntimeScope(params.scope),
             emittedAtMs: Date.now(), agentId: 'opencode', localId: `opencode:child-tool:${key}`,
             body: phase === 'call'
@@ -1765,7 +1762,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       const messageId = readNonBlankOpaqueIdentifier(part?.messageID);
       if (partId) livePartTypes.set(partId, projection.kind === 'ignored_internal' ? 'suppressed' : projection.partType);
       if (!partId || !messageId || (projection.kind !== 'transcript_text' && projection.kind !== 'reasoning_text')) return;
-      childTextParts.set(JSON.stringify([childSessionId, partId]), { sessionId: childSessionId, messageId, partId, partType: projection.partType, text: projection.text });
+      childTranscriptText.record(childSessionId, { messageId, partId, partType: projection.partType, text: projection.text });
       return;
     }
     if (type === 'message.part.delta' || type.startsWith('session.next.text.') || type.startsWith('session.next.reasoning.')) {
@@ -1774,15 +1771,14 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
       if (!partId || !messageId || livePartTypes.get(partId) === 'suppressed') return;
       const partType = normalizeString(properties.partType) || livePartTypes.get(partId)
         || (type.startsWith('session.next.reasoning.') ? 'reasoning' : type.startsWith('session.next.text.') ? 'text' : '');
-      const key = JSON.stringify([childSessionId, partId]);
-      const previous = childTextParts.get(key)?.text ?? '';
+      const previous = childTranscriptText.textForPart(childSessionId, partId);
       const delta = typeof properties.delta === 'string' ? properties.delta : '';
       const snapshot = typeof properties.text === 'string' ? properties.text : null;
       const projection = classifyOpenCodePartForProjection({ ...properties, type: partType, text: snapshot ?? previous + delta }, { context: 'live_transcript' });
       if (projection.kind !== 'transcript_text' && projection.kind !== 'reasoning_text') return;
-      childTextParts.set(key, { sessionId: childSessionId, messageId, partId, partType,
-        text: projection.text });
-      if (type.endsWith('.ended')) flushChildText(childSessionId, messageId);
+      const ended = type.endsWith('.ended');
+      childTranscriptText.record(childSessionId, { messageId, partId, partType, text: projection.text, ended });
+      if (ended && partType === 'text') childTranscriptText.flush(childSessionId, { kind: 'text', messageId });
     }
   };
 

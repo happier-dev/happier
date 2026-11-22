@@ -1215,6 +1215,52 @@ describe('createOpenCodeServerRuntime', () => {
     ]);
   });
 
+  it.each(['v1', 'v2'] as const)('groups consecutive %s child reasoning and closes the group at a child tool', async (version) => {
+    const { ctx, harness } = createContextFixture({ onSubagentObservation: async value => value });
+    const runtime = await createStartedRuntime({ ctx, harness });
+    const nativeRuntime = createNativeSessionRuntimeForTest(runtime);
+    const events: AgentSessionRuntimeEvent[] = [];
+    nativeRuntime.watch(event => events.push(AgentSessionRuntimeEventSchema.parse(event)));
+    const childId = 'thinking-child';
+    await runtime.handleProviderEvent({ type: 'session.created', properties: {
+      sessionID: childId, info: { id: childId, parentID: 'ses-1' },
+    } });
+    const emitThought = async (id: string, text: string) => {
+      if (version === 'v2') {
+        const part = { sessionID: childId, assistantMessageID: id, ordinal: 0 };
+        await runtime.handleProviderEvent(normalizeOpenCodeV2Event('session.reasoning.delta', { ...part, delta: text }));
+        await runtime.handleProviderEvent(normalizeOpenCodeV2Event('session.reasoning.ended', { ...part, text }));
+      } else {
+        await runtime.handleProviderEvent({ type: 'message.part.delta', properties: {
+          sessionID: childId, messageID: id, partID: id + '-thought', partType: 'reasoning', delta: text,
+        } });
+      }
+    };
+    await emitThought('first', 'First');
+    await emitThought('second', 'Second');
+    await runtime.handleProviderEvent({ type: 'message.part.created', properties: { part: {
+      id: 'child-tool', type: 'tool', sessionID: childId, messageID: 'second', callID: 'call',
+      tool: 'bash', state: { status: 'running', input: { command: 'pwd' } },
+    } } });
+    if (version === 'v2') {
+      expect(events.filter(event => event.kind === 'transcript-message-committed' || event.kind === 'tool-call')).toEqual([
+        expect.objectContaining({ kind: 'transcript-message-committed', role: 'reasoning', text: 'First\n\nSecond' }),
+        expect.objectContaining({ kind: 'tool-call', toolCallId: 'call' }),
+      ]);
+    }
+    // The classification for the second thought arrives after the tool.
+    await runtime.handleProviderEvent({ type: 'message.updated', properties: {
+      info: { id: 'second', sessionID: childId, role: 'assistant' },
+    } });
+    await emitThought('third', 'Third');
+    await runtime.handleProviderEvent({ type: 'session.idle', properties: { sessionID: childId, executionOutcome: 'succeeded' } });
+
+    expect(events.filter(event => event.kind === 'transcript-message-committed' && event.role === 'reasoning')).toEqual([
+      expect.objectContaining({ text: 'First\n\nSecond', sidechainId: childId }),
+      expect.objectContaining({ text: 'Third', sidechainId: childId }),
+    ]);
+  });
+
   it.each(['succeeded', 'failed', 'interrupted'] as const)('routes late child output and attention and terminal %s without opening the parent turn', async (outcome) => {
     const observations: unknown[] = [];
     const { ctx, runtimeEvents, harness } = createContextFixture({ onSubagentObservation: async (value) => { observations.push(value); return value; } });
