@@ -3,6 +3,8 @@ import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments
 import type { DeploymentIngressV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { Item } from '@/components/ui/lists/Item';
+import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
+import { DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE } from '@happier-dev/protocol/deployments/cloudflareTunnelConnectorsV1';
 import { useMachineListForServer } from '@/sync/store/hooks';
 import { t } from '@/text';
 import type { DeploymentEnvironmentEditing } from './DeploymentEnvironmentSettingsPanel';
@@ -12,6 +14,8 @@ import { suggestFleetEdgeMachineId } from './fleetIngressSuggestion';
 
 const id = 'project-deployments.environment.settings.servers-build.ingress';
 const noop = () => {};
+/** A short count: one is the default, a few more keep the address up through a stopped connector. */
+const CONNECTOR_CHOICES = [1, 2, 3, 4] as const;
 type FleetIngressDraft = Readonly<{ serverId: string; value: DeploymentIngressV1 | undefined;
   onChange: (value: DeploymentIngressV1) => void }>;
 
@@ -24,8 +28,12 @@ export function DeploymentFleetIngress(props: Readonly<{
   machineName: (machineId: string) => string;
 }>) {
   if (props.draft) return <FleetIngressChoice {...props} />;
-  if (props.detail.runtimeTargetLink?.targetKind !== 'ownServer'
-    || props.detail.runtimeTargetLink.machines.length < 2) return null;
+  if (props.detail.runtimeTargetLink?.targetKind !== 'ownServer') return null;
+  // One Machine behind a Tunnel (the common case) has no ingress to choose, only how many connectors it runs.
+  if (props.detail.runtimeTargetLink.machines.length < 2) {
+    return props.editing && props.detail.content.ingress?.kind === 'cloudflareTunnel'
+      ? <TunnelConnectorsSetting detail={props.detail} editing={props.editing} machineName={props.machineName} /> : null;
+  }
   if (props.editing) return <FleetIngressChoice {...props} editing={props.editing} />;
   const ingress = props.detail.content.ingress;
   return <Item testID={id} title={t('projects.deployments.settingsSections.fleetIngressTitle')}
@@ -81,6 +89,45 @@ function FleetIngressChoice(props: Readonly<{
       }}
       awayMachinesChoosable disabled={change.running}
       onSelectMachine={machine => choose({ kind: 'edgeCaddy', edgeMachineId: machine.id })} />
+    {ingress?.kind === 'cloudflareTunnel'
+      ? <TunnelConnectorsChoice ingress={ingress} disabled={change.running} onChoose={choose} /> : null}
+    {change.outcome ? <DeployOutcomeBanner controller={change.banner}
+      machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
+  </>;
+}
+
+/**
+ * Connectors per Machine (owner 2026-11-20): only for a Tunnel ingress, a short count with its consequence in words,
+ * saved as the ingress itself. One component wherever the Tunnel is the Environment's ingress.
+ */
+function TunnelConnectorsChoice(props: Readonly<{
+  ingress: Extract<DeploymentIngressV1, { kind: 'cloudflareTunnel' }>;
+  disabled: boolean;
+  onChoose: (value: DeploymentIngressV1) => void;
+}>) {
+  const count = props.ingress.connectorsPerMachine ?? DEFAULT_CLOUDFLARE_TUNNEL_CONNECTORS_PER_MACHINE;
+  const counts: readonly number[] = CONNECTOR_CHOICES.some(choice => choice === count) ? CONNECTOR_CHOICES : [...CONNECTOR_CHOICES, count];
+  return <SegmentedChoiceItem<string> testIDPrefix={`${id}.connectors`}
+    title={t('projects.deployments.settingsSections.fleetIngressConnectors')}
+    subtitle={t('projects.deployments.settingsSections.fleetIngressConnectorsBody')} subtitleLines={0}
+    value={String(count)} disabled={props.disabled}
+    options={counts.map(choice => ({ id: String(choice), label: String(choice) }))}
+    onChange={next => { if (Number(next) !== count) props.onChoose({ kind: 'cloudflareTunnel', connectorsPerMachine: Number(next) }); }} />;
+}
+
+/** A single-Machine Tunnel: the connectors choice alone, saved through the same Environment update. */
+function TunnelConnectorsSetting(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  editing: DeploymentEnvironmentEditing;
+  machineName: (machineId: string) => string;
+}>) {
+  const change = useDeploymentChangePress(props.editing.review, props.editing.onChanged);
+  const ingress = props.detail.content.ingress;
+  if (ingress?.kind !== 'cloudflareTunnel') return null;
+  return <>
+    <TunnelConnectorsChoice ingress={ingress} disabled={change.running} onChoose={value => {
+      if (!change.running) void change.press(() => props.editing.actions.updateEnvironment(props.detail.environment, { ingress: value }));
+    }} />
     {change.outcome ? <DeployOutcomeBanner controller={change.banner}
       machine={props.machineName(props.detail.environment.controllerMachineId)} copy="setting" /> : null}
   </>;

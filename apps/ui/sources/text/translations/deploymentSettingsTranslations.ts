@@ -120,6 +120,8 @@ export type DeploymentSettingsTranslations = Readonly<{
   fleetIngressTunnel: string;
   fleetIngressEdge: string;
   fleetIngressTunnelBody: string;
+  fleetIngressConnectors: string;
+  fleetIngressConnectorsBody: string;
   fleetIngressEdgeBody: string;
   fleetIngressSuggestedBody: string;
   privateSharingTitle: string;
@@ -271,6 +273,8 @@ export const deploymentSettingsTranslations = {
     fleetIngressTunnel: "Cloudflare Tunnel",
     fleetIngressEdge: "Caddy edge",
     fleetIngressTunnelBody: "Connectors back each other up; they do not balance load. Without a private network, only host or connector loss is covered.",
+    fleetIngressConnectors: "Connectors per Machine",
+    fleetIngressConnectorsBody: "More connectors keep the address up if one stops; each uses a little memory on the Machine. Applies on the next deploy.",
     fleetIngressEdgeBody: "Balances traffic over a private network. The app is unreachable if the edge Machine stops.",
     privateSharingTitle: "Private sharing",
     privateSharingBody: "Share a service privately. Saved changes apply on the next deploy.",
