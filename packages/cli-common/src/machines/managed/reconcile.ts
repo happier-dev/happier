@@ -429,8 +429,8 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
     if (!machine.resource || machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) return machine;
     const boundResource = machine.resource;
     input.onResource?.(machine);
-    // Save before guest IO: a host exit can lose its operation, never the fact enrollment was unfinished.
-    if (input.acquisitionMode !== 'resource-bound') machine = await input.home.row('report', { ...input.home.correlation(machine),
+    // Save before guest IO unless setup recovery already has a durable failure.
+    if (input.acquisitionMode !== 'resource-bound' && !resumeSetup) machine = await input.home.row('report', { ...input.home.correlation(machine),
         result: { kind: 'bound', resource: machine.resource },
         observation: { observedAt: Date.now(), availability: 'unavailable', reason: 'bootstrap.incomplete' } }, null);
     try {

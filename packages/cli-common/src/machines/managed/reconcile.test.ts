@@ -763,13 +763,14 @@ describe('portable managed reconciliation', () => {
             bootstrap: { ...run.input.bootstrap, enroll: async enrollment => {
                 expect(enrollment.resumeSetup).toBe(true);
                 expect(enrollment.machine.enrolledMachineId).toBe('guest');
+                expect(run.read().observation?.reason).toBe('bootstrap.ssh_command_failed');
                 return await run.input.bootstrap.enroll(enrollment);
             }, complete: async (_row, resumeSetup) => { expect(resumeSetup).toBe(true); run.events.push('complete'); } },
         });
         expect(result).toMatchObject({ resource, enrolledMachineId: 'guest', observation: { availability: 'present', power: 'running' } });
         expect(result.observation?.reason).toBeUndefined();
         expect(run.roles).toEqual(['inspect', 'bootstrap', 'inspect']);
-        expect(run.events).toEqual(['report', 'report', 'enroll', 'complete', 'report']);
+        expect(run.events).toEqual(['report', 'enroll', 'complete', 'report']);
     });
     it('refuses an enrolled guest update without a native bootstrap transport before any provider or Home effect', async () => {
         const enrolled = ManagedMachineFullV1Schema.parse({ ...machine, allocation: 'bound', resource, enrolledMachineId: 'guest' });
