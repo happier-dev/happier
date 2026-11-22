@@ -14,6 +14,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createFakeSocket, getSocketHandler } from '../testkit/socketHarness';
 import type { machineLiveStreamRelayHandler } from './machineLiveStreamRelayHandler';
 import { TEST_MACHINE_INSTALLATION_ID } from '../testkit/machineAdmissionPersistenceBoundary';
+import type { MachineLiveStreamControlV1, MachineLiveStreamFrameV1 as CaptureFrame } from '@happier-dev/protocol';
 
 vi.mock('@/storage/db', async () => {
   const { createMachineAdmissionPersistenceBoundary } = await import('../testkit/machineAdmissionPersistenceBoundary');
@@ -198,7 +199,7 @@ describe('machineLiveStreamRelayHandler observability', () => {
     }
   });
 
-  it('replenishes image credit from a delayed acknowledgement while metadata advances', async () => {
+  it('replenishes image credit and keeps the newest picture under slow-consumer log floods', async () => {
     const { machineLiveStreamRelayHandler } = await import('./machineLiveStreamRelayHandler');
     const source = createFakeSocket({ id: 'metadata-source' });
     source.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
@@ -256,6 +257,21 @@ describe('machineLiveStreamRelayHandler observability', () => {
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2 } }));
       expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR,
         expect.objectContaining({ error: 'stale_live_stream_ack' }));
+
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'stop' } }));
+      await send(startMessage('stream_1', undefined, caps));
+      emitted.length = 0;
+      // The producer owns this regression harness; Home owns this real relay transport.
+      const { expectNewestPictureUnderLogFlood } = await import(new URL('../../../../../cli/src/daemon/devices/simulator/capture/logs.slowViewer.testkit.ts', import.meta.url).href);
+      await expectNewestPictureUnderLogFlood({
+        caps,
+        sendFrame: (offered: CaptureFrame) => {
+          const { payloadBase64, ...header } = offered;
+          return send(envelope({ kind: 'frame', frame: { ...header, payload: { t: 'plain', v: payloadBase64 } } }));
+        },
+        consumeAck: (control: MachineLiveStreamControlV1) => Promise.resolve(receive(envelope({ kind: 'control', control }))),
+        readDelivered: () => emitted,
+      });
     } finally {
       await getSocketHandler(source, 'disconnect')();
       await getSocketHandler(viewer, 'disconnect')();

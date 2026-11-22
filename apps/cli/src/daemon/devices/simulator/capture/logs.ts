@@ -20,8 +20,9 @@ export function withSimulatorLogs(resource: SimulatorDeviceResourceV1, adapter: 
         let sequence = 1;
         let stopped = false;
         let logs: ReturnType<typeof startSimulatorLogs> | undefined;
+        let inFlightLog: Readonly<{ sequence: number; message: LogMessage }> | undefined;
         const key = Symbol(resource.simulatorId);
-        const stopLogs = () => { stopped = true; activeLogs.delete(key); logs?.stop(); };
+        const stopLogs = () => { stopped = true; inFlightLog = undefined; activeLogs.delete(key); logs?.stop(); };
         const result = await adapter.start({ ...input,
             offerFrame: frame => input.offerFrame({ ...frame, sequence: sequence++ }),
             emitReceipt: receipt => { if (receipt.terminal) stopLogs(); input.emitReceipt(receipt); },
@@ -31,11 +32,16 @@ export function withSimulatorLogs(resource: SimulatorDeviceResourceV1, adapter: 
         const emit = (message: LogMessage) => {
             if (stopped) return;
             activeLogs.set(key, { simulatorId: resource.simulatorId, latest: message });
+            // The viewer shows the latest log, not history. Keep its next
+            // observation here until the existing ACK consumes the offered one.
+            if (inFlightLog) return;
             const payload = Buffer.from(JSON.stringify(message));
-            const offered = input.offerFrame({ v: 1, streamId: input.streamId, sequence: sequence++, timestampMs: message.emittedAtMs,
+            const logSequence = sequence++;
+            const offered = input.offerFrame({ v: 1, streamId: input.streamId, sequence: logSequence, timestampMs: message.emittedAtMs,
                 payloadKind: 'metadata', payloadEncoding: 'binary_base64', payloadBase64: payload.toString('base64'),
                 payloadSizeBytes: payload.length });
-            if (!offered.ok && offered.reasonCode !== 'backpressure_window_exhausted') stopLogs();
+            if (offered.ok) inFlightLog = { sequence: logSequence, message };
+            else if (offered.reasonCode !== 'backpressure_window_exhausted') stopLogs();
         };
         const reportFailure = (reason: string) => emit({ ...empty, emittedAtMs: input.nowMs(), level: 'error', message: reason });
         const startLogs = async () => {
@@ -58,6 +64,20 @@ export function withSimulatorLogs(resource: SimulatorDeviceResourceV1, adapter: 
         // Optional logs never delay video readiness. The capture lifetime also
         // covers tooling resolution, so a late resolution cannot orphan a child.
         void startLogs().catch(() => reportFailure('simulator_logs_tooling_failed'));
-        return { ...result, session: { ...result.session, stop: async () => { stopLogs(); await result.session.stop(); } } };
+        return { ...result, session: { ...result.session,
+            applyControl: control => {
+                const applied = result.session.applyControl?.(control) ?? { ok: true as const };
+                if (!applied.ok) return applied;
+                if (control.kind === 'ack' && control.streamId === input.streamId
+                    && inFlightLog && control.nextSequence > inFlightLog.sequence) {
+                    const consumed = inFlightLog.message;
+                    inFlightLog = undefined;
+                    const latest = activeLogs.get(key)?.latest;
+                    if (latest && latest !== consumed) emit(latest);
+                }
+                return applied;
+            },
+            stop: async () => { stopLogs(); await result.session.stop(); },
+        } };
     } };
 }

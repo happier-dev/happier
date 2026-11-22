@@ -691,7 +691,11 @@ The daemon starts `simctl spawn <device> log stream` on iOS and device-scoped
 Log lines share the admitted frame byte budget, travel as metadata, and never enter
 the video decoder. The Tools panel shows the latest log sideband; the sideband
 Action reads that same active producer's latest message. Closing the viewer retires
-the producer and its snapshot. This is live device logging, without retained history.
+the producer and its snapshot. This is live device logging, without retained history. In 0.3
+development, the log producer keeps the latest observation in that same snapshot while an
+offered log is unacknowledged. The existing capture ACK releases the newest pending log;
+superseded lines are never offered to the relay. Home retains network-credit ownership and
+its image retention policy; opaque codec metadata and Browser input results are unchanged.
 
 The direct HTTP start endpoint is not a complete live-stream carrier. It verifies signed grants,
 proofs and scope, then returns `direct_stream_channel_unavailable` before starting capture or
