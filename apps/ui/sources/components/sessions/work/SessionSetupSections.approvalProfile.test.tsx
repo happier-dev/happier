@@ -1,13 +1,13 @@
 import * as React from 'react';
 import { SessionCurrentProjectionRecordV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, createSessionFixture, createPlainSessionCurrentProjectionRecordFixture, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createSessionFixture, createPlainSessionCurrentProjectionRecordFixture, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createSecretSettingsTestHarness } from '@/components/settings/secrets/secretSettingsTestHarness';
-import { settingsParse } from '@/sync/domains/settings/settings';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { storage } from '@/sync/domains/state/storage';
 import { ModalProvider } from '@/modal';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
@@ -19,6 +19,8 @@ import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/act
 // the mounted setup host, profile reader and revision-aware Action executor stay real.
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+vi.mock('@/components/ui/popover', async original =>
+    (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(original));
 vi.mock('@expo/vector-icons', async () => (await import('@/dev/testkit/mocks/icons')).createExpoVectorIconsMock());
 vi.mock('socket.io-client', async original =>
     (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -29,9 +31,13 @@ afterEach(() => { standardCleanup(); storage.setState(initialState, true); });
 
 describe('Session setup approval profile', () => {
     it.each(['apply', 'keep'] as const)('shows the typed missing fallback and holds an explicit clear against a newer Session until %s', async decision => {
-        const account = await createSecretSettingsTestHarness({ mode: 'plain', settings: settingsParse({
-            actionsSettingsV1: { v: 1, actions: {}, approvalProfiles: [] },
-        }) });
+        const account = await createSecretSettingsTestHarness({ mode: 'plain' });
+        const profile = { name: 'Release approval' };
+        const header = { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: profile.name, title: profile.name };
+        account.artifacts.replaceStoredRow(createPlainArtifactHttpFixture({ id: 'release-profile', isDecrypted: true,
+            title: profile.name, header, rawHeader: header, headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+            body: JSON.stringify({ kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile }),
+        }, account.scope.accountId));
         const disposeLoader = await installRealActionExecutorModuleLoader();
         try {
             const sessionHttp = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
@@ -64,11 +70,11 @@ describe('Session setup approval profile', () => {
                 // Owner 11-15 C4: a collapsed value row like Role (glyph, label, current choice), not an open field.
                 expect(screen.getTextContent()).toContain(t('workflows.triggers.guided.profile.deletedName'));
                 expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-row' }).length).toBeGreaterThan(0);
-                const picker = screen.tree.root.findAllByType(DropdownMenu).find(row => row.props.testID === 'session-approval-profile');
-                if (!picker) throw new Error('Session approval profile picker missing');
-                expect(picker.props.open).toBe(false);
+                expect(screen.findByTestId('session-approval-profile:release-profile')).toBeNull();
+                await screen.pressByTestIdAsync('session-approval-profile-row');
+                await vi.waitFor(() => expect(screen.findByTestId('session-approval-profile:release-profile')).not.toBeNull());
                 // "Machine default" clears the Session's own choice (null): it follows its Machine, then the Account.
-                await act(async () => picker.props.onSelect('machine_default'));
+                await screen.pressByTestIdAsync('session-approval-profile:machine_default');
                 await vi.waitFor(() => expect(screen.tree.root.findAllByProps({ testID: 'session-approval-profile-conflict' }).length).toBeGreaterThan(0));
                 // The boundary counts attempted PATCHes, including independent projection
                 // maintenance. The owner's persisted profile must retain the refused intent.

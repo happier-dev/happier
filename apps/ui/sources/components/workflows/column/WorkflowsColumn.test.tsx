@@ -205,6 +205,15 @@ describe('WorkflowsColumn', () => {
         expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
         expect(routerPush).toHaveBeenCalledWith('/workflows/events');
     });
+    it('leaves the desktop Events detail when Definitions is selected', async () => {
+        routeState.pathname = '/workflows/events/observed-session';
+        const screen = await renderScreen(<WorkflowsColumn surface="plane" />, { wrapper: TestAuth });
+        try {
+            expect(screen.findHostByTestId('workflows-column:view:events')?.props.accessibilityState).toMatchObject({ selected: true });
+            await pressView(screen, 'definitions');
+            expect(routerPush).toHaveBeenCalledWith('/workflows');
+        } finally { await screen.unmount(); }
+    });
     it('opens the page form on its name, with the Definitions and Runs switch under it in both views (FIN-DESIGN-REVIEW L6)', async () => {
         const screen = await renderScreen(<WorkflowsColumn surface="page" definitionsContent={<View testID="workflow-definitions-content" />} />, { wrapper: TestAuth });
         const order = () => screen.tree.root.findAll((node) => typeof node.type === 'string'

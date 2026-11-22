@@ -57,7 +57,7 @@ import { collectionSpaceSettingRefs } from '@/components/settings/session/collec
 import { readOpenWorkflowDefinition } from './workflowsColumnModel';
 import { WorkflowLibraryFreshness } from '../library/WorkflowLibraryFreshness';
 import { isWorkflowEventsPath, useWorkflowsColumnEvents, WorkflowsColumnEventsFilters, WorkflowsColumnEventsListening, WorkflowsColumnEventsRows } from '../events/WorkflowsColumnEvents';
-import { WORKFLOWS_EVENTS_ROUTE, WORKFLOWS_RUNS_ROUTE } from '../workflowsRoutes';
+import { WORKFLOWS_EVENTS_ROUTE, WORKFLOWS_LIBRARY_ROUTE, WORKFLOWS_RUNS_ROUTE } from '../workflowsRoutes';
 
 
 function isRunPath(pathname: string): boolean {
@@ -90,7 +90,8 @@ export const WorkflowsColumn = React.memo(function WorkflowsColumn(props: Readon
     const selectView = useEventCallback((next: WorkflowsColumnView) => {
         setView(next);
         if (props.definitionsContent !== undefined) return;
-        // Beside the main pane Events and Runs open their pages there; an open run stays where it is.
+        // Leaving Events also closes its main-pane detail and releases its live observation.
+        if (next === 'definitions' && isWorkflowEventsPath(pathname)) router.push(WORKFLOWS_LIBRARY_ROUTE as never);
         if (next === 'events' && !isWorkflowEventsPath(pathname)) router.push(WORKFLOWS_EVENTS_ROUTE as never);
         if (next === 'runs' && !isRunPath(pathname)) router.push(WORKFLOWS_RUNS_ROUTE as never);
     });
