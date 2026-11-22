@@ -27,6 +27,7 @@ import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 import { MachineEffectInternalRequestSchema } from '@/machines/setup/effectInternalProtocol';
 import { prepareDedicatedDaemonBootstrap } from './dedicatedDaemonBootstrap';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { projectDeploymentException } from '@/deployments/deploymentFailure';
 
 const execFileAsync = promisify(execFile);
 
@@ -205,6 +206,26 @@ describe('runManagedMachineEnrollment', () => {
       },
     })).rejects.toBe(failure);
     expect(failure.cause).toBe(cause);
+  });
+
+  it('keeps the native bootstrap failure facts in the App deployment result', async () => {
+    const enrollment = { source: 'deploymentApp' as const, homeId: correlation.homeId,
+      environmentId: 'environment-collector', deploymentId: 'deployment-collector', actionOperationId: 'operation-collector',
+      controller: correlation.controller };
+    const result = await runManagedMachineEnrollment({ source: 'deploymentApp', enrollment, target,
+      deploymentAppBinding: { serviceName: 'collector', port: 4318 }, enrollmentAccountId: 'requester-account',
+      machineDisplayName: 'Telemetry collector', binaryPath: 'happier', homeDir: '/home/collector',
+      happyHomeDir: '/home/collector/.happier', channel: 'stable',
+      accountCredentials: { token: 'fixture-account', encryption: null },
+      onExistingMachine: async () => {}, onPairingRequest: async () => {}, restartDaemon: async () => {},
+    }, { native: {
+      exec: async () => { throw Object.assign(new TypeError('private native details'), { code: 'EACCES' }); },
+      putFile: async () => { throw new Error('Installation must fail before file delivery'); },
+    } }).catch(error => projectDeploymentException(error));
+    expect(result).toMatchObject({ ok: false, errorCode: 'system_task_failed', failureCause: {
+      phase: 'machine.bootstrap', errorCode: 'EACCES', errorClass: 'TypeError', httpStatus: null,
+    } });
+    expect(JSON.stringify(result)).not.toContain('private native details');
   });
 
   it('refuses requester enrollment without the owning Action operation before any guest effect', async () => {

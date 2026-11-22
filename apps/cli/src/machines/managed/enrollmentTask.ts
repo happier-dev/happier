@@ -1,5 +1,6 @@
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '@happier-dev/cli-common/systemTasks';
 import { projectManagedMachineBootstrapPrompt, SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineControllerError } from './controllerErrors';
 import { createManagedEnrollmentResponseValidation } from './enrollmentPairing';
@@ -18,7 +19,7 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
     run: async (kind: InteractiveSystemTaskKind) => {
       const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
       const owner = getLiveSystemTasksRunnerAdapter();
-      let taskFailure: ManagedMachineControllerError | SystemTaskExecutionError | undefined;
+      let taskFailure: unknown;
       const task = await owner.startAdmitted({ run: async ctx => {
         try {
           return await kind.run({ ...ctx, emit: event => { ctx.emit(event); input.onEvent?.(event); }, prompt: async prompt => {
@@ -32,7 +33,7 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
             } : {}) }); } finally { input.onPrompt?.(null); }
           } });
         } catch (error) {
-          if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) taskFailure = error;
+          taskFailure = error;
           if (error instanceof ManagedMachineControllerError) throw new SystemTaskExecutionError(error.code, error.code);
           throw error;
         }
@@ -45,8 +46,12 @@ export function createManagedBootstrapTaskRunner(input: Readonly<{
         await input.onTask?.({ ...task, kind: 'remote.ssh.bootstrapMachine.v1' });
         const result = await owner.wait(task);
         if (!result.ok) {
-          if (taskFailure && result.error?.code === taskFailure.code) throw taskFailure;
-          throw new SystemTaskExecutionError(result.error?.code ?? 'system_task_failed', result.error?.message ?? 'Managed guest setup failed.');
+          if ((taskFailure instanceof ManagedMachineControllerError || taskFailure instanceof SystemTaskExecutionError)
+            && result.error?.code === taskFailure.code) throw taskFailure;
+          const failure = new SystemTaskExecutionError(result.error?.code ?? 'system_task_failed',
+            result.error?.message ?? 'Managed guest setup failed.');
+          // This waiter owns the in-process task. Recover the original closed facts without changing the task result schema.
+          throw Object.assign(failure, { failureCause: projectActionFailureCauseV1(taskFailure, 'machine.bootstrap') });
         }
         input.signal?.throwIfAborted();
         return result.data;
