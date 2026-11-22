@@ -16,6 +16,8 @@ import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/dom
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { useProjectAccountRows } from '@/sync/domains/workspaces/projectAccountRows';
 import { resolveWorkspaceRefByAddress } from '@/sync/domains/workspaces/workspaceRefs';
+import { announceAccessibilityMessage } from '@/components/ui/accessibility/announceAccessibilityMessage';
+import { t } from '@/text';
 
 type Snapshot = Readonly<{ data: ProjectSessionDefaultsGetOutputV1 | null; status: 'idle' | 'loading' | 'ready' | 'refreshing' | 'error' | 'unavailable'; error: unknown }>;
 const EMPTY: Snapshot = Object.freeze({ data: null, status: 'idle', error: null });
@@ -129,18 +131,23 @@ export function useProjectSessionDefaultsEditor(input: Readonly<{
         if (isProjectSessionDefaultsEditUnchanged(current, next)) return;
         setBusy(true); setError(null);
         try {
+            let savedRow: ProjectSessionDefaultsRowV1 | undefined;
             if (scope === 'personal-project' && read.input.projectRef) {
                 const result = ProjectOrganizationUpdateOutputV1Schema.parse(await executeProjectDefaultsAction(read.scope,
                     'projects.organization.update', { projectRef: read.input.projectRef, expectedRevision: 'absent',
                         sessionDefaults: { expectedRevision: read.data.personalDefaultsRow?.revision ?? 'absent', defaults: next } }));
                 if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
-                if ('sessionDefaults' in result) read.applyDefaultsReceipt(scope, result.sessionDefaults);
+                if ('sessionDefaults' in result) savedRow = result.sessionDefaults;
             } else if (read.input.sourceRef && read.data.source) {
                 const result = ProjectSourcesUpdateOutputV1Schema.parse(await executeProjectDefaultsAction(read.scope,
                     'projects.sources.update', { ...read.input.sourceRef, expectedRevision: read.data.source.revision,
                         patch: { sessionDefaults: { expectedRevision: read.data.sourceDefaultsRow?.revision ?? 'absent', defaults: next } } }));
                 if (!result.ok) throw Object.assign(new Error(result.error), { code: result.error });
-                if (result.sessionDefaults) read.applyDefaultsReceipt(scope, result.sessionDefaults);
+                savedRow = result.sessionDefaults;
+            }
+            if (savedRow) {
+                read.applyDefaultsReceipt(scope, savedRow);
+                announceAccessibilityMessage(t('projects.sessionDefaults.saved'));
             }
         } catch (failure) { setError(failure); throw failure; }
         finally { setBusy(false); }

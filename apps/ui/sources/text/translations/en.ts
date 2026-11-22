@@ -22574,6 +22574,7 @@ const enProjects = {
       more: ({ count }: { count: number }) => (count === 1 ? `1 more` : `${count} more`),
   },
   sessionDefaults: {
+      saved: "Project defaults saved.",
       description: ({ project }: { project: string }) => `How new sessions in ${project} start`,
       scopeMe: "For me",
       scopeTeam: ({ team }: { team: string }) => `For ${team}`,

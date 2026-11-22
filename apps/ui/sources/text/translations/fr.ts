@@ -19052,6 +19052,7 @@ settingsSession: {
         more: ({ count }: { count: number }) => (count === 1 ? `1 de plus` : `${count} de plus`),
     },
     sessionDefaults: {
+        saved: "Les réglages par défaut du projet ont été enregistrés.",
         description: ({ project }: { project: string }) => `Comment démarrent les nouvelles sessions dans ${project}`,
         scopeMe: "Pour moi",
         scopeTeam: ({ team }: { team: string }) => `Pour ${team}`,

@@ -19284,6 +19284,7 @@ settingsSession: {
         more: ({ count }: { count: number }) => (count === 1 ? `Mais 1` : `Mais ${count}`),
     },
     sessionDefaults: {
+        saved: "As predefinições do projeto foram salvas.",
         description: ({ project }: { project: string }) => `Como começam as novas sessões em ${project}`,
         scopeMe: "Para mim",
         scopeTeam: ({ team }: { team: string }) => `Para ${team}`,

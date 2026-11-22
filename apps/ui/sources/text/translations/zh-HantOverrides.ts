@@ -14728,6 +14728,7 @@ settingsSession: {
             more: ({ count }: { count: number }) => (count === 1 ? `還有 1 個` : `還有 ${count} 個`),
         },
         sessionDefaults: {
+            saved: "專案預設設定已儲存。",
             description: ({ project }: { project: string }) => `${project} 中新工作階段的起始方式`,
             scopeMe: "我自己",
             scopeTeam: ({ team }: { team: string }) => `${team}`,

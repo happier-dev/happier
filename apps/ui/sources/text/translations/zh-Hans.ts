@@ -18798,6 +18798,7 @@ settingsSession: {
         more: ({ count }: { count: number }) => (count === 1 ? `还有 1 个` : `还有 ${count} 个`),
     },
     sessionDefaults: {
+        saved: "项目默认设置已保存。",
         description: ({ project }: { project: string }) => `${project} 中新会话的起始方式`,
         scopeMe: "我自己",
         scopeTeam: ({ team }: { team: string }) => `${team}`,

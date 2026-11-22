@@ -19092,6 +19092,7 @@ settingsSession: {
         more: ({ count }: { count: number }) => (count === 1 ? `他 1 件` : `他 ${count} 件`),
     },
     sessionDefaults: {
+        saved: "プロジェクトのデフォルト設定を保存しました。",
         description: ({ project }: { project: string }) => `${project} の新しいセッションの始まり方`,
         scopeMe: "自分用",
         scopeTeam: ({ team }: { team: string }) => `${team} 用`,

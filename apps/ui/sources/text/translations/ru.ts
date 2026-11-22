@@ -19132,6 +19132,7 @@ settingsSession: {
         more: ({ count }: { count: number }) => (count === 1 ? `Ещё 1` : `Ещё ${count}`),
     },
     sessionDefaults: {
+        saved: "Настройки проекта по умолчанию сохранены.",
         description: ({ project }: { project: string }) => `Как начинаются новые сессии в ${project}`,
         scopeMe: "Для меня",
         scopeTeam: ({ team }: { team: string }) => `Для ${team}`,

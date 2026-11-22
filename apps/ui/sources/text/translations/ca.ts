@@ -17982,6 +17982,7 @@ La meva pregunta: `,
             more: ({ count }: { count: number }) => (count === 1 ? `1 més` : `${count} més`),
         },
         sessionDefaults: {
+            saved: "S’han desat els valors predeterminats del projecte.",
             description: ({ project }: { project: string }) => `Com comencen les sessions noves a ${project}`,
             scopeMe: "Per a mi",
             scopeTeam: ({ team }: { team: string }) => `Per a ${team}`,
