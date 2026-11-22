@@ -1,3 +1,6 @@
+import type { ArtifactCallerAccessV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+
 type PluginArtifactOwner = Readonly<{
     accountId: string;
     pluginId: string;
@@ -24,6 +27,11 @@ export const artifactOrdinaryWhere = Object.freeze({
 
 /** Retiring rows keep physical-byte custody, but are unavailable to all live readers and writers. */
 export const artifactVisibleWhere = Object.freeze({ ...artifactOrdinaryWhere, deletedAt: null });
+
+/** Revision trimming is available for the owner of an admitted, ordinary browser Artifact. */
+export function viewerMayTrimArtifactRevisions(access: ArtifactCallerAccessV1, kindHint: string | null | undefined): boolean {
+    return access === 'owner' && getArtifactKindPolicyV1(kindHint).browserListed;
+}
 
 /** SQL projection of the same classification for byte aggregates that cannot hydrate content. */
 export function artifactOrdinarySqlPredicate(mysql: boolean): string {

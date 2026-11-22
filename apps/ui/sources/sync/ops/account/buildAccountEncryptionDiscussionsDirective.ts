@@ -14,9 +14,10 @@ import { DiscussionMessageContentV1StoredSchema, readDiscussionAttachmentReferen
 import { BinaryBlobAccountEncryptionStageV1Schema, type BinaryBlobAccountEncryptionStageV1, type BinaryBlobStoredContentV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
 import { createBinaryContentEncryption, hashBinaryContent, openBinaryContent, sealBinaryContent } from '@/sync/encryption/binaryContent';
 import { decodeBase64 } from '@/encryption/base64';
+import type { DiscussionAttachmentReadResponseV1 } from '@happier-dev/protocol/discussions/attachments';
 
 export type DiscussionMigrationAttachmentTransport = Readonly<{
-    readAttachment?: (discussionId: string, messageId: string, blobId: string) => Promise<Readonly<{ blobId: string; content: BinaryBlobStoredContentV1 }>>;
+    readAttachment?: (discussionId: string, messageId: string, blobId: string) => Promise<DiscussionAttachmentReadResponseV1>;
     stageAttachment?: (discussionId: string, messageId: string, blobId: string, content: BinaryBlobStoredContentV1) => Promise<BinaryBlobAccountEncryptionStageV1>;
 }>;
 
@@ -70,12 +71,12 @@ export async function buildAccountEncryptionDiscussionsDirective(input: Readonly
             const references = readDiscussionAttachmentReferencesV1(content);
             const byBlobId = new Map(references.map(reference => [reference.blobId, reference]));
             const bindings = message.attachments ?? [];
+            const expectedIds = [...bindings.map(binding => binding.blobId), ...(message.removedAttachmentBlobIds ?? [])];
             if (references.some(reference => {
                 const canonical = byBlobId.get(reference.blobId)!;
                 return reference.sizeBytes !== canonical.sizeBytes || reference.sha256 !== canonical.sha256 || reference.mime !== canonical.mime;
-            }) || byBlobId.size !== bindings.length
-                || new Set(bindings.map(binding => binding.blobId)).size !== bindings.length
-                || bindings.some(binding => binding.encryptionMode !== input.fromMode || !byBlobId.has(binding.blobId))) {
+            }) || byBlobId.size !== expectedIds.length || new Set(expectedIds).size !== expectedIds.length
+                || expectedIds.some(id => !byBlobId.has(id)) || bindings.some(binding => binding.encryptionMode !== input.fromMode)) {
                 throw new Error('Discussion migration attachment census changed');
             }
             const attachments = [];
@@ -85,7 +86,7 @@ export async function buildAccountEncryptionDiscussionsDirective(input: Readonly
                 if (!input.readAttachment || !input.stageAttachment) throw new Error('Discussion migration attachment transport unavailable');
                 const stored = await input.readAttachment(row.discussionId, message.id, binding.blobId);
                 assertAccountEncryptionMigrationScopeCurrent(input.scope);
-                if (stored.blobId !== binding.blobId) throw new Error('Discussion migration attachment identity changed');
+                if (stored.blobId !== binding.blobId || !('content' in stored)) throw new Error('Discussion migration attachment identity changed');
                 const bytes = await openBinaryContent({ reference: byBlobId.get(binding.blobId)!, content: stored.content,
                     mode: input.fromMode, encryption: sourceKey?.mode === 'e2ee' ? createBinaryContentEncryption(sourceKey.dataKey) : null });
                 const expectedContentSha256 = hashBinaryContent(decodeBase64(stored.content.t === 'plain' ? stored.content.v : stored.content.c));

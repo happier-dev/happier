@@ -66,6 +66,13 @@ thread router creates a new Session for each external thread. See
 [Email setup](/extending/email-channel) and the
 [binding support matrix](/extending/channels#binding-support-in-development-source).
 
+## Remove a file
+
+In 0.3 development source, `discussion.attachment.remove` allows the message
+author or the Discussion owner to remove a file. The original message stays
+and records who removed the attachment. Removing the file frees storage on the
+Discussion owner's Account. An agent asks for approval before removing a file.
+
 ## Ask an agent
 
 Type `@` in the Discussion composer and **choose an invited agent from the

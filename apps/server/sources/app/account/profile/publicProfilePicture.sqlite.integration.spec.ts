@@ -56,6 +56,7 @@ describe('reviewed public-profile picture custody', () => {
         const read = await readPublicProfilePicture({ accountId: owner.id, pictureId: row.id });
         expect(read.ok).toBe(true);
         if (!read.ok) throw new Error('Expected applied picture');
+        expect(row.storedSizeBytes).toBe(BigInt(read.bytes.byteLength));
         expect(read).toMatchObject({ mimeType: 'image/png', width: 96, height: 48 });
         const actual = await sharp(read.bytes).raw().toBuffer();
         const reviewed = await sharp(fixture.bytes).raw().toBuffer();

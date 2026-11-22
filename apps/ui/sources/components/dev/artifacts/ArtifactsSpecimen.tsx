@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 
 import { ArtifactsBrowser } from '@/components/artifacts/ArtifactsBrowserScreen';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
@@ -60,8 +60,9 @@ function specimenArtifacts(now: number): readonly DecryptedArtifact[] {
     ];
 }
 
-const BUDGET: ArtifactStorageUsageV1 = { usedBytes: 18_400_000, limitBytes: 50_000_000, documentLimitBytes: 1_048_576, revisionRetentionCount: 10 };
-const FULL: ArtifactStorageUsageV1 = { usedBytes: 50_000_000, limitBytes: 50_000_000, documentLimitBytes: 1_048_576, revisionRetentionCount: 10 };
+const BUDGET: StorageInventoryV1 = { totalBytes: 18_400_000, artifactLimitBytes: 50_000_000, unmeasuredKinds: [],
+    byKind: { artifacts: 18_400_000, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } };
+const FULL: StorageInventoryV1 = { ...BUDGET, totalBytes: 50_000_000, byKind: { ...BUDGET.byKind, artifacts: 50_000_000 } };
 const NOOP = () => {};
 
 export function ArtifactsSpecimen(props: Readonly<{ state: ArtifactsSpecimenState }>): React.ReactElement {

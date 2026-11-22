@@ -5,7 +5,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { Collection, useHappierCollection, type CollectionAnatomy, type CollectionRowActions } from '@happier-dev/plugin-ui';
 import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
 import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/CorePluginUiPresentationScope';
-import type { ArtifactStorageUsageV1} from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { StorageInventoryV1} from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import type { PromptFoldersV1 } from '@happier-dev/protocol/prompts/library/promptFoldersV1';
 
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
@@ -67,7 +67,7 @@ import { ArtifactQuotaNotice } from './ArtifactQuotaNotice';
 import { ArtifactView } from './ArtifactView';
 import { useArtifactOperations } from './useArtifactOperations';
 
-const SORTS: readonly ArtifactBrowserSort[] = ['updated_desc', 'created_desc', 'title_asc'];
+const SORTS: readonly ArtifactBrowserSort[] = ['updated_desc', 'created_desc', 'title_asc', 'size_desc'];
 /** The narrowest card that still shows a readable preview beside another on a tablet or desktop. */
 const CARD_MIN_WIDTH_PX = 260;
 /**
@@ -98,6 +98,7 @@ function sortLabel(sort: ArtifactBrowserSort): string {
         case 'updated_desc': return t('artifacts.browser.sort.updated_desc');
         case 'created_desc': return t('artifacts.browser.sort.created_desc');
         case 'title_asc': return t('artifacts.browser.sort.title_asc');
+        case 'size_desc': return t('artifacts.browser.sort.size_desc');
     }
 }
 
@@ -136,7 +137,7 @@ export function ArtifactsBrowser(props: Readonly<{
     loaded: boolean;
     loadFailed: boolean;
     onRetry: () => void;
-    usage: ArtifactStorageUsageV1 | null;
+    usage: StorageInventoryV1 | null;
     /** Opens this artifact beside the grid on arrival (the specimen's selected state). */
     initialOpenId?: string;
 }>): React.ReactElement {
@@ -430,7 +431,7 @@ function BrowserHeader(props: Readonly<{
     /** The rows shown are only what is loaded so far: the count is not a final total. */
     partial: boolean;
     savedToday: number;
-    usage: ArtifactStorageUsageV1 | null;
+    usage: StorageInventoryV1 | null;
     showPresent: boolean;
     reservePresent: boolean;
     create: PageCreateAction;
@@ -440,9 +441,9 @@ function BrowserHeader(props: Readonly<{
     viewSwitch: React.ReactNode;
     toolbar: React.ReactNode;
 }>) {
-    const limit = props.usage?.limitBytes ?? null;
+    const limit = props.usage?.artifactLimitBytes ?? null;
     const phone = useDeviceType() === 'phone';
-    const overQuota = props.usage !== null && limit !== null && props.usage.usedBytes >= limit;
+    const overQuota = props.usage !== null && limit !== null && props.usage.byKind.artifacts >= limit;
     // The library's reported counts go to the shared count line; the storage meter stays beside the title (or the switch).
     // Nothing listed in the chosen kinds: the page's line says what belongs here, so no count sits above it.
     const count = props.showPresent && props.total > 0 ? [
@@ -451,7 +452,7 @@ function BrowserHeader(props: Readonly<{
         props.savedToday > 0 && !props.partial ? t('artifacts.browser.savedToday', { count: props.savedToday }) : null,
     ] : undefined;
     const meter = props.showPresent && props.usage !== null && limit !== null
-        ? <StorageMeter usedBytes={props.usage.usedBytes} limitBytes={limit} /> : null;
+        ? <StorageMeter usedBytes={props.usage.byKind.artifacts} limitBytes={limit} /> : null;
     return (
         // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
         // same action); the kind and order chips sit right under it on every width (owner O5), the count line last.
@@ -469,7 +470,7 @@ function BrowserHeader(props: Readonly<{
                 {props.toolbar}
                 {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
                 {overQuota && props.usage !== null && limit !== null ? (
-                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.usedBytes, limitBytes: limit }} />
+                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: props.usage.byKind.artifacts, limitBytes: limit }} />
                 ) : null}
             </> : undefined}
             status={phone ? meter ?? undefined : undefined}

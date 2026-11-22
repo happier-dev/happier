@@ -16,7 +16,7 @@ import { createArtifactPublicLinkRequest } from '@/sync/api/artifacts/artifactPu
 import { artifactKindRequiresSharedAudienceV1, readArtifactSharedAudienceV1, workflowDefinitionArtifactSharingAdapterV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
 import { loadAiLaunchProfileArtifacts, readAiLaunchProfileCollection } from '@happier-dev/protocol/profiles/read';
 import type { ArtifactAccessActionTransportV1 } from '@happier-dev/protocol/actions/executor/artifactAccessActions';
-import type { ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import type { ArtifactActionInputV1, StorageInventoryInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactHtmlBundleFromBodyV1, type ArtifactHtmlBundleV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import type { ArtifactBlobReferenceV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { ArtifactPublicLinkKeyholdingResourceV1, WorkflowDefinitionArtifactOperations } from '@happier-dev/protocol/actions';
@@ -43,7 +43,7 @@ import { parseToken } from '@/utils/auth/parseToken';
 import { createArtifactWithHeaderViaApi, decryptArtifactListItems, fetchArtifactWithBodyFromApi, fetchArtifactsWithBodiesFromApi, openArtifactsWithBodiesFromApi, updateArtifactWithHeaderViaApi,
     fetchArtifactBodyRevisionsFromApi, fetchArtifactBinaryFromApi, restoreArtifactBodyRevisionViaApi, type ArtifactDataKeyCache } from '@/sync/engine/artifacts/syncArtifacts';
 import { listArtifactHeadersV1, type ArtifactListPageOptionsV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
-import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactReadBatch, fetchArtifactStorageUsage, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
+import { createArtifactAccessApi, deleteArtifact as deleteArtifactApi, fetchArtifactListPage, fetchArtifactReadBatch, fetchArtifactRevisionHeaders, fetchStorageInventory, trimArtifactRevisions, encodeArtifactListCursor } from '@/sync/api/artifacts/apiArtifacts';
 import { HappyError } from '@/utils/errors/errors';
 import type { Artifact, ArtifactBodyInput, ArtifactHeader, ArtifactLockedListItem, DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
@@ -181,9 +181,11 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             workflowArtifacts, artifactAccessGrants, encodeArtifactListCursor,
             homeHubArtifactTransport: { read: artifactUnavailable, create: artifactUnavailable, update: artifactUnavailable } satisfies HomeHubArtifactTransportV1,
             listArtifacts: async (_options: Parameters<WorkflowDefinitionArtifactOperations['list']>[0]) => artifactUnavailable(),
-            listArtifactRevisions: async (_artifactId: string, _signal?: AbortSignal) => artifactUnavailable(),
+            listArtifactRevisions: async (_input: ArtifactActionInputV1<'artifact.revisions.list'>, _signal?: AbortSignal) => artifactUnavailable(),
+            trimArtifactRevisions: async (_artifactId: string, _signal?: AbortSignal) => artifactUnavailable(),
             restoreArtifactRevision: async (_input: ArtifactActionInputV1<'artifact.revisions.restore'>, _signal?: AbortSignal, _savedBy?: ArtifactSavedByV1) => artifactUnavailable(),
-            readArtifactStorageUsage: async (_signal?: AbortSignal) => artifactUnavailable(),
+            readStorageInventory: async (_input: StorageInventoryInputV1,
+                _signal?: AbortSignal) => artifactUnavailable(),
             readArtifactPublicLinkResource: async (_artifactId: string, _signal?: AbortSignal,
                 _options?: Readonly<{ prepareRecipientKeys?: boolean }>): Promise<ArtifactPublicLinkKeyholdingResourceV1 | null> => artifactUnavailable(),
             readArtifactHtmlBundle: async (_artifactId: string, _signal?: AbortSignal): Promise<ArtifactHtmlBundleRead> => artifactUnavailable(),
@@ -546,10 +548,11 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
             set: (input, operationSignal) => withArtifactPreparation(input.artifactId, () => accessApi.set(input, operationSignal), operationSignal),
             remove: (input, operationSignal) => withArtifactPreparation(input.artifactId, () => accessApi.remove(input, operationSignal), operationSignal),
         };
-        const projectArtifactListItem = (artifact: Pick<Artifact, 'id' | 'bodyVersion' | 'headerVersion' | 'seq' | 'createdAt' | 'updatedAt' | 'ownerAccountId' | 'ownerDisplayName' | 'access' | 'sharedTeamIds' | 'sharedWithTeamScope' | 'publicAudience'>,
+        const projectArtifactListItem = (artifact: Pick<Artifact, 'id' | 'bodyVersion' | 'headerVersion' | 'seq' | 'createdAt' | 'updatedAt' | 'ownerAccountId' | 'ownerDisplayName' | 'access' | 'sharedTeamIds' | 'sharedWithTeamScope' | 'publicAudience' | 'storedSizeBytes'>,
             opened: DecryptedArtifact | null | undefined, includeBody?: boolean, availability?: ArtifactLockedListItem['availability']) => ({
                 artifactId: artifact.id, header: opened?.isDecrypted && opened.rawHeader ? opened.rawHeader : {},
                 ...(availability ? { availability } : {}),
+                ...(artifact.storedSizeBytes === undefined ? {} : { storedSizeBytes: artifact.storedSizeBytes }),
                 ...(artifact.bodyVersion !== undefined ? { bodyVersion: artifact.bodyVersion } : {}),
                 ...(opened?.isDecrypted ? { provenance: opened.provenance } : {}),
                 ...(includeBody && opened?.isDecrypted ? { body: opened.body, bodyVersion: opened.bodyVersion } : {}),
@@ -904,9 +907,21 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                     ...(artifact.bodyVersion === undefined ? {} : { revision: { headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion } }) };
             },
             workflowArtifacts, homeHubArtifactTransport, artifactAccessGrants, encodeArtifactListCursor, listArtifacts,
-            listArtifactRevisions: async (artifactId: string, operationSignal?: AbortSignal) => {
+            listArtifactRevisions: async (input: ArtifactActionInputV1<'artifact.revisions.list'>, operationSignal?: AbortSignal) => {
                 assertCurrent();
+                const { artifactId } = input;
+                if (input.projection === 'headers') {
+                    const result = await fetchArtifactRevisionHeaders(credentials, artifactId, { request, signal: operationSignal ?? signal });
+                    assertCurrent();
+                    return { artifactId, ...result };
+                }
                 const result = await fetchArtifactBodyRevisionsFromApi({ ...await artifactParams(), artifactId, signal: operationSignal ?? signal });
+                assertCurrent();
+                return result;
+            },
+            trimArtifactRevisions: async (artifactId: string, operationSignal?: AbortSignal) => {
+                assertCurrent();
+                const result = await trimArtifactRevisions(credentials, artifactId, { request, signal: operationSignal ?? signal });
                 assertCurrent();
                 return result;
             },
@@ -919,9 +934,10 @@ async function createLazyActionAccountContext(serverIdRaw: string, signal?: Abor
                 assertCurrent();
                 return result;
             },
-            readArtifactStorageUsage: async (operationSignal?: AbortSignal) => {
+            readStorageInventory: async (input: StorageInventoryInputV1,
+                operationSignal?: AbortSignal) => {
                 assertCurrent();
-                const result = await fetchArtifactStorageUsage(credentials, { request, signal: operationSignal ?? signal });
+                const result = await fetchStorageInventory(credentials, { input, request, signal: operationSignal ?? signal });
                 assertCurrent();
                 return result;
             },

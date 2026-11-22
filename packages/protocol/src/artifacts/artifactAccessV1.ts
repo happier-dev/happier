@@ -158,10 +158,14 @@ export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
   dataEncryptionKey: z.string(), seq: z.number(), createdAt: z.number(), updatedAt: z.number(),
 }));
 export type ArtifactHttpReadV1 = z.infer<typeof ArtifactHttpReadV1Schema>;
+
+export const ArtifactStoredSizeBytesV1Schema = lazyZodSchema(() => z.optional(z.number().check(z.int(), z.nonnegative())));
+
 /** No private header, body, provenance or encryption envelope is valid in this branch. */
 export const ArtifactHttpLockedListItemV1Schema = lazyZodSchema(() => z.extend(z.omit(ArtifactHttpReadV1Schema, {
   header: true, body: true, provenance: true, provenanceDataEncryptionKey: true, dataEncryptionKey: true, encryptionMode: true,
-}), { availability: ArtifactLockedAvailabilityV1Schema, encryptionMode: z.optional(AccountEncryptionModeSchema) }));
+}), { availability: ArtifactLockedAvailabilityV1Schema, encryptionMode: z.optional(AccountEncryptionModeSchema),
+  storedSizeBytes: ArtifactStoredSizeBytesV1Schema }));
 export type ArtifactHttpLockedListItemV1 = z.infer<typeof ArtifactHttpLockedListItemV1Schema>;
 
 /** Create returns the authoritative inserted-row fact; reads keep their existing shape. */

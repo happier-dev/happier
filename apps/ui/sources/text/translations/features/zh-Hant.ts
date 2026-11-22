@@ -3313,6 +3313,7 @@ const artifactsBrowserTranslations = { 'zh-Hant': {
             label: '排序',
             updated_desc: '最近更新',
             created_desc: '最近建立',
+            size_desc: '從大到小',
             title_asc: '標題',
         },
         view: {

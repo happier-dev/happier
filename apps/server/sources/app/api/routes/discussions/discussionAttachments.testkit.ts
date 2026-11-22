@@ -8,11 +8,11 @@ import { registerDiscussionRoutes } from './registerDiscussionRoutes';
 import * as privateFiles from '@/storage/blob/files';
 import tweetnacl from 'tweetnacl';
 import { encodeBase64, decodeBase64 } from 'privacy-kit';
-import { sealAesGcmPayloadWebCrypto, openAesGcmPayloadWebCrypto, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
+import { sealAesGcmPayloadWebCrypto, openAesGcmPayloadWebCrypto, openSessionDataKeyBundleV0, sealSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleWebCrypto';
 import { frameSessionDataKeyBundleV0, readSessionDataKeyBundleV0 } from '@happier-dev/protocol/crypto/sessionDataKeyBundleV0';
 import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
-import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
+import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
@@ -21,6 +21,14 @@ import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/arti
 import { signDiscussionAttachmentAgentUploadV1, DiscussionAttachmentUploadRequestV1Schema, type DiscussionAttachmentUploadRequestV1 } from '@happier-dev/protocol/discussions/attachmentsUpload';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { readStorageInventoryInTx } from '@/app/artifacts/artifactStorageService';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { inReadSnapshot } from '@/storage/inTx';
+import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
+import { publicShareRoutes } from '@/app/api/routes/share/publicShareRoutes';
+import { auth } from '@/app/auth/auth';
+import { buildAccountStoredContentCompatibilityHttpHeadersV1, createPlainSessionOwnerMetadataEnvelopeV1,
+    CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 
 export function createAttachmentApp(actorAccountId: () => string, options?: Readonly<{
     authenticate?: (request: FastifyRequest) => void;
@@ -47,6 +55,117 @@ export function createAttachmentApp(actorAccountId: () => string, options?: Read
 
 /** Identical storage/HTTP contracts run against both admitted disposable providers. */
 export function discussionAttachmentContracts(): void {
+    it.each(['author', 'owner'] as const)('lets the %s remove a committed attachment, while other readers cannot', async remover => {
+        const [owner, author, participant, teamReader, unrelated] = await Promise.all(Array.from({ length: 5 }, () =>
+            db.account.create({ data: { encryptionMode: 'plain' } })));
+        await makeShareEligibleForTest(owner.id, author.id);
+        await makeShareEligibleForTest(owner.id, participant.id);
+        const team = await db.team.create({ data: { name: 'Attachment readers', memberships: { create: [
+            { accountId: owner.id, role: 'owner' }, { accountId: teamReader.id, role: 'member' },
+        ] } } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain',
+            metadata: JSON.stringify({ v: 1 }), metadataLayoutVersion: 1,
+            ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} })),
+        } });
+        const linkToken = randomUUID();
+        await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id,
+            tokenHash: createHash('sha256').update(linkToken).digest(), isConsentRequired: false } });
+        let actorAccountId = owner.id;
+        const { app, restoreEnvironment } = createAttachmentApp(() => actorAccountId);
+        const publicApp = createAuthenticatedTestApp({ authentication: 'real' });
+        artifactsRoutes(app);
+        artifactsRoutes(publicApp);
+        publicShareRoutes(publicApp);
+        registerDiscussionRoutes(publicApp);
+        try {
+            await auth.init();
+            const titleContent = { t: 'plain', v: { v: 1, title: 'Attachment removal' } };
+            const created = await app.inject({ method: 'POST', url: '/v1/discussions', payload: {
+                creationLocalId: randomUUID(), titleContent, anchor: { kind: 'session', sessionId: session.id },
+                participants: [author.id, participant.id].map(accountId => ({ kind: 'account', accountId })),
+                firstMessage: { localId: randomUUID(), mentionedAccountIds: [],
+                    content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'First message' }] } } },
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            const discussionId: string = created.json().discussion.id;
+            const grant = await app.inject({ method: 'PUT', url: DISCUSSION_HTTP_PATHS_V1.grants.replace(':discussionId', discussionId),
+                payload: { principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' } });
+            expect(grant.statusCode, grant.body).toBe(200);
+            actorAccountId = author.id;
+            const bytes = Buffer.from('removable private attachment');
+            const blobId = randomUUID();
+            const metadata = { operation: 'post', input: { discussionId, localId: randomUUID(),
+                mentionedAccountIds: [], attachments: [{ blobId, t: 'plain' }],
+                content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Keep this message' },
+                    { t: 'attachment', attachment: { kind: 'file', id: blobId, name: 'keep-message.txt',
+                        file: { blobId, mime: 'text/plain', sizeBytes: bytes.length,
+                            sha256: createHash('sha256').update(bytes).digest('hex') } } }] } } },
+                attachments: [{ blobId, t: 'plain', storedSizeBytes: bytes.length }] };
+            const posted = await app.inject({ method: 'POST', url: '/v1/discussions/upload',
+                headers: { 'content-type': 'application/vnd.happier.discussion-upload-v1' },
+                payload: Buffer.concat([Buffer.from(`${JSON.stringify(metadata)}\n`), bytes]) });
+            expect(posted.statusCode, posted.body).toBe(200);
+            const messageId: string = posted.json().message.id;
+            const url = `/v1/discussions/${discussionId}/messages/${messageId}/attachments/${blobId}`;
+            const inventoryPath = '/v1/artifacts/storage/usage?inventory=true&paged=true&kinds=discussionAttachments';
+            const scopedPath = `${inventoryPath}&discussionId=${discussionId}`;
+            const before = await db.discussionAttachment.findUniqueOrThrow({ where: { blobId } });
+            const expectedItem = { id: blobId, kind: 'discussionAttachments', storedSizeBytes: Number(before.storedSizeBytes),
+                location: { kind: 'discussion', discussionId, messageId, attachmentId: blobId } };
+            const expectItem = async (path: string, viewerMayRemove: boolean) => {
+                const response = await app.inject({ url: path });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(response.json().page.items).toEqual([expect.objectContaining({ ...expectedItem, viewerMayRemove })]);
+                expect(response.body).not.toContain('keep-message.txt');
+            };
+            await expectItem(scopedPath, true);
+            actorAccountId = owner.id;
+            await expectItem(inventoryPath, true);
+            await expectItem(scopedPath, true);
+            const inventory = () => inReadSnapshot(tx => readStorageInventoryInTx(tx, owner.id));
+            expect((await inventory()).byKind.discussionAttachments).toBe(Number(before.storedSizeBytes));
+            actorAccountId = participant.id;
+            await expectItem(scopedPath, false);
+            expect((await app.inject({ url: inventoryPath })).json().page.items).toEqual([]);
+            expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
+            const denied = await app.inject({ method: 'DELETE', url });
+            expect(denied.statusCode, denied.body).toBe(403);
+            actorAccountId = teamReader.id;
+            await expectItem(scopedPath, false);
+            expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
+            expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(403);
+            actorAccountId = unrelated.id;
+            expect((await app.inject({ url: scopedPath })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'DELETE', url })).statusCode).toBe(403);
+            const publicRead = await publicApp.inject({ method: 'GET', url: `/v1/public-share/${linkToken}`,
+                headers: buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) });
+            expect(publicRead.statusCode, publicRead.body).toBe(200);
+            expect((await publicApp.inject({ url: scopedPath, headers: { authorization: `Bearer ${linkToken}` } })).statusCode).toBe(401);
+            expect((await publicApp.inject({ method: 'DELETE', url, headers: { authorization: `Bearer ${linkToken}` } })).statusCode).toBe(401);
+            expect(await privateFiles.readPrivateFile(before.storageKey)).toBeDefined();
+            actorAccountId = remover === 'owner' ? owner.id : author.id;
+            const removed = { blobId, removedByAccountId: actorAccountId };
+            const effect = await app.inject({ method: 'DELETE', url });
+            expect(effect.statusCode, effect.body).toBe(200);
+            expect(effect.json()).toEqual(removed);
+            expect((await app.inject({ method: 'DELETE', url })).json()).toEqual(removed);
+            actorAccountId = participant.id;
+            expect((await app.inject({ method: 'GET', url })).json()).toEqual(removed);
+            const page = await app.inject({ method: 'GET', url: `/v1/discussions/${discussionId}/messages?messageId=${messageId}` });
+            expect(page.statusCode, page.body).toBe(200);
+            expect(page.json().messages.find((row: { id: string }) => row.id === messageId)?.removedAttachments).toEqual([removed]);
+            expect(await db.discussionMessage.findUniqueOrThrow({ where: { id: messageId }, select: { content: true } }))
+                .toEqual({ content: metadata.input.content });
+            await expect(privateFiles.readPrivateFile(before.storageKey)).rejects.toThrow();
+            expect(await inventory()).toMatchObject({ totalBytes: 0, byKind: { discussionAttachments: 0 } });
+        } finally {
+            await publicApp.close();
+            await app.close();
+            restoreEnvironment();
+        }
+    });
+
     it.each(['account', 'terminal'] as const)('streams signed agent create, post and reply with Machine custody admitted once per upload (%s)', async credentialKind => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -433,12 +552,27 @@ export function discussionAttachmentContracts(): void {
         let actorAccountId = owner.id;
         const { app, restoreEnvironment } = createAttachmentApp(() => actorAccountId);
         try {
+            artifactsRoutes(app);
             const metadata = { operation: 'create', input, attachments: [{ blobId, t: 'encrypted', storedSizeBytes: sealed.byteLength }] };
             const created = await app.inject({ method: 'POST', url: '/v1/discussions/upload', headers: {
                 'content-type': 'application/vnd.happier.discussion-upload-v1',
             }, payload: Buffer.concat([Buffer.from(`${JSON.stringify(metadata)}\n`), Buffer.from(sealed)]) });
             expect(created.statusCode).toBe(200);
             const result = created.json();
+            const inventory = await app.inject({ url: '/v1/artifacts/storage/usage?inventory=true&paged=true&kinds=discussionAttachments' });
+            expect(inventory.statusCode, inventory.body).toBe(200);
+            expect(inventory.body).not.toContain('private.txt');
+            const [item] = inventory.json().page.items;
+            expect(item.location).toEqual({ kind: 'discussion', discussionId: result.discussion.id,
+                messageId: result.firstMessage.id, attachmentId: blobId });
+            const selected = await app.inject({ url: `/v1/discussions/${item.location.discussionId}/messages?messageId=${item.location.messageId}` });
+            expect(selected.statusCode, selected.body).toBe(200);
+            const [message] = selected.json().messages;
+            expect(message).toMatchObject({ id: item.location.messageId, content: { t: 'encrypted' } });
+            expect(selected.body).not.toContain('private.txt');
+            expect(await openSessionDataKeyBundleV0(decodeBase64(message.content.c), dataKey))
+                .toMatchObject({ status: 'authenticated', value: { parts: [{ t: 'attachment',
+                    attachment: { id: item.location.attachmentId, name: 'private.txt' } }] } });
             const changedBindings = structuredClone(metadata);
             const otherBlobId = randomUUID();
             changedBindings.input.firstMessage.attachments![0]!.blobId = otherBlobId;

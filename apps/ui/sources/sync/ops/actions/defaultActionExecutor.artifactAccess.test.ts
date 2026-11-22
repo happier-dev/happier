@@ -117,8 +117,9 @@ async function fixture(mode: 'plain' | 'e2ee', document?: Readonly<{ header: Rec
             return Response.json({ publicShares: [publicShare] });
         }
         if (target.pathname === '/v1/public-shares/share-1' && init?.method === 'DELETE') return Response.json({ success: true });
-        if (target.pathname === '/v1/artifacts/storage/usage') return Response.json({ usedBytes: 321, limitBytes: null,
-            documentLimitBytes: null, revisionRetentionCount: 10 });
+        if (target.pathname === '/v1/artifacts/storage/usage' && target.searchParams.get('inventory') === 'true')
+            return Response.json({ totalBytes: 345, artifactLimitBytes: null, unmeasuredKinds: ['avatars'],
+                byKind: { artifacts: 321, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 24, pluginCollections: 0 } });
         if (target.pathname === '/v1/artifacts' && init?.method === 'POST') {
             const input = JSON.parse(String(init.body)) as ArtifactCreateRequest;
             stored = { ...input, ...projectArtifactStoredKind(input.kind), ownerAccountId: 'owner', access, encryptionMode: mode, publicAudience: 'none',
@@ -398,8 +399,9 @@ describe('UI Artifact sharing Action front door', () => {
             const listed = await f.executor.execute('artifact.revisions.list', { artifactId: 'document' }, f.context);
             expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { artifactId: 'document', retentionCount: 10,
                 revisions: [{ bodyVersion: 1, body: originalBody, createdAt: 1 }] } });
-            await expect(f.executor.execute('artifact.storage.usage', {}, f.context)).resolves.toEqual({ ok: true,
-                result: { usedBytes: 321, limitBytes: null, documentLimitBytes: null, revisionRetentionCount: 10 } });
+            await expect(f.executor.execute('storage.inventory.read', {}, f.context)).resolves.toEqual({ ok: true,
+                result: { totalBytes: 345, artifactLimitBytes: null, unmeasuredKinds: ['avatars'],
+                    byKind: { artifacts: 321, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 24, pluginCollections: 0 } } });
             await expect(f.executor.execute('artifact.revisions.restore', { artifactId: 'document', bodyVersion: 1,
                 expectedRevision: nextHeader.revision }, f.context)).resolves.toEqual({ ok: true,
                 result: { artifactId: 'document', revision: { headerVersion: 3, bodyVersion: 3 } } });

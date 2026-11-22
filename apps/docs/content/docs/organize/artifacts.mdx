@@ -124,6 +124,11 @@ retention with `HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT`, so an older version
 may no longer be available. A failed history read offers **Retry** rather than
 treating the failure as an empty history.
 
+In 0.3 development source, `artifact.revisions.trim` clears the saved versions
+of one Artifact you own. It keeps the current version and the file that version
+uses. The result reports the bytes freed and your updated Artifact usage.
+Agents ask for approval before clearing history.
+
 ## Share access
 
 Choose **Share** to manage access through the existing Account and Team sharing

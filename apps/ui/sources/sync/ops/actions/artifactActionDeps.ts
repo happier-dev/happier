@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1, ArtifactDocumentV1Schema, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, ArtifactDocumentV1Schema, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { createArtifactPublicLinkActionsV1, createArtifactSignedInLinkJoinActionV1, type ArtifactPublicLinkIssuedV1, type ArtifactSignedInLinkOpenedV1 } from '@happier-dev/protocol/actions/executor/artifactPublicLinkActions';
 import { artifactActionListSelectionV1, listArtifactHeadersV1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -271,7 +271,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                         }) };
                     }
                     const page = await listArtifactHeadersV1({ options: artifactActionListSelectionV1({ ...args, signal }),
-                        readPage: (options) => account.listArtifacts(options ?? {}), encodeCursor: account.encodeArtifactListCursor });
+                        readPage: (options) => account.listArtifacts({ ...options, includeStoredSize: true }), encodeCursor: account.encodeArtifactListCursor });
                     // Native document lists also carry retained body metadata. The ordinary
                     // Action publishes only its existing strict header projection.
                     const items = page.items.map(projectArtifactHeaderV1);
@@ -319,12 +319,14 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                         : { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:artifact.public_link.join' };
                 case 'artifact.revisions.list': {
                     const args = ArtifactActionInputSchemasV1[actionId].parse(input);
-                    return await account.listArtifactRevisions(args.artifactId, signal);
+                    return await account.listArtifactRevisions(args, signal);
                 }
                 case 'artifact.revisions.restore':
                     return await account.restoreArtifactRevision(ArtifactActionInputSchemasV1[actionId].parse(input), signal, savedBy);
-                case 'artifact.storage.usage':
-                    return await account.readArtifactStorageUsage(signal);
+                case 'artifact.revisions.trim':
+                    return await account.trimArtifactRevisions(ArtifactActionInputSchemasV1[actionId].parse(input).artifactId, signal);
+                case STORAGE_INVENTORY_READ_ACTION_ID_V1:
+                    return await account.readStorageInventory(ArtifactActionInputSchemasV1[actionId].parse(input), signal);
                 default:
                     return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
             }

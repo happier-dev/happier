@@ -315,6 +315,7 @@ model Team {
     name                        String
     description                 String?
     logo                        Json?
+    logoStoredSizeBytes         BigInt?
     sessionCreationPolicy       TeamSessionCreationPolicy @default(private_default)
     reviewCreationPolicy        TeamSessionCreationPolicy @default(private_default)
     externalSharingPolicy       TeamExternalSharingPolicy @default(allowed)
@@ -2091,6 +2092,7 @@ model DiscussionAttachment {
     storageKey      String @unique
     encryptionMode  String
     storedSizeBytes BigInt
+    removedByAccountId String?
     message         DiscussionMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
 
     @@index([messageId])
@@ -3367,6 +3369,7 @@ model UploadedFile {
     height    Int?
     thumbhash String?
     reuseKey  String?
+    storedSizeBytes BigInt?
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
 

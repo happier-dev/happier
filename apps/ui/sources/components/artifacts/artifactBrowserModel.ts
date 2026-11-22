@@ -1,4 +1,5 @@
 import { artifactMimeAllowsTextV1 } from '@happier-dev/protocol/artifacts/artifactWorkspaceFileV1';
+import { compareArtifactStoredSizeV1, type ArtifactListSortV1 } from '@happier-dev/protocol/artifacts/artifactListPageV1';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { deriveArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
 import { artifactKindIsTextDocumentV1, getArtifactKindPolicyV1, getArtifactUseTargetV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
@@ -52,6 +53,7 @@ export type ArtifactBrowserArtifact = Readonly<{
     rawHeader?: Readonly<Record<string, unknown>> | null; kindHint?: string | null; draft?: boolean;
     access?: DecryptedArtifact['access']; ownerAccountId?: string; createdAt?: number; updatedAt?: number;
     body?: DecryptedArtifact['body'];
+    storedSizeBytes?: number;
 }>;
 
 /** Binary bodies and unopened binary MIME headers share the File viewer's existing presentation policy. */
@@ -370,7 +372,7 @@ export function readArtifactPreview(artifact: Pick<DecryptedArtifact, 'id' | 'he
     return typeof header?.kind === 'string' ? { kind: 'none' } : { kind: 'code', text: clipped, language: 'JSON' };
 }
 
-export type ArtifactBrowserSort = 'updated_desc' | 'created_desc' | 'title_asc';
+export type ArtifactBrowserSort = ArtifactListSortV1;
 /** `home` (the default) lists what lives in Artifacts; `all` the whole library; a kind only that kind. */
 export type ArtifactBrowserKindFilter = ArtifactBrowserKind | 'all' | 'home';
 export type ArtifactBrowserFilter = Readonly<{ query: string; kind: ArtifactBrowserKindFilter; sort: ArtifactBrowserSort }>;
@@ -426,6 +428,8 @@ export function projectArtifactBrowserRows<T extends ArtifactBrowserArtifact>(
     const byTitle = (a: ArtifactBrowserRow<T>, b: ArtifactBrowserRow<T>) =>
         (a.artifact.title ?? '').localeCompare(b.artifact.title ?? '', undefined, { sensitivity: 'base' });
     rows.sort(filter.sort === 'title_asc' ? byTitle
+        : filter.sort === 'size_desc' ? (a, b) => compareArtifactStoredSizeV1(
+            a.artifact.storedSizeBytes, b.artifact.storedSizeBytes, a.artifact.title, b.artifact.title)
         : filter.sort === 'created_desc' ? (a, b) => (b.artifact.createdAt ?? 0) - (a.artifact.createdAt ?? 0) || byTitle(a, b)
             : (a, b) => (b.artifact.updatedAt ?? 0) - (a.artifact.updatedAt ?? 0) || byTitle(a, b));
     return rows;

@@ -33,6 +33,7 @@ export type ArtifactsBrowserTranslations = Readonly<{
     sort: Readonly<{
         label: string;
         updated_desc: string;
+        size_desc: string;
         created_desc: string;
         title_asc: string;
     }>;
@@ -240,6 +241,7 @@ export const artifactsBrowserTranslationsEnglish = { en: {
         sort: {
             label: 'Sort',
             updated_desc: 'Recently updated',
+            size_desc: 'Largest first',
             created_desc: 'Recently created',
             title_asc: 'Title',
         },

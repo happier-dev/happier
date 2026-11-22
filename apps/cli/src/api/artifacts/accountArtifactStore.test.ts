@@ -9,7 +9,7 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, decod
   sealEncryptedDataKeyEnvelopeV1, openEncryptedDataKeyEnvelopeV1, createWorkflowDefinitionActions,
   workflowDefinitionArtifactSharingAdapterV1, readLaunchProfileArtifactV1,
   launchProfileArtifactSharingAdapterV1, prepareArtifactWorkspaceFileV1 } from '@happier-dev/protocol';
-import { ArtifactActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { sealPublicShareDataKeyV1 } from '@happier-dev/protocol/crypto/publicShareEncryptedDataKeyEnvelopeV0';
 import { ArtifactBlobWriteV1Schema, type ArtifactBlobReadResponseV1 } from '@happier-dev/protocol';
@@ -145,6 +145,33 @@ describe('createAccountArtifactStore', () => {
     ]);
     mockPost.mockResolvedValueOnce({ status: 404, data: { error: 'not_found' } });
     await expect(store.readHeader('review-a', { prepareRecipients: false })).rejects.toMatchObject({ code: 'artifact_read_unavailable' });
+  });
+
+  it('reads a filtered Discussion storage page as an Account-authorized agent', async () => {
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const input = {
+      scope: { kind: 'discussion', discussionId: 'discussion' },
+      kinds: ['discussionAttachments'], sort: 'size_desc', cursor: 'previous-page',
+    } as const;
+    const inventory = { totalBytes: 17, artifactLimitBytes: null, unmeasuredKinds: [],
+      byKind: { artifacts: 0, pluginArtifacts: 0, discussionAttachments: 17, accountPets: 0, pluginCollections: 0 },
+      kinds: { discussionAttachments: { storedSizeBytes: 17 } },
+      page: { items: [{ id: 'blob', kind: 'discussionAttachments', storedSizeBytes: 9, createdAt: null,
+        location: { kind: 'discussion', discussionId: 'discussion', messageId: 'message' } }], nextCursor: 'next-page' } };
+    mockGet.mockImplementation(async (url: string) => {
+      const target = new URL(url);
+      expect(target.pathname).toBe('/v1/artifacts/storage/usage');
+      expect(Object.fromEntries(target.searchParams)).toEqual({ inventory: 'true', paged: 'true',
+        discussionId: 'discussion', kinds: 'discussionAttachments', sort: 'size_desc', cursor: 'previous-page' });
+      return { status: 200, data: inventory };
+    });
+    const store = createAccountArtifactStore({ credentials: { token, encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    const executor = createActionExecutor({ artifactAction: createCliArtifactActions({
+      store, beforeDelete: fixtureArtifactDeletionGuard(store), resolvePublishCaller: async () => null,
+    }) });
+    await expect(executor.execute(STORAGE_INVENTORY_READ_ACTION_ID_V1, input,
+      { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } }))
+      .resolves.toMatchObject({ ok: true, result: inventory });
   });
 
   it('admits a private template draft through the real CLI transport and refuses its grant-reachable copy', async () => {
@@ -1882,7 +1909,8 @@ describe('createAccountArtifactStore', () => {
       body: encodePlainArtifactStoredContent({ body: 'valid content' }),
       dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
       seq: 1, createdAt: 1, updatedAt: 1 };
-    const usage = { usedBytes: 80, limitBytes: null, documentLimitBytes: null, revisionRetentionCount: 10 };
+    const inventory = { totalBytes: 80, artifactLimitBytes: null, unmeasuredKinds: [],
+      byKind: { artifacts: 80, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } };
     const server = createServer((request, response) => {
       request.resume();
       const path = new URL(request.url ?? '/', 'http://localhost').pathname;
@@ -1895,7 +1923,7 @@ describe('createAccountArtifactStore', () => {
       if (path === '/v1/artifacts/network-failure') { request.socket.destroy(); return; }
       const data = request.method === 'DELETE' ? {}
         : request.method === 'POST' ? { id: 'create', success: true, headerVersion: 2, bodyVersion: 2 }
-        : path === '/v1/artifacts/storage/usage' ? usage
+        : path === '/v1/artifacts/storage/usage' ? inventory
         : path === '/v1/artifacts' ? [row] : { ...row, id: decodeURIComponent(path.slice('/v1/artifacts/'.length)) };
       const respond = () => { response.writeHead(200, { 'Content-Type': 'application/json' }); response.end(JSON.stringify(data)); };
       // The update's prerequisite read is fast; its write exercises the slow path.
@@ -1914,7 +1942,7 @@ describe('createAccountArtifactStore', () => {
         const results = await Promise.allSettled([
           store.read('read', { signal: lifecycle.signal }),
           store.list({ signal: lifecycle.signal }),
-          store.storageUsage(lifecycle.signal),
+          store.storageInventory(lifecycle.signal),
           store.create({ artifactId: 'create', header: {}, body: 'valid content', signal: lifecycle.signal }),
           store.update({ artifactId: 'update', header: {}, body: 'changed',
             expectedRevision: { headerVersion: 1, bodyVersion: 1 }, signal: lifecycle.signal }),
@@ -1923,7 +1951,7 @@ describe('createAccountArtifactStore', () => {
         expect(results).toMatchObject([
           { status: 'fulfilled', value: { artifactId: 'read', body: 'valid content' } },
           { status: 'fulfilled', value: { coverage: 'complete', items: [{ artifactId: 'read' }] } },
-          { status: 'fulfilled', value: usage },
+          { status: 'fulfilled', value: inventory },
           { status: 'fulfilled', value: { artifactId: 'create', revision: { headerVersion: 2, bodyVersion: 2 } } },
           { status: 'fulfilled', value: { ok: true, revision: { headerVersion: 2, bodyVersion: 2 } } },
           { status: 'fulfilled', value: { ok: true } },
@@ -3200,16 +3228,17 @@ it.each(['plain', 'e2ee'] as const)('round trips binary content under the same A
     await expect(store.create({ header: {}, body: 'content' })).rejects.toMatchObject({ code: 'create_failed' });
   });
 
-  it('preserves typed quota details on writes and exposes the configured Account storage usage', async () => {
+  it('preserves typed quota details on writes and reads the configured Artifact limit in the storage inventory', async () => {
     const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null },
       getAccountEncryptionMode: async () => 'plain' });
     const quota = { error: 'quota_exceeded', budget: 'account', limitBytes: 100, usedBytes: 120 };
     mockPost.mockResolvedValueOnce({ status: 413, data: quota });
     await expect(store.create({ header: {}, body: 'content' })).rejects.toMatchObject({ code: 'quota_exceeded',
       details: { budget: 'account', limitBytes: 100, usedBytes: 120 } });
-    const usage = { usedBytes: 80, limitBytes: 100, documentLimitBytes: null, revisionRetentionCount: 10 };
-    mockGet.mockResolvedValueOnce({ status: 200, data: usage });
-    await expect(store.storageUsage()).resolves.toEqual(usage);
+    const inventory = { totalBytes: 100, artifactLimitBytes: 100, unmeasuredKinds: [],
+      byKind: { artifacts: 80, pluginArtifacts: 20, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } };
+    mockGet.mockResolvedValueOnce({ status: 200, data: inventory });
+    await expect(store.storageInventory()).resolves.toEqual(inventory);
   });
 
   it('preserves the operator reason when a Home refuses a binary Artifact write', async () => {

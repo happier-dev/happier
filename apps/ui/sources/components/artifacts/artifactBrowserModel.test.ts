@@ -27,6 +27,16 @@ function artifact(id: string, header: Record<string, unknown> | null, extra: Par
 }
 
 describe('artifactBrowserModel', () => {
+    it('sorts measured stored bytes largest first and keeps older unknown sizes last', () => {
+        const rows = [
+            { ...artifact('unknown', { title: 'First' }) },
+            { ...artifact('empty', { title: 'Empty' }), storedSizeBytes: 0 },
+            { ...artifact('large', { title: 'Large' }), storedSizeBytes: 512 },
+            { ...artifact('small', { title: 'Small' }), storedSizeBytes: 16 },
+        ];
+        expect(projectArtifactBrowserRows(rows, { query: '', kind: 'all', sort: 'size_desc' }).map(row => row.key))
+            .toEqual(['large', 'small', 'empty', 'unknown']);
+    });
     it('opens a shared approval profile in its settings owner and keeps it out of generic documents', () => {
         const row = artifact('profile/id', { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, name: 'Deploy', title: 'Deploy' }, { access: 'view' });
         expect(resolveArtifactOpenRoute(row)).toBe('/settings/actions/profiles/profile%2Fid');

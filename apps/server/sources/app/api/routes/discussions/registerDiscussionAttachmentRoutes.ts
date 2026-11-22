@@ -3,7 +3,8 @@ import { readFile, rm } from 'node:fs/promises';
 import { z } from 'zod/mini';
 import { encodeBase64 } from 'privacy-kit';
 import { DISCUSSION_HTTP_PATHS_V1, DiscussionErrorResponseV1Schema, type DiscussionAgentPublisherPublicationV1 } from '@happier-dev/protocol/discussions/api';
-import { DiscussionAttachmentReadRequestV1Schema, DiscussionAttachmentReadResponseV1Schema } from '@happier-dev/protocol/discussions/attachments';
+import { DiscussionAttachmentReadRequestV1Schema, DiscussionAttachmentReadResponseV1Schema,
+    DiscussionAttachmentRemovedV1Schema } from '@happier-dev/protocol/discussions/attachments';
 import { readDiscussionAttachmentAgentPublicationV1, verifyDiscussionAttachmentAgentUploadV1,
     type DiscussionAttachmentUploadRequestV1 } from '@happier-dev/protocol/discussions/attachmentsUpload';
 import { SERVER_HTTP_REQUEST_MAX_BODY_UTF8_BYTES_V1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -19,12 +20,14 @@ import { reconcileDiscussionCreationIdentityRace } from '@/app/discussions/creat
 import { hasCurrentSessionActionRpcSourceBinding } from '@/app/api/socket/sessionScopedBinding';
 import { admitInstalledDiscussionPublisherInTx } from '@/app/discussions/installedPublisherAdmission';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { readDiscussionAttachment, prepareDiscussionAttachmentWrite, discardDiscussionAttachmentCandidate,
+import { readDiscussionAttachment, removeDiscussionAttachment, prepareDiscussionAttachmentWrite, discardDiscussionAttachmentCandidate,
     cleanupRejectedDiscussionAttachmentUploads, type PreparedDiscussionAttachmentWrite } from '@/app/discussions/attachmentService';
 import { stageDiscussionAttachmentAccountEncryptionConversion, cancelDiscussionAttachmentAccountEncryptionConversion } from '@/app/discussions/attachmentEncryptionConversion';
 import { readSessionAccessAuthenticationFromRequest, type SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { createServerFeatureGatedRouteApp } from '@/app/features/catalog/serverFeatureGate';
 import { requireRouteActionAuthority } from '@/app/api/utils/requireRouteActionAuthority';
+import { DISCUSSION_ATTACHMENT_REMOVE_ACTION_ID_V1 } from '@happier-dev/protocol/discussions/idsV1';
+import { PresentUserRequiredResponseSchema } from '@/app/api/utils/requirePresentUser';
 import { logUnexpectedRequestError } from '@/app/api/utils/logUnexpectedRequestError';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
 import type { DiscussionFailureCode } from '@/app/discussions/serviceTypes';
@@ -146,6 +149,17 @@ export function registerDiscussionAttachmentRoutes(app: Fastify,
                 response: { 200: DiscussionAttachmentReadResponseV1Schema, ...DiscussionAttachmentErrorResponses } },
         }, async (request, reply) => {
             const result = await readDiscussionAttachment({ ...request.params, ...request.query, actorAccountId: request.userId,
+                authentication: readSessionAccessAuthenticationFromRequest(request) });
+            return result.ok ? reply.send(result.value) : reply.code(statusForFailure(result.error)).send({ error: result.error });
+        });
+        routes.delete(DISCUSSION_HTTP_PATHS_V1.attachment, {
+            preHandler: [scoped.authenticate, requireRouteActionAuthority(DISCUSSION_ATTACHMENT_REMOVE_ACTION_ID_V1)],
+            config: { allowApiToken: true, rateLimit }, errorHandler,
+            schema: { params: DiscussionAttachmentReadRequestV1Schema,
+                response: { 200: DiscussionAttachmentRemovedV1Schema, ...DiscussionAttachmentErrorResponses,
+                    403: z.union([DiscussionErrorResponseV1Schema, PresentUserRequiredResponseSchema]) } },
+        }, async (request, reply) => {
+            const result = await removeDiscussionAttachment({ ...request.params, actorAccountId: request.userId,
                 authentication: readSessionAccessAuthenticationFromRequest(request) });
             return result.ok ? reply.send(result.value) : reply.code(statusForFailure(result.error)).send({ error: result.error });
         });

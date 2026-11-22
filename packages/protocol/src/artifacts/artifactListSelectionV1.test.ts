@@ -13,6 +13,31 @@ const encodeCursor = (row: Readonly<{ artifactId: string }>) => row.artifactId;
 const completeKindCoverage = { status: 'complete', unclassifiedCount: 0 } as const;
 
 describe('Artifact coarse selection', () => {
+  it.each(['library', 'received'] as const)('orders the %s Action list by stored bytes before paging', async scope => {
+    const audience = scope === 'received' ? scope : undefined;
+    const input = ArtifactListInputV1Schema.parse({ sort: 'size_desc', limit: 2, audience });
+    const row = (artifactId: string, updatedAt: number, storedSizeBytes?: number) =>
+      ({ artifactId, header: { title: artifactId }, createdAt: 1, updatedAt, storedSizeBytes });
+    const requests: Array<Readonly<{ includeStoredSize?: boolean; includeBody?: boolean; cursor?: string; audience?: 'received' }> | undefined> = [];
+    const list = (cursor?: string) => listArtifactHeadersV1({
+      options: artifactActionListSelectionV1({ ...input, ...(cursor === undefined ? {} : { cursor }) }),
+      encodeCursor,
+      readPage: async page => {
+        requests.push(page);
+        return page?.cursor === 'small'
+          ? { items: [row('largest', 1, 10), row('empty', 0, 0)], kindCoverage: completeKindCoverage }
+          : { items: [row('unknown', 3), row('small', 2, 1)], nextCursor: 'small', kindCoverage: completeKindCoverage };
+      },
+    });
+    const first = await list();
+    expect(first.items.map(item => item.artifactId)).toEqual(['largest', 'small']);
+    expect(first.nextCursor).toBe('small');
+    expect((await list(first.nextCursor)).items.map(item => item.artifactId)).toEqual(['empty', 'unknown']);
+    expect(requests.map(page => [page?.includeStoredSize, page?.cursor]))
+      .toEqual([[true, undefined], [true, 'small'], [true, undefined], [true, 'small']]);
+    expect(requests.every(page => page?.audience === audience && page?.includeBody !== true)).toBe(true);
+  });
+
   it('selects exact header identities separately from inventory selectors', () => {
     expect(ArtifactListInputV1Schema.parse({ artifactIds: ['review-a', 'review-b'] }))
       .toEqual({ artifactIds: ['review-a', 'review-b'] });

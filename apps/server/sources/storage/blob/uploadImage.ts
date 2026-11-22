@@ -10,13 +10,15 @@ export interface PreparedUploadedImage {
     persist: (client: Pick<Tx, "uploadedFile">) => Promise<void>;
 }
 
+export const uploadedPublicImageUrlReuseKeyPrefix = 'image-url:';
+
 /** Prepare file bytes outside the Account transaction; persist its FK only after Account insertion. */
 export async function prepareUploadedImage(userId: string, directory: string, prefix: string, url: string, src: Buffer): Promise<PreparedUploadedImage> {
 
     // Check if image already exists
     const existing = await db.uploadedFile.findFirst({
         where: {
-            reuseKey: 'image-url:' + url
+            reuseKey: uploadedPublicImageUrlReuseKeyPrefix + url
         }
     });
 
@@ -52,10 +54,11 @@ export async function prepareUploadedImage(userId: string, directory: string, pr
                 data: {
                     accountId: userId,
                     path,
-                    reuseKey: 'image-url:' + url,
+                    reuseKey: uploadedPublicImageUrlReuseKeyPrefix + url,
                     width: processed.width,
                     height: processed.height,
                     thumbhash: processed.thumbhash,
+                    storedSizeBytes: BigInt(processed.bytes.byteLength),
                 },
             });
         },

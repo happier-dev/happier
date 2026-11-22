@@ -109,6 +109,7 @@ function artifactAccessProjection(artifact: Artifact, previous?: DecryptedArtifa
     const identity = previous?.storageIdentity;
     return { kind: artifact.kind, ...(Object.hasOwn(artifact, 'kindHint') ? { kindHint: artifact.kindHint } : {}),
         access: artifact.access, ownerAccountId: artifact.ownerAccountId,
+        ...(artifact.storedSizeBytes === undefined ? {} : { storedSizeBytes: artifact.storedSizeBytes }),
         ...(artifact.ownerDisplayName === undefined ? {} : { ownerDisplayName: artifact.ownerDisplayName }),
         ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: artifact.sharedTeamIds }),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(artifact.publicAudience),
@@ -417,6 +418,7 @@ function createLockedArtifactView(params: Readonly<{
         body: undefined,
         headerVersion: artifact.headerVersion,
         bodyVersion: artifact.bodyVersion,
+        ...(artifact.storedSizeBytes === undefined ? {} : { storedSizeBytes: artifact.storedSizeBytes }),
         seq: artifact.seq,
         createdAt: artifact.createdAt,
         updatedAt: artifact.updatedAt,
@@ -935,6 +937,7 @@ export async function fetchAndApplyArtifactsList(params: {
                     // A satisfied window also skips the legacy-membership walk.
                     if (!shouldContinue() || windowed) return { items: [] };
                     const page = await fetchArtifactListPage(credentials, { ...options, request: params.request,
+                        includeStoredSize: params.browserListed,
                         readTransport: params.readTransport, signal: params.signal, retry: 'none' });
                     if (!shouldContinue()) return { items: [] };
                     // The decoder batches changed envelopes, retaining locked structural rows.

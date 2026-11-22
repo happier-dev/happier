@@ -192,6 +192,7 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 const reference = opened.content === null ? undefined : readDiscussionAttachmentReferencesV1(opened.content).find(file => file.blobId === args.blobId);
                 if (!reference) return failure('discussion_content_unavailable');
                 const stored = await readDiscussionAttachmentStoredContent({ ...args, request: options.request, assertCurrent }, signal);
+                if ('removedByAccountId' in stored) return stored;
                 const bytes = await openBinaryContent({ reference, content: stored.content, mode: key.mode,
                     encryption: key.mode === 'e2ee' ? createBinaryContentEncryption(key.dataKey) : null });
                 assertCurrent();
@@ -576,6 +577,7 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
         setSettings: (discussionId: string, settings: DiscussionSettingsV1, signal?: AbortSignal) => run('discussion.settings.set', { discussionId, settings }, signal),
         read: (discussionId: string, input: Omit<DiscussionActionInputV1ById['discussion.read'], 'discussionId'> = {}, signal?: AbortSignal) => run('discussion.read', { discussionId, ...input }, signal),
         readAttachment: (input: DiscussionActionInputV1ById['discussion.attachment.read'], signal?: AbortSignal) => run('discussion.attachment.read', input, signal),
+        removeAttachment: (input: DiscussionActionInputV1ById['discussion.attachment.remove'], signal?: AbortSignal) => run('discussion.attachment.remove', input, signal),
         create: async (input: Omit<DiscussionActionInputV1ById['discussion.create'], 'firstMessage' | 'participants' | 'attachmentSources'> & {
             messageLocalId: string; content: DiscussionActionInputV1ById['discussion.post']['content']; mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[];
             participants?: readonly NonNullable<DiscussionActionInputV1ById['discussion.create']['participants']>[number][];

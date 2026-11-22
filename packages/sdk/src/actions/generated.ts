@@ -11,6 +11,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "account.credentials.forgetAll",
   "account.delete",
   "account.name.set",
+  "account.plugins.availability.intent.set",
   "account.public_profile.pause",
   "account.public_profile.publish",
   "account.public_profile.refresh",
@@ -60,6 +61,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "artifact.public_link.revoke",
   "artifact.publish_from_file",
   "artifact.revisions.restore",
+  "artifact.revisions.trim",
   "artifact.update",
   "automation.run.reply_handoff.retry",
   "automation.run.result.redeliver",
@@ -144,6 +146,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "code.imports.organize",
   "code.rename.apply",
   "code.restart",
+  "collection.space.membership.set",
   "composer.attachments.pick",
   "composer.transaction.apply",
   "computer.clipboard.write",
@@ -308,11 +311,13 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "home.runtime.restart",
   "home.settings.set",
   "homes.connect",
+  "homes.personal.create",
   "homes.reconnect",
   "identity.providers.test.consume",
   "identity.providers.test.start",
   "inbox.mark_all_read",
   "inbox.notice.dismiss",
+  "inbox.notice.reminder.set",
   "launch_profiles.create",
   "launch_profiles.delete",
   "launch_profiles.draft.discard",
@@ -381,6 +386,7 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "machines.managed.controller.update",
   "machines.managed.credentials.install",
   "machines.managed.delete",
+  "machines.managed.exec",
   "machines.managed.power.set",
   "machines.managed.rebuild",
   "machines.managed.resize",
@@ -468,6 +474,8 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "notifications.webhooks.signingSecret.set",
   "notifications.webhooks.test",
   "notifications.webhooks.update",
+  "pet.delete",
+  "pet.import",
   "plugin.webhook.delivery.discard",
   "plugin.webhook.delivery.replay",
   "plugins.account.cache.clear",
@@ -610,6 +618,10 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "repository.upload.pick",
   "review.apply",
   "review.explain_findings",
+  "review.new_round",
+  "review.prepare_round",
+  "review.reviewers.set",
+  "review.settle_round",
   "review.start",
   "review.walkthrough",
   "reviews.comments.attachEvidence",
@@ -1033,6 +1045,8 @@ export const MUTATING_PUBLIC_ACTION_IDS: ReadonlySet<PublicActionId> = new Set([
   "workflow.run.resume",
   "workflow.run.review.draft.set",
   "workflow.run.start",
+  "workflow.run.view.reset",
+  "workflow.run.view.set",
   "workflow.trigger.add",
   "workflow.trigger.remove",
   "workflow.trigger.run_now",
@@ -1071,6 +1085,13 @@ export type GeneratedActions = Readonly<{
     readonly delete: (input: PublicActionInputById["account.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.delete">>;
     readonly name: Readonly<{
       readonly set: (input: PublicActionInputById["account.name.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.name.set">>;
+    }> ;
+    readonly plugins: Readonly<{
+      readonly availability: Readonly<{
+        readonly intent: Readonly<{
+          readonly set: (input: PublicActionInputById["account.plugins.availability.intent.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.plugins.availability.intent.set">>;
+        }> ;
+      }> ;
     }> ;
     readonly profile: Readonly<{
       readonly get: (input: PublicActionInputById["account.profile.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"account.profile.get">>;
@@ -1221,9 +1242,7 @@ export type GeneratedActions = Readonly<{
     readonly revisions: Readonly<{
       readonly list: (input: PublicActionInputById["artifact.revisions.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.revisions.list">>;
       readonly restore: (input: PublicActionInputById["artifact.revisions.restore"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.revisions.restore">>;
-    }> ;
-    readonly storage: Readonly<{
-      readonly usage: (input: PublicActionInputById["artifact.storage.usage"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.storage.usage">>;
+      readonly trim: (input: PublicActionInputById["artifact.revisions.trim"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.revisions.trim">>;
     }> ;
     readonly update: (input: PublicActionInputById["artifact.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"artifact.update">>;
   }> ;
@@ -1427,6 +1446,13 @@ export type GeneratedActions = Readonly<{
       readonly get: (input: PublicActionInputById["code.typeDefinition.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"code.typeDefinition.get">>;
     }> ;
   }> ;
+  readonly collection: Readonly<{
+    readonly space: Readonly<{
+      readonly membership: Readonly<{
+        readonly set: (input: PublicActionInputById["collection.space.membership.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"collection.space.membership.set">>;
+      }> ;
+    }> ;
+  }> ;
   readonly composer: Readonly<{
     readonly attachments: Readonly<{
       readonly pick: (input: PublicActionInputById["composer.attachments.pick"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"composer.attachments.pick">>;
@@ -1601,7 +1627,7 @@ export type GeneratedActions = Readonly<{
     readonly cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.cancel">>;
     readonly data: Readonly<{
       readonly page: (input: PublicActionInputById["deployments.data.page"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.page">>;
-      readonly query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.query">>;
+      readonly size: (input: PublicActionInputById["deployments.data.size"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.data.size">>;
     }> ;
     readonly deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"deployments.deploy">>;
     readonly domains: Readonly<{
@@ -1946,6 +1972,9 @@ export type GeneratedActions = Readonly<{
   }> ;
   readonly homes: Readonly<{
     readonly connect: (input: PublicActionInputById["homes.connect"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"homes.connect">>;
+    readonly personal: Readonly<{
+      readonly create: (input: PublicActionInputById["homes.personal.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"homes.personal.create">>;
+    }> ;
     readonly reconnect: (input: PublicActionInputById["homes.reconnect"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"homes.reconnect">>;
   }> ;
   readonly identity: Readonly<{
@@ -1968,6 +1997,9 @@ export type GeneratedActions = Readonly<{
     readonly markAllRead: (input: PublicActionInputById["inbox.mark_all_read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"inbox.mark_all_read">>;
     readonly notice: Readonly<{
       readonly dismiss: (input: PublicActionInputById["inbox.notice.dismiss"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"inbox.notice.dismiss">>;
+      readonly reminder: Readonly<{
+        readonly set: (input: PublicActionInputById["inbox.notice.reminder.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"inbox.notice.reminder.set">>;
+      }> ;
     }> ;
   }> ;
   readonly launchProfiles: Readonly<{
@@ -2144,6 +2176,7 @@ export type GeneratedActions = Readonly<{
         readonly install: (input: PublicActionInputById["machines.managed.credentials.install"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.credentials.install">>;
       }> ;
       readonly delete: (input: PublicActionInputById["machines.managed.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.delete">>;
+      readonly exec: (input: PublicActionInputById["machines.managed.exec"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.exec">>;
       readonly get: (input: PublicActionInputById["machines.managed.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.get">>;
       readonly inspect: (input: PublicActionInputById["machines.managed.inspect"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.inspect">>;
       readonly list: (input: PublicActionInputById["machines.managed.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"machines.managed.list">>;
@@ -2437,6 +2470,10 @@ export type GeneratedActions = Readonly<{
       readonly unsubscribe: (input: PublicActionInputById["peerMediation.observability.unsubscribe"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"peerMediation.observability.unsubscribe">>;
     }> ;
   }> ;
+  readonly pet: Readonly<{
+    readonly delete: (input: PublicActionInputById["pet.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"pet.delete">>;
+    readonly import: (input: PublicActionInputById["pet.import"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"pet.import">>;
+  }> ;
   readonly plugin: Readonly<{
     readonly webhook: Readonly<{
       readonly delivery: Readonly<{
@@ -2491,6 +2528,9 @@ export type GeneratedActions = Readonly<{
       readonly clear: (input: PublicActionInputById["plugins.execution_origin.clear"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.execution_origin.clear">>;
       readonly list: (input: PublicActionInputById["plugins.execution_origin.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.execution_origin.list">>;
       readonly set: (input: PublicActionInputById["plugins.execution_origin.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.execution_origin.set">>;
+    }> ;
+    readonly git: Readonly<{
+      readonly preview: (input: PublicActionInputById["plugins.git.preview"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.git.preview">>;
     }> ;
     readonly list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"plugins.list">>;
     readonly logs: Readonly<{
@@ -2835,9 +2875,19 @@ export type GeneratedActions = Readonly<{
       readonly list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.engines.list">>;
     }> ;
     readonly explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.explain_findings">>;
+    readonly get: (input: PublicActionInputById["review.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.get">>;
     readonly history: Readonly<{
       readonly list: (input: PublicActionInputById["review.history.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.history.list">>;
     }> ;
+    readonly human: Readonly<{
+      readonly get: (input: PublicActionInputById["review.human.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.human.get">>;
+    }> ;
+    readonly newRound: (input: PublicActionInputById["review.new_round"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.new_round">>;
+    readonly prepareRound: (input: PublicActionInputById["review.prepare_round"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.prepare_round">>;
+    readonly reviewers: Readonly<{
+      readonly set: (input: PublicActionInputById["review.reviewers.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.reviewers.set">>;
+    }> ;
+    readonly settleRound: (input: PublicActionInputById["review.settle_round"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.settle_round">>;
     readonly start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.start">>;
     readonly walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"review.walkthrough">>;
   }> ;
@@ -3037,11 +3087,17 @@ export type GeneratedActions = Readonly<{
     readonly shared: Readonly<{
       readonly create: (input: PublicActionInputById["secrets.shared.create"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.create">>;
       readonly delete: (input: PublicActionInputById["secrets.shared.delete"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.delete">>;
+      readonly disclosures: Readonly<{
+        readonly list: (input: PublicActionInputById["secrets.shared.disclosures.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.disclosures.list">>;
+      }> ;
       readonly grants: Readonly<{
         readonly set: (input: PublicActionInputById["secrets.shared.grants.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.grants.set">>;
       }> ;
       readonly list: (input: PublicActionInputById["secrets.shared.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.list">>;
       readonly promote: (input: PublicActionInputById["secrets.shared.promote"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.promote">>;
+      readonly recipients: Readonly<{
+        readonly list: (input: PublicActionInputById["secrets.shared.recipients.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.recipients.list">>;
+      }> ;
       readonly update: (input: PublicActionInputById["secrets.shared.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.shared.update">>;
     }> ;
     readonly update: (input: PublicActionInputById["secrets.update"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"secrets.update">>;
@@ -3513,6 +3569,11 @@ export type GeneratedActions = Readonly<{
     readonly updates: Readonly<{
       readonly apply: (input: PublicActionInputById["skills.updates.apply"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"skills.updates.apply">>;
       readonly diff: (input: PublicActionInputById["skills.updates.diff"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"skills.updates.diff">>;
+    }> ;
+  }> ;
+  readonly storage: Readonly<{
+    readonly inventory: Readonly<{
+      readonly read: (input: PublicActionInputById["storage.inventory.read"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"storage.inventory.read">>;
     }> ;
   }> ;
   readonly subagents: Readonly<{
@@ -4003,6 +4064,11 @@ export type GeneratedActions = Readonly<{
       readonly summaries: (input: PublicActionInputById["workflow.run.summaries"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.summaries">>;
       readonly wait: (input: PublicActionInputById["workflow.run.wait"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.wait">>;
     }> ;
+    readonly runView: Readonly<{
+      readonly get: (input: PublicActionInputById["workflow.run.view.get"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.view.get">>;
+      readonly reset: (input: PublicActionInputById["workflow.run.view.reset"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.view.reset">>;
+      readonly set: (input: PublicActionInputById["workflow.run.view.set"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.run.view.set">>;
+    }> ;
     readonly starters: Readonly<{
       readonly list: (input: PublicActionInputById["workflow.starters.list"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.starters.list">>;
       readonly resolve: (input: PublicActionInputById["workflow.starters.resolve"], options?: ActionExecutionOptions) => Promise<PublicActionExecutionResult<"workflow.starters.resolve">>;
@@ -4087,6 +4153,13 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       delete: (input: PublicActionInputById["account.delete"], options?: ActionExecutionOptions) => execute("account.delete", input, options),
       name: {
         set: (input: PublicActionInputById["account.name.set"], options?: ActionExecutionOptions) => execute("account.name.set", input, options),
+      },
+      plugins: {
+        availability: {
+          intent: {
+            set: (input: PublicActionInputById["account.plugins.availability.intent.set"], options?: ActionExecutionOptions) => execute("account.plugins.availability.intent.set", input, options),
+          },
+        },
       },
       profile: {
         get: (input: PublicActionInputById["account.profile.get"], options?: ActionExecutionOptions) => execute("account.profile.get", input, options),
@@ -4237,9 +4310,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       revisions: {
         list: (input: PublicActionInputById["artifact.revisions.list"], options?: ActionExecutionOptions) => execute("artifact.revisions.list", input, options),
         restore: (input: PublicActionInputById["artifact.revisions.restore"], options?: ActionExecutionOptions) => execute("artifact.revisions.restore", input, options),
-      },
-      storage: {
-        usage: (input: PublicActionInputById["artifact.storage.usage"], options?: ActionExecutionOptions) => execute("artifact.storage.usage", input, options),
+        trim: (input: PublicActionInputById["artifact.revisions.trim"], options?: ActionExecutionOptions) => execute("artifact.revisions.trim", input, options),
       },
       update: (input: PublicActionInputById["artifact.update"], options?: ActionExecutionOptions) => execute("artifact.update", input, options),
     },
@@ -4443,6 +4514,13 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         get: (input: PublicActionInputById["code.typeDefinition.get"], options?: ActionExecutionOptions) => execute("code.typeDefinition.get", input, options),
       },
     },
+    collection: {
+      space: {
+        membership: {
+          set: (input: PublicActionInputById["collection.space.membership.set"], options?: ActionExecutionOptions) => execute("collection.space.membership.set", input, options),
+        },
+      },
+    },
     composer: {
       attachments: {
         pick: (input: PublicActionInputById["composer.attachments.pick"], options?: ActionExecutionOptions) => execute("composer.attachments.pick", input, options),
@@ -4617,7 +4695,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       cancel: (input: PublicActionInputById["deployments.cancel"], options?: ActionExecutionOptions) => execute("deployments.cancel", input, options),
       data: {
         page: (input: PublicActionInputById["deployments.data.page"], options?: ActionExecutionOptions) => execute("deployments.data.page", input, options),
-        query: (input: PublicActionInputById["deployments.data.query"], options?: ActionExecutionOptions) => execute("deployments.data.query", input, options),
+        size: (input: PublicActionInputById["deployments.data.size"], options?: ActionExecutionOptions) => execute("deployments.data.size", input, options),
       },
       deploy: (input: PublicActionInputById["deployments.deploy"], options?: ActionExecutionOptions) => execute("deployments.deploy", input, options),
       domains: {
@@ -4962,6 +5040,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
     },
     homes: {
       connect: (input: PublicActionInputById["homes.connect"], options?: ActionExecutionOptions) => execute("homes.connect", input, options),
+      personal: {
+        create: (input: PublicActionInputById["homes.personal.create"], options?: ActionExecutionOptions) => execute("homes.personal.create", input, options),
+      },
       reconnect: (input: PublicActionInputById["homes.reconnect"], options?: ActionExecutionOptions) => execute("homes.reconnect", input, options),
     },
     identity: {
@@ -4984,6 +5065,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       markAllRead: (input: PublicActionInputById["inbox.mark_all_read"], options?: ActionExecutionOptions) => execute("inbox.mark_all_read", input, options),
       notice: {
         dismiss: (input: PublicActionInputById["inbox.notice.dismiss"], options?: ActionExecutionOptions) => execute("inbox.notice.dismiss", input, options),
+        reminder: {
+          set: (input: PublicActionInputById["inbox.notice.reminder.set"], options?: ActionExecutionOptions) => execute("inbox.notice.reminder.set", input, options),
+        },
       },
     },
     launchProfiles: {
@@ -5160,6 +5244,7 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
           install: (input: PublicActionInputById["machines.managed.credentials.install"], options?: ActionExecutionOptions) => execute("machines.managed.credentials.install", input, options),
         },
         delete: (input: PublicActionInputById["machines.managed.delete"], options?: ActionExecutionOptions) => execute("machines.managed.delete", input, options),
+        exec: (input: PublicActionInputById["machines.managed.exec"], options?: ActionExecutionOptions) => execute("machines.managed.exec", input, options),
         get: (input: PublicActionInputById["machines.managed.get"], options?: ActionExecutionOptions) => execute("machines.managed.get", input, options),
         inspect: (input: PublicActionInputById["machines.managed.inspect"], options?: ActionExecutionOptions) => execute("machines.managed.inspect", input, options),
         list: (input: PublicActionInputById["machines.managed.list"], options?: ActionExecutionOptions) => execute("machines.managed.list", input, options),
@@ -5453,6 +5538,10 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         unsubscribe: (input: PublicActionInputById["peerMediation.observability.unsubscribe"], options?: ActionExecutionOptions) => execute("peerMediation.observability.unsubscribe", input, options),
       },
     },
+    pet: {
+      delete: (input: PublicActionInputById["pet.delete"], options?: ActionExecutionOptions) => execute("pet.delete", input, options),
+      import: (input: PublicActionInputById["pet.import"], options?: ActionExecutionOptions) => execute("pet.import", input, options),
+    },
     plugin: {
       webhook: {
         delivery: {
@@ -5507,6 +5596,9 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         clear: (input: PublicActionInputById["plugins.execution_origin.clear"], options?: ActionExecutionOptions) => execute("plugins.execution_origin.clear", input, options),
         list: (input: PublicActionInputById["plugins.execution_origin.list"], options?: ActionExecutionOptions) => execute("plugins.execution_origin.list", input, options),
         set: (input: PublicActionInputById["plugins.execution_origin.set"], options?: ActionExecutionOptions) => execute("plugins.execution_origin.set", input, options),
+      },
+      git: {
+        preview: (input: PublicActionInputById["plugins.git.preview"], options?: ActionExecutionOptions) => execute("plugins.git.preview", input, options),
       },
       list: (input: PublicActionInputById["plugins.list"], options?: ActionExecutionOptions) => execute("plugins.list", input, options),
       logs: {
@@ -5851,9 +5943,19 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         list: (input: PublicActionInputById["review.engines.list"], options?: ActionExecutionOptions) => execute("review.engines.list", input, options),
       },
       explainFindings: (input: PublicActionInputById["review.explain_findings"], options?: ActionExecutionOptions) => execute("review.explain_findings", input, options),
+      get: (input: PublicActionInputById["review.get"], options?: ActionExecutionOptions) => execute("review.get", input, options),
       history: {
         list: (input: PublicActionInputById["review.history.list"], options?: ActionExecutionOptions) => execute("review.history.list", input, options),
       },
+      human: {
+        get: (input: PublicActionInputById["review.human.get"], options?: ActionExecutionOptions) => execute("review.human.get", input, options),
+      },
+      newRound: (input: PublicActionInputById["review.new_round"], options?: ActionExecutionOptions) => execute("review.new_round", input, options),
+      prepareRound: (input: PublicActionInputById["review.prepare_round"], options?: ActionExecutionOptions) => execute("review.prepare_round", input, options),
+      reviewers: {
+        set: (input: PublicActionInputById["review.reviewers.set"], options?: ActionExecutionOptions) => execute("review.reviewers.set", input, options),
+      },
+      settleRound: (input: PublicActionInputById["review.settle_round"], options?: ActionExecutionOptions) => execute("review.settle_round", input, options),
       start: (input: PublicActionInputById["review.start"], options?: ActionExecutionOptions) => execute("review.start", input, options),
       walkthrough: (input: PublicActionInputById["review.walkthrough"], options?: ActionExecutionOptions) => execute("review.walkthrough", input, options),
     },
@@ -6053,11 +6155,17 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       shared: {
         create: (input: PublicActionInputById["secrets.shared.create"], options?: ActionExecutionOptions) => execute("secrets.shared.create", input, options),
         delete: (input: PublicActionInputById["secrets.shared.delete"], options?: ActionExecutionOptions) => execute("secrets.shared.delete", input, options),
+        disclosures: {
+          list: (input: PublicActionInputById["secrets.shared.disclosures.list"], options?: ActionExecutionOptions) => execute("secrets.shared.disclosures.list", input, options),
+        },
         grants: {
           set: (input: PublicActionInputById["secrets.shared.grants.set"], options?: ActionExecutionOptions) => execute("secrets.shared.grants.set", input, options),
         },
         list: (input: PublicActionInputById["secrets.shared.list"], options?: ActionExecutionOptions) => execute("secrets.shared.list", input, options),
         promote: (input: PublicActionInputById["secrets.shared.promote"], options?: ActionExecutionOptions) => execute("secrets.shared.promote", input, options),
+        recipients: {
+          list: (input: PublicActionInputById["secrets.shared.recipients.list"], options?: ActionExecutionOptions) => execute("secrets.shared.recipients.list", input, options),
+        },
         update: (input: PublicActionInputById["secrets.shared.update"], options?: ActionExecutionOptions) => execute("secrets.shared.update", input, options),
       },
       update: (input: PublicActionInputById["secrets.update"], options?: ActionExecutionOptions) => execute("secrets.update", input, options),
@@ -6529,6 +6637,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
       updates: {
         apply: (input: PublicActionInputById["skills.updates.apply"], options?: ActionExecutionOptions) => execute("skills.updates.apply", input, options),
         diff: (input: PublicActionInputById["skills.updates.diff"], options?: ActionExecutionOptions) => execute("skills.updates.diff", input, options),
+      },
+    },
+    storage: {
+      inventory: {
+        read: (input: PublicActionInputById["storage.inventory.read"], options?: ActionExecutionOptions) => execute("storage.inventory.read", input, options),
       },
     },
     subagents: {
@@ -7018,6 +7131,11 @@ export function createGeneratedActions(execute: RawActionExecute): GeneratedActi
         start: (input: PublicActionInputById["workflow.run.start"], options?: ActionExecutionOptions) => execute("workflow.run.start", input, options),
         summaries: (input: PublicActionInputById["workflow.run.summaries"], options?: ActionExecutionOptions) => execute("workflow.run.summaries", input, options),
         wait: (input: PublicActionInputById["workflow.run.wait"], options?: ActionExecutionOptions) => execute("workflow.run.wait", input, options),
+      },
+      runView: {
+        get: (input: PublicActionInputById["workflow.run.view.get"], options?: ActionExecutionOptions) => execute("workflow.run.view.get", input, options),
+        reset: (input: PublicActionInputById["workflow.run.view.reset"], options?: ActionExecutionOptions) => execute("workflow.run.view.reset", input, options),
+        set: (input: PublicActionInputById["workflow.run.view.set"], options?: ActionExecutionOptions) => execute("workflow.run.view.set", input, options),
       },
       starters: {
         list: (input: PublicActionInputById["workflow.starters.list"], options?: ActionExecutionOptions) => execute("workflow.starters.list", input, options),

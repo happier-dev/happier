@@ -513,6 +513,7 @@ export function createDiscussionActionDeps(options: Readonly<{
         if (!reference) throw new DiscussionRequestError('discussion_content_unavailable');
         const response = DiscussionAttachmentReadResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1(actionId, args)));
         if (response.blobId !== reference.blobId) throw new DiscussionRequestError('discussion_content_unavailable');
+        if ('removedByAccountId' in response) return response;
         let bytes: Uint8Array;
         try { bytes = await openResourceBinaryContent(key, reference, response.content); }
         catch { throw new DiscussionRequestError('discussion_content_unavailable'); }

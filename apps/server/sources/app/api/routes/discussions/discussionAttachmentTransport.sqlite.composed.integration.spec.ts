@@ -1,13 +1,16 @@
 import { randomUUID } from 'node:crypto';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { decodeBase64 } from 'privacy-kit';
 import { buildDiscussionMutationRequestBodyV1, DiscussionPostResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { prepareAttachmentPayloads } from '../../../../../../ui/sources/sync/domains/attachments/prepareAttachmentPayloads';
 import { prepareDiscussionAttachmentUpload, requestDiscussionAttachmentUpload } from '../../../../../../ui/sources/sync/api/discussions/discussionAttachmentTransport';
 import { createAttachmentApp } from './discussionAttachments.testkit';
+
+vi.mock('react-native', async () => (await import('../../../../../../ui/sources/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 // The existing UI→server lane owns native/Expo boundaries; transfer and storage stay real.
 describe('UI-prepared Discussion attachment transport (SQLite composition)', () => {
@@ -20,6 +23,7 @@ describe('UI-prepared Discussion attachment transport (SQLite composition)', () 
     it('posts two UI-prepared leaf attachments to an existing Discussion and reads back their exact bytes', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, reader.id);
         const { app, restoreEnvironment } = createAttachmentApp(() => owner.id);
         try {
             const created = await app.inject({ method: 'POST', url: '/v1/discussions', payload: {

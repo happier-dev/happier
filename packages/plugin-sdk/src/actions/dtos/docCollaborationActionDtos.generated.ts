@@ -222,6 +222,7 @@ export type DocCollaborationActionResultById = {
                 reason: 'encryption_material_unavailable';
             };
             sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
+            storedSizeBytes?: number | undefined;
             provenance?: undefined | {
                 savedBy: {
                     kind: 'agent';
@@ -576,6 +577,10 @@ export type DocCollaborationActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
@@ -947,6 +952,10 @@ export type DocCollaborationActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {

@@ -2,7 +2,7 @@ import * as React from 'react';
 import { v5 as uuidv5 } from 'uuid';
 import type { z } from 'zod/mini';
 import { ActionApprovalRequestCreatedResultSchema, ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ArtifactActionOutputSchemasV1, type ArtifactActionInputV1, type ArtifactStorageUsageV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, type ArtifactActionInputV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DocCollaborationActionInputSchemasV1, DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactAccessActionOutputSchemasV1, type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
@@ -37,7 +37,7 @@ export type ArtifactActionOutcome<T> = Readonly<{ ok: true; value: T }> | Readon
 
 type SurfaceMutationActionId = 'artifact.create' | 'artifact.publish_from_file' | 'artifact.access.grants.set'
     | 'artifact.update' | 'artifact.revisions.restore' | 'artifact.delete' | 'widgets.area.layout.delete' | 'doc.comment.reply' | 'doc.edit.propose' | 'doc.edit.accept' | 'doc.edit.decline';
-type SurfaceActionId = 'artifact.get' | 'artifact.export' | 'artifact.revisions.list' | 'artifact.storage.usage' | 'doc.read' | 'artifact.access.grants.list' | SurfaceMutationActionId;
+type SurfaceActionId = 'artifact.get' | 'artifact.export' | 'artifact.revisions.list' | typeof STORAGE_INVENTORY_READ_ACTION_ID_V1 | 'doc.read' | 'artifact.access.grants.list' | SurfaceMutationActionId;
 const SURFACE_OUTPUT_SCHEMAS = { ...ArtifactActionOutputSchemasV1, ...DocCollaborationActionOutputSchemasV1,
     ...ArtifactAccessActionOutputSchemasV1, 'widgets.area.layout.delete': WidgetInstanceActionOutputSchemasV1['widgets.area.layout.delete'] };
 type SurfaceActionResult<Id extends SurfaceActionId> = z.infer<(typeof SURFACE_OUTPUT_SCHEMAS)[Id]>;
@@ -161,7 +161,7 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
             runMutation('artifact.publish_from_file', input, { ...operation, ...(source ? { defaultSessionId: source.sessionId } : {}) }),
         setAccessGrant: (input: ArtifactAccessGrantSetInputV1, operation?: ArtifactActionOperation) => runMutation('artifact.access.grants.set', input, operation),
         updateArtifact: (input: ArtifactActionInputV1<'artifact.update'>, operation?: ArtifactActionOperation) => runMutation('artifact.update', input, operation),
-        storageUsage: () => run('artifact.storage.usage', {}),
+        storageUsage: () => run(STORAGE_INVENTORY_READ_ACTION_ID_V1, {}),
         listRevisions,
         /** Who the document is shared with (its grant roster), for the page's audience line. */
         listAccessGrants: (artifactId: string) => run('artifact.access.grants.list', { artifactId }),
@@ -193,10 +193,10 @@ export function useArtifactActionsClient(): ArtifactActionsClient | null {
  * change. Retain the last successful read during refresh; never carry it to another
  * Account. The server, not the retained local heads, accounts for storage and revision bytes.
  */
-export function useArtifactStorageUsage(): ArtifactStorageUsageV1 | null {
+export function useArtifactStorageUsage(): StorageInventoryV1 | null {
     const client = useArtifactActionsClient();
     const storageRevision = getStorage()((state) => state.artifactsStorageRevision);
-    const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; usage: ArtifactStorageUsageV1 }> | null>(null);
+    const [snapshot, setSnapshot] = React.useState<Readonly<{ client: ArtifactActionsClient; usage: StorageInventoryV1 }> | null>(null);
     React.useEffect(() => {
         if (!client) return;
         let current = true;

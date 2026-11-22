@@ -22,12 +22,15 @@ afterEach(async () => {
     vi.restoreAllMocks();
 });
 
+const inventory = (bytes: number, limit: number | null) => ({ totalBytes: bytes, artifactLimitBytes: limit, unmeasuredKinds: [],
+    byKind: { artifacts: bytes, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } });
+
 describe('Artifacts storage meter', () => {
     it('does not re-read usage for hydration, unchanged echoes, or access-only projections', async () => {
         const served = await serveActionHomes({
             homes: [{ key: 'owner', serverUrl: 'https://artifact-meter-projection.test', accountId: 'owner' }],
             route: request => request.path === '/v1/artifacts/storage/usage'
-                ? Response.json({ usedBytes: 100, limitBytes: null, documentLimitBytes: null, revisionRetentionCount: 10 })
+                ? Response.json(inventory(100, null))
                 : undefined,
         });
         disposeHome = served.dispose;
@@ -68,7 +71,7 @@ describe('Artifacts storage meter', () => {
             homes: [{ key: 'owner', serverUrl: 'https://artifact-meter-mutations.test', accountId: 'owner' }],
             route: (request) => request.path === '/v1/artifacts/storage/usage'
                 ? usageUnavailable ? Response.json({ error: 'unavailable' }, { status: 503 })
-                    : Response.json({ usedBytes, limitBytes: 1000, documentLimitBytes: null, revisionRetentionCount: 10 })
+                    : Response.json(inventory(usedBytes, 1000))
                 : undefined,
         });
         disposeHome = served.dispose;
@@ -77,39 +80,39 @@ describe('Artifacts storage meter', () => {
             body: 'Notes', createdAt: 1, updatedAt: 1, access: 'owner', storageMode: 'plain' };
         const hook = await renderHook(useArtifactStorageUsage);
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(100);
+        expect(hook.getCurrent()?.totalBytes).toBe(100);
 
         usedBytes = 300;
         await act(async () => { getStorage().getState().addArtifact(artifact); });
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(300);
+        expect(hook.getCurrent()?.totalBytes).toBe(300);
 
         usedBytes = 550;
         await act(async () => { getStorage().getState().updateArtifact({ ...artifact, body: 'Updated', bodyVersion: 2 }); });
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(550);
+        expect(hook.getCurrent()?.totalBytes).toBe(550);
 
         usageUnavailable = true;
         await act(async () => { getStorage().getState().updateArtifact({ ...artifact, bodyVersion: 3 }); });
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(550);
+        expect(hook.getCurrent()?.totalBytes).toBe(550);
 
         // Revision restore uses the same canonical updateArtifact writer as an ordinary update.
         usedBytes = 800;
         usageUnavailable = false;
         await act(async () => { getStorage().getState().updateArtifact({ ...artifact, bodyVersion: 4 }); });
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(800);
+        expect(hook.getCurrent()?.totalBytes).toBe(800);
 
         usedBytes = 0;
         await act(async () => { getStorage().getState().deleteArtifact(artifact.id); });
         await flushHookEffects();
-        expect(hook.getCurrent()?.usedBytes).toBe(0);
+        expect(hook.getCurrent()?.totalBytes).toBe(0);
         await hook.unmount();
     });
 
     it('never carries another Home\'s budget into the active Account when its usage read fails', async () => {
-        const usage = { usedBytes: 321, limitBytes: 1000, documentLimitBytes: null, revisionRetentionCount: 10 };
+        const usage = inventory(321, 1000);
         const served = await serveActionHomes({
             homes: [
                 { key: 'first', serverUrl: 'https://artifact-meter-first.test', accountId: 'first-owner' },

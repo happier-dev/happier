@@ -119,7 +119,11 @@ function reconcileArtifacts(
       ...(before.ownerAccountId !== undefined ? { ownerAccountId: incomingArtifact.ownerAccountId ?? before.ownerAccountId } : {}),
       ...(before.sourceServerId !== undefined ? { sourceServerId: incomingArtifact.sourceServerId ?? before.sourceServerId } : {}),
     } : incomingArtifact;
-    const artifact = retainArtifactSlices(before, retainOpenedContent(before, withKnownAccess));
+    const retainSize = before?.storedSizeBytes !== undefined && withKnownAccess.storedSizeBytes === undefined
+      && withKnownAccess.headerVersion === before.headerVersion && withKnownAccess.bodyVersion === before.bodyVersion
+      && withKnownAccess.ownerAccountId === before.ownerAccountId && withKnownAccess.storageMode === before.storageMode;
+    const artifact = retainArtifactSlices(before, retainOpenedContent(before, retainSize
+      ? { ...withKnownAccess, storedSizeBytes: before.storedSizeBytes } : withKnownAccess));
     if (sameStrictJsonValue(before, artifact)) continue;
     if (!before || before.headerVersion !== artifact.headerVersion || before.bodyVersion !== artifact.bodyVersion
       || before.storageMode !== artifact.storageMode) storageChanged = true;

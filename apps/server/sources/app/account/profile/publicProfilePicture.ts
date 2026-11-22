@@ -38,7 +38,8 @@ export async function preparePublicProfilePicture(input: Readonly<{ accountId: s
     const path = normalizePrivateFileKey(`public-profile/${input.accountId}/${randomUUID()}.png`);
     const custody = await inTx(tx => captureAccountPrivateFileUploadInTx(tx, {
         accountId: input.accountId, path, reuseKey: publicProfilePictureWritingReuseKey,
-        metadata: { width: processed.image.width, height: processed.image.height, thumbhash: processed.image.thumbhash },
+        metadata: { width: processed.image.width, height: processed.image.height, thumbhash: processed.image.thumbhash,
+            storedSizeBytes: BigInt(processed.image.bytes.byteLength) },
     }));
     if (!custody) return { ok: false, reason: 'account_unavailable' };
     const prepared: PreparedPublicProfilePicture = { accountId: input.accountId, uploadId: custody.id,

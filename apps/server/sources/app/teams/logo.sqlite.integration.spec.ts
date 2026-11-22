@@ -84,11 +84,14 @@ describe("Team logo custody (SQLite integration)", () => {
         expect(result.team.logo?.url).toContain(result.team.logo?.path ?? "");
         // The stored value carries no URL: the public base is a deployment fact
         // resolved at projection time, exactly as Account avatars resolve it.
-        const stored = readStoredTeamLogo((await db.team.findUniqueOrThrow({ where: { id: teamId } })).logo);
+        const row = await db.team.findUniqueOrThrow({ where: { id: teamId } });
+        const stored = readStoredTeamLogo(row.logo);
         expect(stored).toMatchObject({ width: 512, height: 512 });
         expect(stored).not.toHaveProperty("url");
 
-        const published = await sharp(Buffer.from(await readPublicFile(stored?.path ?? ""))).metadata();
+        const bytes = await readPublicFile(stored?.path ?? "");
+        expect(row.logoStoredSizeBytes).toBe(BigInt(bytes.byteLength));
+        const published = await sharp(Buffer.from(bytes)).metadata();
         expect(published.width).toBe(512);
         expect(published.height).toBe(512);
     });

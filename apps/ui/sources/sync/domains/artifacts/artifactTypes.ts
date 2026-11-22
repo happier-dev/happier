@@ -35,6 +35,7 @@ export interface Artifact {
     headerVersion: number;
     body?: string;  // Base64 encoded encrypted JSON { "body": string | null } - only in full fetch
     bodyVersion?: number;  // Current head revision, also projected by header-only HTTP lists
+    storedSizeBytes?: number;
     dataEncryptionKey: string;  // Base64 encoded encryption key (encrypted with user key)
     provenance?: string | null;
     provenanceDataEncryptionKey?: string | null;
@@ -109,6 +110,7 @@ export interface DecryptedArtifactBase {
     provenance?: ArtifactRevisionProvenanceV1;
     headerVersion: number;
     bodyVersion?: number;
+    storedSizeBytes?: number;
     seq: number;
     createdAt: number;
     updatedAt: number;

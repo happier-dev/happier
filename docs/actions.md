@@ -5731,9 +5731,39 @@ prepares the header through the document-kind owner, keeping embedded Workflow
 revisions and body-derived profile, role and Board projections coherent with
 the restored body. Historical rows are never rewritten. Revision reads use
 the same current grants, Account mode and recipient key as the document.
-`artifact.storage.usage` reports persisted ordinary header, body and revision
-bytes; wrapped keys and row metadata are excluded. Optional document and Account
-budgets default to unlimited. A rejected write returns `quota_exceeded` with
+`storage.inventory.read` defaults to the authenticated Account. To read one
+Discussion, pass `scope: { kind: 'discussion', discussionId }`. Home checks
+current Discussion read access. The Discussion scope reports the thread's
+attachments and has no Artifact limit. An Account's inventory charges
+Discussion attachments to the current Discussion owner.
+
+The summary includes the measured total, per-kind sizes, and the nullable
+Artifact limit. A null size means a kind has at least one unmeasured item.
+Profile picture, avatar and Team logo uploads record the normalized bytes
+written. Older images remain unknown where their size was never retained.
+Empty kinds count as zero. The optional `kinds` filter selects page items and
+leaves the scope summary intact. Items are sorted largest first, with unknown
+sizes last. Request the next page with the returned cursor. Rows carry an ID,
+kind, size, storage location and date when available. Clients supply names.
+The existing HTTP usage projection remains available without `inventory=true`.
+
+`artifact.list` accepts `sort: 'size_desc'`. Its `storedSizeBytes` covers the
+Artifact's stored header, current body, provenance, retained versions and
+distinct file blobs. Wrapped keys and row metadata are excluded. Shared
+Artifacts contribute to the owner's inventory. `artifact.revisions.list`
+with `projection: 'headers'` gives each retained version's size and date
+without fetching its body. Several versions can refer to the same file. The
+version size includes that file when linked, and the whole Artifact counts it
+once. `artifact.revisions.trim` returns freed bytes and current Artifact
+usage after removing old versions for one owned Artifact. It keeps the
+current version and its file. Agents ask for approval by default.
+
+`discussion.attachment.remove` takes the Discussion ID, message ID and blob ID.
+Home admits the message author or Discussion owner. The message remains, and
+the attachment read returns the blob ID and the Account ID of the person who
+removed it. Agent requests ask for approval by default.
+
+Optional document and Account budgets default to unlimited. A rejected write returns `quota_exceeded` with
 `{budget,limitBytes,usedBytes}` in the canonical Action failure's `details`.
 `usedBytes` is the projected storage after the attempted write. Delete or export
 provides recovery; a rejected write changes neither content nor history.

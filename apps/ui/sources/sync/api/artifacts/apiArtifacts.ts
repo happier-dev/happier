@@ -1,4 +1,4 @@
-import { pick } from 'zod/mini';
+import { pick, type ZodMiniType } from 'zod/mini';
 import { randomUUID } from '@/platform/randomUUID';
 import { ArtifactTemplateAcceptedVersionResponseV1Schema, type ArtifactTemplateAcceptedVersionInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactKindCoverageV1Schema, type ArtifactCoarseKindV1, type ArtifactKindCoverageV1, type ArtifactKindWriteBatchInputV1, type ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -16,9 +16,10 @@ import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, iterateArtifa
 import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactOwedRecipientCensusPageV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
-import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionListResponseV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema, ArtifactStorageUsageV1Schema, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactPublicAudienceV1ReadSchema, ArtifactRevisionHeadersResponseV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactRevisionTrimResultV1Schema, ArtifactQuotaExceededV1Schema, ArtifactRevisionV1Schema,
+    StorageInventoryV1Schema, createStorageInventoryQueryV1, type StorageInventoryInputV1, type ArtifactRevisionV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { ArtifactBlobReadResponseV1Schema, ArtifactBlobAccountEncryptionStageV1Schema, type ArtifactBlobStoredContentV1, type ArtifactBlobAccountEncryptionStageV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema,
+import { ArtifactCreateHttpResponseV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactHttpReadV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactStoredSizeBytesV1Schema,
     ArtifactReadHeadersBatchResponseV1Schema, type ArtifactReadBatchResponseV1,
     type ArtifactReadHeadersBatchResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
@@ -121,6 +122,7 @@ function readArtifactResponse(value: unknown): Artifact {
         throw new HappyError('Artifact content does not match its owner Account mode', false, { code: 'artifact_account_mode_mismatch' });
     }
     return { ...value as Artifact, ...projection.data,
+        ...(Object.hasOwn(value, 'storedSizeBytes') ? { storedSizeBytes: ArtifactStoredSizeBytesV1Schema.parse(Reflect.get(value, 'storedSizeBytes')) } : {}),
         ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(Reflect.get(value, 'ownerDisplayName')),
         sharedWithTeamScope: ArtifactHttpReadV1Schema.shape.sharedWithTeamScope.parse(Reflect.get(value, 'sharedWithTeamScope')),
         publicAudience: ArtifactPublicAudienceV1ReadSchema.parse(Reflect.get(value, 'publicAudience')) };
@@ -149,6 +151,7 @@ export type ArtifactApiOptions = Readonly<{
     /** Owner-only legacy header repair, mutually exclusive with kind selectors. */
     unclassified?: boolean | 'coarse' | 'approval';
     includeBody?: boolean;
+    includeStoredSize?: boolean;
     retry?: 'default' | 'none';
     request?: ServerFetch;
     /** A captured neutral transport; each consumer still owns disclosure admission. */
@@ -335,30 +338,51 @@ export async function fetchArtifactRevisions(
     artifactId: string,
     opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {},
 ) {
+    return readArtifactRevisions(credentials, artifactId, ArtifactRevisionListResponseV1Schema, '', opts);
+}
+
+export async function fetchArtifactRevisionHeaders(credentials: AuthCredentials, artifactId: string,
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}) {
+    return readArtifactRevisions(credentials, artifactId, ArtifactRevisionHeadersResponseV1Schema, '?projection=headers', opts);
+}
+
+async function readArtifactRevisions<T>(credentials: AuthCredentials, artifactId: string, schema: ZodMiniType<T>,
+    query: string, opts: Pick<ArtifactApiOptions, 'request' | 'signal'>) {
     throwIfAborted(opts.signal);
-    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(artifactId)}/revisions`, {
+    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(artifactId)}/revisions${query}`, {
         headers: { Authorization: `Bearer ${credentials.token}`, 'Content-Type': 'application/json' },
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     throwIfAborted(opts.signal);
     if (!response.ok) throw await artifactHttpReadError(response, 'Artifact revisions are unavailable', 'artifact_content_unavailable');
-    const parsed = ArtifactRevisionListResponseV1Schema.safeParse(await response.json());
+    const parsed = schema.safeParse(await response.json());
     throwIfAborted(opts.signal);
     if (!parsed.success) throw new HappyError('Artifact revision inventory is incomplete', false, { code: 'artifact_content_unavailable' });
     return parsed.data;
 }
 
-export async function fetchArtifactStorageUsage(credentials: AuthCredentials,
+export async function trimArtifactRevisions(credentials: AuthCredentials, artifactId: string,
     opts: Pick<ArtifactApiOptions, 'request' | 'signal'> = {}) {
     throwIfAborted(opts.signal);
-    const response = await (opts.request ?? serverFetch)('/v1/artifacts/storage/usage', {
+    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/${encodeURIComponent(artifactId)}/revisions`, {
+        method: 'DELETE', headers: { Authorization: `Bearer ${credentials.token}` }, signal: opts.signal,
+    }, { includeAuth: false, retry: 'none' });
+    if (!response.ok) throw await artifactHttpReadError(response, 'Artifact revisions could not be cleared', 'artifact_content_unavailable');
+    const result = ArtifactRevisionTrimResultV1Schema.parse(await response.json());
+    throwIfAborted(opts.signal);
+    return result;
+}
+
+export async function fetchStorageInventory(credentials: AuthCredentials,
+    opts: Pick<ArtifactApiOptions, 'request' | 'signal'> & { input?: StorageInventoryInputV1 } = {}) {
+    throwIfAborted(opts.signal);
+    const response = await (opts.request ?? serverFetch)(`/v1/artifacts/storage/usage?${createStorageInventoryQueryV1(opts.input ?? {})}`, {
         headers: { Authorization: `Bearer ${credentials.token}` },
         ...(opts.signal ? { signal: opts.signal } : {}),
     }, { includeAuth: false, retry: 'none' });
     throwIfAborted(opts.signal);
-    if (!response.ok) throw new HappyError('Artifact storage usage is unavailable', false,
-        { status: response.status, code: 'content_unavailable' });
-    const parsed = ArtifactStorageUsageV1Schema.safeParse(await response.json());
+    if (!response.ok) throw await artifactHttpReadError(response, 'Storage inventory is unavailable', 'content_unavailable');
+    const parsed = StorageInventoryV1Schema.safeParse(await response.json());
     throwIfAborted(opts.signal);
     if (!parsed.success) throw new HappyError('Artifact storage usage is unavailable', false, { code: 'content_unavailable' });
     return parsed.data;
@@ -498,6 +522,7 @@ export async function fetchArtifactListPage(credentials: AuthCredentials,
     if (opts.sharedWithTeamId !== undefined) query.set('sharedWithTeamId', opts.sharedWithTeamId);
     if (opts.teamResourceKind !== undefined) query.set('teamResourceKind', opts.teamResourceKind);
     if (opts.includeBody) query.set('includeBody', 'true');
+    if (opts.includeStoredSize) query.set('includeStoredSize', 'true');
     if (opts.coarseKind) query.set('kind', opts.coarseKind);
     if (opts.kinds !== undefined) query.set('kinds', JSON.stringify(opts.kinds));
     if (opts.approvalStates !== undefined) query.set('approvalStates', JSON.stringify(opts.approvalStates));

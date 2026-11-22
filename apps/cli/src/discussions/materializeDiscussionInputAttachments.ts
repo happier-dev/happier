@@ -54,6 +54,7 @@ export async function materializeDiscussionInputAttachments(input: Readonly<{
         discussionId: addressing.discussionId, messageId, reference, key, throughSeq: addressing.throughSeq, signal }));
       if (!read.success || read.data.blobId !== reference.blobId || read.data.mime !== reference.mime
         || read.data.sizeBytes !== reference.sizeBytes || read.data.sha256 !== reference.sha256) throw unavailable();
+      if ('removedByAccountId' in read.data) throw new Error('discussion_attachment_removed');
       return decodeBase64(read.data.bytesBase64);
     },
   });

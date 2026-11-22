@@ -3409,6 +3409,7 @@ const artifactsBrowserTranslations = { ca: {
             label: 'Ordena',
             updated_desc: 'Actualitzats recentment',
             created_desc: 'Creats recentment',
+            size_desc: 'Els més grans primer',
             title_asc: 'Títol',
         },
         view: {

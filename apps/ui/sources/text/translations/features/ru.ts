@@ -3413,6 +3413,7 @@ const artifactsBrowserTranslations = { ru: {
             label: 'Сортировка',
             updated_desc: 'Недавно изменённые',
             created_desc: 'Недавно созданные',
+            size_desc: 'Сначала самые большие',
             title_asc: 'Название',
         },
         view: {

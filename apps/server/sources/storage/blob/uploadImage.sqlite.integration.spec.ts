@@ -49,6 +49,7 @@ describe("Account avatar publication (SQLite integration)", () => {
         expect(row.width).toBe(image.width);
         expect(row.height).toBe(image.height);
         expect(row.path).toBe(image.path);
+        expect(row.storedSizeBytes).toBe(BigInt(published.byteLength));
     });
 
     it("never enlarges a small avatar to reach the published bound", async () => {

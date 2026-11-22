@@ -83,7 +83,7 @@ function openedArtifactBoundary(initial: z.infer<typeof ArtifactDocumentV1Schema
 }
 
 const ids = ['artifact.create', 'artifact.get', 'artifact.list', 'artifact.update', 'artifact.delete',
-  'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'artifact.storage.usage'] as const;
+  'artifact.publish_from_file', 'artifact.revisions.list', 'artifact.revisions.restore', 'storage.inventory.read'] as const;
 
 describe('ordinary Artifact Actions', () => {
   it('opens an addressed Review for its owner and shared recipient while preserving transport refusal', async () => {
@@ -613,7 +613,7 @@ describe('ordinary Artifact Actions', () => {
       const spec = getActionSpec(id as ActionId);
       expect(spec.surfaces).toMatchObject({ agent: true, mcp: true, cli: true, ui: true });
       expect(spec.requiredAuthority).toBe('account_automation');
-      const read = ['artifact.get', 'artifact.list', 'artifact.revisions.list', 'artifact.storage.usage'].includes(id);
+      const read = ['artifact.get', 'artifact.list', 'artifact.revisions.list', 'storage.inventory.read'].includes(id);
       expect(spec.safety).toBe(read ? 'safe' : 'danger');
       expect(resolveActionApprovalRouting({ actionId: id as ActionId, spec,
         context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(!read);

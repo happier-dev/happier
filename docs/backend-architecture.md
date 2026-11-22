@@ -659,6 +659,24 @@ The existing serialized mutation still enforces the limit. When concurrent
 uploads pass the snapshot and one later exceeds quota, the server returns HTTP
 413 and discards that upload through the existing private file custody owner.
 
+In 0.3 development, `artifactStorageService.ts` composes the Account storage
+inventory from the records that own each kind of data. The Account read uses
+the authenticated Account. A Discussion read uses the existing Discussion
+read admission and charges live attachments to the Discussion owner. The
+database computes the scope summary and returns one size-ordered page with a
+cursor. Rows carry storage locations and byte counts. Attachment rows carry
+the Discussion, message and attachment IDs and the viewer's removal
+permission. The removal Action and inventory use the same Discussion authority
+check, which admits the message author and Discussion owner. Artifact rows
+carry the viewer's per-Artifact trim permission from the revision policy.
+Clients resolve attachment names from
+the owning message content and open encrypted envelopes with their keys.
+The Discussion messages endpoint can read one exact message ID or a sequence
+page.
+The Artifact budget includes current content, retained versions and stored
+file blobs counted once per Artifact. Pets and plugin collections use their
+own budgets. See [Artifact and storage Actions](./actions.md#ordinary-account-artifacts-development).
+
 ### Redis
 A Redis client is initialized in `main.ts` and pinged at startup. It can be expanded for caching or pub/sub if needed.
 

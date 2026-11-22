@@ -727,6 +727,20 @@ export type DiscussionActionInputById = {
                     };
                 };
                 projectFilesSource?: undefined | {
+                    kind: 'managed';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     target: {
                         serverId: string;
                         machineId: string;
@@ -795,6 +809,20 @@ export type DiscussionActionInputById = {
                     };
                 };
                 projectFilesSource?: undefined | {
+                    kind: 'managed';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     target: {
                         serverId: string;
                         machineId: string;
@@ -855,6 +883,20 @@ export type DiscussionActionInputById = {
                     };
                 };
                 projectFilesSource?: undefined | {
+                    kind: 'managed';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
                     target: {
                         serverId: string;
                         machineId: string;
@@ -890,6 +932,11 @@ export type DiscussionActionInputById = {
         messageId: string;
         blobId: string;
         throughSeq?: number | undefined;
+    };
+    readonly "discussion.attachment.remove": {
+        discussionId: string;
+        messageId: string;
+        blobId: string;
     };
     readonly "discussion.create": {
         title: string;
@@ -2047,6 +2094,7 @@ export type DiscussionActionInputById = {
                 } | {
                     kind: 'unknown';
                 };
+                reason?: 'agent_execution_state_unknown' | 'agent_inventory_invalid' | 'agent_inventory_item_missing' | 'agent_inventory_item_unavailable' | 'agent_inventory_not_current' | 'agent_inventory_reader_unavailable' | 'agent_inventory_unavailable' | 'credential_selection_unknown' | 'invocation_access_unknown' | 'machine_host_facts_missing' | 'machine_host_facts_unavailable' | 'machine_readiness_unknown' | 'personal_credential_readiness_unknown' | 'session_agent_unknown' | 'session_machine_unknown' | 'team_credential_readiness_unknown' | undefined;
             };
             repair?: null | undefined | {
                 actionId: 'connectedServices.authentication.beginReconnect';
@@ -3793,6 +3841,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -4531,6 +4583,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -4931,6 +4987,10 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
@@ -4986,11 +5046,18 @@ export type DiscussionActionResultById = {
         serverId: string;
     };
     readonly "discussion.attachment.read": {
+        blobId: string;
+        removedByAccountId: string;
+    } | {
         bytesBase64: string;
         blobId: string;
         mime: string;
         sizeBytes: number;
         sha256: string;
+    };
+    readonly "discussion.attachment.remove": {
+        blobId: string;
+        removedByAccountId: string;
     };
     readonly "discussion.create": {
         discussion: {
@@ -5653,6 +5720,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -6043,6 +6114,10 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
@@ -6413,6 +6488,10 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
@@ -7126,6 +7205,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -7867,6 +7950,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -8608,6 +8695,10 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'pending';
                 })[] | undefined;
+                removedAttachments?: undefined | {
+                    blobId: string;
+                    removedByAccountId: string;
+                }[];
                 replyTarget?: undefined | {
                     kind: 'doc_passage';
                     doc: {
@@ -9016,6 +9107,10 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'pending';
             })[] | undefined;
+            removedAttachments?: undefined | {
+                blobId: string;
+                removedByAccountId: string;
+            }[];
             replyTarget?: undefined | {
                 kind: 'doc_passage';
                 doc: {
@@ -9845,6 +9940,7 @@ export type DiscussionActionResultById = {
                 } | {
                     kind: 'unknown';
                 };
+                reason?: 'agent_execution_state_unknown' | 'agent_inventory_invalid' | 'agent_inventory_item_missing' | 'agent_inventory_item_unavailable' | 'agent_inventory_not_current' | 'agent_inventory_reader_unavailable' | 'agent_inventory_unavailable' | 'credential_selection_unknown' | 'invocation_access_unknown' | 'machine_host_facts_missing' | 'machine_host_facts_unavailable' | 'machine_readiness_unknown' | 'personal_credential_readiness_unknown' | 'session_agent_unknown' | 'session_machine_unknown' | 'team_credential_readiness_unknown' | undefined;
             };
             repair: null | {
                 actionId: 'connectedServices.authentication.beginReconnect';
@@ -10223,6 +10319,11 @@ export type DiscussionActionResultById = {
             createdAt: number;
         };
         sessionStart?: undefined | {
+            code: 'session_team_credential_binding_rejected';
+            reason: 'access_removed' | 'authentication_required' | 'authentication_unavailable' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'disabled' | 'feature_disabled' | 'invalid_input' | 'resource_changed' | 'resource_corrupt' | 'resource_missing' | 'session_missing' | 'session_owner_mismatch' | 'source_owner_required' | 'source_replaced_or_missing' | 'team_context_required' | 'team_visibility_required' | 'update_required';
+            type: 'error';
+            retryable: false;
+        } | {
             type: 'error';
             code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
             retryable: boolean;

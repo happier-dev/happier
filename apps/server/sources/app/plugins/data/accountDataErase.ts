@@ -616,7 +616,7 @@ async function captureAccountErasureBlobLocatorsInTx(
             where: { artifact: { accountId } }, select: { id: true, storageKey: true },
             orderBy: [{ storageKey: 'asc' }, { id: 'asc' }],
         }),
-        tx.discussionAttachment.findMany({ where: { message: { discussion: { ownerAccountId: accountId } } },
+        tx.discussionAttachment.findMany({ where: { removedByAccountId: null, message: { discussion: { ownerAccountId: accountId } } },
             select: { blobId: true, storageKey: true }, orderBy: [{ storageKey: 'asc' }, { blobId: 'asc' }] }),
     ]);
     return Object.freeze({

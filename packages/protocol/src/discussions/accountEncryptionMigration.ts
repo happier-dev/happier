@@ -10,6 +10,7 @@ const Content = StrictSessionStoredMessageContentEnvelopeSchema;
 const Message = lazyZodSchema(() => z.strictObject({ id: z.string().check(z.minLength(1)), content: Content,
   attachments: z.optional(z.array(z.strictObject({ blobId: z.string().check(z.uuid()), encryptionMode: z.enum(['plain', 'e2ee']),
     storedSizeBytes: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }))),
+  removedAttachmentBlobIds: z.optional(z.array(z.string().check(z.uuid()))),
 }));
 export const DiscussionAccountEncryptionInventoryV1Schema = lazyZodSchema(() => z.strictObject({
   items: z.array(z.strictObject({

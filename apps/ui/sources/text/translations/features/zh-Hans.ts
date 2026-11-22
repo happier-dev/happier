@@ -3312,6 +3312,7 @@ const artifactsBrowserTranslations = { 'zh-Hans': {
             label: '排序',
             updated_desc: '最近更新',
             created_desc: '最近创建',
+            size_desc: '从大到小',
             title_asc: '标题',
         },
         view: {

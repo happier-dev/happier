@@ -20,7 +20,8 @@ function readRows(tx: Tx, accountId: string) {
     return tx.discussion.findMany({ where: { ownerAccountId: accountId }, orderBy: { id: 'asc' },
         select: { id: true, encryptionMode: true, dataEncryptionKey: true, titleContent: true,
             messages: { orderBy: { id: 'asc' }, select: { id: true, content: true,
-                attachments: { orderBy: { blobId: 'asc' }, select: { blobId: true, messageId: true, storageKey: true, encryptionMode: true, storedSizeBytes: true } } } },
+                attachments: { orderBy: { blobId: 'asc' }, select: { blobId: true, messageId: true, storageKey: true, encryptionMode: true,
+                    storedSizeBytes: true, removedByAccountId: true } } } },
             keyEnvelopes: { orderBy: { recipientAccountId: 'asc' }, select: { recipientAccountId: true,
                 encryptedDataKey: true, recipientContentPublicKeyFingerprint: true } } } });
 }
@@ -37,7 +38,9 @@ export async function readDiscussionAccountEncryptionInventoryInTx(tx: Tx, input
         items.push({ discussionId: row.id, dataEncryptionKey: privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
             titleContent: StrictSessionStoredMessageContentEnvelopeSchema.parse(row.titleContent),
             messages: row.messages.map(message => ({ id: message.id,
-                content: StrictSessionStoredMessageContentEnvelopeSchema.parse(message.content), attachments: message.attachments.map(attachment => {
+                content: StrictSessionStoredMessageContentEnvelopeSchema.parse(message.content),
+                ...removedAttachmentIds(message.attachments),
+                attachments: message.attachments.filter(row => row.removedByAccountId === null).map(attachment => {
                     const encryptionMode = attachment.encryptionMode;
                     if ((encryptionMode !== 'plain' && encryptionMode !== 'e2ee') || encryptionMode !== row.encryptionMode) {
                         throw new Error('Discussion attachment mode unavailable');
@@ -46,6 +49,11 @@ export async function readDiscussionAccountEncryptionInventoryInTx(tx: Tx, input
                 }) })), recipients: census.value });
     }
     return { items };
+}
+
+function removedAttachmentIds(attachments: readonly { blobId: string; removedByAccountId: string | null }[]) {
+    const removed = attachments.filter(row => row.removedByAccountId !== null).map(row => row.blobId);
+    return removed.length ? { removedAttachmentBlobIds: removed } : {};
 }
 
 function matchesMode(content: unknown, mode: 'plain' | 'e2ee', title = false): boolean {
@@ -76,8 +84,8 @@ export async function matchDiscussionAccountEncryptionMigrationPostStateInTx(tx:
             || row.messages.some(message => !isDeepStrictEqual(message.content, messages.get(message.id)?.content))) return { status: 'mismatch' };
         for (const message of row.messages) {
             const attachments = messages.get(message.id)?.attachments ?? [];
-            if (attachments.length !== message.attachments.length || new Set(attachments.map(attachment => attachment.blobId)).size !== attachments.length) return { status: 'mismatch' };
-            const currentByBlobId = new Map(message.attachments.map(row => [row.blobId, row]));
+            const currentByBlobId = new Map(message.attachments.filter(row => row.removedByAccountId === null).map(row => [row.blobId, row]));
+            if (attachments.length !== currentByBlobId.size || new Set(attachments.map(attachment => attachment.blobId)).size !== attachments.length) return { status: 'mismatch' };
             for (const attachment of attachments) {
                 const current = currentByBlobId.get(attachment.blobId);
                 const prepared = input.preparedAttachments?.get(discussionConversionAttachmentKey(message.id, attachment.blobId));
@@ -124,19 +132,20 @@ export async function migrateDiscussionAccountEncryptionInTx(tx: Tx, input: Read
             const replacement = messages.get(message.id)!;
             const attachments = replacement.attachments ?? [];
             const attachmentIds = new Set(attachments.map(attachment => attachment.blobId));
-            if (attachments.length !== message.attachments.length || attachmentIds.size !== attachments.length) return { status: 'migration_incomplete' };
+            const sourceByBlobId = new Map(message.attachments.filter(row => row.removedByAccountId === null).map(row => [row.blobId, row]));
+            if (attachments.length !== sourceByBlobId.size || attachmentIds.size !== attachments.length) return { status: 'migration_incomplete' };
+            const messageAttachmentIds = new Set(message.attachments.map(row => row.blobId));
             const sourceEnvelope = StrictSessionStoredMessageContentEnvelopeSchema.parse(message.content);
             const sourceReferences = sourceEnvelope.t === 'plain'
                 ? readDiscussionAttachmentReferencesV1(DiscussionMessageContentV1StoredSchema.parse(sourceEnvelope.v)) : null;
             const targetReferences = replacement.content.t === 'plain'
                 ? readDiscussionAttachmentReferencesV1(DiscussionMessageContentV1StoredSchema.parse(replacement.content.v)) : null;
             for (const references of [sourceReferences, targetReferences]) {
-                if (references && (new Set(references.map(reference => reference.blobId)).size !== attachments.length
-                    || references.some(reference => !attachmentIds.has(reference.blobId)))) return { status: 'migration_incomplete' };
+                if (references && (new Set(references.map(reference => reference.blobId)).size !== messageAttachmentIds.size
+                    || references.some(reference => !messageAttachmentIds.has(reference.blobId)))) return { status: 'migration_incomplete' };
             }
             const targetByBlobId = new Map(targetReferences?.map(reference => [reference.blobId, reference]));
             const sourceReferenceByBlobId = new Map(sourceReferences?.map(reference => [reference.blobId, reference]));
-            const sourceByBlobId = new Map(message.attachments.map(row => [row.blobId, row]));
             for (const attachment of attachments) {
                 const source = sourceByBlobId.get(attachment.blobId);
                 const candidate = input.preparedAttachments?.get(discussionConversionAttachmentKey(message.id, attachment.blobId));

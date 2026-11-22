@@ -5,6 +5,7 @@ import { getActionSpec } from './actionSpecs.js';
 import { bindDiscussionActionHttpRequestV1 } from './discussionActionFamily.js';
 import * as discussionFamily from './discussionActionFamily.js';
 import { bindHomeDomainHttpRequestV1 } from './homeDomainHttpBinding.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { buildDiscussionMutationRequestBodyV1 } from '../discussions/api.js';
 import { DiscussionAccessGrantRemoveRequestV1Schema } from '../discussions/access.js';
 import { DiscussionMessagesQueryV1Schema } from '../discussions/query.js';
@@ -13,6 +14,11 @@ import { DiscussionMessageV1Schema } from '../discussions/models.js';
 import { createDiscussionMessageRefV1, DiscussionMessageRefV1Schema } from '../discussions/messageRefs.js';
 
 describe('Home Discussion Action identity', () => {
+  it.each(['discussion.attachment.remove', 'artifact.revisions.trim'] as const)('requires agent approval for %s', actionId => {
+    expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
+      context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
+  });
+
   it('binds an attachment read to its committed Discussion message and exact blob', () => {
     const input = { discussionId: 'discussion/one', messageId: 'message/two',
       blobId: 'aee3c9c8-18d8-4e40-9b23-3ab21b67b7ca', throughSeq: 7 };

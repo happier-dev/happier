@@ -4,7 +4,7 @@ import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
 import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactTeamResourceKindV1Schema, type ArtifactTeamResourceKindV1, ArtifactKindWriteBatchInputV1Schema,
     ArtifactKindWriteBatchResponseV1Schema, ArtifactKindCoverageV1Schema, type ArtifactKindWriteBatchResponseV1, type ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
-import { createServerFeatureGatedRouteApp } from '@/app/features/catalog/serverFeatureGate';
+import { createServerFeatureGatedRouteApp, isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { registerArtifactEditProposalRoutes } from './artifactEditProposalRoutes';
 import { readArtifactAccountEncryptionMigrationInventoryInTx } from '@/app/artifacts/artifactAccountEncryptionMigrationInventory';
 import { eventRouter, buildNewArtifactUpdate, buildUpdateArtifactUpdate, buildDeleteArtifactUpdate } from "@/app/events/eventRouter";
@@ -31,12 +31,18 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { log, warn } from "@/utils/logging/log";
 import * as privacyKit from "privacy-kit";
 import { createArtifact, deleteArtifact, updateArtifact } from "@/app/artifacts/artifactWriteService";
-import { listArtifactBodyRevisions, restoreArtifactBodyRevision } from "@/app/artifacts/artifactRevisionService";
-import { ArtifactStorageSizeUnavailableError, readArtifactStorageUsageInTx } from "@/app/artifacts/artifactStorageService";
+import { listArtifactBodyRevisions, listArtifactRevisionHeaders, restoreArtifactBodyRevision, trimArtifactRevisions } from "@/app/artifacts/artifactRevisionService";
+import { ArtifactStorageSizeUnavailableError, InvalidStorageInventoryCursorError, readArtifactStorageUsageInTx, readStorageInventoryInTx } from "@/app/artifacts/artifactStorageService";
+import { resolveDiscussionContextInTx } from '@/app/discussions/access';
 import { readArtifactBlob } from '@/app/artifacts/artifactBlobService';
+import { ARTIFACT_REVISIONS_TRIM_ACTION_ID_V1 } from '@happier-dev/protocol/artifacts/artifactActionIdsV1';
+import { requireRouteActionAuthority } from '@/app/api/utils/requireRouteActionAuthority';
+import { PresentUserRequiredResponseSchema } from '@/app/api/utils/requirePresentUser';
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { ArtifactCallerAccessV1Schema, ArtifactAccessGrantSetStorageInputV1Schema, ArtifactAccessGrantRemoveInputV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitInputV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactAccessErrorCodeV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
-import { ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema, ArtifactQuotaExceededV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactRevisionHeadersResponseV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactRevisionTrimResultV1Schema, ArtifactStorageUsageV1Schema, ArtifactQuotaExceededV1Schema,
+    StorageInventoryV1Schema, StorageInventoryKindV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactStoredSizeBytesV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { ArtifactBlobReadResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { ArtifactAccountEncryptionMigrationInventoryV1Schema } from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
@@ -82,6 +88,7 @@ const artifactListItemSchema = z.object({
     sharedTeamIds: z.optional(z.array(z.string())),
     sharedWithTeamScope: ArtifactHttpReadV1Schema.shape.sharedWithTeamScope,
     encryptionMode: ArtifactAccessRecipientCensusResponseV1Schema.shape.encryptionMode,
+    storedSizeBytes: ArtifactStoredSizeBytesV1Schema,
 });
 
 const artifactInventoryItemSchema = z.union([artifactListItemSchema, ArtifactHttpLockedListItemV1Schema]);
@@ -102,14 +109,16 @@ function projectArtifactReadableListItem(artifact: ArtifactListItemForCaller) {
     };
 }
 
-function projectArtifactListItem(artifact: ArtifactInventoryItemForCaller) {
-    if (!('availability' in artifact)) return projectArtifactReadableListItem(artifact);
+function projectArtifactListItem(artifact: ArtifactInventoryItemForCaller & { storedSizeBytes?: number }) {
+    const size = artifact.storedSizeBytes === undefined ? {} : { storedSizeBytes: artifact.storedSizeBytes };
+    if (!('availability' in artifact)) return { ...projectArtifactReadableListItem(artifact), ...size };
     return { id: artifact.id, kind: artifact.kind, kindHint: artifact.kindHint,
         ownerAccountId: artifact.ownerAccountId, ownerDisplayName: artifact.ownerDisplayName,
         access: artifact.access, publicAudience: artifact.publicAudience,
-        sharedTeamIds: artifact.sharedTeamIds, sharedWithTeamScope: artifact.sharedWithTeamScope, encryptionMode: artifact.encryptionMode,
+        ...(artifact.sharedTeamIds === undefined ? {} : { sharedTeamIds: [...artifact.sharedTeamIds] }),
+        sharedWithTeamScope: artifact.sharedWithTeamScope, encryptionMode: artifact.encryptionMode,
         availability: artifact.availability, headerVersion: artifact.headerVersion, bodyVersion: artifact.bodyVersion,
-        seq: artifact.seq, createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime() };
+        seq: artifact.seq, createdAt: artifact.createdAt.getTime(), updatedAt: artifact.updatedAt.getTime(), ...size };
 }
 
 /** Retain the exact read's owner recovery versus granted-caller refusal semantics. */
@@ -176,11 +185,36 @@ export function artifactsRoutes(app: Fastify) {
     app.get('/v1/artifacts/storage/usage', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "artifacts") },
-        schema: { response: { 200: ArtifactStorageUsageV1Schema,
+        schema: { querystring: z.strictObject({ inventory: z.optional(z.literal('true')), paged: z.optional(z.literal('true')),
+                discussionId: z.optional(z.string().check(z.minLength(1))), kinds: z.optional(z.string()),
+                sort: z.optional(z.literal('size_desc')), cursor: z.optional(z.string().check(z.minLength(1))) }),
+            response: { 200: z.union([ArtifactStorageUsageV1Schema, StorageInventoryV1Schema]),
+            400: z.strictObject({ error: z.enum(['invalid_storage_inventory_cursor', 'invalid_storage_inventory_kinds']) }),
+            404: z.strictObject({ error: z.literal('discussion_not_found') }),
             503: z.object({ error: z.literal('storage_size_out_of_range') }) } },
     }, async (request, reply) => {
-        try { return reply.send(await inReadSnapshot(tx => readArtifactStorageUsageInTx(tx, request.userId))); }
+        const query = request.query;
+        const kinds = z.array(StorageInventoryKindV1Schema).safeParse(query.kinds ? query.kinds.split(',') : []);
+        if (!kinds.success) return reply.code(400).send({ error: 'invalid_storage_inventory_kinds' });
+        try {
+            if (query.inventory !== 'true') return reply.send(await inReadSnapshot(tx => readArtifactStorageUsageInTx(tx, request.userId)));
+            const scoped = query.discussionId;
+            const paged = query.paged === 'true' || scoped !== undefined;
+            const result = await inReadSnapshot(async tx => {
+                if (scoped) {
+                    if (!await isServerFeatureEnabledForHome('sessions.conversations', { tx })) return null;
+                    const discussion = await resolveDiscussionContextInTx(tx, { discussionId: scoped, accountId: request.userId,
+                        authentication: readSessionAccessAuthenticationFromRequest(request) });
+                    if (!discussion?.keyReadiness) return null;
+                }
+                return readStorageInventoryInTx(tx, request.userId, paged ? {
+                    discussionId: scoped, kinds: query.kinds === undefined ? undefined : kinds.data, cursor: query.cursor,
+                } : undefined);
+            });
+            return result ? reply.send(result) : reply.code(404).send({ error: 'discussion_not_found' });
+        }
         catch (error) {
+            if (error instanceof InvalidStorageInventoryCursorError) return reply.code(400).send({ error: error.code });
             if (error instanceof ArtifactStorageSizeUnavailableError) return reply.code(503).send({ error: error.code });
             throw error;
         }
@@ -189,12 +223,19 @@ export function artifactsRoutes(app: Fastify) {
     app.get('/v1/artifacts/:id/revisions', {
         preHandler: app.authenticate,
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "artifacts") },
-        schema: { params: z.object({ id: z.string() }), response: {
-            200: ArtifactRevisionListResponseV1Schema,
+        schema: { params: z.object({ id: z.string() }), querystring: z.strictObject({ projection: z.optional(z.literal('headers')) }), response: {
+            200: z.union([ArtifactRevisionListResponseV1Schema, ArtifactRevisionHeadersResponseV1Schema]),
             404: z.object({ error: z.literal('Artifact not found') }),
             503: z.object({ error: z.literal('artifact_content_unavailable') }),
         } },
     }, async (request, reply) => {
+        if (request.query.projection === 'headers') {
+            const result = await listArtifactRevisionHeaders({ actorAccountId: request.userId, artifactId: request.params.id });
+            if (!result.ok) return result.error === 'artifact_not_found'
+                ? reply.code(404).send({ error: 'Artifact not found' })
+                : reply.code(503).send({ error: 'artifact_content_unavailable' });
+            return reply.send({ retentionCount: result.retentionCount, revisions: result.revisions });
+        }
         const result = await listArtifactBodyRevisions({ actorAccountId: request.userId, artifactId: request.params.id });
         if (!result.ok) return result.error === 'artifact_not_found'
             ? reply.code(404).send({ error: 'Artifact not found' })
@@ -203,6 +244,24 @@ export function artifactsRoutes(app: Fastify) {
             ...revision, body: privacyKit.encodeBase64(revision.body), createdAt: revision.createdAt.getTime(),
             provenance: revision.provenance ? privacyKit.encodeBase64(revision.provenance) : null,
         })) });
+    });
+
+    app.delete('/v1/artifacts/:id/revisions', {
+        preHandler: [app.authenticate, requireRouteActionAuthority(ARTIFACT_REVISIONS_TRIM_ACTION_ID_V1)],
+        schema: { params: z.object({ id: z.string() }), response: {
+            200: ArtifactRevisionTrimResultV1Schema,
+            403: PresentUserRequiredResponseSchema,
+            404: z.object({ error: z.literal('Artifact not found') }),
+            503: z.object({ error: z.literal('artifact_content_unavailable') }),
+        } },
+    }, async (request, reply) => {
+        try {
+            const result = await trimArtifactRevisions({ actorAccountId: request.userId, artifactId: request.params.id });
+            return result ? reply.send(result) : reply.code(404).send({ error: 'Artifact not found' });
+        } catch (error) {
+            log({ module: 'api', level: 'error', error }, 'Failed to clear Artifact history');
+            return reply.code(503).send({ error: 'artifact_content_unavailable' });
+        }
     });
 
     app.post('/v1/artifacts/:id/revisions/:bodyVersion/restore', {
@@ -264,6 +323,7 @@ export function artifactsRoutes(app: Fastify) {
                 limit: z.optional(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(ARTIFACT_LIST_PAGE_MAX_ITEMS_V1))),
                 cursor: z.optional(z.string().check(z.minLength(1))),
                 includeBody: z.optional(z.literal('true')),
+                includeStoredSize: z.optional(z.literal('true')),
                 ownerAccountId: z.optional(z.string()),
                 audience: z.optional(z.literal('received')),
                 sharedWithTeamId: z.optional(z.string().check(z.minLength(1))),
@@ -284,7 +344,7 @@ export function artifactsRoutes(app: Fastify) {
         }
     }, async (request, reply) => {
         const userId = request.userId;
-        const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true'; ownerAccountId?: string; audience?: 'received';
+        const query = request.query as { limit?: number; cursor?: string; includeBody?: 'true'; includeStoredSize?: 'true'; ownerAccountId?: string; audience?: 'received';
             sharedWithTeamId?: string; teamResourceKind?: ArtifactTeamResourceKindV1;
             kind?: ArtifactCoarseKindV1; kinds?: string; approvalStates?: string; approvalSessionIds?: string;
             browserListed?: 'true'; unclassified?: 'true' | 'coarse' | 'approval' };
@@ -323,12 +383,14 @@ export function artifactsRoutes(app: Fastify) {
             sharedWithTeamId: query.sharedWithTeamId, teamResourceKind: query.teamResourceKind,
             ...(query.sharedWithTeamId && request.authAuthority
                 ? { authentication: readTeamOperationAuthenticationFromRequest(request) } : {}),
-            includeBody: query.includeBody === 'true', ownerAccountId: query.ownerAccountId, audience: query.audience, kind: query.kind, kinds,
+            includeBody: query.includeBody === 'true', includeStoredSize: query.includeStoredSize === 'true',
+            ownerAccountId: query.ownerAccountId, audience: query.audience, kind: query.kind, kinds,
             approvalStates, approvalSessionIds,
             ...(query.browserListed ? { browserListed: true } : {}),
             unclassified: query.unclassified === 'coarse' || query.unclassified === 'approval' ? query.unclassified : query.unclassified === 'true' })
             .catch((error: unknown) => {
-                if (error && typeof error === 'object' && 'code' in error && error.code === 'source_unavailable') return null;
+                if (error instanceof ArtifactStorageSizeUnavailableError
+                    || (error && typeof error === 'object' && 'code' in error && error.code === 'source_unavailable')) return null;
                 throw error;
             });
         if (page === null) return reply.code(503).send({ error: 'artifact_content_unavailable' });

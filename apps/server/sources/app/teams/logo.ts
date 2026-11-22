@@ -120,6 +120,7 @@ export async function setTeamLogo(input: Readonly<{
                 teamId: input.teamId,
                 actorAccountId: input.actorAccountId,
                 logo,
+                storedSizeBytes: BigInt(processed.image.bytes.byteLength),
                 authentication: input.authentication,
             });
         }, { isolationLevel: "ReadCommitted" /* The Team guard precedes fresh authority and displaced-logo capture. */ });
@@ -158,6 +159,7 @@ export async function removeTeamLogo(input: Readonly<{
             teamId: input.teamId,
             actorAccountId: input.actorAccountId,
             logo: null,
+            storedSizeBytes: null,
             authentication: input.authentication,
         });
     }, { isolationLevel: "ReadCommitted" /* The Team guard precedes fresh authority and displaced-logo capture. */ });
@@ -210,6 +212,7 @@ async function commitTeamLogoInTx(
         teamId: string;
         actorAccountId: string;
         logo: StoredTeamLogo | null;
+        storedSizeBytes: bigint | null;
         authentication?: TeamOperationAuthenticationContext;
     }>,
 ): Promise<LogoCommit> {
@@ -222,7 +225,8 @@ async function commitTeamLogoInTx(
 
     const updated = await tx.team.update({
         where: { id: input.teamId },
-        data: { logo: input.logo === null ? getActivePrismaRuntime().DbNull : input.logo },
+        data: { logo: input.logo === null ? getActivePrismaRuntime().DbNull : input.logo,
+            logoStoredSizeBytes: input.storedSizeBytes },
         select: TEAM_PROJECTION_SELECT,
     });
     await publishTeamChangedInTx(tx, { teamId: input.teamId });

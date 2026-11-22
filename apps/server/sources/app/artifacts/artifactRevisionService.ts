@@ -1,10 +1,14 @@
-import { inTx, type Tx } from "@/storage/inTx";
+import { inReadSnapshot, inTx, type Tx } from "@/storage/inTx";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
-import { acquireArtifactPublicationLocksInTx, readArtifactForCallerInTx } from "./artifactAccessService";
+import { acquireArtifactPublicationLocksInTx, readArtifactForCallerInTx, readArtifactHeaderForCallerInTx, resolveArtifactAudienceInTx } from "./artifactAccessService";
+import { readArtifactStorageUsageInTx, storageSize, storageSql, storedDateTimestamp } from "./artifactStorageService";
+import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
+import { viewerMayTrimArtifactRevisions } from './artifactClassification';
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { openArtifactStoredContentBytes, openArtifactProvenanceBytes } from "./artifactStoredContent";
 import { updateArtifactTx, type UpdateArtifactResult } from "./artifactWriteService";
-import { cleanupArtifactOrphanBlobsAfterCommit } from './artifactBlobService';
+import { cleanupArtifactOrphanBlobs, cleanupArtifactOrphanBlobsAfterCommit } from './artifactBlobService';
+import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { ArtifactBodyEnvelopeV1Schema, ArtifactBodyEnvelopeV1StoredSchema } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -28,8 +32,7 @@ async function captureArtifactBodyRevisionsInTx(tx: Tx, input: Readonly<{
                 mode: read.artifact.encryptionMode, bodyVersion: revision.bodyVersion, dataEncryptionKey: read.artifact.dataEncryptionKey,
                 provenanceDataEncryptionKey: read.artifact.provenanceDataEncryptionKey, content: revision.provenance }) : null;
         if (revision.provenance && (read.artifact.encryptionMode === 'plain' || read.artifact.provenanceDataEncryptionKey) && !provenance) return { ok: false as const, error: 'artifact_content_unavailable' as const };
-        projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt,
-            sizeBytes: revision.body.byteLength + (revision.provenance?.byteLength ?? 0) });
+        projected.push({ bodyVersion: revision.bodyVersion, body, provenance, createdAt: revision.createdAt });
     }
     return { ok: true as const, revisions: projected, retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
 }
@@ -41,6 +44,50 @@ export async function listArtifactBodyRevisionsInTx(tx: Tx, input: Parameters<ty
 export async function listArtifactBodyRevisions(input: Parameters<typeof listArtifactBodyRevisionsInTx>[1]): Promise<Awaited<ReturnType<typeof listArtifactBodyRevisionsInTx>>> {
     return await captureReadSnapshot<Awaited<ReturnType<typeof captureArtifactBodyRevisionsInTx>>>(
         tx => captureArtifactBodyRevisionsInTx(tx, input));
+}
+
+export async function listArtifactRevisionHeaders(input: Readonly<{ actorAccountId: string; artifactId: string }>) {
+    return captureReadSnapshot(async tx => {
+        const access = await readArtifactHeaderForCallerInTx(tx, input);
+        if (!access.ok) return access;
+        if (!getArtifactKindPolicyV1(access.artifact.kindHint).browserListed)
+            return { ok: false as const, error: 'artifact_not_found' as const };
+        const { sql, identifier: name, bytes } = storageSql();
+        const rows = await tx.$queryRaw<Array<{ bodyVersion: number | bigint; createdAt: Date | bigint;
+            sizeBytes: number | bigint | string }>>(sql.sql`
+            SELECT r.${name('bodyVersion')}, r.${name('createdAt')},
+                ${bytes('body', 'r')} + COALESCE(${bytes('provenance', 'r')}, 0)
+                + COALESCE(b.${name('storedSizeBytes')}, 0) AS ${name('sizeBytes')}
+            FROM ${name('ArtifactRevision')} r LEFT JOIN ${name('ArtifactBlob')} b
+                ON b.${name('id')} = r.${name('blobId')} AND b.${name('artifactId')} = r.${name('artifactId')}
+            WHERE r.${name('artifactId')} = ${input.artifactId}
+            ORDER BY r.${name('bodyVersion')} DESC`);
+        return { ok: true as const, revisions: rows.map(row => ({ bodyVersion: storageSize(row.bodyVersion),
+            createdAt: storedDateTimestamp(row.createdAt), sizeBytes: storageSize(row.sizeBytes) })),
+            retentionCount: readArtifactStorageEnv(process.env).revisionRetentionCount };
+    });
+}
+
+export async function trimArtifactRevisions(input: Readonly<{ actorAccountId: string; artifactId: string }>) {
+    const { artifactId, actorAccountId } = input;
+    const trimmed = await inTx(async tx => {
+        await acquireArtifactPublicationLocksInTx(tx, artifactId, [actorAccountId]);
+        const access = await readArtifactHeaderForCallerInTx(tx, input);
+        if (!access.ok || !viewerMayTrimArtifactRevisions(access.artifact.access, access.artifact.kindHint)) return null;
+        const { sql, identifier: name, bytes } = storageSql();
+        const [total] = await tx.$queryRaw<Array<{ freedBytes: number | bigint | string }>>(sql.sql`
+            SELECT COALESCE(SUM(${bytes('body')} + COALESCE(${bytes('provenance')}, 0)), 0) AS ${name('freedBytes')}
+            FROM ${name('ArtifactRevision')} WHERE ${name('artifactId')} = ${artifactId}`);
+        const freedBytes = storageSize(total?.freedBytes ?? 0);
+        const removed = await tx.artifactRevision.deleteMany({ where: { artifactId } });
+        if (removed.count > 0) await markAccountsChanged(tx, { accountIds: await resolveArtifactAudienceInTx(tx, artifactId),
+            kind: 'artifact', entityId: artifactId });
+        return freedBytes;
+    }, { transactionClass: 'artifact-restore' });
+    if (trimmed === null) return null;
+    const removedFiles = await cleanupArtifactOrphanBlobs(artifactId);
+    return { artifactId, freedBytes: storageSize(trimmed + storageSize(removedFiles)),
+        storageUsage: await inReadSnapshot(tx => readArtifactStorageUsageInTx(tx, actorAccountId)) };
 }
 
 /** Restore the selected body with caller-prepared provenance, atomically advancing both head versions. */

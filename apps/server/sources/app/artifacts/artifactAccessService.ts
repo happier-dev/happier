@@ -14,6 +14,7 @@ import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { artifactOrdinarySqlPredicate, artifactVisibleWhere } from "./artifactClassification";
+import { readArtifactStoredSizesInTx } from "./artifactStorageService";
 import { openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from "./artifactStoredContent";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from "@/app/session/encryption/sessionDataKeyRecipientProjection";
@@ -777,8 +778,10 @@ async function countUnclassifiedArtifactsInTx(tx: Tx, input: Readonly<{
 }
 
 /** The filtered page and its completeness witness share the canonical stable read snapshot. */
-export async function listArtifactHeaderPageForCaller(input: Parameters<typeof listArtifactHeadersForCallerInTx>[1]): Promise<{
-    items: ArtifactInventoryItemForCaller[]; hasUnclassified: boolean; coverage: ArtifactKindCoverageV1;
+export async function listArtifactHeaderPageForCaller(input: Parameters<typeof listArtifactHeadersForCallerInTx>[1] & {
+    includeStoredSize?: boolean;
+}): Promise<{
+    items: (ArtifactInventoryItemForCaller & { storedSizeBytes?: number })[]; hasUnclassified: boolean; coverage: ArtifactKindCoverageV1;
 }> {
     if (input.approvalSessionIds?.length === 0) return { items: [], hasUnclassified: false, coverage: { status: 'complete', unclassifiedCount: 0 } };
     const readCount = async (tx: Tx, candidateAccess: ArtifactCandidateAccess) => input.kind !== undefined || input.kinds !== undefined
@@ -799,7 +802,9 @@ export async function listArtifactHeaderPageForCaller(input: Parameters<typeof l
         const coverage: ArtifactKindCoverageV1 = unclassifiedCount === 0
             ? { status: 'complete', unclassifiedCount: 0 }
             : { status: 'partial', unclassifiedCount, reason: 'unclassified_legacy_rows' };
-        return { items, coverage, hasUnclassified: unclassifiedCount > 0 };
+        const sizes = input.includeStoredSize ? await readArtifactStoredSizesInTx(tx, items.map(item => item.id)) : null;
+        return { items: sizes ? items.map(item => ({ ...item, storedSizeBytes: sizes.get(item.id) })) : items,
+            coverage, hasUnclassified: unclassifiedCount > 0 };
     };
     return await captureReadSnapshot(capture);
 }

@@ -6,7 +6,7 @@ import { getArtifactKindPolicyV1 } from './artifactSharingV1.js';
 import type { ArtifactActionInputV1 } from './artifactActionsV1.js';
 import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '../bots/templates/botTemplateV1.js';
 
-import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from './artifactListPageV1.js';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, compareArtifactStoredSizeV1, type ArtifactListSortV1 } from './artifactListPageV1.js';
 export { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from './artifactListPageV1.js';
 
 export type ArtifactListSelectionOptionsV1 = Readonly<{
@@ -27,11 +27,11 @@ export type ArtifactListSelectionOptionsV1 = Readonly<{
   headerFilter?: (header: Readonly<Record<string, unknown>>) => boolean;
   /** Async host authority checked before paging/body demand and on fresh headers; never sent over transport. */
   headerAdmission?: (header: Readonly<Record<string, unknown>>) => Promise<boolean>;
-  sort?: 'updated_desc' | 'created_desc' | 'title_asc'; includeBody?: boolean; signal?: AbortSignal;
+  sort?: ArtifactListSortV1; includeBody?: boolean; signal?: AbortSignal;
 }>;
 
 export type ArtifactListPageOptionsV1 = Readonly<Pick<ArtifactListSelectionOptionsV1,
-  'audience' | 'sharedWithTeamId' | 'teamResourceKind' | 'limit' | 'cursor' | 'includeBody' | 'coarseKind' | 'kinds' | 'approvalStates' | 'approvalSessionIds' | 'browserListed' | 'indexedKinds' | 'ownerAccountId' | 'signal'> & { unclassified?: boolean | 'coarse' | 'approval' }>;
+  'audience' | 'sharedWithTeamId' | 'teamResourceKind' | 'limit' | 'cursor' | 'includeBody' | 'coarseKind' | 'kinds' | 'approvalStates' | 'approvalSessionIds' | 'browserListed' | 'indexedKinds' | 'ownerAccountId' | 'signal'> & { unclassified?: boolean | 'coarse' | 'approval'; includeStoredSize?: boolean }>;
 
 /** Public hosts select membership before paging. The executor admits private approval callers. */
 export function artifactActionListSelectionV1(input: ArtifactActionInputV1<'artifact.list'> & Readonly<{ signal?: AbortSignal }>): ArtifactListSelectionOptionsV1 {
@@ -47,6 +47,7 @@ export function artifactActionListSelectionV1(input: ArtifactActionInputV1<'arti
 
 type ArtifactListHeader = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; createdAt: number; updatedAt: number;
+  storedSizeBytes?: number;
 }>;
 type ArtifactListPage<T> = Readonly<{ items: readonly T[]; nextCursor?: string; coverage?: 'complete' | 'partial';
   kindCoverage?: ArtifactKindCoverageV1; hasUnclassified?: boolean }>;
@@ -96,6 +97,7 @@ function artifactHeaderSelection(options: ArtifactListSelectionOptionsV1 = {}) {
     && matchesSelection(item, true);
   const compare = (left: ArtifactListHeader, right: ArtifactListHeader) => {
     const primary = options.sort === 'title_asc' ? title(left).localeCompare(title(right))
+      : options.sort === 'size_desc' ? compareArtifactStoredSizeV1(left.storedSizeBytes, right.storedSizeBytes, title(left), title(right))
       : options.sort === 'created_desc' ? right.createdAt - left.createdAt : right.updatedAt - left.updatedAt;
     return primary || (updatedOrder ? right.artifactId.localeCompare(left.artifactId) : left.artifactId.localeCompare(right.artifactId));
   };
@@ -138,6 +140,8 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
     throw new TypeError('Header admission requires separate body reads');
   }
   const { kinds, updatedOrder, matches, compare, approvalSelection, unknownApprovalStateMatches } = artifactHeaderSelection(options);
+  const received = options?.audience === 'received';
+  const sizeSelection = options?.sort === 'size_desc' ? { includeStoredSize: true as const } : {};
   if (kinds?.length === 0 || options?.approvalSessionIds?.length === 0) return { items: [], coverage: 'complete' };
   // The server owns Team bucket membership, including locked and legacy rows.
   // Preserve its structural frontier instead of filling a page from the library.
@@ -165,8 +169,8 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   }
   // Received discovery is a demanded structural page, including when a private
   // search is sparse. Its frontier belongs to transport, never a logical fill
-  // or legacy-inventory walk, and this path never requests bodies.
-  if (options?.audience === 'received') {
+  // or legacy-inventory walk. Explicit size ordering uses the header walk below.
+  if (received && options.sort !== 'size_desc') {
     const page = await params.readPage({ audience: 'received', limit: Math.min(options.limit ?? ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1),
       ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
       ...(options.cursor ? { cursor: options.cursor } : {}),
@@ -218,15 +222,17 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   let hasMorePhysicalRows = false;
   do {
     const page = await params.readPage({ limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1, ...(cursor ? { cursor } : {}),
+      ...sizeSelection,
+      ...(received ? { audience: 'received' as const } : {}),
       ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
       ...(options.browserListed ? { browserListed: true as const } : options.indexedKinds !== undefined ? { indexedKinds: options.indexedKinds }
         : kinds !== undefined ? { kinds } : options.coarseKind ? { coarseKind: options.coarseKind } : {}),
       ...(options.ownerAccountId !== undefined ? { ownerAccountId: options.ownerAccountId } : {}),
       ...(options.approvalStates !== undefined ? { approvalStates: options.approvalStates } : {}),
       ...(options.approvalSessionIds !== undefined ? { approvalSessionIds: options.approvalSessionIds } : {}),
-      ...(options.includeBody && !params.readBodies ? { includeBody: true } : {}), ...(options.signal ? { signal: options.signal } : {}) });
+      ...(!received && options.includeBody && !params.readBodies ? { includeBody: true } : {}), ...(options.signal ? { signal: options.signal } : {}) });
     throwIfAborted(options.signal);
-    if (kinds !== undefined || options.indexedKinds !== undefined || options.browserListed || approvalSelection) requireArtifactKindCoverageV1(page.kindCoverage);
+    if (received || kinds !== undefined || options.indexedKinds !== undefined || options.browserListed || approvalSelection) requireArtifactKindCoverageV1(page.kindCoverage);
     // Indexed classification lag is resolved by the legacy header pass below;
     // classification lag is not itself unreadable content.
     if (coarseSelection && (page.hasUnclassified === true || page.kindCoverage?.status === 'partial')) hasUnclassifiedCoarseRows = true;
@@ -235,7 +241,8 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
     if (page.coverage === 'partial') coverage = 'partial';
     if (page.items.some(unknownApprovalStateMatches)) coverage = 'partial';
     if (page.kindCoverage) {
-      kindCoverage = page.kindCoverage;
+      if (!received || kindCoverage?.status !== 'partial') kindCoverage = page.kindCoverage;
+      if (received && kindCoverage.status === 'partial') coverage = 'partial';
       if (kindCoverage.status === 'partial' && kinds === undefined && !options.browserListed && !approvalSelection && !coarseSelection) coverage = 'partial';
     }
     all.push(...await admittedHeaders(page.items));
@@ -246,12 +253,13 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   } while (true);
   // Legacy membership is resolved only under the server's current typed witness.
   // This same header reader never repairs hints or opens unrelated bodies.
-  if ((kinds !== undefined || approvalSelection || coarseSelection) && (options.indexedKinds === undefined || approvalSelection)
+  if (!received && (kinds !== undefined || approvalSelection || coarseSelection) && (options.indexedKinds === undefined || approvalSelection)
     && (kindCoverage?.status === 'partial' || hasUnclassifiedCoarseRows)) {
     let legacyCursor = updatedOrder ? options.cursor : undefined;
     const selectedIds = new Set(all.map(item => item.artifactId));
     do {
       const page = await params.readPage({ limit: ARTIFACT_LIST_PAGE_MAX_ITEMS_V1,
+        ...sizeSelection,
         ...(options.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId, teamResourceKind: options.teamResourceKind }),
         unclassified: approvalSelection ? 'approval' : coarseSelection ? 'coarse' : true,
         ...(legacyCursor ? { cursor: legacyCursor } : {}),
@@ -277,7 +285,7 @@ export async function listArtifactHeadersV1<T extends ArtifactListHeader>(params
   // Only this page needs content. Recheck fresh returned headers rather than
   // attaching a new body to the earlier header/revision or disclosing a kind
   // that changed during the read. Continuation uses the structural frontier.
-  const selected = options.includeBody && params.readBodies && pageItems.length > 0 ? await params.readBodies(pageItems) : pageItems;
+  const selected = !received && options.includeBody && params.readBodies && pageItems.length > 0 ? await params.readBodies(pageItems) : pageItems;
   throwIfAborted(options.signal);
   if (selected.some(unknownApprovalStateMatches)) coverage = 'partial';
   const items = (await admittedHeaders(selected)).sort(compare);

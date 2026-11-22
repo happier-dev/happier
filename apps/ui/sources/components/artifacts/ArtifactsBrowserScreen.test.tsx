@@ -948,7 +948,8 @@ describe('Artifacts browser recovery', () => {
             homes: [{ key: 'owner', serverUrl: 'https://artifact-browser-quota.test', accountId: 'owner' }],
             route: (request) => {
                 if (request.path === '/v1/artifacts/storage/usage')
-                    return Response.json({ usedBytes, limitBytes: 1000, documentLimitBytes: null, revisionRetentionCount: 10 });
+                    return Response.json({ totalBytes: usedBytes, artifactLimitBytes: 1000, unmeasuredKinds: [],
+                        byKind: { artifacts: usedBytes, pluginArtifacts: 0, discussionAttachments: 0, accountPets: 0, pluginCollections: 0 } });
                 if (request.path === '/v1/artifacts' && request.method === 'POST')
                     return Response.json({ error: 'quota_exceeded', budget: 'account', limitBytes: 1000, usedBytes }, { status: 413 });
                 if (request.path === '/v1/artifacts/document' && request.method === 'DELETE') {

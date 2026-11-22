@@ -42,7 +42,7 @@ export async function isAccountPrivateFileUploadActiveInTx(tx: Tx, accountId: st
 /** Capture the exact private locator before IO, under the existing Account fence. */
 export async function captureAccountPrivateFileUploadInTx(tx: Tx, input: Readonly<{
     accountId: string; path: string; reuseKey: string;
-    metadata?: Readonly<{ width: number; height: number; thumbhash: string }>;
+    metadata?: Readonly<{ width: number; height: number; thumbhash: string; storedSizeBytes?: bigint }>;
 }>): Promise<Readonly<{ id: string }> | null> {
     if (!await isAccountPrivateFileUploadActiveInTx(tx, input.accountId)) return null;
     return await tx.uploadedFile.create({ data: { accountId: input.accountId, path: input.path,

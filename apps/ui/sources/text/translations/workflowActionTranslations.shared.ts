@@ -22,7 +22,7 @@ export const en = {
     artifactPublish: "Publish a file",
     artifactRevisions: "List document versions",
     artifactRestore: "Restore a document version",
-    artifactUsage: "Read document storage usage",
+    artifactUsage: "Read Account storage",
     artifactShare: "Share a document by link",
     artifactLinks: "List document links",
     artifactRevoke: "Revoke a document link",

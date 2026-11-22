@@ -58,6 +58,7 @@ function captureResource(input: ResourceInput) {
                 code: result.kind === 'failed' ? result.errorCode : 'discussion_content_unavailable' });
             assertCurrent(signal);
             const value = result.value;
+            if ('removedByAccountId' in value) throw Object.assign(new Error('Discussion attachment was removed'), { code: 'discussion_attachment_removed' });
             if (value.blobId !== reference.blobId || value.sha256 !== reference.sha256 || value.sizeBytes !== reference.sizeBytes || value.mime !== reference.mime) {
                 throw Object.assign(new Error('Discussion attachment identity changed'), { code: 'discussion_content_unavailable' });
             }

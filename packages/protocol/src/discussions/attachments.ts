@@ -36,13 +36,22 @@ export const DiscussionAttachmentReadInputV1Schema = lazyZodSchema(() => z.exten
   throughSeq: z.optional(z.number().check(z.int(), z.nonnegative())),
 }));
 export type DiscussionAttachmentReadInputV1 = z.infer<typeof DiscussionAttachmentReadInputV1Schema>;
-export const DiscussionAttachmentReadResponseV1Schema = lazyZodSchema(() => z.strictObject({
-  blobId: BinaryBlobReferenceV1Schema.shape.blobId, content: BinaryBlobStoredContentV1Schema,
+export const DiscussionAttachmentRemovedV1Schema = lazyZodSchema(() => z.strictObject({
+  blobId: BinaryBlobReferenceV1Schema.shape.blobId,
+  removedByAccountId: z.string().check(z.minLength(1)),
 }));
+export type DiscussionAttachmentRemovedV1 = z.infer<typeof DiscussionAttachmentRemovedV1Schema>;
+export const DiscussionAttachmentReadResponseV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ blobId: BinaryBlobReferenceV1Schema.shape.blobId, content: BinaryBlobStoredContentV1Schema }),
+  DiscussionAttachmentRemovedV1Schema,
+]));
 export type DiscussionAttachmentReadResponseV1 = z.infer<typeof DiscussionAttachmentReadResponseV1Schema>;
 /** Semantic Action output has already been opened and integrity checked by the invoking host. */
-export const DiscussionAttachmentReadResultV1Schema = lazyZodSchema(() => z.strictObject({
-  ...BinaryBlobReferenceV1Schema.shape,
-  bytesBase64: BinaryBlobStoredContentV1Schema.def.options[0].shape.v,
-}));
+export const DiscussionAttachmentReadResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({
+    ...BinaryBlobReferenceV1Schema.shape,
+    bytesBase64: BinaryBlobStoredContentV1Schema.def.options[0].shape.v,
+  }),
+  DiscussionAttachmentRemovedV1Schema,
+]));
 export type DiscussionAttachmentReadResultV1 = z.infer<typeof DiscussionAttachmentReadResultV1Schema>;

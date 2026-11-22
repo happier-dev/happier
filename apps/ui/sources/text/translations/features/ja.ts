@@ -3367,6 +3367,7 @@ const artifactsBrowserTranslations = { ja: {
             label: '並べ替え',
             updated_desc: '最近更新',
             created_desc: '最近作成',
+            size_desc: 'サイズの大きい順',
             title_asc: 'タイトル',
         },
         view: {

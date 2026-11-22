@@ -3,7 +3,8 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import type { ActionExecutionPlacement, ActionSurfaces } from '../metadata.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
-import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
+import { ARTIFACT_ACTION_IDS_V1, STORAGE_INVENTORY_READ_ACTION_ID_V1 } from '../../artifacts/artifactActionIdsV1.js';
+import { ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 
@@ -65,7 +66,8 @@ export const ARTIFACT_ACTION_COPY = {
   'artifact.publish_from_file': ['Save a file as a document', 'Turn a file on a machine into a document in your account.'],
   'artifact.revisions.list': ['List document versions', 'See the earlier versions of a document.'],
   'artifact.revisions.restore': ['Restore document version', 'Make an earlier version of a document the current one.'],
-  'artifact.storage.usage': ['Read document storage', 'See how much space your documents take.'],
+  'artifact.revisions.trim': ['Clear old document versions', 'Delete a document’s retained versions and keep the current version and its file.'],
+  [STORAGE_INVENTORY_READ_ACTION_ID_V1]: ['Read storage inventory', 'See scoped storage totals and one page of the largest stored items.'],
   'artifact.public_link.create': ['Create document link', 'Create an anonymous or signed-in link to a document.'],
   'artifact.public_link.list': ['List document links', 'See a document’s links for the selected audience.'],
   'artifact.public_link.revoke': ['Turn off document public link', 'Stop a public link working. People who have it can no longer open the document.'],
@@ -80,11 +82,11 @@ export function isAnsweringClientArtifactExport(input: unknown): boolean {
 export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly<{
   requiredAuthority: 'account_automation';
 }>)[] = lazyActionSpecArray(() => ARTIFACT_ACTION_IDS_V1.map((id): PreNormalizedActionSpec & Readonly<{ requiredAuthority: 'account_automation' }> => {
-  const read = id === 'artifact.get' || id === 'artifact.list' || id === 'artifact.revisions.list' || id === 'artifact.storage.usage' || id === 'artifact.public_link.audit';
+  const read = id === 'artifact.get' || id === 'artifact.list' || id === 'artifact.revisions.list' || id === STORAGE_INVENTORY_READ_ACTION_ID_V1 || id === 'artifact.public_link.audit';
   const voice = id !== 'artifact.export';
   return {
     id, approval: { result: 'required' },
-    ...(id === 'artifact.delete'
+    ...(id === 'artifact.delete' || id === 'artifact.revisions.trim'
       ? { irreversible: true as const, confirmVerb: { key: 'common.delete', fallback: 'Delete' } } : {}),
     // The confirm's button repeats the Turn off control that opened it, matching the title.
     ...(id === 'artifact.public_link.revoke' ? { irreversible: true as const,
@@ -115,7 +117,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     // Save is the person's direct UI decision. Automation keeps the danger default;
     // notice transitions and document access remain enforced by their existing owners.
     ...(id === 'artifact.update' ? { approvalPolicy: { uiConfirmation: 'direct' as const } } : {}),
-    title: ARTIFACT_ACTION_COPY[id][0], description: id === 'artifact.export' ? ARTIFACT_ACTION_COPY[id][1]
+    title: ARTIFACT_ACTION_COPY[id][0], description: id === 'artifact.export' || id === 'artifact.revisions.trim' || id === STORAGE_INVENTORY_READ_ACTION_ID_V1 ? ARTIFACT_ACTION_COPY[id][1]
       : 'Read, publish and manage ordinary Account Artifacts through their mode-aware store.',
     safety: read ? 'safe' : 'danger', sideEffectClass: read || id === 'artifact.public_link.list' ? 'read' : 'write',
     // Agent issuance uses the answering App; a person at the CLI uses Account placement.

@@ -3416,6 +3416,7 @@ const artifactsBrowserTranslations = { it: {
             label: 'Ordina',
             updated_desc: 'Aggiornati di recente',
             created_desc: 'Creati di recente',
+            size_desc: 'Prima i più grandi',
             title_asc: 'Titolo',
         },
         view: {

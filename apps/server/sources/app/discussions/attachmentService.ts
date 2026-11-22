@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
 import type { BinaryBlobStoredContentV1, BinaryBlobReferenceV1 } from '@happier-dev/protocol/storage/binaryBlobV1';
-import type { DiscussionAttachmentReadInputV1, DiscussionAttachmentReadResponseV1 } from '@happier-dev/protocol/discussions/attachments';
+import type { DiscussionAttachmentReadRequestV1, DiscussionAttachmentReadInputV1, DiscussionAttachmentReadResponseV1,
+    DiscussionAttachmentRemovedV1 } from '@happier-dev/protocol/discussions/attachments';
 import type { DiscussionPostRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { db } from '@/storage/db';
-import type { Tx } from '@/storage/inTx';
+import { inTx, type Tx } from '@/storage/inTx';
 import { captureReadSnapshot } from '@/storage/captureReadSnapshot';
 import { normalizePrivateFileKey } from '@/storage/privateFiles/privateFileKeys';
 import { storePrivateBinaryContent, openPrivateBinaryContent } from '@/storage/privateFiles/privateBinaryContent';
@@ -12,6 +13,9 @@ import { writeAccountPrivateFileCandidate, settleAccountPrivateFileUploadInTx, d
     deleteAccountPrivateFileUpload, discussionAttachmentWritingUploadPrefix, discussionAttachmentRejectedUploadPrefix } from '@/storage/privateFiles/accountPrivateFileCustody';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import { readDiscussionMessageWithContextInTx } from './queries';
+import { isDiscussionCredentialCurrentInTx, prepareDiscussionMutationAccounts } from './access';
+import { viewerMayRemoveDiscussionAttachment } from './attachmentRemovalAuthority';
+import { markDiscussionReadersChangedInTx } from './changes';
 import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
 
 export type DiscussionAttachmentRow = Readonly<{
@@ -80,8 +84,9 @@ export async function admitDiscussionAttachmentsInTx(tx: Tx, input: Readonly<{
     if (bindings.some(binding => binding.t !== expectedKind)) return false;
     if (input.existingMessageId) {
         const retained = await tx.discussionAttachment.findMany({ where: { messageId: input.existingMessageId },
-            select: { blobId: true, encryptionMode: true } });
-        return retained.length === bindings.length && retained.every(row => row.encryptionMode === input.mode && bindingIds.has(row.blobId));
+            select: { blobId: true, encryptionMode: true, removedByAccountId: true } });
+        return retained.length === bindings.length && retained.every(row =>
+            (row.removedByAccountId !== null || row.encryptionMode === input.mode) && bindingIds.has(row.blobId));
     }
     const prepared = input.prepared ?? [];
     const byBlobId = new Map(prepared.map(item => [item.row.blobId, item]));
@@ -122,19 +127,56 @@ async function captureAttachmentInTx(tx: Tx, input: Reader) {
     const row = await tx.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId,
         message: { discussionId: input.discussionId } } });
     if (!row) return discussionFailure('discussion_not_found');
+    if (row.removedByAccountId !== null) return discussionSuccess({ removed: { blobId: row.blobId, removedByAccountId: row.removedByAccountId } });
     if (row.encryptionMode !== context.storageMode) return discussionFailure('discussion_encryption_mode_mismatch');
     return discussionSuccess({ row, mode: context.storageMode, dataEncryptionKey: context.dataEncryptionKey, ownerAccountId: context.ownerAccountId });
 }
 
 /** Capture authorized message, mode, key and immutable locator before slow private IO. */
 export async function readDiscussionAttachment(input: Reader): Promise<DiscussionResult<DiscussionAttachmentReadResponseV1>> {
-    const result = await captureReadSnapshot({ capture: tx => captureAttachmentInTx(tx, input), materialize: async captured => {
+    return captureReadSnapshot({ capture: tx => captureAttachmentInTx(tx, input), materialize: async (captured): Promise<DiscussionResult<DiscussionAttachmentReadResponseV1>> => {
         if (!captured.ok) return captured;
+        if (captured.value.removed) return discussionSuccess(captured.value.removed);
         try {
             const bytes = privacyKit.encodeBase64(new Uint8Array(await openDiscussionAttachmentBytes(captured.value.row)));
             const content: BinaryBlobStoredContentV1 = captured.value.mode === 'plain' ? { t: 'plain', v: bytes } : { t: 'encrypted', c: bytes };
-            return discussionSuccess({ ...captured.value, content });
+            return discussionSuccess({ blobId: input.blobId, content });
         } catch { return discussionFailure('discussion_content_unavailable'); }
     } });
-    return result.ok ? discussionSuccess({ blobId: input.blobId, content: result.value.content }) : result;
+}
+
+/** The message author and the Discussion's storage owner can withdraw its bytes. */
+export async function removeDiscussionAttachment(input: DiscussionAttachmentReadRequestV1 &
+    Readonly<{ actorAccountId: string; authentication: SessionAccessAuthentication }>): Promise<DiscussionResult<DiscussionAttachmentRemovedV1>> {
+    const { actorAccountId, authentication, discussionId, messageId, blobId } = input;
+    const result = await inTx(async tx => {
+        if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: actorAccountId, authentication })) {
+            return discussionFailure('discussion_manage_denied');
+        }
+        const row = await tx.discussionAttachment.findFirst({ where: { blobId, messageId, message: { discussionId } },
+            select: { storageKey: true, removedByAccountId: true,
+                message: { select: { authorAccountId: true, discussion: { select: { ownerAccountId: true } } } },
+            },
+        });
+        if (!row || !viewerMayRemoveDiscussionAttachment(actorAccountId, row.message.authorAccountId, row.message.discussion.ownerAccountId)) {
+            return discussionFailure('discussion_manage_denied');
+        }
+        const reuseKey = discussionAttachmentRejectedUploadReuseKey(blobId);
+        let custody: { id: string; accountId: string; path: string; reuseKey: string | null } | null;
+        if (row.removedByAccountId === null) {
+            const accountId = row.message.discussion.ownerAccountId;
+            custody = await tx.uploadedFile.create({ data: { accountId, path: row.storageKey, reuseKey } });
+            await tx.discussionAttachment.update({ where: { blobId },
+                data: { removedByAccountId: actorAccountId, storedSizeBytes: 0 } });
+            await markDiscussionReadersChangedInTx({ tx, discussionId });
+        } else {
+            custody = await tx.uploadedFile.findFirst({ where: { path: row.storageKey, reuseKey } });
+        }
+        return discussionSuccess({ removed: { blobId, removedByAccountId: row.removedByAccountId ?? actorAccountId }, custody });
+    }, { prepare: () => prepareDiscussionMutationAccounts(input) });
+    if (!result.ok) return result;
+    try {
+        if (result.value.custody) await deleteAccountPrivateFileUpload(result.value.custody);
+    } catch { return discussionFailure('discussion_content_unavailable'); }
+    return discussionSuccess(result.value.removed);
 }

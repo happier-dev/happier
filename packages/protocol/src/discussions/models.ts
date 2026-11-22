@@ -19,6 +19,7 @@ import { SessionDataKeyEnvelopeBytesV1Schema } from '../sessions/encryption/sess
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from './replyTargets.js';
 import { DiscussionMessageAddressingV1Schema, DiscussionSessionParticipantRefV1Schema } from './references.js';
 import { DocEditProposalDispositionV1Schema } from './docEditProposalDispositionV1.js';
+import { DiscussionAttachmentRemovedV1Schema } from './attachments.js';
 import { SessionMessageReplyPublicationFailureV1Schema } from '../sessions/messages/sessionMessageReplyPublicationV1.js';
 export { DocEditProposalDispositionV1Schema } from './docEditProposalDispositionV1.js';
 export type { DocEditProposalDispositionV1 } from './docEditProposalDispositionV1.js';
@@ -147,6 +148,7 @@ export const DiscussionMessageV1Schema = lazyZodSchema(() => z.strictObject({
   /** Null/absent only for retained messages committed before executable addressing existed. */
   addressingV1: z.optional(z.nullable(DiscussionMessageAddressingV1Schema)),
   participantDeliveryV1: z.optional(z.array(DiscussionParticipantDeliveryV1Schema)),
+  removedAttachments: z.optional(z.array(DiscussionAttachmentRemovedV1Schema)),
   replyTarget: z.optional(DiscussionReplyTargetV1Schema),
   docEditProposalDispositionV1: z.optional(DocEditProposalDispositionV1Schema),
   createdAt: z.number().check(z.int()),

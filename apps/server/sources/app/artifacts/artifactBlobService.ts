@@ -137,23 +137,26 @@ export async function cleanupRejectedArtifactBlobUploads(accountId: string): Pro
 }
 
 /** Unreferenced rows retain exact cleanup custody until idempotent storage deletion succeeds. */
-export async function cleanupArtifactOrphanBlobs(artifactId: string): Promise<void> {
+export async function cleanupArtifactOrphanBlobs(artifactId: string): Promise<bigint> {
     const obsolete = await inTx(async tx => {
         const head = await tx.artifact.findUnique({ where: { id: artifactId }, select: { currentBlobId: true } });
         const revisions = await tx.artifactRevision.findMany({ where: { artifactId }, select: { blobId: true } });
         const retainedIds = new Set([head?.currentBlobId, ...revisions.map(row => row.blobId)].filter((id): id is string => Boolean(id)));
         return (await tx.artifactBlob.findMany({ where: { artifactId } })).filter(row => !retainedIds.has(row.id));
     }, { /* Head, retained revisions and orphan blobs must share one snapshot before private-file deletion. */ isolationLevel: "Serializable", readOnly: true });
+    let freedBytes = 0n;
     for (const row of obsolete) {
         await deletePrivateFile(row.storageKey);
-        await inTx(async tx => {
+        const removed = await inTx(async tx => {
             const head = await tx.artifact.findUnique({ where: { id: artifactId }, select: { currentBlobId: true } });
             if (head?.currentBlobId === row.id || await tx.artifactRevision.findFirst({ where: { artifactId, blobId: row.id } })) {
                 throw new Error('Artifact blob cleanup lost its unreferenced precondition');
             }
-            await tx.artifactBlob.deleteMany({ where: { id: row.id, artifactId, storageKey: row.storageKey } });
+            return tx.artifactBlob.deleteMany({ where: { id: row.id, artifactId, storageKey: row.storageKey } });
         });
+        if (removed.count === 1) freedBytes += row.storedSizeBytes;
     }
+    return freedBytes;
 }
 
 /** A committed update keeps its receipt while blob rows retain cleanup custody. */

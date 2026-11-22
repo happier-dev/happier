@@ -25,12 +25,14 @@ import { type UsageNoticeArtifactHeaderV1,
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, decodePlainArtifactStoredContent, encodePlainArtifactStoredContent, isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
 import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError } from '@/api/encryption/resourceDataKey';
-import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactHttpLockedListItemV1Schema, type ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import { ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, ArtifactReadBatchInputV1Schema, ArtifactReadBatchResponseV1Schema, ArtifactReadHeadersBatchInputV1Schema, ArtifactReadHeadersBatchResponseV1Schema, ArtifactHttpReadV1Schema, ArtifactHttpLockedListItemV1Schema, ArtifactStoredSizeBytesV1Schema, type ArtifactLockedAvailabilityV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { completeArtifactAccessMutationPreparationV1, runArtifactRecipientKeyPreparationV1, prepareArtifactRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/artifacts/artifactRecipientKeyPreparationV1';
 import type { ProjectSourceArtifactReadOptionsV1 } from '@happier-dev/protocol/projects/sources/projectSourceAttachmentAdmissionV1';
 import type { ArtifactCallerAccessV1, ArtifactAccessGrantSetInputV1, ArtifactAccessGrantRemoveInputV1, ArtifactPublicLinkActionIdV1, ArtifactPublicLinkIssuedV1, ArtifactSavedByV1, ArtifactWorkspaceSourceV1, ArtifactRevisionProvenanceV1, ArtifactBodyV1, ArtifactBlobWriteV1, ArtifactListSelectionOptionsV1 } from '@happier-dev/protocol';
 import { ArtifactJsonUpdateHttpInputV1Schema } from '@happier-dev/protocol/artifacts/artifactMutationHttpV1';
-import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactStorageUsageV1Schema } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactHeaderMetadataV1Schema, ArtifactPublicAudienceV1ReadSchema, type ArtifactPublicAudienceV1, ArtifactQuotaExceededV1Schema,
+  ArtifactRevisionHeadersResponseV1Schema, ArtifactRevisionListResponseV1Schema, ArtifactRevisionTrimResultV1Schema, StorageInventoryV1Schema, createStorageInventoryQueryV1,
+  type StorageInventoryInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { canShareArtifactWriteContentV1, prepareArtifactHeaderForRevisionV1, prepareArtifactHeaderForBodyV1 } from '@happier-dev/protocol/artifacts/artifactHeaderRestorationV1';
 import { preserveSkillCreatorV1 } from '@happier-dev/protocol/prompts/library/skills/skillCreatorV1';
 import { withArtifactExcerptV1 } from '@happier-dev/protocol/artifacts/artifactExcerptV1';
@@ -169,6 +171,7 @@ export type AccountArtifactHeader = Readonly<{
   artifactId: string; header: Readonly<Record<string, unknown>>; headerVersion: number;
   seq: number; createdAt: number; updatedAt: number;
   body?: ArtifactBodyV1 | null; bodyVersion?: number;
+  storedSizeBytes?: number;
   provenance?: ArtifactRevisionProvenanceV1;
 }>;
 export function encodeAccountArtifactListCursor(item: Pick<AccountArtifactHeader, 'artifactId' | 'updatedAt'>): string {
@@ -749,6 +752,7 @@ export function createAccountArtifactStore(params: Readonly<{
     if (options?.sharedWithTeamId) url.searchParams.set('sharedWithTeamId', options.sharedWithTeamId);
     if (options?.teamResourceKind) url.searchParams.set('teamResourceKind', options.teamResourceKind);
     if (options?.includeBody) url.searchParams.set('includeBody', 'true');
+    if (options?.includeStoredSize) url.searchParams.set('includeStoredSize', 'true');
     const coarseKind = options?.coarseKind;
     const indexedKinds = options?.indexedKinds ?? options?.kinds;
     const filtered = coarseKind !== undefined || indexedKinds !== undefined || options?.browserListed === true || Boolean(options?.unclassified)
@@ -867,6 +871,7 @@ export function createAccountArtifactStore(params: Readonly<{
           ownerDisplayName: row.ownerDisplayName, access: row.access, sharedTeamIds: row.sharedTeamIds,
           publicAudience: row.publicAudience, availability: row.availability, sharedWithTeamScope: row.sharedWithTeamScope, header: {},
           headerVersion: row.headerVersion, bodyVersion: row.bodyVersion,
+          ...(row.storedSizeBytes === undefined ? {} : { storedSizeBytes: row.storedSizeBytes }),
           seq: row.seq, createdAt: row.createdAt, updatedAt: row.updatedAt });
         continue;
       }
@@ -922,8 +927,9 @@ export function createAccountArtifactStore(params: Readonly<{
           }
         }
       }
+      const storedSizeBytes = ArtifactStoredSizeBytesV1Schema.parse(value.storedSizeBytes);
       items.push({ artifactId: value.id, header: header as Readonly<Record<string, unknown>>,
-        ...content,
+        ...content, ...(storedSizeBytes === undefined ? {} : { storedSizeBytes }),
         ...(value.ownerDisplayName === undefined ? {} : { ownerDisplayName: ArtifactHttpReadV1Schema.shape.ownerDisplayName.parse(value.ownerDisplayName) }),
         ownerAccountId: access.ownerAccountId, access: access.access,
         ...(value.sharedTeamIds === undefined ? {} : { sharedTeamIds: ArtifactHttpReadV1Schema.shape.sharedTeamIds.parse(value.sharedTeamIds) }),
@@ -1344,10 +1350,28 @@ export function createAccountArtifactStore(params: Readonly<{
           : { ok: false, errorCode: 'restore_failed', error: 'artifact_restore_failed' } as const;
       },
     },
-    storageUsage: async (signal?: AbortSignal) => {
+    listRevisionHeaders: async (artifactId: string, signal?: AbortSignal) => {
       signal?.throwIfAborted();
-      const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/storage/usage`, accessConfig(signal));
-      const parsed = ArtifactStorageUsageV1Schema.safeParse(response.data);
+      const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(artifactId)}/revisions?projection=headers`, accessConfig(signal));
+      if (response.status < 200 || response.status >= 300) {
+        throw Object.assign(new Error('artifact_revisions_unavailable'), { code: response.status === 404 ? 'not_found' : 'artifact_revisions_unavailable' });
+      }
+      signal?.throwIfAborted();
+      return { artifactId, ...ArtifactRevisionHeadersResponseV1Schema.parse(response.data) };
+    },
+    trimRevisions: async (artifactId: string, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      const response = await axios.delete(`${resolveServerHttpBaseUrl()}/v1/artifacts/${encodeURIComponent(artifactId)}/revisions`, accessConfig(signal));
+      if (response.status < 200 || response.status >= 300) {
+        throw Object.assign(new Error('artifact_revisions_unavailable'), { code: response.status === 404 ? 'not_found' : 'artifact_revisions_unavailable' });
+      }
+      signal?.throwIfAborted();
+      return ArtifactRevisionTrimResultV1Schema.parse(response.data);
+    },
+    storageInventory: async (input: StorageInventoryInputV1, signal?: AbortSignal) => {
+      signal?.throwIfAborted();
+      const response = await axios.get(`${resolveServerHttpBaseUrl()}/v1/artifacts/storage/usage?${createStorageInventoryQueryV1(input)}`, accessConfig(signal));
+      const parsed = StorageInventoryV1Schema.safeParse(response.data);
       if (response.status < 200 || response.status >= 300 || !parsed.success) {
         throw Object.assign(new Error('artifact_storage_usage_unavailable'), { code: 'artifact_storage_usage_unavailable' });
       }
@@ -1523,14 +1547,15 @@ export function createAccountArtifactStore(params: Readonly<{
     // Keep refused/unopenable identities visible without content so consumers can report incomplete coverage.
     return items.map(item => byId.get(item.artifactId) ?? item);
   };
-  async function list(options?: ArtifactListSelectionOptionsV1,
+  async function list(options?: ArtifactListSelectionOptionsV1 & Pick<ArtifactListPageOptionsV1, 'includeStoredSize'>,
     readAdmittedAccountMode?: () => Promise<ConnectedServiceAccountEncryptionMode>,
     authorizationHeaders?: ArtifactRequestAuthorizationHeaders) {
     let accountMode: Promise<ConnectedServiceAccountEncryptionMode> | undefined;
     const readListAccountMode = () => accountMode ??= readAdmittedAccountMode?.()
       ?? readAccountMode({ signal: options?.signal, authorizationHeaders });
     const result = await listArtifactHeadersV1({ options,
-      readPage: page => store.list(page, readListAccountMode, authorizationHeaders), encodeCursor: encodeAccountArtifactListCursor,
+      readPage: page => store.list({ ...page, includeStoredSize: page?.includeStoredSize ?? options?.includeStoredSize },
+        readListAccountMode, authorizationHeaders), encodeCursor: encodeAccountArtifactListCursor,
       ...((options?.kind || options?.kinds || options?.headerFilter || options?.approvalStates || options?.approvalSessionIds) && options.includeBody
         ? { readBodies: (items: readonly AccountArtifactHeader[]) => readListBodies(items, options.signal, readListAccountMode, authorizationHeaders) } : {}) });
     options?.signal?.throwIfAborted();

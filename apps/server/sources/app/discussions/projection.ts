@@ -88,6 +88,7 @@ export const DISCUSSION_MESSAGE_SELECT = {
     content: true,
     createdAt: true,
     mentions: { select: { accountId: true }, orderBy: { accountId: "asc" } },
+    attachments: { where: { removedByAccountId: { not: null } }, select: { blobId: true, removedByAccountId: true } },
 } as const;
 
 export type DiscussionRow = Readonly<{
@@ -120,6 +121,7 @@ export type DiscussionMessageRow = Readonly<{
     content: unknown;
     createdAt: Date;
     mentions: readonly Readonly<{ accountId: string }>[];
+    attachments?: readonly Readonly<{ blobId: string; removedByAccountId: string | null }>[];
 }>;
 
 export type AdmittedDiscussionMessageRow = Omit<DiscussionMessageRow,
@@ -288,6 +290,8 @@ export function projectDiscussionMessageV1(
     accountActor: SessionMessageAccountActorV1 | null,
     requesterAccountActor: SessionMessageAccountActorV1 | null = null,
 ): DiscussionMessageV1 {
+    const removedAttachments = row.attachments?.flatMap(({ blobId, removedByAccountId }) =>
+        removedByAccountId === null ? [] : [{ blobId, removedByAccountId }]);
     return {
         id: row.id,
         discussionId: row.discussionId,
@@ -300,6 +304,7 @@ export function projectDiscussionMessageV1(
         ...(row.replyTargetV1 == null ? {} : { replyTarget: row.replyTargetV1 }),
         content: row.content,
         mentionedAccountIds: row.mentions.map((mention) => mention.accountId),
+        ...(removedAttachments?.length ? { removedAttachments } : {}),
         addressingV1: row.addressingV1 ?? null,
         ...(row.docEditProposalDispositionV1 == null ? {} : { docEditProposalDispositionV1: row.docEditProposalDispositionV1 }),
         createdAt: row.createdAt.getTime(),

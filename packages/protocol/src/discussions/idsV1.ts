@@ -13,6 +13,8 @@
  * This leaf carries only the ids so the canonical Action id registry can import
  * it without pulling the discussion content schemas into that module graph.
  */
+export const DISCUSSION_ATTACHMENT_REMOVE_ACTION_ID_V1 = 'discussion.attachment.remove';
+
 export const DISCUSSION_ACTION_IDS_V1 = [
   'discussion.list',
   'discussion.get',
@@ -20,6 +22,7 @@ export const DISCUSSION_ACTION_IDS_V1 = [
   'discussion.settings.set',
   'discussion.read',
   'discussion.attachment.read',
+  DISCUSSION_ATTACHMENT_REMOVE_ACTION_ID_V1,
   'discussion.create',
   'discussion.second_opinion.start',
   'discussion.post',

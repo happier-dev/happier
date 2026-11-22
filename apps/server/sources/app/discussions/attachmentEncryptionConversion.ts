@@ -19,7 +19,7 @@ export const discussionConversionAttachmentKey = (messageId: string, blobId: str
 export async function stageDiscussionAttachmentAccountEncryptionConversion(input: Readonly<{
     accountId: string; discussionId: string; messageId: string; blobId: string; content: BinaryBlobStoredContentV1;
 }>): Promise<BinaryBlobAccountEncryptionStageV1> {
-    const source = await db.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId,
+    const source = await db.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId, removedByAccountId: null,
         message: { discussionId: input.discussionId, discussion: { ownerAccountId: input.accountId } } },
         include: { message: { select: { discussion: { select: { encryptionMode: true, ownerAccount: { select: { encryptionMode: true } } } } } } } });
     const targetMode = input.content.t === 'plain' ? 'plain' : 'e2ee';
@@ -31,7 +31,7 @@ export async function stageDiscussionAttachmentAccountEncryptionConversion(input
     try {
         await inTx(async tx => {
             const fence = await acquireAccountEncryptionTransitionFenceInTx(tx, input.accountId, 'content');
-            const current = await tx.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId,
+            const current = await tx.discussionAttachment.findFirst({ where: { blobId: input.blobId, messageId: input.messageId, removedByAccountId: null,
                 storageKey: source.storageKey, encryptionMode: source.encryptionMode, storedSizeBytes: source.storedSizeBytes,
                 message: { discussionId: input.discussionId, discussion: { ownerAccountId: input.accountId, encryptionMode: source.encryptionMode } } } });
             if (fence.status !== 'ready' || fence.account.currentness.encryptionMode !== source.encryptionMode || !current) {
@@ -49,7 +49,7 @@ export async function prepareDiscussionAttachmentAccountEncryptionConversions(in
 }>): Promise<PreparedDiscussionAttachmentConversions> {
     const result = new Map<string, PreparedDiscussionAttachmentConversion>();
     for (const item of input.directive?.items ?? []) for (const message of item.messages) for (const attachment of message.attachments ?? []) {
-        const source = await db.discussionAttachment.findFirst({ where: { blobId: attachment.blobId, messageId: message.id,
+        const source = await db.discussionAttachment.findFirst({ where: { blobId: attachment.blobId, messageId: message.id, removedByAccountId: null,
             message: { discussionId: item.discussionId, discussion: { ownerAccountId: input.accountId } } } });
         if (!source) continue;
         const storageKey = discussionAttachmentCandidateStorageKey(attachment.blobId, attachment.content.uploadId);

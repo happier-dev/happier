@@ -1,4 +1,4 @@
-import { ArtifactActionInputSchemasV1, projectArtifactDocumentV1, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
+import { ArtifactActionInputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, projectArtifactDocumentV1, projectArtifactHeaderV1, type ArtifactActionInputV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { artifactSavedByFromActionContextV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import { isArtifactHtmlHeaderV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
 import { getArtifactKindPolicyV1 } from '@happier-dev/protocol/artifacts/artifactSharingV1';
@@ -126,7 +126,7 @@ export function createCliArtifactActions(params: Readonly<{
               return result.value ? [projectArtifactHeaderV1(result.value)] : [];
             }) };
           }
-          const page = await params.store.list(artifactActionListSelectionV1({ ...input, ...(signal ? { signal } : {}) }));
+          const page = await params.store.list({ ...artifactActionListSelectionV1({ ...input, ...(signal ? { signal } : {}) }), includeStoredSize: true });
           const items = page.items.map(projectArtifactHeaderV1);
           return { items, ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}) };
         }
@@ -153,16 +153,22 @@ export function createCliArtifactActions(params: Readonly<{
           return await publishArtifactFromWorkspaceFile({ store: params.store, caller, input, savedBy, ...(signal ? { signal } : {}) });
         }
         case 'artifact.revisions.list': {
-          return await params.store.revisions.list(ArtifactActionInputSchemasV1[args.actionId].parse(args.input), signal);
+          const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
+          return input.projection === 'headers'
+            ? await params.store.listRevisionHeaders(input.artifactId, signal)
+            : await params.store.revisions.list(input, signal);
         }
         case 'artifact.revisions.restore': {
           const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
           const result = await params.store.revisions.restore({ ...input, savedBy }, signal);
           return result.ok ? { artifactId: input.artifactId, revision: result.revision } : result;
         }
-        case 'artifact.storage.usage': {
-          ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
-          return await params.store.storageUsage(signal);
+        case 'artifact.revisions.trim': {
+          const input = ArtifactActionInputSchemasV1[args.actionId].parse(args.input);
+          return await params.store.trimRevisions(input.artifactId, signal);
+        }
+        case STORAGE_INVENTORY_READ_ACTION_ID_V1: {
+          return await params.store.storageInventory(ArtifactActionInputSchemasV1[args.actionId].parse(args.input), signal);
         }
       }
     } catch (error) {

@@ -5100,7 +5100,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           || artifactActionId === 'artifact.publish_from_file' && 'kind' in artifactInput
             && !getArtifactKindPolicyV1(artifactInput.kind).browserListed) return internalKindRefusal;
         if ((artifactActionId === 'artifact.update' || artifactActionId === 'artifact.delete' || artifactActionId === 'artifact.export'
-          || artifactActionId === 'artifact.revisions.list' || artifactActionId === 'artifact.revisions.restore')
+          || artifactActionId === 'artifact.revisions.list' && (!('projection' in artifactInput) || artifactInput.projection !== 'headers')
+          || artifactActionId === 'artifact.revisions.restore')
           && 'artifactId' in artifactInput) {
           // The keyholding host opens the actual current document and admits its access.
           // The existing expected-revision writer still decides stale/current mutations.

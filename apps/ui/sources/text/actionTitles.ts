@@ -1,5 +1,6 @@
 import { SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { STORAGE_INVENTORY_READ_ACTION_ID_V1 } from '@happier-dev/protocol/artifacts/artifactActionIdsV1';
 import { getTranslationValue, t, type TranslationKeyNoParams } from '@/text';
 
 /** UI names for catalog declarations that use machine ids. Never infer a title from an id. */
@@ -24,7 +25,7 @@ const ACTION_TITLE_KEYS = {
     'artifact.publish_from_file': 'workflows.actionTitles.artifactPublish',
     'artifact.revisions.list': 'workflows.actionTitles.artifactRevisions',
     'artifact.revisions.restore': 'workflows.actionTitles.artifactRestore',
-    'artifact.storage.usage': 'workflows.actionTitles.artifactUsage',
+    [STORAGE_INVENTORY_READ_ACTION_ID_V1]: 'workflows.actionTitles.artifactUsage',
     'artifact.public_link.create': 'workflows.actionTitles.artifactShare',
     'artifact.public_link.list': 'workflows.actionTitles.artifactLinks',
     'artifact.public_link.revoke': 'workflows.actionTitles.artifactRevoke',

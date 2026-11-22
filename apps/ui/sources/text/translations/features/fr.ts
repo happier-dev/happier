@@ -3427,6 +3427,7 @@ const artifactsBrowserTranslations = { fr: {
             label: 'Trier',
             updated_desc: 'Modifiés récemment',
             created_desc: 'Créés récemment',
+            size_desc: 'Les plus volumineux d’abord',
             title_asc: 'Titre',
         },
         view: {
