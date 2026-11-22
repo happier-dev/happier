@@ -11,6 +11,7 @@ type MachineNameSource = Readonly<{
     id: string;
     name: string;
     host?: string | null;
+    ownerName?: string | null;
     /** Loading text is not an identity and must not gain an id suffix. */
     disambiguate?: boolean;
 }>;
@@ -61,6 +62,11 @@ export function resolveMachineDisplayNameParts(machines: readonly MachineNameSou
     const resolved = new Map<string, Readonly<{ name: string; hint: string | null }>>();
     for (const [key, group] of groups) {
         const hostCounts = new Map<string, number>();
+        const ownerCounts = new Map<string, number>();
+        for (const { machine } of group) {
+            const owner = machine.ownerName?.trim().toLocaleLowerCase();
+            if (owner) ownerCounts.set(owner, (ownerCounts.get(owner) ?? 0) + 1);
+        }
         if (group.length > 1) for (const { host } of group) {
             const hostKey = host.toLocaleLowerCase();
             hostCounts.set(hostKey, (hostCounts.get(hostKey) ?? 0) + 1);
@@ -74,6 +80,11 @@ export function resolveMachineDisplayNameParts(machines: readonly MachineNameSou
             const hostKey = host.toLocaleLowerCase();
             if (host.length > 0 && hostKey !== key && hostCounts.get(hostKey) === 1) {
                 resolved.set(machine.id, { name, hint: host });
+                continue;
+            }
+            const ownerName = machine.ownerName?.trim();
+            if (ownerName && ownerCounts.get(ownerName.toLocaleLowerCase()) === 1) {
+                resolved.set(machine.id, { name, hint: ownerName });
                 continue;
             }
             idHints ??= uniqueIdHints(group.map((entry) => entry.machine.id));

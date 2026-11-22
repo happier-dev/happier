@@ -106,5 +106,5 @@ function isSameNamedHeaderState(
 /** The Machine facts a header name reads; presence and receipts never enter it. */
 function machineNameKeyFor(machines: readonly MachineDisplayRenderable[]): string {
     return JSON.stringify(machines.map(machine => [machine.id, machine.metadataVersion, machine.metadata === null,
-        machine.metadata?.displayName, machine.metadata?.host, machine.availability?.kind]));
+        machine.metadata?.displayName, machine.metadata?.host, machine.access?.custodian.displayName, machine.availability?.kind]));
 }

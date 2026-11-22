@@ -23,6 +23,7 @@ export type MachineAbsence = 'removed' | 'replaced' | 'temporary' | 'unlisted';
 type MachineNameInput = Readonly<{
     id?: string | null;
     metadata?: MachineNameMetadata;
+    access?: Readonly<{ custodian: Readonly<{ displayName?: string | null }> }>;
     /** The admitted managed resource's human name, before the generated guest host. */
     managedName?: string | null;
     /** The Home's mark on a managed Machine; recipients hold it without the managed record behind `managedName`. */
@@ -301,6 +302,7 @@ export function resolveMachineDisplayNameParts(machines: readonly MachineNameSou
     return resolvePublishedMachineNameParts(machines.map(machine => ({
         // The bare name: this resolver decides the telling suffix itself, from exactly these peers.
         id: machine.id, name: machineBaseDisplayName(machine),
+        ownerName: machine.access?.custodian.displayName,
         // A managed Machine's host is its provider's generated instance id, not something a person named:
         // same-named managed Machines are told apart by the short id instead, for owners and recipients alike.
         host: machine.absence || isMachineLocked(machine) || machine.managedName || machine.managedMachineRef

@@ -17,6 +17,17 @@ function countedFleet(count: number, host: (index: number) => string): Readonly<
 }
 
 describe('resolveMachineDisplayNameParts', () => {
+    it('uses a distinct published owner name before an opaque id when Machine names and hosts collide', () => {
+        const machines: Source[] = [
+            { id: 'aaaa-machine', name: 'Build', host: 'build.local', ownerName: 'Alice' },
+            { id: 'bbbb-machine', name: 'Build', host: 'build.local', ownerName: 'Bob' },
+        ];
+        expect(resolveMachineDisplayNameParts(machines).get('aaaa-machine')?.hint).toBe('Alice');
+        expect(resolveMachineDisplayNameParts(machines).get('bbbb-machine')?.hint).toBe('Bob');
+        expect(resolveMachineDisplayNameParts(machines.map(machine => ({ ...machine, ownerName: 'Alice' })))
+            .get('aaaa-machine')?.hint).toBe('aaaa');
+    });
+
     it('reads each Machine a constant number of times however many share its name', () => {
         // QA A holds 483 same-named Machines; the resolver read 233,289 host fields for them in one pass.
         for (const count of [7, 137, 483]) {

@@ -49,6 +49,14 @@ describe('getMachineDisplayName', () => {
 });
 
 describe('getMachineDisplayNameParts', () => {
+    it('passes the shared Machine custodian name to the canonical resolver', () => {
+        const left = { id: 'aaaa1111', metadata: { displayName: 'Build', host: 'build.local' },
+            access: { custodian: { displayName: 'Alice' } } };
+        const right = { id: 'bbbb2222', metadata: { displayName: 'Build', host: 'build.local' },
+            access: { custodian: { displayName: 'Bob' } } };
+        expect(getMachineDisplayNameParts(left, [left, right])).toEqual({ name: 'Build', hint: 'Alice' });
+        expect(getMachineDisplayNameParts(right, [left, right])).toEqual({ name: 'Build', hint: 'Bob' });
+    });
     it('keeps the telling suffix apart from a same-named machine\'s name, so a chip can shorten only the name', () => {
         const left = { id: 'aaaa1111', metadata: { displayName: 'NLDW3-5-36-33', host: 'NLDW3-5-36-33' } };
         const right = { id: 'bbbb2222', metadata: { displayName: 'NLDW3-5-36-33', host: 'NLDW3-5-36-33' } };
