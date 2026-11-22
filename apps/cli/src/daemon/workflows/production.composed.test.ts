@@ -3733,6 +3733,38 @@ describe('production workflow coordinator', () => {
     expect(execute).toHaveBeenCalledOnce();
   });
 
+  it('prepares a projectless Action Link only on the invocation Machine', async () => {
+    const pathIsDirectory = vi.fn(async () => false);
+    const coordinate = createProductionWorkflowRunCoordinator({
+      token: 'token', accountId, machineId,
+      resolveControllerContext: async () => ({ surface: 'cli', authority: 'account_automation' }),
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
+      isAcceptedAuthorizationCurrent: async () => true,
+      execution: productionExecution(),
+      prepareAcceptedWorkspaceTarget: input => prepareWorkflowAcceptedWorkspaceTarget({
+        ...input, env: { HOME: '/actor-home' }, platform: 'linux', pathIsDirectory,
+      }),
+      onCommittedTransition: vi.fn(),
+      storage: { observeChanges: quietStorageChanges, execute: vi.fn() },
+    });
+    const claim = (admittedMachineId: string) => coordinate({
+      runId, attempt: 0, expectedRevision: 0,
+      accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null },
+      automationId: 'automation-1', scopeSessionId: null, workflowDefinitionId: 'builtin:repository-review',
+      automationCause: { kind: 'trigger', triggerKind: 'action', triggerId: 'trigger-1', triggerRevision: 1,
+        occurrenceKey: 'occurrence-1', occurredAt: 1, evidence: { actionId: 'deployments.deploy',
+          requestId: 'material-action-request', phase: 'after', status: 'succeeded', machineId: admittedMachineId } },
+      causeWorkDepth: 0,
+      definitionEnvelope: JSON.stringify({ t: 'plain', v: { executionTarget: { kind: 'session' },
+        inputs: { cwd: '/actor-home', reviewers: [], instructions: 'Review the actor workspace' } } }),
+      automationEvidenceEnvelope: null,
+    });
+    await expect(claim('other-machine')).resolves.toMatchObject({ state: 'failed', reason: 'source_unavailable' });
+    expect(pathIsDirectory).not.toHaveBeenCalled();
+    await expect(claim(machineId)).resolves.toMatchObject({ state: 'failed', reason: 'workspace_unavailable' });
+    expect(pathIsDirectory).toHaveBeenCalledExactlyOnceWith('/actor-home');
+  });
+
   it('resolves an Automation workspace reference from current settings at claim admission', async () => {
     const oldRef: import('@happier-dev/protocol').WorkspaceRefV1 = {
       id: 'workspace-1', serverId: 'server-1', machineId,

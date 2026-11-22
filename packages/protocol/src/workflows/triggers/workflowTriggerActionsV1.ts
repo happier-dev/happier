@@ -213,7 +213,10 @@ const WorkflowTriggerExecutableAddRequestV1Schema = lazyZodSchema(() => z.strict
   deployment: z.optional(AutomationDeploymentTriggerFilterV1Schema),
   actionApproval: z.optional(z.enum(['automatic', 'ask'])),
 }).check(z.superRefine((value, ctx) => {
-  if (value.project === undefined && value.lifetimeSession === undefined) {
+  const usesInvocationPlacement = (value.workflow !== undefined || value.target?.kind === 'workflow')
+    && value.trigger.kind === 'action' && !('consentFor' in value.trigger)
+    && value.actionApproval !== 'automatic' && value.deployment === undefined && value.deploymentPreview === undefined;
+  if (value.project === undefined && value.lifetimeSession === undefined && !usesInvocationPlacement) {
     ctx.addIssue({ code: 'custom', path: ['project'], message: 'Choose an execution project or Session lifetime' });
   }
   if ((value.workflow === undefined) === (value.target === undefined)) {

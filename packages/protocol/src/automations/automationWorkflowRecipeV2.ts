@@ -120,11 +120,11 @@ export const AutomationStoredWorkflowDefinitionV2Schema = lazyZodSchema(() => z.
   /** Present for every new definition; omitted only by retained 0.2 storage. */
   display: z.optional(AutomationDefinitionDisplayV1Schema),
   approvalProfileId: z.optional(z.nullable(ApprovalProfileIdV1Schema)),
-  workspace: z.strictObject({
+  workspace: z.optional(z.strictObject({
     directory: z.string().check(z.minLength(1)),
     workspaceRefId: zMini.optional(preservedBoundedNfcString(191, 'Workspace reference ids')),
     sessionPlacement: z.optional(SessionPlacementSelectionV1Schema),
-  }),
+  })),
   executionTarget: WorkflowRunExecutionTargetV1Schema,
   inputs: zMini.optional(WorkflowResolvedInputsV1Schema),
   visibleTeamId: visibleTeamIdSchema,
@@ -192,11 +192,13 @@ export function openAutomationStoredWorkflowDefinitionV2(params: Readonly<{
  * context and an inline target's definition. Workflow references resolve live
  * at claim and are never copied into this payload.
  */
-function createAutomationStoredWorkflowDefinitionRecipeV2Schema(definitionSchema: z.ZodMiniType) {
+function createAutomationStoredWorkflowDefinitionRecipeV2Schema(definitionSchema: z.ZodMiniType<{ workspace?: unknown }>) {
   return z.strictObject({
     v: z.literal(2),
     templateVersion: z.number().check(z.int(), z.nonnegative(), z.int()),
     workflow: AutomationStoredContentEnvelopeV1Schema,
+    /** An Account Action Link has no definition assignment. Its occurrence supplies the Machine. */
+    placement: z.optional(z.literal('action_invocation')),
     managedTarget: z.optional(z.nullable(AutomationManagedTargetV1Schema)),
     /** Selected Run audience, readable without opening the private trigger context. */
     visibleTeamId: visibleTeamIdSchema,
@@ -208,12 +210,15 @@ function createAutomationStoredWorkflowDefinitionRecipeV2Schema(definitionSchema
       context,
       'Automation workflow definition recipe exceeds its UTF-8 byte limit',
     );
-    if (value.workflow.t === 'plain' && !definitionSchema.safeParse(value.workflow.v).success) {
-      context.addIssue({
-        code: "custom",
-        path: ['workflow'],
-        message: 'Automation workflow definition is invalid',
-      });
+    if (value.workflow.t === 'plain') {
+      const definition = definitionSchema.safeParse(value.workflow.v);
+      if (!definition.success || (definition.data.workspace === undefined) !== (value.placement === 'action_invocation')) {
+        context.addIssue({
+          code: "custom",
+          path: ['workflow'],
+          message: 'Automation workflow definition is invalid for its placement',
+        });
+      }
     }
   }));
 }

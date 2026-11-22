@@ -125,7 +125,7 @@ describe('Automation managed-target migration', () => {
     expect(f.rows.get('old-unrelated')!.executionRecipe).toMatchObject({ deploymentEnvironment });
     const opened = recipe.workflow.t === 'plain' ? recipe.workflow.v : isAvailableE2eeAutomationAccountEncryptionV1(mode)
       ? openAccountScopedBlobCiphertext({ kind: 'automation_template_payload', material: mode.material.material, ciphertext: recipe.workflow.c })?.value : null;
-    expect(AutomationStoredWorkflowDefinitionV2ReadSchema.parse(opened).workspace.directory).toBe('/private/repo');
+    expect(AutomationStoredWorkflowDefinitionV2ReadSchema.parse(opened).workspace?.directory).toBe('/private/repo');
   });
 
   it('resumes after a committed write loses its acknowledgement without writing the row again', async () => {

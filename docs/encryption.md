@@ -745,6 +745,13 @@ publication lock and revision check, so key replacement cannot strand a delayed 
 An author can re-save a retained Account-sealed check's definition to move it to
 the Workflow key, even when the filter and other settings stay the same.
 
+An Account Action Link can leave the saved Workflow unassigned. Its Automation
+recipe has the structural placement `action_invocation` and omits the workspace
+from the protected Workflow definition. Home freezes the Machine admitted for
+the Action occurrence into the Run. Without an admitted Machine, the Action
+shows that the Workflow needs a Machine and starts no steps. The link adds no
+resource subject or audience.
+
 Artifact reads project `sharedTeamIds` only for direct Team grants admitted by
 the existing effective-membership policy. The Workflow library carries this
 actor-filtered audience to the Team overview; it never exposes another owner's

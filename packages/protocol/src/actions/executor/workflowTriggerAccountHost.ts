@@ -140,6 +140,7 @@ async function sealWorkflowContext(params: WorkflowCodecParams, input: Readonly<
   const managed = payload.inlineDefinition && readManagedMachineTriggerAction({ kind: 'inline', definition: payload.inlineDefinition });
   return AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: input.templateVersion,
     workflow, triggerEvidence: null, visibleTeamId: payload.visibleTeamId ?? null,
+    ...(payload.workspace === undefined ? { placement: 'action_invocation' } : {}),
     ...(deploymentEnvironment ? { deploymentEnvironment } : {}),
     managedTarget: managed ? { homeId: managed.input.homeId, managedId: managed.input.managedId } : null });
 }
@@ -216,6 +217,7 @@ export async function backfillAutomationManagedTargetsV1(params: WorkflowCodecPa
         assertCurrent();
         let context = AutomationStoredWorkflowDefinitionV2ReadSchema.parse(openWorkflowEnvelope(row.executionRecipe.workflow, openedEncryption));
         if (context.deploymentTriggers?.some(trigger => trigger.approval)) {
+          if (!context.workspace) unavailable();
           if (row.assignments.length !== 1) unavailable('source_unavailable');
           context = (await normalizeStoredWorkflowTriggerConsent({ automationId: row.id, context,
             project: { machineId: row.assignments[0]!.machineId, ...context.workspace } })).context;
@@ -1014,6 +1016,7 @@ if (trigger.kind === 'sessionLifecycle') {
     openContext: async (row) => {
       if (row.executionRecipe?.v !== 2) unavailable('source_unavailable');
       const { display: _display, ...context } = await open(row.executionRecipe.workflow);
+      if ((context.workspace === undefined) !== (row.executionRecipe.placement === 'action_invocation')) unavailable('source_unavailable');
       return context;
     },
     sealContext: input => sealWorkflowContext(params, input),

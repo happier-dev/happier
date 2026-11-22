@@ -1560,10 +1560,19 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       const target = readTriggerTargetV1({ workflowDefinitionId: frozen.success ? null : claim.workflowDefinitionId,
         scopeSessionId }, definitionContent);
       if (!storedDefinition.success || target.kind !== 'available') return refuse('definition_payload', 'source_unavailable');
+      const actionEvidence = claim.automationCause.kind === 'trigger' && claim.automationCause.triggerKind === 'action'
+        ? claim.automationCause.evidence : undefined;
+      const storedWorkspace = storedDefinition.data.workspace;
+      const claimWorkspace: typeof storedDefinition.data.workspace = storedWorkspace ?? (
+        target.target.kind === 'workflow' && !scopeSessionId && actionEvidence?.machineId === params.machineId
+          ? { directory: '~' } : undefined
+      );
+      if (!claimWorkspace) return refuse('definition_payload', 'source_unavailable');
       if (storedDefinition.data.deploymentTriggers?.some(trigger => trigger.approval)) {
+        if (!storedWorkspace) return refuse('definition_payload', 'source_unavailable');
         try {
           storedDefinition.data = (await normalizeStoredWorkflowTriggerConsent({ automationId: claim.automationId,
-            context: storedDefinition.data, project: { machineId: params.machineId, ...storedDefinition.data.workspace } })).context;
+            context: storedDefinition.data, project: { machineId: params.machineId, ...storedWorkspace } })).context;
         } catch (error) { return refuseSourceRead('definition_payload', error); }
       }
       const evidenceContent = claim.automationEvidenceEnvelope == null ? null
@@ -1601,7 +1610,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
       if (deploymentOccurrence.kind === 'skipped') return { state: 'skipped', reason: 'filtered', admission: 'refused' };
       const prepareClaimWorkspace = async () => {
         let workspaceRefs: readonly import('@happier-dev/protocol').WorkspaceRefV1[] = [];
-        if (storedDefinition.data.workspace.workspaceRefId || storedDefinition.data.workspace.sessionPlacement?.kind === 'in_place') {
+        if (claimWorkspace.workspaceRefId || claimWorkspace.sessionPlacement?.kind === 'in_place') {
           try {
             workspaceRefs = await params.resolveCurrentWorkspaceRefs?.(claim.signal) ?? [];
           } catch {
@@ -1611,7 +1620,7 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
         }
         const workspaceServerId = params.execution.serverIdentityId ?? params.execution.serverId;
         return (params.prepareAcceptedWorkspaceTarget ?? prepareWorkflowAcceptedWorkspaceTarget)({
-          projectTarget: { machineId: params.machineId, ...storedDefinition.data.workspace },
+          projectTarget: { machineId: params.machineId, ...claimWorkspace },
           executionTargetKind: storedDefinition.data.executionTarget.kind,
           definition: source.definition,
           currentServerId: workspaceServerId,

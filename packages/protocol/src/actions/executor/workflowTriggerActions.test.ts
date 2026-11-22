@@ -20,9 +20,9 @@ import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '../../approvals/approvalRequestV1.js';
 import { AutomationTriggerDetailSchema } from '../../automations/automationTriggerProjectionV1.js';
-import { AutomationPullRequestTriggerSchema, AutomationSessionLifecycleTriggerSchema, projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTriggerInput } from '../../automations/automationTriggerDefinition.js';
+import { AutomationPullRequestTriggerSchema, AutomationSessionLifecycleTriggerSchema, projectAutomationSessionLifecycleStructuralTrigger, type AutomationSessionLifecycleTriggerInput, type AutomationTriggerDefinitionInput } from '../../automations/automationTriggerDefinition.js';
 import { initialAutomationSessionLifecycleRemainingOccurrences } from '../../automations/automationSessionLifecycle.js';
-import { projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
+import { AutomationActionTriggerSchema, projectAutomationActionTriggerStructuralV1 } from '../../automations/automationActionTriggerV1.js';
 import { AutomationEncryptedTriggerDefinitionEnvelopeV1Schema } from '../../automations/automationTriggerDefinition.js';
 import { openAutomationTriggerDefinitionStoredEnvelopeV1, sealAutomationTriggerDefinitionStoredEnvelopeV1 } from '../../automations/automationTriggerDefinitionStoredContent.js';
 import { AutomationEventTriggerDefinitionStoredPayloadV1Schema } from '../../automations/automationEventV1.js';
@@ -117,6 +117,22 @@ function fixture(savedDefinition = definition) {
     encodeListCursor: (row) => row.artifactId, assertDefinitionWriteAllowed: () => { throw new Error('Unexpected fixture definition policy write'); } });
   const toTrigger = (id: string, enabled = trigger.enabled): AutomationTriggerDetail => ({ ...trigger, enabled, id: AutomationTriggerIdSchema.parse(id),
     revision: 0, createdAt: 1, updatedAt: 1, nextRunAt: 2, triggerDefinitionEnvelope: null });
+  const actionDetail = (automationId: string, triggerId: string,
+    value: Extract<AutomationTriggerDefinitionInput, { kind: 'action' }>, revision = 0) => {
+    const { enabled, ...definition } = value;
+    const base = { id: triggerId, revision, enabled, createdAt: 1, updatedAt: 1 };
+    if ('consentFor' in definition) return AutomationTriggerDetailSchema.parse({ ...definition, ...base, triggerDefinitionEnvelope: null });
+    if ('triggerDefinitionEnvelope' in definition) return AutomationTriggerDetailSchema.parse({
+      ...definition, ...base, triggerDefinitionEnvelope: JSON.stringify(definition.triggerDefinitionEnvelope),
+    });
+    return AutomationTriggerDetailSchema.parse({ ...projectAutomationActionTriggerStructuralV1(definition),
+      ...base,
+      triggerDefinitionEnvelope: JSON.stringify(sealAutomationTriggerDefinitionStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, automationId, triggerId: AutomationTriggerIdSchema.parse(triggerId),
+          triggerRevision: revision, triggerKind: 'action' }, definition,
+      })),
+    });
+  };
   const lifecycleDetail = (automationId: string, triggerId: string, value: AutomationSessionLifecycleTriggerInput,
     revision = 0, previous?: Extract<AutomationTriggerDetail, { kind: 'sessionLifecycle' }>) => {
     const { enabled: _enabled, ...definition } = value;
@@ -147,7 +163,18 @@ function fixture(savedDefinition = definition) {
     },
     resolveWorkflowTeamIds: async () => [],
     openContext: async (row) => row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null,
-    sealContext: async ({ templateVersion, context }) => ({ v: 2, templateVersion, workflow: { t: 'plain', v: context }, triggerEvidence: null }),
+    sealContext: async ({ templateVersion, context }) => AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({
+      v: 2, templateVersion, workflow: { t: 'plain', v: context }, triggerEvidence: null,
+      ...(context.workspace === undefined ? { placement: 'action_invocation' } : {}),
+    }),
+    openActionTrigger: async (row, item) => {
+      if ('consentFor' in item) throw new Error('Expected an ordinary Action trigger');
+      const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, automationId: row.id, triggerId: item.id, triggerRevision: item.revision, triggerKind: item.kind },
+        envelope: JSON.parse(item.triggerDefinitionEnvelope) });
+      if (opened.kind !== 'available') throw new Error(opened.kind);
+      return AutomationActionTriggerSchema.parse(opened.definition);
+    },
     openSessionLifecycleTrigger: async (row, item) => {
       const opened = openAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'plain',
         binding: { v: 1, automationId: row.id, triggerId: item.id, triggerRevision: item.revision, triggerKind: item.kind },
@@ -208,6 +235,8 @@ function fixture(savedDefinition = definition) {
                     displayLabel: value.trigger.displayLabel, filter: value.trigger.filter, maximumObservationAgeMs: value.trigger.maximumObservationAgeMs } })) })
             : value.trigger.kind === 'sessionLifecycle'
             ? lifecycleDetail(input.automationId, value.triggerId, value.trigger)
+            : value.trigger.kind === 'action'
+            ? actionDetail(input.automationId, value.triggerId, value.trigger)
             : value.trigger.kind === 'runLifecycle'
             ? AutomationTriggerDetailSchema.parse({ ...value.trigger, id: value.triggerId,
               revision: 0, createdAt: 1, updatedAt: 1, remainingOccurrences: 1,
@@ -228,8 +257,15 @@ function fixture(savedDefinition = definition) {
                   definition: { kind: value.kind, pullRequest: value.pullRequest } })) });
           }
           if (item.kind === 'new' && item.trigger.kind === 'sessionLifecycle') return lifecycleDetail(id, item.triggerId, item.trigger);
+          if (item.kind === 'new' && item.trigger.kind === 'action') return actionDetail(id, item.triggerId, item.trigger);
           if (item.kind === 'new') return toTrigger(item.triggerId, item.trigger.enabled);
           const old = current.triggers.find((value) => value.id === item.triggerId)!;
+          if (current.executionRecipe?.v === 2 && current.executionRecipe.placement === 'action_invocation'
+            && old.kind === 'action' && !('consentFor' in old) && (item.enabled !== undefined || item.trigger !== undefined)) {
+            const definition = item.trigger ?? await deps.openActionTrigger!(current, old);
+            if (definition.kind !== 'action') throw new Error('Unsupported fixture replacement');
+            return actionDetail(id, old.id, { ...definition, enabled: item.enabled ?? old.enabled }, old.revision + 1);
+          }
           if (old.kind === 'sessionLifecycle' && (item.enabled !== undefined || item.trigger !== undefined || item.triggerDefinitionEnvelope !== undefined)) {
             const value = item.trigger ?? (item.triggerDefinitionEnvelope === undefined
               ? await deps.openSessionLifecycleTrigger!(current, old)
@@ -1818,6 +1854,33 @@ describe('person-saved deployment trigger consent', () => {
 });
 
 describe('workflow trigger Automation composition', () => {
+  it('links a saved Workflow to an Account Action without an authored placement or resource audience', async () => {
+    const { actions, rows } = fixture();
+    const scheduled = await actions.add({ workflow, project, trigger });
+    const result = await actions.add({
+      workflow,
+      trigger: { kind: 'action', enabled: true, phase: 'after', actionIds: ['deployments.deploy'] },
+    });
+
+    expect(rows.get(result.set.automationId)).toMatchObject({
+      workflowDefinitionId: workflow,
+      scopeSessionId: null,
+      assignments: [],
+      triggers: [{ id: result.triggerId, kind: 'action', phase: 'after', actionIds: ['deployments.deploy'] }],
+    });
+    expect(result.set.project).toBeUndefined();
+    expect(result.set.placements).toEqual([]);
+    expect(rows.get(result.set.automationId)?.triggers[0]).not.toHaveProperty('subjectKey');
+    expect(rows.get(scheduled.set.automationId)).toMatchObject({
+      assignments: [{ machineId: project.machineId }], triggers: [{ id: scheduled.triggerId, kind: 'schedule' }],
+    });
+    const updated = await actions.update({ automationId: result.set.automationId, triggerId: result.triggerId,
+      expectedRevision: result.set.revision, patch: { enabled: false } });
+    expect(updated.set.triggers).toMatchObject([{ id: result.triggerId, enabled: false }]);
+    if (!result.triggerId) throw new Error('Expected the linked Action trigger identity');
+    const removed = await actions.remove({ automationId: result.set.automationId, triggerId: result.triggerId });
+    expect(removed.set.triggers).toEqual([]);
+  });
   it('assigns saved Session placement before sealing Automation workspace intent', async () => {
     const f = fixture();
     const sessionPlacement = { kind: 'machine' as const,

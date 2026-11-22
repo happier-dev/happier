@@ -4364,6 +4364,12 @@ function assertAutomationTriggerKindsForDefinition(
         && triggerKinds.some(kind => kind !== "pluginEvent")) {
         throw new AutomationValidationError("Observation-only definitions support plugin Event sources only");
     }
+    if (triggerKinds.some(kind => kind !== "action")) {
+        const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(templateCiphertext);
+        if (recipe.kind === "available" && recipe.recipe.placement === "action_invocation") {
+            throw new AutomationValidationError("Invocation placement supports Action triggers only");
+        }
+    }
 }
 
 async function normalizeAutomationTriggerWriteTx(params: Readonly<{
@@ -4389,6 +4395,10 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
 
     if (params.input.kind === "action") {
         if ('consentFor' in params.input) {
+            const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(params.automation.templateCiphertext);
+            if (recipe.kind === "available" && recipe.recipe.placement === "action_invocation") {
+                throw new AutomationValidationError("An Action Link cannot store an actor consent");
+            }
             return { isEvent: false, data: { ...common, kind: 'action',
                 consentForAutomationId: params.input.consentFor.automationId,
                 consentForTriggerId: params.input.consentFor.triggerId,
@@ -4830,10 +4840,20 @@ async function assertWorkflowTriggerContextTx(tx: Tx, params: Readonly<{
     enabled: boolean;
     assignments: readonly AutomationAssignmentInput[];
     existingAssignments?: AutomationListItem['assignments'];
-    observationOnly?: boolean;
+    templateCiphertext: string;
     consentOnly?: boolean;
 }>): Promise<void> {
-    if (params.observationOnly) {
+    const observationOnly = parseAutomationObservationOnlyDefinitionV1(params.templateCiphertext) !== null;
+    const recipe = parseAutomationStoredWorkflowDefinitionRecipeV2(params.templateCiphertext);
+    if (recipe.kind === "available" && recipe.recipe.placement === "action_invocation") {
+        if (params.targetType !== null || params.workflowDefinitionId === null || params.scopeSessionId !== null
+            || params.assignments.length !== 0 || params.consentOnly) {
+            throw new AutomationValidationError("Invocation placement requires an unassigned Account Workflow");
+        }
+        return;
+    }
+    assertAutomationAssignmentLiveness({ ...params, observationOnly });
+    if (observationOnly) {
         if (params.targetType !== null || params.workflowDefinitionId !== null || params.scopeSessionId !== null
             || params.assignments.length > 0) {
             throw new AutomationValidationError("Observation-only definitions have no execution context");
@@ -4962,13 +4982,6 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         throw new Error("Automation definition normalization failed");
     }
     const consentOnly = isAutomationConsentDefinition(triggerInputs.map(item => item.trigger));
-    // Ordinary enabled definitions need placement; consent uses the invoking Machine.
-    assertAutomationAssignmentLiveness({
-        enabled: params.input.enabled,
-        assignments: params.input.assignments ?? [],
-        consentOnly,
-        observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
-    });
     await assertWorkflowTriggerContextTx(tx, {
         accountId: params.accountId, targetType: definition.targetType,
         workflowDefinitionId: params.input.workflowDefinitionId ?? null,
@@ -4976,7 +4989,7 @@ export async function createAutomationInTx(tx: Tx, params: Readonly<{
         enabled: params.input.enabled,
         assignments: params.input.assignments ?? [],
         consentOnly,
-        observationOnly: parseAutomationObservationOnlyDefinitionV1(definition.templateCiphertext) !== null,
+        templateCiphertext: definition.templateCiphertext,
     });
 
     await validateExistingSessionAutomationTargetTx({
@@ -5396,18 +5409,7 @@ export async function updateAutomation(params: {
             existingAssignments: existing.assignments,
             assignments: params.input.assignments ?? existing.assignments,
             consentOnly,
-            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
-        });
-        // Assignment-liveness against the exact post-patch set: a replacement
-        // set when one is supplied, otherwise the loaded persisted set. Throws
-        // before any write so enabling without an assignment — or removing or
-        // disabling the last enabled assignment of an enabled Automation —
-        // rolls the whole patch back atomically.
-        assertAutomationAssignmentLiveness({
-            enabled: effectiveEnabled,
-            assignments: params.input.assignments ?? existing.assignments,
-            consentOnly,
-            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveTemplateCiphertext) !== null,
+            templateCiphertext: effectiveTemplateCiphertext,
         });
         const targetTypeChanged =
             inputSuppliesTarget
@@ -5678,16 +5680,6 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             && params.input.triggers.every(item => item.kind === "existing"
                 && (automationTriggerPatchMatches(existing, existingTriggersById.get(item.triggerId)!, item)
                     || automationTriggerPatchOnlyDisables(item)));
-        // Assignment-liveness before any write: a whole-editor Save of an
-        // enabled Automation must commit at least one enabled execution
-        // assignment or roll the entire reconciliation back atomically.
-        assertAutomationAssignmentLiveness({
-            enabled: params.input.enabled,
-            assignments: params.input.assignments,
-            consentOnly,
-            observationOnly: params.input.observationOnly !== undefined
-                || (params.input.executionRecipe === undefined && parseAutomationObservationOnlyDefinitionV1(existing.templateCiphertext) !== null),
-        });
 
         const currentDefinition = params.input.executionRecipe || params.input.observationOnly
             ? await normalizeCurrentAutomationDefinitionWriteTx({
@@ -5741,7 +5733,7 @@ export async function reconcileAutomationDefinition(params: Readonly<{
             existingAssignments: existing.assignments,
             assignments: params.input.assignments,
             consentOnly,
-            observationOnly: parseAutomationObservationOnlyDefinitionV1(effectiveAutomation.templateCiphertext) !== null,
+            templateCiphertext: effectiveAutomation.templateCiphertext,
         });
         await validateExistingSessionAutomationTargetTx({
             tx,

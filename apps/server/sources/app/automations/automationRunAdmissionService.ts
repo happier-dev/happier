@@ -49,6 +49,7 @@ export type AutomationRunAdmissionIneligibleReason =
     | "automationNotFound"
     | "automationDisabled"
     | "noEnabledAssignment"
+    | "machineRequired"
     | "triggerNotFound"
     | "triggerDisabled"
     | "triggerRevisionMismatch"
@@ -326,6 +327,7 @@ function prepareAutomationRunAdmission(params: Readonly<{
     triggersById: ReadonlyMap<string, AutomationAdmissionTrigger>;
     recipeFeaturePolicy: AutomationRecipeFeaturePolicy;
     scopedConversationMatches: boolean;
+    invocationPlacement: boolean;
     runTargetAdmission: WorkflowMachineAdmission | undefined;
 }>): PreparedAutomationRunAdmissionResult {
     const cause = params.cause;
@@ -377,7 +379,8 @@ function prepareAutomationRunAdmission(params: Readonly<{
     // is permanently unclaimable.
     // Rejoin above keeps already-admitted Runs on their immutable snapshots.
     if (admissionAutomation.assignments.length === 0) {
-        return { kind: "ineligible", reason: "noEnabledAssignment" };
+        return { kind: "ineligible", reason: params.invocationPlacement && cause.kind === "trigger"
+            && cause.triggerKind === "action" ? "machineRequired" : "noEnabledAssignment" };
     }
     const sourceTriggerId = cause.kind === "manual" ? undefined : cause.triggerId;
     if (sourceTriggerId) {
@@ -581,7 +584,11 @@ export async function admitAutomationRunsTx(params: Readonly<{
             ? [cause.triggerId] : []);
     await acquireWorkflowPublicationLocksInTx(params.tx, { accountId: params.accountId,
         automationIds: [...new Set(params.admissions.map(request => request.automationId))],
-        machineIds: parsedAdmissions.flatMap(({ request }) => request.runTargetMachineId === undefined ? [] : [request.runTargetMachineId]),
+        machineIds: parsedAdmissions.flatMap(({ request, cause }) => {
+            const machineId = request.runTargetMachineId
+                ?? (cause.kind === "trigger" && cause.triggerKind === "action" ? cause.evidence.machineId : undefined);
+            return machineId === undefined ? [] : [machineId];
+        }),
         sessionIds: parsedAdmissions.flatMap(({ cause }) => {
             const sourceSessionId = getSessionReviewProjectionIdForRun(encodeAutomationRunCause(cause));
             return sourceSessionId === null ? [] : [sourceSessionId];
@@ -678,13 +685,22 @@ export async function admitAutomationRunsTx(params: Readonly<{
     // after undo.
     const newAdmissionAutomationIds = new Set(parsedAdmissions.filter(({ request, cause }) =>
         !findExistingRun({ rows: existingRuns, ...request, cause })).map(({ request }) => request.automationId));
-    const workflowAutomationIds = new Set(automations.filter(automation => newAdmissionAutomationIds.has(automation.id)
-        && parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext).kind === 'available').map(row => row.id));
+    const workflowRecipes = new Map(automations.flatMap(automation => {
+        if (!newAdmissionAutomationIds.has(automation.id)) return [];
+        const parsed = parseAutomationStoredWorkflowDefinitionRecipeV2(automation.templateCiphertext);
+        return parsed.kind === "available" ? [[automation.id, parsed.recipe] as const] : [];
+    }));
+    const placedAdmissions = parsedAdmissions.map(({ request, cause }) => {
+        const invocationPlacement = workflowRecipes.get(request.automationId)?.placement === "action_invocation";
+        const machineId = invocationPlacement && cause.kind === "trigger" && cause.triggerKind === "action"
+            ? cause.evidence.machineId : request.runTargetMachineId;
+        return { request: { ...request, runTargetMachineId: machineId }, cause, invocationPlacement };
+    });
     const machineAdmissions = await resolveMachineAdmissionsInTx(params.tx, { actorAccountId: params.accountId, purpose: 'workflow',
         machineIds: [
-            ...automations.filter(row => workflowAutomationIds.has(row.id))
+            ...automations.filter(row => workflowRecipes.has(row.id))
                 .flatMap(row => row.assignments.map(assignment => assignment.machineId)),
-            ...parsedAdmissions.flatMap(({ request }) => workflowAutomationIds.has(request.automationId)
+            ...placedAdmissions.flatMap(({ request }) => workflowRecipes.has(request.automationId)
                 && request.runTargetMachineId !== undefined ? [request.runTargetMachineId] : []),
         ] });
     const automationsById = new Map(automations.map((automation) => [
@@ -692,12 +708,12 @@ export async function admitAutomationRunsTx(params: Readonly<{
         {
             ...automation,
             assignments: automation.assignments.filter((assignment) => (
-                (workflowAutomationIds.has(automation.id)
+                (workflowRecipes.has(automation.id)
                     ? machineAdmissions.get(assignment.machineId)?.kind === 'admitted'
                     : assignment.machine.accountId === params.accountId)
                 && classifyMachineAvailabilityState(assignment.machine) !== "revoked"
             )).map(assignment => {
-                const admission = workflowAutomationIds.has(automation.id) ? machineAdmissions.get(assignment.machineId) : undefined;
+                const admission = workflowRecipes.has(automation.id) ? machineAdmissions.get(assignment.machineId) : undefined;
                 return admission?.kind === 'admitted'
                     ? { ...assignment, machine: { ...assignment.machine, installationId: admission.installationId,
                         accountId: admission.custodianAccountId } }
@@ -715,7 +731,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
             automationId: automation.id, scopeSessionId: automation.scopeSessionId,
             scopedTrigger: request.scopedConversationTrigger });
     }));
-    const prepared = parsedAdmissions.map(({ request, cause }, index) => prepareAutomationRunAdmission({
+    const prepared = placedAdmissions.map(({ request, cause, invocationPlacement }, index) => prepareAutomationRunAdmission({
         request,
         cause,
         existingRuns,
@@ -723,6 +739,7 @@ export async function admitAutomationRunsTx(params: Readonly<{
         triggersById,
         recipeFeaturePolicy,
         scopedConversationMatches: scopedConversationMatches[index] === true,
+        invocationPlacement,
         runTargetAdmission: request.runTargetMachineId === undefined ? undefined : machineAdmissions.get(request.runTargetMachineId),
     }));
 
