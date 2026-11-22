@@ -24,6 +24,37 @@ const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/se
 
 afterEach(() => standardCleanup());
 
+it('counts active presets in the Machines rail without opening their bodies', async () => {
+    await home.reset();
+    const profileId = await home.addHome({ name: 'Studio Home', serverUrl: 'https://studio.example',
+        serverIdentityId: 'srv_studio', accountId: 'account-a', active: true, currentAccount: true });
+    const features = createRootLayoutFeaturesResponse({ capabilities: { serverIdentity: { serverIdentityId: 'srv_studio' } } });
+    home.answer(profileId, '/v1/features', { body: features });
+    home.answer(profileId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: profileId, snapshot: { status: 'ready', features } });
+    home.answer(profileId, '/v1/machines/managed/actions/list', { body: { machines: [] } });
+    home.answer(profileId, '/v1/machines/pools/list', { body: { pools: [] } });
+    await home.setActionPolicy(profileId, 'machines.presets.list', 'ui', 'allowed');
+    const projections: Array<string | undefined> = [];
+    home.answer(profileId, '/v1/machines/presets/list', { select: input => {
+        const { projection } = input as { projection?: string };
+        projections.push(projection);
+        return projection === 'revisions'
+            ? { body: { kind: 'revisions', presets: [
+                { id: 'active', homeId: 'srv_studio', revision: 1, setupRevision: 1 },
+                { id: 'archived', homeId: 'srv_studio', revision: 2, setupRevision: 1, archivedAt: 10 },
+            ] } }
+            : { body: { kind: 'listed', presets: [] } };
+    } });
+    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [createMachineFixture()]);
+    const screen = await renderScreen(<MachineCollectionRail />);
+    const presetRequests = () => home.requests.filter(request => request.path === '/v1/machines/presets/list');
+    await waitForHomeGovernance(() => expect(presetRequests(), JSON.stringify(home.requests.map(request => request.path))).toHaveLength(1));
+    expect(projections).toEqual(['revisions']);
+    await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props?.testID === 'settings.machines.presets'
+        && node.props.detail === '1').length).toBeGreaterThan(0));
+});
+
 it.each([false, true])('gives the machine its identity glyph and whole name row (this computer: %s)', async isThisComputer => {
     await home.reset();
     const profileId = await home.addHome({

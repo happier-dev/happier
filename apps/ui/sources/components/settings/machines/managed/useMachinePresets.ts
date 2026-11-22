@@ -18,7 +18,7 @@ import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAcc
 import type { ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
-import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
+import { invalidateMachinePresets, isMachinePresetAccessLost, readMachinePresetRevisionsSnapshot, readMachinePresetsSnapshot, retainMachinePresets, subscribeMachinePresets, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 export { isMachinePresetAccessLost, type MachinePresetQueryState } from '@/sync/engine/machines/machinePresetsResource';
 import { createMachinePresetCollectionClient, type MachinePresetHistoryData, type MachinePresetCollectionResult, type MachinePresetCollectionSettledResult, type MachinePresetCollectionOptions, type MachinePresetCollectionFilter } from './machinePresetCollectionClient';
 import { buildManagedPresetHistory } from './managedPresetHistory';
@@ -430,6 +430,32 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         projection.current = retainShallow(projection.current, next);
         return { presetsByServerId: projection.current, statesByServerId, refresh };
     }, [statesByServerId, refresh]);
+}
+
+/** A collection navigation row counts visible active presets from Home's revision headers. */
+export function useActiveMachinePresetCount(serverIds: readonly string[]): number {
+    const presented = useLayoutPresentationActive();
+    const accountScopes = useServerCredentialAccountScopeStates(serverIds);
+    const homes = React.useMemo(() => Array.from(accountScopes).flatMap(([serverId, scope]) => {
+        const homeId = getServerProfileById(serverId)?.serverIdentityId;
+        return homeId && scope.binding ? [{ serverId, homeId, binding: scope.binding }] : [];
+    }), [accountScopes]);
+    React.useEffect(() => {
+        if (!presented) return;
+        const release = homes.map(({ homeId, binding }) => retainMachinePresets(binding, homeId, undefined, { projection: 'revisions' }));
+        return () => { for (const dispose of release) dispose(); };
+    }, [homes, presented]);
+    const subscribe = React.useCallback((listener: () => void) => presented
+        ? subscribeMachinePresets(homes.map(({ serverId }) => serverId), listener) : () => {}, [homes, presented]);
+    const readCount = React.useCallback(() => {
+        let active = 0;
+        for (const { serverId, homeId, binding } of homes) {
+            const revisions = readMachinePresetRevisionsSnapshot(serverId, homeId, binding.accountId).value;
+            for (const preset of Object.values(revisions ?? {})) if (preset.archivedAt === undefined) active++;
+        }
+        return active;
+    }, [homes]);
+    return React.useSyncExternalStore(subscribe, readCount, readCount);
 }
 
 /**

@@ -26,7 +26,7 @@ import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { useMachinesSettingsViewModel, type MachinesSettingsViewModel } from '../machinesSettingsViewModel';
-import { useMachinePresets } from '../managed/useMachinePresets';
+import { useActiveMachinePresetCount } from '../managed/useMachinePresets';
 import { MachinePoolsSection } from '../sections/MachinePoolsSection';
 import { useCollectionDraftTitle } from '@/components/ui/lists/collection/CollectionDraftTitle';
 import {
@@ -312,7 +312,7 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     const openFleetPage = (page: 'updates' | 'activity' | 'presets') => door === 'settings'
         ? openSection(machineFleetPageHref(page))
         : openHref(router, machineFleetPageHref(page), replaceConfiguration, `MachineCollectionList.${page}`);
-    const presetInventory = useMachinePresets(viewModel.visibleServerIds);
+    const presetCount = useActiveMachinePresetCount(viewModel.visibleServerIds);
     const selectedKey = rail ? resolveSelectedMachineCollectionKey(pathname, { serverId: readParam(params.serverId) }) : null;
 
     const [query, setQuery] = React.useState(() => readLastVisitedMachine()?.query ?? '');
@@ -321,9 +321,8 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         groupedByHome: viewModel.showMachinesGroupedByServer,
         managedByServerId: viewModel.managedByServerId,
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
-        presetsByServerId: presetInventory.presetsByServerId,
     }), [viewModel.visibleMachineGroups, viewModel.showMachinesGroupedByServer, viewModel.managedByServerId,
-        viewModel.managedFirstAnswerPending, presetInventory.presetsByServerId]);
+        viewModel.managedFirstAnswerPending]);
     const total = unfiltered.count;
     const searchable = total > SEARCH_THRESHOLD;
     const collection = useMachineCollection({
@@ -332,7 +331,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
         managedFirstAnswerPending: viewModel.managedFirstAnswerPending,
         query: searchable ? query : '',
         managedByServerId: viewModel.managedByServerId,
-        presetsByServerId: presetInventory.presetsByServerId,
     });
 
     React.useEffect(() => {
@@ -460,7 +458,6 @@ export const MachineCollectionList = React.memo(function MachineCollectionList(p
     };
     // Presets open their own table (lab ideas-1118-platform scene 7): one row here, counting the active presets, as
     // Updates and Activity open their pages. The page lists each Home's presets, their images and their notices.
-    const presetCount = collection.presetSections.reduce((sum, section) => sum + section.rows.length, 0);
     const presetsRow = (
         <Item
             rowRole="catalogRow"
