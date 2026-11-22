@@ -1148,7 +1148,7 @@ def('painted', {
 def('haze', {
   label: 'Haze',
   group: 'image',
-  note: 'monocode’s haze: two blurred copies that take over down the band (7 and 18 px), a veil toward the page and 1-in-3 px scanlines.',
+  note: 'A layered haze: two blurred copies that take over down the band (7 and 18 px), a veil toward the page and 1-in-3 px scanlines.',
   params: [
     { id: 'blur', min: 0.4, max: 2, step: 0.05, default: 1 },
     { id: 'veil', min: 0, max: 1, step: 0.05, default: 0.55 },
@@ -1161,7 +1161,7 @@ def('haze', {
       b2 = wideBlur(src, W, H, (18 * c.dpr * P.blur) / 1.7);
     const lp = Math.max(2, Math.round(3 * c.dpr)),
       lw = Math.max(1, Math.round(c.dpr));
-    // monocode's stops, as fractions of the band: soft blur 18→60 %, strong 28→76 %, veil 16/38/55/75 % at 0/26/55/78 %
+    // Haze stops, as fractions of the band: soft blur 18→60 %, strong 28→76 %, veil 16/38/55/75 % at 0/26/55/78 %
     const veil = (v) =>
       v < 0.16
         ? 0

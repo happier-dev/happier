@@ -95,9 +95,9 @@ export type GlassBackdropMap = Readonly<{ tone: string; coat: string | null; opa
 /**
  * How a floating surface declares its job. Panels (centred dialogs, phone sheets and large anchored
  * panels such as Add widget, About this widget or Workflow run inputs) carry the page at a heavy coat
- * behind their blur, as monocode's modals do (the page colour at 55% in dark at Subtle); menus,
- * tooltips and small popovers keep the tint's hair (owner, 2026-10-16). Over the plain page a panel
- * still lands on its floating paint. Coats interpolate with the global tint.
+ * behind their blur (the page colour at 55% at Subtle, a frosted modal); menus, tooltips and small
+ * popovers keep the tint's hair (owner, 2026-10-16). Over the plain page a panel still lands on its
+ * floating paint. Coats interpolate with the global tint.
  */
 export type FloatingSurfaceRole = 'menu' | 'panel';
 /**
@@ -118,15 +118,16 @@ function isDefaultGlassAppearance(settings: GlassMaterialSettings): boolean {
 
 /**
  * The heavy coat a named-preset floating surface carries over its glass, or undefined for the tint's hair.
- * Panels take the tint's panel coat; over a live picture every floating surface takes Strong's. Menus and popovers
- * are glass like the cards (owner, 2026-11-11 OWNER-1330-COAT/03): the hair, solved against the picture, with the
- * strong blur keeping what lies under them from competing. Native light glass has no real blur (NATIVE-SWEEP M3:
- * rows read through popovers), so there, under the default glass, it keeps Strong's coat. Native glass paints
- * exactly this coat (it has no backdrop tone to solve against).
+ * Panels take the tint's panel coat; over a live picture every floating surface takes Strong's. Under the default
+ * glass, every light floating surface (menus, popovers, tooltips, toasts, dialogs, sheets) carries Strong's coat too,
+ * a white veil (owner 2026-11-22, light glass veil, amending OWNER-1330-COAT/03): through the hair a dark terminal or
+ * code block under a light menu read as a mid-grey wash; at 0.85 the backdrop passes at most 15%. Dark menus keep the
+ * hair, and a customized glass applies as set. Native glass paints exactly this coat (it has no backdrop tone to solve
+ * against).
  */
-export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false, environment: Pick<GlassMaterialEnvironment, 'nativeRenderer'> = {}): number | undefined {
+export function resolveGlassPanelCoatOpacity(settings: GlassMaterialSettings, dark: boolean, panel: GlassFloatingCoat = false): number | undefined {
     const overPicture = panel === 'livePicture' || panel === 'livePicturePanel';
-    const readable = isDefaultGlassAppearance(settings) && (overPicture || (!dark && environment.nativeRenderer === true));
+    const readable = isDefaultGlassAppearance(settings) && (overPicture || !dark);
     const coat: GlassFloatingCoat = readable ? 'livePicture' : panel === 'livePicture' ? false : panel === 'livePicturePanel' ? true : panel;
     if (!coat || readGlassPreset(settings) === 'custom') return undefined;
     const tint = resolveGlassTintValues(settings.glassTintIntensity);
@@ -211,7 +212,8 @@ function solveGlassFixedPoint(compressionPaint: GlassCompression, alpha: number,
         // keeps exactly k. The required coat grows with its own brightness, so this converges in a few steps.
         for (let step = 0; step < 8 && infeasible(); step++) {
             opacity = feasibleOpacity(backdrop);
-            ({ tone, backdrop, flat } = filter(0, compression / (1 - opacity)));
+            // A full coat covers the backdrop: its gain is zero, never compression / 0 (brightness(Infinity)).
+            ({ tone, backdrop, flat } = filter(0, opacity >= 1 ? 0 : compression / (1 - opacity)));
             coat = coatFor(opacity);
         }
         coat = coat.map(clamp);
@@ -327,13 +329,15 @@ export function resolveGlassBackdropMapPaint(settings: GlassMaterialSettings, gr
     if (group === 'floating' || group === 'card') {
         const picture = environment.atmosphereBehind === 'band' || environment.atmosphereBehind === 'wallpaper';
         const tint = resolveGlassTintValues(settings.glassTintIntensity);
-        // Panels and live pictures carry a heavy coat (`resolveGlassPanelCoatOpacity`); menus and popovers are the
-        // tint's hair solved below, as Elements are (owner, 2026-11-11). A customized appearance is the plain
-        // floating surface it would be anywhere else.
-        const alpha = group === 'floating' ? resolveGlassPanelCoatOpacity(settings, dark, panel, environment) : undefined;
+        // Panels, live pictures and light floating glass under the default glass carry a heavy coat
+        // (`resolveGlassPanelCoatOpacity`); other menus and popovers are the tint's hair solved below, as Elements are
+        // (owner, 2026-11-11). A customized appearance is the plain floating surface it would be anywhere else.
+        const alpha = group === 'floating' ? resolveGlassPanelCoatOpacity(settings, dark, panel) : undefined;
+        // A light floating surface over the plain page hangs over that page's content: it solves against the page's ink.
+        const contentTone = group === 'floating' && !picture && !dark ? pageInkTone(ground) : undefined;
         if (alpha !== undefined) {
             // The heavy coat carries the panel: the backdrop passes at most at 1 − α, never brightened.
-            const compression = legibleCompression(Math.min(1 - alpha, dark ? 1 : tint.lightCompression), dark, picture ? environment.atmosphereTone : undefined, ground);
+            const compression = legibleCompression(Math.min(1 - alpha, dark ? 1 : tint.lightCompression), dark, picture ? environment.atmosphereTone : contentTone, ground);
             return { opacity: alpha, ...solveGlassFixedPoint(compression, alpha, ground, true) };
         }
         // Every tint lands on the surface's own solid paint over the plain page, its warm hue included;
@@ -343,8 +347,7 @@ export function resolveGlassBackdropMapPaint(settings: GlassMaterialSettings, gr
         // as the paint needs, keeping k exact without a neutral lift.
         // Elements stand on the page's reading coat; floating surfaces may hang over any plane, so they keep the bare picture.
         const standing = group === 'card' && picture ? resolveGlassReadingCoatOpacity(settings, environment, dark) : 0;
-        // Dark floating glass keeps passing an ordinary page through unchanged (the monocode reference).
-        const contentTone = group === 'floating' && !picture && !dark ? pageInkTone(ground) : undefined;
+        // Dark floating glass keeps passing an ordinary page through unchanged (no content tone).
         return solveGlassFixedPoint(legibleCompression(dark ? compression : Math.min(compression, 1 - opacity), dark, picture ? environment.atmosphereTone : contentTone, ground, standing), opacity, ground, group === 'floating');
     }
     // Shell planes over a wallpaper are frosted picture under their coat, as in the atmosphere lab's G1

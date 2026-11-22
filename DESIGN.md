@@ -380,8 +380,9 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   Check popover and secondary-text contrast over every built-in picture in light and dark;
   preserve custom values without contrast floors or extra coats.
 - **Floating glass is the enabled default.** Auto, Everywhere and Clear all give menus, popovers,
-  dialogs, floating sheets, tooltips and toasts the same low-tint floating material. Web uses 24px
-  frost and a fixed dark/light backdrop treatment, not a near-opaque coat or content-reactive scrim;
+  dialogs, floating sheets, tooltips and toasts the same floating material. Web uses 24px
+  frost and a fixed dark/light backdrop treatment (light under the default glass adds the white veil
+  below), not a content-reactive scrim;
   native uses adaptive Liquid Glass or the existing tinted blur fallback. Solid and Reduce
   Transparency remove translucency. Custom per-group opacity and blur remain exactly authored.
   A **Tint** slider (integer 0–100, default 12) sets how much of its own paint
@@ -390,7 +391,7 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   that paint is. The anchors at 0/50/100 are the former Subtle/Medium/Strong values; every coat and
   compression value interpolates linearly between neighbouring anchors at the protocol's
   `glassTint.ts` owner. At 12, light Elements over a picture use k ≈ .863 (about a 14% wash).
-  At 0, glass is monocode's blur: a 1% hair of paint, thickened only as far as the fixed
+  At 0, glass is blur alone: a 1% hair of paint, thickened only as far as the fixed
   point needs (about 6% for dark's warm card and menu paint), never a neutral lift, and k = 1, so over
   a picture the inside stays within ±5% of the blurred backdrop's luminance in light and moves only by
   the surface's own paint step in dark (owner, 2026-10-15). Legibility over very bright pictures
@@ -404,20 +405,25 @@ Art-directed imagery and narrative surfaces may need locally owned visual tokens
   keeps k = 1 while Medium and Strong drop k only as far as primary ink needs 4.5:1 over a bright sky
   (Medium .45, Strong .35).
   Light hangs its band from white (`invert(1) brightness() invert(1)`) and never brightens the
-  backdrop past the page (k ≤ 1 − α), so a white page stays white. Saturation is kept at 1.05, never reduced
-  (our one deviation from monocode). A floating surface declares its role on the material owner
-  (`FloatingSurfaceRole`): **panels** carry the page at a heavy coat behind their blur, as monocode's
-  modals do: 55% at 0, 70% at 50, 85% at 100 (61% at the default 20), still landing on the floating paint over a plain
+  backdrop past the page (k ≤ 1 − α), so a white page stays white. Saturation is kept at 1.05, never reduced.
+  A floating surface declares its role on the material owner
+  (`FloatingSurfaceRole`): **panels** carry the page at a heavy coat behind their blur, a frosted
+  modal: 55% at 0, 70% at 50, 85% at 100 (59% at the default 12), still landing on the floating paint over a plain
   page. Panels are centred dialogs (`ModalCardFrame`: alerts, prompts, the command palette), phone
   sheets and large anchored panels (`FloatingOverlay role="panel"`: Add widget, About this widget and
   the other widget flows, Workflow run inputs, Board settings, the workflow examples gallery, the
   session role panel). **Menus**, tooltips and small popovers keep the hair (owner, 2026-10-16),
   except over a live picture (a shared screen or browser page): there every floating surface carries
   Strong's panel coat (85%) at any tint, because arbitrary pixels are content, not atmosphere
-  (recommended exception; owner ruling pending). In light, the default glass gives every
-  floating surface that coat everywhere, on web and native: what lies under a light menu or Share card is ink (a black
-  button, text, field edges), and through the hair its blur reads as a grey ghost on white glass
-  (2026-10-31, intake #44; native, NATIVE-SWEEP M3 2026-11-10). Dark floating glass keeps its coats.
+  (recommended exception; owner ruling pending). **Light floating glass carries a white veil** (owner
+  2026-11-22, light glass veil, amending OWNER-1330-COAT/03): under the default glass every light floating
+  surface (menus, popovers, tooltips, toasts, dialogs and sheets, web and native) carries Strong's panel
+  coat (85%), so the backdrop passes at most 15%. Through the hair, a dark terminal or code block under a
+  light menu read as a mid-grey wash (about #7f7f7f over black); behind the veil it reads near white (about
+  #d9d9d9) while the plain page still lands exactly on the floating paint, and what lies under the menu
+  shows only as a faint soft shape. The veil is the coat itself, never a separate backing layer. A
+  customized preset, blur or tint applies as set. Dark floating glass keeps its hair and coats. This light
+  recipe is our own: the references we compared keep light surfaces opaque and draw glass only in dark.
   A native panel coat is the role's own surface paint, never the ink. Native Liquid Glass stays untinted,
   as in 0.2 (a tint darkens it, an opaque one makes it a flat disc), and native glass has no backdrop tone,
   so a dark menu or bar paints no hair coat over it: clear glass with its rim (owner, 2026-11-10).

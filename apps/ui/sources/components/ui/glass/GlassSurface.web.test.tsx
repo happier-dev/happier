@@ -928,7 +928,7 @@ describe('web glass material', () => {
                 expect({ tone: map.tone, coat: map.coat, opacity }).toMatchInlineSnapshot(`
                   {
                     "coat": "rgb(0, 0, 0)",
-                    "opacity": 0.0124,
+                    "opacity": 0.85,
                     "tone": "brightness(0) saturate(1.05)",
                   }
                 `);

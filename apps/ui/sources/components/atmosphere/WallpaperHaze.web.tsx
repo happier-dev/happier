@@ -6,7 +6,7 @@ import { pictureBackdropProps } from './pictureBackdrop';
 import type { WallpaperHaze as WallpaperHazeComposition } from './wallpaperHaze';
 
 /**
- * monocode's haze under the content (lab `paintHaze`): two soft copies of the scene, centred on the
+ * A layered haze under the content (lab `paintHaze`): two soft copies of the scene, centred on the
  * content column. They are low-resolution renders of the same picture, blurred once as images, never a
  * live backdrop filter; the radii are the glass owner's.
  */

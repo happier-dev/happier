@@ -26,10 +26,10 @@ export type GlassMaterialSettings = Readonly<{
 export function glassPresetMaterials(preset: GlassPreset, intensity: 'light' | 'regular' | 'strong' = 'regular'): GlassSurfaceMaterials {
     const solid: GlassSurfaceMaterial = { blur: 'off', opacity: 1 };
     const glass: GlassSurfaceMaterial = { blur: intensity, opacity: PRESET_OPACITY[intensity] };
-    // Floating tasks need the reference's frost even when surrounding planes use Light.
+    // Floating tasks keep a strong frost even when surrounding planes use Light.
     const floating: GlassSurfaceMaterial = { blur: 'strong', opacity: 0.02 };
     // Elements only turn glass where something shows through (a background or the desktop). Their coat
-    // is faint, as in the monocode reference: the heavy blur and the backdrop tone carry the material.
+    // is faint: the heavy blur and the backdrop tone carry the material.
     const card: GlassSurfaceMaterial = { blur: 'strong', opacity: 0.25 };
     if (preset === 'solid') return { chrome: solid, sidebar: solid, content: solid, card: solid, floating: solid };
     if (preset === 'everywhere') return { chrome: glass, sidebar: glass, content: glass, card, floating };

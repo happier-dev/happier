@@ -193,7 +193,7 @@ reach every channel, removing the lift when that permits a thinner feasible coat
 the authored fill; custom material tables remain exact. At the 0 anchor, glass never takes a neutral lift: when its 1% hair cannot
 reach the paint, the coat thickens and the brightness is re-derived at that coat, so k stays exact.
 The preferred compression k = (1 − α)·s comes from the same `glassTint.ts` anchors: dark 1 over an ordinary page for
-Subtle and Medium (the page shows through, as in monocode); Subtle stays at 1 over a picture too (monocode's blur:
+Subtle and Medium (the page shows through); Subtle stays at 1 over a picture too (blur alone, no dim or wash:
 inside luminance within ±5% of the blurred backdrop in light, moved only by the paint step in dark); over a picture
 Medium .45 and Strong .35 (primary ink keeps 4.5:1 over the balloons' bright sky); Strong .7 over a page; light .43
 (.3 Strong), hung from white, and every light k is at most 1 − α so the backdrop is never brightened.
@@ -207,7 +207,8 @@ their heavy coat over a `brightness(.65)` tone in dark. Panels pass `floatingRol
 (`ModalCardFrame` for dialogs and phone sheets; `FloatingOverlay role="panel"` for large anchored panels such as
 Add widget, the widget flows, Workflow run inputs and Board settings; menus keep the default `menu` role and its
 hair, owner 2026-10-16): the protocol tint anchors give panel coats .55/.7/.85 at 0/50/100
-(default .61), painted
+(default .586). Under the default glass every light floating surface, menus included, takes the .85 coat
+(`resolveGlassPanelCoatOpacity`; owner 2026-11-22, light glass veil), so its k is at most .15. Each coat is painted
 as a fixed `color-mix` coat with k ≤ 1 − α and the coat solved so a plain page lands on
 `edge.floatingFill`. Faint ink: a translucent Elements or floating `GlassSurface` with a band,
 wallpaper or live desktop behind it redefines `--colors-text-secondary` for its subtree as

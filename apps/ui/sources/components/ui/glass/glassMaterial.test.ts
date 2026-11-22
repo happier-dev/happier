@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import Color from 'color';
 import { GlassSurfaceMaterialsSchema } from '@happier-dev/protocol';
-import { DEFAULT_GLASS_TINT_INTENSITY } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
+import { DEFAULT_GLASS_TINT_INTENSITY, resolveGlassTintValues } from '@happier-dev/protocol/actions/settings/glassPreferenceMutations';
 import { darkTheme, lightTheme } from '@/theme';
 import { applyGlassBackdropFilter, glassContrastRatio, renderGlassOver } from '@/dev/testkit/glassBackdrop';
 
@@ -116,8 +116,8 @@ describe('glass material Account owner', () => {
                         for (const atmosphereBehind of ['none', 'wallpaper'] as const) {
                             const environment = { atmosphereBehind, desktopWindow: true, nativeWindowMaterialLive: true };
                             const map = resolveGlassBackdropMap(settings, group, dark, environment)!;
-                            // Menus are glass like Elements in both themes (owner, 2026-11-11 OWNER-1330-COAT/03).
-                            const opacity = resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
+                            // Light floating glass under the default glass carries the veil (owner 2026-11-22, light glass veil).
+                            const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, group, environment).material.opacity;
                             const compression = dark ? atmosphereBehind === 'none' ? plainDark : pictureDark : Math.min(light, 1 - opacity);
                             const filtered = applyGlassBackdropFilter(map.tone, [60, 60, 60]);
                             expect((1 - opacity) * filtered[0]! / 60).toBeCloseTo(compression, 3);
@@ -182,9 +182,9 @@ describe('glass material Account owner', () => {
                 }
             }
         });
-        it('lands every light floating surface on its own paint over the page, and lets a menu show what lies behind through its blur', () => {
-            // Owner 2026-11-11 (OWNER-1330-COAT/03): menus and popovers are glass like the cards, not the old near-opaque
-            // coat; the strong blur keeps what lies behind from competing. Panels keep the tint's panel coat.
+        it('lands every light floating surface on its own paint over the page, and veils what lies behind under the default glass', () => {
+            // Owner 2026-11-22, light glass veil (amends OWNER-1330-COAT/03): under the default glass menus and panels
+            // carry Strong's coat, so black behind them moves the paint by at most 15%.
             const theme = lightTheme;
             const solid = rgb(theme.colors.edge.floatingFill);
             for (const tint of [undefined, DEFAULT_GLASS_TINT_INTENSITY]) {
@@ -196,7 +196,7 @@ describe('glass material Account owner', () => {
                         const over = (backdrop: [number, number, number]) => renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop });
                         const label = `${tint} ${atmosphereBehind} ${role ? 'panel' : 'menu'}`;
                         over(rgb(theme.colors.surface.base)).forEach((value, channel) => expect(Math.abs(value - solid[channel]!), label).toBeLessThanOrEqual(1));
-                        if (!role) expect(Math.abs(over([0, 0, 0])[0]! - solid[0]!), label).toBeGreaterThan(0.3 * 255);
+                        expect(Math.abs(over([0, 0, 0])[0]! - solid[0]!), label).toBeLessThanOrEqual(0.15 * 255 + 2);
                     }
                 }
             }
@@ -266,7 +266,7 @@ describe('glass material Account owner', () => {
                 }
             });
         }
-        it('passes a picture through Subtle glass as monocode does: blur, no dim and no wash', () => {
+        it('passes a picture through Subtle glass as blur alone: no dim and no wash', () => {
             const luminance = (rgb: readonly number[]) => Color.rgb(rgb as number[]).luminosity();
             // The balloons' sky, the blurred ferris wheel sky (measured live) and a bright cloud.
             for (const backdrop of [sky, FERRIS_SKY, [236, 240, 244]] as [number, number, number][]) {
@@ -285,7 +285,7 @@ describe('glass material Account owner', () => {
                 }
             }
         });
-        it('lets an ordinary page show through Subtle and Medium dark floating glass unchanged, like the monocode reference', () => {
+        it('lets an ordinary page show through Subtle and Medium dark floating glass unchanged', () => {
             const page = rgb(darkTheme.colors.surface.base);
             const row: [number, number, number] = [60, 54, 52];
             for (const tint of [0, 12, 50]) {
@@ -524,10 +524,10 @@ describe('Elements over a picture solve against the reading coat they stand on',
     }
 });
 
-// Owner 2026-11-11 (OWNER-1330-COAT/03): popovers kept the old, near-opaque coat next to the new card glass. Menus,
-// dropdowns and anchored popovers are glass like the cards: the tint's hair, solved against the picture, with the
-// strong blur keeping what lies under them from competing. Only native renderers (no real blur, NATIVE-SWEEP M3)
-// keep light glass's coat; panels (dialogs, sheets) and live pictures keep theirs.
+// Owner 2026-11-11 (OWNER-1330-COAT/03): dark menus, dropdowns and anchored popovers are glass like the cards: the
+// tint's hair, solved against the picture, with the strong blur keeping what lies under them from competing. Light
+// floating glass under the default glass carries Strong's coat instead (owner 2026-11-22, light glass veil); panels
+// (dialogs, sheets) and live pictures keep theirs.
 describe('floating menus solve like Elements', () => {
     type Rgb = [number, number, number];
     const rgb = (value: string) => Color(value).rgb().array().slice(0, 3) as Rgb;
@@ -543,33 +543,58 @@ describe('floating menus solve like Elements', () => {
     const settings = { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: DEFAULT_GLASS_TINT_INTENSITY };
     for (const theme of [darkTheme, lightTheme]) {
         for (const [name, atmosphereTone] of Object.entries(pictures)) {
-            it(`${theme.dark ? 'dark' : 'light'} ${name}: a web menu is the tint's thin glass and body ink holds 4.5:1`, () => {
+            it(`${theme.dark ? 'dark' : 'light'} ${name}: a web menu keeps its default coat and body ink holds 4.5:1`, () => {
                 const environment = { atmosphereBehind: 'wallpaper' as const, atmosphereTone };
                 const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill, ink: theme.colors.text.primary, controlFill: theme.colors.surface.selected };
                 const map = resolveGlassBackdropMap(settings, 'floating', theme.dark, environment, ground)!;
                 const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating', environment).material.opacity;
-                expect(opacity).toBeLessThan(0.2);
+                // Light carries the default glass's veil (owner 2026-11-22, light glass veil); dark keeps the hair.
+                if (theme.dark) expect(opacity).toBeLessThan(0.2); else expect(opacity).toBeCloseTo(0.85, 6);
                 const out = renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop: grey(theme.dark ? atmosphereTone.light : atmosphereTone.dark) });
                 expect(glassContrastRatio(out, rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
             });
         }
     }
-    // COR5B (UI refinements 18:15Z): over a plain page there is no measured picture, and a menu over a list read its
-    // rows as dark smudges under its words. The same rule holds there: the thin glass keeps body ink at 4.5:1 over
-    // the page's own darkest content (its ink), with the owner's hair coat unchanged.
-    it('light: over a plain page a web menu keeps the hair coat and holds body ink 4.5:1 over the page\'s ink', () => {
+    // Owner 2026-11-22, light glass veil (amends OWNER-1330-COAT/03): through the hair a light menu over a dark terminal
+    // or code block read as a mid-grey wash (k ≈ 0.50 → about #7f over black). Under the default glass every light web
+    // floating surface carries Strong's panel coat, so the backdrop passes at most 15% and the menu reads white.
+    it('light: under the default glass a web menu carries the 0.85 veil and stays near white over black', () => {
         const theme = lightTheme;
         const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill, ink: theme.colors.text.primary, controlFill: theme.colors.surface.selected };
         const map = resolveGlassBackdropMap(settings, 'floating', false, {}, ground)!;
-        const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating').material.opacity;
-        expect(opacity).toBeLessThan(0.2);
-        const out = renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop: rgb(theme.colors.text.primary) });
-        expect(glassContrastRatio(out, rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
+        expect(map.opacity).toBeCloseTo(0.85, 6);
+        const over = (backdrop: Rgb) => renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity: map.opacity!, backdrop });
+        const page = rgb(theme.colors.surface.base);
+        const gain = (over(page)[0]! - over([0, 0, 0])[0]!) / page[0]!;
+        expect(gain).toBeLessThanOrEqual(0.15 + 0.01);
+        over([0, 0, 0]).forEach(value => expect(value / 255).toBeGreaterThanOrEqual(0.84));
+        over(page).forEach((value, channel) => expect(Math.abs(value - rgb(theme.colors.edge.floatingFill)[channel]!)).toBeLessThanOrEqual(1));
+        expect(glassContrastRatio(over([0, 0, 0]), rgb(theme.colors.text.primary))).toBeGreaterThanOrEqual(4.5);
     });
-    it('keeps the coat where it is still the readable answer: native light menus, panels and live pictures', () => {
-        expect(resolveGlassPanelCoatOpacity(settings, false, false, { nativeRenderer: true })).toBeGreaterThan(0.5);
-        expect(resolveGlassPanelCoatOpacity(settings, false, false)).toBeUndefined();
+    it('dark: a web menu keeps the hair and passes the page through (k = 1)', () => {
+        const theme = darkTheme;
+        const ground = { page: theme.colors.surface.base, solid: theme.colors.edge.floatingFill, ink: theme.colors.text.primary };
         expect(resolveGlassPanelCoatOpacity(settings, true, false)).toBeUndefined();
+        expect(resolveGlassSurfaceMaterial(settings, 'floating').material.opacity).toBeCloseTo(0.0124, 4);
+        const map = resolveGlassBackdropMap(settings, 'floating', true, {}, ground)!;
+        const opacity = map.opacity ?? resolveGlassSurfaceMaterial(settings, 'floating').material.opacity;
+        const page = rgb(theme.colors.surface.base);
+        const row: Rgb = [60, 54, 52];
+        const over = (backdrop: Rgb) => renderGlassOver({ filter: map.tone, coat: rgb(map.coat!), opacity, backdrop });
+        expect(Math.abs((over(row)[0]! - over(page)[0]!) - (row[0]! - page[0]!))).toBeLessThanOrEqual(1.5);
+    });
+    it('keeps the veil to the default glass in light; dark menus and customized glass keep their own coats', () => {
+        // Web and native share the one decision: native paints exactly this coat.
+        expect(resolveGlassPanelCoatOpacity(settings, false, false)).toBeCloseTo(0.85, 6);
+        expect(resolveGlassPanelCoatOpacity(settings, false, true)).toBeCloseTo(0.85, 6);
+        expect(resolveGlassPanelCoatOpacity(settings, true, false)).toBeUndefined();
+        for (const chosen of [
+            { glassSurfaceMaterials: glassPresetMaterials('auto'), glassTintIntensity: 0 },
+            { glassSurfaceMaterials: glassPresetMaterials('everywhere') },
+        ]) {
+            expect(resolveGlassPanelCoatOpacity(chosen, false, false)).toBeUndefined();
+            expect(resolveGlassPanelCoatOpacity(chosen, false, true)).toBe(resolveGlassTintValues(chosen.glassTintIntensity).panelCoat);
+        }
         for (const dark of [true, false]) {
             expect(resolveGlassPanelCoatOpacity(settings, dark, true)).toBeGreaterThan(0.5);
             expect(resolveGlassPanelCoatOpacity(settings, dark, 'livePicture')).toBeGreaterThan(0.5);

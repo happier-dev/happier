@@ -56,7 +56,7 @@ describe('glass material preferences', () => {
         const auto = { glassBlurEnabled: true, glassSurfaceMaterials: glassPresetMaterials('auto') };
         const coats = (tint: number, settings: Parameters<typeof readGlassTintedMaterials>[0] = auto) =>
             readGlassTintedMaterials({ ...settings, ...resolveGlassTintSettingsDelta(settings, tint) });
-        // Subtle is monocode's hair, as thin as the fixed point allows; Medium the earlier faint coat; Strong a frosted one.
+        // Subtle is a hair of paint, as thin as the fixed point allows; Medium the earlier faint coat; Strong a frosted one.
         for (const [tint, card, clearCard, floating] of [[0, 0.01, 0.01, 0.01], [12, 0.0676, 0.0436, 0.0124], [50, 0.25, 0.15, 0.02], [100, 0.45, 0.3, 0.25]] as const) {
             expect(coats(tint).card.opacity).toBeCloseTo(card);
             expect(coats(tint, { glassSurfaceMaterials: glassPresetMaterials('clear') }).card.opacity).toBeCloseTo(clearCard);

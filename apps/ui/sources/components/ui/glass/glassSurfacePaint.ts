@@ -149,7 +149,7 @@ export function resolveGlassSurfacePaintLayers(input: Readonly<{
     if (!c.web) {
         const coatOpacity = !c.hasNativeBackdrop ? undefined
             : c.atmosphereCoat === 'reading' ? c.material.opacity
-            : c.group === 'floating' ? resolveGlassPanelCoatOpacity(c.settings, input.dark, c.panel, { nativeRenderer: true }) : undefined;
+            : c.group === 'floating' ? resolveGlassPanelCoatOpacity(c.settings, input.dark, c.panel) : undefined;
         const background = (c.plane && c.material.opacity === 0 && c.enabled) || c.hasNativeBackdrop || c.inheritsTranslucentMaterial
             ? fixedThemePaint('transparent') : c.tintsWithoutBlur && c.enabled ? materialOpacityPaint(tint, c.material.opacity) : solid;
         return { background, ...(coatOpacity === undefined ? {} : { coat: materialOpacityPaint(tint, coatOpacity) }) };
