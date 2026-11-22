@@ -1,26 +1,27 @@
 import * as React from 'react';
 import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
+import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LocalDaemonServiceOutputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
 
-import { getDefaultSystemTaskRunner, useSystemTaskSnapshot } from '@/components/systemTasks';
-import { buildLocalDaemonServiceSystemTaskSpec } from '@/components/systemTasks/specs/localControl/buildLocalDaemonServiceSystemTaskSpec';
+import { getDefaultSystemTaskRunner } from '@/components/systemTasks';
 import { isSystemTaskBridgeUnavailableError, readSystemTaskStartErrorMessage } from '@/components/systemTasks/systemTaskStartError';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { Modal } from '@/modal';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { t } from '@/text';
 import { desktopHostKind, invokeDesktopHost } from '@/utils/platform/desktopHost';
 
-type CliPathExposureTaskKind = 'cli.pathExposure.ensure.v1' | 'cli.pathExposure.remove.v1';
-
-function readTaskOutcome(kind: CliPathExposureTaskKind, result: SystemTaskResult): string {
+function readTaskOutcome(enabled: boolean, result: SystemTaskResult): string {
     if (!result.ok) {
         const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
         return message || t('settings.systemTaskStartFailed');
     }
     const data = (result.data ?? {}) as Record<string, unknown>;
-    if (kind === 'cli.pathExposure.remove.v1') {
+    if (!enabled) {
         return data.removed === true ? t('machine.cliPath.removed') : t('machine.cliPath.nothingToRemove');
     }
     if (data.changed !== true) {
@@ -37,11 +38,11 @@ function readTaskOutcome(kind: CliPathExposureTaskKind, result: SystemTaskResult
  * re-derives which entry Happier may touch (INV5). `changed: false` is deliberately not one of
  * them: an entry that is already present may be the shell installer's, which removal never claims.
  */
-function readDesktopEntryAbsent(kind: CliPathExposureTaskKind, result: SystemTaskResult): boolean | null {
+function readDesktopEntryAbsent(enabled: boolean, result: SystemTaskResult): boolean | null {
     if (!result.ok) {
         return null;
     }
-    if (kind === 'cli.pathExposure.remove.v1') {
+    if (!enabled) {
         return true;
     }
     return (result.data as Record<string, unknown> | undefined)?.changed === true ? false : null;
@@ -56,44 +57,44 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
     runner?: SystemTaskRunner;
 }>) {
     const runner = props.runner ?? getDefaultSystemTaskRunner();
-    const [activeTask, setActiveTask] = React.useState<Readonly<{ kind: CliPathExposureTaskKind; taskId: string }> | null>(null);
+    const execute = React.useMemo(() => createFrontDoorActionExecute(undefined, { homeRuntimeRunner: runner }), [runner]);
+    const [pending, setPending] = React.useState<boolean | null>(null);
+    const [outcome, setOutcome] = React.useState<string | null>(null);
     const [startErrorMessage, setStartErrorMessage] = React.useState<string | null>(null);
     const [desktopEntryAbsent, setDesktopEntryAbsent] = React.useState(false);
     const [cleanupBusy, setCleanupBusy] = React.useState(false);
     const [cleanupError, setCleanupError] = React.useState<string | null>(null);
     const cleanupPendingRef = React.useRef(false);
-    const snapshot = useSystemTaskSnapshot(runner, activeTask?.taskId ?? null);
-    const result = snapshot?.result ?? null;
     const isUnavailable = runner.mode === 'unavailable';
-    const isBusy = activeTask != null && result == null;
+    const isBusy = pending !== null;
 
-    const handledResultTaskIdRef = React.useRef<string | null>(null);
-    React.useEffect(() => {
-        if (!activeTask || !result || handledResultTaskIdRef.current === activeTask.taskId) {
+    const startTask = React.useCallback(async (enabled: boolean) => {
+        const { serverId } = getActiveServerSnapshot();
+        if (!serverId || isUnavailable || isBusy || cleanupPendingRef.current) {
             return;
         }
-        handledResultTaskIdRef.current = activeTask.taskId;
-        const absent = readDesktopEntryAbsent(activeTask.kind, result);
-        if (absent !== null) {
-            setDesktopEntryAbsent(absent);
-        }
-    }, [activeTask, result]);
-
-    const startTask = React.useCallback(async (kind: CliPathExposureTaskKind) => {
-        if (isUnavailable || isBusy || cleanupPendingRef.current) {
-            return;
-        }
+        setPending(enabled);
+        setOutcome(null);
+        setStartErrorMessage(null);
         try {
-            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec(kind));
-            setStartErrorMessage(null);
-            setActiveTask({ kind, taskId });
+            const scope = getActiveServerAccountScope();
+            const response = await execute(LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, { serverId, enabled }, {
+                surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId,
+                ...(scope ? { expectedAccountId: scope.accountId } : {}),
+            });
+            requireActionSuccess(response);
+            const { result } = LocalDaemonServiceOutputSchema.parse(response.result);
+            const absent = readDesktopEntryAbsent(enabled, result);
+            if (absent !== null) setDesktopEntryAbsent(absent);
+            setOutcome(readTaskOutcome(enabled, result));
         } catch (error) {
-            setActiveTask(null);
             setStartErrorMessage(isSystemTaskBridgeUnavailableError(error)
                 ? t('settings.systemTaskBridgeUnavailable')
                 : (readSystemTaskStartErrorMessage(error) ?? t('settings.systemTaskStartFailed')));
+        } finally {
+            setPending(null);
         }
-    }, [isUnavailable, isBusy, runner]);
+    }, [execute, isUnavailable, isBusy]);
 
     const removeDesktopComponents = useEventCallback(async () => {
         if (desktopHostKind() !== 'tauri' || isBusy || cleanupPendingRef.current) return;
@@ -131,7 +132,7 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
         ? t('settings.systemTaskBridgeUnavailable')
         : startErrorMessage
             ?? (isBusy ? t('machine.cliPath.working') : null)
-            ?? (activeTask && result ? readTaskOutcome(activeTask.kind, result) : null);
+            ?? outcome;
 
     return (
         <>
@@ -152,9 +153,9 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
                     title={t('machine.cliPath.addTitle')}
                     subtitle={t('machine.cliPath.addSubtitle')}
                     onPress={() => {
-                        void startTask('cli.pathExposure.ensure.v1');
+                        void startTask(true);
                     }}
-                    loading={isBusy && activeTask?.kind === 'cli.pathExposure.ensure.v1'}
+                    loading={pending === true}
                     disabled={isUnavailable || isBusy || cleanupBusy}
                 />
                 <Item
@@ -162,9 +163,9 @@ export const LocalCliPathExposureSection = React.memo(function LocalCliPathExpos
                     title={t('machine.cliPath.removeTitle')}
                     subtitle={t('machine.cliPath.removeSubtitle')}
                     onPress={() => {
-                        void startTask('cli.pathExposure.remove.v1');
+                        void startTask(false);
                     }}
-                    loading={isBusy && activeTask?.kind === 'cli.pathExposure.remove.v1'}
+                    loading={pending === false}
                     disabled={isUnavailable || isBusy || cleanupBusy || desktopEntryAbsent}
                 />
             </ItemGroup>

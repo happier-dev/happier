@@ -3,7 +3,12 @@ import renderer from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createDeferred, renderScreen } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { installMachinesSettingsCommonModuleMocks } from '@/components/settings/machines/machinesSettingsTestHelpers';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 
 (
     globalThis as typeof globalThis & {
@@ -23,6 +28,12 @@ installMachinesSettingsCommonModuleMocks({
         });
     },
 });
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+vi.mock('socket.io-client', async original =>
+    (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
+installDisconnectedServerSocketBoundary();
+vi.mock('expo-router/build/link/href', () => ({ resolveHref: vi.fn() }));
 
 const LOCAL_PARAMS = {
     target: { kind: 'local' },
@@ -34,6 +45,8 @@ const LOCAL_PARAMS = {
 
 // Load the real UI graph after installing its platform boundaries, outside a test's effect deadline.
 const { LocalCliPathExposureSection } = await import('./LocalCliPathExposureSection');
+const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
+await loadSyncSingletonForTests();
 
 async function createHarness() {
     const { createSystemTaskRunner } = await import('@/components/systemTasks/createSystemTaskRunner');
@@ -65,10 +78,19 @@ async function createHarness() {
     });
 
     const screen = await renderScreen(React.createElement(LocalCliPathExposureSection, { runner }));
+    const pressPath = async (op: 'add' | 'remove') => {
+        const previous = starts.length;
+        await screen.pressByTestIdAsync(`settings.localCliPath.${op}`);
+        await renderer.act(async () => {
+            await vi.waitFor(() => expect(listeners.size).toBeGreaterThan(0));
+            expect(starts.length).toBe(previous + 1);
+        });
+    };
 
     return {
         screen,
         starts,
+        pressPath,
         /** The props this section hands the canonical `Item` primitive. */
         row(testID: string): Record<string, unknown> {
             const match = screen.findAllByTestId(testID)
@@ -109,12 +131,16 @@ async function createHarness() {
 describe('LocalCliPathExposureSection', () => {
     let Modal: (typeof import('@/modal'))['Modal'];
     beforeEach(async () => {
+        await homes.reset();
+        const serverId = await homes.addHome({ name: 'PATH Home', serverUrl: 'https://path-home.test', accountId: 'alice' });
+        storage.setState({ settingsScope: { serverId, accountId: 'alice' }, profileScope: { serverId, accountId: 'alice' } });
+        publishAppliedActiveServerSnapshot(getActiveServerSnapshot(), true);
         ({ Modal } = await import('@/modal'));
         vi.mocked(Modal.confirm).mockReset();
         vi.mocked(Modal.confirm).mockResolvedValue(false);
     });
 
-    afterEach(() => vi.unstubAllGlobals());
+    afterEach(() => { publishAppliedActiveServerRuntimeAvailability(false); vi.unstubAllGlobals(); });
 
     it('shows Desktop cleanup only inside the native Desktop app', async () => {
         const browser = await createHarness();
@@ -195,7 +221,7 @@ describe('LocalCliPathExposureSection', () => {
             confirmation.resolve(false);
             await first;
         });
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
         await harness.pressRow('settings.localDesktop.cleanup');
         expect(Modal.confirm).toHaveBeenCalledTimes(1);
         expect(invoke).not.toHaveBeenCalled();
@@ -205,7 +231,7 @@ describe('LocalCliPathExposureSection', () => {
         const harness = await createHarness();
 
         expect(harness.starts).toEqual([]);
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
 
         expect(harness.starts).toEqual([{ kind: 'cli.pathExposure.ensure.v1', params: LOCAL_PARAMS }]);
 
@@ -227,7 +253,7 @@ describe('LocalCliPathExposureSection', () => {
     it('reports an already-present entry without claiming a change', async () => {
         const harness = await createHarness();
 
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
         await harness.resolve('task_1:cli.pathExposure.ensure.v1', { changed: false, shellReloadHint: null, failure: null });
 
         expect(harness.subtitleOf('settings.localCliPath.status')).toBe('machine.cliPath.alreadyPresent');
@@ -238,7 +264,7 @@ describe('LocalCliPathExposureSection', () => {
     it('starts the remove task from the remove row and reports what the owner removed', async () => {
         const harness = await createHarness();
 
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.remove');
+        await harness.pressPath('remove');
 
         expect(harness.starts).toEqual([{ kind: 'cli.pathExposure.remove.v1', params: LOCAL_PARAMS }]);
 
@@ -251,7 +277,7 @@ describe('LocalCliPathExposureSection', () => {
 
         expect(harness.row('settings.localCliPath.remove').disabled).toBe(false);
 
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.remove');
+        await harness.pressPath('remove');
         await harness.resolve('task_1:cli.pathExposure.remove.v1', { removed: false, failure: null });
 
         expect(harness.subtitleOf('settings.localCliPath.status')).toBe('machine.cliPath.nothingToRemove');
@@ -260,7 +286,7 @@ describe('LocalCliPathExposureSection', () => {
         expect(harness.row('settings.localCliPath.add').disabled).toBe(false);
 
         // Adding the entry back makes it removable again — both facts come from the owner.
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
         await harness.resolve('task_2:cli.pathExposure.ensure.v1', { changed: true, shellReloadHint: null, failure: null });
         expect(harness.row('settings.localCliPath.remove').disabled).toBe(false);
     });
@@ -268,7 +294,7 @@ describe('LocalCliPathExposureSection', () => {
     it('surfaces a task failure as the repair affordance and keeps both actions available', async () => {
         const harness = await createHarness();
 
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
         await harness.fail('task_1:cli.pathExposure.ensure.v1', 'Could not update shell profile /home/me/.profile: EACCES');
 
         expect(harness.subtitleOf('settings.localCliPath.status'))
@@ -280,7 +306,7 @@ describe('LocalCliPathExposureSection', () => {
     it('announces the outcome politely and labels every row', async () => {
         const harness = await createHarness();
 
-        await harness.screen.pressByTestIdAsync('settings.localCliPath.add');
+        await harness.pressPath('add');
         await harness.resolve('task_1:cli.pathExposure.ensure.v1', { changed: true, shellReloadHint: null, failure: null });
 
         const status = harness.row('settings.localCliPath.status');

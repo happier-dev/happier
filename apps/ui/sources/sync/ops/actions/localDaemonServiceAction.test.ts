@@ -50,6 +50,32 @@ async function fixture(mode: 'tauri' | 'native' = 'tauri') {
 }
 
 describe('local daemon service Actions through the native task owner', () => {
+    it.each([
+        [true, 'cli.pathExposure.ensure.v1', { changed: true, shellReloadHint: null, failure: null }],
+        [false, 'cli.pathExposure.remove.v1', { removed: true, failure: null }],
+    ] as const)('settles PATH exposure %s through the answering desktop native task', async (enabled, kind, data) => {
+        const { serverId, manual, executor, context } = await fixture();
+        const actionId = 'machines.local.service.pathExposure.set';
+        const { resolveDesktopUiActionClientRpcMethod, DESKTOP_UI_ACTION_CLIENT_RPC_METHOD } =
+            await import('@happier-dev/protocol/actions/clientDispatchV1');
+        const { listActionSpecsForCatalogSurface } = await import('@happier-dev/protocol/actions/actionCatalog');
+        const input = { serverId, enabled };
+        expect(resolveDesktopUiActionClientRpcMethod(actionId, input)).toBe(DESKTOP_UI_ACTION_CLIENT_RPC_METHOD);
+        expect(resolveDesktopUiActionClientRpcMethod(actionId, { ...input, clientId: 'electron-client' })).toBeUndefined();
+        for (const surface of ['agent', 'mcp', 'cli'] as const) {
+            expect(listActionSpecsForCatalogSurface({ surface }).some(spec => spec.id === actionId)).toBe(true);
+        }
+        const pending = executor.execute(actionId, input, context);
+        await vi.waitFor(() => expect(manual.bridge.start).toHaveBeenCalledOnce());
+        const task = manual.bridge.start.mock.calls[0]?.[0];
+        expect(task).toMatchObject({ kind, params: { target: { kind: 'local' } } });
+        expect(task?.params).not.toHaveProperty('relayUrl');
+        const taskId = 'personal-home-task-1';
+        const result = { protocolVersion: 1, taskId, ok: true, data };
+        manual.emitResult(taskId, result);
+        await expect(pending).resolves.toMatchObject({ ok: true, result: { taskId, result } });
+    });
+
     it('does not display or cancel another Home service start in Settings', async () => {
         const { serverId, manual, executor, context } = await fixture();
         const pending = executor.execute('machines.local.service.start', { serverId }, context);

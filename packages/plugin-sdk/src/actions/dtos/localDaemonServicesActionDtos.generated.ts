@@ -42,6 +42,12 @@ export type LocalDaemonServicesActionInputById = {
     } & {
         clientId?: string | undefined;
     };
+    readonly "machines.local.service.pathExposure.set": {
+        enabled: boolean;
+        serverId: string;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "machines.services.exec": {
         target: {
             kind: 'candidate';
@@ -313,6 +319,23 @@ export type LocalDaemonServicesActionResultById = {
     } | {
         outcome: 'user_owned';
         label: null | string;
+    };
+    readonly "machines.local.service.pathExposure.set": {
+        taskId: string;
+        result: {
+            protocolVersion: 1;
+            taskId: string;
+            ok: false;
+            error: {
+                code: string;
+                message: string;
+            };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
+        };
     };
     readonly "machines.services.exec": {
         exitCode: number;

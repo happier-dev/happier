@@ -21,6 +21,7 @@ import type { SocketRpcAnsweringClientCandidateV1 } from '../rpc/socket.js';
 import { AdmittedHostReviewedChildrenV1Schema, type AdmittedHostReviewedChildrenV1 } from './executor/hostReviewedChildrenV1.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
 import { PERSONAL_HOME_CREATE_ACTION_ID_V1 } from './specs/machineConnectionActionIdsV1.js';
+import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1 } from './specs/localDaemonServiceActionIdsV1.js';
 export { withoutClientActionInput } from './clientActionInput.js';
 
 /** One deterministic recovery contract for every client-placed Action family. */
@@ -42,6 +43,12 @@ const DESKTOP_ACTION_IDS: ReadonlySet<ActionId> = new Set([
 
 /** Desktop effects use the Home's desktop responder, even for an Agent with a bound Session. */
 export function resolveDesktopUiActionClientRpcMethod(actionId: ActionId, input: unknown): typeof DESKTOP_UI_ACTION_CLIENT_RPC_METHOD | undefined {
+  if (actionId === LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1) {
+    // An explicit addressing choice can also be an Electron client. Both
+    // native shells serve System Tasks; only Tauri advertises the desktop room.
+    if (input && typeof input === 'object' && 'clientId' in input && typeof input.clientId === 'string') return undefined;
+    return DESKTOP_UI_ACTION_CLIENT_RPC_METHOD;
+  }
   const presentation = actionId === 'session.open' && input && typeof input === 'object' && 'presentation' in input
     ? input.presentation : undefined;
   if (DESKTOP_ACTION_IDS.has(actionId) || presentation === 'overlay' || presentation === 'window') {

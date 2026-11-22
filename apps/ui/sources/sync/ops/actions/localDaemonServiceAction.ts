@@ -1,6 +1,6 @@
 import type { ActionExecutorDeps} from '@happier-dev/protocol/actions/executor/types';
 import type { SystemTaskResult } from '@happier-dev/protocol/system/tasks/spec';
-import { LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, LocalDaemonServiceAutostartInputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
+import { LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1, LOCAL_DAEMON_SERVICE_INPUT_SCHEMAS, LocalCliPathExposureSetInputSchema, LocalDaemonServiceAutostartInputSchema } from '@happier-dev/protocol/actions/specs/localDaemonService';
 import { getSystemTasksRunner } from '@/components/systemTasks/systemTasksRuntime';
 import type { SystemTaskRunner } from '@/components/systemTasks/types';
 import { waitForSystemTaskResult } from '@/components/systemTasks/createSystemTaskRunner';
@@ -64,14 +64,18 @@ export function createLocalDaemonServiceAction(options: Readonly<{ runner?: Syst
             const kinds = { 'machines.local.service.status': 'daemon.service.status.v1',
                 'machines.local.service.start': 'daemon.service.start.v1', 'machines.local.service.stop': 'daemon.service.stop.v1',
                 'machines.local.service.restart': 'daemon.service.restart.v1' } as const;
-            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec(kinds[actionId], scope));
+            const isPathExposure = actionId === LOCAL_CLI_PATH_EXPOSURE_SET_ACTION_ID_V1;
+            const kind = isPathExposure
+                ? LocalCliPathExposureSetInputSchema.parse(input).enabled ? 'cli.pathExposure.ensure.v1' : 'cli.pathExposure.remove.v1'
+                : kinds[actionId];
+            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec(kind, scope));
             if (actionId === 'machines.local.service.start') publishLocalDaemonServiceStartTask(runner, taskId,
                 { serverId: account.serverId, accountId: account.accountId });
             let result: SystemTaskResult;
             try { result = await waitForSystemTaskResult(runner, taskId, { signal }); }
             catch (error) { if (signal?.aborted) await runner.cancel(taskId); throw error; }
             throwIfAborted(signal);
-            if (!result.ok) return settled(result);
+            if (!result.ok || isPathExposure) return settled(result);
             if (actionId === 'machines.local.service.status') {
                 const status = readLocalDaemonStatusData(result);
                 if (status && canPublish()) publishLocalDaemonStatus(runner, status);
