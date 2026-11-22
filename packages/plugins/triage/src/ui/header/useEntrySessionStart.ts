@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
-import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { isPluginActionConfirmationDeclined, projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { usePluginHostApi, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
 import {
@@ -13,6 +13,14 @@ export type { TriageRecentSessionV1, TriageEntrySessionStartTargetV1, TriageRece
 
 export type TriageEntrySessionStartUiControllerV1 = Omit<TriageEntrySessionStartControllerV1, 'settleAction'> & Readonly<{ settleAction: PluginUiActionControlController['onSettled'] }>;
 
+export function projectTriageEntrySessionSettlement(
+    execution: Parameters<typeof projectPluginActionControlExecutionV1>[0],
+    translate: Parameters<typeof projectPluginActionControlExecutionV1>[1],
+): ReturnType<typeof projectPluginActionControlExecutionV1> {
+    const settlement = projectPluginActionControlExecutionV1(execution, translate);
+    return isPluginActionConfirmationDeclined(settlement) ? { status: 'idle' } : settlement;
+}
+
 export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOptionsV1): TriageEntrySessionStartUiControllerV1 {
     const host = usePluginHostApi() as unknown as TriageStartHostV1;
     const text = usePluginTranslation();
@@ -20,7 +28,7 @@ export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOpti
     React.useEffect(() => { owner.activate(); return () => owner.dispose(); }, [owner]);
     const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
     const settleAction = React.useCallback<PluginUiActionControlController['onSettled']>(execution => {
-        owner.getSnapshot().settleAction(projectPluginActionControlExecutionV1(execution, text));
+        owner.getSnapshot().settleAction(projectTriageEntrySessionSettlement(execution, text));
     }, [owner, text]);
     return React.useMemo(() => ({ ...snapshot, settleAction }), [snapshot, settleAction]);
 }

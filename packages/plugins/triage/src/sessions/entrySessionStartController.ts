@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { isPluginActionHandlerInvocationNotStartedAdvisory } from '@happier-dev/plugin-sdk/actions';
-import { isPluginActionConfirmationDeclined, type PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
@@ -1222,8 +1222,8 @@ export function createTriageEntrySessionStartController(
         releasePreparation?.(); releasePreparation = undefined;
         inFlight.current = false;
         if (retired.current) return;
-        if (execution.status === 'idle' || execution.status === 'pending') return;
-        if (isPluginActionConfirmationDeclined(execution)) { setPhase(IDLE); return; }
+        if (execution.status === 'pending') return;
+        if (execution.status === 'idle') { setPhase(IDLE); return; }
         if (execution.status === 'error') {
             setPhase(unavailable('dispatch', projectTriageNewSessionFailureV1(new PluginError({ code: execution.code,
                 message: execution.message, ...(execution.diagnostics === undefined ? {} : { diagnostics: [...execution.diagnostics] }),

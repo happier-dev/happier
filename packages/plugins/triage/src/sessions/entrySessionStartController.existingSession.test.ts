@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createPluginActionHandlerUnavailableFixture } from '@happier-dev/plugin-sdk/testing';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
@@ -17,6 +16,7 @@ import { TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1, TriageRunConfiguredActionInpu
     type TriageRunConfiguredActionInputV1 } from '../actions/configuredActionRunProtocol.js';
 import { testkitEntryRef, testkitLocator, testkitSnapshot, testkitViewer } from '../corpus/testkit/observations.test-support.js';
 import { testkitConfiguredInstance, testkitTriageActionId } from './testkit/entrySessionTestkit.test-support.js';
+import { projectTriageEntrySessionSettlement } from '../ui/header/useEntrySessionStart.js';
 import { createTriageEntrySessionStartController, type TriageEntrySessionStartRequestV1,
     type TriageStartHostV1 } from './entrySessionStartController.js';
 import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
@@ -110,7 +110,7 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
                 if (!(error instanceof PluginError)) throw error;
                 return { ok: false as const, errorCode: error.code, error: error.message };
             });
-        controller.getSnapshot().settleAction(projectPluginActionControlExecutionV1(execution, (_key, fallback) => fallback ?? 'Action failed'));
+        controller.getSnapshot().settleAction(projectTriageEntrySessionSettlement(execution, (_key, fallback) => fallback ?? 'Action failed'));
         return execution.ok ? controller.getSnapshot().configuredResult : null;
     };
     return { controller, request, send, operands, addresses, sends, edits, unexpected, boundaryErrors, setAddress: (value: ActionSessionAddressV1) => { address = value; } };
