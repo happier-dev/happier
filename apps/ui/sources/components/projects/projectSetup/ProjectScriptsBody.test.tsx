@@ -132,6 +132,7 @@ vi.mock('@/text', async () => {
   return createTextModuleMock({ translate: (key, params) =>
     // Memory summaries disclose the stored amount through the translation parameter.
     key === 'projects.scripts.editor.needsAbout' || key === 'projects.scripts.setup.lead' || key === 'projects.authoring.lastSession'
+      || key === 'projects.scripts.sharedUpdate.env'
       ? parameterized.t(key, params) : key,
   });
 });
@@ -2802,6 +2803,40 @@ describe('ProjectScriptsBody with thousands of found scripts', () => {
 });
 
 describe('Project setup layers on the Scripts page (plan A L6)', () => {
+  it.each(['current', 'notRequired', 'needsReview', 'unprepared'] as const)(
+    'offers content acceptance with executable consent only when readiness requires it (%s)', async kind => {
+      const { ProjectSharedSetupUpdateView, readProjectSharedSetupUpdateRows } = await import('./ProjectSharedSetupUpdateSheet');
+      const before: ProjectManifestV1 = { version: 1, workspace: { setup: [{ kind: 'command', command: './bootstrap.sh' }] } };
+      const after: ProjectManifestV1 = { ...before, environmentVariables: [{ name: 'OPTIONAL', kind: 'config', required: false }] };
+      const selection = { sourceId: 'src-acme-web', contentRevision: { headerVersion: 1, bodyVersion: 4 }, digest: hash };
+      const setupReadiness = kind === 'current'
+        ? { kind, reviewedEffectDigest: hash, completedAtMs: 1795355077257 }
+        : kind === 'needsReview' ? { kind, code: 'project_setup_consent_required' }
+        : { kind, reviewedEffectDigest: hash };
+      const change = { kind: 'changed' as const, selection,
+        before: { effectiveManifest: before, origins: [] }, after: { effectiveManifest: after, origins: [] }, setupReadiness };
+      const snapshot = { kind: 'ready' as const, pending: false, change,
+        request: { projectRef: { serverId: workspace.serverId, projectKey: 'w1' }, expectedRevision: 3, review: change } };
+      const decide = vi.fn();
+      const screen = await renderScreen(<ProjectSharedSetupUpdateView snapshot={snapshot}
+        rows={readProjectSharedSetupUpdateRows(snapshot)} sourceName="Acme web" machineName="My machine"
+        scope="thisTime" onScopeChange={() => {}} busy={null} failure={null} onRetry={() => {}}
+        onDecide={decide} onClose={() => {}} />);
+      const requiresPreparation = kind === 'needsReview' || kind === 'unprepared';
+      const optional = screen.findByTestId('project-shared-setup-update.change:env:OPTIONAL');
+      expect(optional).not.toBeNull();
+      expect(optional?.props.accessibilityLabel).toContain('OPTIONAL');
+      expect(screen.findByTestId('project-shared-setup-update.scope:thisTime') !== null).toBe(requiresPreparation);
+      expect(screen.findByTestId('project-shared-setup-update.scope:untilChanged') !== null).toBe(requiresPreparation);
+      expect(screen.getTextContent().includes('projects.scripts.sharedUpdate.nothingRuns')).toBe(requiresPreparation);
+      expect(screen.getTextContent().includes('projects.scripts.sharedUpdate.afterDescription')).toBe(requiresPreparation);
+      await act(async () => { await screen.pressByTestIdAsync('project-shared-setup-update.use'); });
+      expect(decide).toHaveBeenCalledWith('thisTime');
+      await act(async () => { await screen.pressByTestIdAsync('project-shared-setup-update.keep'); });
+      expect(decide).toHaveBeenLastCalledWith('keep');
+    },
+  );
+
   it('lists the scripts that run from every layer and names where each non-repository one comes from', async () => {
     const effectiveManifest = { version: 1, scripts: {
       test: { source: nativeRef('test') },

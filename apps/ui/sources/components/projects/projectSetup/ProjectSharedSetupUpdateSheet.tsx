@@ -199,6 +199,8 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
   const { snapshot, scope, busy, failure, rows } = props;
   const change = snapshot?.kind === 'ready' ? snapshot.change : null;
   const request = snapshot?.kind === 'ready' ? snapshot.request : null;
+  const needsPreparation = change?.kind === 'changed'
+    && change.setupReadiness.kind !== 'current' && change.setupReadiness.kind !== 'notRequired';
   const name = props.sourceName ?? t('projects.scripts.layers.sharedUnnamed');
   // What will run once the person takes the update, each line naming its layer (lab "After the change").
   const after = change?.kind === 'changed' ? change.after : null;
@@ -261,14 +263,14 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
             ))}
           </ItemGroup>
         ) : null}
-        <ItemGroup
+        {needsPreparation ? <ItemGroup
           surface="none"
           title={props.pending ? t('projects.scripts.sharedUpdate.pendingRuns') : t('projects.scripts.sharedUpdate.after')}
           description={t('projects.scripts.sharedUpdate.afterDescription', { machine: props.machineName })}
           testID="project-shared-setup-update.after"
         >
           <ProjectSetupEffectLines testID="project-shared-setup-update.after" lines={afterLines} framed />
-        </ItemGroup>
+        </ItemGroup> : null}
         {failure ? (
           <AttentionBanner
             testID="project-shared-setup-update.failure"
@@ -278,14 +280,14 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
           />
         ) : null}
         {/* The choice stands on the sections' edge, so the group owns its inset. */}
-        <ItemGroup surface="none" testID="project-shared-setup-update.choice">
+        {needsPreparation ? <ItemGroup surface="none" testID="project-shared-setup-update.choice">
           <ProjectSetupScopeChoice
             testID="project-shared-setup-update"
             scope={scope}
             onChange={props.onScopeChange}
             allowSkip={false}
           />
-        </ItemGroup>
+        </ItemGroup> : null}
       </>
     );
   }
@@ -296,7 +298,7 @@ export function ProjectSharedSetupUpdateView(props: Readonly<{
       <ListPresentationProvider value="page">{content}</ListPresentationProvider>
       {/* Lab L6-updateSheet: what nothing-runs-yet means sits beside the decision it qualifies. */}
       <View style={styles.footer}>
-      {decidable ? (
+      {decidable && needsPreparation ? (
         <View style={styles.note}>
           <Icon name="lock" size={14} color={theme.colors.text.tertiary} />
           <Text variant="meta" style={[styles.noteText, { color: theme.colors.text.secondary }]}>

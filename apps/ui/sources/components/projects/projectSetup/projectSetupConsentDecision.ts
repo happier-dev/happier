@@ -27,7 +27,7 @@ export type ProjectSharedSetupUpdateDecisionResult =
   | Readonly<{ kind: 'accepted'; setup: AcceptedSetup; preparation: ProjectPrepareResultV1 }>
   | Readonly<{ kind: 'acceptedConsentUnavailable'; setup: AcceptedSetup; code: string }>;
 
-/** One human update choice commits the reviewed copy, then enters the existing preparation owner.
+/** One human update choice commits the reviewed copy, preparing only when the target needs setup.
  * The controller consumes that operation's pushed review to finish the same choice; no Trust is
  * written from proposed facts and a failed preparation leaves its accepted-copy receipt visible.
  */
@@ -41,7 +41,7 @@ export async function decideProjectSharedSetupUpdate(input: ProjectSharedSetupUp
 }>): Promise<ProjectSharedSetupUpdateDecisionResult> {
   if (input.decision === 'keep') return { kind: 'kept' };
   const readiness = input.review.setupReadiness;
-  const reviewedEffectDigest = readiness.kind === 'notRequired'
+  const reviewedEffectDigest = readiness.kind === 'notRequired' || readiness.kind === 'current'
     ? readiness.reviewedEffectDigest : input.review.setupReview?.reviewedEffectDigest;
   if (!reviewedEffectDigest) return { kind: 'unavailable',
     code: readiness.kind === 'unknown' || readiness.kind === 'needsReview' ? readiness.code : 'project_setup_review_unavailable' };
@@ -55,6 +55,8 @@ export async function decideProjectSharedSetupUpdate(input: ProjectSharedSetupUp
     setup = accepted;
     if (readiness.kind === 'notRequired') return { kind: 'accepted', setup,
       preparation: { kind: 'notRequired', reviewedEffectDigest: readiness.reviewedEffectDigest } };
+    if (readiness.kind === 'current') return { kind: 'accepted', setup,
+      preparation: { kind: 'success', reviewedEffectDigest: readiness.reviewedEffectDigest } };
     const preparation = await client.prepare({ phase: 'setup', expectedEffectDigest: reviewedEffectDigest });
     return { kind: 'accepted', setup, preparation };
   } catch (error) {

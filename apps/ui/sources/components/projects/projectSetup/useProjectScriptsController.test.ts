@@ -150,6 +150,64 @@ describe('Project Scripts Setup controls', () => {
         expect(accepted).toBe(1);
     });
 
+    it.each([true, false])('accepts content-only shared changes without preparing a current lifecycle (review details: %s)', async withReview => {
+        const { useProjectScriptsController } = await import('./useProjectScriptsController');
+        const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
+        const { ProjectSetupSetInputV1Schema } = await import('@happier-dev/protocol/projects/projectSetupSetV1');
+        const home = await harness.addHome({ name: 'Current lifecycle', serverUrl: 'https://current-lifecycle.test', accountId: 'alice' });
+        const serverId = resolveServerProfileScopeIdForIdentifier(home);
+        const workspace = { serverId, workspaceId: 'checkout', machineId: 'machine', rootPath: '/repo' };
+        const before = { version: 1 as const, workspace: { setup: [{ kind: 'command' as const, command: './bootstrap.sh' }] } };
+        const after = { ...before, environmentVariables: [{ name: 'OPTIONAL', kind: 'config' as const, required: false }] };
+        const selection = { sourceId: 'shared', contentRevision: { headerVersion: 1, bodyVersion: 4 }, digest: projectSharedSetupDigestV1(after) };
+        let acceptedSelection = { ...selection, contentRevision: { headerVersion: 1, bodyVersion: 3 }, digest: projectSharedSetupDigestV1(before) };
+        let completedAtMs = 1795355077257;
+        const readiness = { kind: 'current' as const, reviewedEffectDigest: 'unchanged-lifecycle', completedAtMs };
+        const review = { kind: 'changed' as const, selection,
+            before: { effectiveManifest: before, origins: [] }, after: { effectiveManifest: after, origins: [] },
+            setupReadiness: readiness,
+            ...(withReview ? { setupReview: { reviewedEffectDigest: readiness.reviewedEffectDigest,
+                reviewedEffect: { commands: ['./bootstrap.sh'] } } } : {}) };
+        const confirm = vi.fn(async () => true);
+        const prepare = vi.fn(async () => {
+            completedAtMs++;
+            return { kind: 'success' as const, reviewedEffectDigest: readiness.reviewedEffectDigest };
+        });
+        const execute = createFrontDoorActionExecute(createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({
+            // Home content CAS, passive daemon facts, native effects and the confirmation presenter are boundaries.
+            projectsSetupSet: async ({ input }) => {
+                const request = ProjectSetupSetInputV1Schema.parse(input);
+                if (request.intent.kind !== 'accept' || !request.intent.expectedSelection) throw new Error('Expected reviewed content acceptance');
+                acceptedSelection = request.intent.expectedSelection;
+                return { ok: true, row: { setupSelection: acceptedSelection }, revision: 4, effectiveDefinition: review.after };
+            },
+            projectDefinitionAction: async () => ProjectDefinitionInspectOutputSchema.parse({
+                definition: { basis: { kind: 'absent' }, document: null },
+                detection: { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] }, importCandidates: [],
+                setupReadiness: readiness, ...(withReview ? { setupReview: review.setupReview } : {}),
+            }),
+            projectAction: prepare,
+            presentUserActionConfirmation: confirm,
+        }), 'alice'));
+        const homes = [serverId];
+        const hook = await renderHook(() => useProjectScriptsController(workspace, () => {},
+            useServerCredentialAccountScopeBindings(homes).get(serverId) ?? null, { execute }));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().ready).toBe(true));
+            await act(async () => {
+                expect(await hook.getCurrent().decideSharedSetupUpdate({ projectRef: { serverId, projectKey: 'project' },
+                    expectedRevision: 3, review }, 'thisTime')).toMatchObject({ kind: 'accepted', setup: { row: { setupSelection: selection } },
+                    preparation: { kind: 'success', reviewedEffectDigest: readiness.reviewedEffectDigest } });
+            });
+            expect(acceptedSelection).toEqual(selection);
+            expect(completedAtMs).toBe(readiness.completedAtMs);
+            expect(confirm).not.toHaveBeenCalled();
+            expect(prepare).not.toHaveBeenCalled();
+            expect(hook.getCurrent().sharedSetupUpdatePending).toBe(false);
+            expect(hook.getCurrent().failure).toBeNull();
+        } finally { await hook.unmount(); }
+    });
+
     it('discards picker intent for another checkout, Account, or a removed portable Script', async () => {
         const { useProjectScriptsController } = await import('./useProjectScriptsController');
         const { useServerCredentialAccountScopeBindings } = await import('@/sync/domains/scope/useServerCredentialAccountScopes');
