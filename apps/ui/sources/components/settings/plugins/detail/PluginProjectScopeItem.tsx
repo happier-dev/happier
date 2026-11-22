@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { SchemaFieldStatusLine } from '@/components/settings/schemaFields/SchemaFieldRow';
-import { useProjectPickerOptions } from '@/components/projects/useProjectPickerOptions';
+import { usePresentedProjectPicker } from '@/components/projects/useProjectPickerOptions';
 import {
   MultiSelectField,
   type MultiSelectCandidate,
@@ -29,7 +29,8 @@ export function PluginProjectScopeItem(
   const control = usePluginProjectScopeControl(props.pluginId);
   const draftControl = React.useRef<typeof control>(control);
   const [refusal, setRefusal] = React.useState<'conflict' | 'unavailable' | 'rejected' | null>(null);
-  const projects = useProjectPickerOptions();
+  const [open, setOpen] = React.useState(false);
+  const { projects, status } = usePresentedProjectPicker(open && control.kind === 'available');
   const { theme } = useUnistyles();
   const allProjectsLabel = t('capabilities.store.allProjects');
   const candidates = React.useMemo<readonly MultiSelectCandidate[]>(
@@ -64,6 +65,10 @@ export function PluginProjectScopeItem(
         exclusiveId={ALL_PROJECTS_ID}
         minimumSelected={1}
         disabled={props.disabled}
+        optionsStatus={open && status !== 'ready' ? {
+          title: t(status === 'loading' ? 'projects.identity.rowsLoadingTitle' : 'projects.identity.rowsUnavailableTitle'),
+          loading: status === 'loading',
+        } : undefined}
         subtitle={(_count, _total, ids) => {
           if (ids.has(ALL_PROJECTS_ID) || ids.size === 0) return allProjectsLabel;
           return t('settingsPlugins.surfaces.projectScopeOnly', {
@@ -92,12 +97,13 @@ export function PluginProjectScopeItem(
             showChevron={false}
           />
         )}
-        onOpenChange={(open) => {
-          if (open) draftControl.current = control;
+        onOpenChange={(nextOpen) => {
+          setOpen(nextOpen);
+          if (nextOpen) draftControl.current = control;
         }}
         onCommit={async (ids) => {
           const edit = draftControl.current;
-          if (edit.kind !== 'available') return;
+          if (edit.kind !== 'available' || status !== 'ready') return;
           const projectKeys = ids.filter((id) => id !== ALL_PROJECTS_ID);
           setRefusal(null);
           const result = await edit.setProjectScope(

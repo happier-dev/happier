@@ -3,15 +3,19 @@ import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { PLUGIN_PROJECT_SCOPE_SET_ACTION_ID } from '@happier-dev/protocol/actions/pluginAccountAdministrationActionIds';
+import type { PluginProjectScopeV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadActionOutputV1Schema,
     PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityIntentSetActionOutputV1Schema,
     PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
     PluginAvailabilityReleaseReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { createDeferred, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createProviderSettingsAccountHarness } from '@/dev/testkit/harness/providerSettingsHarness';
+import { installBrowserRuntimeForTests } from '@/dev/testkit/harness/browserRuntimeHarness';
+import { installReactDomPortalBoundaryForTests } from '@/dev/testkit/mocks/reactDom';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { applyProjectAccountRowsFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { applyProjectAccountRowsFixture, createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
 
 const confirm = vi.hoisted(() => vi.fn(async () => false));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -36,7 +40,7 @@ await import('@/sync/ops/actions/frontDoorRuntimeActionExecutor');
 
 afterEach(async () => { await standardCleanup(); await account.reset(); confirm.mockClear(); vi.unstubAllGlobals(); });
 
-async function restorePluginIntent() {
+async function restorePluginIntent(projectScope?: PluginProjectScopeV1) {
     const pluginId = 'example.brand';
     await account.restore({ accountId: 'account-a', currentAccount: true,
         serverIdentityId: 'srv_plugin_hosting_consent', machines: [] });
@@ -50,7 +54,7 @@ async function restorePluginIntent() {
         packageAssetArchive: { archiveDigestSha256: `sha256:${'c'.repeat(64)}`, resources: [{ resourceId: 'brand', path: 'assets/brand.png', mimeType: 'image/png', byteSize: 3, digestSha256: `sha256:${'d'.repeat(64)}` }] },
     } }).facts;
     let intent = PluginAvailabilityIntentSetActionOutputV1Schema.parse({ intent: {
-        pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1',
+        pluginId, desiredVersion: '1.0.0', enabled: true, offlineUiHosting: 'disabled', writableCollections: [], revision: 'intent-1', projectScope,
     } }).intent;
     const intentPath = PluginAvailabilityActionHttpPathsV1[PLUGIN_PROJECT_SCOPE_SET_ACTION_ID];
     const attempts: ReturnType<typeof PluginAvailabilityIntentSetActionInputV1Schema.parse>[] = [];
@@ -136,4 +140,55 @@ it('settles a Project scope edit and visibly refuses a stale revision from the s
     ]);
     expect(readIntent().projectScope).toEqual({ kind: 'only', projectKeys: ['alpha'] });
     await waitForHomeGovernance(() => expect(screen.findByTestId('projectScope.refusal')).not.toBeNull());
+});
+
+it('lists both Account Projects from one census when the Store scope opens cold', async () => {
+    const projectScope: PluginProjectScopeV1 = { kind: 'only', projectKeys: ['previous-project'] };
+    const { pluginId, scope, attempts, readIntent } = await restorePluginIntent(projectScope);
+    const censusPath = `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`;
+    await waitForHomeGovernance(() => expect(storage.getState().projectAccountRows).toMatchObject({
+        status: 'ready', coverage: 'complete',
+    }));
+    const sync = getSyncSingleton();
+    const reads = () => account.home.requestsFor(censusPath);
+    const token = reads().at(-1)?.token;
+    if (!token) throw new Error('Expected an authenticated Account census');
+    // Use the real scope retirement so subsequent reads see a cold census.
+    sync.reconfigureAuthoringMemoryForAccountMode({ token }, 'plain');
+    const beforeOpen = reads().length;
+    const response = createDeferred<void>();
+    account.home.answer(account.serverId, `POST ${censusPath}`, { respondAfter: response.promise,
+        body: createPlainProjectAccountRowListFixture({ workspaceRefs: ['alpha', 'beta'].map(projectKey => ({
+            id: `workspace-${projectKey}`, serverId: scope.serverId, machineId: 'machine-alpha',
+            rootPath: `/${projectKey}`, label: projectKey, projectKey, createdAtMs: 1,
+        })) }),
+    });
+    const browser = await installBrowserRuntimeForTests({ url: 'https://store-scope.test/' });
+    const portal = installReactDomPortalBoundaryForTests();
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+        const mounted = await renderScreen(<PluginProjectScopeItem pluginId={pluginId} testID="projectScope" />);
+        screen = mounted;
+        const menu = () => mounted.findAllByType(DropdownMenu)[0]!.props;
+        expect(reads()).toHaveLength(beforeOpen);
+        await act(async () => { menu().onOpenChange(true); });
+        await waitForHomeGovernance(() => expect(reads()).toHaveLength(beforeOpen + 1));
+        expect(menu().items).toEqual(expect.arrayContaining([expect.objectContaining({ loading: true })]));
+        await act(async () => { menu().onOpenChange(false); });
+        await act(async () => { menu().onOpenChange(true); });
+        await act(async () => { response.resolve(); });
+        await waitForHomeGovernance(() => expect(menu().items).toEqual(expect.arrayContaining([
+            expect.objectContaining({ id: 'alpha', title: 'alpha' }),
+            expect.objectContaining({ id: 'beta', title: 'beta' }),
+        ])));
+        await act(async () => { menu().onOpenChange(false); });
+        expect(attempts).toHaveLength(0);
+        expect(readIntent().projectScope).toEqual(projectScope);
+        expect(reads()).toHaveLength(beforeOpen + 1);
+    } finally {
+        response.resolve();
+        await screen?.unmount();
+        portal.restore();
+        browser.restore();
+    }
 });

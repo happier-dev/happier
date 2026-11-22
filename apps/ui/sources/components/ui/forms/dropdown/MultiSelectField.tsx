@@ -37,6 +37,7 @@ export type MultiSelectFieldProps = Readonly<{
     /** Always offer search (a members list the person scans by name), not only for long lists. */
     searchable?: boolean;
     menuChrome?: boolean;
+    optionsStatus?: Readonly<{ title: string; loading: boolean }>;
     connectAction?: Readonly<{ label: string; onPress: (anchor?: PopoverAnchor) => void }>;
     /** Controlled open state, for a surface that opens the menu from elsewhere (an empty state). */
     open?: boolean;
@@ -71,13 +72,14 @@ export const MultiSelectField = React.memo(function MultiSelectField(
     );
 
     const commitDraft = React.useCallback((next: ReadonlySet<string>) => {
+        // Choices can arrive after the field opens. Dismissing an untouched draft must never drop stored IDs.
+        if (next.size === committed.size && [...next].every((id) => committed.has(id))) return;
         const ids = props.candidates
             .map((candidate) => candidate.id)
             .filter((id) => next.has(id));
-        const previous = new Set(props.selectedIds);
-        if (ids.length === previous.size && ids.every((id) => previous.has(id))) return;
+        if (ids.length === committed.size && ids.every((id) => committed.has(id))) return;
         void props.onCommit(ids);
-    }, [props]);
+    }, [committed, props]);
 
     const handleOpenChange = React.useCallback((nextOpen: boolean) => {
         setOpen(nextOpen);
@@ -89,7 +91,9 @@ export const MultiSelectField = React.memo(function MultiSelectField(
         setDraft(null);
     }, [commitDraft, draft, props.selectedIds, setOpen]);
 
-    const items = React.useMemo(() => props.candidates.map((candidate) => {
+    const items = React.useMemo(() => props.optionsStatus ? [
+        { id: 'options-status', disabled: true, ...props.optionsStatus },
+    ] : props.candidates.map((candidate) => {
         // A candidate that is not choosable here is never shown as chosen; its stored id still reaches the commit.
         const checked = candidate.disabled !== true && selected.has(candidate.id);
         return {
@@ -104,6 +108,7 @@ export const MultiSelectField = React.memo(function MultiSelectField(
     }), [
         props.candidates,
         props.optionTestIDPrefix,
+        props.optionsStatus,
         selected,
     ]);
 
