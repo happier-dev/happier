@@ -1578,7 +1578,7 @@ describe('createCliActionDeps session controls', () => {
       errorCode: 'session_rpc_failed',
       error: 'session_rpc_failed',
     }, true],
-  ])('handles a stale active Codex session when %s', async (scenario, liveResult, usesTimedFallback) => {
+  ])('handles a stale active Codex session when %s', async (scenario, liveResult, usesFallback) => {
     const recoverySessionId = `sess_stale_${scenario.replace(/[^a-z]/g, '_')}`;
     const response = liveResult.ok ? { ...liveResult, sessionId: recoverySessionId } : liveResult;
     mocks.callSessionRpc.mockResolvedValueOnce(response);
@@ -1643,10 +1643,16 @@ describe('createCliActionDeps session controls', () => {
     });
 
     const result = await deps.sessionUsageLimitCheckNow?.({ sessionId: recoverySessionId, provider: 'codex' });
-    expect(result).toMatchObject({ ok: true, status: 'ready', sessionId: recoverySessionId });
-    if (usesTimedFallback) expect(result).toMatchObject({ metadata: {
-      sessionUsageLimitRecoveryV1: { status: 'waiting', attemptCount: 0 },
-    } });
+    expect(result).toMatchObject({
+      ok: true,
+      status: usesFallback ? 'waiting' : 'ready',
+      sessionId: recoverySessionId,
+    });
+    if (usesFallback) {
+      expect(result).toMatchObject({ metadata: {
+        sessionUsageLimitRecoveryV1: { status: 'waiting', resetAtMs: null, nextCheckAtMs: null, attemptCount: 0 },
+      } });
+    }
     expect(mocks.callSessionRpc).toHaveBeenCalledTimes(1);
     // Attaching a process cannot claim resumption without a continuation handoff.
     expect(mocks.callMachineRpc).not.toHaveBeenCalled();
