@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
-import { ActionApprovalRequestCreatedResultSchema, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, projectUnexpectedActionFailureV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { LocalServiceNativePrerequisiteV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -468,8 +468,11 @@ describe('useLocalServiceActionRunner', () => {
         'preview_runtime_unavailable', 'invalid_preview_resource', 'session_not_authorized',
         'preview_token_secret_missing', 'preview_public_base_url_missing', 'preview_hostname_collision',
     ])('keeps the Open again refusal typed and Service-named through the real outcome owner (%s)', async reasonCode => {
-        previewRpc.mockReset();
-        previewRpc.mockRejectedValue(new Error(`local_service_preview_lifecycle_refused:${reasonCode}`));
+        // Preview effects cross the Machine Action boundary, not the snapshot RPC.
+        // Match the daemon previewLifecycleFailure producer's typed envelope.
+        const executeOnMachine = vi.fn(async () => ActionExecuteFailureSchema.parse({
+            ok: false, errorCode: reasonCode, error: `local_service_preview_lifecycle_refused:${reasonCode}`,
+        }));
         const managedTarget = LocalServiceLaunchTargetV1Schema.parse({
             id: 'managed:reading-desk', source: 'managed_service', machineId: 'machine', title: 'Reading desk',
             sourceClass: { kind: 'managed_service', managedServiceId: 'reading-desk' },
@@ -491,7 +494,7 @@ describe('useLocalServiceActionRunner', () => {
             },
         } : managedTarget);
         const fixture = createBrowserWorkspaceOpeningFixture({ scope: 'sessionDetails', platform: 'web', openDetailsTab: () => {} }, {
-            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ fallback: createBrowserRuntimeActionExecutor({}) }),
+            runtimeActionExecute: createLocalServicesRuntimeActionExecutor({ executeOnMachine, fallback: createBrowserRuntimeActionExecutor({}) }),
         });
         const deps = { platform: 'web' as const, serverId: fixture.context.serverId,
             onOpenTarget: () => { throw new Error('A refused preview must not open a tab'); },
@@ -516,7 +519,7 @@ describe('useLocalServiceActionRunner', () => {
         }
         expect(value.current?.pendingId).toBeNull();
         // A refusal settles once; the owner does not automatically repeat admission.
-        expect(previewRpc).toHaveBeenCalledTimes(1);
+        expect(executeOnMachine).toHaveBeenCalledTimes(1);
         expect(modalSpies.alert).not.toHaveBeenCalled();
         fixture.dispose();
     });
