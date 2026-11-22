@@ -73,8 +73,8 @@ it.each(['personal-project', 'project'] as const)('uses the %s audience for the 
     const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true,
         machines: [createMachineFixture({ id: 'machine-muse', activeAt: Date.now(), storageMode: 'plain' })],
         features: createRootLayoutFeaturesResponse({ features: { connectedServices: { enabled: true }, teams: { enabled: true },
-            plugins: { enabled: true, ui: { enabled: true, reactNativeBundles: { enabled: true } } } },
-            capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 } } } }),
+            plugins: { enabled: true, ui: { enabled: true, reactNativeBundles: { enabled: true }, hostedWeb: { enabled: false } } } },
+            capabilities: { connectedServices: { qualifiedAccounts: { protocolVersion: 4 }, credentialDelete: { revisionGuard: false } } } }),
         httpAnswers: {
             [`GET ${CONNECTED_PRESENTATION_ROWS_ROUTE_V1}`]: { body: ConnectedPresentationRowReadResponseV1Schema.parse({ status: 'absent' }) },
             [`GET ${CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1}`]: { body: ConnectedAcknowledgementsRowReadResponseV1Schema.parse({ status: 'absent' }) },

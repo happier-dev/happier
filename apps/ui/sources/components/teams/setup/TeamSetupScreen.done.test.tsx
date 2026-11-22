@@ -124,7 +124,7 @@ it('opens the Source setup review on the exact adopted checkout before binding i
       running: false,
       completed: true,
       settlement: {
-        completed: true, machine: null, repositories: [{
+        completed: true, machine: null, machineSettlement: null, repositories: [{
           id: web.id, result: { ok: true, result: {
             kind: 'opened', setup: 'notRequired', directory: rootPath,
             workspace: { serverId: scope.serverId, machineId: 'devbox', workspaceId: 'adopted-web', rootPath },

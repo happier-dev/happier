@@ -191,7 +191,7 @@ it('keeps explicit Automatic separate from clearing a personal model to its Sour
     function Host() {
         const [defaults, setDefaults] = React.useState(persisted);
         return <ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
-            defaults={defaults} save={async next => { persisted = next; writes(next); setDefaults(next); }}
+            defaults={defaults} save={async next => { persisted = next ?? {}; writes(next); setDefaults(persisted); }}
             scope="personal-project" context={context} teamName="Acme" projectName="acme/web" editable busy={false} />;
     }
     const screen = await renderScreen(<ModalProvider><Host /></ModalProvider>);

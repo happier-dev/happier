@@ -75,6 +75,13 @@ export type NewSessionSimpleScreenProps = NewSessionSimplePanelProps & Readonly<
 
 export type NewSessionScreenModel =
     Readonly<{
+        managedDefaults?: Readonly<{
+            context: import('@happier-dev/protocol/teams/managedDefaults').ManagedSessionDefaultsContext;
+            agentTarget: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['agentTarget'];
+            approvalProfileId: import('@happier-dev/protocol/teams/managedDefaults').ResolvedManagedSessionDefaults['approvalProfileId'];
+            projectRead: ReturnType<typeof import('@/hooks/projects/useProjectSessionDefaults').useProjectSessionDefaults>;
+            unavailableDefaults?: import('@happier-dev/protocol/projects/loadManagedSessionDefaultsContextV1').ProjectSessionDefaultsGetOutputV1['unavailableDefaults'];
+        }>;
         /** Editable local draft context; presentation is supplied by the creation host. */
         spaceMembership?: SessionSpaceMembershipTargetV1 | null;
         setSpaceMembership?: (next: SessionSpaceMembershipTargetV1 | null) => void;
