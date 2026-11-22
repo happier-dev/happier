@@ -214,7 +214,9 @@ export function readProviderAccountUsageWindowComparabilityReason(input: Readonl
   if (currentWindow && exceedsNonRenewingEntitlement(current, currentWindow)) return 'entitlement_changed';
   const previousFacts = operands.readSnapshot(previous);
   const currentFacts = operands.readSnapshot(current);
-  if (previousFacts.planLabel !== currentFacts.planLabel || previousFacts.status !== currentFacts.status
+  const planLabelChanged = previousFacts.planLabel !== null && currentFacts.planLabel !== null
+    && previousFacts.planLabel !== currentFacts.planLabel;
+  if (planLabelChanged || previousFacts.status !== currentFacts.status
     || previousFacts.renewal !== currentFacts.renewal) return 'entitlement_changed';
   const previousPeriod = previous.subscription;
   const currentPeriod = current.subscription;

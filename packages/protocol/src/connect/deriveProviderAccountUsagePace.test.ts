@@ -81,6 +81,7 @@ describe('accepted provider usage pace', () => {
     current.meters[0]!.resetsAt = 2000;
     current.meters[0]!.used = 0;
     expect(hasProviderAccountUsageWitnessedReset({ previous, current, meterId: 'weekly', nowMs: 1000 })).toBe(true);
+    previous.planLabel = 'previous entitlement';
     current.planLabel = 'replaced entitlement';
     expect(hasProviderAccountUsageWitnessedReset({ previous, current, meterId: 'weekly', nowMs: 1000 })).toBe(false);
   });
@@ -117,8 +118,9 @@ describe('accepted provider usage pace', () => {
     expect(deriveProviderAccountUsagePace({ snapshot: current, meterId: 'weekly', nowMs: 300 })).toMatchObject({ status: 'available', depletesAtMs: null });
     previous.meters[0]!.unit = 'credits';
     expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 300, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'denominator_changed' });
-    previous.meters[0]!.unit = 'requests'; previous.planLabel = 'changed tier';
-    expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 300, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'entitlement_changed' });
+    previous.meters[0]!.unit = 'requests'; previous.planLabel = 'previous tier';
+    const withNewTier = { ...snapshot(), planLabel: 'changed tier' };
+    expect(deriveProviderAccountUsagePace({ snapshot: withNewTier, meterId: 'weekly', nowMs: 300, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'entitlement_changed' });
   });
   it('does not substitute a percentage for an unusable known raw denominator', () => {
     const current = snapshot();
@@ -210,11 +212,27 @@ describe('accepted provider usage pace', () => {
     previous.meters[0]!.limit = 100; previous.meters[0]!.used = 60;
     expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 250, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'counter_reset' });
   });
+  it.each([true, false])('keeps the same rolling-window pace when only one reading names a plan (%s)', namedCurrent => {
+    const previous = snapshot(600);
+    const current = snapshot(900);
+    for (const sample of [previous, current]) {
+      Object.assign(sample.meters[0]!, { meterId: 'window', used: 1, utilizationPct: 1, remainingPct: 99 });
+    }
+    const named = namedCurrent ? current : previous;
+    named.planLabel = 'Reported plan';
+    const input = { snapshot: current, meterId: 'window', nowMs: current.observedAtMs };
+    expect(deriveProviderAccountUsagePace(input)).toMatchObject({ status: 'available',
+      usedFraction: .01, projectedResetUtilizationFraction: expect.closeTo(.0111, 3), sampleCount: 1 });
+    expect(deriveProviderAccountUsagePace({ ...input, history: [previous] })).toMatchObject({ status: 'available',
+      usedFraction: .01, projectedResetUtilizationFraction: expect.closeTo(.0111, 3), sampleCount: 2 });
+  });
+
   it('breaks changed entitlement and exposes empirical spread only for comparable accepted samples', () => {
     const previous = snapshot(100); previous.meters[0]!.used = 10;
     expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 250, history: [previous] })).toMatchObject({ status: 'available', sampleCount: 2, empiricalRange: { min: 1, max: 2 } });
-    previous.planLabel = 'changed';
-    expect(deriveProviderAccountUsagePace({ snapshot: snapshot(), meterId: 'weekly', nowMs: 250, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'entitlement_changed' });
+    previous.planLabel = 'previous tier';
+    const current = { ...snapshot(), planLabel: 'changed tier' };
+    expect(deriveProviderAccountUsagePace({ snapshot: current, meterId: 'weekly', nowMs: 250, history: [previous] })).toMatchObject({ status: 'unavailable', reason: 'entitlement_changed' });
   });
 });
 
