@@ -160,8 +160,9 @@ export function createScopedUsageEvidenceRowNormalizer() {
     };
     return <Row extends Pick<ScopedUsageEvidenceDbRow, 'metadata' | 'accountingEvidence'>>(row: Row):
         Omit<Row, 'metadata' | 'accountingEvidence'> & Pick<ScopedUsageEvidenceRow, 'metadata' | 'accountingEvidence'> => {
-        // Object inputs may change; supplied evidence has already been admitted.
-        if (typeof row.metadata !== 'string' || row.accountingEvidence) return toScopedUsageEvidenceRow(row);
+        // Captured metadata can be JSON or historical text. Reuse native subject
+        // admission by value across both shapes and preserve supplied evidence.
+        if (row.accountingEvidence) return toScopedUsageEvidenceRow(row);
         return { ...row, ...normalizeScopedUsageMetadata(row.metadata, undefined, readSubject) };
     };
 }

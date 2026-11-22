@@ -94,14 +94,11 @@ export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
     )`;
     const selected = allHistory ? prismaRuntime.sql`TRUE` : prismaRuntime.sql`c."id" IS NOT NULL`;
     const evidenceKeys = new Set(Object.keys(usageEventEvidenceSelect));
-    const columns = prismaRuntime.join(Object.keys(usageEventSelect).map(key => {
-        if (key === 'metadata') return prismaRuntime.raw('e."metadata" #>> \'{}\' AS "metadata"');
-        return evidenceKeys.has(key) ? prismaRuntime.raw(`e."${key}"`)
-            : prismaRuntime.sql`CASE WHEN ${selected} THEN ${prismaRuntime.raw(`e."${key}"`)} END AS ${prismaRuntime.raw(`"${key}"`)}`;
-    }));
+    const columns = prismaRuntime.join(Object.keys(usageEventSelect).map(key =>
+        evidenceKeys.has(key) ? prismaRuntime.raw(`e."${key}"`)
+            : prismaRuntime.sql`CASE WHEN ${selected} THEN ${prismaRuntime.raw(`e."${key}"`)} END AS ${prismaRuntime.raw(`"${key}"`)}`));
     const reportColumns = prismaRuntime.join(Object.keys(usageEventSelect).map(key =>
-        Object.hasOwn(usageReportSelect, key) ? prismaRuntime.raw(`r."${key}"`)
-            : key === 'metadata' ? prismaRuntime.sql`NULL::text` : prismaRuntime.sql`NULL`));
+        Object.hasOwn(usageReportSelect, key) ? prismaRuntime.raw(`r."${key}"`) : prismaRuntime.sql`NULL`));
     const reportSelect = prismaRuntime.join(Object.keys(usageReportSelect).map(key => prismaRuntime.raw(`"${key}"`)));
     const reportOrder = prismaRuntime.join(legacyUsageReportCanonicalOrder.flatMap(order => Object.entries(order)
         .map(([key, direction]) => prismaRuntime.raw(`r."${key}" ${direction}`))));
@@ -120,6 +117,7 @@ export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
     // Prisma materializes a native result cell for every selected column. Keep
     // accounting values in one text cell, with field order derived from the
     // select owner, while dates retain the database driver's native decoding.
+    // Nest JSONB metadata directly so only historical strings need another parse.
     return tx.$queryRaw<PackedUsageAccountingRow[]>(prismaRuntime.sql`
         SELECT jsonb_build_array(${prismaRuntime.join(payloadKeys.map(key => prismaRuntime.raw(`c."${key}"`)))})::text AS payload,
             c."observedAt", c."createdAt", c."reportUpdatedAt"

@@ -184,6 +184,62 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
+    it('decodes stored JSON objects once per captured row across a batch and preserves historical string metadata', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const prefix = 'packed-metadata-fixture-';
+        const metadata = (kind: 'object' | 'historical', at: number) => ({
+            packedMetadataFixture: kind,
+            usageAccounting: { path: 'native', status: 'available', historyComplete: true, asOfMs: at },
+        });
+        const rowCount = 32;
+        await db.usageEvent.createMany({ data: Array.from({ length: rowCount }, (_, index) => ({
+            id: prefix + index, accountId: account.id, observedAt: new Date(100 + index),
+            source: 'native', scope: 'turn_delta', agentId: 'codex', totalTokens: 1,
+            metadata: index === 0 ? JSON.stringify(metadata('historical', 100)) : metadata('object', 100 + index),
+        })) });
+        const query = { dateRange: { startMs: 100, endMs: 200 }, includeSeries: false };
+        const body = { queries: [query, { ...query, includeSeries: true },
+            { ...query, dateRange: { startMs: 100, endMs: 116 } }], contributionQueries: [] };
+        const cost = { packedRows: 0, objectMetadataDecodes: 0, historicalMetadataDecodes: 0 };
+        const parse = JSON.parse;
+        const observe = vi.spyOn(JSON, 'parse').mockImplementation((...args: Parameters<typeof JSON.parse>) => {
+            const decoded: unknown = parse(...args);
+            if (Array.isArray(decoded) && decoded[0] === 'body' && typeof decoded[1] === 'string'
+                && decoded[1].startsWith(prefix)) cost.packedRows++;
+            if (typeof decoded === 'object' && decoded !== null && 'packedMetadataFixture' in decoded) {
+                if (decoded.packedMetadataFixture === 'object') cost.objectMetadataDecodes++;
+                if (decoded.packedMetadataFixture === 'historical') cost.historicalMetadataDecodes++;
+            }
+            return decoded;
+        });
+        try {
+            await withAuthenticatedTestApp(app => registerAccountUsageRoutes(app), async app => {
+                const read = () => app.inject({ method: 'POST', url: '/v2/usage/query-batch',
+                    headers: { 'x-test-user-id': account.id }, payload: body });
+                const response = await read();
+                observe.mockRestore();
+                expect(response.statusCode).toBe(200);
+                const batch = UsageAnalyticsQueryBatchResponseSchema.parse(response.json());
+                expect(batch.results.map(row => 'value' in row ? row.value.totals.tokens.total : row.error))
+                    .toEqual([32, 32, 16]);
+                // Rows stored by older writers still enter the canonical parser as text.
+                // Changing only their stored representation must preserve the full response.
+                await Promise.all(Array.from({ length: rowCount - 1 }, (_, offset) => {
+                    const index = offset + 1;
+                    return db.usageEvent.update({ where: { id: prefix + index },
+                        data: { metadata: JSON.stringify(metadata('object', 100 + index)) } });
+                }));
+                const historical = await read();
+                expect(historical.body).toBe(response.body);
+                expect(cost, 'one packed decode per row per batch, plus one decode for the historical string')
+                    .toEqual({ packedRows: rowCount, objectMetadataDecodes: 0, historicalMetadataDecodes: 1 });
+            });
+        } finally {
+            observe.mockRestore();
+            await db.account.delete({ where: { id: account.id } });
+        }
+    });
+
     it('hydrates earlier contributions for an opaque stream in a later-day Accounting read', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const startMs = Date.UTC(2026, 6, 1);

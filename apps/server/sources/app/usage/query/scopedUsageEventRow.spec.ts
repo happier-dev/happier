@@ -52,7 +52,7 @@ describe('captured Usage metadata admission', () => {
         const subject = (index: number) => ({ kind: 'native', machineId: 'machine',
             agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
             sourceRootKey: 'root', nativeSessionKey: `native-${index % 3_976}` });
-        const value = (index: number) => JSON.stringify({
+        const value = (index: number) => ({
             usageAccounting: { path: 'native', status: 'available', asOfMs: index, extra: 'drop' },
             ...(index < 54_945 ? { accountingSubject: subject(index) } : {}), measurement: index,
         });
@@ -62,7 +62,8 @@ describe('captured Usage metadata admission', () => {
         const parser = vi.spyOn(createStoredReadSchema(UsageNativeAccountingSubjectSchema), 'safeParse');
         try {
             for (let index = 0; index < 107_019; index++) {
-                const admitted = normalize({ id: index, metadata: value(index) });
+                const metadata = index % 2 === 0 ? value(index) : JSON.stringify(value(index));
+                const admitted = normalize({ id: index, metadata });
                 if (admitted.accountingEvidence.subject) subjects.add(admitted.accountingEvidence.subject);
                 if (index === 107_018) last = admitted;
             }
