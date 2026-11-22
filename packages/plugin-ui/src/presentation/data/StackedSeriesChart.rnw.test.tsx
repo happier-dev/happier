@@ -2,12 +2,12 @@ import { act, Profiler, type ReactNode } from 'react';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
 import { createSurfaceContextFixture, SURFACE_CONTEXT_THEME_FIXTURE as theme } from '../../../../plugin-sdk/src/ui/surfaceContext.fixture.js';
-import { StackedSeriesChart, type StackedSeriesChartProps } from './StackedSeriesChart.js';
+import type { StackedSeriesChartProps } from './StackedSeriesChart.js';
 import { HappierUiEnvironmentProvider, HappierUiPlatformProvider } from '../../environment/context.js';
 import { projectHappierUiEnvironment } from '../../environment/projectEnvironment.js';
 import { View } from 'react-native';
 import { Path, Svg } from 'react-native-svg';
-import { BurnUpChart } from '@happier-dev/plugin-ui/presentation';
+import { BurnUpChart, StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
 import { HappierDataChart } from './Chart.js';
 import type { HappierLayoutChangeEvent } from '../portableTypes.js';
 import { ChartInteractionProvider } from './ChartDatum.js';
@@ -288,6 +288,23 @@ describe('neutral series dataset', () => {
       expect(edges.every(edge => edge.getAttribute('fill') === 'none')).toBe(true);
       expect(edges.every(edge => !edge.getAttribute('d')?.endsWith('Z'))).toBe(true);
       expect(find(mount.container, 'peaks-bucket-0').getAttribute('aria-label')).toContain('Maximum 95');
+    } finally { mount.unmount(); }
+  });
+  it.each([
+    { selection: 'absent', ids: undefined, hatched: true },
+    { selection: 'explicitly empty', ids: [], hatched: false },
+  ])('uses the public bar hatch fallback when bucket IDs are $selection', ({ ids, hatched }) => {
+    const input = [{ id: 'visits', label: 'Visits', points: [10, null, 0].map((y, x) => ({ id: String(x), x, y })) }];
+    const mount = mountThroughReactNativeWeb(<StackedSeriesChart theme={theme} label="Observations" series={input}
+      width={200} viewportHeight={100} variant="bar" size="full" testID="observed" showLegend gapLabel="Unavailable"
+      {...(ids === undefined ? {} : { gapBucketIds: ids })} />);
+    try {
+      expect({
+        hatch: Boolean(find(mount.container, 'observed-gap-1')),
+        legend: find(mount.container, 'observed-gap-key')?.textContent ?? null,
+      }).toEqual({ hatch: hatched, legend: hatched ? 'Unavailable' : null });
+      expect(find(mount.container, 'observed-gap-2')).toBeNull();
+      expect(find(mount.container, 'observed-bar-2-0')).toBeTruthy();
     } finally { mount.unmount(); }
   });
   it('draws declared hatches, shading and a reference box while preserving bucket readings', () => {

@@ -108,9 +108,9 @@ export type StackedSeriesChartProps = Readonly<{
   leads?: Readonly<Record<string, ReactNode>>;
   /** Callers supply localized unavailable wording. */
   unknownLabel?: string;
-  /** Names the hatch drawn for the caller's flagged bar buckets. */
+  /** Names the hatch in the bar chart legend. */
   gapLabel?: string;
-  /** Bar bucket IDs that the caller marks as missing or incomplete. */
+  /** Bar bucket IDs to hatch. Omit to hatch all-null buckets. */
   gapBucketIds?: readonly string[];
   valueFormatter?: (value: number) => string;
   /**
@@ -353,7 +353,8 @@ export function StackedSeriesChart(props: StackedSeriesChartProps) {
   }, [denseLine, selectedId, geometry.buckets]);
   const unknown = props.unknownLabel ?? formatHappierDataValue(null, text.locale);
   const gapBucketIds = props.gapBucketIds && new Set(props.gapBucketIds);
-  const showsGap = (bucket: HappierSeriesBucket) => gapBucketIds?.has(bucket.id) === true;
+  const showsGap = (bucket: HappierSeriesBucket) =>
+    gapBucketIds?.has(bucket.id) ?? bucket.values.every(entry => entry.value === null);
   const gapKey = props.gapLabel && props.variant === 'bar' && geometry.buckets.some(showsGap) ? props.gapLabel : null;
   const magnitude = (value: number) => props.mirrored ? Math.abs(value) : value;
   const format = (value: number) => props.valueFormatter ? props.valueFormatter(magnitude(value)) : formatHappierDataValue(magnitude(value), text.locale);

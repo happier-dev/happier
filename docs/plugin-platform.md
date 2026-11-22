@@ -9338,9 +9338,10 @@ each member's identity, label and exact values keyed by bucket ID. The chart
 draws the combined series and the Values disclosure exposes each member.
 Missing member values read as unknown.
 
-Bar charts draw the existing hatch for caller-supplied `gapBucketIds`. A marked
-bucket can still show known values, and the exact Values disclosure preserves
-each reading independently.
+Bar charts hatch all-null buckets by default. When supplied, `gapBucketIds`
+selects the buckets to hatch, including buckets with known values. `gapLabel`
+names the hatch in the legend. The exact Values disclosure preserves each
+reading independently.
 
 Private Usage and public profiles also share the original Daily, Rhythm, Period
 summary, Breakdowns, Outcomes, Recap, Footprint and Coverage bodies in
