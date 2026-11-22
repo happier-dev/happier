@@ -26,6 +26,7 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
+import { describeBrowserAction, readBrowserCallOutcome, type BrowserCallOutcome } from './browserActionPhrase';
 import {
     resolveTranscriptBrowserActionReference,
     type TranscriptBrowserActionReference,
@@ -58,48 +59,6 @@ const stylesheet = StyleSheet.create((theme) => ({
         gap: theme.space.s8,
     },
 }));
-
-function describeAction(reference: TranscriptBrowserActionReference): string {
-    const target = reference.targetLabel;
-    switch (reference.verb) {
-        case 'open':
-            return reference.pageLabel ? t('browserTool.opened', { page: reference.pageLabel }) : t('browserTool.openedPage');
-        case 'reload':
-            return t('browserTool.reloaded');
-        case 'back':
-            return t('browserTool.wentBack');
-        case 'forward':
-            return t('browserTool.wentForward');
-        case 'click':
-            return target ? t('browserTool.clicked', { target }) : t('browserTool.clickedPage');
-        case 'type':
-            return target ? t('browserTool.typedInto', { target }) : t('browserTool.typed');
-        case 'fill':
-            return target ? t('browserTool.filledIn', { target }) : t('browserTool.filled');
-        case 'press':
-            return reference.keyLabel ? t('browserTool.pressed', { key: reference.keyLabel }) : t('browserTool.pressedKey');
-        case 'scroll':
-            return t('browserTool.scrolled');
-        case 'point':
-            return target ? t('browserTool.pointedAt', { target }) : t('browserTool.pointed');
-        case 'select':
-            return target ? t('browserTool.choseIn', { target }) : t('browserTool.chose');
-        case 'upload':
-            return target ? t('browserTool.uploadedTo', { target }) : t('browserTool.uploaded');
-        case 'drag':
-            return target ? t('browserTool.dragged', { target }) : t('browserTool.draggedPage');
-        case 'look':
-            return t('browserTool.looked');
-        case 'screenshot':
-            return t('browserTool.screenshot');
-        case 'recordingStarted':
-            return t('browserTool.recordingStarted');
-        case 'recordingStopped':
-            return t('browserTool.recordingStopped');
-        case 'other':
-            return t('browserTool.other');
-    }
-}
 
 function iconForVerb(verb: TranscriptBrowserActionReference['verb']): IconName {
     switch (verb) {
@@ -141,10 +100,12 @@ export const BrowserActionResultReference = React.memo(function BrowserActionRes
         input: props.tool.input,
         result: props.tool.result,
     }), [props.tool.input, props.tool.name, props.tool.result, props.tool.state]);
+    const outcome = readBrowserCallOutcome(props.tool);
     if (!reference) return null;
     return (
         <MountedBrowserActionReference
             reference={reference}
+            outcome={outcome}
             sessionId={props.sessionId ?? null}
             serverId={props.serverId ?? null}
             mediaPreviewEnabled={props.mediaPreviewEnabled === true}
@@ -154,6 +115,7 @@ export const BrowserActionResultReference = React.memo(function BrowserActionRes
 
 function MountedBrowserActionReference(props: Readonly<{
     reference: TranscriptBrowserActionReference;
+    outcome: BrowserCallOutcome;
     sessionId: string | null;
     serverId: string | null;
     mediaPreviewEnabled: boolean;
@@ -179,15 +141,17 @@ function MountedBrowserActionReference(props: Readonly<{
         role: 'output' as const,
     }] : []), [screenshot]);
     const testID = `transcript-browser-action-${reference.actionId}`;
+    // A call that failed opened nothing, so there is nothing to watch.
+    const watch = props.outcome === 'failed' ? null : reference.watch;
 
     return (
         <View style={stylesheet.root} testID={testID}>
             <View style={stylesheet.line}>
                 <Icon name={iconForVerb(reference.verb)} size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
-                <Text style={stylesheet.action} numberOfLines={1} testID={`${testID}-label`}>{describeAction(reference)}</Text>
+                <Text style={stylesheet.action} numberOfLines={1} testID={`${testID}-label`}>{describeBrowserAction(reference, props.outcome)}</Text>
                 {showPage ? <Text style={stylesheet.page} numberOfLines={1}>{`· ${reference.pageLabel}`}</Text> : null}
             </View>
-            {screenshot || (reference.watch && props.sessionId) ? (
+            {screenshot || (watch && props.sessionId) ? (
                 <View style={stylesheet.shot}>
                     {screenshot && props.sessionId ? (
                         <BrowserScreenshotThumbnail
@@ -199,9 +163,9 @@ function MountedBrowserActionReference(props: Readonly<{
                             testID={testID}
                         />
                     ) : null}
-                    {reference.watch && props.sessionId ? (
+                    {watch && props.sessionId ? (
                         <BrowserActionWatchButton
-                            watch={reference.watch}
+                            watch={watch}
                             sessionId={props.sessionId}
                             serverId={props.serverId}
                             testID={`${testID}-watch`}
