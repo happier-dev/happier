@@ -1576,8 +1576,13 @@ describe('opening a row into the source detail', () => {
         const secondInitialScan = new Promise<void>(resolve => { releaseScan = resolve; });
         const shell = await mountShell({ subPath, pinnedEntryIds: ['657'], noScannedEntries: true,
             activeSurface: true, automaticDemandOnly: true, secondInstance: true, secondInitialScan });
+        const findDetailRegion = () => document.querySelector(`[data-testid="${TRIAGE_SHELL_DETAIL_REGION_TEST_ID_V1}"]`);
+        let pendingDetail: Element | null = null;
         try {
-            await expect(shell.getByRole('button', { name: 'Pinned change 657' })).resolves.toBeDefined();
+            // The route opens its detail before the first pass qualifies a connection (acceptance 252 N1).
+            await measureFillRegion(1440);
+            pendingDetail = findDetailRegion();
+            expect(pendingDetail).not.toBeNull();
             expect(currentHarness?.exactReads).toEqual([]);
         } finally {
             await act(async () => { releaseScan(); });
