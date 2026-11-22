@@ -13,6 +13,7 @@ import type { RpcLocalActionContext } from '@/api/rpc/types';
 
 import { listHappierMcpToolNames, registerHappierMcpResources } from '@/mcp/resources/registerHappierMcpResources';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
+import { createSessionAgentTitleWriteGuard, SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
 import { createChangeTitleToolHandler } from '@/agent/tools/happierTools/createChangeTitleToolHandler';
 import { dispatchBuiltInHappierTool, unknownBuiltInHappierToolFailure } from '@/agent/tools/happierTools/dispatchBuiltInHappierTool';
 import type { HappierBuiltInToolDispatchResult } from '@/agent/tools/happierTools/types';
@@ -119,13 +120,17 @@ async function writeMcpSessionStateFieldMetadata(params: Readonly<{
   client: HappyMcpSessionClient;
   write: Parameters<NonNullable<ActionExecutorDeps['sessionStateFieldSet']>>[0];
   metadataReason: string;
+  checkMetadata?: (metadata: Metadata) => void;
 }>): Promise<boolean> {
   const engine = createSessionStateSyncEngine({
     capabilities: MCP_SESSION_STATE_CAPABILITIES,
     facet: null,
     metadataPort: {
       update: async (_sessionId, updater) => {
-        await Promise.resolve(params.client.updateMetadata((metadata) => updater(metadata) as Metadata));
+        await Promise.resolve(params.client.updateMetadata((metadata) => {
+          params.checkMetadata?.(metadata);
+          return updater(metadata) as Metadata;
+        }));
         return { ok: true, version: 0 };
       },
     },
@@ -502,11 +507,15 @@ export function createHappierMcpServer(
             client,
             write,
             metadataReason: `mcp-${write.actionId}`,
+            checkMetadata: createSessionAgentTitleWriteGuard(write, () => actionSettingsProvider.getAccountSettings?.()),
           });
           if (!ok) {
             return { ok: false as const, errorCode: 'metadata_update_failed' as const, error: 'metadata_update_failed' as const };
           }
         } catch (error) {
+          if (error instanceof SessionAgentTitleUpdateDenied) {
+            return { ok: false as const, errorCode: error.code, error: error.code };
+          }
           logger.debug('[mcp] Failed to update registered metadata via session-scoped bridge', {
             sessionId: normalizedSessionId,
             error,

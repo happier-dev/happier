@@ -30,6 +30,7 @@ const boundary = vi.hoisted(() => ({
   race: null as 'unrelated' | 'same-field' | null,
   raceField: 'memory' as 'memory' | 'context' | 'instructions' | 'voice' | 'bot',
   accountMode: 'plain' as 'plain' | 'e2ee',
+  concurrentTitle: false,
 }));
 
 const botSecret = new Uint8Array(32).fill(17);
@@ -61,6 +62,13 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
     if (boundary.session?.metadataLayoutVersion === 1) {
       const patch = SessionMetadataOwnerPatchV1Schema.parse(request.patch);
       const current = boundary.session;
+      if (boundary.concurrentTitle) {
+        boundary.concurrentTitle = false;
+        boundary.session = { ...current, metadataVersion: current.metadataVersion + 1,
+          metadata: JSON.stringify({ v: 1, summary: { text: 'Manual rename', updatedAt: 2 } }) };
+        return { success: false, error: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
+          sharedMetadata: { version: boundary.session.metadataVersion }, agentState: { version: current.agentStateVersion } };
+      }
       if (boundary.race) {
         const currentOwner = readBotOwner();
         const work = currentOwner.work;
@@ -110,14 +118,18 @@ vi.mock('@/session/transport/rpc/sessionRpc', async (importOriginal) => ({
 
 const sessionId = 'c123456789012345678901234';
 
-function executor() {
-  return createActionExecutor(createCliActionDeps({
+function actionDeps() {
+  return createCliActionDeps({
     token: 'token', credentials: { token: 'token', encryption: boundary.accountMode === 'e2ee' ? botMaterial : null,
       requesterSessionCredentialScope: { serverId: 'home', serverHttpBaseUrl: 'https://home.example.test' } },
     sessionId, ...(boundary.accountMode === 'e2ee'
       ? { mode: 'e2ee', ctx: { encryptionKey: botSecret, encryptionVariant: 'legacy' } } : { mode: 'plain', ctx: null }), serverId: 'home',
     serverHttpBaseUrl: 'https://home.example.test',
-  }));
+  });
+}
+
+function executor() {
+  return createActionExecutor(actionDeps());
 }
 
 async function executeFaceThroughMcp(owner: ReturnType<typeof executor>, face: unknown) {
@@ -160,6 +172,7 @@ describe('headless registered Session field Actions', () => {
     boundary.rpcCalls = 0;
     boundary.race = null;
     boundary.accountMode = 'plain';
+    boundary.concurrentTitle = false;
     boundary.session = V2SessionRecordSchema.parse({
       id: sessionId, seq: 0, createdAt: 1, updatedAt: 1, active: false, activeAt: 1,
       encryptionMode: 'plain', metadataLayoutVersion: 0, metadataVersion: 4,
@@ -209,6 +222,31 @@ describe('headless registered Session field Actions', () => {
       }
     },
   );
+
+  it('preserves a manual rename that wins an initial-mode agent title version conflict', async () => {
+    if (!boundary.session) throw new Error('Missing Home fixture');
+    boundary.session = { ...boundary.session, active: true, metadataLayoutVersion: 1,
+      metadata: JSON.stringify({ v: 1 }),
+      ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 }) };
+    const context = { serverId: 'home', defaultSessionId: sessionId } as const;
+    const actionCaller = AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 });
+    const writeField = actionDeps().sessionStateFieldSet;
+    if (!writeField) throw new Error('Missing registered field writer');
+    const nameAsAgent = () => writeField({
+      actionId: 'session.title.set', fieldId: 'display.title', sessionId, serverId: 'home', value: 'Agent title',
+      context: { ...context, surface: 'agent', authority: 'account_automation', actionCaller },
+    });
+
+    boundary.concurrentTitle = true;
+    const refused = await nameAsAgent();
+    expect(refused, JSON.stringify(refused)).toMatchObject({ ok: false, errorCode: 'session_title_updates_disabled' });
+    expect(boundary.patches).toHaveLength(1);
+    expect(JSON.parse(boundary.session.metadata)).toMatchObject({ summary: { text: 'Manual rename' } });
+
+    expect(await executor().execute('session.title.set', { sessionId, title: 'New manual title' },
+      { ...context, surface: 'cli', authority: 'present_user' })).toMatchObject({ ok: true });
+    expect(JSON.parse(boundary.session.metadata)).toMatchObject({ summary: { text: 'New manual title' } });
+  });
 
   it('persists an addressed Session progress count from MCP and clears it from the CLI', async () => {
     if (!boundary.session) throw new Error('Missing Home fixture');

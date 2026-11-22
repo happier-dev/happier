@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import { SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
 import {
   createSessionStateSyncEngine,
   type SessionStateFieldWriteValue,
@@ -90,6 +91,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
   expectedMetadataRevision?: number;
   expectedValue?: SessionStateFieldValue<F> | null;
   currentness?: SessionMetadataMutationCurrentness;
+  checkMetadata?: (metadata: unknown) => void;
 }>): Promise<UpdateSessionMetadataForTargetResult> {
   assertSessionMetadataMutationCurrentness(params.currentness);
   let targetResult: UpdateSessionMetadataForTargetResult | null = null;
@@ -111,7 +113,10 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
               ? { resolveAuthorizationHeaders: params.resolveAuthorizationHeaders }
               : {}),
             idOrPrefix: sessionId,
-            updater: (metadata, context) => updater(metadata, context?.metadataRevision),
+            updater: (metadata, context) => {
+              params.checkMetadata?.(metadata);
+              return updater(metadata, context?.metadataRevision);
+            },
             currentness: params.currentness,
           });
           targetResult = result;
@@ -131,6 +136,7 @@ export async function updateSessionStateFieldForTarget<F extends SessionStateFie
           assertSessionMetadataMutationCurrentness(params.currentness);
           // The shared Session transport adapter already classified these as the
           // established control codes; Action normalization reports them as thrown.
+          if (error instanceof SessionAgentTitleUpdateDenied) throw error;
           const controlCode = (error as { code?: unknown } | null)?.code;
           if (controlCode === 'server_unreachable' || controlCode === 'not_authenticated') throw error;
           portFailureCode = resolveMetadataPortFailureCode(error);

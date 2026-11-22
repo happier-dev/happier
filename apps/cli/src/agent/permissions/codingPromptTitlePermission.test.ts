@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { shouldDenyAgentSessionTitleToolCall } from './codingPromptTitlePermission';
+import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
+
+import {
+  createSessionAgentTitleWriteGuard,
+  SessionAgentTitleUpdateDenied,
+  shouldDenyAgentSessionTitleToolCall,
+} from './codingPromptTitlePermission';
 
 function settingsWithProfile(
   overrides: unknown,
@@ -76,7 +82,7 @@ describe('shouldDenyAgentSessionTitleToolCall', () => {
     })).toBe(false);
   });
 
-  it('denies the shell-bridge title call the profile disabled', () => {
+  it('leaves ordinary shell title calls alone', () => {
     expect(shouldDenyAgentSessionTitleToolCall({
       settings: settingsWithProfile({ sessionTitleUpdates: 'disabled' }),
       profileId: 'focused',
@@ -84,7 +90,7 @@ describe('shouldDenyAgentSessionTitleToolCall', () => {
       input: {
         command: 'happier tools call --source happier --tool change_title --args-json \'{"title":"x"}\'',
       },
-    })).toBe(true);
+    })).toBe(false);
   });
 
   it('never denies a non-title tool call', () => {
@@ -94,5 +100,32 @@ describe('shouldDenyAgentSessionTitleToolCall', () => {
       toolName: 'Read',
       input: { path: '/tmp/a' },
     })).toBe(false);
+  });
+});
+
+describe('Session-agent title writes', () => {
+  it.each([
+    ['initial', { summary: { text: '  ' } }, true],
+    ['initial', { name: 'Existing title' }, false],
+    ['ongoing', { summary: { text: 'Existing title' } }, true],
+    ['disabled', {}, false],
+  ] as const)('applies %s mode to current metadata %j', (sessionTitleUpdates, metadata, allow) => {
+    const sessionId = 'session-1';
+    const actionCaller = AgentStartSessionCallerV1Schema.parse({ kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 });
+    const guard = createSessionAgentTitleWriteGuard({
+      actionId: 'session.title.set',
+      fieldId: 'display.title',
+      value: 'New title',
+      sessionId,
+      serverId: null,
+      context: { surface: 'agent', actionCaller },
+    }, () => settingsWithProfile({ sessionTitleUpdates }, 'disabled'));
+    if (!guard) throw new Error('Expected the authenticated Session-agent title guard');
+    const write = () => guard({ ...metadata, profileId: 'focused' });
+    if (allow) {
+      expect(write).not.toThrow();
+    } else {
+      expect(write).toThrow(SessionAgentTitleUpdateDenied);
+    }
   });
 });

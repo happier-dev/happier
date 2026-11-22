@@ -1,8 +1,7 @@
-import { extractShellCommand } from '@happier-dev/protocol/activity/shellCommand';
-import { parseHappierToolsShellBridgeCommand } from '@happier-dev/protocol/tools/happierToolsShellBridge';
 import { resolveEffectiveCodingPromptBehaviorV1 } from '@happier-dev/protocol/prompts/effectiveCodingPromptBehaviorV1';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2/aliases';
-import type { CodingPromptBehaviorV1 } from '@happier-dev/protocol';
+import { hasSessionTitleInMetadata } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { ActionExecutorDeps, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 
 function readActionId(input: unknown): string {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
@@ -15,23 +14,9 @@ function isTitleActionExecute(toolName: string, input: unknown): boolean {
   return lower.includes('action_execute') && readActionId(input) === 'session.title.set';
 }
 
-function isShellBridgeTitleCall(toolName: string, input: unknown): boolean {
-  const lowerToolName = toolName.toLowerCase();
-  if (lowerToolName !== 'bash' && lowerToolName !== 'execute' && lowerToolName !== 'shell') return false;
-
-  const command = extractShellCommand(input);
-  if (!command) return false;
-
-  const parsed = parseHappierToolsShellBridgeCommand(command);
-  if (!parsed || parsed.kind !== 'call') return false;
-  if (parsed.source !== 'happier') return false;
-  return parsed.tool === 'change_title' || parsed.tool === 'session_title_set';
-}
-
 export function isAgentSessionTitleToolCall(toolName: string, input: unknown): boolean {
   return isChangeTitleToolLikeName(toolName)
-    || isTitleActionExecute(toolName, input)
-    || isShellBridgeTitleCall(toolName, input);
+    || isTitleActionExecute(toolName, input);
 }
 
 /**
@@ -55,4 +40,37 @@ export function shouldDenyAgentSessionTitleToolCall(params: Readonly<{
     settings: params.settings,
     profileId: params.profileId ?? null,
   })).sessionTitleUpdates === 'disabled';
+}
+
+export class SessionAgentTitleUpdateDenied extends Error {
+  readonly code = 'session_title_updates_disabled';
+  readonly retryable = false;
+
+  constructor() {
+    super('session_title_updates_disabled');
+  }
+}
+
+type SessionStateFieldWrite = Parameters<NonNullable<ActionExecutorDeps['sessionStateFieldSet']>>[0];
+
+export function createSessionAgentTitleWriteGuard(
+  write: SessionStateFieldWrite,
+  readSettings: () => unknown,
+): ((metadata: unknown) => void) | undefined {
+  if (write.fieldId !== 'display.title'
+    || write.context.surface !== 'agent'
+    || write.context.actionCaller?.kind !== 'session') return undefined;
+
+  return (metadata) => {
+    const profileId = metadata && typeof metadata === 'object' && 'profileId' in metadata
+      && typeof metadata.profileId === 'string' ? metadata.profileId : null;
+    const { sessionTitleUpdates } = resolveEffectiveCodingPromptBehaviorV1({
+      settings: readSettings(),
+      profileId,
+    });
+    if (sessionTitleUpdates === 'disabled'
+      || (sessionTitleUpdates === 'initial' && hasSessionTitleInMetadata(metadata))) {
+      throw new SessionAgentTitleUpdateDenied();
+    }
+  };
 }

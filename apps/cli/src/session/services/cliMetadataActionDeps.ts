@@ -1,3 +1,5 @@
+import { createSessionAgentTitleWriteGuard, SessionAgentTitleUpdateDenied } from '@/agent/permissions/codingPromptTitlePermission';
+import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import { writeSessionApprovalReviewerOverrideV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -24,7 +26,7 @@ type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionUpdatePost' | 'sessionM
 
 export function createCliMetadataActionDeps(
   params: CliActionDepsParams,
-  { callSessionActionRpc, executionRunActionFailure, isSameActionHomeId, normalizeStringValue, prepareSourceKeyAfterCommit, projectHomeId, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome }: Readonly<{
+  { callSessionActionRpc, executionRunActionFailure, isSameActionHomeId, normalizeStringValue, prepareSourceKeyAfterCommit, projectHomeId, readAccountSettings, readServerFeaturesSnapshot, resolveServerRequestHeaders, resolveTransportForSession, withProjectHome }: Readonly<{
 
     callSessionActionRpc: (transport: ResolvedSessionTransport, method: string, input: unknown, context: ActionExecutorContext) => Promise<unknown>;
     executionRunActionFailure: (code: string, message?: string, details?: unknown) => Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
@@ -38,6 +40,7 @@ export function createCliMetadataActionDeps(
     signal?: AbortSignal;
   }>) => Promise<SessionFollowSourceKeyPreparationResultV1>;
     projectHomeId: string;
+    readAccountSettings: RuntimeActionSettingsProvider['getAccountSettings'];
     readServerFeaturesSnapshot: () => Promise<CliServerFeaturesSnapshot | undefined>;
     resolveServerRequestHeaders: (context: ActionExecutorContext | undefined, effectActionId: string, request: Readonly<{ method: string; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
     resolveTransportForSession: (idOrPrefix: string, signal?: AbortSignal, caller?: Readonly<{ context: ActionExecutorContext; actionId: ActionId }>, expectedSessionAddress?: ActionExecutorContext['expectedSessionAddress']) => Promise<ResolvedSessionTransport | Readonly<{
@@ -230,9 +233,16 @@ export function createCliMetadataActionDeps(
         expectedMetadataRevision: 'expectedMetadataRevision' in write ? write.expectedMetadataRevision : undefined,
         expectedValue: 'expectedValue' in write ? write.expectedValue : undefined,
         currentness: { signal: context.signal },
+        checkMetadata: createSessionAgentTitleWriteGuard(write, () => readAccountSettings?.()),
         resolveAuthorizationHeaders,
       });
-      const res = await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, mutate) : mutate());
+      const res = await (params.serverHttpBaseUrl ? runWithServerHttpBaseUrl(params.serverHttpBaseUrl, mutate) : mutate())
+        .catch((error: unknown) => {
+          if (error instanceof SessionAgentTitleUpdateDenied) {
+            return { ok: false as const, code: error.code, candidates: undefined };
+          }
+          throw error;
+        });
       if (!res.ok) {
         return { ok: false, errorCode: res.code, error: res.code, ...(res.candidates ? { candidates: res.candidates } : {}) };
       }

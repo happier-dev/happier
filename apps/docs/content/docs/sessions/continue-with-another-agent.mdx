@@ -90,9 +90,10 @@ state, archive and pin state, project and working directory, past turns and usag
 mode carries too — it is a Happier safety intent for the session, not an Agent setting, so switching
 Agents never quietly loosens it.
 
-In current development source, **Session title updates: At session start** applies once to the
-Happier session. Switching Agents preserves an existing title instead of asking the new Agent to
-generate another one. Explicit renames and ongoing title updates remain available.
+In current development source, **Session title updates: At session start** lets an Agent use
+Happier's title tools while the session is untitled. Those tools preserve an existing title when
+you switch Agents. Choose **Ongoing** to let an Agent revise the title through those tools.
+You can rename a session yourself at any time, including with `happier session set-title`.
 
 What the old Agent owned does not carry. Its slash commands, tools, capabilities, mode and config
 catalogs, model selection, work state, activity and thinking state are cleared, and the new Agent
