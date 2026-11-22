@@ -2170,7 +2170,9 @@ describe('createStablePluginExecService', () => {
 
         const failure = await service.spawn({ executable, args: ['bad\0argument'] }).catch((error: unknown) => error);
         expect(failure).toMatchObject({ code: 'plugin_exec_spawn_failed' });
-        expect(projectActionFailureCauseV1(failure)).toMatchObject({ errorCode: 'ERR_INVALID_ARG_VALUE' });
+        expect(projectActionFailureCauseV1(failure)).toEqual({
+            phase: 'exec.spawn', errorClass: 'TypeError', errorCode: null, httpStatus: null,
+        });
         expect(release).toHaveBeenCalledTimes(1);
     });
 
