@@ -2,6 +2,8 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { StackedSeriesChart } from '@happier-dev/plugin-ui/presentation';
+import { isHealthCheckEventSourceV1, readHealthCheckEventSubjectV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { HEALTH_CHECK_EVENT_REFS_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
@@ -184,6 +186,13 @@ export function ServiceCheckDetail(
   const nowMs = props.nowMs ?? Date.now();
   const pluginTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
   const { seed, unavailable: seedUnavailable, retry: retrySeed } = useCheckSeed(row);
+  const setupSeed = React.useMemo(() => {
+    if (!seed || !isHealthCheckEventSourceV1({ eventRef: seed.eventRef, sourceContractVersion: seed.source.sourceContractVersion }) ||
+      seed.eventRef.localId === HEALTH_CHECK_EVENT_REFS_V1.status.localId ||
+      readHealthCheckEventSubjectV1(seed.source.sourceConfig) === null) return seed;
+    // Saved failure and recovery Events can carry native check settings. The status Event owns their editor.
+    return { ...seed, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status };
+  }, [seed]);
   const shown =
     facts.checks.find(
       (check) =>
@@ -253,8 +262,9 @@ export function ServiceCheckDetail(
   };
   const finishAddressSetup: NonNullable<React.ComponentProps<typeof PluginEventAutomationEditor>['savedSourceSetup']>['onSettled'] = result => {
     if (result.kind === 'cancelled') { setAddressEdit(null); return; }
+    if (!seed) return;
     const { enabled: _enabled, ...trigger } = result.trigger;
-    saveSource(trigger);
+    saveSource({ ...trigger, eventRef: seed.eventRef });
   };
   const setPaused = React.useCallback(
     async (paused: boolean) => {
@@ -380,14 +390,14 @@ export function ServiceCheckDetail(
         label: t('runs.openMachine'),
         onPress: () => router.push(machinePageHref({ door: 'rail', target: { machineId: offlineObserver, serverId } })),
       })
-        : seed && canEditAddress ? (
+        : setupSeed && canEditAddress ? (
           <PluginEventAutomationEditor key={`${addressEdit.checkId}/${addressEdit.field}`}
-            automationId={seed.automationId} clientId={seed.triggerId}
-            seed={seed} value={null} serverId={serverId}
-            authoringMachineId={seed.observation.kind === 'durablePush' ? null : seed.observation.watcherMaterializationRef.machineId}
+            automationId={setupSeed.automationId} clientId={setupSeed.triggerId}
+            seed={setupSeed} value={null} serverId={serverId}
+            authoringMachineId={setupSeed.observation.kind === 'durablePush' ? null : setupSeed.observation.watcherMaterializationRef.machineId}
             savedSourceSetup={{
               input: { selectedCheckId: addressEdit.checkId },
-              chooseWatcher: addressEdit.field === 'from' && seed.observation.kind !== 'durablePush',
+              chooseWatcher: addressEdit.field === 'from' && setupSeed.observation.kind !== 'durablePush',
               onSettled: finishAddressSetup,
               // A wait names what it reads and where, never a bare spinner (saved Kuma/Gatus edits, live sweep #193).
               waitingTitle: machineName => t(`${k}.checkEditOpening`, { machine: machineName ?? observer ?? t('machine.unnamedMachine') }),

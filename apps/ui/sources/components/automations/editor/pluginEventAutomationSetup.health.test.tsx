@@ -852,12 +852,20 @@ it.each([
         config: { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: 1 } },
     { kind: 'gatus', field: 'Endpoint name', key: 'endpointName', original: 'health', edited: 'health-edited',
         config: { endpointGroup: 'Production', webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBB', observingSince: 1 } },
+    { kind: 'settings-kuma', providerKind: 'uptime-kuma', field: 'Monitor ID', key: 'monitorId', original: '177', edited: '178',
+        config: { webhookEndpointId: 'wh_ep_AAAAAAAAAAAAAAAAAAAAAA', observingSince: 1 } },
+    { kind: 'settings-gatus', providerKind: 'gatus', field: 'Endpoint name', key: 'endpointName', original: 'health', edited: 'health-edited',
+        config: { endpointGroup: 'Production', webhookEndpointId: 'wh_ep_BBBBBBBBBBBBBBBBBBBBBB', observingSince: 1 } },
     { kind: 'http', field: 'Endpoint', key: 'endpoint', original: 'https://before.test/health', edited: 'https://after.test/health',
+        config: { expectStatus: 200 } },
+    { kind: 'legacy-http', field: 'Endpoint', key: 'endpoint', original: 'https://before.test/health', edited: 'https://after.test/health',
         config: { expectStatus: 200 } },
     { kind: 'sentry' },
     { kind: 'posthog' },
 ] as const)('persists a saved $kind edit after the setup Action settles', async fixture => {
-    const { kind } = fixture;
+    const kind = 'providerKind' in fixture ? fixture.providerKind : fixture.kind;
+    const legacy = kind === 'legacy-http';
+    const fromCheckSettings = legacy || 'providerKind' in fixture;
     const provider = kind === 'sentry' || kind === 'posthog' ? kind : null;
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { createWorkflowAutomationHttpBoundary, createWorkflowAutomationTriggerDetailFixture } = await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
@@ -900,6 +908,9 @@ it.each([
         provider ? { eventId: TRIAGE_ISSUE_EVENT_LOCAL_ID_V1, actionId: TRIAGE_ISSUE_SETUP_ACTION_LOCAL_ID_V1 }
             : { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
         providerManifest ?? PLUGIN_MANIFEST);
+    const legacyEvent = legacy ? healthSetupFixture(connection.serverId, serverIdentityId, false,
+        { eventId: HEALTH_CHECK_EVENT_REFS_V1.failed.localId, actionId: 'health-check-failed/setup' }).event : null;
+    const savedEventRef = legacyEvent?.event.identity ?? event.event.identity;
     const automationId = '412bddd2-014a-4ebf-8854-a3954566cb7f';
     const triggerId = AutomationTriggerIdSchema.parse('262544ff-0dc8-4240-9462-89784070f592');
     const subject = { kind: 'machineService' as const, machineId, serviceId: 'production' };
@@ -917,7 +928,7 @@ it.each([
         }, checkPeriodMs: 120_000, investigation: { mode: 'inbox' } });
     })();
     const sourceConfig = providerConfig ?? ('field' in fixture ? HealthCheckSetupInputV1ProtocolSchema.parse({ v: 1, subject, checks: [{
-        checkId: 'saved', kind: { pluginId, localId: kind }, binding: { kind: 'healthCheck' },
+        checkId: 'saved', kind: { pluginId, localId: legacy ? 'http' : kind }, binding: { kind: 'healthCheck' },
         config: { ...fixture.config, [fixture.key]: fixture.original }, periodMs: 60000, consecutiveFailuresBeforeAlerting: 1,
     }], alerts: { channels: [], phases: ['open', 'recovered'] }, investigation: { mode: 'inbox' } }) : null);
     if (!sourceConfig) throw new Error('Expected saved Event configuration');
@@ -926,7 +937,7 @@ it.each([
         workflowDefinitionId: null, scopeSessionId: null, targetType: null, existingSessionId: null, lastRunAt: null,
         createdAt: 1, updatedAt: 1, assignments: [], observationOnly: { kind: 'observationOnly', templateVersion: 1 },
         triggers: [createWorkflowAutomationTriggerDetailFixture(automationId, { kind: 'new', triggerId,
-            trigger: { kind: 'pluginEvent', enabled: true, eventRef: event.event.identity, sourceInstanceId,
+            trigger: { kind: 'pluginEvent', enabled: true, eventRef: savedEventRef, sourceInstanceId,
                 sourceContractVersion: 1, sourceConfig, displayLabel: 'Saved health checks', filter: null,
                 maximumObservationAgeMs: null, observationTransport: { kind: 'checkpointedPull',
                     watcherMaterializationRef: { machineId, pluginId, materializationId: 'machine-services-observer' } } } })],
@@ -942,7 +953,7 @@ it.each([
     const setupInputs: unknown[] = [];
     rpc.respond = request => {
         if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
-            return { protocolVersion: 1, projection, automationEligibleEvents: [event] };
+            return { protocolVersion: 1, projection, automationEligibleEvents: legacyEvent ? [event, legacyEvent] : [event] };
         if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
             return { ok: true, inputSchema: event.setupAction.inputSchema };
         if (request.method !== RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return undefined;
@@ -998,16 +1009,36 @@ it.each([
         await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
         storage.getState().applyMachines([fresh.machineTarget.machine], true, { sourceServerId: connection.serverId });
         observeMachinePresenceForTest(lifetime.scope, [machineId]);
-        screen = await renderScreen(<AccountTriggersSection />);
-        const row = () => screen?.findAllByType(TriggerRow).find(candidate => candidate.props.testID === `workflows-column:trigger:${automationId}`);
-        await waitForHomeGovernance(() => expect(row()).toBeDefined());
-        const restorePopoverGlobals = withPopoverWebGlobals();
-        try { await pressTestInstanceAsync(row()); }
-        finally { restorePopoverGlobals(); }
-        await pressTestInstanceAsync(screen.findAllByType(Item).find(candidate =>
-            candidate.props.testID === 'workflows-column-trigger-popover-configure-event'));
-        await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.sourceStatus).toBe('configured'));
-        await pressTestInstanceAsync(screen.findAllByType(HappierPressable).find(candidate => candidate.props.testID === 'automation-event-configure-source'));
+        if (fromCheckSettings) {
+            const { ServiceCheckDetail } = await import('@/components/projects/deployments/ServiceCheckDetail');
+            const { createAutomationDefinitionSummary } = await import('@/sync/domains/automations/automationDefinitionProjection');
+            const definition = automations.rows.get(automationId);
+            if (!definition || !('field' in fixture)) throw new Error('Expected the saved native Check');
+            screen = await renderScreen(<ServiceCheckDetail nowMs={Date.now()} row={{ kind: 'configuredCheck', key: automationId,
+                scope: lifetime.scope, automationId, triggerId, native: createAutomationDefinitionSummary(definition),
+                definitionFacts: { kind: 'available', observerMachineId: machineId, checks: [{ checkId: 'saved', name: 'Readiness',
+                    targetLabel: legacy ? fixture.original : null, periodMs: 60_000, domainId: null, keyFlow: null }] },
+                lastResults: { kind: 'available', checks: [] },
+            }} />);
+            const address = screen.findAllByType(Item).find(row => row.props.testID === 'services.check.settings.address');
+            if (!legacy) expect(address).toBeUndefined();
+            if (!legacy) await waitForHomeGovernance(() => expect(screen!.findAllByType(Item)
+                .some(row => row.props.testID === 'services.check.settings.alert')).toBe(true));
+            await pressTestInstanceAsync(legacy ? address : screen.findAllByType(Item)
+                .find(row => row.props.testID === 'services.check.settings.alert'));
+            await waitForHomeGovernance(() => expect(nativeSurface, screen!.getTextContent()).toBeDefined());
+        } else {
+            screen = await renderScreen(<AccountTriggersSection />);
+            const row = () => screen?.findAllByType(TriggerRow).find(candidate => candidate.props.testID === `workflows-column:trigger:${automationId}`);
+            await waitForHomeGovernance(() => expect(row()).toBeDefined());
+            const restorePopoverGlobals = withPopoverWebGlobals();
+            try { await pressTestInstanceAsync(row()); }
+            finally { restorePopoverGlobals(); }
+            await pressTestInstanceAsync(screen.findAllByType(Item).find(candidate =>
+                candidate.props.testID === 'workflows-column-trigger-popover-configure-event'));
+            await waitForHomeGovernance(() => expect(screen!.findByType(InlinePluginEventEditor).props.model.sourceStatus).toBe('configured'));
+            await pressTestInstanceAsync(screen.findAllByType(HappierPressable).find(candidate => candidate.props.testID === 'automation-event-configure-source'));
+        }
         const editedConfig = 'field' in fixture ? { checks: [{ config: { [fixture.key]: fixture.edited } }] } : { checkPeriodMs: 180_000 };
         if ('field' in fixture) {
             const mounted = await presented.promise;
@@ -1027,8 +1058,8 @@ it.each([
             await waitForHomeGovernance(() => expect(setupInputs).toMatchObject([{ sourceInstanceId, checkPeriodSeconds: 180 }]));
         }
         const innerDone = button('automation-plugin-event-done');
-        expect(innerDone).toBeDefined();
-        if (!innerDone?.props.disabled) {
+        if (!fromCheckSettings) expect(innerDone).toBeDefined();
+        if (innerDone && !innerDone.props.disabled) {
             await pressTestInstanceAsync(button('automation-plugin-event-done'));
             await submit();
         }
@@ -1048,11 +1079,15 @@ it.each([
             }
             await submit();
         }
+        if (fromCheckSettings) await waitForHomeGovernance(() => expect(automations.rows.get(automationId)?.templateVersion).toBe(2));
         const persisted = await listWorkflowTriggerPage({ automationId, triggerId });
         expect(persisted.sets).toMatchObject([{ revision: 2, triggers: [{ id: triggerId, revision: 1 }] }]);
         expect(persisted.triggerDefinition).toMatchObject({ triggerId, definition: {
             sourceConfig: editedConfig,
         } });
+        if (legacy) expect(automations.rows.get(automationId)?.triggers[0]).toMatchObject({
+            eventRef: HEALTH_CHECK_EVENT_REFS_V1.status,
+        });
     } finally {
         pendingSetup.resolve();
         modal.mockRestore();
