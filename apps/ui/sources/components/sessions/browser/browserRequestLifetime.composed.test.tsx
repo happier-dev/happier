@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createDeferred, flushHookEffects, renderHook, renderScreen, renderWithSessionTranscriptSource, standardCleanup } from '@/dev/testkit';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { BrowserAnnotationCaptureRequest } from '@/sync/domains/browser/context/types';
@@ -17,6 +17,15 @@ const { useSessionBrowserContextRuntime, SessionBrowserContextRuntimeProvider } 
 const { submitComposerSnapshot } = await import('@/components/sessions/composer/composerSubmissionCoordinator');
 const { BrowserActionResultReference } = await import('@/components/sessions/transcript/references/BrowserActionResultReference');
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
+const { ToolView } = await import('@/components/tools/shell/views/ToolView');
+const { ToolTimelineRow } = await import('@/components/tools/shell/views/ToolTimelineRow');
+const { ApprovalRequestV2Schema } = await import('@happier-dev/protocol/approvals/approvalRequestV1');
+const { buildApprovalExecutionOriginV1 } = await import('@happier-dev/protocol/actions/actionExecutor');
+const { buildApprovalRequestArtifactHeaderV1 } = await import('@happier-dev/protocol/approvals/approvalArtifactHeaderV1');
+const { listTranscriptApprovalArtifactsForSession } = await import('@/sync/domains/artifacts/approvalArtifacts');
+const { TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS } = await import('@/components/tools/shell/approvals/transcriptSettledApprovalPresentations');
+const { describeBrowserAction } = await import('@/components/sessions/transcript/references/browserActionPhrase');
+const { resolveTranscriptBrowserActionReference } = await import('@/components/sessions/transcript/references/transcriptBrowserActionReference');
 
 let fixture: Awaited<ReturnType<typeof createSessionFilesViewFixture>>;
 afterEach(async () => { vi.useRealTimers(); standardCleanup(); await fixture?.dispose(); });
@@ -50,6 +59,41 @@ async function setup(reply: Promise<void>) {
 }
 
 describe('Browser request lifetime through the mounted owner and real RPC', () => {
+    it.each([{ name: 'card', Row: ToolView }, { name: 'timeline', Row: ToolTimelineRow }])(
+        'updates the $name tool row from waiting to done through the retained approval projection', async ({ Row }) => {
+            await setup(Promise.resolve());
+            const actionArgs = { kind: 'openView', commandId: 'command_1', browserSessionId: 'browser_1', viewId: 'view_1', platform: 'web',
+                target: { kind: 'externalUrl', targetId: 'target_1', url: 'https://example.test/page' } };
+            const call = { id: 'tool_1', name: 'mcp__happier__action_execute', state: 'completed' as const,
+                input: { actionId: 'browser.view.open', input: actionArgs },
+                result: { ok: true, result: { kind: 'approval_request_created', artifactId: 'approval_1', actionId: 'browser.view.open' } },
+                createdAt: 1, startedAt: 1, completedAt: 2, description: null };
+            const project = (done: boolean) => {
+                const approval = ApprovalRequestV2Schema.parse({ v: 2, status: done ? 'executed' : 'open', createdAtMs: 1, updatedAtMs: 3,
+                    createdBy: { surface: 'agent', sessionId: 's1' }, requestedSurface: 'agent',
+                    actionId: 'browser.view.open', actionArgs, summary: 'Open page',
+                    executionOriginV1: buildApprovalExecutionOriginV1({ actionId: 'browser.view.open', input: actionArgs, targetSessionId: 's1',
+                        context: { surface: 'agent', authority: 'account_automation', serverId: fixture.home.id,
+                            runtimeAccountId: 'account_1', executionRunTargetMachineId: 'm1', actionRequestId: 'approval_1', actionCaller: { kind: 'host' } } }),
+                    origin: { kind: 'transcript_tool_call', sessionId: 's1', toolCallId: 'tool_1', toolName: call.name },
+                    ...(done ? { decision: { kind: 'approve', decidedAtMs: 2 }, execution: { executedAtMs: 3, ok: true,
+                        result: { v: 1, commandId: 'command_1', status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] } } } : {}) });
+                return listTranscriptApprovalArtifactsForSession([{ id: 'approval_1', title: approval.summary, isDecrypted: true,
+                    header: buildApprovalRequestArtifactHeaderV1(approval, { legacyServerId: fixture.home.id }),
+                    body: JSON.stringify(approval), headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 3 }],
+                { sessionId: 's1', serverId: fixture.home.id }, { settledPresentations: TRANSCRIPT_SETTLED_APPROVAL_PRESENTATIONS });
+            };
+            const row = (done: boolean) => <AppPaneProvider><Row tool={call} metadata={null} sessionId="s1"
+                serverId={fixture.home.id} messageId="message_1" approvalRequests={project(done)} /></AppPaneProvider>;
+            const screen = await renderWithSessionTranscriptSource(row(false));
+            const label = 'transcript-browser-action-browser.view.open-label';
+            const reference = resolveTranscriptBrowserActionReference({ toolName: call.name, input: call.input, state: call.state, result: call.result });
+            expect(reference).not.toBeNull();
+            expect(screen.findByTestId(label).props.children).toBe(describeBrowserAction(reference!, 'pending'));
+            await screen.update(row(true));
+            expect(screen.findByTestId(label).props.children).toBe(describeBrowserAction(reference!, 'completed'));
+        });
+
     it('retires a non-replying control command on target change, retries, and cancels on unmount', async () => {
         const reply = createDeferred<void>();
         await setup(reply.promise);

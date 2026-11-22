@@ -83,7 +83,7 @@ const BROWSER_ACTION_IDS: readonly string[] = listActionSpecs()
 const BROWSER_ACTION_ID_SET = new Set(BROWSER_ACTION_IDS);
 const BROWSER_ACTION_ID_BY_TOOL_NAME = createHappierActionToolNameIndex<string>(BROWSER_ACTION_IDS);
 
-function isBrowserActionId(actionId: string): actionId is string {
+export function isBrowserActionId(actionId: string): actionId is string {
     return BROWSER_ACTION_ID_SET.has(actionId);
 }
 

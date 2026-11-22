@@ -589,6 +589,7 @@ const ToolViewContent = React.memo<ToolViewProps & { displaySettings: ToolCardDi
             ) : null}
         </TranscriptJumpAttention>
         <TranscriptToolResultCard tool={toolForRendering} sessionId={sessionId} serverId={props.serverId}
+            approvalRequests={matchingApprovalRequests}
             mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true} />
         </TranscriptRowSeqProvider>
     );

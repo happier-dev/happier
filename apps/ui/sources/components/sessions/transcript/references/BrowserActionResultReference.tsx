@@ -16,6 +16,7 @@ import { shouldRedirectDetailsRouteToPanes } from '@/components/ui/panels/should
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ToolCall } from '@happier-dev/session-core/messages';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { useLocalSetting } from '@/sync/domains/state/storage';
 import { usePreferredServerIdForSession } from '@/sync/runtime/orchestration/serverScopedRpc/usePreferredServerIdForSession';
 import { listBrowserDaemonViewsViaMachineRpc } from '@/sync/domains/browser/control/machineRpc';
@@ -90,6 +91,7 @@ function iconForVerb(verb: TranscriptBrowserActionReference['verb']): IconName {
  */
 export const BrowserActionResultReference = React.memo(function BrowserActionResultReference(props: Readonly<{
     tool: ToolCall;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
     sessionId?: string;
     serverId?: string | null;
     mediaPreviewEnabled?: boolean;
@@ -100,7 +102,7 @@ export const BrowserActionResultReference = React.memo(function BrowserActionRes
         input: props.tool.input,
         result: props.tool.result,
     }), [props.tool.input, props.tool.name, props.tool.result, props.tool.state]);
-    const outcome = readBrowserCallOutcome(props.tool);
+    const outcome = readBrowserCallOutcome(props.tool, props.approvalRequests);
     if (!reference) return null;
     return (
         <MountedBrowserActionReference

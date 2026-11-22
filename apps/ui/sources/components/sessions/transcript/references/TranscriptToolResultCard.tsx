@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ToolCall } from '@happier-dev/session-core/messages';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import { BotTemplateDraftCard } from '@/components/sessions/bots/templates/BotTemplateDraftCard';
 import { SavedSkillResult } from '@/components/tools/renderers/system/SavedSkillResult';
 import { readSavedSkillResult } from '@/components/tools/renderers/system/savedSkillResultModel';
@@ -17,6 +18,7 @@ import { DeploySuggestionCheckResult } from '@/components/tools/renderers/system
 /** A tool's result is a reply block, outside both its own disclosure and tool groups. */
 export function TranscriptToolResultCard(props: Readonly<{
     tool: ToolCall; sessionId?: string; serverId?: string; mediaPreviewEnabled: boolean;
+    approvalRequests?: readonly OpenApprovalArtifactForSession[];
 }>) {
     const contentDemand = useTranscriptRowContentDemand();
     const visualContext = useTranscriptVisualContext();

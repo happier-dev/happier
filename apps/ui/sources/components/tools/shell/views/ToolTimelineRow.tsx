@@ -536,6 +536,7 @@ const ToolTimelineRowContent = React.memo((props: ToolTimelineRowProps & { displ
             )}
 
             <TranscriptToolResultCard tool={toolForRendering} sessionId={props.sessionId} serverId={props.serverId}
+                approvalRequests={matchingApprovalRequests}
                 mediaPreviewEnabled={'canPreviewMedia' in interaction && interaction.canPreviewMedia === true} />
 
             <McpAlwaysAllowSettledLineReporter.Provider value={setCatalogSettledLineShown}>

@@ -1,36 +1,56 @@
 import type { ToolCall } from '@happier-dev/session-core/messages';
 import { resolveToolStatusIndicatorKind } from '@happier-dev/session-core/tools';
+import type { ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 import { t } from '@/text';
+import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
+import { readBrowserOpenAcceptance } from '@/sync/domains/browser/firstUse/browserFirstUse';
 
 import { isRecord, readHappierActionToolResultCandidates } from './happierActionToolResult';
-import type { TranscriptBrowserActionReference } from './transcriptBrowserActionReference';
+import { isBrowserActionId, type TranscriptBrowserActionReference } from './transcriptBrowserActionReference';
 
 /** Where a browser call stands, as the row tells it: asked and waiting, done, or ended without doing it. */
 export type BrowserCallOutcome = 'pending' | 'completed' | 'failed';
 
 /**
- * The call's outcome from the tool status owner. A call that only created an approval request has asked and
- * has no outcome of its own yet (its approved run reports separately), so it reads as asked.
+ * A call that created an approval request reads that exact retained receipt. Approval alone is still
+ * waiting; only its executed result can finish the call, through the existing tool status owner.
  */
-export function readBrowserCallOutcome(tool: ToolCall): BrowserCallOutcome {
+export function readBrowserCallOutcome(tool: ToolCall, approvalRequests?: readonly OpenApprovalArtifactForSession[]): BrowserCallOutcome {
     switch (resolveToolStatusIndicatorKind(tool)) {
         case 'error':
         case 'permission_blocked':
         case 'stopped':
             return 'failed';
         case 'completed':
-            return readHappierActionToolResultCandidates(tool.result).some(isApprovalRequestCreated) ? 'pending' : 'completed';
+            for (const candidate of readHappierActionToolResultCandidates(tool.result)) {
+                const result = isRecord(candidate) && candidate.ok === true ? candidate.result : candidate;
+                if (isRecord(result) && result.status === 'failed') return 'failed';
+                const created = readApprovalRequestCreated(candidate);
+                if (!created) continue;
+                const approval = approvalRequests?.find((request) => request.artifact.id === created.artifactId)?.approval;
+                if (!approval) return 'pending';
+                if (approval.status === 'rejected' || approval.status === 'canceled' || approval.execution?.ok === false) return 'failed';
+                if (approval.status !== 'executed' || approval.execution?.ok !== true || readBrowserOpenAcceptance(approval)) return 'pending';
+                return readBrowserCallOutcome({ ...tool, result: approval.execution.result });
+            }
+            return 'completed';
         default:
             return 'pending';
     }
 }
 
 /** The Action executor's answer when the call waits for a person: the bare result or its `{ ok, result }` envelope. */
-function isApprovalRequestCreated(candidate: unknown): boolean {
-    if (!isRecord(candidate)) return false;
-    return candidate.kind === 'approval_request_created'
-        || (isRecord(candidate.result) && candidate.result.kind === 'approval_request_created');
+function readApprovalRequestCreated(candidate: unknown): Record<string, unknown> | null {
+    if (!isRecord(candidate)) return null;
+    if (candidate.kind === 'approval_request_created') return candidate;
+    return isRecord(candidate.result) && candidate.result.kind === 'approval_request_created' ? candidate.result : null;
+}
+
+/** Browser tool receipts remain available to the originating row after their execution settles. */
+export function presentsSettledBrowserToolApproval(approval: ApprovalRequest): boolean {
+    return approval.origin?.kind === 'transcript_tool_call' && approval.execution !== undefined
+        && isBrowserActionId(approval.actionId);
 }
 
 /**
