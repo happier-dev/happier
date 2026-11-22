@@ -27,7 +27,7 @@ import { createGoalActionChip } from '@/components/sessions/agentInput/definitio
 import { AttachmentFilePicker } from '@/components/sessions/attachments/AttachmentFilePicker';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
 import type { AttachmentFilePickerHandle, PickedAttachment } from '@/components/sessions/attachments/AttachmentFilePicker.types';
-import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
+import { openAttachmentFilePickerCamera, openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@/components/sessions/attachments/attachmentFilePickerActions';
 import { resolveReviewCommentDraftAnchorsForPrompt } from '@/components/sessions/reviews/comments/resolveReviewCommentDraftAnchorsForPrompt';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import { useSessionFileUploadAvailability } from '@/components/sessions/files/useSessionFileUploadAvailability';
@@ -84,6 +84,7 @@ import { VoiceSurface } from '@/components/voice/surface/VoiceSurface';
 import { useDraft } from '@/hooks/session/useDraft';
 import {
     areSessionDraftCurrentnessCapturesEqual,
+    getSessionDraftErrorReason,
     type SessionDraftCurrentness,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import {
@@ -294,7 +295,7 @@ import {
 import {
     resolveSessionActivityComposerTranslate,
     resolveSessionActivityStatusBadgePresentation,
-    shouldRetainSessionActivityStatusBadge,
+    shouldDismissSessionActivityStatusBadge,
 } from '@/components/sessions/workState/sessionActivityPresentation';
 import { isSessionGoalEditingAvailable } from '@/components/sessions/workState/sessionGoalEditingAvailability';
 import { SessionWorkStatePopover } from '@/components/sessions/workState/SessionWorkStatePopover';
@@ -3735,13 +3736,14 @@ function SessionViewLoaded({
         // the question the chip above already answers, and on a run whose named agents have all
         // finished the two disagreed — this effect closed the open work-state popover while the chip
         // stayed on screen naming the workflow (FIX-F1).
-        if (shouldRetainSessionActivityStatusBadge({
+        if (shouldDismissSessionActivityStatusBadge({
             activeStatusBadgeKey,
             hasPrimaryWorkStateItem: Boolean(primaryWorkStateItem),
             canShowEmptyGoalControls: canEditSessionGoals,
             agentActivityCounts,
-        })) return;
-        setActiveStatusBadgeKey(null);
+        })) {
+            setActiveStatusBadgeKey(null);
+        }
     }, [activeStatusBadgeKey, agentActivityCounts, canEditSessionGoals, primaryWorkStateItem]);
     const isVoiceConversationSession = isVoiceConversationSystemSessionMetadata(session.metadata ?? null);
     const isHiddenSystemSessionSession = isHiddenSystemSession({ metadata: session.metadata ?? null });
@@ -4337,8 +4339,13 @@ function SessionViewLoaded({
     } = useDraft(sessionId, composerTextStore, { active: surfaceFocused });
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftConflict);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftStatus ?? 'clean'),
-        [draftStatus],
+        () => buildSessionDraftSyncStatusBadge(
+            draftStatus ?? 'clean',
+            draftScope
+                ? { readErrorReason: () => getSessionDraftErrorReason(draftScope, { kind: 'session', sessionId }) }
+                : undefined,
+        ),
+        [draftScope, draftStatus, sessionId],
     );
     const [pendingMessageEdit, setPendingMessageEdit] = React.useState<PendingMessageComposerEditState | null>(null);
     const pendingMessageEditRef = React.useRef(pendingMessageEdit);
@@ -5154,6 +5161,9 @@ function SessionViewLoaded({
         const handlePickAttachmentImage = React.useCallback(() => {
             openAttachmentFilePickerImages(filePickerRef.current);
         }, [filePickerRef]);
+        const handleTakeAttachmentPhoto = React.useCallback(() => {
+            openAttachmentFilePickerCamera(filePickerRef.current);
+        }, [filePickerRef]);
         const handleAppendLinkedPath = React.useCallback((path: string) => {
             setDraftValue((prev) => {
                 const base = prev ?? '';
@@ -5176,6 +5186,7 @@ function SessionViewLoaded({
             onPickAttachmentFile: handlePickAttachmentFile,
             onPickAttachmentImage: handlePickAttachmentImage,
             onPasteAttachmentImage: pasteAttachmentImage,
+            onTakeAttachmentPhoto: handleTakeAttachmentPhoto,
             onAppendLinkedPath: handleAppendLinkedPath,
             reviewCommentsEnabled,
             reviewScope,
@@ -6332,6 +6343,7 @@ function SessionViewLoaded({
                 <ComposerAuxiliaryFrame>
                     <SessionUsageLimitRecoveryBanner
                         temporaryThrottle={visibleUsageLimitRecoveryPresentation.banner.temporaryThrottle}
+                        quotaWait={visibleUsageLimitRecoveryPresentation.banner.quotaWait}
                         surfaceFocused={surfaceFocused}
                         testID={visibleUsageLimitRecoveryPresentation.banner.testID}
                         actionTestID={visibleUsageLimitRecoveryPresentation.banner.primaryAction.testID}

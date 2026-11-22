@@ -96,6 +96,11 @@ test('release-path tokens use only the current-repository permissions their muta
     'promote-docs.yml/promote/Create GitHub App token',
     'promote-server.yml/promote_deploy_ref/Create trusted promotion GitHub App token',
   ]);
+  // Hosted deploys dispatch deploy.yml on the protected deploy ref and watch that run.
+  const actionsWriters = new Set([
+    'promote-ui.yml/promote/Create GitHub App token',
+    'promote-server.yml/promote_deploy_ref/Create trusted promotion GitHub App token',
+  ]);
   const reachable = reachableWorkflowNames(['release.yml', 'nightly-dev.yml']);
   const observed = new Set();
   for (const name of reachable) {
@@ -110,9 +115,14 @@ test('release-path tokens use only the current-repository permissions their muta
         assert.equal(step.with.repositories, '${{ github.event.repository.name }}');
         assert.equal(step.with['permission-contents'], expected.get(key));
         assert.equal(step.with['permission-workflows'], workflowWriters.has(key) ? 'write' : undefined);
+        assert.equal(step.with['permission-actions'], actionsWriters.has(key) ? 'write' : undefined);
         assert.deepEqual(
           Object.keys(step.with).filter((field) => field.startsWith('permission-')),
-          workflowWriters.has(key) ? ['permission-contents', 'permission-workflows'] : ['permission-contents'],
+          [
+            'permission-contents',
+            ...(workflowWriters.has(key) ? ['permission-workflows'] : []),
+            ...(actionsWriters.has(key) ? ['permission-actions'] : []),
+          ],
           `${key} must not request additional App permissions`,
         );
       }

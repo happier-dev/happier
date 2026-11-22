@@ -32,6 +32,14 @@ export function openAttachmentFilePickerFiles(handle: AttachmentFilePickerHandle
     }
 }
 
+export function openAttachmentFilePickerCamera(handle: AttachmentFilePickerHandle | null | undefined): void {
+    const takePhoto = handle?.takePhoto;
+    if (typeof takePhoto !== 'function') return;
+    runOpenOncePerTick(() => {
+        takePhoto();
+    });
+}
+
 export function openAttachmentFilePickerImages(handle: AttachmentFilePickerHandle | null | undefined): void {
     if (!handle) return;
     if (typeof handle.openImages === 'function') {

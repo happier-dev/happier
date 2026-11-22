@@ -46,6 +46,8 @@ test('tests workflow exposes thin release-validation continuity/update jobs thro
   assert.ok(upload, 'CLI update failures should retain their scenario logs');
   const artifactPaths = upload.with.path.trim().split(/\s+/);
   assert.ok(artifactPaths.includes('.project/logs/e2e/*core*/cli-update-*/*.log'));
+  assert.ok(artifactPaths.includes('.project/logs/e2e/*core*/cli-update-*/daemon-home/logs/*.log'),
+    'CLI update failures must retain restarted runner file logs as well as daemon stdout');
   assert.ok(artifactPaths.every((path) => /\.(?:log|json|jsonl|ndjson)$/.test(path)),
     'CLI update failure artifacts must retain diagnostic files without extracted release installs and dependency trees');
   assert.doesNotMatch(

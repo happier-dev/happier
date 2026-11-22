@@ -6,6 +6,7 @@ import {
   type ClaudeControlCommandCompletionOwner,
 } from '../utils/controlCommandRows';
 import { parseRawJsonLinesObject } from '../utils/parseRawJsonLines';
+import { isClaudeGeneratedUserMessage } from '../utils/readClaudeUserMessageText';
 import { readClaudeTaskLifecycleEnvelope } from '../taskNotifications/claudeTaskLifecycleEnvelope';
 import { normalizeClaudeUnifiedPromptIdentityText } from './promptIdentity';
 import { readPendingLocalId } from '@happier-dev/protocol';
@@ -203,7 +204,7 @@ function readUserPromptTexts(message: RawJSONLines): readonly string[] {
   if (message.type !== 'user') return [];
   if (readObject((message as Record<string, unknown>).origin)?.kind === 'peer') return [];
   if (readClaudeTaskLifecycleEnvelope(message)?.subtype === 'task_notification') return [];
-  if ((message as Record<string, unknown>).isMeta === true) return [];
+  if (isClaudeGeneratedUserMessage(message)) return [];
   const content = message.message?.content;
   const textParts = readContentTextParts(content);
   if (textParts.length === 0) return [];

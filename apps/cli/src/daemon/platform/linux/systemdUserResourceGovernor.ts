@@ -22,15 +22,6 @@ export type SystemdUserScopedLaunchSpec = Readonly<{
   env?: Record<string, string>;
 }>;
 
-export function shouldUseSystemdUserSessionResourceGovernor(params: Readonly<{
-  platform: NodeJS.Platform;
-  startupSource: string | undefined;
-}>): boolean {
-  // Startup source describes lifecycle ownership, not resource policy. Stack/TUI-managed
-  // Linux daemons are intentionally labelled "manual" and need the same session isolation.
-  return params.platform === 'linux';
-}
-
 export type SystemdUserResourceGovernorExecFile = (
   command: string,
   args: readonly string[],

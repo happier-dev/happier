@@ -13,6 +13,7 @@ import { navigateWithBlurOnWeb } from '@/utils/platform/navigateWithBlurOnWeb';
 import { ApprovalDecisionFooter } from './ApprovalDecisionFooter';
 import { useApprovalDecisionHandler } from './useApprovalDecisionHandler';
 import { Icon } from '@/components/ui/icons/Icon';
+import { PromptCardLayout } from '@/components/tools/shell/presentation/PromptCardLayout';
 
 const PROMPT_CARD_HORIZONTAL_PADDING = 12;
 const PROMPT_CARD_ICON_SIZE = 18;
@@ -45,6 +46,7 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
     canApprove: boolean;
     disabledReason?: 'public' | 'readOnly' | 'notGranted' | 'inactive';
     chrome?: 'card' | 'inline';
+    maxHeightPx?: number;
 }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
@@ -70,42 +72,48 @@ export const ApprovalPromptCard = React.memo(function ApprovalPromptCard(props: 
 
     return (
         <View testID="approval-prompt-card" style={[styles.container, chrome === 'inline' ? styles.containerInline : null]}>
-            <View style={styles.header}>
-                <View style={styles.icon}>
-                    <Icon name="shield-check" size={16} color={theme.colors.state.neutral.foreground} />
+            <PromptCardLayout
+                maxHeightPx={props.maxHeightPx}
+                bodyTestID="approval-prompt-scroll-body"
+                footer={(
+                    <View style={styles.actions}>
+                        <ApprovalDecisionFooter
+                            disabled={!props.canApprove}
+                            disabledReason={props.disabledReason}
+                            isDeciding={isDeciding}
+                            onApprove={() => { void decide('approve'); }}
+                            onReject={() => { void decide('reject'); }}
+                        />
+                    </View>
+                )}
+            >
+                <View style={styles.header}>
+                    <View style={styles.icon}>
+                        <Icon name="shield-check" size={16} color={theme.colors.state.neutral.foreground} />
+                    </View>
+                    <View style={styles.headerText}>
+                        <Text style={styles.title} numberOfLines={1}>{title}</Text>
+                        <Text style={styles.subtitle} numberOfLines={2}>{props.approval.summary || t('approvals.untitled')}</Text>
+                    </View>
+                    {canOpenToolRoute ? (
+                        <Pressable
+                            testID="approval-prompt-view-tool"
+                            onPress={onViewTool}
+                            accessibilityRole="button"
+                            accessibilityLabel={t('toolView.open')}
+                            style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
+                        >
+                            <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
+                        </Pressable>
+                    ) : null}
                 </View>
-                <View style={styles.headerText}>
-                    <Text style={styles.title} numberOfLines={1}>{title}</Text>
-                    <Text style={styles.subtitle} numberOfLines={2}>{props.approval.summary || t('approvals.untitled')}</Text>
-                </View>
-                {canOpenToolRoute ? (
-                    <Pressable
-                        testID="approval-prompt-view-tool"
-                        onPress={onViewTool}
-                        accessibilityRole="button"
-                        accessibilityLabel={t('toolView.open')}
-                        style={({ pressed }) => [styles.viewButton, pressed && styles.viewButtonPressed]}
-                    >
-                        <Icon name="arrow-square-out" size={16} color={theme.colors.text.secondary} />
-                    </Pressable>
+
+                {previewSummary ? (
+                    <View style={styles.preview}>
+                        <Text style={styles.previewText}>{previewSummary}</Text>
+                    </View>
                 ) : null}
-            </View>
-
-            {previewSummary ? (
-                <View style={styles.preview}>
-                    <Text style={styles.previewText}>{previewSummary}</Text>
-                </View>
-            ) : null}
-
-            <View style={styles.actions}>
-                <ApprovalDecisionFooter
-                    disabled={!props.canApprove}
-                    disabledReason={props.disabledReason}
-                    isDeciding={isDeciding}
-                    onApprove={() => { void decide('approve'); }}
-                    onReject={() => { void decide('reject'); }}
-                />
-            </View>
+            </PromptCardLayout>
         </View>
     );
 });

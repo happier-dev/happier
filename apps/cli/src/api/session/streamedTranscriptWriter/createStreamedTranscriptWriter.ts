@@ -124,9 +124,8 @@ export function createStreamedTranscriptWriter(params: {
     interruptedReason?: string;
     drain: Promise<void> | null;
     failureReported: boolean;
-    retryAfterDrain: boolean;
   }>();
-  let unsubscribeConnectionState: (() => void) | null = null;
+  let unsubscribeReplayReady: (() => void) | null = null;
   let scheduleDurableCheckpoint: (segment: SegmentRuntime) => void;
 
   const clearLiveSnapshotTimer = (segment: SegmentRuntime) => {
@@ -576,19 +575,18 @@ export function createStreamedTranscriptWriter(params: {
         interruptedReason: opts.interruptedReason,
         drain: null,
         failureReported: false,
-        retryAfterDrain: false,
       });
     }
     segments.clear();
-    if (terminalSegments.size > 0 && !unsubscribeConnectionState) {
-      unsubscribeConnectionState = session.subscribeToSessionConnectionState?.((state) => {
-        if (state.phase !== 'online') return;
-        for (const [segment, terminal] of terminalSegments) {
-          // A reconnect can arrive before an offline write has settled. Preserve
-          // that wake until the original attempt releases its drain.
-          if (terminal.drain) terminal.retryAfterDrain = true;
-          else startTerminalCommit(segment, terminal, false);
-        }
+    if (terminalSegments.size > 0 && !unsubscribeReplayReady) {
+      unsubscribeReplayReady = session.subscribeToTranscriptReplayReady?.(async (signal) => {
+        await Promise.all(Array.from(terminalSegments, async ([segment, terminal]) => {
+          // The write on the old socket can still be settling when its replacement is ready.
+          await terminal.drain;
+          if (signal.aborted || !terminalSegments.has(segment)) return;
+          startTerminalCommit(segment, terminal, false);
+          await terminal.drain;
+        }));
       }) ?? null;
     }
     return Array.from(terminalSegments.entries());
@@ -630,13 +628,9 @@ export function createStreamedTranscriptWriter(params: {
       logUnresolvedLiveFailureSummary(segment);
     })().finally(() => {
       terminal.drain = null;
-      if (terminal.retryAfterDrain && terminalSegments.has(segment)) {
-        terminal.retryAfterDrain = false;
-        startTerminalCommit(segment, terminal, false);
-      }
       if (terminalSegments.size === 0) {
-        unsubscribeConnectionState?.();
-        unsubscribeConnectionState = null;
+        unsubscribeReplayReady?.();
+        unsubscribeReplayReady = null;
       }
     });
   };
@@ -684,8 +678,8 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   const discard = () => {
-    unsubscribeConnectionState?.();
-    unsubscribeConnectionState = null;
+    unsubscribeReplayReady?.();
+    unsubscribeReplayReady = null;
     for (const segment of [...segments.values(), ...terminalSegments.keys()]) {
       clearDurableCheckpointTimer(segment);
       clearLiveSnapshotTimer(segment);

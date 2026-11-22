@@ -137,6 +137,31 @@ describe('buildPythonPtyRelaySpawnCommand', () => {
 });
 
 describe('createPythonPtyRelayProvider', () => {
+  const pythonExecutable = resolvePythonPtyRelayExecutable();
+
+  it.skipIf(!pythonExecutable).each([
+    { name: 'xterm-256color', inheritedTerm: undefined, expectedTerm: 'xterm-256color' },
+    { name: 'vt100', inheritedTerm: 'dumb', expectedTerm: 'vt100' },
+    { name: undefined, inheritedTerm: 'vt100', expectedTerm: 'vt100' },
+  ])('exposes TERM=$expectedTerm to the child with PTY name $name and inherited TERM=$inheritedTerm', async ({
+    name, inheritedTerm, expectedTerm,
+  }) => {
+    const provider = createPythonPtyRelayProvider({ pythonExecutable })!;
+    const pty = provider.spawn({
+      file: pythonExecutable!,
+      args: ['-c', 'import os; print(os.environ.get("TERM", "<unset>"))'],
+      options: { name, env: { TERM: inheritedTerm } },
+    });
+
+    let output = '';
+    pty.onData((data) => { output += data; });
+    try {
+      await expect.poll(() => output.trim()).toBe(expectedTerm);
+    } finally {
+      pty.kill();
+    }
+  });
+
   it('returns null on Windows', () => {
     expect(createPythonPtyRelayProvider({ platform: 'win32', pythonExecutable: 'python3' })).toBeNull();
   });

@@ -2,6 +2,7 @@ import type { LocalTurnLifecycleEvent } from '@/agent/localControl/turnLifecycle
 import type { RawJSONLines } from '@/backends/claude/types';
 import { isClaudeInternalTranscriptMessage } from '../utils/isClaudeInternalTranscriptMessage';
 import { readClaudeControlCommandRowShape } from '../utils/controlCommandRows';
+import { isClaudeGeneratedUserMessage } from '../utils/readClaudeUserMessageText';
 import { isClaudeRuntimeAuthFailureEvidence } from '../connectedServices/classifyClaudeConnectedServiceRuntimeAuthFailure';
 import { isClaudeTranscriptTaskNotification } from './readClaudeTranscriptProviderActivity';
 
@@ -174,7 +175,7 @@ export function readClaudeTranscriptTurnSignal(message: RawJSONLines): LocalTurn
     };
   }
 
-  if (readBooleanFlag(message, 'isMeta') || hasToolResultContent(content) || isClaudeTranscriptTaskNotification(message)) return null;
+  if (isClaudeGeneratedUserMessage(message) || hasToolResultContent(content) || isClaudeTranscriptTaskNotification(message)) return null;
   if (typeof text === 'string' && text.trim().length > 0) {
     return {
       type: 'turn_started',

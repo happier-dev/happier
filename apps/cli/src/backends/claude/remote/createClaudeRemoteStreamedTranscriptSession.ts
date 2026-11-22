@@ -21,7 +21,7 @@ export type ClaudeRemoteStreamedTranscriptEphemeralDeltaOptions = Readonly<{
 }>;
 
 export type ClaudeRemoteStreamedTranscriptClient = Readonly<{
-    subscribeToSessionConnectionState?: StreamedTranscriptWriterSession['subscribeToSessionConnectionState'];
+    subscribeToTranscriptReplayReady?: StreamedTranscriptWriterSession['subscribeToTranscriptReplayReady'];
     sendAgentMessage: (
         provider: ACPProvider,
         body: ACPMessageData,
@@ -68,7 +68,7 @@ export function createClaudeRemoteStreamedTranscriptSession(
     const sendEphemeral = client.sendAgentMessageEphemeral?.bind(client);
     const sendEphemeralDelta = client.sendAgentMessageEphemeralDelta?.bind(client);
     return {
-        subscribeToSessionConnectionState: client.subscribeToSessionConnectionState?.bind(client),
+        subscribeToTranscriptReplayReady: client.subscribeToTranscriptReplayReady?.bind(client),
         sendAgentMessage: (provider, body, opts) => client.sendAgentMessage(provider, body, opts),
         ...(typeof client.sendAgentMessageCommitted === 'function'
             ? {

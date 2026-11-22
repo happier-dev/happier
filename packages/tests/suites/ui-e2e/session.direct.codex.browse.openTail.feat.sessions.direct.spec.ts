@@ -56,7 +56,14 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
         }),
         responseItemLine({
           timestamp: '2026-03-06T00:00:02.000Z',
-          payload: { type: 'message', role: 'assistant', content: [{ type: 'text', text: 'latest direct codex ui reply' }] },
+          payload: {
+            type: 'message',
+            role: 'assistant',
+            content: [{
+              type: 'text',
+              text: 'latest direct codex ui reply\n\n| Item | Link |\n| --- | --- |\n| **Website** | [Happier](https://happier.dev) |',
+            }],
+          },
         }),
       ].join(''),
       'utf8',
@@ -167,6 +174,24 @@ test.describe('ui e2e: direct Codex sessions browse/open/tail', () => {
     await expect(transcript).toHaveCount(1, { timeout: 120_000 });
     await expect(transcript.getByText('older direct codex ui message')).toHaveCount(1, { timeout: 60_000 });
     await expect(transcript.getByText('latest direct codex ui reply')).toHaveCount(1, { timeout: 60_000 });
+
+    const table = transcript.getByTestId('markdown-table-scroll');
+    await expect(table.getByText('Website', { exact: true })).toBeVisible();
+    await expect(table.getByText('**Website**', { exact: true })).toHaveCount(0);
+
+    await page.context().route('https://happier.dev/', (route) => route.fulfill({ body: 'Happier link destination' }));
+    const [destination] = await Promise.all([
+      page.context().waitForEvent('page'),
+      table.getByRole('link', { name: 'Happier', exact: true }).click(),
+    ]);
+    await expect(destination).toHaveURL('https://happier.dev/');
+    await destination.close();
+
+    await transcript.getByTestId('markdown-table-open').click();
+    const viewer = page.getByTestId('markdown-table-viewer');
+    await expect(viewer.getByText('Website', { exact: true })).toBeVisible();
+    await expect(viewer.getByRole('link', { name: 'Happier', exact: true })).toBeVisible();
+    await viewer.getByTestId('modal-card-close').click();
 
     await appendFile(
       rolloutFile,

@@ -54,6 +54,7 @@ export type UsageLimitRecoverySchedulerRecoveryResult =
   | Readonly<{
       status: 'wait';
       nextCheckAtMs: number;
+      resetAtMs?: number | null;
       lastProbeError?: string | null;
       selectedAuth?: SessionUsageLimitRecoveryAuthSelectionV1;
       recoveryCredits?: ConnectedServiceQuotaRecoveryCreditsV1;
@@ -287,6 +288,7 @@ export class UsageLimitRecoveryScheduler {
           intent: {
             ...intent,
             status: 'waiting' as const,
+            resetAtMs: recovery.resetAtMs === undefined ? intent.resetAtMs : recovery.resetAtMs,
             nextCheckAtMs,
             lastProbeError: recovery.lastProbeError ?? null,
             selectedAuth: recovery.selectedAuth ?? intent.selectedAuth,

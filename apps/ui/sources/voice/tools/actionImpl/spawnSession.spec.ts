@@ -98,6 +98,22 @@ describe('spawnSessionForVoiceTool', () => {
     voiceTargetState.lastFocusedSessionId = null;
   });
 
+  it('refuses an AI session request instead of spawning without the requesting session policy', async () => {
+    const { spawnSessionForVoiceTool } = await import('./spawnSession');
+
+    // An approved AI request is executed here with the requesting surface; only the requesting
+    // CLI can apply its spawn policy, permission inheritance and environment.
+    for (const surfaceFields of [{ surface: 'session_agent' }, { callerSurface: 'session_agent' }] as const) {
+      await expect(spawnSessionForVoiceTool({
+        path: '/Users/leeroy/projects/happier',
+        permissionMode: 'read-only',
+        environmentVariables: { CLAUDE_CONFIG_DIR: '/tmp/second-account' },
+        ...surfaceFields,
+      })).rejects.toMatchObject({ code: 'unsupported' });
+    }
+    expect(machineSpawnNewSession).not.toHaveBeenCalled();
+  });
+
   it('spawns from the explicit path and returns human-readable target and session labels', async () => {
     const { spawnSessionForVoiceTool } = await import('./spawnSession');
 

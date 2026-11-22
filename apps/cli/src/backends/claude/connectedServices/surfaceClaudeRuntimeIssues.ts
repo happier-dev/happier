@@ -1,6 +1,7 @@
 import { isClaudeSidechainRuntimeEvidence } from '../utils/sessionHookAttribution';
 import {
     buildUsageLimitIssueFingerprint,
+    SessionRuntimeUsageLimitDetailsV1Schema,
     readConnectedServiceLimitCategoryV1,
     type ConnectedServiceQuotaSnapshotV1,
     type ConnectedServiceLimitCategoryV1,
@@ -122,10 +123,11 @@ function resolveClaudeRuntimeIssueSelection(session: RuntimeIssueSession): Conne
     };
 }
 
-const requestIdentityBySession = new WeakMap<RuntimeIssueSession, Readonly<{
-    selection: ConnectedServiceChildSelection | undefined;
-    identity: Promise<Readonly<{ sourceProviderAccountId: string | null; sourceProviderOrganizationId: string | null }>>;
-}>>();
+const requestContextBySession = new WeakMap<RuntimeIssueSession, {
+    observedWindows: readonly NormalizedProviderUsageLimitDetailsV1[];
+    readonly selection: ConnectedServiceChildSelection | undefined;
+    readonly identity: Promise<Readonly<{ sourceProviderAccountId: string | null; sourceProviderOrganizationId: string | null }>>;
+}>();
 
 /** Capture before dispatch: all pool runners share a home that another session may rewrite. */
 export async function captureClaudeRuntimeAuthRequestIdentity(session: RuntimeIssueSession): Promise<void> {
@@ -139,7 +141,7 @@ export async function captureClaudeRuntimeAuthRequestIdentity(session: RuntimeIs
             return { sourceProviderAccountId: null, sourceProviderOrganizationId: null };
         })
         : Promise.resolve({ sourceProviderAccountId: null, sourceProviderOrganizationId: null });
-    requestIdentityBySession.set(session, { selection, identity });
+    requestContextBySession.set(session, { selection, identity, observedWindows: [] });
     await identity;
 }
 
@@ -162,7 +164,7 @@ export function observeClaudeRuntimeAuthTranscript(
         onUsageLimitNote(note) {
             if (!session.sessionId || note.sourceSessionId !== session.sessionId) return;
             if (note.kind === 'near_limit') {
-                const issued = requestIdentityBySession.get(session);
+                const issued = requestContextBySession.get(session);
                 const identity = issued?.identity ?? Promise.resolve({
                     sourceProviderAccountId: null,
                     sourceProviderOrganizationId: null,
@@ -535,7 +537,7 @@ function resolveClaudeQuotaSnapshotTarget(session: RuntimeIssueSession, input: R
     groupId: string | null;
     groupGeneration: number | null;
 }> {
-    const issued = requestIdentityBySession.get(session);
+    const issued = requestContextBySession.get(session);
     const selection = issued ? issued.selection : resolveClaudeRuntimeIssueSelection(session);
     const selectedGroup = selection?.kind === 'group' ? selection : null;
     const serviceId = input.serviceId
@@ -558,12 +560,20 @@ export async function recordClaudeRateLimitQuotaEvidence(
     logPrefix: string,
 ): Promise<void> {
     void logPrefix;
-    const [primaryWindow, ...otherWindows] = windows;
-    if (!primaryWindow) return;
+    const [observedPrimaryWindow] = windows;
+    if (!observedPrimaryWindow) return;
+    // Retain the response before any identity/delivery await. All launchers share this
+    // request context, reset at dispatch/UserPromptSubmit; sidechain errors are not a window snapshot.
+    const issued = requestContextBySession.get(session);
+    if (issued && !windows.some((window) => window.sourcedFromSidechain === true)) {
+        issued.observedWindows = windows;
+    }
+    const [primaryWindow, ...otherWindows] = observedPrimaryWindow.sourcedFromSidechain === true
+        ? resolveClaudeRuntimeQuotaWindows(observedPrimaryWindow, issued?.observedWindows ?? [])
+        : [observedPrimaryWindow, ...windows.slice(1)];
     const target = resolveClaudeQuotaSnapshotTarget(session, {});
     if (!target.profileId) return;
     // All windows come from one provider response, so one account identity covers them.
-    const issued = requestIdentityBySession.get(session);
     const enrichedPrimaryWindow = issued
         ? { ...primaryWindow, ...await issued.identity }
         : 'transcriptPath' in session
@@ -589,34 +599,59 @@ export async function recordClaudeRateLimitQuotaEvidence(
     }).catch(() => undefined);
 }
 
+/** Resolve failure identity/reset and measured response windows once for both projections. */
+function resolveClaudeRuntimeQuotaWindows(
+    details: NormalizedProviderUsageLimitDetailsV1,
+    observedWindows: readonly NormalizedProviderUsageLimitDetailsV1[],
+): readonly [NormalizedProviderUsageLimitDetailsV1, ...NormalizedProviderUsageLimitDetailsV1[]] {
+    const providerLimitId = resolveClaudeQuotaProviderLimitId(details);
+    const observedWindow = observedWindows.find((window) => resolveClaudeQuotaProviderLimitId(window) === providerLimitId);
+    return [
+        {
+            ...details,
+            utilization: observedWindow?.utilization ?? details.utilization,
+            resetAtMs: details.resetAtMs ?? observedWindow?.resetAtMs ?? null,
+        },
+        ...observedWindows.filter((window) => resolveClaudeQuotaProviderLimitId(window) !== providerLimitId),
+    ];
+}
+
 function buildClaudeRuntimeIssueUsageLimit(params: Readonly<{
-    details: NormalizedProviderUsageLimitDetailsV1;
+    windows: readonly [NormalizedProviderUsageLimitDetailsV1, ...NormalizedProviderUsageLimitDetailsV1[]];
     connectedService: RuntimeIssueConnectedService;
 }>): RuntimeIssueUsageLimitDetails {
-    const providerLimitId = params.details.providerLimitId ?? params.details.limitCategory ?? 'account';
-    const resetAtMs = params.details.resetAtMs ?? params.details.overage?.resetAtMs ?? null;
-    const remainingPct = params.details.utilization === null
-        ? null
-        : Math.max(0, 100 - params.details.utilization);
-    const { sourceProviderOrganizationId: _internalOrganizationId, ...publicDetails } = params.details;
-    return {
-        ...publicDetails,
-        limitCategory: normalizeClaudePublicLimitCategory(params.details.limitCategory),
+    const [details] = params.windows;
+    const primaryMeter = buildClaudeRuntimeQuotaMeter(details, 'runtime_event');
+    const allWindows = params.windows.flatMap((window) => {
+        const meter = buildClaudeRuntimeQuotaMeter(window, 'runtime_event');
+        // A rejection proves failure, not a numerical measurement of the window.
+        if (typeof meter.remainingPct !== 'number') return [];
+        return [{
+            meterId: meter.meterId,
+            scope: resolveClaudeUsageWindowLabel(meter.meterId) ?? window.quotaScope,
+            remainingPct: meter.remainingPct,
+            ...(meter.resetAtMs == null ? {} : { resetAtMs: meter.resetAtMs }),
+            status: 'ok',
+        }];
+    });
+    // Project keys only: invalid provider values must reach the canonical durable
+    // failure-issue reduction rather than throw before local failure/recovery starts.
+    const publicDetails = {
+        ...details,
+        resetAtMs: primaryMeter.resetAtMs ?? null,
+        limitCategory: normalizeClaudePublicLimitCategory(details.limitCategory),
         connectedService: params.connectedService,
-        ...(remainingPct === null
-            ? {}
-            : {
-                effectiveMeterId: providerLimitId,
-                effectiveRemainingPct: remainingPct,
-                allWindows: [{
-                    meterId: providerLimitId,
-                    scope: params.details.quotaScope,
-                    remainingPct,
-                    ...(resetAtMs === null ? {} : { resetAtMs }),
-                    status: 'ok',
-                }],
-            }),
+        ...(typeof primaryMeter.remainingPct === 'number'
+            ? { effectiveMeterId: primaryMeter.meterId, effectiveRemainingPct: primaryMeter.remainingPct }
+            : {}),
+        ...(allWindows.length > 0 ? { allWindows } : {}),
     };
+    for (const key of Object.keys(publicDetails)) {
+        if (!Object.hasOwn(SessionRuntimeUsageLimitDetailsV1Schema.shape, key)) {
+            Reflect.deleteProperty(publicDetails, key);
+        }
+    }
+    return publicDetails;
 }
 
 function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
@@ -624,6 +659,7 @@ function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
     classification: NonNullable<ReturnType<typeof classifyClaudeConnectedServiceRuntimeAuthFailure>>;
     connectedService: RuntimeIssueConnectedService;
     occurredAt: number;
+    windows: readonly [NormalizedProviderUsageLimitDetailsV1, ...NormalizedProviderUsageLimitDetailsV1[]];
 }>): SessionRuntimeIssueV1 {
     if (params.classification.kind === 'temporary_throttle') {
         return {
@@ -655,7 +691,7 @@ function buildClaudeRateLimitRuntimeIssue(params: Readonly<{
         provider: 'claude',
         sanitizedPreview: isProviderCapacity ? 'Provider reported an error' : 'Usage limit reached',
         usageLimit: buildClaudeRuntimeIssueUsageLimit({
-            details: params.details,
+            windows: params.windows,
             connectedService: params.connectedService,
         }),
     };
@@ -665,12 +701,9 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
     session: RuntimeIssueSession,
     details: NormalizedProviderUsageLimitDetailsV1,
     logPrefix: string,
-    options?: Readonly<{
-        /** Every window the same provider event reported; the snapshot keeps them beside `details`. */
-        observedWindows?: readonly NormalizedProviderUsageLimitDetailsV1[];
-    }>,
 ): Promise<void> {
-    const requestIdentity = requestIdentityBySession.get(session);
+    const requestIdentity = requestContextBySession.get(session);
+    const windows = resolveClaudeRuntimeQuotaWindows(details, requestIdentity?.observedWindows ?? []);
     const selection = requestIdentity ? requestIdentity.selection : resolveClaudeRuntimeIssueSelection(session);
     const enrichedDetailsPromise = requestIdentity
         ? requestIdentity.identity.then((identity) => ({ ...details, ...identity }))
@@ -710,6 +743,7 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
             classification: initialClassification,
             connectedService,
             occurredAt,
+            windows,
         });
         if (selection) {
             runtimeIssueFingerprint = beginConnectedClaudeTurnFailure(session, issue, logPrefix);
@@ -733,15 +767,6 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
             ...(runtimeIssueFingerprint ? { runtimeIssueFingerprint } : {}) }
         : null;
     if (!classification) return;
-    const observedLimitedWindow = options?.observedWindows?.find((window) => (
-        resolveClaudeQuotaProviderLimitId(window) === resolveClaudeQuotaProviderLimitId(enrichedDetails)
-    ));
-    // Rejection owns failure/recovery; the same event's window owns its measured usage.
-    const limitedWindow = {
-        ...enrichedDetails,
-        utilization: observedLimitedWindow?.utilization ?? enrichedDetails.utilization ?? null,
-        resetAtMs: enrichedDetails.resetAtMs ?? observedLimitedWindow?.resetAtMs ?? null,
-    };
     // RD-QUO-2: in-band rate-limit evidence is the freshest usage signal for the real quota
     // subject. Record it for BOTH the native identity and the selected member (mirroring Codex)
     // so the canonical quota row does not lag behind the background fetcher for group sessions.
@@ -757,13 +782,11 @@ export async function surfaceClaudeRateLimitRuntimeIssue(
             ...(effectiveGroupGeneration !== null ? { groupGeneration: effectiveGroupGeneration } : {}),
             ...(enrichedDetails.sourceProviderAccountId !== undefined ? { sourceProviderAccountId: enrichedDetails.sourceProviderAccountId } : {}),
             snapshot: buildClaudeRuntimeQuotaSnapshot({
-                // The surfaced limit leads; the event's other windows stay in the account's usage.
-                windows: [
-                    limitedWindow,
-                    ...(options?.observedWindows ?? []).filter((window) => (
-                        resolveClaudeQuotaProviderLimitId(window) !== resolveClaudeQuotaProviderLimitId(enrichedDetails)
-                    )),
-                ],
+                windows: [{
+                    ...windows[0],
+                    sourceProviderAccountId: enrichedDetails.sourceProviderAccountId,
+                    sourceProviderOrganizationId: enrichedDetails.sourceProviderOrganizationId,
+                }, ...windows.slice(1)],
                 fetchedAt: occurredAt,
                 serviceId: connectedServiceId,
                 profileId,
@@ -824,7 +847,7 @@ export async function surfaceClaudeRuntimeAuthFailure(
     const definitiveSubagentOAuthRevocation = subagentScoped
         && containsDefinitiveClaudeOAuthRevocationEvidence(error);
     if (subagentScoped && !definitiveSubagentOAuthRevocation) return false;
-    const requestIdentity = requestIdentityBySession.get(session);
+    const requestIdentity = requestContextBySession.get(session);
     const selection = requestIdentity ? requestIdentity.selection : resolveClaudeRuntimeIssueSelection(session);
 
     const initialClassification = classifyClaudeConnectedServiceRuntimeAuthFailure({

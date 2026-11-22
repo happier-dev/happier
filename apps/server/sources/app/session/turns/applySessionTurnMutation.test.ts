@@ -44,6 +44,66 @@ function failedUsageLimitTurn(overrides: Partial<SessionTurnV1> = {}): SessionTu
 }
 
 describe("applySessionTurnMutationToTurns", () => {
+    it.each([
+        ["complete", "completed"],
+        ["fail", "failed"],
+        ["cancel", "cancelled"],
+    ] as const)("settles a historical %s without replacing a later-begun completed turn", (action, status) => {
+        const latestTurn: SessionTurnV1 = {
+            turnId: "turn-2",
+            status: "completed",
+            startedAt: 300,
+            updatedAt: 400,
+            terminalAt: 400,
+        };
+        const mutation = {
+            v: 1 as const,
+            sessionId: "s1",
+            mutationId: `historical-${action}`,
+            turnId: "turn-1",
+            observedAt: 500,
+            ...(action === "fail" ? { action, issue: usageLimitIssue } : { action }),
+        };
+        const decision = applySessionTurnMutationToTurns({
+            currentLatestTurnId: latestTurn.turnId,
+            turns: [{
+                turnId: "turn-1",
+                status: "in_progress",
+                startedAt: 100,
+                updatedAt: 100,
+            }, latestTurn],
+            mutation,
+            appliedAt: 501,
+        });
+
+        expect(decision.apply).toBe(true);
+        expect(decision.receipt.decision).toBe("applied");
+        expect(decision.turns.find((turn) => turn.turnId === "turn-1")).toMatchObject({
+            status,
+            terminalAt: 500,
+            lastMutationId: mutation.mutationId,
+            lastRuntimeIssue: action === "fail" ? usageLimitIssue : null,
+        });
+        expect(decision.turns.find((turn) => turn.turnId === latestTurn.turnId)).toEqual(latestTurn);
+        expect(decision.latestTurnId).toBe(latestTurn.turnId);
+        expect(decision.materialized).toEqual({
+            latestTurnId: latestTurn.turnId,
+            latestTurnStatus: "completed",
+            latestTurnStatusObservedAt: 400,
+            lastRuntimeIssue: null,
+        });
+
+        const retry = applySessionTurnMutationToTurns({
+            currentLatestTurnId: decision.latestTurnId,
+            turns: decision.turns,
+            mutation,
+            appliedAt: 502,
+        });
+        expect(retry.apply).toBe(false);
+        expect(retry.receipt.decision).toBe("duplicate-terminal");
+        expect(retry.materialized).toEqual(decision.materialized);
+    });
+
     it("lets newer matching task-started evidence supersede a stale failed runtime issue", () => {
         const decision = applySessionTurnMutationToTurns({
             currentLatestTurnId: "turn-1",

@@ -1,4 +1,5 @@
 import React from 'react';
+import { buildSessionListViewItemNodeId } from '@/sync/domains/session/listing/sessionListIndex';
 import { normalizeSessionListBackgroundWorkAttentionMode } from '@/sync/domains/session/listing/sessionListBackgroundWorkAttention';
 import {
     View,
@@ -860,30 +861,38 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
         () => buildPrioritySessionRowReasonCounts(renderedListItems),
         [renderedListItems],
     );
-    const [viewableSessionRowKeys, setViewableSessionRowKeys] = React.useState<ReadonlySet<string> | null>(null);
+    const [viewableRows, setViewableRows] = React.useState<Readonly<{
+        keys: ReadonlySet<string>;
+        scopes: readonly { serverId: string | null; sessionId: string }[];
+    }> | null>(null);
+    const viewableSessionRowKeys = viewableRows?.keys ?? null;
+    React.useEffect(() => {
+        if (!surfaceOwnership.dataActive || !viewableRows || viewableRows.scopes.length === 0) return;
+        return sync.registerSessionListViewportRows(viewableRows.scopes);
+    }, [surfaceOwnership.dataActive, viewableRows, selection.activeServerId]);
     const viewabilityConfigRef = React.useRef({ itemVisiblePercentThreshold: 1 });
     const handleViewableItemsChangedRef = React.useRef((info: { viewableItems: ViewToken[] }) => {
         const nextKeys = new Set<string>();
+        const scopes: { serverId: string | null; sessionId: string }[] = [];
         for (const token of info.viewableItems) {
             if (token.isViewable === false) continue;
             const item = token.item as SessionListViewItem | undefined;
             if (!item || item.type !== 'session') continue;
-            nextKeys.add(resolveSessionListRowStoreScopeKey({
-                sessionId: item.session.id,
-                serverId: item.serverId ?? null,
-            }));
+            const scope = { sessionId: item.session.id, serverId: item.serverId ?? null };
+            nextKeys.add(resolveSessionListRowStoreScopeKey(scope));
+            scopes.push(scope);
         }
-        setViewableSessionRowKeys((current) => {
-            if (stringSetsEqual(current, nextKeys)) return current;
+        setViewableRows((current) => {
+            if (stringSetsEqual(current?.keys ?? null, nextKeys)) return current;
             if (syncPerformanceTelemetry.isEnabled()) {
                 syncPerformanceTelemetry.count('ui.sessionsList.viewableRows.changed', {
                     changed: 1,
                     nextVisibleRows: nextKeys.size,
                     previousKnown: current === null ? 0 : 1,
-                    previousVisibleRows: current?.size ?? 0,
+                    previousVisibleRows: current?.keys.size ?? 0,
                 });
             }
-            return nextKeys;
+            return { keys: nextKeys, scopes };
         });
     });
     const viewableRowStoreScopes = React.useMemo(
@@ -1792,6 +1801,7 @@ export const SessionsListContent = React.memo(function SessionsListContent(props
 
     const listItemKeyExtractor = React.useCallback((item: SessionListViewItem, index: number) => {
         if (item.type === 'header') {
+            if (item.headerKind === 'project') return buildSessionListViewItemNodeId(item);
             const gk = String(item.groupKey ?? '').trim();
             const kind = String(item.headerKind ?? '').trim();
             const sid = String(item.serverId ?? '').trim();

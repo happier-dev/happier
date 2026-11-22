@@ -5,6 +5,7 @@ import { Modal } from '@/modal';
 import { sync } from '@/sync/sync';
 import { useApplySettings } from '@/sync/store/settingsWriters';
 import { storage } from '@/sync/domains/state/storage';
+import { hasUncommittedLocalOutboundProjection } from '@/sync/store/domains/pending';
 import {
     completeMachineSpawnAttemptCustody,
     machineBash,
@@ -387,11 +388,12 @@ export function useCreateNewSession(params: Readonly<{
         current.setIsCreating(true);
         // This launch owns everything it needs from here, so it outlives the screen. Only navigation
         // below asks whether the screen is still there.
-        if (resolveNewSessionAfterSend({
+        const afterSend = resolveNewSessionAfterSend({
             configured: current.settings.newSessionAfterSendV1,
             requested: opts?.afterSend,
             automationEnabled: current.authoringDraft?.automation?.enabled === true,
-        }) === 'startAnother') {
+        });
+        if (afterSend === 'startAnother') {
             current.onStartAnother?.();
         }
 
@@ -1297,6 +1299,15 @@ export function useCreateNewSession(params: Readonly<{
                         }),
                         deliveryStatus: 'accepted',
                     });
+                    if (
+                        (afterSend === 'startAnother' || !isLaunchScopeStillActive())
+                        && hasUncommittedLocalOutboundProjection(storage.getState(), createdSessionId)
+                    ) {
+                        fireAndForget(sync.refreshSessionMessages(createdSessionId), {
+                            tag: 'new-session-background-transcript-reconciliation',
+                            onError: captureExceptionIfEnabled,
+                        });
+                    }
                 }
 
                 const sessionRoute = buildScopedSessionRouteHref({
@@ -1569,8 +1580,11 @@ export function useCreateNewSession(params: Readonly<{
         const reentry = params.persistedOperationReentry;
         const operation = reentry?.operation;
         if (!reentry || !operation) return;
-        if (operation.state === 'accepted' || operation.state === 'running') return;
-        if (operation.state === 'succeeded') return;
+        // Only a terminal launch that did not succeed reconciles custody here.
+        const terminalOutcome = operation.state === 'failed' || operation.state === 'cancelled'
+            ? operation.state
+            : null;
+        if (!terminalOutcome) return;
         const revisionKey = `${operation.operationId}:${operation.revision}`;
         if (handledTerminalReentryRevisionRef.current === revisionKey) return;
         if (createInFlightRef.current) return;
@@ -1588,7 +1602,7 @@ export function useCreateNewSession(params: Readonly<{
             machineId: reentry.custody.machineId,
             userAttemptId: reentry.custody.userAttemptId,
             requestId: operation.requestId ?? '',
-            outcome: { kind: operation.state },
+            outcome: { kind: terminalOutcome },
         }).finally(() => {
             latestParamsRef.current.setIsCreating(false);
             workflowClaim.release();

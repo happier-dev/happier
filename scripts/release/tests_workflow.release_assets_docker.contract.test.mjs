@@ -12,6 +12,9 @@ test('tests workflow exposes a thin docker release-assets job through release-va
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'tests.yml'), 'utf8');
   const workflow = YAML.parse(raw);
   const job = workflow.jobs['release-assets-docker'];
+  assert.deepEqual(job.permissions ?? workflow.permissions, { contents: 'read' });
+  const validation = job.steps.find((step) => step.name === 'Run unified Docker release-assets validation');
+  assert.equal(validation.env.GITHUB_TOKEN, '${{ github.token }}');
 
   assert.match(
     raw,

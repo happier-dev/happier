@@ -5,7 +5,8 @@
  * into runtime `McpServerConfig` records with plaintext env/header values.
  *
  * - `stdio` servers pass through as-is (command/args/env).
- * - `http`/`sse` servers are materialized as stdio servers by spawning a local bridge.
+ * - `http`/`sse` servers have a stdio bridge fallback. Eligible endpoints can also be
+ *   passed directly to an agent that negotiates the corresponding transport.
  *
  * Strict mode:
  * - when enabled, any missing/invalid materialization for an enabled server throws.
@@ -21,6 +22,7 @@ import {
   type SecretStringV1,
 } from '@happier-dev/protocol';
 
+import { managedMcpDirectEndpoint, resolveManagedMcpDirectEndpoint } from './managedMcpDirectEndpoint';
 import { isPackageRunnerCommand, normalizePackageRunnerInvocation } from './normalizePackageRunnerInvocation';
 import { resolveMcpValueRefPlaintext } from './resolveMcpValueRefPlaintext';
 
@@ -149,10 +151,12 @@ async function materializeRemoteServer(params: Readonly<{
     HAPPIER_MCP_REMOTE_BRIDGE_CONFIG_FILE: configPath,
   };
 
+  const directEndpoint = resolveManagedMcpDirectEndpoint(params.server);
   return {
     command: bridgeCommand.command,
     args: bridgeCommand.args,
     env,
+    ...(directEndpoint ? { [managedMcpDirectEndpoint]: directEndpoint } : {}),
   };
 }
 

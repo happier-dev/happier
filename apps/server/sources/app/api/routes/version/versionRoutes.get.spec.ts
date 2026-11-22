@@ -1,37 +1,27 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
+import packageJson from "../../../../../package.json";
+import { withAuthenticatedTestApp } from "../../testkit/sqliteFastify";
 import { versionRoutes } from "./versionRoutes";
 
 describe("versionRoutes GET /v1/version", () => {
-    it("responds with ok=true for server validation probes", async () => {
-        const route = createRouteTestBuilder({
-            method: "GET",
-            path: "/v1/version",
-            registerRoutes(app) {
-                versionRoutes(app as any);
-            },
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("includes the server package version in reachability responses", async () => {
+        vi.stubEnv("HAPPIER_RELEASE_SOURCE_SHA", "");
+        await withAuthenticatedTestApp(versionRoutes, async (app) => {
+            const response = await app.inject({ method: "GET", url: "/v1/version" });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ ok: true, version: packageJson.version });
         });
-        const { response } = await route.invoke();
-        expect(response).toEqual({ ok: true });
     });
 
-    it("reports an exact deployed source revision when the release environment provides one", async () => {
-        const prior = process.env.HAPPIER_RELEASE_SOURCE_SHA;
-        process.env.HAPPIER_RELEASE_SOURCE_SHA = "a".repeat(40);
-        try {
-            const route = createRouteTestBuilder({
-                method: "GET",
-                path: "/v1/version",
-                registerRoutes(app) {
-                    versionRoutes(app as any);
-                },
-            });
-            const { response } = await route.invoke();
-            expect(response).toEqual({ ok: true, source_sha: "a".repeat(40) });
-        } finally {
-            if (prior === undefined) delete process.env.HAPPIER_RELEASE_SOURCE_SHA;
-            else process.env.HAPPIER_RELEASE_SOURCE_SHA = prior;
-        }
+    it("includes the deployed source revision when provided", async () => {
+        vi.stubEnv("HAPPIER_RELEASE_SOURCE_SHA", "a".repeat(40));
+        await withAuthenticatedTestApp(versionRoutes, async (app) => {
+            const response = await app.inject({ method: "GET", url: "/v1/version" });
+            expect(response.statusCode).toBe(200);
+            expect(response.json()).toEqual({ ok: true, version: packageJson.version, source_sha: "a".repeat(40) });
+        });
     });
 });

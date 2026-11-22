@@ -9,7 +9,11 @@ import { configuration } from '@/configuration';
 import { encodeBase64, encrypt } from '@/api/encryption';
 import type { Credentials } from '@/persistence';
 
-import { bootstrapAccountSettingsContext, resetInMemoryAccountSettingsContextForTests } from './bootstrapAccountSettingsContext';
+import {
+  bootstrapAccountSettingsContext,
+  resetAccountSettingsRefreshBackoff,
+  resetInMemoryAccountSettingsContextForTests,
+} from './bootstrapAccountSettingsContext';
 import { setActiveAccountSettingsSnapshot } from './activeAccountSettingsSnapshot';
 import { createAccountSettingsScopeKey } from './accountSettingsScopeKey';
 import { resolveAccountSettingsCachePath, writeAccountSettingsCacheAtomic } from './accountSettingsCache';
@@ -997,5 +1001,95 @@ describe('bootstrapAccountSettingsContext', () => {
       'http://127.0.0.1:3005/v1/account/settings',
       expect.any(Object),
     );
+  });
+  describe('when the server keeps failing', () => {
+    const cachePath = '/tmp/server/account.settings.cache.json';
+    const ttlMs = 60_000;
+    const t0 = 1_000_000;
+
+    function createFailingServer() {
+      let failing = false;
+      const attemptsAtMs: number[] = [];
+      let clock = t0;
+      const fetchFromServer = vi.fn(async () => {
+        attemptsAtMs.push(clock);
+        if (failing) throw new Error('Failed to fetch /v2/account/settings (502)');
+        return { settingsContent: { t: 'plain' as const, v: { schemaVersion: 6 } }, settingsVersion: 5 };
+      });
+      const read = (nowMs: number, refresh: 'auto' | 'force' = 'auto') => {
+        clock = nowMs;
+        return bootstrapAccountSettingsContext({
+          credentials: createCredentialsStub(),
+          mode: 'blocking',
+          refresh,
+          nowMs,
+          ttlMs,
+          deps: {
+            resolveCachePath: () => cachePath,
+            readCache: async () => ({ version: 2, cachedAt: t0, settingsContent: { t: 'plain', v: { schemaVersion: 6 } }, settingsVersion: 5 }),
+            writeCache: async () => {},
+            decryptCiphertext: async () => null,
+            fetchFromServer,
+            applySideEffects: () => {},
+          },
+        });
+      };
+      return { fetchFromServer, attemptsAtMs, read, fail: (value: boolean) => { failing = value; } };
+    }
+
+    it('backs off growing intervals instead of re-reading on every 1 s call, and resets on success', async () => {
+      const server = createFailingServer();
+      await server.read(t0);
+      server.fail(true);
+      const firstStaleMs = t0 + ttlMs + 1;
+      for (let second = 0; second < 120; second++) {
+        const result = await server.read(firstStaleMs + second * 1_000);
+        expect(result.settingsVersion).toBe(5);
+      }
+      expect(server.attemptsAtMs[0]).toBe(firstStaleMs);
+      const failedAttempts = [...server.attemptsAtMs];
+      expect(failedAttempts.length).toBeGreaterThan(2);
+      expect(failedAttempts.length).toBeLessThanOrEqual(8);
+      const gaps = failedAttempts.slice(1).map((at, index) => at - failedAttempts[index]!);
+      expect(gaps.at(-1)!).toBeGreaterThanOrEqual(16_000);
+
+      server.fail(false);
+      const recoveredAtMs = firstStaleMs + 400_000;
+      const beforeRecovery = server.attemptsAtMs.length;
+      expect((await server.read(recoveredAtMs)).settingsVersion).toBe(5);
+      expect(server.attemptsAtMs.length).toBe(beforeRecovery + 1);
+      server.fail(true);
+      const before = server.attemptsAtMs.length;
+      await server.read(recoveredAtMs + ttlMs + 1);
+      await server.read(recoveredAtMs + ttlMs + 1 + 2_000);
+      expect(server.attemptsAtMs.length - before).toBe(2);
+    });
+
+    it('does not re-read a healthy server on every call after an equal-version refresh', async () => {
+      const server = createFailingServer();
+      await server.read(t0);
+      const staleMs = t0 + ttlMs + 1;
+      for (let second = 0; second < 30; second++) await server.read(staleMs + second * 1_000);
+      expect(server.attemptsAtMs).toEqual([staleMs]);
+    });
+
+    it('lets a forced refresh or a reconnect reset try the server at once during backoff', async () => {
+      const server = createFailingServer();
+      await server.read(t0);
+      server.fail(true);
+      const staleMs = t0 + ttlMs + 1;
+      await server.read(staleMs);
+      const backedOff = server.attemptsAtMs.length;
+      await server.read(staleMs + 100);
+      expect(server.attemptsAtMs.length).toBe(backedOff);
+      const lastMs = staleMs;
+
+      await server.read(lastMs + 200, 'force');
+      expect(server.attemptsAtMs.length).toBe(backedOff + 1);
+
+      resetAccountSettingsRefreshBackoff();
+      await server.read(lastMs + 300);
+      expect(server.attemptsAtMs.length).toBe(backedOff + 2);
+    });
   });
 });

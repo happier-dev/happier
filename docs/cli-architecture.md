@@ -143,10 +143,17 @@ structured-question projection to preserve Claude's exact displayed scopes;
 the original tool or plan remains in the transcript. Plan controls require a
 live matching request, including after reconnect.
 
+Native permission identity excludes Claude's changing unattended safety countdown.
+The displayed warning remains intact; a changed command, warning or permission
+scope still replaces the request and prevents answering an older prompt.
+The request retains the warning captured when published; Claude owns the timeout.
+
 The existing screen probe observes native rendering and the existing terminal
 drivers navigate verified forms. App question responses are acknowledged only
 after Claude's correlated structured result matches. Native tool results,
 including cancellation results without a completion hook, retire the app waiter.
+Native reviews match the hook-owned questions, requested answers and Submit/Cancel
+controls; the optional “Ready to submit your answers?” prose is not required.
 Terminal successes record the observed answer instead of a canceled request.
 Unknown forms and conflicting local drafts fail closed to terminal interaction.
 This is development source behavior, not a released-channel guarantee.
@@ -200,13 +207,13 @@ development source; they do not establish preview or stable availability.
 settlement. Closing a segment freezes its completion or interruption intent and
 separates it from subsequent output. A rejected terminal write retains the full
 snapshot for the next flush with the same local id; unresolved delivery is recorded
-in the default file log. While closed snapshots remain, the writer subscribes to
-the session's existing connection-state events and retries them when its transport
-comes online, including a reconnect that races an in-flight failed write. Retries
-reuse the same local id and terminal state through the session commit queue, without
-waiting for pending-input readiness or a new prompt. The subscription ends when
-the snapshots settle or the writer is discarded. This retention is process-local;
-it does not provide recovery after process exit or replacement of the session client.
+in the default file log. The session retries retained snapshots during connection
+convergence, after the replacement socket settles its Runtime Activity publisher
+registration on relays that support the publisher fence. The writer waits for
+any in-flight attempt, then retries with the original local id and terminal state.
+Pending input materialization becomes eligible once the replay attempt settles.
+The subscription ends when the snapshots settle or the writer is discarded.
+Retention lasts for the lifetime of the session client in the current process.
 
 `createKeyedStreamedTranscriptBridge` keeps writers with active, in-flight, or failed
 segments and releases only drained writers. Codex tool boundaries wait for admission
@@ -1691,12 +1698,18 @@ Herdr-specific transport lives in `integrations/herdr`. The adapter uses direct 
 launch, styled screen capture, input, process inspection, and terminal attachment.
 Runtime detection requires a stable Herdr release at or after `0.9.2`, and attach
 and startup also verify the running server's version before using it.
+In development source, Stop and liveness checks for an existing Herdr pane use the
+recorded socket and terminal ID independently of executable detection.
 In the development source, standalone Claude unified uses the default Herdr server,
 matching `happier herdr`; recovery of a retained attachment keeps its recorded server namespace. Daemon
 requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+The development parser recognizes Claude's bordered `↑ N more` composer viewport
+when a small terminal hides the prompt marker. Submission verifies the visible
+prompt text through that same parser, without requiring a terminal attachment or
+resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and
 wrapped-text reader. Shell input is verification-only: it cannot make the terminal
 ready for an ordinary message, and only a request starting with `!` can authorize
@@ -1812,10 +1825,14 @@ remote serviceability projection does not block retirement of the old local
 evidence. That projection remains untouched. Remote-only recovery without captured
 local custody still refuses a changed target; transport failures remain retryable.
 
-On Linux, startup migration always considers explicitly tracked daemon-owned
-session processes. Sweeping untracked processes from the daemon's cgroup additionally
-requires a service-managed startup in an actual service cgroup; a manually started
-daemon must not transfer unrelated processes from a shared SSH or editor scope.
+On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
+`happier-jobs.slice` policy is available. Otherwise the runner launches directly
+and inherits the launching process's cgroup. The installed daemon service uses
+`KillMode=process` so direct children can survive a daemon restart. Reattachment
+tracks existing sessions in their current cgroups.
+
+The daemon strips the retired self-migration flag from child environments and masks
+it in tmux windows so an older runner snapshot cannot reactivate cgroup writes.
 
 For child-owned same-pane launches, the shared terminal runtime owns the native
 process. Claude unified, runner-managed Codex/OpenCode TUIs, and standalone native
@@ -2204,10 +2221,32 @@ continues to require the exact captured issue. The arming-time check cannot esta
 the original failure across a restart or re-arming. A superseded live turn or
 archived session settles the old recovery
 terminally instead of waiting for provider proof after suppressing admission.
+Claude's public usage-limit issue is projected through the protocol schema's own
+field set without validating provider values before failure publication. Provider
+observation time, account attribution, sidechain attribution and note kind remain
+internal evidence. Invalid values reach the existing durable admission reduction
+below rather than throwing before local turn failure and recovery reporting. At durable
+mutation validation, an invalid issue on an otherwise valid terminal failure loses
+only the deepest invalid fields or unknown keys first. The same owner revalidates
+before dropping an affected top-level field, then falls back to the shared generic
+failure issue if necessary, with a warning in the default file log. Valid reset and
+account-association details survive optional-field errors. The terminal transition
+remains authoritative; malformed mutation fields still fail validation. Historical
+invalid-issue failures retained only as recovery evidence remain quarantined at
+startup; this admission correction does not replay them. Existing recovery of other
+supported dead-letter shapes is unchanged. The server may settle delayed terminal
+evidence for an older turn without replacing a later-begun current turn, including
+when that current turn has completed. Lists, badges, presence and socket updates
+continue to consume the canonical current-turn projection.
+Runtime-state revision and generation conflicts retry under the existing recovery
+scheduler budget and backoff, rather than immediately cancelling recovery.
 Failure reporting does not wait for its durable projection.
-An unresolved projection is retryable while the live turn matches the projected
-in-progress turn. Without that witness, or when the projected turn is already
-completed or cancelled, recovery settles terminally without admitting a continuation.
+An unresolved in-progress projection remains retryable when there is no local
+active turn, or when the local active turn matches the projection. This allows a
+locally failed turn to publish its durable terminal mutation before continuation
+admission. A conflicting local turn, an archived session or a failure after arming
+still supersedes recovery; completed or cancelled projections settle terminally.
+Projection waits consume the existing recovery attempt budget and backoff.
 Completed projections omit both the failed issue and input origin; they cannot
 distinguish provider task notifications from newer human work. The terminal
 recovery event appears in the session transcript, but cancelled usage-limit

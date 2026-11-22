@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import psList from 'ps-list';
 
-import { HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY } from './platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { ensureMachineRegistered } from '@/api/machine/ensureMachineRegistered';
 import {
@@ -546,17 +545,6 @@ const resolveHappyCliSubprocessRuntimeDecision = vi.hoisted(() =>
   vi.fn<() => HappyCliSubprocessRuntimeDecision | null>(() => null),
 );
 
-const cgroupMigrationCapture = vi.hoisted(() => {
-  const capture = {
-    lastParams: null as null | { trackedSessions: Iterable<{ pid: number }> },
-    migrateTrackedSessionProcessesOutOfDaemonServiceCgroup: vi.fn(async (params: { trackedSessions: Iterable<{ pid: number }> }) => {
-      capture.lastParams = params;
-      return [];
-    }),
-  };
-  return capture;
-});
-
 const sessionRespawnManagerCapture = vi.hoisted(() => {
   const capture = {
     instances: [] as Array<{
@@ -630,24 +618,6 @@ const providerActivityRecorderCapture = vi.hoisted(() => ({
   createConnectedServiceProviderActivityProofRecorder: vi.fn(() => providerActivityRecorderCapture.record),
 }));
 
-const buildCgroupSelfMigratingHappyCliLaunchSpec = vi.hoisted(() => vi.fn(async () => ({
-  filePath: '/bin/sh',
-  args: [
-    '-lc',
-    'target_dir="$HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR/happier-session-$$.scope" && mkdir -p "$target_dir" && printf "%s\\n" "$$" > "$target_dir/cgroup.procs" && exec "$@"',
-    'sh',
-    '/tmp/happier-runtime',
-    'codex',
-    '--happy-starting-mode',
-    'remote',
-    '--started-by',
-    'daemon',
-  ],
-  env: {
-    HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR: '/sys/fs/cgroup/user.slice/user-501.slice/user@501.service/app.slice',
-  },
-})));
-
 const applySpawnedChildOomScoreAdjustmentMock = vi.hoisted(() => vi.fn(async () => false));
 
 vi.mock('@/utils/spawnHappyCLI', () => ({
@@ -659,14 +629,6 @@ vi.mock('@/utils/spawnHappyCLI', () => ({
 
 vi.mock('./platform/linux/applySpawnedChildOomScoreAdjustment', () => ({
   applySpawnedChildOomScoreAdjustment: applySpawnedChildOomScoreAdjustmentMock,
-}));
-
-vi.mock('./platform/linux/migrateTrackedSessionProcessesOutOfDaemonServiceCgroup', () => ({
-  migrateTrackedSessionProcessesOutOfDaemonServiceCgroup: cgroupMigrationCapture.migrateTrackedSessionProcessesOutOfDaemonServiceCgroup,
-}));
-
-vi.mock('./platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec', () => ({
-  buildCgroupSelfMigratingHappyCliLaunchSpec,
 }));
 
 vi.mock('./processSupervision/sessionRunnerRespawn', () => ({
@@ -1177,10 +1139,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     resolveHappyCliSubprocessRuntimeDecision.mockReturnValue(null);
     spawnHappyCliCapture.children.length = 0;
     spawnChildProcess.mockClear();
-    buildCgroupSelfMigratingHappyCliLaunchSpec.mockClear();
     applySpawnedChildOomScoreAdjustmentMock.mockClear();
-    cgroupMigrationCapture.migrateTrackedSessionProcessesOutOfDaemonServiceCgroup.mockClear();
-    cgroupMigrationCapture.lastParams = null;
     sessionRespawnManagerCapture.createSessionRunnerRespawnManager.mockClear();
     sessionRespawnManagerCapture.instances.length = 0;
     sessionRegistryCapture.clearSessionMarkerConnectedServiceRestartIntent.mockClear();
@@ -4073,14 +4032,16 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     }
   });
 
-  it.each(['background-service', 'self-restart'] as const)('spawns regular linux %s runners through a pre-exec cgroup self-migration wrapper before provider children start', async (startupSource) => {
+  it.each(['background-service', 'self-restart'] as const)('launches Linux %s runners directly when the systemd user bus is unavailable', async (startupSource) => {
     if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
       throw new Error('Expected process.platform to be configurable for this test');
     }
     Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
+    const busEnv = createEnvKeyScope(['DBUS_SESSION_BUS_ADDRESS', 'HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP']);
+    busEnv.patch({ DBUS_SESSION_BUS_ADDRESS: '', HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP: '1' });
     process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
     if (startupSource === 'self-restart') {
-      process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID = 'spawn-resume-cgroup-wrapper';
+      process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID = 'spawn-resume-direct-linux';
       process.env.HAPPIER_DAEMON_SELF_RESTART_DEADLINE_MS = String(Date.now() + 60_000);
     }
 
@@ -4096,151 +4057,36 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
       const spawnSession = await waitForSpawnSessionRegistration();
 
-      await spawnSession({
+      const result = await spawnSession({
         directory: '/tmp',
         backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
         token: 't',
         codexBackendMode: 'acp',
       });
 
-      expect(spawnHappyCLI).not.toHaveBeenCalled();
-      expect(buildCgroupSelfMigratingHappyCliLaunchSpec).toHaveBeenCalledTimes(1);
-      expect(buildCgroupSelfMigratingHappyCliLaunchSpec).toHaveBeenCalledWith(expect.objectContaining({
-        environment: expect.objectContaining({
-          HAPPIER_SESSION_REQUESTED_DIRECTORY: '/tmp',
-        }),
-      }));
-      expect(spawnChildProcess).toHaveBeenCalledTimes(1);
-      const spawnCall = spawnChildProcess.mock.calls[0] as unknown as [string, string[], { env?: NodeJS.ProcessEnv } | undefined] | undefined;
-      const spawnFilePath = spawnCall?.[0];
-      const spawnArgs = spawnCall?.[1];
-      const spawnOptions = spawnCall?.[2];
-      expect(spawnFilePath).toBe('/bin/sh');
-      expect(spawnArgs).toEqual(expect.arrayContaining(['-lc']));
-      expect(spawnArgs?.join(' ')).toContain('happier-session-$$.scope');
-      expect(spawnArgs?.join(' ')).toContain('exec "$@"');
-      expect(spawnOptions?.env?.HAPPIER_DAEMON_SESSION_CGROUP_BASE_DIR).toContain('/sys/fs/cgroup/');
-      expect(spawnOptions?.env?.[HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP_ENV_KEY]).toBe('1');
+      expect(result.type).toBe('success');
+      expect(spawnChildProcess).not.toHaveBeenCalled();
+      expect(spawnHappyCLI).toHaveBeenCalledWith(
+        expect.arrayContaining(['codex', '--started-by', 'daemon']),
+        expect.objectContaining({ cwd: '/tmp', detached: true }),
+        expect.anything(),
+      );
+      const spawnOptions = spawnHappyCLI.mock.calls[0]?.[1] as { env?: NodeJS.ProcessEnv } | undefined;
+      expect(spawnOptions?.env?.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBeUndefined();
       expect(applySpawnedChildOomScoreAdjustmentMock).toHaveBeenCalledWith(expect.objectContaining({
         pid: 12345,
+        startupSource,
       }));
 
       harness.requestShutdown('happier-cli');
       await run;
       run = null;
     } finally {
+      busEnv.restore();
       if (run) {
         harness.requestShutdown('happier-cli');
         await run;
       }
-      if (refreshEnvOriginal === undefined) {
-        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
-      } else {
-        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      }
-      await restoreDaemonExitBoundary(exitSpy);
-    }
-  });
-
-  it('wraps manual Linux daemon session spawns for cgroup self-migration and adjusts their OOM score', async () => {
-    if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
-      throw new Error('Expected process.platform to be configurable for this test');
-    }
-    Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
-    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = 'manual';
-
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
-    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
-
-    try {
-      const { startDaemon } = await import('./startDaemon');
-
-      const run = startDaemon();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-
-      const spawnSession = await waitForSpawnSessionRegistration();
-
-      await spawnSession({
-        directory: '/tmp',
-        backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
-        token: 't',
-        codexBackendMode: 'acp',
-      });
-
-      expect(spawnHappyCLI).not.toHaveBeenCalled();
-      expect(buildCgroupSelfMigratingHappyCliLaunchSpec).toHaveBeenCalledTimes(1);
-      expect(spawnChildProcess).toHaveBeenCalledTimes(1);
-      expect(applySpawnedChildOomScoreAdjustmentMock).toHaveBeenCalledWith(expect.objectContaining({
-        pid: 12345,
-        startupSource: 'manual',
-      }));
-
-      harness.requestShutdown('happier-cli');
-      await run;
-    } finally {
-      if (refreshEnvOriginal === undefined) {
-        delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
-      } else {
-        process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = refreshEnvOriginal;
-      }
-      await restoreDaemonExitBoundary(exitSpy);
-    }
-  });
-
-  it.each(['background-service', 'self-restart'] as const)('migrates reattached linux %s session runners out of the daemon service cgroup during startup', async (startupSource) => {
-    if (!ORIGINAL_PLATFORM_DESCRIPTOR) {
-      throw new Error('Expected process.platform to be configurable for this test');
-    }
-    Object.defineProperty(process, 'platform', { ...ORIGINAL_PLATFORM_DESCRIPTOR, value: 'linux' });
-    process.env.HAPPIER_DAEMON_STARTUP_SOURCE = startupSource;
-    if (startupSource === 'self-restart') {
-      process.env.HAPPIER_DAEMON_SELF_RESTART_CORRELATION_ID = 'spawn-resume-cgroup-reattach';
-      process.env.HAPPIER_DAEMON_SELF_RESTART_DEADLINE_MS = String(Date.now() + 60_000);
-    }
-
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation((() => undefined) as never);
-    const refreshEnvOriginal = process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
-    process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED = 'false';
-
-    try {
-      const reattachModule = await import('./sessions/reattachFromMarkers');
-      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(6480, {
-          pid: 6480,
-          startedBy: 'daemon',
-          happySessionId: 'sess-6480',
-          reattachedFromDiskMarker: true,
-        });
-        return { orphanedDeadDaemonSessions: [], connectedServiceRestartIntents: [] };
-      });
-
-      const { startDaemon } = await import('./startDaemon');
-
-      const run = startDaemon();
-
-      for (let attempt = 0; attempt < 20; attempt += 1) {
-        if (cgroupMigrationCapture.migrateTrackedSessionProcessesOutOfDaemonServiceCgroup.mock.calls.length > 0) break;
-        await new Promise((resolve) => setTimeout(resolve, 0));
-      }
-
-      expect(cgroupMigrationCapture.migrateTrackedSessionProcessesOutOfDaemonServiceCgroup).toHaveBeenCalledTimes(1);
-      const migrationParams = cgroupMigrationCapture.lastParams;
-      if (!migrationParams) {
-        throw new Error('Expected cgroup migration helper to be called');
-      }
-      const trackedSessionsArg = Array.from(migrationParams.trackedSessions as Iterable<{ pid: number }>);
-      expect(trackedSessionsArg).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({
-            pid: 6480,
-          }),
-        ]),
-      );
-
-      harness.requestShutdown('happier-cli');
-      await run;
-    } finally {
       if (refreshEnvOriginal === undefined) {
         delete process.env.HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED;
       } else {

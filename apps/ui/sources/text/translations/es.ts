@@ -783,6 +783,7 @@ export const es: TranslationStructure = {
     details: "Detalles",
     fieldStatus: "Estado",
     fieldAction: "Acción",
+    fieldFailureReason: "Motivo del fallo",
     approve: "Aprobar",
     reject: "Rechazar",
     loadError: "No se pudo cargar la aprobación.",
@@ -1276,6 +1277,7 @@ export const es: TranslationStructure = {
     send: "Enviar",
     attach: "Adjuntar",
     addImage: "Agregar imagen",
+    takePhoto: "Tomar foto",
     addFile: "Agregar archivo",
     linkFile: "Vincular archivo",
     files: "Archivos",
@@ -2811,6 +2813,7 @@ export const es: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usado`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "ahora",
         outdated: "desactualizado",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3304,6 +3307,8 @@ export const es: TranslationStructure = {
         `Se omitieron ${count} ${plural({ count, singular: "archivo", plural: "archivos" })} que superan el tamaño máximo de adjunto.`,
       noClipboardImageTitle: "No hay imagen en el portapapeles",
       noClipboardImageBody: "Copia una imagen y pégala como adjunto.",
+      cameraPermissionDeniedTitle: "Se necesita acceso a la cámara",
+      cameraPermissionDeniedBody: "Permite el acceso a la cámara en los ajustes del dispositivo para tomar una foto.",
     },
   },
 
@@ -5470,8 +5475,8 @@ export const es: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Intento ${attempt}`,
       title: "Límite de uso alcanzado",
       readyTitle: "El límite de uso se restableció",
-      resetBody: ({ time }: { time: string }) =>
-        `Este proveedor pide esperar hasta ${time} antes de continuar.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Este proveedor pide esperar hasta ${time}${duration ? ` (${duration})` : ''} antes de continuar.`,
       genericBody: "Este proveedor pide esperar antes de continuar.",
       stoppedBody: "La recuperación automática se detuvo y no se reintentará sola. Vuelve a intentarlo abajo.",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6572,7 +6577,8 @@ export const es: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Borradores', badge: 'Borrador', untitled: 'Borrador sin título', continueEditing: 'Continuar editando', startAnother: 'Empezar otro', startedOpen: "Sesión iniciada · Abrir",
-    status: { offline: 'Sin conexión', syncing: 'Sincronizando', conflict: 'Conflicto', machineUnavailable: 'Máquina no disponible', attachmentNeedsAttention: 'El archivo adjunto requiere atención', startInterrupted: 'Inicio interrumpido' },
+    status: { offline: 'Sin conexión', syncing: 'Sincronizando', conflict: 'Conflicto', machineUnavailable: 'Máquina no disponible', attachmentNeedsAttention: 'El archivo adjunto requiere atención', starting: 'Iniciando', startFailed: 'No se pudo iniciar' },
+    error: { title: 'Error del borrador', storageDescription: 'No se pudo guardar este borrador en este dispositivo. Copia el texto en un lugar seguro antes de salir; se volverá a intentar guardar en la próxima edición.', encryptionDescription: "Este dispositivo no pudo sincronizar el borrador.", showDetailsHint: 'Muestra por qué este borrador tiene un error' },
     new: { action: 'Nuevo borrador' }, delete: { action: 'Eliminar borrador', confirmTitle: '¿Eliminar borrador?', confirmDescription: 'Este borrador se eliminará de tus dispositivos.' },
     conflict: { title: 'Conflicto de borrador', description: 'Este campo cambió en otro dispositivo.', mine: 'En este dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Conservar dispositivo', copyMine: 'Copiar el mío', copied: 'Copiado', copyFailed: 'No se pudo copiar', field: { text: 'Texto', mentions: 'Menciones', attachments: 'Adjuntos', recipient: 'Destinatario', agentContinuation: 'Continuación del agente', executionRunDelivery: 'Entrega de ejecución' } },
   },

@@ -1,6 +1,7 @@
 // @ts-check
 
 import { resolveReleasePromotionIntent } from './release/validate-release-dispatch.mjs';
+import { validateReleaseValidationRefinements } from './release-validation/resolve-validation-plan.mjs';
 import { assertApprovedReleaseIntent, readApprovedReleaseIntent } from './release/approved-release-intent.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -4482,8 +4483,10 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const forceDeploy = parseBoolString(releaseValue('force-deploy', approvedInputs.force_deploy), '--force-deploy');
           const bumpPreset = 'none';
           const waiveCi = parseBoolString(releaseValue('waive-ci', approvedInputs.waive_ci), '--waive-ci');
-          const includeValidationSuites = parseCsvList(String(releaseValue('include-validation-suites', approvedInputs.include_validation_suites) ?? ''));
-          const waiveValidationSuites = parseCsvList(String(releaseValue('waive-validation-suites', approvedInputs.waive_validation_suites) ?? ''));
+          const { includeSuiteIds: includeValidationSuites, waiveSuiteIds: waiveValidationSuites } = validateReleaseValidationRefinements({
+            includeSuiteIds: parseCsvList(String(releaseValue('include-validation-suites', approvedInputs.include_validation_suites) ?? '')),
+            waiveSuiteIds: parseCsvList(String(releaseValue('waive-validation-suites', approvedInputs.waive_validation_suites) ?? '')),
+          });
           const overrideReason = String(releaseValue('override-reason', approvedInputs.override_reason) ?? '').trim();
           if ((waiveCi || waiveValidationSuites.length > 0) && !overrideReason) {
             fail('--override-reason is required when CI or validation evidence is waived.');

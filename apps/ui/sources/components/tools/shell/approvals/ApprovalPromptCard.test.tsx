@@ -99,17 +99,22 @@ describe('ApprovalPromptCard', () => {
                 approval={approvalRequest()}
                 sessionId="session-1"
                 canApprove={true}
+                maxHeightPx={360}
             />,
         );
 
         expect(screen.findByTestId('approval-prompt-card')).toBeTruthy();
         expect(screen.getTextContent()).toContain('List sessions before continuing');
         expect(screen.getTextContent()).toContain('Agent wants to inspect active sessions');
+        const body = screen.findByTestId('approval-prompt-scroll-body');
+        expect(body).toBeTruthy();
+        expect(body!.findAll((node) => node.props.testID === 'approval-prompt-approve')).toHaveLength(0);
+        expect(screen.findByTestId('approval-prompt-approve')).toBeTruthy();
     });
 
     it('opens the originating transcript tool when a location is available', async () => {
-        const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
         routerPushSpy.mockClear();
+        const { ApprovalPromptCard } = await import('./ApprovalPromptCard');
 
         const screen = await renderScreen(
             <ApprovalPromptCard

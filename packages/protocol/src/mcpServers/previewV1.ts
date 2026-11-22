@@ -77,6 +77,7 @@ export const ManagedMcpPreviewEntryV1Schema = lazySchema(() => McpPreviewEntryBa
   reasonCode: ManagedSessionMcpReasonCodeV1Schema,
   portability: ManagedSessionMcpPortabilityV1Schema,
   defaultSelected: z.boolean(),
+  acpDelivery: z.enum(['bridge', 'direct_if_supported']).optional(),
 }));
 export type ManagedMcpPreviewEntryV1 = z.infer<typeof ManagedMcpPreviewEntryV1Schema>;
 

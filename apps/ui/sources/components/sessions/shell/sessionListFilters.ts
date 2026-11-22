@@ -55,6 +55,7 @@ function buildSessionSearchText(
 ): string {
     const metadata = item.session.metadata;
     const parts: string[] = [];
+    appendSearchText(parts, item.session.id);
     appendSearchText(parts, metadata?.name);
     appendSearchText(parts, metadata?.summaryText);
     appendSearchText(parts, metadata?.path);
@@ -116,7 +117,13 @@ export function filterSessionListItemsForHeaderControls(
     const searchTokens = normalizeSearchTokens(input.searchQuery);
     const selectedTags = new Set(input.selectedTags);
     const result: SessionListViewItem[] = [];
-    let pendingHeaders: Extract<SessionListViewItem, { type: 'header' }>[] = [];
+    type Header = Extract<SessionListViewItem, { type: 'header' }>;
+    const openHeaders: Array<{ header: Header; level: number; shown: boolean }> = [];
+    const closeHeadersFrom = (level: number) => {
+        while (openHeaders.length > 0 && openHeaders[openHeaders.length - 1]!.level >= level) {
+            openHeaders.pop();
+        }
+    };
     let fallbackHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
     let anchorHeader: Extract<SessionListViewItem, { type: 'header' }> | null = null;
 
@@ -127,13 +134,18 @@ export function filterSessionListItemsForHeaderControls(
                 if (input.controlsAnchorKey && getSessionListHeaderControlsAnchorKey(item) === input.controlsAnchorKey) {
                     anchorHeader = item;
                 }
-                pendingHeaders = [item];
+                openHeaders.length = 0;
+                openHeaders.push({ header: item, level: -1, shown: false });
             } else {
-                pendingHeaders.push(item);
+                const level = item.headerKind === 'folder' ? 1 + (item.depth ?? 0) : 0;
+                closeHeadersFrom(level);
+                openHeaders.push({ header: item, level, shown: false });
             }
             continue;
         }
 
+        // Child folders are emitted before their parent's own sessions.
+        closeHeadersFrom((item.groupKind === 'pinned' ? 0 : item.folderDepth ?? 0) + 1);
         const key = buildSessionKey(item);
         if (
             !sessionMatchesSelectedTags(key, selectedTags, input.sessionTags)
@@ -142,9 +154,10 @@ export function filterSessionListItemsForHeaderControls(
             continue;
         }
 
-        if (pendingHeaders.length > 0) {
-            result.push(...pendingHeaders);
-            pendingHeaders = [];
+        for (const open of openHeaders) {
+            if (open.shown) continue;
+            open.shown = true;
+            result.push(open.header);
         }
         result.push(item);
     }

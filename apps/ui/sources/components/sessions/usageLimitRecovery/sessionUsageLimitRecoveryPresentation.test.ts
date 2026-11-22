@@ -978,6 +978,39 @@ describe('sessionUsageLimitRecoveryPresentation', () => {
         })?.key).toBe('session-usage-limit-recovery');
     });
 
+    it('passes absolute time and relative duration to the real reset translation', () => {
+        const issue = usageIssue('codex', 5_000);
+        const presentation = buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            latestTurnStatus: 'failed',
+            issue,
+            recovery: null,
+            rememberedMode: 'ask',
+            translate: translateSessionUsageLimitRecovery,
+            formatTime: () => '12:30',
+        });
+
+        expect(presentation?.banner.quotaWait?.renderBody('5s')).toContain('12:30 (5s)');
+    });
+
+    it('offers manual continuation when a provider has no quota probe and no reset', () => {
+        const issue = usageIssue('claude', null);
+        const build = (checkNowSupported: boolean) => buildSessionUsageLimitRecoveryPresentation({
+            featureEnabled: true,
+            latestTurnStatus: 'failed',
+            issue,
+            recovery: null,
+            rememberedMode: 'ask',
+            checkNowSupported,
+            hasInterruptedWorkToResume: true,
+            translate: (key) => key,
+            formatTime: String,
+        });
+
+        expect(build(false)?.banner.secondaryActions.map(({ kind }) => kind)).toEqual(['resume_now', 'remember']);
+        expect(build(true)?.banner.secondaryActions.map(({ kind }) => kind)).toEqual(['check_now', 'remember']);
+    });
+
     describe('recovery stopped by the daemon', () => {
         const recoveryFor = (issue: SessionRuntimeIssueV1, overrides: Partial<SessionUsageLimitRecoveryV1> = {}): SessionUsageLimitRecoveryV1 => ({
             v: 1, status: 'cancelled', issueFingerprint: buildUsageLimitIssueFingerprint(issue),

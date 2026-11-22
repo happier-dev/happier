@@ -781,6 +781,7 @@ export const it: TranslationStructure = {
     details: "Dettagli",
     fieldStatus: "Stato",
     fieldAction: "Azione",
+    fieldFailureReason: "Motivo dell’errore",
     approve: "Approva",
     reject: "Rifiuta",
     loadError: "Impossibile caricare l'approvazione.",
@@ -1273,6 +1274,7 @@ export const it: TranslationStructure = {
     send: "Invia",
     attach: "Allega",
     addImage: "Aggiungi immagine",
+    takePhoto: "Scatta foto",
     addFile: "Aggiungi file",
     linkFile: "Collega file",
     files: "File",
@@ -3162,6 +3164,7 @@ export const it: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usato`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "ora",
         outdated: "non aggiornato",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3656,6 +3659,8 @@ export const it: TranslationStructure = {
         `Saltati ${count} ${plural({ count, singular: "file", plural: "file" })} che superano la dimensione massima dell’allegato.`,
       noClipboardImageTitle: "Nessuna immagine negli appunti",
       noClipboardImageBody: "Copia un'immagine e incollala come allegato.",
+      cameraPermissionDeniedTitle: "Accesso alla fotocamera necessario",
+      cameraPermissionDeniedBody: "Consenti l'accesso alla fotocamera nelle impostazioni del dispositivo per scattare una foto.",
     },
   },
 
@@ -5825,8 +5830,8 @@ export const it: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Tentativo ${attempt}`,
       title: "Limite di utilizzo raggiunto",
       readyTitle: "Limite di utilizzo reimpostato",
-      resetBody: ({ time }: { time: string }) =>
-        `Questo provider chiede alla sessione di attendere fino a ${time} prima di continuare.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Questo provider chiede alla sessione di attendere fino a ${time}${duration ? ` (${duration})` : ''} prima di continuare.`,
       genericBody: "Questo provider chiede alla sessione di attendere prima di continuare.",
       stoppedBody: "Il recupero automatico si è interrotto e non riproverà da solo. Riprova qui sotto.",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6924,7 +6929,8 @@ export const it: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Bozze', badge: 'Bozza', untitled: 'Bozza senza titolo', continueEditing: 'Continua a modificare', startAnother: 'Iniziane un’altra', startedOpen: "Sessione avviata · Apri",
-    status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', startInterrupted: 'Avvio interrotto' },
+    status: { offline: 'Non in linea', syncing: 'Sincronizzazione', conflict: 'Conflitto', machineUnavailable: 'Computer non disponibile', attachmentNeedsAttention: 'Allegato da controllare', starting: 'Avvio in corso', startFailed: 'Avvio non riuscito' },
+    error: { title: 'Errore della bozza', storageDescription: 'Non è stato possibile salvare questa bozza su questo dispositivo. Copia il testo in un posto sicuro prima di uscire; il salvataggio verrà ritentato alla prossima modifica.', encryptionDescription: "Questo dispositivo non è riuscito a sincronizzare la bozza.", showDetailsHint: 'Mostra perché questa bozza ha un errore' },
     new: { action: 'Nuova bozza' }, delete: { action: 'Elimina bozza', confirmTitle: 'Eliminare la bozza?', confirmDescription: 'Questa bozza verrà rimossa dai tuoi dispositivi.' },
     conflict: { title: 'Conflitto della bozza', description: 'Questo campo è cambiato su un altro dispositivo.', mine: 'Su questo dispositivo', synced: 'Sincronizzato', useSynced: 'Usa sincronizzato', keepDevice: 'Mantieni dispositivo', copyMine: 'Copia il mio', copied: 'Copiato', copyFailed: 'Impossibile copiare', field: { text: 'Testo', mentions: 'Menzioni', attachments: 'Allegati', recipient: 'Destinatario', agentContinuation: 'Continuazione agente', executionRunDelivery: 'Consegna esecuzione' } },
   },

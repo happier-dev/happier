@@ -69,6 +69,8 @@ type ProviderAccountUsagePersistencePayload = Readonly<{
 }>;
 
 export type ProviderAccountUsageInBandSnapshotOptions = Readonly<{
+  /** An explicit provider query can acknowledge freshness with unchanged values. */
+  forceFreshness?: boolean;
   source?: ConnectedServiceUsageSourceV1;
   sources?: readonly ConnectedServiceUsageSourceV1[];
   /**
@@ -322,7 +324,7 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
           minFreshnessMs,
           nowMs: normalizeNonNegativeInteger(params.now()),
         });
-        if (!decision.persist) {
+        if (!decision.persist && !(options?.forceFreshness && decision.reason === 'unchanged')) {
           lastSuppressionReason = decision.reason;
           continue;
         }

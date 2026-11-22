@@ -134,6 +134,7 @@ import { resolveNewSessionDraftAttachmentFlowId } from '@/components/sessions/ne
 
 
 import { useStableValueBySignature } from '@/hooks/ui/useStableValueBySignature';
+import { isActionOperationInFlight } from '@/sync/domains/actionOperations/actionOperationSelectors';
 import { useActionOperation, useAllActionOperations } from '@/sync/domains/actionOperations/useActionOperations';
 import { resolvePersistedNewSessionOperationIdentity } from '@/sync/domains/actionOperations/actionOperationReentry';
 import {
@@ -947,7 +948,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
     const reentryOperation = explicitReentryOperation ?? persistedOperationReentry?.operation ?? null;
     const isCreating = isCreatingLocally || (
         reentryOperation?.actionId === 'session.spawn_new'
-        && (reentryOperation.state === 'accepted' || reentryOperation.state === 'running')
+        && isActionOperationInFlight(reentryOperation)
     );
     const [isResumeSupportChecking, setIsResumeSupportChecking] = React.useState(false);
 

@@ -27,41 +27,18 @@ function filterOrderKey(key: string | null, orderKeyFilter?: OrderKeyFilter): st
     return !orderKeyFilter || orderKeyFilter(key) ? key : null;
 }
 
-function filterCurrentScopeOrderMap(params: Readonly<{
-    currentMap: GroupOrderMap;
-    scopeKey: string;
-    orderKeyFilter?: OrderKeyFilter;
-}>): GroupOrderMap {
-    if (!params.orderKeyFilter) return params.currentMap;
-    const currentKeys = params.currentMap[params.scopeKey];
-    if (!Array.isArray(currentKeys)) return params.currentMap;
-    const nextKeys = currentKeys.filter(params.orderKeyFilter);
-    return {
-        ...params.currentMap,
-        [params.scopeKey]: nextKeys,
-    };
-}
-
-function mergeFilteredScopeOrderMap(params: Readonly<{
-    currentMap: GroupOrderMap;
-    nextMap: Readonly<Record<string, string[]>>;
-    scopeKey: string;
-    orderKeyFilter: OrderKeyFilter;
-}>): Record<string, string[]> {
-    const currentScopeKeys = params.currentMap[params.scopeKey];
-    if (!Array.isArray(currentScopeKeys) || currentScopeKeys.length === 0) {
-        return { ...params.nextMap };
-    }
-
-    const nextFilteredKeys = (params.nextMap[params.scopeKey] ?? [])
-        .filter(params.orderKeyFilter);
+function mergeFilteredScopeOrder(
+    currentScopeKeys: readonly string[],
+    nextFilteredKeys: readonly string[],
+    orderKeyFilter: OrderKeyFilter,
+): string[] {
     const dedupedNextFilteredKeys = Array.from(new Set(nextFilteredKeys));
     const mergedScopeKeys: string[] = [];
     const mergedKeySet = new Set<string>();
     let nextFilteredIndex = 0;
 
     for (const currentKey of currentScopeKeys) {
-        if (params.orderKeyFilter(currentKey)) {
+        if (orderKeyFilter(currentKey)) {
             while (
                 nextFilteredIndex < dedupedNextFilteredKeys.length
                 && mergedKeySet.has(dedupedNextFilteredKeys[nextFilteredIndex] ?? '')
@@ -91,10 +68,7 @@ function mergeFilteredScopeOrderMap(params: Readonly<{
         }
     }
 
-    return {
-        ...params.nextMap,
-        [params.scopeKey]: mergedScopeKeys,
-    };
+    return mergedScopeKeys;
 }
 
 function resolveFilteredFallbackAnchor(params: Readonly<{
@@ -157,25 +131,21 @@ export function buildSessionListGroupOrderAfterTreeDrop(params: Readonly<{
         afterKey,
         orderKeyFilter: params.orderKeyFilter,
     });
-    const filteredNext = buildOrderMapAfterMove({
-        currentMap: filterCurrentScopeOrderMap({
-            currentMap: params.currentMap,
-            scopeKey: container.groupKey,
-            orderKeyFilter: params.orderKeyFilter,
-        }),
-        scopeKey: container.groupKey,
+    const scopeKey = container.groupKey;
+    const { orderKeyFilter } = params;
+    return buildOrderMapAfterMove({
+        currentMap: params.currentMap,
+        scopeKey,
+        sourceScopeKey: moved.containerGroupKey,
+        orderKeyFilter,
+        mergeDestinationKeys: orderKeyFilter
+            ? (keys) => mergeFilteredScopeOrder(params.currentMap[scopeKey] ?? [], keys, orderKeyFilter)
+            : undefined,
         movedKey,
         directKeys: directChildKeys,
         beforeKey: anchors.beforeKey,
         afterKey: anchors.afterKey,
         maxKeys: SESSION_LIST_GROUP_ORDER_MAX_KEYS_PER_GROUP,
-    });
-    if (!params.orderKeyFilter) return filteredNext;
-    return mergeFilteredScopeOrderMap({
-        currentMap: params.currentMap,
-        nextMap: filteredNext,
-        scopeKey: container.groupKey,
-        orderKeyFilter: params.orderKeyFilter,
     });
 }
 
@@ -190,7 +160,7 @@ export function applyGroupOrderUpdate(params: Readonly<{
     setSessionListGroupOrderV1: (next: Record<string, string[]>) => void;
 }>): boolean {
     const next = buildSessionListGroupOrderAfterTreeDrop(params);
-    if (!next) return false;
+    if (!next || Object.keys(next).length === 0) return false;
     params.setSessionListGroupOrderV1(next);
     return true;
 }

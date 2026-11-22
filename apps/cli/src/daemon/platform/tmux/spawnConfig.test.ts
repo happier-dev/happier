@@ -102,7 +102,7 @@ describe('tmux session resource policy', () => {
     expect(config.tmuxEnv.DBUS_SESSION_BUS_ADDRESS).toBe('unix:path=/test/session-bus');
     expect(config.tmuxEnv.XDG_RUNTIME_DIR).toBe('/test/runtime');
     expect(config.tmuxEnv.HAPPIER_TEST_RUNNER_ENV).toBe('retained');
-    expect(config.tmuxEnv.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).not.toBe('1');
+    expect(config.tmuxEnv.HAPPIER_DAEMON_SPAWN_SELF_MIGRATE_CGROUP).toBe('');
   });
 
   it('pins daemon-owned child keys so a long-lived tmux server cannot leak stale relay state', async () => {

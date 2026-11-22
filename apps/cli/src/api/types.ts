@@ -584,6 +584,7 @@ export type Metadata = {
   opencodeBackendMode?: 'server' | 'acp',
   opencodeServerBaseUrl?: string,
   opencodeServerBaseUrlExplicit?: true,
+  directTranscriptPendingV1?: true,
   directSessionV1?: DirectSessionMetadataV1,
   directSessionAttentionV1?: {
     v: 1,

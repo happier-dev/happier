@@ -475,8 +475,8 @@ jobs:
             "$RUNNER_TEMP/deploy-ref-cas.mjs"
           cp scripts/pipeline/github/promote-server-deploy-ref.mjs \
             "$RUNNER_TEMP/promote-server-deploy-ref.mjs"
-          cp scripts/pipeline/deploy/deploy-hosted-images.mjs \
-            "$RUNNER_TEMP/deploy-hosted-images.mjs"
+          cp scripts/pipeline/deploy/dispatch-hosted-deploy.mjs \
+            "$RUNNER_TEMP/dispatch-hosted-deploy.mjs"
           cp scripts/pipeline/github/resolve-server-promotion-inputs.mjs \
             "$RUNNER_TEMP/resolve-server-promotion-inputs.mjs"
 
@@ -540,6 +540,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: write
           permission-workflows: write
+          permission-actions: write
 
       - name: Resolve exact server deploy ref before promotion
         id: deploy_before
@@ -575,14 +576,10 @@ jobs:
             --github-output "$GITHUB_OUTPUT"
 
       - name: Deploy exact hosted images
-        if: steps.promote_ref.outputs.changed == 'true' || inputs.force_deploy
         env:
           HOSTED_IMAGES: ${{ needs.publish_hosted.outputs.hosted_images }}
           DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
-          DOKPLOY_API_URL: ${{ vars.DOKPLOY_API_URL }}
-          DOKPLOY_API_KEY: ${{ secrets.DOKPLOY_API_KEY }}
-          DOKPLOY_API_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_API_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
-          DOKPLOY_WORKER_APPLICATION_ID: ${{ vars[format('DOKPLOY_{0}_WORKER_APPLICATION_ID', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}
-          CF_WEBHOOK_DEPLOY_CLIENT_ID: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_ID }}
-          CF_WEBHOOK_DEPLOY_CLIENT_SECRET: ${{ secrets.CF_WEBHOOK_DEPLOY_CLIENT_SECRET }}
-        run: node "$RUNNER_TEMP/deploy-hosted-images.mjs" --images "$HOSTED_IMAGES"
+          DEPLOY_COMPONENT: server
+          GH_REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ steps.promotion_token.outputs.token }}
+        run: node "$RUNNER_TEMP/dispatch-hosted-deploy.mjs" --images "$HOSTED_IMAGES"

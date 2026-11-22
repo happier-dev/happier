@@ -832,6 +832,7 @@ export const pt: TranslationStructure = {
     details: "Detalhes",
     fieldStatus: "Estado",
     fieldAction: "Ação",
+    fieldFailureReason: "Motivo da falha",
     approve: "Aprovar",
     reject: "Rejeitar",
     loadError: "Falha ao carregar a aprovação.",
@@ -1323,6 +1324,7 @@ export const pt: TranslationStructure = {
     send: "Enviar",
     attach: "Anexar",
     addImage: "Adicionar imagem",
+    takePhoto: "Tirar foto",
     addFile: "Adicionar arquivo",
     linkFile: "Vincular arquivo",
     files: "Arquivos",
@@ -2836,6 +2838,7 @@ export const pt: TranslationStructure = {
       usageCount: ({ used, limit }: { used: number; limit: number }) =>
         `${used}/${limit} usado`,
       duration: {
+        seconds: ({ seconds }: { seconds: number }) => `${seconds} s`,
         now: "agora",
         outdated: "desatualizado",
         daysHours: ({ days, hours }: { days: number; hours: number }) =>
@@ -3427,6 +3430,8 @@ export const pt: TranslationStructure = {
         `Ignorados ${count} ${plural({ count, singular: "arquivo", plural: "arquivos" })} que excedem o tamanho máximo de anexo.`,
       noClipboardImageTitle: "Nenhuma imagem na área de transferência",
       noClipboardImageBody: "Copie uma imagem e cole-a como anexo.",
+      cameraPermissionDeniedTitle: "Acesso à câmera necessário",
+      cameraPermissionDeniedBody: "Permita o acesso à câmera nas configurações do dispositivo para tirar uma foto.",
     },
   },
 
@@ -5590,8 +5595,8 @@ export const pt: TranslationStructure = {
         overloadAttempt: ({ attempt }: { attempt: number }) => `Tentativa ${attempt}`,
       title: "Limite de uso atingido",
       readyTitle: "Limite de uso redefinido",
-      resetBody: ({ time }: { time: string }) =>
-        `Este provedor pede que a sessão espere até ${time} antes de continuar.`,
+      resetBody: ({ time, duration }: { time: string; duration?: string }) =>
+        `Este provedor pede que a sessão espere até ${time}${duration ? ` (${duration})` : ''} antes de continuar.`,
       genericBody: "Este provedor pede que a sessão espere antes de continuar.",
       stoppedBody: "A recuperação automática parou e não tentará novamente sozinha. Tente novamente abaixo.",
       resetCreditBody: ({ count }: { count: number }) =>
@@ -6690,7 +6695,8 @@ export const pt: TranslationStructure = {
 
   sessionDrafts: {
     sectionTitle: 'Rascunhos', badge: 'Rascunho', untitled: 'Rascunho sem título', continueEditing: 'Continuar a editar', startAnother: 'Começar outro', startedOpen: "Sessão iniciada · Abrir",
-    status: { offline: 'Sem ligação', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', startInterrupted: 'Início interrompido' },
+    status: { offline: 'Sem ligação', syncing: 'A sincronizar', conflict: 'Conflito', machineUnavailable: 'Máquina indisponível', attachmentNeedsAttention: 'O anexo requer atenção', starting: 'A iniciar', startFailed: 'Não foi possível iniciar' },
+    error: { title: 'Erro do rascunho', storageDescription: 'Não foi possível guardar este rascunho neste dispositivo. Copie o texto para um local seguro antes de sair; a gravação será tentada novamente na próxima edição.', encryptionDescription: "Este dispositivo não conseguiu sincronizar o rascunho.", showDetailsHint: 'Mostra porque é que este rascunho tem um erro' },
     new: { action: 'Novo rascunho' }, delete: { action: 'Eliminar rascunho', confirmTitle: 'Eliminar rascunho?', confirmDescription: 'Este rascunho será removido dos teus dispositivos.' },
     conflict: { title: 'Conflito de rascunho', description: 'Este campo mudou noutro dispositivo.', mine: 'Neste dispositivo', synced: 'Sincronizado', useSynced: 'Usar sincronizado', keepDevice: 'Manter do dispositivo', copyMine: 'Copiar o meu', copied: 'Copiado', copyFailed: 'Não foi possível copiar', field: { text: 'Texto', mentions: 'Menções', attachments: 'Anexos', recipient: 'Destinatário', agentContinuation: 'Continuação do agente', executionRunDelivery: 'Entrega da execução' } },
   },

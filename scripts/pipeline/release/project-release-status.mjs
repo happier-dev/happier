@@ -44,7 +44,7 @@ export function projectReleaseStatus(mode, env) {
     return {
       id,
       result: requestedValue ? (verified ? 'success' : result(env, resultName)) : 'skipped',
-      identity: { sourceSha, verified, ...(verified ? { product, version } : {}) },
+      identity: { sourceSha, verified, ...(requestedValue && exact(resultName) && version ? { product, version } : {}) },
       recoveryHint,
     };
   };

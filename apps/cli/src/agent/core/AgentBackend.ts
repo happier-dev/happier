@@ -13,6 +13,7 @@
  */
 
 import type { AgentId as CatalogAgentId } from '@happier-dev/agents';
+import type { managedMcpDirectEndpoint, ManagedMcpDirectEndpoint } from '@/mcp/servers/managedMcpDirectEndpoint';
 import type { AgentMessageHandler, SessionId } from './AgentMessage';
 import type { AgentPromptPayload } from './AgentPromptPayload';
 
@@ -23,6 +24,7 @@ export interface McpServerConfig {
   command: string;
   args?: string[];
   env?: Record<string, string>;
+  [managedMcpDirectEndpoint]?: ManagedMcpDirectEndpoint;
 }
 
 /** Transport type for agent communication */

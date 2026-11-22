@@ -33,6 +33,7 @@ import { createClaudeUnifiedTranscriptBridge } from './createClaudeUnifiedTransc
 import type { ClaudeEffectiveModelObservation } from '../sessionModels/effectiveModelUpdate';
 import type { ClaudeWorkflowActivityObservationContext } from '../workflows/claudeWorkflowActivitySource';
 import { isClaudeMainChainCompactBoundary } from '../localControl/readClaudeTranscriptTurnSignal';
+import { isClaudeInternalUserTextMessage } from '../utils/readClaudeUserMessageText';
 import type { ClaudeRemoteSubagentFileCollector } from '../remote/sidechains/claudeRemoteSubagentFileCollector';
 import {
   createClaudeUnifiedTerminalReadinessBridge,
@@ -2552,6 +2553,7 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
         message: RawJSONLines,
         handler: ((message: RawJSONLines) => void | Promise<void>) | undefined,
       ): Promise<void> => {
+        if (isClaudeInternalUserTextMessage(message)) return;
         if (acceptedPromptTranscriptDiscovery.consumeAcceptedPromptTranscriptEcho(message)) {
           opts.onTranscriptMessageSuppressed?.(message);
           return;
@@ -2600,7 +2602,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               // feeds the centralized goal source; never reaches the visible transcript.
               opts.onRawTranscriptValue?.(value, observation);
             },
-            proveAcceptedMainTranscript: (value) => confirmPromptAcceptedFromTranscript([value]),
+            onMainTranscriptForPromptAcceptance: (value) => {
+              confirmPromptAcceptedFromTranscript([value]);
+            },
             onSubagentFileCollectorChanged: opts.onSubagentFileCollectorChanged,
             onSessionFound: opts.onSessionFound,
             validateSessionStart: (sessionInfo) => {

@@ -9,13 +9,14 @@ import { Text } from '@/components/ui/text/Text';
 import type { AgentEvent } from '@/sync/typesRaw';
 import { t } from '@/text';
 import { resolveConnectedServiceUxDiagnosticPresentation, resolveSessionConnectedServiceAuthSwitchErrorMessageKey } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
+import { getStorage } from '@/sync/domains/state/storage';
 import { useSettings } from '@/sync/store/hooks';
 import { buildConnectedServiceAccountSwitchMessage } from './connectedServiceAccountSwitchMessage';
 import {
     isTerminalComposerDraftBlockedEvent,
     readTerminalComposerDraftBlockedStateAtMs,
 } from '@/components/sessions/terminalComposer/terminalComposerDraftBlockedEvent';
-import { useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
+import { canClearLiveTerminalComposerDraft, useTerminalComposerClearAction } from '@/components/sessions/terminalComposer/useTerminalComposerClearAction';
 import { getCachedIntlDateTimeFormat } from '@/utils/datetime/cachedIntlFormatters';
 import type { TranscriptEventEmphasis } from './transcriptEventEmphasis';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
@@ -244,6 +245,8 @@ const TerminalComposerClearActionButton = React.memo(function TerminalComposerCl
 }) {
     const { theme } = useUnistyles();
     const terminalComposerClear = useTerminalComposerClearAction(props.sessionId);
+    const canClear = getStorage()((state) => canClearLiveTerminalComposerDraft(state.sessions[props.sessionId]));
+    if (!canClear) return null;
 
     return (
         <Pressable

@@ -57,7 +57,7 @@ export function applyWorkspaceOrderUpdate(params: Readonly<{
     setSessionWorkspaceOrderV1: (next: Record<string, string[]>) => void;
 }>): boolean {
     const next = buildSessionWorkspaceOrderAfterTreeDrop(params);
-    if (!next) return false;
+    if (!next || Object.keys(next).length === 0) return false;
     params.setSessionWorkspaceOrderV1(next);
     return true;
 }

@@ -218,14 +218,10 @@ import { createCliUpdateMetadataPublisher, type CliUpdateMetadataPublisher } fro
 import { createDaemonShutdownController } from './lifecycle/shutdown';
 import { buildHostedRunnerSpawnConfig, buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
 export { buildTmuxSpawnConfig, buildTmuxWindowEnv } from './platform/tmux/spawnConfig';
-import {
-  migrateTrackedSessionProcessesOutOfDaemonServiceCgroup,
-} from './platform/linux/migrateTrackedSessionProcessesOutOfDaemonServiceCgroup';
 import { removeRuntimeAuthFailureReportOutboxItemsForSession } from './connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutbox';
 import { drainRuntimeAuthFailureReportOutboxToDaemon } from './connectedServices/runtimeAuth/reportOutbox/runtimeAuthFailureReportOutboxDrain';
 import { createConnectedServiceRecoverySupersessionCleaner } from './connectedServices/continuation/continuationRecoverySupersession';
-import { buildCgroupSelfMigratingHappyCliLaunchSpec } from './platform/linux/buildCgroupSelfMigratingHappyCliLaunchSpec';
-import { shouldUseSystemdUserSessionResourceGovernor } from './platform/linux/systemdUserResourceGovernor';
+import { resolveSystemdUserSessionLaunchSpec } from './platform/linux/resolveSystemdUserSessionLaunchSpec';
 import { applySpawnedChildOomScoreAdjustment } from './platform/linux/applySpawnedChildOomScoreAdjustment';
 import { resolveWindowsRemoteSessionConsoleMode } from './platform/windows/windowsSessionConsoleMode';
 import { startHappySessionInVisibleWindowsConsole } from './platform/windows/spawnHappyCliVisibleConsole';
@@ -473,6 +469,7 @@ import type { TerminalHostHandle } from '@/integrations/terminalHost/_types';
 import { normalizeAccountSettingsVersionHint } from '@/settings/accountSettings/accountSettingsVersion';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { warmActiveAccountSettingsSnapshotBestEffort } from '@/settings/accountSettings/warmActiveAccountSettingsSnapshot';
+import { resetAccountSettingsRefreshBackoff } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createProviderAccountSettingsController } from './lifecycle/providerAccountSettings';
@@ -2378,7 +2375,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         const physicallyRetiredTerminalAttachmentIdBySessionId = new Map<string, string>();
         let terminalHostAdaptersPromise: ReturnType<typeof createDefaultTerminalHostRegistry> | null = null;
         const loadTerminalHostAdapters = async () => await (
-          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry()
+          terminalHostAdaptersPromise ??= createDefaultTerminalHostRegistry({ forExistingAttachments: true })
         );
         const retireTerminalControlServiceabilityForCurrentAccount = async (
           input: Omit<Parameters<typeof retireExactTerminalControlServiceability>[0], 'credentials'>,
@@ -2858,18 +2855,6 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           logger.debug('[DAEMON RUN] Connected-service group home startup reconciliation failed (non-fatal)', error);
         });
         connectedServiceMaterializedHomeCleanupLoopHandle?.trigger();
-        if (shouldUseSystemdUserSessionResourceGovernor({ platform: process.platform, startupSource })) {
-          const migratedTrackedSessionProcesses = await migrateTrackedSessionProcessesOutOfDaemonServiceCgroup({
-            trackedSessions: pidToTrackedSession.values(),
-            daemonPid: process.pid,
-            startupSource,
-          });
-          if (migratedTrackedSessionProcesses.length > 0) {
-            logger.debug('[DAEMON RUN] Moved reattached session runner process(es) out of the daemon service cgroup', {
-              migrations: migratedTrackedSessionProcesses,
-            });
-          }
-        }
 
         const recordConnectedServiceContinuationProviderActivity =
           createConnectedServiceProviderActivityProofRecorder({
@@ -4680,24 +4665,20 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 windowsHide: true,
                 env: childProcessEnv,
               };
-              const cgroupSelfMigratingLaunchSpec =
-                shouldUseSystemdUserSessionResourceGovernor({ platform: process.platform, startupSource })
-                  ? await buildCgroupSelfMigratingHappyCliLaunchSpec({
-                    args,
-                    daemonPid: process.pid,
-                    environment: childProcessEnv,
-                    launchOptions: runnerLaunchOptions,
-                  })
-                  : null;
-              const happyProcess = cgroupSelfMigratingLaunchSpec
+              const scopedLaunchSpec = await resolveSystemdUserSessionLaunchSpec({
+                args,
+                environment: childProcessEnv,
+                launchOptions: runnerLaunchOptions,
+              });
+              const happyProcess = scopedLaunchSpec
                 ? spawnChildProcess(
-                  cgroupSelfMigratingLaunchSpec.filePath,
-                  cgroupSelfMigratingLaunchSpec.args,
+                  scopedLaunchSpec.filePath,
+                  scopedLaunchSpec.args,
                   {
                     ...spawnOptions,
                     env: {
                       ...childProcessEnv,
-                      ...(cgroupSelfMigratingLaunchSpec.env ?? {}),
+                      ...(scopedLaunchSpec.env ?? {}),
                     },
                   },
                 )
@@ -8946,6 +8927,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                   // FIX-1a (incident Jun-11 H-A): keep the account-settings snapshot fresh on
                   // (re)connect. Cheap no-op when a scope-matching snapshot is already active;
                   // populates it when the startup warm-up failed (e.g. started offline).
+                  // A reconnect supersedes any Settings refresh backoff from the outage.
+                  resetAccountSettingsRefreshBackoff();
                   await warmActiveAccountSettingsSnapshotBestEffort({ credentials });
                   await providerAccountSettings.refresh().catch((error) => {
                     logger.warn('[DAEMON RUN] Failed to apply provider account settings on reconnect', error);

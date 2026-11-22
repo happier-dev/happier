@@ -1,6 +1,7 @@
 import type { Credentials } from '@/persistence';
 
 import { measureHappierReplayDialogLineChars } from '@happier-dev/agents';
+import { readSessionRollbackRangesV1FromMetadata } from '@happier-dev/protocol';
 
 import { isAuthenticationError } from '@/api/client/httpStatusError';
 import { findTranscriptEncryptedMessageByLocalId } from '@/api/session/transcriptMessageLookup';
@@ -162,6 +163,37 @@ function readForkV1FromMetadata(metadata: Record<string, unknown>): ForkV1 | nul
   return { v: 1, parentSessionId, parentCutoffSeqInclusive: cutoff };
 }
 
+type SeqRange = Readonly<{ startSeqInclusive: number; endSeqInclusive: number }>;
+
+function readFiniteTimestamp(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/**
+ * The conversation-rollback ranges (`metadata.sessionRollbackRangesV1`) a reader
+ * of this segment must not see.
+ *
+ * A rollback removed those turns from the Agent's own context, and replay is how
+ * the next reader (an Agent switch, a replay fork, continue-with-replay) receives
+ * that context, so carrying them would hand back exactly what the user removed.
+ * For a parent segment the reader is a fork: a rollback applied after the fork
+ * was created is not part of the fork's history, so only earlier ones apply.
+ */
+function readSegmentRollbackRanges(
+  metadata: Record<string, unknown> | null,
+  appliedNoLaterThan: number | null,
+): readonly SeqRange[] {
+  const ranges = readSessionRollbackRangesV1FromMetadata(metadata)?.ranges ?? [];
+  return ranges
+    .filter((range) => appliedNoLaterThan === null || range.rolledBackAt <= appliedNoLaterThan)
+    .map((range) => ({ startSeqInclusive: range.startSeqInclusive, endSeqInclusive: range.endSeqInclusive }));
+}
+
+function findContainingRange(seq: unknown, ranges: readonly SeqRange[]): SeqRange | null {
+  if (typeof seq !== 'number') return null;
+  return ranges.find((range) => seq >= range.startSeqInclusive && seq <= range.endSeqInclusive) ?? null;
+}
+
 function readMinSeq(rows: readonly { seq?: unknown }[]): number | null {
   let min = Number.POSITIVE_INFINITY;
   for (const row of rows) {
@@ -304,7 +336,13 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       : rows.filter((row) => typeof row.seq === 'number' && row.seq > afterSeqExclusive);
 
   const visited = new Set<string>();
-  const segments: Array<{ sessionId: string; rawSession: any; upToSeqInclusive?: number }> = [];
+  const segments: Array<{
+    sessionId: string;
+    rawSession: any;
+    metadata: Record<string, unknown> | null;
+    rollbackRanges: readonly SeqRange[];
+    upToSeqInclusive?: number;
+  }> = [];
 
   let currentSessionId = String(params.startingSessionId ?? '').trim();
   let currentUpToSeqInclusive = params.upToSeqInclusive;
@@ -329,9 +367,16 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
     });
     if (!rawSession) break;
 
+    const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
+    const forkChild = segments[segments.length - 1];
     segments.push({
       sessionId: currentSessionId,
       rawSession,
+      metadata,
+      rollbackRanges: readSegmentRollbackRanges(
+        metadata,
+        forkChild ? readFiniteTimestamp(forkChild.rawSession?.createdAt) : null,
+      ),
       ...(typeof currentUpToSeqInclusive === 'number' && Number.isFinite(currentUpToSeqInclusive)
         ? { upToSeqInclusive: Math.max(0, Math.floor(currentUpToSeqInclusive)) }
         : {}),
@@ -345,7 +390,6 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       break;
     }
 
-    const metadata = tryDecryptSessionMetadata({ credentials: params.credentials, rawSession });
     if (!metadata) break;
     const fork = readForkV1FromMetadata(metadata);
     if (!fork) {
@@ -394,9 +438,7 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       ? Math.max(0, Math.floor(startingSegment.upToSeqInclusive))
       : startingSessionSeq;
 
-  const sourceTitleText = readSessionTitleText(
-    tryDecryptSessionMetadata({ credentials: params.credentials, rawSession: startingSegment.rawSession }),
-  );
+  const sourceTitleText = readSessionTitleText(startingSegment.metadata);
 
   // Resolved BEFORE the walk, because the summary is part of the frame the
   // transcript shares its budget with: planning the walk without it would fetch
@@ -497,7 +539,8 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
       firstPage = false;
 
       const slice = decryptTranscriptReplaySlice({
-        rows: withinDepartureBound(page.messages as readonly RawTranscriptRow[]),
+        rows: withinDepartureBound(page.messages as readonly RawTranscriptRow[])
+          .filter((row) => findContainingRange(row.seq, segment.rollbackRanges) === null),
         ...(ctx ?? {}),
         maxTextChars: params.maxTextChars,
         maxDialogItems: pageSize,
@@ -588,31 +631,42 @@ export async function hydrateReplayDialogFromForkChain(params: Readonly<{
   // The window is all agent output, so the instruction it is serving is outside
   // it. One targeted lookup — the newest user row of the source, nothing else —
   // is the whole cost of not handing the target Agent the work without the ask.
-  if (!lastUserDialogItem) {
+  // A rolled-back user row is not the newest instruction: the lookup steps below
+  // its range and asks again, at most once per range.
+  let pinnedBeforeSeq = Math.max(0, sourceCutoffSeqInclusive + 1);
+  for (let attempt = 0; !lastUserDialogItem && attempt <= startingSegment.rollbackRanges.length; attempt += 1) {
     const pinnedPage = await fetchEncryptedTranscriptMessagesPage({
       token: params.credentials.token,
       sessionId: startingSegment.sessionId,
       limit: 1,
-      beforeSeq: Math.max(0, sourceCutoffSeqInclusive + 1),
+      beforeSeq: pinnedBeforeSeq,
       roles: ['user'],
     }).catch((error) => {
       if (isAuthenticationError(error)) throw error;
       return null;
     });
-    if (pinnedPage) {
-      const pinnedSlice = decryptTranscriptReplaySlice({
-        // Bounded the same way as the walk, and for the same reason it cannot be
-        // an `afterSeq`: a user turn from BEFORE the returning Agent left is
-        // already in that Agent's own conversation, and pinning it as "the
-        // latest instruction" would restate an ask it has already served.
-        rows: withinDepartureBound(pinnedPage.messages as readonly RawTranscriptRow[]),
-        ...(startingCtx ?? {}),
-        maxTextChars: params.maxTextChars,
-        maxDialogItems: 1,
-      });
-      const pinned = pinnedSlice.dialog.find((item) => item.role === 'User');
-      lastUserDialogItem = pinned ? { ...pinned, sessionId: startingSegment.sessionId } : null;
+    const pinnedRolledBackRange = findContainingRange(
+      (pinnedPage?.messages[0] as RawTranscriptRow | undefined)?.seq,
+      startingSegment.rollbackRanges,
+    );
+    if (pinnedRolledBackRange) {
+      pinnedBeforeSeq = pinnedRolledBackRange.startSeqInclusive;
+      continue;
     }
+    if (!pinnedPage) break;
+    const pinnedSlice = decryptTranscriptReplaySlice({
+      // Bounded the same way as the walk, and for the same reason it cannot be
+      // an `afterSeq`: a user turn from BEFORE the returning Agent left is
+      // already in that Agent's own conversation, and pinning it as "the
+      // latest instruction" would restate an ask it has already served.
+      rows: withinDepartureBound(pinnedPage.messages as readonly RawTranscriptRow[]),
+      ...(startingCtx ?? {}),
+      maxTextChars: params.maxTextChars,
+      maxDialogItems: 1,
+    });
+    const pinned = pinnedSlice.dialog.find((item) => item.role === 'User');
+    lastUserDialogItem = pinned ? { ...pinned, sessionId: startingSegment.sessionId } : null;
+    break;
   }
 
   /**

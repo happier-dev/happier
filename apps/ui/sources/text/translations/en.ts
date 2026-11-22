@@ -555,6 +555,7 @@ export const en = {
         details: 'Details',
         fieldStatus: 'Status',
         fieldAction: 'Action',
+        fieldFailureReason: 'Why it failed',
         approve: 'Approve',
         reject: 'Reject',
         loadError: 'Failed to load approval.',
@@ -1114,6 +1115,7 @@ export const en = {
         send: 'Send',
         attach: 'Attach',
         addImage: 'Add image',
+        takePhoto: 'Take photo',
         addFile: 'Add file',
         linkFile: 'Link file',
         files: 'Files',
@@ -2583,6 +2585,7 @@ export const en = {
             remainingWithReset: ({ percent, reset }: { percent: string; reset: string }) => `${percent} left · resets in ${reset}`,
             usageCount: ({ used, limit }: { used: number; limit: number }) => `${used}/${limit} used`,
             duration: {
+                seconds: ({ seconds }: { seconds: number }) => `${seconds}s`,
                 now: 'now',
                 outdated: 'outdated',
                 daysHours: ({ days, hours }: { days: number; hours: number }) => `${days}d ${hours}h`,
@@ -3070,6 +3073,8 @@ export const en = {
                 `Skipped ${count} ${plural({ count, singular: 'file', plural: 'files' })} that exceed the max attachment size.`,
             noClipboardImageTitle: 'No clipboard image',
             noClipboardImageBody: 'Copy an image, then paste it as an attachment.',
+            cameraPermissionDeniedTitle: 'Camera access needed',
+            cameraPermissionDeniedBody: 'Allow camera access in your device settings to take a photo.',
         },
     },
 
@@ -5149,7 +5154,7 @@ export const en = {
             overloadAttempt: ({ attempt }: { attempt: number }) => `Attempt ${attempt}`,
             title: 'Usage limit reached',
             readyTitle: 'Usage limit reset',
-            resetBody: ({ time }: { time: string }) => `This provider is asking the session to wait until ${time} before continuing.`,
+            resetBody: ({ time, duration }: { time: string; duration?: string }) => `This provider is asking the session to wait until ${time}${duration ? ` (${duration})` : ''} before continuing.`,
             genericBody: 'This provider is asking the session to wait before continuing.',
             stoppedBody: 'Automatic recovery stopped and won’t retry on its own. Try again below.',
             resetCreditBody: ({ count }: { count: number }) => `${count} usage ${count === 1 ? 'reset is' : 'resets are'} available.`,
@@ -6231,7 +6236,8 @@ export const en = {
 
     sessionDrafts: {
         sectionTitle: 'Drafts', badge: 'Draft', untitled: 'Untitled draft', continueEditing: 'Continue editing', startAnother: 'Start another', startedOpen: "Session started · Open",
-        status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', startInterrupted: 'Start interrupted' },
+        status: { offline: 'Offline', syncing: 'Syncing', conflict: 'Conflict', machineUnavailable: 'Machine unavailable', attachmentNeedsAttention: 'Attachment needs attention', starting: 'Starting', startFailed: 'Couldn’t start' },
+        error: { title: 'Draft error', storageDescription: 'This draft couldn\'t be saved on this device. Copy your text somewhere safe before leaving; saving is retried on your next edit.', encryptionDescription: "This device couldn’t sync the draft.", showDetailsHint: 'Shows why this draft has an error' },
         new: { action: 'New draft' },
         delete: { action: 'Delete draft', confirmTitle: 'Delete draft?', confirmDescription: 'This draft will be removed from your devices.' },
         conflict: {
