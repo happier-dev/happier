@@ -6,7 +6,8 @@ import {
     rewrapManagedMachinePresetRecipientsV1, sealManagedMachinePresetContentV1,
     type ManagedMachinePresetRecipientsV1,
 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
-import type { ManagedMachinePresetRecipientCensusResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { ManagedMachinePresetListResultV1Schema,
+    type ManagedMachinePresetRecipientCensusResultV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { readMachinePresetRecipientCensus } from '@/app/machines/managed/machinePresetService';
@@ -39,6 +40,59 @@ describe('Machine preset owed recipient delivery', () => {
         await db.account.create({ data: { id: accountId, encryptionMode: 'e2ee', ...createSignedAccountContentBinding(key.publicKey) } });
         return key.secretKey;
     }
+
+    it('returns only the requested page of full Team preset bodies and preserves access across a cursor', async () => {
+        const manager = 'preset-page-manager';
+        const viewer = 'preset-page-viewer';
+        const outsider = 'preset-page-outsider';
+        const sharedWithTeamId = 'preset-page-team';
+        await account(manager);
+        const viewerKey = await account(viewer);
+        await account(outsider);
+        await db.team.create({ data: { id: sharedWithTeamId, name: 'Preset page' } });
+        await db.teamMembership.createMany({ data: [{ teamId: sharedWithTeamId, accountId: manager, role: 'owner' },
+            { teamId: sharedWithTeamId, accountId: viewer, role: 'member' }] });
+        const owner = { kind: 'team' as const, teamId: sharedWithTeamId };
+        const census = await readMachinePresetRecipientCensus({ accountId: manager, input: { homeId, owner } });
+        if (census.kind !== 'ready') throw new Error('Expected manager census');
+        const post = (endpoint: string, payload: object, accountId = viewer) => app.inject({ method: 'POST',
+            url: `/v1/machines/presets/${endpoint}`, headers: { 'x-test-user-id': accountId }, payload });
+        const id = 'page-a';
+        const content = { v: 1, name: 'Encrypted preset', setup: { scripts: [{ body: 'echo private setup' }] } };
+        const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee', content,
+            recipientCensus: census.recipients, randomBytes: nacl.randomBytes });
+        const created = await post('create', { id, homeId, owner, contentEncryptionMode: 'e2ee', ...sealed }, manager);
+        expect(created.statusCode, created.body).toBe(200);
+
+        const archivedAt = new Date('2026-01-01T00:00:00Z');
+        await db.managedMachinePreset.createMany({ data: ['page-b', 'page-c', 'page-d'].map(presetId => ({
+            id: presetId, homeId, teamId: sharedWithTeamId, name: '', ...(presetId === 'page-d' ? { archivedAt } : {}),
+            launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+                content: { t: 'plain', v: { ...content, name: presetId } } }),
+        })) });
+        const input = { homeId, sharedWithTeamId, limit: 1 };
+        expect.soft((await post('list', { ...input, cursor: id }, outsider)).json()).toEqual({ kind: 'listed', presets: [] });
+        expect.soft((await post('list', { homeId, sharedWithTeamId, cursor: id, projection: 'revisions' }, outsider)).json())
+            .toEqual({ kind: 'revisions', presets: [] });
+
+        const first = await post('list', input);
+        expect(first.statusCode, first.body).toBe(200);
+        const page = ManagedMachinePresetListResultV1Schema.parse(first.json());
+        if (page.kind !== 'listed') throw new Error('Expected a page of full presets');
+        expect(page.presets.map(preset => preset.id)).toEqual([id]);
+        expect(page.cursor).toBe(id);
+        expect(openManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee', ...page.presets[0],
+            accountId: viewer, accountKey: viewerKey })).toMatchObject(content);
+
+        const second = await post('list', { ...input, cursor: id, limit: 2 });
+        expect(second.statusCode, second.body).toBe(200);
+        expect(second.json()).toMatchObject({ kind: 'listed', presets: [{ id: 'page-b', content: { t: 'plain' } },
+            { id: 'page-c', content: { t: 'plain' } }] });
+        expect(second.json()).not.toHaveProperty('cursor');
+
+        await db.team.update({ where: { id: sharedWithTeamId }, data: { archivedAt } });
+        expect((await post('list', { ...input, cursor: id })).json()).toEqual({ kind: 'listed', presets: [] });
+    });
 
     it('offers only the owed preset to its manager and opens it for a later member after one repair', async () => {
         const manager = 'owed-manager';

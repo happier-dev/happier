@@ -24,6 +24,7 @@ import { teamSharedResourceSummaryRowKeyV1 } from '@happier-dev/protocol/teams/t
 import type { ProviderBrokerApplicationBindingV1 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
 import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { HomeDomainFailure } from '@/sync/ops/teams/teamActionClient';
+import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { TeamSharedMachineListItem } from '@/sync/ops/teams/teamSharedMachines';
 import type { TeamPage } from '@/sync/engine/teams/loadTeamPageRange';
 import type { SavedSecretCatalogResultV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
@@ -256,6 +257,8 @@ function createTeamObservations<Data>() {
 
 export const teamSharedMachineObservations = createTeamObservations<readonly TeamSharedMachineListItem[]>();
 export const teamSharedMachinePoolObservations = createTeamObservations<readonly MachinePoolViewV1[]>();
+export type TeamSharedMachinePresetRow = Readonly<Pick<ManagedMachinePresetListEntryV1, 'id' | 'name'>>;
+export const teamSharedMachinePresetPages = createTeamObservations<TeamPage<TeamSharedMachinePresetRow>>();
 export const teamSharedSavedSecretPages = createTeamObservations<TeamPage<SavedSecretCatalogResultV1>>();
 export type TeamSharedArtifactRow = ArtifactActionResultV1<'artifact.list'>['items'][number] & Readonly<{
     review?: ReviewListResponseV1['items'][number];
@@ -277,6 +280,7 @@ export const teamExternalGroupBindingPages = createTeamObservations<TeamPage<Tea
 const retainedTeamObservations = [
     teamSharedMachineObservations,
     teamSharedMachinePoolObservations,
+    teamSharedMachinePresetPages,
     teamSharedSavedSecretPages,
     teamSharedArtifactPages,
     teamSharedDiscussionPages,

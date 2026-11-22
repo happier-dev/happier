@@ -5,7 +5,7 @@ import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } 
 import { getServerProfileById, resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { retainDeep, retainKeyedRows, retainShallow } from '@/sync/domains/state/structuralSharing';
 import { createMachinePresetCollectionClient, type ManagedMachinePresetListEntryV1, type MachinePresetCollectionFilter } from '@/sync/ops/machines/machinePresetCollectionClient';
-import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type MachinePresetQueryState<T> = Readonly<{
     value: T | null;
@@ -43,6 +43,12 @@ let demandedHomes = '';
 
 export function isMachinePresetAccessLost(code: string): boolean {
     return code === 'permission_denied' || code === 'preset_not_found' || code === 'action_account_scope_changed';
+}
+
+export function homeAccountChangeAffectsMachinePresetList(event: HomeAccountChangeEvent): boolean {
+    return event.source === 'snapshot'
+        || event.entityIds?.includes(MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true
+        || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1) === true;
 }
 
 function notify(serverId: string) {
@@ -86,12 +92,8 @@ function load(serverId: string, entry: Entry) {
         const presets: ManagedMachinePresetRevisionV1[] = [];
         let cursor: string | undefined;
         do {
-            const result = await client.read('machines.presets.list', { homeId: entry.homeId,
-                projection: 'revisions', includeArchived: true,
-                ...(entry.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: entry.sharedWithTeamId }),
-                ...(cursor ? { cursor } : {}) }, options);
+            const result = await client.listPage({ ...options, projection: 'revisions', cursor });
             if (result.kind === 'failed') return result;
-            if (result.value.kind === 'refused') return { kind: 'failed' as const, code: result.value.code };
             if (result.value.kind !== 'revisions') return { kind: 'failed' as const, code: 'invalid_action_output' };
             presets.push(...result.value.presets);
             cursor = result.value.cursor;
@@ -146,9 +148,7 @@ function reconcileObservation() {
     if (entries.size > 0 && !stopObserving) {
         // Retained rows hear changes on existing connections even between page visits.
         stopObserving = subscribeHomeAccountChange(event => {
-            if (event.source === 'snapshot'
-                || event.entityIds?.includes(MACHINE_PRESETS_ACCOUNT_CHANGE_ENTITY_ID_V1)
-                || event.entityIds?.includes(TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) invalidateMachinePresets(event.serverId);
+            if (homeAccountChangeAffectsMachinePresetList(event)) invalidateMachinePresets(event.serverId);
         });
     } else if (entries.size === 0) {
         stopObserving?.();

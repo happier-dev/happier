@@ -1990,6 +1990,11 @@ viewer's Account. Legacy raw rows are exposed as a transient Plain read projecti
 without rewriting storage; their next normal save uses the author’s persisted
 Account mode. No plaintext launch, setup or name is copied into the server's review.
 
+In Team Shared, Home returns the encrypted preset bodies for one page of the
+selected kind. The client opens those bodies to display their names and requests
+the next page on scroll. Listing uses the saved recipient envelopes. Exact
+detail and rewrap can check the current recipient census.
+
 The preset author allocates a fresh data key for each private-content write and
 wraps it for the author and eligible Team Accounts through the Saved Secret
 recipient-envelope owner. The controller's custodian Account must be a recipient;

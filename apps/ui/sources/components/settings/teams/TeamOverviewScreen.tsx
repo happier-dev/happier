@@ -32,7 +32,7 @@ import { directorySourcePresentationState } from './identity/directoryAdministra
 import { useDirectoryAdministration } from './identity/useDirectoryAdministration';
 import { TeamSection } from './TeamSection';
 import { TeamSharedResourcesSection } from './TeamSharedResourcesSection';
-import { TeamSharedKindBody, TeamSharedKindShareAction } from './shared/TeamSharedKindScreen';
+import { TeamSharedKindBody, TeamSharedKindShareAction, useTeamSharedPresetScroll } from './shared/TeamSharedKindScreen';
 import { TEAM_SHARED_KIND_PRESENTATION, readTeamSharedListKind } from './shared/teamSharedKindPresentation';
 import type { TeamSectionContext } from './teamSectionContext';
 import { isTeamViewerSuspended, teamViewerStandingLabel } from './teamLabels';
@@ -588,11 +588,12 @@ const TeamSharedKindPane = React.memo(function TeamSharedKindPane(props: Readonl
   const { row } = props;
   const collection = row.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? row.collection : null;
   const kind = collection ? TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 : readTeamSharedListKind(row.kind);
+  const { continuation, listScroll } = useTeamSharedPresetScroll(kind === 'machinePresets');
   if (!kind) return null;
   return (
-    <ItemList testID="team-overview-shared-pane-list">
+    <ItemList testID="team-overview-shared-pane-list" {...listScroll}>
       <TeamSection serverId={props.serverId} teamId={props.teamId} presentation="embedded">
-        {(context) => <TeamSharedKindBody context={context} kind={kind} collection={collection} />}
+        {(context) => <TeamSharedKindBody context={context} kind={kind} collection={collection} presetScrollContinuation={continuation} />}
       </TeamSection>
     </ItemList>
   );

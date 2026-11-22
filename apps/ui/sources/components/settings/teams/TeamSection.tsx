@@ -5,7 +5,7 @@ import { useActionApprovalContinuation } from '@/components/approvals/useActionA
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
-import { ItemList } from '@/components/ui/lists/ItemList';
+import { ItemList, type ItemListProps } from '@/components/ui/lists/ItemList';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { HomeCredentialUnreadableCard } from '@/components/sessions/access/UnboundSessionHomeScopeCard';
 import { useTeamBinding } from '@/hooks/teams/useTeamBinding';
@@ -132,6 +132,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     presentation?: 'item-list' | 'virtualized-list' | 'embedded';
     /** The page column (`ItemList`); a page with an aside beside its sections reads in the wide one. */
     pageColumn?: PageColumn;
+    listScroll?: Pick<ItemListProps, 'onScroll' | 'scrollEventThrottle'>;
     /**
      * The page's known sections, holding their rows as skeletons while the Team is read, so the
      * page keeps its shape when the Team arrives. Without it the wait is one state under the header.
@@ -371,7 +372,7 @@ export const TeamSection = React.memo(function TeamSection(props: Readonly<{
     }
 
     return (
-        <ItemList pageColumn={props.pageColumn}>
+        <ItemList pageColumn={props.pageColumn} {...props.listScroll}>
             {props.childRendersHeader ? null : header}
 
             <React.Fragment key={scopeKey}>

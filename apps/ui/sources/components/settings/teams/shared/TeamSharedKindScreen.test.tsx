@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
+import { ScrollView } from 'react-native';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
@@ -18,7 +19,12 @@ import {
 import { PluginAccountAvailabilityIntentReadResponseV1Schema } from '@happier-dev/protocol/plugins/availability/v1';
 import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
+import { MANAGED_MACHINE_PRESET_PAGE_SIZE_V1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import {
   collectRenderedTestIds,
   renderScreen,
@@ -27,6 +33,7 @@ import {
   teamSummaryFixture,
 } from '@/dev/testkit';
 import { createPluginPagePlacementFixture } from '@/dev/testkit/fixtures/pluginPageProjectionFixture';
+import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import {
   createAccountTokenForTests,
   createHomeGovernanceHarness,
@@ -101,6 +108,7 @@ function sharedPool(name: string): MachinePoolPrivateViewV1 {
 
 async function addHome(
   pools: readonly MachinePoolPrivateViewV1[],
+  options?: Partial<Parameters<typeof harness.addHome>[0]>,
 ): Promise<string> {
   const serverId = await harness.addHome({
     name: 'Home A',
@@ -109,6 +117,7 @@ async function addHome(
     currentAccount: true,
     teamsEnabled: true,
     machinePoolsEnabled: true,
+    ...options,
   });
   await harness.selectHomes([serverId]);
   harness.answer(serverId, '/v1/teams/get', {
@@ -139,6 +148,111 @@ afterEach(async () => {
 });
 
 describe('Team shared kind list', () => {
+  it.each([
+    { title: 'loads only the visible preset page and repairs recipients only for the selected preset', failContinuation: false },
+    { title: 'keeps visible presets and allows a manual retry after a failed scroll continuation', failContinuation: true },
+  ])('$title', async ({ failContinuation }) => {
+    const homeId = 'srv_shared_machine_presets';
+    const teamId = 'team-1';
+    const credentials = {
+      token: createAccountTokenForTests(ACCOUNT_ID, { currentAccount: true }),
+      secret: encodeBase64(new Uint8Array(32).fill(33), 'base64url'),
+    };
+    const encryption = await createEncryptionFromAuthCredentials(credentials);
+    const serverId = await addHome([], { serverIdentityId: homeId, accountEncryptionMode: 'e2ee', credentials });
+    const recipient = {
+      account: { kind: 'account' as const, accountId: ACCOUNT_ID, name: null, firstName: 'Ada', lastName: null, username: null, avatarUrl: null },
+      readiness: {
+        status: 'available' as const,
+        contentPublicKey: encodeBase64(encryption.contentDataKey, 'base64'),
+        contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey),
+      },
+      envelopeStatus: 'missing' as const,
+    };
+    const archivedAt = Date.UTC(2026, 10, 21, 12);
+    const presets = ['preset-1', 'preset-2', 'preset-3'].map((id, index) => {
+      const sealed = sealManagedMachinePresetContentV1({ presetId: id, mode: 'e2ee',
+        content: { v: 1, name: `Private Team setup ${index + 1}`, setup: { scripts: [{ body: 'echo ready' }] } }, recipientCensus: [recipient], randomBytes });
+      return {
+        id, homeId, revision: 0, setupRevision: 0, owner: { kind: 'team', teamId }, contentEncryptionMode: 'e2ee',
+        content: sealed.content, recipients: sealed.recipients, ...(index === 2 ? { archivedAt } : {}),
+      };
+    });
+    let listBodies = 0;
+    let detailBodies = 0;
+    let failNextContinuation = failContinuation;
+    harness.answer(serverId, '/v1/account/encryption/currentness', { body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials) });
+    harness.answer(serverId, '/v1/machines/presets/list', { select: input => {
+      const { cursor } = input as { cursor?: string };
+      if (cursor !== undefined && failNextContinuation) {
+        failNextContinuation = false;
+        return { status: 503, body: { error: 'unavailable' } };
+      }
+      const page = cursor === undefined ? presets.slice(0, 2) : presets.slice(2);
+      listBodies += page.length;
+      return { body: { kind: 'listed', presets: page, ...(cursor === undefined ? { cursor: 'preset-2' } : {}) } };
+    } });
+    harness.answer(serverId, '/v1/machines/presets/get', { select: input => {
+      const selected = presets.find(row => row.id === (input as { id?: string }).id);
+      if (!selected) return { status: 404, body: { kind: 'refused', code: 'preset_not_found' } };
+      detailBodies += 1;
+      return { body: { kind: 'found', preset: selected } };
+    } });
+    harness.answer(serverId, '/v1/machines/presets/recipient-census', { body: { kind: 'ready', contentEncryptionMode: 'e2ee',
+      recipients: [{ ...recipient, envelopeStatus: 'prepared' }] } });
+    harness.answer(serverId, '/v1/machines/managed/list', { body: { machines: [] } });
+
+    const screen = await renderScreen(<TeamSharedKindScreen serverId={serverId} teamId={teamId} kind="machinePresets" />);
+    await vi.waitFor(() => expect(ids(screen)).toContain('team-shared-kind-row:preset-2'));
+    const readCounts = () => ({
+      pageRequests: harness.requestsFor('/v1/machines/presets/list').length,
+      listBodies,
+      detailBodies,
+      census: harness.requestsFor('/v1/machines/presets/recipient-census').length,
+    });
+    expect(readCounts()).toEqual({ pageRequests: 1, listBodies: 2, detailBodies: 0, census: 0 });
+    expect(JSON.stringify(screen.tree.toJSON())).toContain('Private Team setup 1');
+    expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Private Team setup 3');
+    expect(ids(screen)).toContain('team-shared-kind-more');
+    const scroller = screen.findByType(ScrollView);
+    const scrollTo = async (y: number) => await act(async () => scroller.props.onScroll({
+      nativeEvent: {
+        contentOffset: { x: 0, y },
+        layoutMeasurement: { width: 320, height: 400 },
+        contentSize: { width: 320, height: 900 },
+      },
+    }));
+    await scrollTo(200);
+    expect(readCounts()).toEqual({ pageRequests: 1, listBodies: 2, detailBodies: 0, census: 0 });
+    await scrollTo(500);
+    if (failContinuation) {
+      await waitForHomeGovernance(() => expect(readCounts()).toEqual({ pageRequests: 2, listBodies: 2, detailBodies: 0, census: 0 }));
+      expect(ids(screen)).toContain('team-shared-kind-row:preset-2');
+      expect(ids(screen)).toContain('team-shared-kind-more');
+      await screen.pressByTestIdAsync('team-shared-kind-more');
+    }
+    const pageRequests = failContinuation ? 3 : 2;
+    await waitForHomeGovernance(() => expect(ids(screen)).toContain('team-shared-kind-row:preset-3'));
+    expect(readCounts()).toEqual({ pageRequests, listBodies: 3, detailBodies: 0, census: 0 });
+    expect(JSON.stringify(screen.tree.toJSON())).toContain('Private Team setup 3');
+    expect(ids(screen)).not.toContain('team-shared-kind-more');
+    const query = { homeId, sharedWithTeamId: teamId, includeArchived: true, limit: MANAGED_MACHINE_PRESET_PAGE_SIZE_V1 };
+    const nextQuery = { ...query, cursor: 'preset-2' };
+    expect(harness.requestsFor('/v1/machines/presets/list').map(request => request.input)).toEqual(
+      failContinuation ? [query, nextQuery, nextQuery] : [query, nextQuery],
+    );
+
+    await screen.pressByTestIdAsync('team-shared-kind-row:preset-3');
+    expect(routerPush).toHaveBeenCalledWith(`/settings/machines/presets/preset-3?serverId=${encodeURIComponent(homeId)}`);
+    const { useMachinePresetDetail } = await import('@/components/settings/machines/managed/useMachinePresets');
+    const { renderHook } = await import('@/dev/testkit/hooks/renderHook');
+    const detail = await renderHook(() => useMachinePresetDetail(homeId, 'preset-3'));
+    await vi.waitFor(() => expect(detail.getCurrent().state.value?.preset).toMatchObject({ name: 'Private Team setup 3',
+      setup: { scripts: [expect.objectContaining({ body: 'echo ready' })] }, archivedAt }));
+    expect(readCounts()).toEqual({ pageRequests, listBodies: 3, detailBodies: 1, census: 1 });
+    expect(harness.requestsFor('/v1/machines/presets/get').map(request => request.input)).toEqual([{ homeId, id: 'preset-3' }]);
+  });
+
   it('opens the selected Saved Secret at its own Home after one Team-filtered metadata read', async () => {
     const serverId = await addHome([]);
     const ref = formatSharedSavedSecretRefV1(POOL_ID);

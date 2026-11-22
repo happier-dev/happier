@@ -1088,25 +1088,32 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
         // Revision demand never reads the private content or recipient envelopes.
         const revisionSelect = { id: true, homeId: true, revision: true, setupRevision: true,
             archivedAt: true, teamId: true } as const;
-        const readRows = (where: Prisma.ManagedMachinePresetWhereInput) => input.projection === 'revisions'
-            ? tx.managedMachinePreset.findMany({ where, select: revisionSelect, orderBy: { id: 'asc' } })
-            : tx.managedMachinePreset.findMany({ where, orderBy: { id: 'asc' } });
+        const readRows = (scope: Prisma.ManagedMachinePresetWhereInput) => {
+            const where = input.cursor ? { AND: [scope, { id: { gt: input.cursor } }] } : scope;
+            return input.projection === 'revisions'
+                ? tx.managedMachinePreset.findMany({ where, select: revisionSelect, orderBy: { id: 'asc' } })
+                : tx.managedMachinePreset.findMany({ where, orderBy: { id: 'asc' },
+                    ...(input.limit === undefined ? {} : { take: input.limit + 1 }) });
+        };
         const projectRows = async (rows: Awaited<ReturnType<typeof readRows>>,
             sharedWithTeamScope?: 'team'): Promise<ManagedMachinePresetListResultV1> => {
             if (input.projection === 'revisions') return { kind: 'revisions', presets: rows.map(row => ({
                 id: row.id, homeId: row.homeId, revision: row.revision, setupRevision: row.setupRevision,
                 ...(row.archivedAt === null ? {} : { archivedAt: row.archivedAt.getTime() }),
             })) };
-            const fullRows = rows.filter((row): row is StoredPreset => 'launch' in row);
+            const hasNextPage = input.limit !== undefined && rows.length > input.limit;
+            // The extra row only establishes continuation. Project the requested page.
+            const page = hasNextPage ? rows.slice(0, input.limit) : rows;
+            const fullRows = page.filter((row): row is StoredPreset => 'launch' in row);
             const lastUsed = await readPresetLastUsedTimesInTx(tx, input.homeId, fullRows.map(row => row.id));
-            return { kind: 'listed', presets: fullRows.map(row => ({ ...projectPreset(row, lastUsed.get(row.id)),
-                ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) })) };
+            return { kind: 'listed', ...(hasNextPage ? { cursor: fullRows.at(-1)?.id } : {}),
+                presets: fullRows.map(row => ({ ...projectPreset(row, lastUsed.get(row.id)),
+                    ...(sharedWithTeamScope ? { sharedWithTeamScope } : {}) })) };
         };
         if ((await tx.account.findUnique({ where: { id: params.accountId }, select: { status: true } }))?.status !== AccountStatus.active) return projectRows([]);
         if (input.sharedWithTeamId) {
             const scope = await scopedPresetListWhereInTx(tx, params, { ...input, sharedWithTeamId: input.sharedWithTeamId });
-            const rows = await readRows({ ...scope.where,
-                ...(input.cursor ? { id: { gt: input.cursor } } : {}) });
+            const rows = await readRows(scope.where);
             return projectRows(rows.map(row => inheritPresetOwnerArchive(row, scope.teamArchivedAt)), 'team');
         }
         const memberships = await tx.teamMembership.findMany({ where: { accountId: params.accountId, status: TeamMembershipStatus.active,
@@ -1127,7 +1134,6 @@ export async function listMachinePresets(params: PresetContext & Readonly<{ inpu
             OR: [...(index === 0 ? [{ custodianAccountId: params.accountId }] : []), { teamId: { in: [...ids] } }],
             ...(input.owner?.kind === "account" ? { custodianAccountId: input.owner.accountId } : {}),
             ...(input.owner?.kind === "team" ? { teamId: input.owner.teamId } : {}),
-            ...(input.cursor ? { id: { gt: input.cursor } } : {}),
         });
             for (const row of selected) rowsById.set(row.id, row);
         }

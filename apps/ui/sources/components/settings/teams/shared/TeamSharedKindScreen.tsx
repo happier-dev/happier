@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { ScrollViewProps } from 'react-native';
 
 import type { ResourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import type { ArtifactTeamResourceKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -24,7 +25,6 @@ import {
   machinePoolCollectionHref,
   machinePresetCollectionHref,
 } from '@/components/settings/machines/collection/machineCollectionModel';
-import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
 import { Item } from '@/components/ui/lists/Item';
@@ -34,6 +34,7 @@ import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useTeamSharedCollectionRowOpener, useTeamSharedCollections } from '@/hooks/teams/useTeamSharedCollections';
 import { useTeamSharedMachinePools } from '@/hooks/teams/useTeamSharedMachinePools';
+import { useTeamSharedMachinePresets } from '@/hooks/teams/useTeamSharedMachinePresets';
 import { useTeamSharedMachines } from '@/hooks/teams/useTeamSharedMachines';
 import { useTeamSharedSavedSecrets } from '@/hooks/teams/useTeamSharedSavedSecrets';
 import { useTeamSharedResourcesSummary } from '@/hooks/teams/useTeamSharedResourcesSummary';
@@ -71,6 +72,24 @@ type KindListState = Readonly<{
   reload?: () => void | Promise<unknown>;
 }>;
 
+type PresetScrollContinuation = React.RefObject<(() => Promise<void>) | null>;
+
+export function useTeamSharedPresetScroll(enabled: boolean) {
+  const continuation = React.useRef<(() => Promise<void>) | null>(null);
+  const scrollTop = React.useRef(0);
+  const onScroll = React.useCallback<NonNullable<ScrollViewProps['onScroll']>>((event) => {
+    const { contentOffset, layoutMeasurement, contentSize } = event.nativeEvent;
+    const previousTop = scrollTop.current;
+    const top = contentOffset.y;
+    scrollTop.current = top;
+    const height = layoutMeasurement.height;
+    if (top > previousTop && height > 0 && contentSize.height > height && Math.ceil(top + height) >= contentSize.height) {
+      void continuation.current?.();
+    }
+  }, []);
+  return { continuation, listScroll: enabled ? { onScroll, scrollEventThrottle: 16 } : undefined };
+}
+
 /** Shared through a Group is the one scope worth saying; a direct share is what this page already says. */
 function scopeLine(
   scope: ResourceTeamShareScopeV1 | undefined,
@@ -96,15 +115,17 @@ export const TeamSharedKindScreen = React.memo(function TeamSharedKindScreen(
   const presentation = TEAM_SHARED_KIND_PRESENTATION[props.kind];
   const collection = props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1 ? props.collection : null;
   const title = collection?.collectionId ?? t(presentation.title);
+  const { continuation, listScroll } = useTeamSharedPresetScroll(props.kind === 'machinePresets');
   return (
     <TeamSection
       serverId={props.serverId}
       teamId={props.teamId}
       title={title}
       description={t('teams.overview.shared.kindDescription')}
+      listScroll={listScroll}
       renderHeader={(context) => <TeamSharedKindHeader context={context} title={title} kind={props.kind} collection={collection} />}
     >
-      {(context) => <TeamSharedKindBody context={context} kind={props.kind} collection={collection} />}
+      {(context) => <TeamSharedKindBody context={context} kind={props.kind} collection={collection} presetScrollContinuation={continuation} />}
     </TeamSection>
   );
 });
@@ -171,12 +192,13 @@ export function TeamSharedKindBody(props: Readonly<{
   context: TeamSectionContext;
   kind: TeamSharedListKind | typeof TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
   collection: TeamSharedResourceCollectionRefV1 | null;
+  presetScrollContinuation: PresetScrollContinuation;
 }>) {
   const { icon } = TEAM_SHARED_KIND_PRESENTATION[props.kind];
   if (props.kind === TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1) {
     return props.collection ? <CollectionList context={props.context} icon={icon} collection={props.collection} /> : null;
   }
-  return <TeamSharedKindList context={props.context} kind={props.kind} icon={icon} />;
+  return <TeamSharedKindList context={props.context} kind={props.kind} icon={icon} presetScrollContinuation={props.presetScrollContinuation} />;
 }
 
 function TeamSharedKindList(
@@ -184,6 +206,7 @@ function TeamSharedKindList(
     context: TeamSectionContext;
     kind: TeamSharedListKind;
     icon: IconName;
+    presetScrollContinuation: PresetScrollContinuation;
   }>,
 ) {
   const { context, kind } = props;
@@ -193,7 +216,7 @@ function TeamSharedKindList(
     case 'machinePools':
       return <MachinePoolsList context={context} icon={props.icon} />;
     case 'machinePresets':
-      return <MachinePresetsList context={context} icon={props.icon} />;
+      return <MachinePresetsList context={context} icon={props.icon} scrollContinuation={props.presetScrollContinuation} />;
     case 'projectSources':
       return <ProjectSourcesList context={context} icon={props.icon} />;
     case 'discussions':
@@ -295,37 +318,24 @@ function MachinePoolsList({ context, icon }: ListProps) {
   return <KindList icon={icon} state={pagedState(list, rows)} />;
 }
 
-function MachinePresetsList({ context, icon }: ListProps) {
+function MachinePresetsList({ context, icon, scrollContinuation }: ListProps & Readonly<{ scrollContinuation: PresetScrollContinuation }>) {
   const serverId = context.address.serverId;
-  const serverIds = React.useMemo(() => [serverId], [serverId]);
-  const filter = React.useMemo(
-    () => ({ sharedWithTeamId: context.address.teamId }),
-    [context.address.teamId],
-  );
-  const presets = useMachinePresets(serverIds, undefined, filter);
-  const presetState = presets.statesByServerId[serverId];
-  const value = presets.presetsByServerId[serverId];
+  const list = useTeamSharedMachinePresets({ scope: context.scope, address: context.address, onApprovalPending: context.requestApproval });
+  const onEndReached = list.hasMore && list.status === 'ready' ? list.loadMore : null;
+  React.useLayoutEffect(() => {
+    scrollContinuation.current = onEndReached;
+    return () => { scrollContinuation.current = null; };
+  }, [onEndReached, scrollContinuation]);
   const rows = React.useMemo(
     () =>
-      (value ?? []).map((preset): KindRow => ({
+      list.rows.map((preset): KindRow => ({
         key: preset.id,
         title: preset.name,
         href: machinePresetCollectionHref({ serverId, presetId: preset.id }),
       })),
-    [serverId, value],
+    [list.rows, serverId],
   );
-  return (
-    <KindList
-      icon={icon}
-      state={{
-        rows,
-        loading: value === undefined && !presetState?.error,
-        hasMore: false,
-        failure: presetState?.error ? t('machinePresets.loadFailed') : null,
-        reload: presets.refresh,
-      }}
-    />
-  );
+  return <KindList icon={icon} state={pagedState(list, rows)} />;
 }
 
 function ProjectSourcesList({ context, icon }: ListProps) {

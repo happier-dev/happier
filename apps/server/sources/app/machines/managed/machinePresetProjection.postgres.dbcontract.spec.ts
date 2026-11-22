@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
 import { db, initDbPostgres } from '@/storage/db';
 import type { Tx } from '@/storage/inTx';
+import { storeOpaquePresetLaunch } from './managedRows';
 import { listMachinePresets } from './machinePresetService';
 import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
 
@@ -44,6 +45,34 @@ describe('preset projection cost on disposable PostgreSQL', () => {
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
+
+    it('pages one Team preset collection without widening the cursor to other Teams', async () => {
+        const homeId = `srv_${'a'.repeat(32)}`;
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Paged presets' } });
+        const otherTeam = await db.team.create({ data: { name: 'Other presets' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const launch = storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', recipients: [],
+            content: { t: 'plain', v: { v: 1, name: 'Setup preset', setup: { scripts: [{ body: 'echo ready' }] } } } });
+        const ids = Array.from({ length: 128 }, () => randomUUID()).sort();
+        await db.managedMachinePreset.createMany({ data: [...ids.map(id => ({ id, homeId, teamId: team.id, name: '', launch })),
+            { id: 'outside-team-preset', homeId, teamId: otherTeam.id, name: '', launch }] });
+        const readPage = async (cursor?: string) => {
+            const page = await listMachinePresets({ accountId: member.id, input: { homeId, sharedWithTeamId: team.id,
+                limit: 50, ...(cursor ? { cursor } : {}) } });
+            if (page.kind !== 'listed') throw new Error('Expected a full Team preset page');
+            return page;
+        };
+        const first = await readPage();
+        expect(first.presets.map(preset => preset.id)).toEqual(ids.slice(0, 50));
+        expect(first.cursor).toBe(ids[49]);
+        const second = await readPage(first.cursor);
+        expect(second.presets.map(preset => preset.id)).toEqual(ids.slice(50, 100));
+        expect(second.cursor).toBe(ids[99]);
+        const last = await readPage(second.cursor);
+        expect(last.presets.map(preset => preset.id)).toEqual(ids.slice(100));
+        expect(last.cursor).toBeUndefined();
+    });
 
     it('shares current controller and declaration reads across Account and delegated Team presets and observes withdrawal', async () => {
         const homeId = `srv_${'a'.repeat(32)}`;

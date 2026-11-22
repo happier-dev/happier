@@ -163,6 +163,10 @@ export type MachinePresetCollectionOptions<T> = Readonly<{
     onApprovalFailed?: (code: string) => void;
 }>;
 
+type MachinePresetListPageOptions = MachinePresetCollectionFilter
+    & Pick<MachinePresetActionInputV1<'machines.presets.list'>, 'cursor' | 'limit' | 'projection'>
+    & Pick<MachinePresetCollectionOptions<never>, 'signal' | 'onApprovalPending' | 'onApprovalSettled'>;
+
 export type MachinePresetHistoryData = Readonly<{ preset: OpenedMachinePreset; machines: readonly ManagedMachineReadSnapshotV1[] }>;
 export type MachinePresetDraftSaveInput = Readonly<{ draft: MachinePresetEditDraft } & (
     | { preset: Readonly<Pick<OpenedMachinePreset, 'id' | 'revision'>
@@ -875,17 +879,25 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
         }).finally(() => { if (awaitingApproval) options?.onApprovalSettled?.(); });
     }
 
+    async function listPage(options?: MachinePresetListPageOptions) {
+        const { sharedWithTeamId, projection, limit, cursor, signal, onApprovalPending, onApprovalSettled } = options ?? {};
+        const result = await read('machines.presets.list', { homeId, includeArchived: true,
+            ...(sharedWithTeamId === undefined ? {} : { sharedWithTeamId }),
+            ...(projection === undefined ? {} : { projection }),
+            ...(limit === undefined ? {} : { limit }),
+            ...(cursor === undefined ? {} : { cursor }),
+        }, { signal, onApprovalPending, onApprovalSettled });
+        if (result.kind === 'failed') return result;
+        if (result.value.kind === 'refused') return { kind: 'failed' as const, code: result.value.code };
+        return { kind: 'succeeded' as const, value: result.value };
+    }
+
     async function list(options?: MachinePresetCollectionOptions<readonly ManagedMachinePresetListEntryV1[]> & MachinePresetCollectionFilter): Promise<MachinePresetCollectionSettledResult<readonly ManagedMachinePresetListEntryV1[]>> {
         const presets: ManagedMachinePresetListEntryV1[] = [];
         let cursor: string | undefined;
         do {
-            const result = await read('machines.presets.list', { homeId, includeArchived: true,
-                ...(options?.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: options.sharedWithTeamId }),
-                ...(cursor ? { cursor } : {}) }, {
-                signal: options?.signal, onApprovalPending: options?.onApprovalPending, onApprovalSettled: options?.onApprovalSettled,
-            });
+            const result = await listPage({ ...options, cursor });
             if (result.kind === 'failed') return result;
-            if (result.value.kind === 'refused') return { kind: 'failed', code: result.value.code };
             if (result.value.kind !== 'listed') return { kind: 'failed', code: 'invalid_action_output' };
             for (const preset of result.value.presets) {
                 if (!isOpenedManagedMachinePresetV1(preset)
@@ -963,6 +975,6 @@ export function createMachinePresetCollectionClient(scope: ServerAccountScope, h
             { kind: 'failed', code: merged.errorCode });
     }
 
-    return Object.freeze({ execute, read, list, detail, capture, saveDraft,
+    return Object.freeze({ execute, read, listPage, list, detail, capture, saveDraft,
         prepareLaunchNameOverride, prepareAcquireOverride, prepareSetupOverride, prepareResizeOverride });
 }

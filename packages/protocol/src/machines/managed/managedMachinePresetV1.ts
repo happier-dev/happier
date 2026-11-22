@@ -255,12 +255,16 @@ export const ManagedMachinePresetCreateInputV1Schema = lazyZodSchema(() => z.omi
   createManagedMachinePresetV1BaseSchema(PluginJsonValueV2Schema), { revision: true, archivedAt: true, sharedWithTeamScope: true },
 ).check(z.refine(hasValidPresetParts, { message: 'A Preset requires complete creation or setup.' })));
 export const ManagedMachinePresetGetInputV1Schema = lazyZodSchema(() => z.strictObject({ homeId: id(), id: id() }));
+/** Team Shared requests one page of presets from the collection owner. */
+export const MANAGED_MACHINE_PRESET_PAGE_SIZE_V1 = 50;
 export const ManagedMachinePresetListInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), owner: z.optional(ManagedMachinePresetOwnerV1Schema),
   sharedWithTeamId: z.optional(id()),
   projection: z.optional(z.literal('revisions')),
+  limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(MANAGED_MACHINE_PRESET_PAGE_SIZE_V1))),
   includeArchived: z.optional(z.boolean()), cursor: z.optional(id()),
-}));
+}).check(z.refine(input => input.limit === undefined || (input.sharedWithTeamId !== undefined && input.projection === undefined),
+  { message: 'A preset page limit requires a Team full-list request' })));
 export const ManagedMachinePresetUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   homeId: id(), id: id(), expectedRevision: revision(),
   patch: z.strictObject({
