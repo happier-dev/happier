@@ -15,7 +15,7 @@ import { DeploymentTargetLinkProviderContentV1Schema, DeploymentTargetRoleInputP
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol';
 import { bindExternalActionExecutionAuthorizationVerifyHttpPathV1, createDeploymentDomainContentArtifactIdV1,
     createDeploymentLinkContentArtifactIdV1, createDeploymentEnvironmentContentArtifactIdV1, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
-    ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionRequestEnvelopeV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
@@ -29,6 +29,10 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
 import { createReviewedChildAuthorizationFixture, prepareReviewedChildAuthorization } from './reviewedChildAuthorization.composed.testkit';
+import { auth } from '@/app/auth/auth';
+import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { resolveMachineAdmission, setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import type { ActionExecutorContext, ActionExecuteResult, HostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
@@ -443,6 +447,75 @@ describe('public roots through real reviewed-child packet producers', () => {
             const sibling = '/v1/artifacts';
             expect((await f.resourceApp.inject({ method: 'GET', url: sibling, headers: await f.headers(observer, {
                 effectActionId: 'deployments.environments.get', method: 'GET', path: sibling }) })).statusCode).toBe(401);
+        } finally { await f.close(); }
+    });
+
+    it('refuses at mint every Environment root of a Machine Manage grantee without Environment permission, with no effect', async () => {
+        const f = await deploymentFixture();
+        try {
+            const grantee = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await makeShareEligibleForTest(f.account.id, grantee.id);
+            await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: f.account.id, machineId: f.machine.id,
+                principal: { kind: 'account', accountId: grantee.id }, level: 'admin' }));
+            expect(await resolveMachineAdmission({ actorAccountId: grantee.id, machineId: f.machine.id, actionId: 'deployments.domains.add' }))
+                .toMatchObject({ kind: 'admitted', role: 'manage' });
+            const token = await auth.createToken(grantee.id, undefined, { kind: 'account', authority: 'present_user' });
+            const receipt = await db.deployment.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
+                operation: 'deploy', state: 'succeeded', requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(),
+                requestedByAccountId: f.account.id, ...await f.artifact('deployment-receipt.v1') } });
+            await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: receipt.id } });
+            const domain = await db.deploymentDomain.create({ data: { environmentId: f.environment.id, targetLinkId: f.link.id,
+                createdByAccountId: f.account.id, state: 'pending', ...await f.artifact('deployment-domain.v1',
+                    { hostname: 'owned.example.test', target: { kind: 'provider' } }) } });
+            const environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+            const link = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+            const place = { serverId: f.serverId, environmentId: environment.id };
+            const existingDomain = { ...place, domainId: domain.id, expectedRevision: environment.revision,
+                expectedDomainRevision: domain.revision };
+            const dns = (localId: string) => ({ action: { pluginId: 'happier.dns.route53', localId },
+                credentialRef: { service: { pluginId: 'happier.dns.route53', localId: 'aws' }, accountId: 'selected' }, zoneId: 'selected', ttl: 300 });
+            const roots = (): ReadonlyArray<readonly [ActionId, unknown]> => [
+                ['deployments.teardown', { ...f.deployInput, expectedRevision: environment.revision,
+                    expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(), reason: 'manual' }],
+                ['deployments.backups.restore', { ...place, deploymentId: receipt.id, targetLinkId: link.id, machineId: f.machine.id,
+                    installationId: f.machine.installationId!, mode: 'prepare', expectedRevision: environment.revision,
+                    source: { kind: 'repository', snapshotId: 'pre-migration' } }],
+                ['deployments.targets.link', { ...place, expectedRevision: environment.revision, requestKey: crypto.randomUUID(),
+                    role: 'runtime', targetId: 'own-server', machines: [{ machineId: f.machine.id, installationId: f.machine.installationId! }],
+                    contentArtifactId: domain.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 }],
+                ['deployments.domains.add', { ...place, domainId: crypto.randomUUID(), expectedRevision: environment.revision,
+                    targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(),
+                    contentArtifactId: domain.contentArtifactId, contentHeaderVersion: 1, contentBodyVersion: 1 }],
+                ['deployments.domains.remove', { ...existingDomain, requestKey: crypto.randomUUID() }],
+                ['deployments.domains.verify', { ...existingDomain, requestKey: crypto.randomUUID() }],
+                ['deployments.domains.verify', { ...place, mode: 'preview', targetLinkId: link.id, expectedRevision: environment.revision,
+                    expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(),
+                    content: { hostname: 'draft.example.test', target: { service: 'web', containerPort: 8080 } } }],
+                ['deployments.domains.dns.create', { ...existingDomain, requestKey: crypto.randomUUID(), dns: dns('records-create') }],
+                ['deployments.domains.dns.verify', { ...existingDomain, requestKey: crypto.randomUUID(), dns: dns('records-verify') }],
+                ['deployments.receipts.observe', { ...place, deploymentId: receipt.id }],
+                ['deployments.observation.get', { ...place, targetLinkId: link.id }],
+            ];
+            const state = async () => ({
+                environment: await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id }, select: { revision: true, deletedAt: true } }),
+                receipts: await db.deployment.count({ where: { environmentId: environment.id } }),
+                links: await db.deploymentTargetLink.count({ where: { environmentId: environment.id } }),
+                domains: await db.deploymentDomain.findMany({ where: { environmentId: environment.id }, select: { id: true, revision: true, state: true } }),
+            });
+            const before = await state();
+            const mint = (bearer: string, actionId: ActionId, input: unknown) => f.app.inject({ method: 'POST',
+                url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId), headers: { authorization: `Bearer ${bearer}` },
+                payload: { v: 1, machineId: f.machine.id, envelope: ExternalActionRequestEnvelopeV1Schema.parse({ v: 1,
+                    requestId: crypto.randomUUID(), target: { kind: 'machine', machineId: f.machine.id }, input }) } });
+            for (const [actionId, input] of roots()) {
+                const refused = await mint(token, actionId, input);
+                expect(refused.statusCode, `${actionId} grantee: ${refused.body.slice(0, 300)}`).not.toBe(200);
+                // The Environment's owner holds the permission; the same root is admitted for them.
+                const admitted = await mint(f.presentUserToken, actionId, input);
+                expect(admitted.statusCode, `${actionId} owner: ${admitted.body.slice(0, 300)}`).toBe(200);
+            }
+            expect(await state()).toEqual(before);
+            expect(f.dispatches).toEqual([]);
         } finally { await f.close(); }
     });
 

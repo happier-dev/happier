@@ -6186,7 +6186,8 @@ describe('deployment children retain their controller Action authority', () => {
 
     it.each(['plain', 'e2ee'] as const)('admits a signed %s Domain admission and retained settlement through its real controller HTTP transport', async mode => {
         const { f, input, envelope, target, authorization, mintQueries } = await domainRootFixture(mode, mode === 'e2ee');
-        expect(mintQueries.filter(query => query.model === 'ProjectSource')).toEqual([]);
+        // Mint decides the requester's Environment permission once (one Source custody read).
+        expect(mintQueries.filter(query => query.model === 'ProjectSource')).toHaveLength(1);
         expect.soft(authorization.binding.environmentId).toBe(input.environmentId);
         const body = { ...input, actionOperationId: crypto.randomUUID(), requestId: envelope.requestId };
         const path = `/v1/deployments/environments/${input.environmentId}/domains`;

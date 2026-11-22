@@ -13,7 +13,8 @@ import { projectDeploymentNativeAdmissionV1,
     projectExternalActionDeploymentMetadataReceiptIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentDomainChildActionIdV1, isDeploymentChildRootActionIdV1, isDeploymentBackupActionIdV1 } from '@happier-dev/protocol';
 import { isDeploymentBackupReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, isDeploymentControllerSetActionIdV1,
-    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
+    isDeploymentReceiptObservationActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EmbedConfigV1Schema, StoredEmbedConfigV1Schema, type EmbedConfigV1 } from '@happier-dev/protocol/embed';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { type AccountStatusV1 } from '@happier-dev/protocol/home/governance';
@@ -791,7 +792,9 @@ class AuthModule {
         if (metadataEnvironmentId !== undefined && nativeAdmission && metadataEnvironmentId !== nativeAdmission.environmentId) {
             throw refuse('metadata_environment_mismatch');
         }
-        if (approvalMetadataRoot && !nativeAdmission || moveDefinitionRoot) {
+        // Observation reads are admitted only for a requester who can read the Environment.
+        const observationRoot = isDeploymentReceiptObservationActionIdV1(input.actionId);
+        if (approvalMetadataRoot && !nativeAdmission || moveDefinitionRoot || observationRoot) {
             if (!metadataEnvironmentId) throw refuse('metadata_environment_missing');
             const { loadDeploymentEnvironmentInTx } = await import('../deployments/deploymentEnvironmentService');
             const { canDeployDeploymentEnvironment } = await import('../deployments/deploymentAdmission');
@@ -799,7 +802,7 @@ class AuthModule {
                 authenticationAuthority: 'account_automation', authenticationEvidence: 'authentication' in input
                     ? input.authentication.evidence : mintApiTokenPrincipal?.authenticationEvidence,
             });
-            if (!environment.ok || !(isDeploymentControllerSetActionIdV1(input.actionId) || moveDefinitionRoot
+            if (!environment.ok || !observationRoot && !(isDeploymentControllerSetActionIdV1(input.actionId) || moveDefinitionRoot
                 ? environment.admission.canManage && !environment.row.deletedAt
                 : canDeployDeploymentEnvironment(environment.admission, environment.row))) {
                 throw refuse('metadata_environment_admission');

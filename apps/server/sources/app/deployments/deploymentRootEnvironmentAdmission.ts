@@ -18,6 +18,8 @@ import {
   DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1,
   DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+  isDeploymentDomainAddActionIdV1,
+  isDeploymentDomainRemoveActionIdV1,
 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
@@ -62,8 +64,7 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     | readonly AuthTokenAuthenticationEvidenceV1[]
     | undefined,
 ): Promise<DeploymentRootEnvironmentAdmission> {
-  // Domain children carry their own native admission owner.
-  if (isDeploymentDomainChildActionIdV1(root.actionId)) return { ok: true };
+  const domainRoot = isDeploymentDomainChildActionIdV1(root.actionId);
   const ingressUpdateRoot =
     root.actionId === 'deployments.environments.update' &&
     isDeploymentEnvironmentUpdateNativeAdmissionV1(nativeAdmission);
@@ -86,6 +87,12 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     authentication,
   );
   if (!environment.ok) return { ok: false, phase: 'environment' };
+  // Domain roots keep their own native placement owner; the requester's Environment
+  // permission is decided here, once, with the capability the Domain owner requires.
+  if (domainRoot) return (isDeploymentDomainAddActionIdV1(root.actionId) || isDeploymentDomainRemoveActionIdV1(root.actionId)
+    ? environment.admission.canManage && !environment.row.deletedAt
+    : canDeployDeploymentEnvironment(environment.admission, environment.row))
+    ? { ok: true } : { ok: false, phase: 'environment_capability' };
   if ('kind' in nativeAdmission && nativeAdmission.kind === 'promote') {
     if (!environment.admission.canManage) return { ok: false, phase: 'promote_manage' };
     const source = await loadDeploymentEnvironmentInTx(tx, root.accountId, root.serverIdentityId,
