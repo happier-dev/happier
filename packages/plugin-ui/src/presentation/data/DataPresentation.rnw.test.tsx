@@ -64,11 +64,11 @@ describe('public data nodes through React Native Web', () => {
   ])('keeps $label units and precision in row and metric exact-value names', ({ label, value, formatted, exact }) => {
     const theme = createSurfaceContext().theme;
     const mount = mountThroughReactNativeWeb(<ChartInteractionProvider renderDatum={(datum, visual, testID) =>
-      <button data-testid={testID} aria-label={`${datum.label}: ${datum.value}`}>{visual}</button>}>
+      <button data-testid={testID} aria-label={datum.accessibilityLabel ?? `${datum.label}: ${datum.value}`}>{visual}</button>}>
       <RankedRows theme={theme} testID="units" label="Models" basis={label}
         rows={[{ id: 'sol', label: 'Sol', value }]} valueFormatter={() => formatted} />
       <HappierDataMetric theme={theme} testID="unit-metric" label={label} value={value}
-        unit={label === 'Tokens' ? 'tokens' : undefined} valueFormatter={() => formatted} />
+        unit={label === 'Tokens' ? 'tokens' : undefined} valueFormatter={() => formatted} caption="This week" />
     </ChartInteractionProvider>);
     try {
       for (const testID of ['units-datum-0', 'unit-metric-datum']) {
@@ -79,7 +79,28 @@ describe('public data nodes through React Native Web', () => {
         else expect(target?.getAttribute('aria-label')).toMatch(/tokens/i);
       }
       expect(query(mount.container, 'units-row-0')?.getAttribute('aria-label')).toContain(formatted);
-      expect(query(mount.container, 'unit-metric')?.getAttribute('aria-label')).toContain(formatted);
+      const figure = query(mount.container, 'unit-metric');
+      const target = query(mount.container, 'unit-metric-datum');
+      expect(figure?.getAttribute('aria-hidden')).toBe('true');
+      expect(figure?.textContent).toContain(formatted);
+      expect(target?.getAttribute('aria-label')).toContain('This week');
+    } finally { mount.unmount(); }
+  });
+
+  it('exposes the metric name once and hides the repeated visual label, value, unit and caption', () => {
+    const theme = createSurfaceContext().theme;
+    const mount = mountThroughReactNativeWeb(<HappierDataMetric theme={theme} testID="named-figure" size="stat"
+      label="Plan cost" value={17} unit="USD" showLabel caption="As of this week"
+      comparison={{ value: '+2%', label: 'vs last week', meaning: 'neutral' }} />);
+    function reading(node: Node): string[] {
+      if (node.nodeType === Node.TEXT_NODE) return [node.textContent ?? ''];
+      if (!(node instanceof HTMLElement) || node.getAttribute('aria-hidden') === 'true') return [];
+      return [node.getAttribute('aria-label') ?? '', ...Array.from(node.childNodes).flatMap(reading)].filter(Boolean);
+    }
+    try {
+      const figure = query(mount.container, 'named-figure')!;
+      expect(reading(figure)).toEqual(['Plan cost: 17 USD, +2% vs last week, As of this week']);
+      expect(figure.textContent).toContain('17');
     } finally { mount.unmount(); }
   });
 

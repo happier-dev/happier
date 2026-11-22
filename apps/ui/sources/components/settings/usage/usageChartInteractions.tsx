@@ -11,7 +11,7 @@ export function UsageChartInteractions(props: Readonly<{ children: React.ReactNo
     const accent = usageSignatureAccent(theme);
     const renderDatum = React.useCallback<HappierChartDatumRenderer>((datum, visual, testID, renderTrigger) =>
         <ChartTooltip title={datum.label} value={datum.value} subtitle={datum.subtitle} accentColor={datum.color ?? accent}
-            triggerTestID={testID} keyboard={datum.keyboard} renderTrigger={renderTrigger}>
+            triggerTestID={testID} keyboard={datum.keyboard} accessibilityLabel={datum.accessibilityLabel} renderTrigger={renderTrigger}>
             {visual}
         </ChartTooltip>, [accent]);
     return <ChartInteractionProvider renderDatum={renderDatum}>{props.children}</ChartInteractionProvider>;

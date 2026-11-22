@@ -2,10 +2,9 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
-import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue } from '@happier-dev/plugin-ui/presentation';
+import { ChartDatum, formatHappierDataExactShare, formatHappierDataValue, HappierDataMetric } from '@happier-dev/plugin-ui/presentation';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { Text } from '@/components/ui/text/Text';
-import { visuallyHiddenStyle } from '@/components/ui/accessibility/visuallyHiddenStyle';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
@@ -17,7 +16,7 @@ import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { projectProviderAccountSubscriptionMonetaryFacts } from '@happier-dev/protocol/connect/accountSubscription';
 import type { UsagePlanInsights } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { UsageBodyInsufficient, UsageBodyReading, usageDimensionLabel, type UsageBodyProps } from './usageBodyKit';
+import { UsageBodyInsufficient, UsageBodyReading, usageDimensionLabel, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 import { summarizeUsagePlanFit, type UsagePlanAccount, type UsagePlanFit } from './plans/usagePlansModel';
 import { readUsagePersonalPaceTarget } from './plans/usagePacingTarget';
 import { UsageBillingButton, UsageSubscriptionPriceEditor } from './plans/UsagePlanActions';
@@ -211,6 +210,7 @@ function PlanRow(
 ) {
   const { account, nowMs } = props;
   const text = usePlanText();
+  const chartTheme = useUsagePluginTheme();
   const fit = summarizeUsagePlanFit(account, props.target);
   if (!account.read?.current) {
     return <View testID={props.testID} style={styles.row}>
@@ -305,9 +305,7 @@ function PlanRow(
   const exactFigure = multiple !== null ? `${formatHappierDataValue(multiple, getPreferredLanguage())}×`
     : selectedPrice && exactPrice && !priceText.includes(exactPrice) ? `${selectedPrice.currency} ${exactPrice}` : null;
   const figure = keyFact === null ? null : (
-    <Text style={[styles.price, text.title]} numberOfLines={1}
-      aria-hidden={exactFigure !== null || undefined}
-      importantForAccessibility={exactFigure !== null ? 'no' : undefined}>
+    <Text style={[styles.price, text.title]} numberOfLines={1}>
       {keyFact}
     </Text>
   );
@@ -341,16 +339,16 @@ function PlanRow(
     <View
       testID={props.testID}
       style={styles.row}
-      accessibilityLabel={[props.name.title, exactFigure !== null && multiple === null ? null : priceText, periodText, paceText].filter(Boolean).join(', ')}
     >
-      {exactFigure !== null ? (
-        <Text style={visuallyHiddenStyle}>
-          {shownMultiple === undefined ? keyFact : t('usage.board.plans.planValueMultiple', { multiple: shownMultiple })}
-        </Text>
-      ) : null}
       {/* The plan row itself opens its exact values and details at every widget size. */}
         <UsagePlanDisclosure loadExactHistory title={`${props.name.title}, ${t('usage.board.charts.showValues')}`} testID={`${props.testID}.details`}
-          label={<>{identity}{secondaryLine}</>} trailing={figureNode}>
+          meta={[multiple !== null || keyFact === null ? priceText : null, periodText, paceText].filter(Boolean).join(', ')}
+          label={<>{identity}{secondaryLine}</>} trailing={keyFact === null ? null : (
+            <HappierDataMetric testID={`${props.testID}.metric`} theme={chartTheme} label={t('usage.board.plans.planValueTitle')}
+              value={shownMultiple === undefined ? keyFact : t('usage.board.plans.planValueMultiple', { multiple: shownMultiple })}>
+              {figureNode}
+            </HappierDataMetric>
+          )}>
           <View style={styles.details}>
             {/* Terms first (what it costs, when it ends), then how it is being used, then what you can do. */}
             <View style={styles.terms}>

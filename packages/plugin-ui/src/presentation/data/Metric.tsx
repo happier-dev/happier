@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import { View } from 'react-native';
 
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -6,7 +7,7 @@ import { resolveHappierTextStepStyle } from '../layout/pageText.js';
 import { useOptionalHappierUiTypography } from '../../environment/context.js';
 import { formatHappierDataValue, formatHappierDataValueWithPrecision, type HappierDataValue } from './dataModel.js';
 import { HAPPIER_DATA_METRICS, useHappierDataTextStyles } from './dataText.js';
-import { ChartDatum } from './ChartDatum.js';
+import { ChartDatum, useChartInteractionAvailable } from './ChartDatum.js';
 
 /** One comparison under a metric ("+18% vs the week before"), coloured only by what it means. */
 export type HappierDataMetricComparison = Readonly<{
@@ -47,9 +48,17 @@ export type HappierDataMetricProps = Readonly<{
   tone?: 'warning' | 'danger';
   /** Visible ink only ("721M"); assistive technology keeps the exact value. */
   valueFormatter?: (value: number) => string;
+  /** Custom ink for an inline figure. The metric still owns the accessible reading. */
+  children?: ReactNode;
   theme: HappierUiTheme;
   testID?: string;
 }>;
+
+const metricInk = {
+  'aria-hidden': true,
+  accessibilityElementsHidden: true,
+  importantForAccessibility: 'no-hide-descendants',
+} as const;
 
 const NO_BREAK_SPACE = '\u00a0';
 
@@ -64,6 +73,7 @@ function bindNumbersToUnits(text: string): string {
 export function HappierDataMetric(props: HappierDataMetricProps) {
   const text = useHappierDataTextStyles(props.theme);
   const typography = useOptionalHappierUiTypography();
+  const chartInteractionAvailable = useChartInteractionAvailable();
   const exact = formatHappierDataValue(props.value, text.locale);
   const value =
     typeof props.value === 'number' &&
@@ -73,6 +83,14 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       : exact;
   const preciseValue = formatHappierDataValueWithPrecision(exact, value);
   const spokenValue = props.unit ? `${preciseValue} ${props.unit}` : preciseValue;
+  const accessibilityLabel = [
+    `${props.label}: ${spokenValue}`,
+    props.comparison ? `${props.comparison.value} ${props.comparison.label}` : null,
+    props.caption,
+  ].filter(Boolean).join(', ');
+  // Only abbreviated or rounded ink needs an exact tooltip. A mounted trigger owns its accessible name.
+  const hasExactTooltip = typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact);
+  const hideVisual = props.decorative || (hasExactTooltip && chartInteractionAvailable);
   const size = props.size ?? 'default';
   const comparisonColor = props.theme.colors.text;
   const valueColor = props.tone ? props.theme.statusText?.[props.tone] ?? props.theme.colors[props.tone] : props.theme.colors.text;
@@ -120,6 +138,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       </View>
     ) : (
       <View
+        {...metricInk}
         style={{
           flexDirection: 'row',
           flexWrap: 'wrap',
@@ -140,27 +159,20 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
   const visual = (
     <View
       testID={props.testID}
-      accessible={!props.decorative}
-      aria-hidden={props.decorative || undefined}
-      importantForAccessibility={props.decorative ? 'no-hide-descendants' : undefined}
+      accessible={!hideVisual}
+      role={hideVisual ? undefined : 'group'}
+      {...(hideVisual ? metricInk : {})}
       // Never wider than its cell: a value with no space to wrap at (a release name) breaks inside itself instead.
       style={{ gap: size === 'default' ? 0 : 2, minWidth: 0, maxWidth: '100%' }}
-      accessibilityLabel={[
-        `${props.label}: ${spokenValue}`,
-        props.comparison
-          ? `${props.comparison.value} ${props.comparison.label}`
-          : null,
-        props.caption ?? null,
-      ]
-        .filter(Boolean)
-        .join(', ')}
+      accessibilityLabel={accessibilityLabel}
     >
       {props.showLabel ? (
-        <HappierText style={text.caption} numberOfLines={1}>
+        <HappierText {...metricInk} style={text.caption} numberOfLines={1}>
           {props.label}
         </HappierText>
       ) : null}
       <View
+        {...metricInk}
         style={{
           flexDirection: 'row',
           alignItems: 'baseline',
@@ -168,14 +180,16 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
           columnGap: HAPPIER_DATA_METRICS.comparisonGapPx,
         }}
       >
-        <HappierText
-          testID={props.testID ? `${props.testID}-value` : undefined}
-          style={valueStyle}
-          tabularNumbers
-          // A figure is never ellipsized ("1 h 54 …"): a long one wraps at its spaces in a narrow cell.
-        >
-          {shown}
-        </HappierText>
+        {props.children ?? (
+          <HappierText
+            testID={props.testID ? `${props.testID}-value` : undefined}
+            style={valueStyle}
+            tabularNumbers
+            // A figure is never ellipsized ("1 h 54 …"): a long one wraps at its spaces in a narrow cell.
+          >
+            {shown}
+          </HappierText>
+        )}
         {inlineUnit ? (
           <HappierText
             style={size === 'hero' ? text.strong : text.caption}
@@ -187,7 +201,7 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
         {size === 'hero' ? comparison : null}
       </View>
       {size === 'hero' && props.comparison ? (
-        <HappierText style={text.caption}>{props.comparison.label}</HappierText>
+        <HappierText {...metricInk} style={text.caption}>{props.comparison.label}</HappierText>
       ) : null}
       {size !== 'hero' ? comparison : null}
       {size === 'stat' && !props.comparison && props.comparisonRoom ? (
@@ -212,17 +226,15 @@ export function HappierDataMetric(props: HappierDataMetricProps) {
       {props.caption ? (
         // Under a glance figure the line is its context ("was 188 ms before the last deploy"): it reads at the
         // meta size, a step above the default node's micro caption.
-        <HappierText style={size === 'default' ? text.caption : { ...text.body, color: props.theme.colors.mutedText }} numberOfLines={2}>
+        <HappierText {...metricInk} style={size === 'default' ? text.caption : { ...text.body, color: props.theme.colors.mutedText }} numberOfLines={2}>
           {props.caption}
         </HappierText>
       ) : null}
     </View>
   );
-  // Currency/percent affixes already state the complete value. Only abbreviated or rounded ink
-  // needs another target; the datum uses the same admitted precision as the accessible figure.
-  return typeof props.value === 'number' && Number.isFinite(props.value) && !value.includes(exact)
+  return hasExactTooltip
     ? <ChartDatum testID={props.testID ? `${props.testID}-datum` : undefined}
-      datum={{ label: props.label, value: spokenValue,
+      datum={{ label: props.label, value: spokenValue, accessibilityLabel,
         subtitle: [value, props.caption, props.comparison ? `${props.comparison.value} ${props.comparison.label}` : null].filter(Boolean).join(' · ') }}>
       {visual}
     </ChartDatum>

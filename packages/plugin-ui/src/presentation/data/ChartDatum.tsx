@@ -7,6 +7,8 @@ export type HappierChartDatum = Readonly<{
   label: string;
   value: string;
   subtitle?: string;
+  /** Accessible name for a trigger that also reads the figure's caption and comparison. */
+  accessibilityLabel?: string;
   color?: string;
   /** Repeated marks of one datum keep one keyboard/screen-reader target. */
   keyboard?: boolean;

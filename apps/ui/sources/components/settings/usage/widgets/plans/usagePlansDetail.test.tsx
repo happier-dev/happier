@@ -363,12 +363,16 @@ async function invokePlanCommand(title: string, input?: string) {
   });
 }
 
-// Project the mounted native host tree in reading order, honoring hidden subtrees and labeled groups.
+// Project the mounted host tree in web reading order. Generic labels and their visible children can both be exposed.
 function spokenPlanText(node: ReactTestInstance): string[] {
   if (typeof node.type === 'string') {
     if (node.props['aria-hidden'] || node.props.accessibilityElementsHidden
       || node.props.importantForAccessibility === 'no-hide-descendants') return [];
-    if (node.props.accessible && typeof node.props.accessibilityLabel === 'string') return [node.props.accessibilityLabel];
+    const label = node.props.accessibilityLabel;
+    if (typeof label === 'string') {
+      if (node.props.accessibilityRole === 'button') return [label];
+      return [label, ...node.children.flatMap(child => typeof child === 'string' ? [child] : spokenPlanText(child))];
+    }
   }
   return node.children.flatMap(child => typeof child === 'string' ? [child] : spokenPlanText(child));
 }
@@ -425,6 +429,41 @@ it.each(['runs out', 'rounded percentage'] as const)('reads the Projections hero
   expect(reading).toContain(t('usage.board.plans.estimatedFrom', { count: 7 }));
 });
 
+it('reads the no-tooltip Projections estimate once beside its label', async () => {
+  const now = Date.now();
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }]);
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const screen = await renderPlanAccessibility(<UsageProjectionsWidget {...bodyProps([read])} id="usage_projections" testID="proj" />);
+  expect(screen.findAllByType(ChartDatum).find(node => node.props.testID === 'proj.headline.detail')).toBeUndefined();
+  const headline = screen.findHostByTestId('proj.headline')!;
+  const reading = spokenPlanText(headline).join(' ');
+  const value = '~60%';
+  const label = t('usage.board.plans.projectionUsedAtReset');
+  expect(reading.indexOf(label), reading).toBeGreaterThanOrEqual(0);
+  expect(reading.indexOf(value)).toBeGreaterThan(reading.indexOf(label));
+  expect(reading.split(value), reading).toHaveLength(2);
+});
+
+it('reads the no-tooltip Plan fit price once', async () => {
+  const now = Date.now();
+  const amount = 17;
+  const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
+    resetAtMs: now + DAY, windowDurationMs: 7 * DAY }], {}, {
+    subscription: { status: 'unavailable', renewal: 'unknown', observedAtMs: now, staleAfterMs: HOUR,
+      enteredMonthlyPrice: { amount, currency: 'USD', enteredAtMs: now } },
+  });
+  const { UsagePlanFitWidget } = await import('../UsagePlanFitWidget');
+  const { formatUsageCost } = await import('@/utils/format/usageNumbers');
+  const screen = await renderPlanAccessibility(<UsagePlanFitWidget {...bodyProps([read])} id="usage_plan_fit" testID="fit" />);
+  expect(screen.findHostByTestId('fit.plan.work.figure')).toBeNull();
+  const reading = spokenPlanText(screen.findHostByTestId('fit.plan.work')!).join(' ');
+  const value = formatUsageCost(amount, 'USD');
+  const label = t('usage.board.plans.planValueTitle');
+  expect(reading.startsWith(`${label}:`), reading).toBe(true);
+  expect(reading.split(value), reading).toHaveLength(2);
+});
+
 it('reads the compact Plan fit value once before its account caption', async () => {
   const now = Date.now();
   const read = quotaRead('work', now, [{ meterId: 'weekly', label: 'Weekly', usedPct: 30,
@@ -445,7 +484,8 @@ it('reads the compact Plan fit value once before its account caption', async () 
   const row = screen.findHostByTestId('fit.plan.work')!;
   expect(screen.findHostByTestId('fit.plan.work.figure')).not.toBeNull();
   const reading = spokenPlanText(row).join(' ');
-  expect(reading.slice(0, 4), reading).toBe('2.8×');
+  const metricLabel = t('usage.board.plans.planValueTitle');
+  expect(reading.startsWith(`${metricLabel}: 2.8×`), reading).toBe(true);
   expect(reading.split('2.8×')).toHaveLength(2);
   expect(reading.indexOf('Account work')).toBeGreaterThan(reading.indexOf('2.8×'));
 });
@@ -465,7 +505,7 @@ it('reads the compact Plan fit price once before its account caption when precis
   expect(screen.findHostByTestId('fit.plan.work.figure')).not.toBeNull();
   const value = t('usage.board.plans.planEntered', { amount: formatUsageCost(amount, 'USD') });
   const reading = spokenPlanText(row).join(' ');
-  expect(reading.slice(0, value.length), reading).toBe(value);
+  expect(reading.startsWith(`${t('usage.board.plans.planValueTitle')}: ${value}`), reading).toBe(true);
   expect(reading.split(value)).toHaveLength(2);
   expect(reading.indexOf('Account work')).toBeGreaterThan(reading.indexOf(value));
 });
@@ -497,7 +537,7 @@ it('exposes all capacity windows through one exact-values disclosure', async () 
   const caption = spoken.findIndex(part => part === t('usage.board.plans.capacityLoneUnit'));
   const reset = spoken.findIndex(part => part.includes(t('usage.board.plans.capacityResets', { time: formatMoment(now + DAY, now) })));
   expect(remaining).toBeGreaterThanOrEqual(0);
-  expect(spoken.filter(part => part.includes('70%'))).toEqual(['70%']);
+  expect(spoken.slice(0, reset + 1).filter(part => part.includes('70%'))).toEqual(['70%']);
   expect(caption).toBe(remaining + 1);
   expect(reset).toBeGreaterThan(caption);
   expect(screen.findByTestId('cap.values-header')?.props.accessibilityLabel).toContain(t('usage.board.charts.showValues'));
@@ -1112,7 +1152,7 @@ it('refreshes the mounted plan price and ending when the quota reading stays the
   const newMoney = formatUsageCost(35, 'USD');
   const renewal = t('usage.board.plans.planRenews', { time: formatMoment(oldEnd, now) });
   const ending = t('usage.board.plans.planEnds', { time: formatMoment(newEnd, now) });
-  const rowLabel = () => screen.findHostByTestId('fit.plan.work')!.props.accessibilityLabel;
+  const rowLabel = () => spokenPlanText(screen.findHostByTestId('fit.plan.work')!).join(' ');
   expect(rowLabel()).toContain(oldMoney);
   expect(rowLabel()).toContain(renewal);
 
@@ -1542,7 +1582,7 @@ it.each([
   const headline = screen.findHostByTestId('cap.tightest');
   if (sibling === 'measured') {
     expect.soft(headline?.props.accessibilityLabel).toContain('80%');
-    expect(screen.findHostByTestId('fit.plan.work')?.props.accessibilityLabel).toContain(formatUsageCost(amount, 'USD'));
+    expect(spokenPlanText(screen.findHostByTestId('fit.plan.work')!).join(' ')).toContain(formatUsageCost(amount, 'USD'));
   } else {
     expect(headline).toBeFalsy();
   }
@@ -2076,7 +2116,7 @@ it('shows the list-price observation date in the selected app language', async (
     const expected = new Intl.DateTimeFormat(appLanguage, options).format(asOfMs);
     const deviceDate = new Intl.DateTimeFormat(undefined, options).format(asOfMs);
     expect(expected).not.toBe(deviceDate);
-    expect(screen.findHostByTestId('fit.plan.work')!.props.accessibilityLabel).toContain(expected);
+    expect(spokenPlanText(screen.findHostByTestId('fit.plan.work')!).join(' ')).toContain(expected);
   } finally {
     setPreferredLanguageFromSettings(previousLanguage);
   }

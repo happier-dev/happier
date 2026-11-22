@@ -573,7 +573,7 @@ const styles = StyleSheet.create((theme) => ({
   disclosureTitle: { flexShrink: 0 },
   disclosureRow: { alignSelf: 'stretch', flex: 1, minWidth: 0, alignItems: 'flex-start' },
   disclosureRowLabel: { flex: 1, minWidth: 0, gap: theme.space.s4 },
-  disclosureRowHead: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space.s16 },
+  disclosureRowHead: { flexDirection: 'row-reverse', alignItems: 'flex-start', gap: theme.space.s16 },
   disclosureBody: { paddingTop: theme.space.s8 },
   rank: {
     minWidth: 18,
@@ -700,7 +700,8 @@ export function UsagePlanDisclosure(
           </View>}
         </HappierPressable>
         );
-        return props.trailing ? <View style={styles.disclosureRowHead}>{pressable}{props.trailing}</View> : pressable;
+        // Read a plan's figure before its account caption while keeping the figure on the trailing edge.
+        return props.trailing ? <View style={styles.disclosureRowHead}>{props.trailing}{pressable}</View> : pressable;
       }}
     >
       {props.children}
