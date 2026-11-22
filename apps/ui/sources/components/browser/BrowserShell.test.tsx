@@ -80,12 +80,16 @@ vi.mock('@/modal', async () =>
 vi.mock('@/components/ui/media/annotation/AnnotatorCanvas', async () => await import('@/components/ui/media/annotation/AnnotatorCanvas.web'));
 
 const testState = vi.hoisted(() => ({
+  routeParams: {} as Record<string, string>,
   fetchBrowserDiagnosticsSnapshotViaMachineRpc: vi.fn(),
   machineRpc: vi.fn(),
   previewOpen: vi.fn<(input: unknown) => Promise<unknown>>(),
   previewFetch: vi.fn<RuntimeFetch>(),
   previewToken: 'header.eyJzdWIiOiJ2aWV3ZXItYWNjb3VudCJ9.signature',
 }));
+
+vi.mock('expo-router', async () =>
+  (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ params: () => testState.routeParams }).module);
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
   const { createTokenStorageModuleMock } =
@@ -1041,12 +1045,16 @@ describe('BrowserShell', () => {
     });
   });
 
-  it('copies the private destination of the service registered for the active frame', async ({ onTestFinished }) => {
+  it('copies the active frame destination and reopens that registered private preview from a fresh route', async ({ onTestFinished }) => {
     const { BrowserShell } = await import('./BrowserShell');
     const { createProjectServiceDeclarationTargetIdV1 } = await import('@happier-dev/protocol/local/services/actions/v1');
-    const { buildLocalServiceDeclarationPreviewLandingUrlV1 } = await import('@happier-dev/protocol/local/services/preview/v1');
+    const { buildLocalServiceDeclarationPreviewLandingUrlV1, parseLocalServiceDeclarationPreviewLandingUrlV1 } =
+      await import('@happier-dev/protocol/local/services/preview/v1');
     const { applyLocalServicePreviewSnapshot, createLocalServicePreviewState } = await import('@/sync/domains/local/services/preview/store');
     const { installLocalStorageMock } = await import('@/auth/storage/tokenStorage.web.testHelpers');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { tryWriteServerEnabledBitInPlace } = await import('@happier-dev/protocol/features/serverEnabledBit');
+    const { primeServerFeaturesSnapshot, deleteServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
     const serverUrl = 'https://browser-copy-home.example.test';
     const previousPlatform = Platform.OS;
     const browserStorage = installLocalStorageMock();
@@ -1054,8 +1062,19 @@ describe('BrowserShell', () => {
     onTestFinished(() => {
       browserStorage.restore();
       Reflect.set(Platform, 'OS', previousPlatform);
+      testState.routeParams = {};
     });
     const home = await addBrowserHome(serverUrl, true);
+    const serverIdentityId = `srv_${new URL(serverUrl).hostname}`;
+    const features = createRootLayoutFeaturesResponse({
+      features: { browser: { enabled: true, internal: { enabled: true }, viewTargets: { enabled: true } } },
+      capabilities: { serverIdentity: { serverIdentityId } },
+    });
+    expect(tryWriteServerEnabledBitInPlace(features, 'localServices', true)).toBe(true);
+    homes.answer(home.id, '/v1/features', { body: features });
+    homes.answer(home.id, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features, serverIdentityId } });
+    onTestFinished(() => deleteServerFeaturesSnapshot({ serverId: home.id }));
     const selection = { kind: 'manifest', name: 'web' } as const;
     const stableId = createProjectServiceDeclarationTargetIdV1({ serverId: home.id, machineId: target.machineId, id: 'workspace_1' }, selection);
     const browserTarget = { kind: 'localServicePreview', machineId: target.machineId, targetId: stableId, display: target.display } as const;
@@ -1071,18 +1090,19 @@ describe('BrowserShell', () => {
       return { v: 1, requestId: 'copy_1', action: 'copy_url', status: 'succeeded', auditEvents: [], destinationUrl };
     });
     previewBoundaries.set(serverUrl, await createExternalActionAccountHttpBoundary({
-      serverUrl, serverIdentityId: `srv_${new URL(serverUrl).hostname}`, accountId: 'viewer-account',
+      serverUrl, serverIdentityId, accountId: 'viewer-account',
       machineId: target.machineId, actionId: 'localServices.actions.copyUrl', tokenEpoch: 0,
       requesterInvocation: 'credentials', execute: copy,
     }));
-    const previewState = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), {
-      generatedAt: 1, refreshState: 'idle', diagnostics: [], previews: [{ previewId: serviceTarget.managedServiceId,
+    const preview = { previewId: serviceTarget.managedServiceId,
         resource: { previewId: serviceTarget.managedServiceId, machineId: target.machineId, serviceTarget, browserTarget,
           owner: { kind: 'user', id: 'viewer-account' }, target: { host: '127.0.0.1', port: 5173, scheme: 'http' },
           initialPath: { pathname: '/', search: '' }, display: target.display, originMode: 'host' },
         accessUrl: 'https://preview.happier.test/', expiresAt: null, diagnostics: [],
-      }],
-    });
+    } satisfies DaemonLocalServicePreviewOpenOrCreateResponseV1['preview'];
+    const snapshot = { v: 1, machineId: target.machineId, generatedAt: 1, refreshState: 'idle',
+      diagnostics: [], previews: [preview], resources: [preview.resource] } satisfies DaemonLocalServicePreviewOpenOrCreateResponseV1['snapshot'];
+    const previewState = applyLocalServicePreviewSnapshot(createLocalServicePreviewState(), snapshot);
     const base = await createShellState();
     const state = { ...base, viewsById: { ...base.viewsById, view_1: { ...base.viewsById.view_1!, target: browserTarget } } };
     const screen = await renderScreen(<BrowserShell browserSessionId="browser_session_1" platform="web"
@@ -1094,6 +1114,43 @@ describe('BrowserShell', () => {
     expect(copy).toHaveBeenCalledOnce();
     expect(clipboard).toHaveBeenCalledExactlyOnceWith(destinationUrl);
     await screen.unmount();
+
+    const locator = parseLocalServiceDeclarationPreviewLandingUrlV1(clipboard.mock.calls[0]![0]);
+    expect(locator).not.toBeNull();
+    testState.routeParams = { ...locator! };
+    const admitted = { protocolVersion: 1, status: 'existing', preview, snapshot } satisfies DaemonLocalServicePreviewOpenOrCreateResponseV1;
+    const admit = vi.fn<(_input: unknown) => unknown>().mockReturnValue(admitted);
+    previewBoundaries.set(serverUrl, await createExternalActionAccountHttpBoundary({
+      serverUrl, serverIdentityId, accountId: 'viewer-account',
+      machineId: target.machineId, actionId: 'localServices.preview.openOrCreate', tokenEpoch: 0,
+      requesterInvocation: 'credentials', execute: admit,
+      failure: result => {
+        const parsed = ActionExecuteFailureSchema.safeParse(result);
+        return parsed.success ? parsed.data : null;
+      },
+    }));
+    const { WorkspaceRouteBody } = await import('../../app/(app)/preview-service/[machineId]/[targetId]');
+    const landing = await renderScreen(<WorkspaceRouteBody />);
+    const { BrowserViewHost } = await import('./BrowserViewHost');
+    await vi.waitFor(() =>
+      expect(landing.findAllByType(BrowserViewHost)[0]?.props.view?.target, landing.getTextContent()).toEqual(browserTarget));
+    expect(admit).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      machineId: target.machineId, launchTargetId: stableId,
+    }), expect.anything());
+    await landing.unmount();
+
+    admit.mockReturnValueOnce(ActionExecuteFailureSchema.parse({ ok: false,
+      errorCode: 'local_services_preview_refused:service_not_listening',
+      error: 'local_services_preview_refused:service_not_listening' }));
+    const stopped = await renderScreen(<WorkspaceRouteBody />);
+    await vi.waitFor(() =>
+      expect(stopped.getTextContent()).toContain('localServices.actions.failure.serviceNotRunning'));
+    expect(stopped.findByTestId('private-service-preview')).toBeNull();
+    expect(admit).toHaveBeenCalledTimes(2);
+    await stopped.pressByTestIdAsync('private-service-preview-retry');
+    await vi.waitFor(() => expect(stopped.findByType(BrowserViewHost).props.view.target).toEqual(browserTarget));
+    expect(admit).toHaveBeenCalledTimes(3);
+    await stopped.unmount();
   });
 
   it('says on the ended card why Open again was refused, and leads to Services once nothing runs it', async () => {
