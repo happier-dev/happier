@@ -33,7 +33,7 @@ import { UsageDailyWidget } from './UsageDailyWidget';
 import { UsageFlowWidget } from './UsageFlowWidget';
 import { UsageBreakdownsWidget } from './UsageBreakdownsWidget';
 import { UsageConstellationBody } from './UsageChartStyleBodies';
-import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { usageAgentTitle, usageSourceTitle } from '@/sync/domains/usage/usageLabels';
 import { leadingUsageRows, UsageCoverageLine, UsageShowAllRows, usagePartialHistoryLabel } from './usageBodyKit';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { UsageEfficiencyWidget } from './UsageEfficiencyWidget';
@@ -523,6 +523,26 @@ describe('one selected money basis across Usage bodies', () => {
     await screen.pressByTestIdAsync('coverage.detail.action');
     expect(screen.getTextContent()).toContain(t('usage.board.page.coverageReason_missing_baseline'));
   });
+  it('groups source coverage by Agent identity, never by display name, and keeps the capture names as the row detail (J-B10)', async () => {
+    const props = mountedCosts();
+    type CoverageSource = NonNullable<NonNullable<typeof props.slice.accounting>['coverage']>['sources'][number];
+    const source: Omit<CoverageSource, 'source'> = { path: 'native', status: 'available', eventCount: 1, captureKind: 'measured', asOfMs: 100, historyComplete: true };
+    const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
+      accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'complete' as const,
+        reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: true }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
+    const rowsOf = async (sources: readonly CoverageSource[]) => (await renderScreen(<UsageSourceCoverageWidget {...props}
+      id="usage_source_coverage" testID="coverage" slice={coverageOf(sources)} />)).findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    // Two installed Agents with distinct routing identities that display under the same name stay two rows.
+    expect(usageAgentTitle('research-tool')).toBe(usageAgentTitle('research_tool'));
+    const twins = await rowsOf([{ ...source, source: 'native:research-tool', machineId: 'm1' }, { ...source, source: 'native:research_tool', machineId: 'm2' }]);
+    expect(twins.map(([title]) => title)).toEqual([usageAgentTitle('research-tool'), usageAgentTitle('research_tool')]);
+    // One Agent with two capture kinds is one row, and both captures are named in its detail.
+    const claude = await rowsOf([{ ...source, source: 'claude-assistant-usage' }, { ...source, source: 'claude-sdk-result' }]);
+    expect(claude).toHaveLength(1);
+    expect(claude[0]![0]).toBe(usageAgentTitle('claude'));
+    expect(claude[0]![1]).toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude[0]![1]).toContain(usageSourceTitle('claude-sdk-result'));
+  });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
     type CoverageSource = NonNullable<NonNullable<typeof props.slice.accounting>['coverage']>['sources'][number];
@@ -543,7 +563,7 @@ describe('one selected money basis across Usage bodies', () => {
       ])} />);
     const runtimeRows = runtime.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
     expect(runtimeRows.filter(([title]) => title === 'Codex')).toHaveLength(1);
-    expect(runtimeRows.find(([title]) => title === 'Codex')?.[1]).toBe(t('usage.board.sources.coverageUnknown'));
+    expect(runtimeRows.find(([title]) => title === 'Codex')?.[1]).toContain(t('usage.board.sources.coverageUnknown'));
     expect(runtime.getTextContent()).not.toContain(t('usage.board.page.sourceAgentPromptUsage'));
     // One source across machines whose captures differ in status is still one row, its statuses counted in it (N8).
     const mixed = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"

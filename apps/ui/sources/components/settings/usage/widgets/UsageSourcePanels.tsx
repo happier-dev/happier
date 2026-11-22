@@ -1,9 +1,11 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 import { HappierDataMetric, UsageSourceCoverageBody } from '@happier-dev/plugin-ui/presentation';
 import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
+import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { t } from '@/text';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
@@ -54,29 +56,42 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
     </View> : null} />;
 }
 
+type CoverageGroup = { agentId: string | null; title: string; captures: Set<string>; kinds: Set<keyof typeof captureKeys | null>;
+  status: CoverageStatus; machines: Set<string>; unbound: boolean };
+
 /**
- * Coverage shows one row per recognizable source. Several capture paths can share a title and a Machine.
+ * Coverage shows one row per Agent (its routing identity, through the source's declaration; the title is display
+ * only), with the captures it reports through named in the row's detail. A capture that names no Agent keeps its
+ * own row. Several capture paths can share an Agent and a Machine.
  */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
-  const groups = new Map<string, { title: string; kinds: Set<keyof typeof captureKeys | null>; status: CoverageStatus; machines: Set<string>; unbound: boolean }>();
+  const groups: CoverageGroup[] = [];
   for (const source of sources) {
+    const agentId = usageSourceAgentId(source.source);
     // A source's own title can be a mid-sentence fragment ("usage"); a row opens with a capital.
     const named = usageSourceTitle(source.source, undefined, 'coverage');
     const title = `${named.charAt(0).toLocaleUpperCase()}${named.slice(1)}`;
     const status = sourceCoverageStatus(source);
-    const group = groups.get(title) ?? { title, kinds: new Set<keyof typeof captureKeys | null>(), status, machines: new Set<string>(), unbound: false };
+    let group = groups.find(row => agentId === null
+      ? row.agentId === null && row.title === title
+      : row.agentId !== null && areSameAgentRoutingIdentity(row.agentId, agentId));
+    if (!group) {
+      group = { agentId, title, captures: new Set(), kinds: new Set(), status, machines: new Set(), unbound: false };
+      groups.push(group);
+    }
+    if (agentId !== null) group.captures.add(usageSourceTitle(source.source));
     if (source.machineId) group.machines.add(source.machineId);
     else group.unbound = true;
     group.kinds.add(source.captureKind ?? null);
     if (COVERAGE_STATUS_RANK.indexOf(status) < COVERAGE_STATUS_RANK.indexOf(group.status)) group.status = status;
-    groups.set(title, group);
   }
   // One status per row, the most limiting one; how it is captured only when every machine captures it the same way.
-  const shared = partialSaid && [...groups.values()].every(group => group.status === 'partial');
-  return [...groups.values()].map(({ title, kinds, status, machines, unbound }) => {
+  const shared = partialSaid && groups.every(group => group.status === 'partial');
+  return groups.map(({ title, captures, kinds, status, machines, unbound }) => {
     const kind = kinds.size === 1 ? [...kinds][0] : null;
     const capture = kind && (kind !== 'measured' || status === 'available') ? t(captureKeys[kind]) : null;
-    return { title, label: [!unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
+    return { title, label: [captures.size > 1 ? [...captures].join(', ') : null,
+      !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
       capture, shared ? null : t(statusKeys[status])].filter(Boolean).join(' · ') };
   });
 }
