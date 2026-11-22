@@ -510,21 +510,23 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'unpriced.tokens')?.props.value).toBe(0);
   });
   it.each([
-    { historyComplete: true, rowStatus: t('usage.board.coach.coverage_complete') },
-    { historyComplete: false, rowStatus: '' },
-    { historyComplete: undefined, rowStatus: t('usage.board.sources.coverageUnknown') },
-  ])('uses only capture coverage in Sources when historyComplete=$historyComplete', async ({ historyComplete, rowStatus }) => {
+    { historyComplete: true, rangeComplete: true, rowStatus: t('usage.board.sources.coverageAvailable') },
+    { historyComplete: true, rangeComplete: false, rowStatus: t('usage.board.sources.coverageAvailable') },
+    { historyComplete: false, rangeComplete: true, rowStatus: '' },
+    { historyComplete: undefined, rangeComplete: true, rowStatus: t('usage.board.sources.coverageUnknown') },
+  ])('uses capture coverage separately from range coverage (capture $historyComplete, range $rangeComplete)', async ({ historyComplete, rangeComplete, rowStatus }) => {
     const props = mountedCosts();
-    const accounting = { ...props.slice.accounting!, coverage: { status: 'complete' as const,
-      reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: true }, ranked: [],
+    const accounting = { ...props.slice.accounting!, coverage: { status: rangeComplete ? 'complete' as const : 'partial' as const,
+      reasons: rangeComplete ? [] : ['counter_discontinuity' as const], missingDimensions: [],
+      range: { startMs: 0, endMs: day, complete: rangeComplete }, ranked: [],
       sources: [{ source: 'claude-sdk-result', path: 'runtime' as const, status: 'available' as const,
         eventCount: 1, captureKind: 'measured' as const, historyComplete }] } };
     const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [
       { query: props.query, status: 'available', value: accounting },
     ] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
+    if (historyComplete === false || !rangeComplete) expect(screen.getTextContent()).toContain(usagePartialHistoryLabel());
     expect(screen.findByType(HappierDataRows).props.rows).toEqual([[usageAgentTitle('claude'), rowStatus]]);
-    if (historyComplete === false) expect(screen.getTextContent()).toContain(usagePartialHistoryLabel());
   });
   it('renders witnessed source coverage and the canonical incomplete-range reasons instead of claiming a complete inventory', async () => {
     const props = mountedCosts();
@@ -578,9 +580,9 @@ describe('one selected money basis across Usage bodies', () => {
     await summaries.pressByTestIdAsync('coverage.captures-header');
     expect(summaries.getTextContent()).toContain(`${usageAgentTitle('claude')}: ${usageSourceTitle('claude-sdk-result')}`);
     const unknown = await rowsOf([{ ...source, source: 'acp-usage-update', captureKind: undefined }]);
-    expect(unknown[0]![1]).toBe(t('usage.board.coach.coverage_complete'));
+    expect(unknown[0]![1]).toBe(t('usage.board.sources.coverageAvailable'));
     const logs = await rowsOf([{ ...source, source: 'codex-native-accounting', captureKind: 'from_logs' }]);
-    expect(logs[0]![1]).toBe(t('usage.board.coach.coverage_complete'));
+    expect(logs[0]![1]).toBe(t('usage.board.sources.coverageAvailable'));
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();

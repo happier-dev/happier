@@ -19,7 +19,7 @@ import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAl
   usageCoverageDescription, usageCoverageSummary, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 
 const statusKeys = {
-  available: 'usage.board.coach.coverage_complete', partial: 'usage.board.page.factIncomplete',
+  available: 'usage.board.sources.coverageAvailable', partial: 'usage.board.page.factIncomplete',
   unknown: 'usage.board.sources.coverageUnknown', unsupported: 'usage.board.sources.unsupported',
   pending: 'usage.board.page.loading', error: 'usage.board.sources.failed',
 } as const;
