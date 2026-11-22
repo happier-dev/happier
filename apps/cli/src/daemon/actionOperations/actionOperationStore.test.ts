@@ -14,6 +14,20 @@ import { prepareProjectOpenReceiptPersistence } from './projectOpenReceiptPersis
 const ACCOUNT_SCOPE = { accountId: 'account-1', machineId: 'machine-1' } as const;
 
 describe('action operation store', () => {
+  it('distinguishes an unopened receipt store from a first Backup receipt write failure', () => {
+    const createBackup = (store: ReturnType<typeof createActionOperationStore>) => store.create({
+      operationId: 'backup', scope: ACCOUNT_SCOPE, actionId: 'deployments.backups.run',
+      title: 'Backup', cancellation: 'unsupported', inputIdentity: '{}',
+    });
+    const unopened = createActionOperationStore({ projectOpenReceiptPersistence: null });
+    const cannotWrite = createActionOperationStore({ projectOpenReceiptPersistence: {
+      retained: [], save() { throw new Error('private storage path'); }, remove() {},
+    } });
+
+    expect(() => createBackup(unopened)).toThrow(expect.objectContaining({ storagePhase: 'open', effectAttempted: false }));
+    expect(() => createBackup(cannotWrite)).toThrow(expect.objectContaining({ storagePhase: 'write', effectAttempted: false }));
+    expect(cannotWrite.get(ACCOUNT_SCOPE, 'backup')).toBeNull();
+  });
   it('retains owner steps through approval and indeterminate progress overlays until explicitly replaced', () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'prepare-steps', scope: ACCOUNT_SCOPE, actionId: 'machines.presets.prepare',

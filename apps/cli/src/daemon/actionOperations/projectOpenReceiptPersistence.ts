@@ -33,8 +33,10 @@ export type ProjectOpenReceiptPersistence = Readonly<{
 }>;
 
 export class ProjectOpenReceiptPersistenceError extends Error {
-    constructor(readonly effectAttempted: boolean) {
-        super('Action operation receipt storage is unavailable on this Machine');
+    constructor(readonly storagePhase: 'open' | 'write', readonly effectAttempted: boolean) {
+        super(storagePhase === 'open'
+            ? 'Action operation receipt storage could not be opened on this Machine'
+            : 'Action operation receipt could not be saved on this Machine');
         this.name = 'ProjectOpenReceiptPersistenceError';
     }
 }
@@ -64,7 +66,7 @@ export async function prepareProjectOpenReceiptPersistence(input: Readonly<{
         // admitted requester can be a different Account; the store scopes reads.
         if (!requiresActionOperationReceiptPersistence(receipt.snapshot.actionId) || entryName(receipt.snapshot.operationId) !== name
             || receipt.snapshot.scope.machineId !== input.machineId) {
-            throw new ProjectOpenReceiptPersistenceError(false);
+            throw new ProjectOpenReceiptPersistenceError('open', false);
         }
         return receipt;
     });

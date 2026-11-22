@@ -240,16 +240,19 @@ export function createActionOperationStore(options?: Readonly<{
       && (isDeploymentBackupEvidenceActionIdV1(snapshot.actionId)
         || retainsReturnedRecoveryResult(snapshot.actionId) && isDeepStrictEqual(snapshot.result, previous.result));
     if (!transientProgressOnly && requiresActionOperationReceiptPersistence(snapshot.actionId) && metadata && projectOpenReceiptPersistence !== undefined) {
+      const refusePersistence = (phase: ProjectOpenReceiptPersistenceError['storagePhase']): never => {
+        const effectAttempted = snapshot.state !== 'accepted' && previous?.state !== 'accepted';
+        if (!effectAttempted) removeSnapshot(snapshot.operationId);
+        throw new ProjectOpenReceiptPersistenceError(phase, effectAttempted);
+      };
+      if (projectOpenReceiptPersistence === null) return refusePersistence('open');
       try {
-        if (!projectOpenReceiptPersistence) throw new ProjectOpenReceiptPersistenceError(false);
         projectOpenReceiptPersistence.save({ version: 1, snapshot, inputIdentity: metadata.inputIdentity,
           ...(metadata.preparedInput !== undefined ? { preparedInput: metadata.preparedInput } : {}),
           ...(metadata.deploymentChildIdentity ? { deploymentChildIdentity: metadata.deploymentChildIdentity } : {}),
           ...(metadata.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: metadata.requesterWorkAttributionV1 } : {}) });
       } catch {
-        const effectAttempted = snapshot.state !== 'accepted' && previous?.state !== 'accepted';
-        if (!effectAttempted) removeSnapshot(snapshot.operationId);
-        throw new ProjectOpenReceiptPersistenceError(effectAttempted);
+        refusePersistence('write');
       }
     }
     const before = previous ? projectLiveWork(previous) : null;
