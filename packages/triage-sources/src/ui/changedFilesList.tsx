@@ -7,6 +7,7 @@ import {
   DiffViewer,
   List,
   LoadingState,
+  ScrollArea,
   Stack,
   Text,
   formatHappierDiffStat,
@@ -304,7 +305,9 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
     [props.focusPath],
   );
   // Single-line file rows stack flush, as an index does; the open row lifts out of them on its own margin.
-  return (
+  // The progress line and the files scroll as one at every width (N2): the List windows its rows in the scroller that
+  // holds it, which is the phone's page or, in a pane, this panel's own scroll area, so no row is clipped under the line.
+  const list = (
     <List
       accessibilityLabel={props.accessibilityLabel}
       accessibilityLabelKey={props.accessibilityLabelKey}
@@ -313,8 +316,8 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
       keyForItem={(row) => row.path}
       header={<FilesHeader>{props.header}</FilesHeader>}
       endContent={props.endContent}
-      // Seed the existing page window with a single padded line before the List measures its rows.
-      {...(pageScroll ? { pageLayout: { estimatedRowHeight: typography.reading.lineHeight + 2 * spacing.small } } : {})}
+      // Seed the page window with a single padded line before the List measures its rows.
+      pageLayout={{ estimatedRowHeight: typography.reading.lineHeight + 2 * spacing.small }}
       {...(revealRequest === undefined ? {} : { revealRequest })}
       renderItem={(row) => (
         <FileRow
@@ -328,7 +331,10 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
       )}
     />
   );
+  return pageScroll ? list : <ScrollArea style={FILES_SCROLL_STYLE}>{list}</ScrollArea>;
 }
+
+const FILES_SCROLL_STYLE = Object.freeze({ flex: 1, minWidth: 0, minHeight: 0 });
 
 /** One file's part of a change's raw diff, and whether the diff stopped inside it. */
 export type TriageChangedFileDiffPartV1 = Readonly<{ diff: string; shortened: boolean }>;

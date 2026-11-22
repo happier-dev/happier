@@ -209,6 +209,45 @@ it('keeps compact Files mounted work in the page window through paging and scrol
     expect(later).not.toContain(FIRST_PAGE[1].path);
 });
 
+it('scrolls the progress line with the files in a pane too, keeping mounted rows in the window (N2)', async () => {
+    // In a pane the Files panel bounds its own scroller. The line above the files scrolls away with them, as it does on
+    // a phone, so a row is never clipped directly under it; the rows stay windowed in that one scroller.
+    let fixture!: PluginUiTestkit;
+    await act(async () => {
+        fixture = await createPluginUiTestkit({
+            identity: { instanceId: 'files-scroll-pane', mountNonce: 'files-scroll-pane-mount' },
+            authorPlugin: { id: 'happier.scm.forge.github', version: '0.0.0' },
+            surfaceContext,
+            surface: defineUiSurface(() => (
+                <PluginUiPresentationHostProviderInternal host={host}>
+                    <TriageDetailPanel panel="files" scrollOwner="list" ariaLabel="Pull request"
+                        panels={{
+                            files: <TriageChangedFilesList accessibilityLabel="Changed files" accessibilityLabelKey="fixture.changedFiles"
+                                sections={[{ key: 'source', title: '', data: [...FIRST_PAGE, ...MORE_FILES] }]} active
+                                focusPath={null} onFocusPath={() => {}} viewed={null} header={<Text value="0 of 201 viewed" />}
+                                renderBody={() => null} />,
+                        }} />
+                </PluginUiPresentationHostProviderInternal>
+            )),
+            adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+            launchInput: {},
+        });
+    });
+    mounted.push(fixture);
+    const line = [...document.querySelectorAll('*')].find(node => node.childElementCount === 0 && node.textContent === '0 of 201 viewed')!;
+    const list = document.querySelector('[role="list"][aria-label="Changed files"]')!;
+    const scrollerOf = (node: Element) => {
+        for (let current: Element | null = node; current !== null; current = current.parentElement) {
+            if (['auto', 'scroll'].includes(getComputedStyle(current).overflowY)) return current;
+        }
+        return null;
+    };
+    expect(scrollerOf(list)).not.toBeNull();
+    expect(scrollerOf(line)).toBe(scrollerOf(list));
+    expect(fileButtons().length).toBeGreaterThan(0);
+    expect(fileButtons().length).toBeLessThan(FIRST_PAGE.length + MORE_FILES.length);
+});
+
 it('holds the same visible file and pixel offset through a trailing append with a diff open', async () => {
     const files = await mountFiles();
     const { scroller, nextPage, press } = files;
