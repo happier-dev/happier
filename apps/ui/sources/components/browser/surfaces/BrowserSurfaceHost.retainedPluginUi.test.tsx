@@ -26,6 +26,7 @@ import { createBrowserViewState, openBrowserTarget } from '@/sync/domains/browse
 import { createDefaultRuntimeActionExecutor } from '@/sync/ops/actions/defaultRuntimeActionExecutor';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 import { BrowserScopedWorkspace } from './BrowserScopedWorkspace';
+import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { AppPaneProvider, useAppPaneContext } from '@/components/appShell/panes/AppPaneProvider';
 import { useAppPaneScope, type AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { DetailsSplitWorkspace } from '@/components/appShell/panes/details/workspace/DetailsSplitWorkspace';
@@ -50,6 +51,10 @@ beforeEach(async () => {
     connection = await restoreServerAccountForTest({ serverUrl: 'https://retained-plugin-ui.example.test',
         serverIdentityId: 'srv_retained_plugin', request: async input => {
             const path = new URL(String(input)).pathname;
+            if (path.endsWith('/preview/phone-preview/access')) {
+                return Response.json({ v: 1, kind: 'server_preview', previewId: 'phone-preview', machineId: 'machine-1',
+                    accessUrl: 'https://phone-preview.example.test/', expiresAt: 2_000_000_000_000 });
+            }
             if (path === '/v1/account/profile') return Response.json({ profile: AccountProfileSchema.parse({ id: 'account-a' }) });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
@@ -209,12 +214,56 @@ async function mountRetainedBrowserForPlugin(scopeId?: string, selectedSlot = fa
 function PhoneWorkspace(props: Readonly<{ shown: boolean; pane: { current?: AppPaneScopeApi } }>) {
     props.pane.current = useAppPaneScope('session:phone-close');
     return props.shown ? <BrowserScopedWorkspace scopeId="session:phone-close"
-        scope={{ kind: 'session', sessionId: 'session-1' }}
+        scope={{ kind: 'session', sessionId: 'session-1', serverId: connection!.serverId }}
+        localServicePreviewServerId={connection!.serverId}
         openScope="sessionMobile" platform="web"
         collapseSingleTab keepAliveAboveRouter presentationSlotId="phone-slot" /> : null;
 }
 
 describe('retained Browser through the external plugin-UI Action API', () => {
+    it('preserves the admitted page while phone Browser switches to Chat and back with membership intact', async () => {
+        const pane: { current?: AppPaneScopeApi } = {};
+        const parent: { current?: AppPaneScopeApi } = {};
+        const store = createRetainedPresentationSlotsStore();
+        function PhoneScene(props: Readonly<{ surface: 'browser' | 'chat' }>) {
+            parent.current = useAppPaneScope('session:phone-parent');
+            return <PluginSurfaceFocusEligibilityProvider active={props.surface === 'browser'}>
+                <PhoneWorkspace shown pane={pane} />
+            </PluginSurfaceFocusEligibilityProvider>;
+        }
+        const render = (surface: 'browser' | 'chat') => <AppPaneProvider><RetainedPresentationSlotsProvider store={store}>
+            <PhoneScene surface={surface} />
+        </RetainedPresentationSlotsProvider></AppPaneProvider>;
+        const screen = await renderScreen(render('browser'), { createNodeMock: () => ({
+            measureInWindow: (publish: (x: number, y: number, width: number, height: number) => void) => publish(0, 0, 640, 480),
+        }) });
+        const tab = createBrowserViewDetailsTab({ browserSessionId: 'phone-browser', viewId: 'phone-view',
+            currentUrl: 'https://phone-preview.example.test/',
+            target: { kind: 'localServicePreview', targetId: 'phone-preview', sessionId: 'session-1',
+                machineId: 'machine-1', display: { title: 'Preview' } } });
+        await act(async () => { pane.current!.openDetailsTab(tab, { intent: 'pinned' }); });
+        await act(async () => invokeTestInstanceHandler(screen.findHostByTestId('browser-keepalive-placeholder-phone-slot'), 'onLayout'));
+        await flushHookEffects({ cycles: 40 });
+        const page = screen.findAllByType('iframe')[0];
+        expect(page).toBeDefined();
+        const shell = screen.findByType(BrowserShell);
+        // The real cockpit switchSurface('chat') closes the parent right presentation,
+        // then the navigator withdraws this Browser scene's focus. It does not close its tab.
+        await act(async () => parent.current!.closeRight());
+        await screen.update(render('chat'));
+        await flushHookEffects();
+        expect(pane.current!.scopeState?.details.tabs.map(tab => tab.key)).toEqual([tab.key]);
+        expect(screen.findByType(BrowserShell)).toBe(shell);
+        expect(screen.findAllByType('iframe')[0]).toBe(page);
+        await screen.update(render('browser'));
+        await flushHookEffects();
+        expect(screen.findAllByType('iframe')[0]).toBe(page);
+        await act(async () => shell.props.onCloseTab());
+        await flushHookEffects();
+        expect(screen.findAllByType('iframe')).toHaveLength(0);
+        expect(store.getPortalSnapshot()).toEqual([]);
+    });
+
     it('retires the collapsed phone workspace page on Close after preserving route recomposition', async () => {
         const pane: { current?: AppPaneScopeApi } = {};
         const store = createRetainedPresentationSlotsStore();
