@@ -16321,6 +16321,7 @@ settingsSession: {
     deleteError: "删除工件失败。请重试。",
     notFound: "未找到工件",
     backToArtifacts: '返回工件',
+    notFoundReason: '它可能已被删除，或未与你共享。',
     discardChanges: "放弃更改？",
     discardChangesDescription: "您有未保存的更改。确定要放弃它们吗？",
     deleteConfirm: ({ name }: { name: string }) => `删除“${name}”？`,

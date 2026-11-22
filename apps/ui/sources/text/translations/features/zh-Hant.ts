@@ -16067,7 +16067,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { 'zh-Hant': {
-        publicLink: { workflowDescription: "任何持有連結的人都可以閱讀此工作流程，無需帳戶。", workflowGrants: "唯讀工作流程。", description: "任何持有連結的人都可以閱讀此文件，無需帳戶。", grants: "唯讀文件。", audit: "存取記錄", auditEmpty: "尚無存取記錄。", ownerUpdateRequired: "擁有者正在更新此連結", ownerUpdateRequiredDescription: "請讓擁有者開啟 Happier，然後重試此連結。" },
+        publicLink: { workflowDescription: "任何持有連結的人都可以閱讀此工作流程，無需帳戶。", workflowGrants: "唯讀工作流程。", description: "任何持有連結的人都可以閱讀此文件，無需帳戶。", grants: "唯讀文件。", linkLabel: "此文件的連結", audit: "存取記錄", auditEmpty: "尚無存取記錄。", ownerUpdateRequired: "擁有者正在更新此連結", ownerUpdateRequiredDescription: "請讓擁有者開啟 Happier，然後重試此連結。" },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `建議：${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `另有 ${count} 個`,
         whoHasAccess: '誰有存取權',

@@ -16781,6 +16781,7 @@ settingsSession: {
     deleteError: "Falha ao excluir o artefato. Tente novamente.",
     notFound: "Artefato não encontrado",
     backToArtifacts: 'Voltar para Artefatos',
+    notFoundReason: 'Pode ter sido eliminado ou não está partilhado contigo.',
     discardChanges: "Descartar alterações?",
     discardChangesDescription:
       "Você tem alterações não salvas. Tem certeza de que deseja descartá-las?",

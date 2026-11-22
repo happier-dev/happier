@@ -16951,6 +16951,7 @@ settingsSession: {
       "アーティファクトを削除できませんでした。もう一度お試しください。",
     notFound: "アーティファクトが見つかりません",
     backToArtifacts: 'アーティファクトに戻る',
+    notFoundReason: '削除されたか、あなたと共有されていない可能性があります。',
     discardChanges: "変更を破棄しますか？",
     discardChangesDescription:
       "保存されていない変更があります。破棄してもよろしいですか？",

@@ -9,6 +9,7 @@ import { resolveHomeGovernanceViewState } from '@/components/settings/home/gover
 
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
+import { formatCalendarDate } from '@/utils/datetime/cachedIntlFormatters';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { describePublicLinkNetworkChoice, PublicLinkNetworkSwitch } from '@/components/sharing/PublicLinkNetworkConfirmation';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -68,7 +69,7 @@ export type PublicLinkCardPublication = Pick<SessionPublicLinkPublication, 'id' 
 export function describeSessionPublicLink(publicShare: PublicLinkCardPublication, grantsLabel = t('session.collaboration.pane.linkGrants')): string {
     const limits = [
         publicShare.expiresAt
-            ? t('session.collaboration.pane.linkExpires', { date: new Date(publicShare.expiresAt).toLocaleDateString() })
+            ? t('session.collaboration.pane.linkExpires', { date: formatCalendarDate(publicShare.expiresAt) })
             : t('session.collaboration.pane.linkNeverExpires'),
         typeof publicShare.maxUses === 'number'
             ? t('session.sharing.usageCountWithMax', { used: publicShare.useCount, max: publicShare.maxUses })
@@ -191,6 +192,8 @@ export function SessionPublicLinkCard(props: Readonly<{
     publicShare: PublicLinkCardPublication | null;
     /** Local bearer URL supplied by the creating client, never a transport projection. */
     shareUrl?: string | null;
+    /** What the link reads as in its field instead of its raw address (a document's "Link to this document"). */
+    urlLabel?: string;
     description?: string;
     grantsLabel?: string;
     networkPolicyLabel?: string;
@@ -304,6 +307,7 @@ export function SessionPublicLinkCard(props: Readonly<{
             loaded={props.loaded}
             configuring={configuring && !setupBlocked}
             shareUrl={shareUrl}
+            {...(props.urlLabel ? { urlLabel: props.urlLabel } : {})}
             title={t('session.sharing.publicLink')}
             status={on ? t('session.collaboration.pane.linkOn') : t('session.collaboration.pane.linkOff')}
             hiddenLabel={t('session.collaboration.pane.linkHidden')}

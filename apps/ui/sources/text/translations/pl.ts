@@ -16513,6 +16513,7 @@ settingsSession: {
     deleteError: "Nie udało się usunąć artefaktu. Spróbuj ponownie.",
     notFound: "Artefakt nie został znaleziony",
     backToArtifacts: 'Wróć do artefaktów',
+    notFoundReason: 'Mogło zostać usunięte albo nie jest Ci udostępnione.',
     discardChanges: "Odrzucić zmiany?",
     discardChangesDescription:
       "Masz niezapisane zmiany. Czy na pewno chcesz je odrzucić?",

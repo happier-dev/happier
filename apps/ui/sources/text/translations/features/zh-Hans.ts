@@ -16067,7 +16067,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { 'zh-Hans': {
-        publicLink: { workflowDescription: "任何持有链接的人都可以阅读此工作流，无需账户。", workflowGrants: "只读工作流。", description: "任何持有链接的人都可以阅读此文档，无需账户。", grants: "只读文档。", audit: "访问记录", auditEmpty: "尚无访问记录。", ownerUpdateRequired: "所有者正在更新此链接", ownerUpdateRequiredDescription: "请让所有者打开 Happier，然后重试此链接。" },
+        publicLink: { workflowDescription: "任何持有链接的人都可以阅读此工作流，无需账户。", workflowGrants: "只读工作流。", description: "任何持有链接的人都可以阅读此文档，无需账户。", grants: "只读文档。", linkLabel: "此文档的链接", audit: "访问记录", auditEmpty: "尚无访问记录。", ownerUpdateRequired: "所有者正在更新此链接", ownerUpdateRequiredDescription: "请让所有者打开 Happier，然后重试此链接。" },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `建议：${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `另有 ${count} 个`,
         whoHasAccess: '谁有访问权限',

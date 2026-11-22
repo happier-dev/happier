@@ -124,4 +124,13 @@ describe('Action arguments read by meaning', () => {
     const summary = getActionSpec('machines.agents.install').approvalPresentation?.summary;
     expect(summary?.(input, undefined as never)).not.toBe(summary?.({ ...input, intent: 'update' }, undefined as never));
   });
+
+  it('confirms turning off a public link by its document, keeping the raw share id under Technical details', () => {
+    const presentation = describeApprovalActionFields({
+      actionId: 'artifact.public_link.revoke',
+      actionArgs: { artifactId: 'artifact-1', shareId: '6285393a-4f4f-4829-bffd-3e09f473882e', revoked: true },
+    });
+    expect(visible(presentation.rows).map((row) => row.path)).not.toContain('shareId');
+    expect(presentation.rows.filter((row) => row.kind === 'value' && row.technical).map((row) => row.path)).toContain('shareId');
+  });
 });

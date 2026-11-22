@@ -13650,6 +13650,7 @@ settingsSession: {
         updateError: '更新工件失敗。請重試。',
         notFound: '未找到工件',
         backToArtifacts: '返回工件',
+        notFoundReason: '它可能已被刪除，或未與你分享。',
         discardChanges: '放棄更改？',
         discardChangesDescription: '您有未儲存的更改。確定要放棄它們嗎？',
         deleteConfirm: ({ name }: { name: string }) => `刪除「${name}」？`,

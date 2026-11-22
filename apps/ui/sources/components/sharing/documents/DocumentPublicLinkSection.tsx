@@ -52,7 +52,7 @@ export function DocumentPublicLinkSection(props: Readonly<{
         <SessionPublicLinkCard key={link.scopeKey} testID={`${idPrefix}document-share-public-link-card`}
             presentation="inline"
             configurationScope={link.configurationScope}
-            publicShare={link.publication} shareUrl={link.shareUrl} serverUrl={null}
+            publicShare={link.publication} shareUrl={link.shareUrl} serverUrl={null} urlLabel={t('shareSheet.publicLink.linkLabel')}
             description={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowDescription' : 'shareSheet.publicLink.description')}
             grantsLabel={t(props.kind === 'workflow-definition.v1' ? 'shareSheet.publicLink.workflowGrants' : 'shareSheet.publicLink.grants')}
             loading={link.loading} loaded={link.loaded} failed={link.error} readFailure={link.issue}

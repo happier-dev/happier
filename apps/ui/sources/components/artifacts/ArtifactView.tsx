@@ -159,7 +159,8 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView> &
                 testID="artifact:notFound"
                 kind="empty"
                 title={t('artifacts.notFound')}
-                reason={t('shareSheet.documents.errors.notFound')}
+                // Not found and not shared read alike (the refusal never tells them apart); neither claims a history.
+                reason={t('artifacts.notFoundReason')}
                 // Its own page leads back to the list; in the browser's pane the list already stands beside it.
                 action={props.presentation === 'page'
                     ? { label: t('artifacts.backToArtifacts'), onPress: () => router.push('/artifacts' as never) }

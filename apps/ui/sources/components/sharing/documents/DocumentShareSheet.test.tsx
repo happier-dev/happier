@@ -1503,7 +1503,21 @@ describe('DocumentShareSheet', () => {
         await settle();
         expect(confirmAction).not.toHaveBeenCalled();
 
-        const issuedUrl = screen.findByTestId('session-public-link-url')?.props.children as string;
+        // A document's link field names the link; its address is carried by Copy, Open and the QR code.
+        expect(String(screen.findByTestId('session-public-link-url')?.props.children)).not.toContain('document-share-sheet.test');
+        const readIssuedUrl = async () => {
+            await screen.pressByTestIdAsync('session-public-link-qr');
+            await settle();
+            const qr = await vi.waitFor(() => {
+                const node = screen.findAll((candidate) => typeof candidate.props.data === 'string')[0];
+                expect(node).toBeDefined();
+                return node!;
+            });
+            const address = qr.props.data as string;
+            await screen.pressByTestIdAsync('session-public-link-qr');
+            return address;
+        };
+        const issuedUrl = await readIssuedUrl();
         const url = new URL(issuedUrl);
         expect(url.origin).toBe('https://document-share-sheet.test');
         expect(url.pathname).toMatch(/^\/s\/[A-Za-z0-9_-]+$/);
@@ -1515,7 +1529,7 @@ describe('DocumentShareSheet', () => {
         await screen.pressByTestIdAsync('document-share-grant-account:ana');
         await screen.pressByTestIdAsync('document-share-public-link');
         await settle();
-        expect(screen.findByTestId('session-public-link-url')?.props.children).toBe(issuedUrl);
+        expect(await readIssuedUrl()).toBe(issuedUrl);
         await screen.pressByTestIdAsync('document-share-public-link-audit');
         await settle();
         expect(screen.findByTestId('document-share-public-link-visit:visit-1')).not.toBeNull();

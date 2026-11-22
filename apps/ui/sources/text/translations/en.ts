@@ -20127,6 +20127,7 @@ const enArtifacts = {
   deleteError: 'Failed to delete artifact. Please try again.',
   notFound: 'Artifact not found',
   backToArtifacts: 'Back to Artifacts',
+  notFoundReason: 'It may have been deleted, or it isn’t shared with you.',
   discardChanges: 'Discard changes?',
   discardChangesDescription:
     'You have unsaved changes. Are you sure you want to discard them?',

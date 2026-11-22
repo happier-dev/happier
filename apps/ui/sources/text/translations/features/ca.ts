@@ -16205,7 +16205,7 @@ const Domain_shareSheetTranslations = (() => {
 type ShareSheetTranslations = Shared_shareSheetTranslations.ShareSheetTranslations;
 
 const shareSheetTranslations = { ca: {
-        publicLink: { workflowDescription: "Qualsevol persona amb l’enllaç pot llegir aquest flux de treball sense un compte.", workflowGrants: "Flux de treball només de lectura.", description: "Qualsevol persona amb l’enllaç pot llegir aquest document sense un compte.", grants: "Document només de lectura.", audit: "Registre d’accés", auditEmpty: "Encara no hi ha visites registrades.", ownerUpdateRequired: "El propietari està actualitzant aquest enllaç", ownerUpdateRequiredDescription: "Demana al propietari que obri Happier i torna a provar aquest enllaç." },
+        publicLink: { workflowDescription: "Qualsevol persona amb l’enllaç pot llegir aquest flux de treball sense un compte.", workflowGrants: "Flux de treball només de lectura.", description: "Qualsevol persona amb l’enllaç pot llegir aquest document sense un compte.", grants: "Document només de lectura.", linkLabel: "Enllaç a aquest document", audit: "Registre d’accés", auditEmpty: "Encara no hi ha visites registrades.", ownerUpdateRequired: "El propietari està actualitzant aquest enllaç", ownerUpdateRequiredDescription: "Demana al propietari que obri Happier i torna a provar aquest enllaç." },
         suggestions: ({ kind }: Readonly<{ kind: string }>) => `Suggeriments: ${kind}`,
         profileAgentsMore: ({ count }: Readonly<{ count: number }>) => `+${count} més`,
         whoHasAccess: 'Qui hi té accés',

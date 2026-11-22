@@ -16547,6 +16547,7 @@ settingsSession: {
     deleteError: "Échec de la suppression de l’artefact. Réessaie.",
     notFound: "Artefact introuvable",
     backToArtifacts: 'Retour aux artefacts',
+    notFoundReason: 'Il a peut-être été supprimé, ou il n’est pas partagé avec toi.',
     discardChanges: "Abandonner les modifications ?",
     discardChangesDescription:
       "Tu as des modifications non enregistrées. Veux-tu vraiment les abandonner ?",

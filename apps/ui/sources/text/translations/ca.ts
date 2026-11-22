@@ -15570,6 +15570,7 @@ settingsSession: {
         deleteError: 'No s\'ha pogut eliminar l\'artefacte. Torna-ho a provar.',
         notFound: 'Artefacte no trobat',
         backToArtifacts: 'Torna als artefactes',
+        notFoundReason: 'Potser s’ha suprimit o no s’ha compartit amb tu.',
         discardChanges: 'Descartar els canvis?',
         discardChangesDescription: 'Tens canvis sense desar. Estàs segur que vols descartar-los?',
         deleteConfirm: ({ name }: { name: string }) => `Eliminar «${name}»?`,

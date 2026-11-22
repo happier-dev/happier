@@ -132,7 +132,9 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     inputSchema: ArtifactActionInputSchemasV1[id], outputSchema: ArtifactActionOutputSchemasV1[id],
     ...(['artifact.public_link.create', 'artifact.create', 'artifact.update', 'artifact.publish_from_file', 'artifact.get', 'artifact.revisions.restore'].includes(id)
       ? { projectObservationOutput: projectPublicLinkCreationObservation } : {}),
-    approvalPresentation: { summary: () => ARTIFACT_ACTION_COPY[id][1] },
+    approvalPresentation: { summary: () => ARTIFACT_ACTION_COPY[id][1],
+      // The confirm already names the document; the link's raw share id stays exact under Technical details.
+      ...(id === 'artifact.public_link.revoke' ? { technicalInputPaths: ['shareId'] } : {}) },
     inputHints: { title: ARTIFACT_ACTION_COPY[id][0], description: ARTIFACT_ACTION_COPY[id][1], fields: id === 'artifact.publish_from_file' ? [
       { path: 'path', title: 'File path', widget: 'text', required: true,
         description: 'File within the source workspace. Without workspace, the admitted caller Session supplies the source.' },

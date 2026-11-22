@@ -12,6 +12,11 @@ export type HappierPublicLinkCardProps = Readonly<{
   loaded: boolean;
   configuring: boolean;
   shareUrl: string | null;
+  /**
+   * What the issued link reads as in its field ("Link to this document"). With it, the raw address is never drawn:
+   * Copy, Open and the QR code carry it. Without it, the field shows the address itself.
+   */
+  urlLabel?: string;
   title: string;
   status: string;
   hiddenLabel: string;
@@ -68,7 +73,9 @@ export function HappierPublicLinkCard(props: HappierPublicLinkCardProps) {
       {props.notices}
       {props.published && !props.configuring ? <>
         {props.shareUrl ? <View style={[styles.url, { borderColor: colors.border, backgroundColor: colors.surface }]}>
-          <Text testID="session-public-link-url" style={[typography.mono, { color: colors.text, flex: 1, minWidth: 0 }]} numberOfLines={1} selectable>{props.shareUrl}</Text>
+          {props.urlLabel
+            ? <Text testID="session-public-link-url" style={[typography.subtitle, { color: colors.text, flex: 1, minWidth: 0 }]} numberOfLines={1}>{props.urlLabel}</Text>
+            : <Text testID="session-public-link-url" style={[typography.mono, { color: colors.text, flex: 1, minWidth: 0 }]} numberOfLines={1} selectable>{props.shareUrl}</Text>}
           {props.copyFeedback}{props.copyControl}
         </View> : <Text testID="session-public-link-hidden" style={meta}>{props.hiddenLabel}</Text>}
         <Text testID="session-public-link-detail" style={meta}>{props.detail}</Text>

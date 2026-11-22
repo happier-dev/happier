@@ -16854,6 +16854,7 @@ settingsSession: {
         deleteError: 'Das Artefakt ließ sich nicht löschen. Versuch es noch einmal.',
         notFound: 'Artefakt nicht gefunden',
         backToArtifacts: 'Zurück zu Artefakten',
+        notFoundReason: 'Es wurde vielleicht gelöscht oder ist nicht mit dir geteilt.',
         discardChanges: 'Änderungen verwerfen?',
         discardChangesDescription: 'Du hast ungespeicherte Änderungen. Willst du sie wirklich verwerfen?',
         deleteConfirm: ({ name }: { name: string }) => `„${name}“ löschen?`,

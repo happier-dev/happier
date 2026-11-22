@@ -17047,6 +17047,7 @@ settingsSession: {
     deleteError: "Impossibile eliminare l’artefatto. Riprova.",
     notFound: "Artefatto non trovato",
     backToArtifacts: 'Torna agli artefatti',
+    notFoundReason: 'Potrebbe essere stato eliminato o non è condiviso con te.',
     discardChanges: "Scartare le modifiche?",
     discardChangesDescription:
       "Hai modifiche non salvate. Sei sicuro di volerle scartare?",

@@ -16673,6 +16673,7 @@ settingsSession: {
     deleteError: "No se pudo eliminar el artefacto. Intenta de nuevo.",
     notFound: "Artefacto no encontrado",
     backToArtifacts: 'Volver a Artefactos',
+    notFoundReason: 'Puede que se haya eliminado o que no esté compartido contigo.',
     discardChanges: "¿Descartar cambios?",
     discardChangesDescription:
       "Tienes cambios sin guardar. ¿Estás seguro de que quieres descartarlos?",
