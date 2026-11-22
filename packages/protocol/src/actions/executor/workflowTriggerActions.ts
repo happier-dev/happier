@@ -1466,6 +1466,8 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
           continue;
         }
         if (input.triggerId !== undefined && item.triggerId !== input.triggerId && item.enabled === undefined) continue;
+        // Withdrawing a retained trigger does not require readmitting its Action declaration.
+        if (item.enabled === false || (input.triggerId === undefined && enabled === false)) continue;
         const stored = row.triggers.find(candidate => candidate.id === item.triggerId);
         if (stored?.kind !== 'action' || 'consentFor' in stored) continue;
         if (!deps.openActionTrigger) refuse('target_unavailable');

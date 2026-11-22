@@ -260,9 +260,9 @@ function fixture(savedDefinition = definition) {
           if (item.kind === 'new' && item.trigger.kind === 'action') return actionDetail(id, item.triggerId, item.trigger);
           if (item.kind === 'new') return toTrigger(item.triggerId, item.trigger.enabled);
           const old = current.triggers.find((value) => value.id === item.triggerId)!;
-          const invocationPlacement = current.executionRecipe?.v === 2 && current.executionRecipe.placement === 'action_invocation';
+          // The Home persistence boundary reseals a private Action when its revision advances.
           if (old.kind === 'action' && !('consentFor' in old)
-            && (item.trigger?.kind === 'action' || invocationPlacement && (item.enabled !== undefined || item.trigger !== undefined))) {
+            && (item.trigger?.kind === 'action' || item.enabled !== undefined)) {
             const definition = item.trigger ?? await deps.openActionTrigger!(current, old);
             if (definition.kind !== 'action') throw new Error('Unsupported fixture replacement');
             return actionDetail(id, old.id, { ...definition, enabled: item.enabled ?? old.enabled }, old.revision + 1);
@@ -396,20 +396,16 @@ describe('profile subject mutation admission', () => {
   it.each(['workflow.trigger.update', 'workflow.trigger.remove'] as const)(
     'asks before %s changes an incumbent profile link and dispatch reuses its admitted row', async actionId => {
       const f = fixture();
-      const created = await f.actions.add({ workflow, project, trigger });
+      const created = await f.actions.add({ workflow, project, trigger: {
+        kind: 'action', enabled: true, phase: 'before', mode: 'wait', actionIds: ['session.title.set'],
+        subject: { kind: 'approvalProfile', serverId: 'home', profileId: 'profile' },
+      } });
       const row = f.rows.get(created.set.automationId)!;
       const triggerId = row.triggers[0]!.id;
-      f.rows.set(row.id, { ...row, triggers: [AutomationTriggerDetailSchema.parse({
-        kind: 'action', id: triggerId, revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
-        phase: 'before', mode: 'wait', actionIds: ['session.title.set'],
-        subjectKind: 'approvalProfile', subjectKey: 'profile-subject', triggerDefinitionEnvelope: '{}',
-      })] });
       let reads = 0;
       const owner = createWorkflowTriggerActions({ ...f.deps, automations: { ...f.deps.automations,
         get: async id => { reads++; return f.rows.get(id) ?? null; },
-      }, resolveSubjectActionReach: async () => false,
-      openActionTrigger: async () => ({ kind: 'action', phase: 'before', mode: 'wait', actionIds: ['session.title.set'],
-        subject: { kind: 'approvalProfile', serverId: 'home', profileId: 'profile' } }) });
+      }, resolveSubjectActionReach: async () => false });
       let featureReads = 0;
       const executor = createActionExecutor({ workflowAction: createWorkflowActionExecutor({ definitions: f.definitions,
         triggers: owner, isWorkflowFeatureEnabled: () => { featureReads++; return true; },
@@ -3769,6 +3765,56 @@ describe('Round 12 Workflow trigger admission', () => {
       expectedRevision: saved.set.revision, patch: { trigger: ticket } }, caller);
     expect(updated.set.triggers).toMatchObject([{ ...ticket, enabled: true }]);
     expect(f.rows.size).toBe(1);
+  });
+});
+
+describe('reviewed qualified Action trigger withdrawal', () => {
+  it.each(['exact', 'any'] as const)('disables a saved %s trigger after its contributed Action becomes unavailable', async scope => {
+    const f = fixture();
+    const pluginId = 'example.tickets';
+    const actionId = `${pluginId}/actions/close-ticket`;
+    const subject = { kind: 'plugin' as const, serverId: 'home', pluginId, subjectKindId: 'ticket',
+      identity: { ticketId: 'ticket-1' } };
+    const descriptor = { ...actionSpecToActionDefinitionV1(getActionSpec('scm.commit.create')), id: actionId,
+      approvalScope: { kind: 'plugin' as const, subjectKindId: 'ticket', identityField: 'ticket' },
+      subjectKindDefinition: { id: 'ticket', label: 'Ticket', listAction: 'list-tickets', identitySchema: {
+        type: 'object', properties: { ticketId: { type: 'string' } }, required: ['ticketId'], additionalProperties: false,
+      } } };
+    let catalogAvailable = true;
+    const owner = createWorkflowTriggerActions({ ...f.deps,
+      listContributedActionDefinitions: () => catalogAvailable ? [descriptor] : [] });
+    const context = { surface: 'ui' as const, authority: 'present_user' as const, serverId: 'home',
+      runtimeAccountId: 'owner', actionCaller: { kind: 'host' as const } };
+    const saved = await owner.add(WorkflowTriggerAddRequestV1Schema.parse({
+      target: { kind: 'inline', definition }, project,
+      trigger: { kind: 'action', enabled: true, phase: 'before', mode: 'wait', actionIds: [actionId],
+        ...(scope === 'exact' ? { subject } : {}) },
+    }), context);
+    const { automationId, revision } = saved.set;
+    const triggerId = saved.triggerId!;
+    let approval: ApprovalRequest | null = null;
+    const executor = f.executor(owner, {
+      readActionsSettings: () => ActionsSettingsV1Schema.parse({ v: 1,
+        actions: { 'workflow.trigger.update': { approvalRequiredSurfaces: ['cli'] } } }),
+      approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'disable-review' }; },
+      approvalsGet: async () => approval,
+      approvalsUpdate: async ({ request }) => { approval = request; return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+    });
+
+    const input = { automationId, triggerId, expectedRevision: revision, patch: { enabled: false } };
+    expect(await executor.execute('workflow.trigger.update', input,
+      { ...context, surface: 'cli', actionRequestId: 'review-disable' }))
+      .toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(f.rows.get(automationId)?.triggers).toMatchObject([{ id: triggerId, enabled: true }]);
+    catalogAvailable = false;
+
+    const decision = await executor.execute('approval.request.decide', { artifactId: 'disable-review', decision: 'approve' },
+      { ...context, actionRequestId: 'approve-disable' });
+    expect(decision).toMatchObject({ ok: true });
+    const terminal = ApprovalRequestV2Schema.parse(approval);
+    expect(terminal, terminal.execution?.errorCode).toMatchObject({ status: 'executed', execution: { ok: true } });
+    expect(f.rows.get(automationId)?.triggers).toMatchObject([{ id: triggerId, enabled: false }]);
   });
 });
 
