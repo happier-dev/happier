@@ -4,6 +4,7 @@ import { act } from 'react';
 import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { serializeActionSpec } from '@happier-dev/protocol/actions/actionCatalog';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { resolveWorkflowActionTitle } from '@/sync/domains/workflows/workflowActionPresentation';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -68,6 +69,31 @@ describe('Action trigger catalog read presentation', () => {
         await serverScopedRpcSocketPool.stopAll();
         serverScopedRpcSocketPool.resetForTests();
         resetScopedMachineTransportCacheForTests();
+    });
+
+    it('authors an outcome predicate on the existing After Deploy trigger', async () => {
+        const { buildTriggerDefinition } = await import('./sessionTriggerForm');
+        const changes: import('./sessionTriggerForm').TriggerWhenValue[] = [];
+        function Deploy() {
+            const [when, setWhen] = React.useState<import('./sessionTriggerForm').TriggerWhenValue>({
+                kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1],
+            });
+            return <WorkflowTriggerBlock testID="deploy" title="Deploy" when={when} enabled incomplete={false}
+                startOptions={[]} onSelectStart={() => {}} onChangeWhen={next => { changes.push(next); setWhen(next); }}
+                onRemove={() => {}} machineId={null} serverId={serverId} />;
+        }
+        const screen = await renderScreen(<Deploy />);
+        const outcome = () => screen.findAllByType(ValueFieldSelect).find(node => node.props.testID === 'deploy-outcome')!;
+        expect(outcome().props.items.map((item: { id: string }) => item.id)).toEqual([
+            'any', 'succeeded', 'failed', 'cancelled', 'outcome_unknown',
+        ]);
+        await act(async () => outcome().props.onSelect('failed'));
+        expect(buildTriggerDefinition({ when: changes.at(-1)!, enabled: true, sessionId: null })).toEqual({
+            kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], enabled: true,
+            filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] },
+        });
+        await act(async () => outcome().props.onSelect('any'));
+        expect(changes.at(-1)).not.toHaveProperty('filter');
     });
 
     it('authors an all-Session changed-files habit through the shared lifecycle filter controls', async () => {

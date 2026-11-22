@@ -20311,6 +20311,8 @@ const pt: WorkflowTriggersCopy = {
         noSession: "Nenhuma sessão ainda",
         howOften: "Com que frequência",
         howOftenKind: { thisTurn: "Este turno", nextTime: "Da próxima vez", everyTime: "Toda vez" },
+        deployFinished: "Implantação concluída",
+        deployOutcome: { custom: "Personalizado", label: "Somente quando", any: "Qualquer resultado", succeeded: "Bem-sucedida", failed: "Falhou", cancelled: "Cancelada", outcome_unknown: "Desconhecido" },
         source: "Origem",
         setUp: "Configurar",
         runsOn: "Os gatilhos são executados em",

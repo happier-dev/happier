@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HappierPressable,
@@ -67,6 +68,7 @@ import {
 import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import {
+  isDeployFinishedTrigger,
   readWorkflowTriggerStartId,
   type WorkflowTriggerStartOption,
   type WorkflowTriggerStartContext,
@@ -343,6 +345,8 @@ export function WorkflowTriggerBlock(
  * while it waits, **If it fails** (Refuse · Let a person approve), each with the one line that says what
  * it does. After carries no wait policy (P02).
  */
+const deployOutcomeField = '/outcome';
+
 function ActionTrackRows(
   props: Readonly<{
     testID: string;
@@ -401,10 +405,16 @@ function ActionTrackRows(
               : t('common.unavailable')}
             onSelect={(id) => {
               // A chosen resource stays only while the new Action is about the same kind.
-              const { subject, ...rest } = when;
+              if (id === selectedId) return;
+              const { subject, filter, ...rest } = when;
               const next = catalog.specs.find((spec) => spec.id === id)?.operand;
-              props.onChange(subject !== undefined && isActionOperandSubject(next, subject)
-                ? { ...rest, actionIds: [id], subject } : { ...rest, actionIds: [id] });
+              const predicates = isDeployFinishedTrigger(when)
+                ? filter?.all.filter(clause => clause.field !== deployOutcomeField)
+                : filter?.all;
+              props.onChange({ ...rest, actionIds: [id],
+                ...(subject !== undefined && isActionOperandSubject(next, subject) ? { subject } : {}),
+                ...(predicates?.length ? { filter: { v: 1, all: predicates } } : {}),
+              });
             }}
           />
         </View>
@@ -429,7 +439,7 @@ function ActionTrackRows(
           </View>
         </TrackRow>
       )}
-      <ActionWaitPolicyRows testID={props.testID} when={when} onChange={props.onChange} />
+      <ActionTriggerPolicyRows testID={props.testID} when={when} onChange={props.onChange} />
     </>
   );
 }
@@ -437,9 +447,10 @@ function ActionTrackRows(
 /**
  * A before trigger's wait policy, said the same wherever a before trigger is authored (the editor's trigger
  * card, a resource's Link): **While it runs** (Wait for its result · Just notify) and, while it waits,
- * **If it fails** (Refuse · Let a person approve), each with the line that says what it does. After has none.
+ * **If it fails** (Refuse · Let a person approve). Deploy completion uses the same After trigger's
+ * occurrence filter; the outcome choices are the protocol's Action evidence values.
  */
-export function ActionWaitPolicyRows(
+export function ActionTriggerPolicyRows(
   props: Readonly<{
     testID: string;
     when: ActionWhen;
@@ -449,6 +460,41 @@ export function ActionWaitPolicyRows(
   const { when } = props;
   const waits = when.phase === 'before' && when.mode !== 'notify';
   const asks = when.onFailure === 'ask';
+  if (isDeployFinishedTrigger(when)) {
+    const clauses = when.filter?.all ?? [];
+    const outcomeClauses = clauses.filter(clause => clause.field === deployOutcomeField);
+    const outcome = outcomeClauses.length === 1 && outcomeClauses[0]?.op === 'eq'
+      ? AutomationActionOutcomeV1Schema.safeParse(outcomeClauses[0].value) : null;
+    const label = t('workflows.triggers.card.deployOutcome.label');
+    return (
+      <TrackRow label={label} trackKey={`${props.testID}-outcome`}>
+        <View style={styles.selectBox}>
+          <ValueFieldSelect
+            testID={`${props.testID}-outcome`}
+            label={label}
+            items={[
+              { id: 'any', title: t('workflows.triggers.card.deployOutcome.any') },
+              ...AutomationActionOutcomeV1Schema.options.map(kind => ({
+                id: kind, title: t(`workflows.triggers.card.deployOutcome.${kind}`),
+              })),
+            ]}
+            selectedId={outcome?.success ? outcome.data : outcomeClauses.length === 0 ? 'any' : null}
+            placeholder={t('workflows.triggers.card.deployOutcome.custom')}
+            onSelect={id => {
+              const next = clauses.filter(clause => clause.field !== deployOutcomeField);
+              if (id !== 'any') {
+                const selected = AutomationActionOutcomeV1Schema.safeParse(id);
+                if (!selected.success) return;
+                next.push({ field: deployOutcomeField, op: 'eq', value: selected.data });
+              }
+              const { filter: _filter, ...rest } = when;
+              props.onChange(next.length === 0 ? rest : { ...rest, filter: { v: 1, all: next } });
+            }}
+          />
+        </View>
+      </TrackRow>
+    );
+  }
   return (
     <>
       {when.phase === 'before' ? (

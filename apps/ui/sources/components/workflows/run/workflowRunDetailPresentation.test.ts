@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { WorkflowProgressEnvelopeV1Schema, WORKFLOW_RUN_STATES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { WorkflowProgressEnvelopeV1Schema, WorkflowRunOriginV1Schema, WORKFLOW_RUN_STATES_V1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { WorkflowDefinitionV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import type { WorkflowRunInvocationIndexV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { projectWorkflowInvocationStructure } from './workflowInvocationStructure';
@@ -31,6 +31,7 @@ import {
     describeWorkflowInvocationCause,
     describeWorkflowRunFailedStep,
     describeWorkflowSetupOutcome,
+    formatWorkflowRunOriginLabel,
     formatWorkflowRunOutcomeLabel,
     formatWorkflowRunOutcomeSentence,
     formatWorkflowRunOutcomeLine,
@@ -65,6 +66,19 @@ it.each(['discussion.invite', 'plugin:external/check'])('FIX250 presents each re
 });
 
 describe('managed workflow Run presentation', () => {
+    it('names a Session start from its typed trigger cause in the Run header', () => {
+        const origin = WorkflowRunOriginV1Schema.parse({
+            kind: 'automation', automationId: 'automation-1',
+            cause: {
+                kind: 'trigger', triggerKind: 'sessionLifecycle', triggerId: 'trigger-1', triggerRevision: 0,
+                occurrenceKey: 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA', occurredAt: 1_700_000_000_000,
+                evidence: { event: 'sessionStarted', sourceSessionId: 'session-1', policy: { kind: 'everyMatch' } },
+            },
+        });
+
+        expect(formatWorkflowRunOriginLabel(origin)).toContain(t('automations.pluralEditor.lifecycleEvent.sessionStarted'));
+    });
+
     it.each(['agent_signed_out', 'agent_cli_missing'])('shows the typed %s start refusal and offers another agent', code => {
         const run = createWorkflowRunSummaryFixture({ state: 'failed', workflowCustodyState: 'settled' });
         const invocation = createWorkflowInvocationIndexFixture({ lifecycle: 'failed' });

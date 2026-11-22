@@ -20382,6 +20382,8 @@ const fr: WorkflowTriggersCopy = {
         noSession: "Aucune session pour l’instant",
         howOften: "Fréquence",
         howOftenKind: { thisTurn: "Ce tour", nextTime: "La prochaine fois", everyTime: "À chaque fois" },
+        deployFinished: "Déploiement terminé",
+        deployOutcome: { custom: "Personnalisé", label: "Seulement si", any: "Tout résultat", succeeded: "Réussi", failed: "Échoué", cancelled: "Annulé", outcome_unknown: "Inconnu" },
         source: "Source",
         setUp: "Configurer",
         runsOn: "Les déclencheurs s’exécutent sur",

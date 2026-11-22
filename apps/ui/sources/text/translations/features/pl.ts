@@ -20349,6 +20349,8 @@ const pl: WorkflowTriggersCopy = {
         noSession: "Brak sesji",
         howOften: "Jak często",
         howOftenKind: { thisTurn: "Ta tura", nextTime: "Następnym razem", everyTime: "Za każdym razem" },
+        deployFinished: "Wdrażanie zakończone",
+        deployOutcome: { custom: "Niestandardowy", label: "Tylko gdy", any: "Dowolny wynik", succeeded: "Powodzenie", failed: "Niepowodzenie", cancelled: "Anulowano", outcome_unknown: "Nieznany" },
         source: "Źródło",
         setUp: "Skonfiguruj",
         runsOn: "Wyzwalacze działają na",

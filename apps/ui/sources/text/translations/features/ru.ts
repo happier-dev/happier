@@ -20350,6 +20350,8 @@ const ru: WorkflowTriggersCopy = {
         noSession: "Пока нет сессий",
         howOften: "Как часто",
         howOftenKind: { thisTurn: "Этот ход", nextTime: "В следующий раз", everyTime: "Каждый раз" },
+        deployFinished: "Развёртывание завершено",
+        deployOutcome: { custom: "Пользовательский", label: "Только когда", any: "Любой результат", succeeded: "Успешно", failed: "Ошибка", cancelled: "Отменено", outcome_unknown: "Неизвестно" },
         source: "Источник",
         setUp: "Настроить",
         runsOn: "Триггеры запускаются на",

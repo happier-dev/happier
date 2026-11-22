@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
+import { AutomationActionOutcomeV1Schema } from '@happier-dev/protocol/automations/automationActionIdentityV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
 import { AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1 } from '@happier-dev/protocol/automations/automationSessionLifecycle';
 
@@ -77,6 +80,24 @@ describe('workflow trigger starts (the "When it runs" card)', () => {
       ['plugins', 'GitLab', 'event:happier.gitlab/push'],
       ['plugins', 'Sentry', 'event:happier.sentry/issue'],
     ]);
+  });
+
+  it('authors one completed deploy start from the terminal declarations', () => {
+    const events = AutomationActionOutcomeV1Schema.options.map(completionOutcome => ({
+      eventRef: { pluginId: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1.pluginId, localId: completionOutcome },
+      title: `Deployment ${completionOutcome}`, pluginName: 'Deployments',
+      automation: { completesActionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], completionOutcome },
+    }));
+    const options = buildWorkflowTriggerStartOptions([...events, {
+      eventRef: DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1, title: 'Deployment receipt changed', pluginName: 'Deployments',
+    }]);
+    const deployStarts = options.filter(option => option.group === 'Deployments');
+    expect(deployStarts).toHaveLength(1);
+    const when = start(deployStarts[0]!.id);
+    expect(readWorkflowTriggerStartId(when)).toBe(deployStarts[0]!.id);
+    expect(buildTriggerDefinition({ when, enabled: true, sessionId: null })).toEqual({
+      kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], enabled: true,
+    });
   });
 
   it('keeps an Event selectable when its plugin display name is unavailable', () => {

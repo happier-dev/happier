@@ -1,4 +1,6 @@
 import { readAutomationEventSubjectKindsV1, type PluginEventAutomationDeclarationV1 } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import type { AutomationSubjectV1 } from '@happier-dev/protocol/automations/automationSubjectV1';
 import type { WorkflowActionSpec } from '../presentation/workflowActionCatalog';
 import type { AutomationTriggerId } from '@happier-dev/protocol/automations/automationTriggerIdentity';
@@ -127,6 +129,16 @@ const SCHEDULE_ID = 'schedule';
 const ACTION_PHASES = ['before', 'after'] as const;
 type ActionPhase = (typeof ACTION_PHASES)[number];
 const actionStartId = (phase: ActionPhase) => `action:${phase}`;
+const DEPLOY_FINISHED_START_ID = `${actionStartId('after')}:${DEPLOYMENT_DEPLOY_ACTION_ID_V1}`;
+
+export function isDeployFinishedTrigger(when: Extract<TriggerWhenValue, { kind: 'action' }>): boolean {
+    return when.phase === 'after' && when.actionIds.length === 1 && when.actionIds[0] === DEPLOYMENT_DEPLOY_ACTION_ID_V1;
+}
+
+function isDeployTerminalEvent(event: WorkflowTriggerEventOption): boolean {
+    return event.automation?.completionOutcome !== undefined
+        && event.automation.completesActionIds?.includes(DEPLOYMENT_DEPLOY_ACTION_ID_V1) === true;
+}
 const sessionId = (kind: SessionEventKind) => `session:${kind}`;
 const eventId = (eventRef: Readonly<{ pluginId: string; localId: string }>) => `event:${eventRef.pluginId}/${eventRef.localId}`;
 
@@ -141,7 +153,7 @@ export function readWorkflowTriggerStartId(when: TriggerWhenValue): string | nul
             return eventRef ? eventId(eventRef) : null;
         }
         case 'action':
-            return actionStartId(when.phase);
+            return isDeployFinishedTrigger(when) ? DEPLOY_FINISHED_START_ID : actionStartId(when.phase);
         case 'prComment':
         case 'ciFailed':
             return `session:${when.kind}`;
@@ -187,16 +199,28 @@ export function buildWorkflowTriggerStartOptions(
             if (left === null) return right === null ? 0 : 1;
             return right === null ? -1 : left.localeCompare(right);
         });
+    let offeredDeploy = false;
     for (const [pluginId, pluginName] of plugins) {
         for (const event of events) {
             if (event.eventRef.pluginId !== pluginId) continue;
+            if (isDeployTerminalEvent(event)) {
+                if (!offeredDeploy) {
+                    options.push({ id: DEPLOY_FINISHED_START_ID, group: pluginName ?? '', section: 'plugins',
+                        title: t('workflows.triggers.card.deployFinished'), glyph: 'lightning' });
+                    offeredDeploy = true;
+                }
+                continue;
+            }
+            // Receipt invalidation serves preview publication. New deployment starters represent terminal outcomes.
+            if (eventId(event.eventRef) === eventId(DEPLOYMENT_RECEIPT_CHANGED_EVENT_REF_V1)) continue;
             options.push({ id: eventId(event.eventRef), group: pluginName ?? '', section: 'plugins', title: event.title, glyph: 'lightning' });
         }
     }
     const currentId = current ? readWorkflowTriggerStartId(current.when) : null;
     if (current && currentId !== null && !options.some((option) => option.id === currentId)) {
         const eventRef = current.when.kind === 'pluginEvent' ? current.when.value?.eventRef ?? current.when.eventRef : undefined;
-        options.push({ id: currentId, group: eventRef?.pluginId ?? '', section: 'plugins', title: current.title, glyph: 'lightning' });
+        options.push({ id: currentId, group: eventRef?.pluginId ?? '', section: 'plugins',
+            title: currentId === DEPLOY_FINISHED_START_ID ? t('workflows.triggers.card.deployFinished') : current.title, glyph: 'lightning' });
     }
     const resource = context?.resource;
     if (resource === undefined) return options;
@@ -216,9 +240,15 @@ export function buildWorkflowTriggerStartOptions(
 export function createWorkflowTriggerStartWhen(id: string, previous?: TriggerWhenValue | null,
     context?: WorkflowTriggerStartContext): TriggerWhenValue | null {
     if (id === SCHEDULE_ID) return createDefaultWhen('schedule');
+    if (id === DEPLOY_FINISHED_START_ID) {
+        if (previous?.kind === 'action' && isDeployFinishedTrigger(previous)) return previous;
+        return { kind: 'action', phase: 'after', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1] };
+    }
     const phase = ACTION_PHASES.find((candidate) => id === actionStartId(candidate));
     if (phase !== undefined) {
-        const kept = previous?.kind === 'action' ? previous : null;
+        // Leaving the specialized start for generic After returns to its Action picker.
+        const kept = previous?.kind === 'action' && !(phase === 'after' && isDeployFinishedTrigger(previous))
+            ? previous : null;
         return {
             kind: 'action',
             phase,

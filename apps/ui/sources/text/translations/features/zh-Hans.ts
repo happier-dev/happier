@@ -20200,6 +20200,8 @@ const zhHans: WorkflowTriggersCopy = {
         noSession: "还没有会话",
         howOften: "频率",
         howOftenKind: { thisTurn: "这一轮", nextTime: "下一次", everyTime: "每一次" },
+        deployFinished: "部署结束",
+        deployOutcome: { custom: "自定义", label: "仅当", any: "任意结果", succeeded: "成功", failed: "失败", cancelled: "已取消", outcome_unknown: "未知" },
         source: "来源",
         setUp: "设置",
         runsOn: "触发器运行于",

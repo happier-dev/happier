@@ -20200,6 +20200,8 @@ const zhHant: WorkflowTriggersCopy = {
         noSession: "還沒有工作階段",
         howOften: "頻率",
         howOftenKind: { thisTurn: "這一輪", nextTime: "下一次", everyTime: "每一次" },
+        deployFinished: "部署結束",
+        deployOutcome: { custom: "自訂", label: "僅當", any: "任何結果", succeeded: "成功", failed: "失敗", cancelled: "已取消", outcome_unknown: "未知" },
         source: "來源",
         setUp: "設定",
         runsOn: "觸發器執行於",

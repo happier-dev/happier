@@ -22,7 +22,7 @@ import { t } from '@/text';
 import { TRIGGER_POPOVER_WIDTH } from './TriggerPopover';
 import { TriggerPluginEventRows } from './TriggerPluginEventRows';
 import {
-  ActionWaitPolicyRows,
+  ActionTriggerPolicyRows,
   TrackRow,
 } from './WorkflowTriggerBlock';
 import type { ResourceAutomationsSectionRead } from './useResourceAutomationsSection';
@@ -332,8 +332,8 @@ export function ResourceLinkWorkflowSheet(
                 ) : null}
               </View>
             </TrackRow>
-            {when?.kind === 'action' && when.phase === 'before' ? (
-              <ActionWaitPolicyRows
+            {when?.kind === 'action' ? (
+              <ActionTriggerPolicyRows
                 testID="resource-link-policy"
                 when={when}
                 onChange={(next) => {

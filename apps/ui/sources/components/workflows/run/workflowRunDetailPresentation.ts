@@ -14,6 +14,7 @@ import type {
 
 import type { TranslationKeyNoParams } from '@/text/i18n';
 import { t } from '@/text';
+import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { formatWorkflowConversationProblem } from '@/components/workflows/presentation/workflowProblemPresentation';
 import type { WorkflowInvocationStructureEntry } from './workflowInvocationStructure';
 import { findWorkflowBlock, findWorkflowBlockListRef, getWorkflowBlockList } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
@@ -574,7 +575,9 @@ export function formatWorkflowRunStateLabel(state: WorkflowRunStateV1): string {
  * its absence never makes the Run unavailable.
  */
 export function formatWorkflowRunOriginLabel(origin: WorkflowRunSummaryV1['origin']): string {
-    if (origin.kind === 'automation') return t('workflows.run.origin.automation');
+    if (origin.kind === 'automation') {
+        return origin.cause ? formatAutomationRunCauseLabel(origin.cause) : t('workflows.run.origin.automation');
+    }
     return origin.originSessionId
         ? t('workflows.run.origin.fromSession')
         : t('workflows.run.origin.direct');

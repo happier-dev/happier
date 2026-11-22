@@ -20325,6 +20325,8 @@ const it: WorkflowTriggersCopy = {
         noSession: "Ancora nessuna sessione",
         howOften: "Con che frequenza",
         howOftenKind: { thisTurn: "Questo turno", nextTime: "La prossima volta", everyTime: "Ogni volta" },
+        deployFinished: "Distribuzione terminata",
+        deployOutcome: { custom: "Personalizzato", label: "Solo se", any: "Qualsiasi esito", succeeded: "Riuscito", failed: "Non riuscito", cancelled: "Annullato", outcome_unknown: "Sconosciuto" },
         source: "Origine",
         setUp: "Configura",
         runsOn: "I trigger vengono eseguiti su",

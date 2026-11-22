@@ -20261,6 +20261,8 @@ const es: WorkflowTriggersCopy = {
         noSession: "Aún no hay sesiones",
         howOften: "Con qué frecuencia",
         howOftenKind: { thisTurn: "Este turno", nextTime: "La próxima vez", everyTime: "Cada vez" },
+        deployFinished: "Despliegue finalizado",
+        deployOutcome: { custom: "Personalizado", label: "Solo cuando", any: "Cualquier resultado", succeeded: "Correcto", failed: "Fallido", cancelled: "Cancelado", outcome_unknown: "Desconocido" },
         source: "Origen",
         setUp: "Configurar",
         runsOn: "Los disparadores se ejecutan en",

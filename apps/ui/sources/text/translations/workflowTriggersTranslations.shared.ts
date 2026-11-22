@@ -402,6 +402,8 @@ export const en = {
         noSession: "No sessions yet",
         howOften: "How often",
         howOftenKind: { thisTurn: "This turn", nextTime: "Next time", everyTime: "Every time" },
+        deployFinished: "Deploy finished",
+        deployOutcome: { custom: "Custom", label: "Only when", any: "Any outcome", succeeded: "Succeeded", failed: "Failed", cancelled: "Cancelled", outcome_unknown: "Unknown" },
         source: "Source",
         setUp: "Set up",
         runsOn: "Triggers run on",

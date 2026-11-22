@@ -20339,6 +20339,8 @@ const ca: WorkflowTriggersCopy = {
         noSession: "Encara no hi ha sessions",
         howOften: "Amb quina freqüència",
         howOftenKind: { thisTurn: "Aquest torn", nextTime: "La propera vegada", everyTime: "Cada vegada" },
+        deployFinished: "Desplegament finalitzat",
+        deployOutcome: { custom: "Personalitzat", label: "Només quan", any: "Qualsevol resultat", succeeded: "Correcte", failed: "Fallat", cancelled: "Cancel·lat", outcome_unknown: "Desconegut" },
         source: "Origen",
         setUp: "Configura",
         runsOn: "Els activadors s’executen a",

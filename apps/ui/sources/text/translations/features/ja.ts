@@ -20260,6 +20260,8 @@ const ja: WorkflowTriggersCopy = {
         noSession: "まだセッションがありません",
         howOften: "頻度",
         howOftenKind: { thisTurn: "このターン", nextTime: "次回", everyTime: "毎回" },
+        deployFinished: "デプロイ終了",
+        deployOutcome: { custom: "カスタム", label: "次の場合のみ", any: "すべての結果", succeeded: "成功", failed: "失敗", cancelled: "キャンセル", outcome_unknown: "不明" },
         source: "ソース",
         setUp: "設定",
         runsOn: "トリガーの実行先",
