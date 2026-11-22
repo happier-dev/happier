@@ -20,6 +20,7 @@ import { createApiSessionSocketStub, resolveApiSessionSocketDefaultAck } from '@
 import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, createDirectRouteGrantSigningInputV2 } from '@happier-dev/protocol';
 import { ProjectAccountRowV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
@@ -28,6 +29,9 @@ import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
 import { sealExternalActionRequesterAccountContextV1, sealSessionRequesterHandoffWorkspaceCaptureRpcRequestV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRequesterAccountActionContext, requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { encodeStoredCredentials } from '@/persistence';
 import { dispatchOriginalAccountAction, prepareExternalActionHandoffPreflightAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { createWorkspaceSyncRelationshipCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
@@ -1183,4 +1187,100 @@ it.skipIf(process.platform !== 'linux').each([
     .toBe('member-reviewed target bytes');
   }
   } finally { await releaseTarget?.(); await capture({ release: true }); }
+});
+
+// An Agent's Action in a Session reaches the SOURCE with requester transport
+// custody only. The SOURCE preflight's requester read stays the row owner's
+// decision; the Session path ends in the deferred approval instead (below).
+it.skipIf(process.platform !== 'linux')('reads requester rows at the SOURCE preflight only with ingress custody', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    targetCustodianAccountId: 'requester', workerCleanCopy: true, accountMode: 'e2ee', targetResourceMode: 'e2ee', originalActionHomeHttp: true });
+  const full = readRequesterAccountActionContext(setup.account.authorization)!;
+  const withRequesterContext = (value: Readonly<Record<string, unknown>>): ExternalActionExecutionAuthorizationV1 => {
+    const projectionDescriptors = Object.getOwnPropertyDescriptors(setup.account.authorization.requesterAccountProjection!);
+    Reflect.deleteProperty(projectionDescriptors, requesterActionContext);
+    const projection = Object.defineProperties({}, projectionDescriptors);
+    const carrierDescriptors = Object.getOwnPropertyDescriptors(setup.account.authorization);
+    Reflect.deleteProperty(carrierDescriptors, 'requesterAccountProjection');
+    const carrier = Object.defineProperties({}, carrierDescriptors) as ExternalActionExecutionAuthorizationV1;
+    Object.defineProperty(carrier, 'requesterAccountProjection', { value: projection, enumerable: false });
+    Object.defineProperty(projection, requesterActionContext, { value: Object.freeze({ ...value, authorization: carrier }), enumerable: false });
+    return carrier;
+  };
+  const preflight = (authorization: ExternalActionExecutionAuthorizationV1) => (setup.fixture.parent.workspaceSync as unknown as {
+    preflightRelationshipTarget: (request: unknown, context: RpcHandlerContext) => Promise<unknown> }).preflightRelationshipTarget({
+    v: 1, serverId: setup.installed.homeServerIdentityId, machineId: setup.request.actionInput.targetMachineId,
+    operationId: setup.request.operationId, targetPath: setup.request.actionInput.targetPath,
+    activatesExactMirror: true, destinationIntent: 'materialize_from_source_workspace',
+  }, { signal: new AbortController().signal, callerAuthority: 'account_automation', callerInputAuthorization: authorization,
+    originalActionEnvelope: setup.envelope, verifyMachineAdmissionCurrent: async () => true,
+    machineAdmission: { actorAccountId: authorization.binding.accountId, custodianAccountId: authorization.binding.accountId,
+      machineId: setup.installed.machineId, installationId: setup.installed.installation.installationId, role: 'manage',
+      encryptionMode: setup.sourceResourceMode } } as RpcHandlerContext).then(() => null, (error: unknown) => readRpcErrorCode(error) ?? (error as { code?: string }).code);
+
+  expect(await preflight(setup.account.authorization)).not.toBe('project_requester_authority_unavailable');
+  expect(await preflight(withRequesterContext({ ...full, isCurrent: async () => false, isCustodyCurrent: async () => false })))
+    .toBe('project_requester_authority_unavailable');
+  expect(await preflight(withRequesterContext({ credentials: full.credentials, serverHttpBaseUrl: full.serverHttpBaseUrl,
+    isCurrent: full.isCurrent, resolveEncryption: full.resolveEncryption }))).toBe('project_requester_authority_unavailable');
+});
+
+// An Agent asks for a Worker clean copy from a Session on the person's own
+// Machine. The ask inspects only the destination and the deferred approval
+// keeps that proof; the person's approval replays exactly that proof. The
+// person's own click to another person's Worker is the control.
+it.skipIf(process.platform !== 'linux').each([
+  { asker: 'session_agent', target: 'unchanged', worker: 'member-a' },
+  { asker: 'session_agent', target: 'changed', worker: 'member-a' },
+  { asker: 'person', target: 'unchanged', worker: 'requester' },
+] as const)('asks a worker clean copy with the destination inspection in its approval ($asker, $worker Worker, target $target before approval)', async ({ asker, target, worker }) => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    sourceCustodianAccountId: 'member-a', targetCustodianAccountId: worker, workerCleanCopy: true, originalActionHomeHttp: true });
+  // As live: the Worker folder does not exist yet.
+  await rm(setup.targetPath, { recursive: true });
+  const requesterReadsBeforeAsk = setup.requesterProjectionReads();
+  let asked: unknown;
+  const beforeDecision = async (artifactId: string) => {
+    // The Agent's ask reads no requester rows; the person's ingress does.
+    if (asker === 'session_agent') expect(setup.requesterProjectionReads()).toBe(requesterReadsBeforeAsk);
+    const stored = decodePlainArtifactStoredContent(String(setup.approvalArtifacts.get(artifactId)?.body));
+    asked = ApprovalRequestV2Schema.parse(JSON.parse(String((stored as { body?: unknown } | null)?.body)));
+    if (target === 'changed') {
+      await mkdir(setup.targetPath, { recursive: true });
+      await writeFile(join(setup.targetPath, 'worker-local.txt'), 'appeared after the ask');
+    }
+  };
+  const askAsPerson = async () => {
+    // The person's own request through the Home-signed API host, as in the API-host test.
+    await setup.prepareActionIngress();
+    const ask = await dispatchOriginalAccountAction({ actionId: 'workspace.sync.relationship.create',
+      input: setup.request.actionInput, requestId: setup.request.operationId, target: setup.envelope.target,
+      credentials: setup.credentials, serverHttpBaseUrl: setup.installed.serverHttpBaseUrl,
+      serverIdentityId: setup.installed.homeServerIdentityId, authority: 'present_user',
+      invocation: { surface: 'api', authority: 'present_user', caller: { kind: 'host' } },
+      onRequesterSessionCredentialDisclosure: () => true });
+    if (!ask.ok || !ask.result || typeof ask.result !== 'object' || !('artifactId' in ask.result)
+      || typeof ask.result.artifactId !== 'string') return ask;
+    await beforeDecision(ask.result.artifactId);
+    const decision = await setup.executeApprovalDecision(ask.result.artifactId, {
+      request: setup.request, envelope: setup.envelope, authorization: setup.authorization });
+    return decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result
+      ? decision.result.execution : decision;
+  };
+  const result = asker === 'person' ? await askAsPerson()
+    : await setup.executeRelationshipAction(undefined, { askedBy: asker, beforeDecision });
+  expect(asked, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics })).toMatchObject({
+    actionId: 'workspace.sync.relationship.create', handoffTargetReplacementApproval: {
+      consequences: ['delete_target_only_files_during_exact_mirror'], machineId: setup.request.actionInput.targetMachineId,
+      operationId: setup.request.operationId } });
+  if (target === 'unchanged') {
+    expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics })).toMatchObject({ ok: true, result: { created: true } });
+    expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+  } else {
+    expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics })).toMatchObject({ ok: false, errorCode: 'approval_stale' });
+    expect(await readdir(setup.targetPath)).toEqual(['worker-local.txt']);
+  }
+  expect(setup.approvalArtifacts.size).toBe(1);
 });

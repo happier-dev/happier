@@ -153,7 +153,7 @@ import {
   spawnWorkspaceSyncSidecar,
   stopRetainedWorkspaceSyncNativeProcesses,
 } from './workspaceSyncNativeProcessLaunchers';
-import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { readRequesterAccountActionContext, readRequesterAccountActionTransportContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
 import { PROJECT_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
 import { isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -2816,6 +2816,20 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       }
     }
   };
+  // An Agent's Action from a Session reaches this SOURCE with requester
+  // transport custody only, never requester Account rows. When the asker is
+  // this daemon's own Account, its installed rows are the asker's rows, so the
+  // destination inspection resolves the named source there. Any other asker
+  // keeps the requester read and its refusal.
+  const readSessionAskerSourceSnapshot = async (sourceWorkspaceRefId: string, context: RpcHandlerContext) => {
+    const authorization = context.callerInputAuthorization;
+    if (!authorization || readRequesterAccountActionContext(authorization)
+      || !readRequesterAccountActionTransportContext(authorization)
+      || authorization.binding.accountId !== installedAccountId) return null;
+    const current = factories.getProjectSnapshot();
+    return current && resolveWorkspaceRefById(current.workspaceRefs, sourceWorkspaceRefId, semanticServerId)
+      ? current : await refreshInstalledProjectRows(context.signal);
+  };
   const readRequesterProjectSnapshot = async (context?: RpcHandlerContext) => {
     const requester = readRequesterAccountActionContext(context?.callerInputAuthorization);
     const accountId = context?.machineAdmission?.actorAccountId;
@@ -3311,7 +3325,8 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         || action.targetPath !== request.targetPath) {
         throw compositionError('project_requester_authority_unavailable', 'The original Sync target placement changed');
       }
-      const snapshot = await readRequesterProjectSnapshot(context);
+      const snapshot = await readSessionAskerSourceSnapshot(action.sourceWorkspaceRefId, context)
+        ?? await readRequesterProjectSnapshot(context);
       if (!snapshot) throw compositionError('project_requester_authority_unavailable', 'Requester Sync projection is unavailable');
       const source = resolveWorkspaceRefById(snapshot.workspaceRefs, action.sourceWorkspaceRefId, semanticServerId);
       if (!source || isManagedWorkspaceRefV2(source) || source.machineId !== input.localMachineId) {

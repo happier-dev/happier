@@ -16,6 +16,7 @@ import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { requesterWorkspaceSyncTargetInstallationFiles } from './requesterWorkspaceSyncFilesystem.testkit';
 import { join } from 'node:path';
 import { mkdir } from 'node:fs/promises';
@@ -53,7 +54,7 @@ import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { workspaceCheckoutNativeBoundary as native } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 import { registerMachineWorkspaceSyncRpcHandlers, resolvePrivateWorkspaceSyncTargetExecution } from '@/api/machine/rpcHandlers.workspaceSync';
-import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { admitRequesterAccountActionContext, prepareInstalledRequesterAccountActionContext, projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent,
   doesWorkspaceSyncTargetRequestMatchRouting, readWorkspaceSyncTargetMethod,
@@ -90,6 +91,7 @@ import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1, ActionAutomationIndexV1Schema } from '@happier-dev/protocol/automations/automationActionTriggerV1';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 
 /** Real Sync receiver/native/controller composition; callers install OS boundaries only. */
@@ -149,6 +151,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     },
   };
   let workspaceSyncService: ApiMachineClientLifecycleDependencies['workspaceSync'];
+  // The Session an Agent asks from in `executeRelationshipAction(..., { askedBy: 'session_agent' })`.
+  const agentSessionId = 'agent-session';
   const installed = await createInstalledFilesystemMachineFixture({ agentIsolation, credentials: installedCredentials,
     accountId: sourceCustodianAccountId,
     readWorkspaceSync: () => workspaceSyncService,
@@ -363,8 +367,11 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           machineId: options.remoteTarget ? 'target-parent' : installed.machineId,
           installationId: receiverInstallation.installationId, role: options.remoteTarget ? 'manage' : role,
           encryptionMode: options.remoteTarget ? targetResourceMode : sourceResourceMode },
-        callerAuthority: sourceContext?.callerAuthority ?? 'present_user',
-        sessionActionOrigin: sourceContext?.sessionActionOrigin, callerInputConstraints: sourceContext?.callerInputConstraints };
+        // Home forwards no SOURCE context with root-free cleanup, so an Agent's
+        // Session origin never reaches the retained TARGET release.
+        callerAuthority: installedWriterRelease ? 'present_user' : sourceContext?.callerAuthority ?? 'present_user',
+        ...(installedWriterRelease ? {} : { sessionActionOrigin: sourceContext?.sessionActionOrigin,
+          callerInputConstraints: sourceContext?.callerInputConstraints }) };
       const root = incoming.callerInputAuthorization;
       if (routing && root) targetRpcDiagnostics.push({ message: 'Physical receiver root binding', data: {
         sourceRootMatches: doesWorkspaceSyncSourceRootMatchRouting(root, routing.source),
@@ -451,9 +458,13 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       return { ok: true, result };
     },
     readAdditionalHttpResponse: async (url, config) => {
-      // A real Home answer for an Account with no Action automations.
+      // Real Home answers: an Account with no Action automations, and the
+      // asking Agent Session's detail that approval replay re-reads.
       if (new URL(url).pathname === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1) return { status: 200,
         data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) };
+      if (new URL(url).pathname === `/v2/sessions/${agentSessionId}`) return { status: 200, data: { session: createSessionRecordFixture({
+        id: agentSessionId, active: true, encryptionMode: 'plain', dataEncryptionKey: null, share: null,
+        metadata: JSON.stringify({ machineId: installed.machineId, permissionMode: 'default', permissionModeUpdatedAt: 1 }) }) } };
       if (options.originalActionHomeHttp && new URL(url).pathname === '/v1/machines') return { status: 200,
         data: [machineBootstrap(false), machineBootstrap(true)] };
       const artifactPath = new URL(url).pathname;
@@ -633,6 +644,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
           { resolvePrivateExecution: fixture.targetParent!.handoffAdapter.resolvePrivateExecution,
             hasRetainedRecoveryAdmission: fixture.targetParent!.workspaceSync.hasRetainedRecoveryAdmission }, admission),
         resolveCustodianAccountId: async () => targetCustodianAccountId, resolveHomeServerIdentityId: async () => installed.homeServerIdentityId,
+        // The Worker's own Agent isolation policy, as a running daemon reads it.
+        readAgentIsolation: () => agentIsolation.read(),
         verifyMachineAdmission: received => verifyMachineRpcAdmissionCurrent({ ...received,
           ...(received.workspaceSyncTargetRouting ? { workspaceSyncTargetReceiver: { machineId: 'target-parent',
             installationId: targetInstallation.installationId } } : {}),
@@ -780,6 +793,10 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       authorization: input.authorization, purpose: input.purpose ?? { kind: 'external_action' },
       machineId: installed.machineId, serverId: installed.serverId, serverHttpBaseUrl: installed.serverHttpBaseUrl,
       isRetainedCustodyCurrent: async () => installed.isHomeCurrent(),
+      // The installed Session owner: the asking Agent Session's own Account custody.
+      resolveRequesterSessionBootstrap: async (sessionId, attribution) => sessionId !== agentSessionId ? null
+        : { credentials, attribution, serverHttpBaseUrl: installed.serverHttpBaseUrl, getBoundSessionId: () => agentSessionId,
+          isCurrent: async () => installed.isHomeCurrent(), release: async () => {} },
       resolveCurrentMachineExecutionOriginContext: resolveOrigin,
       createExecutor: admitted => createExecutor(admitted.credentials, undefined, undefined, undefined, undefined, undefined, admitted) });
     const ingressOwner: ExternalActionIngressOwner = {
@@ -792,7 +809,9 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     };
     const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
       credentials: installed.bootstrap.credentials, machineId: installed.machineId, serverId: installed.serverId,
-      serverApiUrl: installed.serverHttpBaseUrl, resolveCurrentMachineExecutionOriginContext: resolveOrigin });
+      serverApiUrl: installed.serverHttpBaseUrl, resolveCurrentMachineExecutionOriginContext: resolveOrigin,
+      // The Session registry boundary: only the fixture's asking Agent Session is live.
+      isSessionCallerCurrent: async ({ caller }) => caller.sessionId === agentSessionId });
     createExecutor = createDaemonExternalActionExecution({
       params: { machineId: installed.machineId, serverId: installed.serverId, serverBaseUrl: installed.serverHttpBaseUrl,
         credentials: installed.bootstrap.credentials, getApiMachineForSessions: () => installed.machine,
@@ -804,8 +823,8 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
       acquireDaemonPluginRuntimeRegistryLease: () => acquireAuthoritativePluginRuntimeRegistryLease({
         happyHomeDir: configuration.happyHomeDir, controller: pluginReloadController }),
       shutdownCancellationDomains: shutdown,
-      // The fixture has no registered Session caller.
-      isSessionCallerCurrent: async () => false,
+      // The fixture's only registered Session caller is its asking Agent Session.
+      isSessionCallerCurrent: async ({ caller }) => caller.kind === 'session' && caller.sessionId === agentSessionId,
       externalActionApprovalExecutionOriginCurrentness: currentness,
       externalActionIngressOwner: ingressOwner,
       externalActionInstallationIdentity: installed.installation,
@@ -879,13 +898,47 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     const { executor, context } = await prepareExecutorContext(invocation);
     return executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, context);
   };
-  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization }) => {
+  // An Agent's Action in a Session: Home mints a Session-origin root and the
+  // Session host projects it through the real issuer projection, which attaches
+  // requester transport custody only. The person's decision keeps the ingress.
+  const askAsSessionAgent = async (invocation: PreparedInvocation, context: Awaited<ReturnType<typeof prepareExecutorContext>>['context']) => {
+    const sessionActionOrigin = { v: 1 as const, caller: { kind: 'session' as const, sessionId: agentSessionId, starterDepth: 0, turnDepth: 0 },
+      sourceTurnId: 'agent-turn', callerPermissionMode: 'default' as const, requestId: invocation.request.operationId };
+    // Home mints a Session root; it carries no sealed ingress requester box.
+    const { requesterAccountContext: _ingressBox, ...homeRoot } = invocation.authorization;
+    const wire = adoptHomeAuthorization({ ...homeRoot, token: 'member-sync-session-root',
+      binding: { ...invocation.authorization.binding, sessionActionOrigin,
+        sessionActionSource: { machineId: installed.machineId, installationId: installed.installation.installationId } } });
+    const root = await projectRequesterAccountActionAuthorization({ authorization: wire, serverIdentityId: installed.homeServerIdentityId,
+      bootstrap: { credentials, serverHttpBaseUrl: installed.serverHttpBaseUrl, isCurrent: async () => installed.isHomeCurrent(),
+        getBoundSessionId: () => agentSessionId,
+        attribution: { serverId: installed.serverId, accountId: wire.binding.accountId, machineId: installed.machineId,
+          installationId: installed.installation.installationId } } });
+    if (!root) throw new Error('Session issuer projection refused');
+    // A running daemon loaded its installed Account's Settings at startup; approval
+    // replay reads the Agent spawn policy the asking Session was admitted under from them.
+    await runWithServerHttpBaseUrl(installed.serverHttpBaseUrl, () => bootstrapAccountSettingsContext({
+      credentials: installed.bootstrap.credentials, mode: 'blocking' }));
+    return { ...context, externalActionExecutionAuthorization: root, callerInputAuthorization: root,
+      authority: 'account_automation' as const, surface: 'agent' as const, actionCaller: sessionActionOrigin.caller,
+      defaultSessionId: agentSessionId, approvalProfileId: null, approvalProfileTeamOrGroupDerived: false,
+      callerPermissionMode: sessionActionOrigin.callerPermissionMode, causalPermissionAuthority: null,
+      sessionInputSource: { sourceSessionId: agentSessionId, sourceTurnId: sessionActionOrigin.sourceTurnId, via: 'action' as const },
+      signExternalActionApprovalInput: (({ actionId, input, target, requesterConfirmation, sessionTargetsV1 }) =>
+        signExternalActionApprovalInputV1({ authorizationToken: root.token, actionId, input, target,
+          privateKey: installed.installation.privateKey, ...(requesterConfirmation ? { requesterConfirmation } : {}),
+          ...(sessionTargetsV1 ? { sessionTargetsV1 } : {}) })) satisfies NonNullable<import('@happier-dev/protocol').ActionExecutorContext['signExternalActionApprovalInput']> };
+  };
+  const executeRelationshipAction = async (invocation: PreparedInvocation = { request, envelope, authorization },
+    options?: Readonly<{ askedBy?: 'session_agent'; beforeDecision?: (artifactId: string) => Promise<void> }>) => {
     const { executor, context } = await prepareExecutorContext(invocation);
+    const asked = options?.askedBy === 'session_agent' ? await askAsSessionAgent(invocation, context) : context;
     const result = await executor.execute('workspace.sync.relationship.create', invocation.request.actionInput,
-      { ...context, actionRequestId: invocation.request.operationId });
+      { ...asked, actionRequestId: invocation.request.operationId });
     if (result.ok && result.result && typeof result.result === 'object' && 'kind' in result.result
       && result.result.kind === 'approval_request_created' && 'artifactId' in result.result
       && typeof result.result.artifactId === 'string') {
+      await options?.beforeDecision?.(result.result.artifactId);
       const decision = await executor.execute('approval.request.decide', { artifactId: result.result.artifactId, decision: 'approve' }, context);
       if (decision.ok && decision.result && typeof decision.result === 'object' && 'execution' in decision.result) {
         return ApprovalExecutionV2Schema.parse(decision.result.execution);
