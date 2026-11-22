@@ -132,8 +132,12 @@ function TeamSharedKindHeader(props: Readonly<{
       description={row?.status === 'available'
         ? t('teams.overview.summary.credentialsShared', { count: row.count })
         : t('teams.overview.shared.kindDescription')}
-      actions={<TeamSharedKindShareAction kind={kind} teamName={context.team.name} testID="team-shared-kind-share"
-        onOpen={(href) => router.push(href as never)} />}
+      // Only a kind with a share flow passes actions: an action that renders nothing still gives the phone header an
+      // empty "…" menu (export a31cc0dacba, L12-machines-phone-390-light-overflow).
+      actions={TEAM_SHARED_KIND_PRESENTATION[kind].share ? (
+        <TeamSharedKindShareAction kind={kind} teamName={context.team.name} testID="team-shared-kind-share"
+          onOpen={(href) => router.push(href as never)} />
+      ) : undefined}
       teamName={context.team.name}
       homeName={context.homeName}
     />
