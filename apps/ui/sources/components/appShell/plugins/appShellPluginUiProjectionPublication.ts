@@ -429,17 +429,15 @@ export function createAppShellPluginUiProjectionPublication(): AppShellPluginUiP
             }
             const machines = new Map<string, InstalledMachineDeclarations>();
             for (const [machineId, build] of builds) {
-                const next = Object.freeze({ ...build, models: Object.freeze(build.models),
-                    materializationsByPluginId: Object.freeze(build.materializationsByPluginId) });
-                machines.set(machineId, next);
                 const old = installedByMachineId.get(machineId);
-                if (old && old.serverIdentityId === next.serverIdentityId && old.hasUnprovenDeclarations === next.hasUnprovenDeclarations
-                    && old.models.length === next.models.length && old.models.every((model, index) => model === next.models[index])
-                    && old.completeUiPluginIds.size === next.completeUiPluginIds.size
-                    && [...old.completeUiPluginIds].every(id => next.completeUiPluginIds.has(id))
-                    && shallow(old.materializationsByPluginId, next.materializationsByPluginId)) {
-                    machines.set(machineId, old);
-                }
+                const unchanged = old && old.serverIdentityId === build.serverIdentityId
+                    && old.hasUnprovenDeclarations === build.hasUnprovenDeclarations
+                    && old.models.length === build.models.length && old.models.every((model, index) => model === build.models[index])
+                    && old.completeUiPluginIds.size === build.completeUiPluginIds.size
+                    && [...old.completeUiPluginIds].every(id => build.completeUiPluginIds.has(id))
+                    && shallow(old.materializationsByPluginId, build.materializationsByPluginId);
+                machines.set(machineId, unchanged ? old : Object.freeze({ ...build, models: Object.freeze(build.models),
+                    materializationsByPluginId: Object.freeze(build.materializationsByPluginId) }));
             }
             if (machines.size !== installedByMachineId.size || [...machines].some(([id, value]) => installedByMachineId.get(id) !== value)) {
                 installedByMachineId = machines;

@@ -75,7 +75,6 @@ describe('AppShell projection source publication', () => {
         });
         try {
             owner.publishSources({ ...sources, availabilityInputs: inputs });
-            counter.mockRestore();
             expect.soft(vectors).toBe(2);
             expect.soft(elements).toBe(rows.length);
             const key = `${rows[99]!.pluginId}/skills`;
@@ -92,7 +91,16 @@ describe('AppShell projection source publication', () => {
                 const edited = rows.map((row, index) => index === 0 ? { ...row, declaredManifest: {
                     ...row.declaredManifest!, displayName: 'Edited',
                 } } : row);
-                await act(async () => { owner.publishSources({ ...sources, availabilityInputs: prepare(edited) }); });
+                const editedInputs = prepare(edited);
+                for (const plugin of editedInputs?.installedPlugins ?? []) {
+                    for (const installation of plugin.installations) markers.add(installation.uiModel);
+                }
+                vectors = 0;
+                elements = 0;
+                await act(async () => { owner.publishSources({ ...sources, availabilityInputs: editedInputs }); });
+                expect.soft(vectors).toBe(1);
+                expect.soft(elements).toBe(99);
+                counter.mockRestore();
                 expect(owner.getSnapshot().pluginUiProjection?.installedPackagesById[rows[0]!.pluginId]?.displayName).toBe('Edited');
                 expect(hook.getCurrent()).toBe(initial);
                 expect(renders).toBe(settled);
