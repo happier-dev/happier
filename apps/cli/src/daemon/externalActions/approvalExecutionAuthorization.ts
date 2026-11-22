@@ -8,7 +8,7 @@ import type { CurrentMachineExecutionOriginContext } from '@/api/machine/resolve
 import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
-import { isOriginalOwnAccountActionCustody, readOriginalRequesterSessionCustodyId } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { isManagedEnrollmentPolicyChildAccountCustody, isOriginalOwnAccountActionCustody, readOriginalRequesterSessionCustodyId } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { openExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -75,8 +75,10 @@ export function createDaemonApprovalExecutionAuthorizationPreparer(input: Readon
     }
     // Match first admission's custody classification. Session/Workflow
     // carriers retain their existing owners rather than borrowing this
-    // installation's ordinary Account credentials.
+    // installation's ordinary Account credentials. A Session-origin enrollment
+    // policy child is guest-own custody at ingress, so its replay is too.
     if (!authorization.requesterAccountContext && !isOriginalOwnAccountActionCustody(authorization.binding)
+      && !isManagedEnrollmentPolicyChildAccountCustody(authorization.binding)
       && readOriginalRequesterSessionCustodyId(authorization.binding) === null) {
       const binding = authorization.binding;
       const requester = input.requesterAccountContext;

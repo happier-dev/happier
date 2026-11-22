@@ -18,6 +18,8 @@ import { createCliActionExecutorHarness } from '@/session/actions/createCliActio
 import { encryptSessionPayload } from '@/session/transport/encryption/sessionEncryptionContext';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
+import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
@@ -74,6 +76,7 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
     adminAccess: { version: 1 as const, mode: 'none' as const }, comparison: 'field' as const };
   const nativeEffects: unknown[] = [], asks: unknown[] = [];
   let differentInstalledAccountResult: Awaited<ReturnType<typeof executeExternalAction>> | undefined;
+  let storedChildRoot: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse> | undefined;
   const executor = createCliActionExecutorHarness({ token, credentials, mode, ctx: null,
     sessionId: '', serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
     externalActionMachineInstallationId: guest.installationId, externalActionMachineRequestPrivateKey: guestKeys.secretKey,
@@ -135,6 +138,7 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
       managedContinuation: { ...body.managedContinuation, controller,
         acquireRequestEnvelopeDigest: authorization.binding.requestEnvelopeDigest },
     } });
+    storedChildRoot = childAuthorization;
     const receive = (receivedAuthorization = childAuthorization, installedCredentials = credentials) => executeExternalAction({
       actionId: 'machines.setup.adminAccess.set', envelope: body.envelope,
       executionAuthorization: receivedAuthorization, principal: { accountId: 'requester', authority, authentication,
@@ -206,4 +210,18 @@ it.each([['requester', true, 'one-off', 'ui'], ['team', true, 'one-off', 'ui'], 
   }
   expect(nativeEffects).toEqual([adminInput]);
   expect(asks).toEqual([]);
+  // A guest Ask on this child stores the root without private ports (L12 r197).
+  // Its approved replay reopens the same own-guest-Account custody as ingress.
+  const stored = ExternalActionExecutionAuthorizationV1Schema.parse(JSON.parse(JSON.stringify(storedChildRoot)));
+  const prepare = createDaemonApprovalExecutionAuthorizationPreparer({ ...guest, serverId: homeId, serverBaseUrl: serverUrl,
+    daemonWorkSignal: new AbortController().signal,
+    resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: guest.machineId }),
+    prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ authorization: request.authorization,
+      purpose: { kind: 'external_action' }, ...guest, installationPrivateKey: guestKeys.secretKey,
+      serverId: homeId, serverIdentityId: homeId, serverHttpBaseUrl: serverUrl, ownCredentials: credentials,
+      isCurrent: async () => true, createExecutor: () => executor }) });
+  const prepared = await prepare({ authorization: stored });
+  onTestFinished(async () => { await prepared?.dispose?.(); });
+  expect(prepared?.authorization.token).toBe(stored.token);
+  expect(readRequesterAccountActionContext(prepared?.authorization)?.credentials.token).toBe(token);
 }, 120_000);
