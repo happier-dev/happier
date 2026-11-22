@@ -114,6 +114,7 @@ import GiftIcon from '@hugeicons/core-free-icons/GiftIcon';
 import GitCommitIcon from '@hugeicons/core-free-icons/GitCommitIcon';
 import GitCompareIcon from '@hugeicons/core-free-icons/GitCompareIcon';
 import GitMergeIcon from '@hugeicons/core-free-icons/GitMergeIcon';
+import GitPullRequestDraftIcon from '@hugeicons/core-free-icons/GitPullRequestDraftIcon';
 import GitPullRequestIcon from '@hugeicons/core-free-icons/GitPullRequestIcon';
 import GithubIcon from '@hugeicons/core-free-icons/GithubIcon';
 import GlobeIcon from '@hugeicons/core-free-icons/GlobeIcon';
@@ -390,6 +391,7 @@ export const HUGE_ICON_REGISTRY = {
     'git-diff': GitCompareIcon,
     'git-merge': GitMergeIcon,
     'git-pull-request': GitPullRequestIcon,
+    'git-pull-request-draft': GitPullRequestDraftIcon,
     'github-logo': GithubIcon,
     'globe': GlobeIcon,
     'google-logo': GoogleIcon,

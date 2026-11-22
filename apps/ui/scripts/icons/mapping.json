@@ -1,6 +1,7 @@
 {
   "#alias:bookmark-plus": "bookmark",
   "#alias:file-diff": "git-diff",
+  "#alias:git-pull-request-draft": "git-pull-request",
   "#alias:hard-drive-download": "download",
   "#alias:octagon-x": "prohibit",
   "#alias:phone-hang-up": "phone",

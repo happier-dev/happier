@@ -403,6 +403,7 @@ export const ICON_REGISTRY = {
     get 'git-diff'() { return GitDiffIcon; },
     get 'git-merge'() { return GitMergeIcon; },
     get 'git-pull-request'() { return GitPullRequestIcon; },
+    get 'git-pull-request-draft'() { return GitPullRequestIcon; },
     get 'github-logo'() { return GithubLogoIcon; },
     get 'globe'() { return GlobeIcon; },
     get 'google-logo'() { return GoogleLogoIcon; },

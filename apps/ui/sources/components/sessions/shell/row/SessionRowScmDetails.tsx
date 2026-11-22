@@ -6,6 +6,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { DiffStat } from '@/components/workspaces/scm/DiffStat';
+import { resolveGitPullRequestStateIconName } from '@/components/sessions/panes/git/pullRequest/gitPullRequestCardModel';
 import { t } from '@/text';
 
 import type { SessionListRowContextPresentation } from '../sessionListRowViewModels';
@@ -35,7 +36,7 @@ export const SessionRowPullRequestChip = React.memo(
     return (
       <View testID={props.testID} style={styles.chip}>
         <Icon
-          name={state === 'merged' ? 'git-merge' : 'git-pull-request'}
+          name={resolveGitPullRequestStateIconName(state)}
           size={12}
           color={quiet}
         />

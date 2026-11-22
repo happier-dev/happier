@@ -1,4 +1,5 @@
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { IconName } from '@/components/ui/icons/Icon';
 
 import type { GitPullRequestCardModel } from './GitPullRequestCard';
 
@@ -22,4 +23,9 @@ export function resolveGitPullRequestCardModel(
         };
     }
     return null;
+}
+
+/** The one glyph for a pull request's state: merged, draft, or the pull request itself (open, closed, unknown). */
+export function resolveGitPullRequestStateIconName(state: GitPullRequestCardModel['state']): IconName {
+    return state === 'merged' ? 'git-merge' : state === 'draft' ? 'git-pull-request-draft' : 'git-pull-request';
 }

@@ -112,6 +112,7 @@
   "git-diff": "GitCompareIcon",
   "git-merge": "GitMergeIcon",
   "git-pull-request": "GitPullRequestIcon",
+  "git-pull-request-draft": "GitPullRequestDraftIcon",
   "github-logo": "GithubIcon",
   "globe": "GlobeIcon",
   "google-logo": "GoogleIcon",
