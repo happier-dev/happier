@@ -8,6 +8,7 @@ import { readSessionModesMetadata, projectSessionModesV1Compatibility } from '@h
 import { backendTargetKeysMatch, buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AcpConfigOptionOverridesV1, BackendTargetRefV2, ConnectedServiceBindingsV2, ConnectedServiceMaterializationIdentityV1, SessionProviderBindingMetadataV1 } from '@happier-dev/protocol';
 import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
+import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { readPersistedProviderResumeState } from '@/providers/lifecycle/readPersistedResumeSelection';
 import { readSessionStateFieldFromMetadata } from '@happier-dev/agents';
 import { resolveInheritedApprovalProfileIdV1 } from '@happier-dev/protocol/actions/approvalProfiles';
@@ -39,6 +40,7 @@ type ForkInheritedSpawnOverrides = {
   connectedServices?: ConnectedServiceBindingsV2;
   connectedServicesUpdatedAt?: number;
   connectedServiceMaterializationIdentityV1?: ConnectedServiceMaterializationIdentityV1;
+  teamCredentialBindings?: SessionTeamCredentialBindingIntentV1[];
 };
 
 type ForkInheritedMetadataOverrides = Pick<
@@ -305,6 +307,8 @@ export function resolveForkInheritedOverridesFromMetadata(
   metadata: Record<string, unknown> | null | undefined,
   agentTarget: BackendTargetRefV2 | null,
   requestedApprovalProfileId?: string | null,
+  /** The parent row's Home-accepted Team model source (owner detail; absent for other viewers). */
+  parentAcceptedTeamCredentialBinding?: SessionTeamCredentialBindingIntentV1 | null,
 ): {
   spawn: ForkInheritedSpawnOverrides;
   metadata: ForkInheritedMetadataOverrides;
@@ -365,6 +369,13 @@ export function resolveForkInheritedOverridesFromMetadata(
     metadataOverrides.modelSelectionIntentV2 = capturedModel;
   } else if (model?.selection) {
     spawn.modelSelection = { v: 1, ref: model.selection, updatedAt: model.updatedAt };
+  }
+  // The child starts on the same Team model source as its parent. Home admits
+  // it again at child creation with the checks any new Session gets, so a
+  // withdrawn share or expired source refuses with its own typed reason.
+  if (parentAcceptedTeamCredentialBinding?.slot.kind === 'provider_model'
+    && parentAcceptedTeamCredentialBinding.resourceId !== null) {
+    spawn.teamCredentialBindings = [parentAcceptedTeamCredentialBinding];
   }
   const persistedProviderResumeState = readPersistedProviderResumeState(metadata ?? null);
   if (persistedProviderResumeState.binding) {

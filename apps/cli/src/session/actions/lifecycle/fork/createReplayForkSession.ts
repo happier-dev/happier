@@ -140,6 +140,8 @@ export async function createReplayForkSession(params: Readonly<{
                 ? { approvalProfileId: params.inheritedForkOverrides.spawn.approvalProfileId } : {}),
             ...(params.inheritedForkOverrides.spawn.approvalProfileTeamOrGroupDerived !== undefined
                 ? { approvalProfileTeamOrGroupDerived: params.inheritedForkOverrides.spawn.approvalProfileTeamOrGroupDerived } : {}),
+            ...(params.inheritedForkOverrides.spawn.teamCredentialBindings
+                ? { teamCredentialBindings: params.inheritedForkOverrides.spawn.teamCredentialBindings } : {}),
             replaySeededCreation: {
                 tag: managedForkDirectory?.sessionCreationTag ?? params.spawnNonce,
                 flavor: params.forkBackendResolution.replayFlavor,
