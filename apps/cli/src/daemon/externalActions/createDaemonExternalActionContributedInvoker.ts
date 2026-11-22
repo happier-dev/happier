@@ -16,6 +16,8 @@ import { getSharedBlockingApprovalCoordinator } from '@happier-dev/protocol/acti
 import { ActionOperationCredentialUseV1Schema, projectActionFailureCauseV1, type ActionOperationCredentialUseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 
+import { acquireWorkflowApprovalRequester } from '../workflows/requesterCustody';
+import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { configuration } from '@/configuration';
 import type { StoredCredentials } from '@/persistence';
 import { logger } from '@/ui/logger';
@@ -175,6 +177,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
       const origin = approved.executionOriginV1;
       if (!origin) return targetActionReplayFailure('approval_invalid');
       const originalAuthorization = origin.externalActionExecutionAuthorization;
+      let workflowRequester: Awaited<ReturnType<typeof acquireWorkflowApprovalRequester>> | undefined;
       let preparedSource: Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>> | undefined;
       try {
       const sourceBinding = origin.externalActionExecutionAuthorization?.binding;
@@ -228,6 +231,14 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
       const sourceCurrentness = source.currentness;
       if (!sourceCurrentness) return targetActionReplayFailure('approval_stale');
 
+      if (origin.caller.kind === 'workflowRun' && origin.caller.authorization.principal.kind === 'host'
+        && !origin.externalActionExecutionAuthorization) {
+        const installation = readInstallationIdentity();
+        if (installation) workflowRequester = await acquireWorkflowApprovalRequester({ credentials: input.credentials,
+          serverHttpBaseUrl: resolveServerHttpBaseUrl(), happyHomeDir: configuration.happyHomeDir,
+          installationId: installation.installationId, origin, qualifiedActionId: approved.qualifiedActionId,
+          actionInput: approved.input, ...(signal ? { signal } : {}) });
+      }
       const executionClaim: TargetActionApprovalRequestV1 = {
         ...approved,
         status: 'executing',
@@ -319,6 +330,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
             const replayContext: Omit<ActionExecutorContext, 'hostReviewedChild'> & {
               hostReviewedChild?: ActionExecutorContext['hostReviewedChild'];
             } = { authority: origin.authority, runtimeAccountId: origin.accountId,
+              ...workflowRequester?.context,
               recordOperationCredentialUse,
               serverId: origin.serverId,
               serverIdentityId: origin.serverIdentityId,
@@ -392,7 +404,7 @@ export function createDaemonExternalActionContributedApprovalReplay(input: Reado
 
       return await settleTargetActionExecution({ request: approved, result: executionResult,
         operationCredentialUses, persist, executedAtMs: nextTimestamp(approved) });
-      } finally { await preparedSource?.dispose?.(); }
+      } finally { await workflowRequester?.release(); await preparedSource?.dispose?.(); }
     },
   });
 }

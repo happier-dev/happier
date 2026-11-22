@@ -1,3 +1,7 @@
+import type { ActionExecutorContext, ApprovalExecutionOriginV1 } from '@happier-dev/protocol';
+import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { createCredentialedWorkflowActionAdmissionReader, readWorkflowActionInvocationEffect } from './workflowActionAdmission';
 import type { StoredCredentials } from '@/persistence';
 import { z } from 'zod/mini';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -44,8 +48,18 @@ export async function listWorkflowRequesterCredentialScopes(input: Omit<ScopeBin
 
 export async function retainWorkflowRequesterCredentials(input: Readonly<{
   scopeId: string; credentials: StoredCredentials; attribution: RequesterWorkAttributionV1; happyHomeDir: string; homeServerIdentityId?: string; automationId?: string;
+  machineAdmission?: SavedSecretOperationContextV1['machineAdmission'];
 }>): Promise<Awaited<ReturnType<typeof createRequesterSessionCredentialCustody>>> {
-  const retained = await createRequesterSessionCredentialCustody({ ...input, sessionId: input.scopeId, scope: 'workflow_trigger' });
+  if (input.machineAdmission && input.machineAdmission.actorAccountId !== input.attribution.accountId) {
+    throw new Error('requester_session_custody_mismatch');
+  }
+  // A trigger may be saved for future occurrences. A Run keeps the admission
+  // it captured first, including an unavailable role in older private custody.
+  const original = input.automationId ? null : await readBinding({ ...input.attribution,
+    happyHomeDir: input.happyHomeDir, scopeId: input.scopeId, homeServerIdentityId: input.homeServerIdentityId });
+  const retained = await createRequesterSessionCredentialCustody({ ...input,
+    machineAdmission: original ? original.stored.machineAdmission : input.machineAdmission,
+    sessionId: input.scopeId, scope: 'workflow_trigger' });
   const active = activeScopes.get(retained.path);
   if (active) active.retire = false;
   notifyCustodyChange();
@@ -299,5 +313,41 @@ export async function acquireWorkflowRequesterCredentials(input: ScopeBinding & 
     // private file to the installed daemon; it does not re-evaluate grants.
     verifyMachineAdmissionCurrent: async () => true, signal: input.signal });
   if (!credentials) return null;
-  return { credentials, attribution: stored.value.attribution, release: holdExecutionScope(input, stored.value, stored.stored.retireWhenIdle) };
+  return { credentials, attribution: stored.value.attribution,
+    ...(stored.stored.machineAdmission ? { machineAdmission: {
+      actorAccountId: stored.value.attribution.accountId, ...stored.stored.machineAdmission } } : {}),
+    release: holdExecutionScope(input, stored.value, stored.stored.retireWhenIdle) };
+}
+
+
+/** Durable native consent reopens the original Run's private custody, never the deciding person's context. */
+export async function acquireWorkflowApprovalRequester(input: Readonly<{
+  credentials: StoredCredentials; serverHttpBaseUrl: string; happyHomeDir: string; installationId: string;
+  origin: ApprovalExecutionOriginV1; qualifiedActionId: string; actionInput: unknown; signal?: AbortSignal;
+}>): Promise<Readonly<{ context: Pick<ActionExecutorContext, 'admittedHostWorkflowRequester' | 'verifyMachineAdmissionCurrent'
+  | 'executionRunWorkflowRunId' | 'actionRequestId'>; release(): Promise<void> }> | null> {
+  const origin = input.origin;
+  if (origin.caller.kind !== 'workflowRun' || origin.caller.authorization.principal.kind !== 'host'
+    || origin.externalActionExecutionAuthorization || !origin.accountId || !origin.machineId || !origin.serverIdentityId) return null;
+  const runId = origin.caller.runId;
+  const context = { runtimeAccountId: origin.accountId, actionCaller: origin.caller, executionRunWorkflowRunId: runId,
+    actionRequestId: origin.requestId, ...(input.signal ? { signal: input.signal } : {}) };
+  const admission = await createCredentialedWorkflowActionAdmissionReader(input)({ runId, context, phase: 'approval_replay' });
+  const invocation = await admission?.readActionInvocation('approval_replay');
+  const execution = invocation?.progress.execution;
+  const effect = readWorkflowActionInvocationEffect(execution);
+  if (!admission || admission.run.machineId !== origin.machineId || execution?.kind !== 'action'
+    || execution.actionRequestId !== origin.requestId || effect?.actionId !== input.qualifiedActionId
+    || !sameStrictJsonValue(effect.input, input.actionInput)) return null;
+  const retained = await acquireWorkflowRequesterCredentials({ happyHomeDir: input.happyHomeDir, serverId: origin.serverId,
+    machineId: origin.machineId, installationId: input.installationId, scopeId: runId,
+    accountId: origin.accountId, homeServerIdentityId: origin.serverIdentityId,
+    serverHttpBaseUrl: input.serverHttpBaseUrl, signal: input.signal });
+  if (!retained) return null;
+  if (!retained.machineAdmission?.role) { await retained.release(); return null; }
+  return { context: { executionRunWorkflowRunId: runId, actionRequestId: origin.requestId,
+    admittedHostWorkflowRequester: { ...retained.machineAdmission, role: retained.machineAdmission.role,
+      machineId: retained.attribution.machineId, installationId: retained.attribution.installationId },
+    // The exact admitted Run was opened above. Finite replay follows its local cancellation signal.
+    verifyMachineAdmissionCurrent: async signal => !input.signal?.aborted && !signal?.aborted }, release: retained.release };
 }

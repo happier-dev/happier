@@ -83,7 +83,7 @@ type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
         externalActionExecutionAuthorization?: RpcHandlerContext['callerInputAuthorization'];
         verifiedExternalActionRequester?: VerifiedExternalActionRequester;
         authenticatedLocalRootCustody?: AuthenticatedLocalRootCustody;
-        admittedHostWorkflowRequester?: true;
+        admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
     }>;
 
 /** Restore only host-private proof, never replace an existing receipt or guard. */
@@ -148,9 +148,9 @@ function readHostRequesterInvocationSource(input: Pick<HostRequesterExecutionIde
             ?? localContexts.find(local => local?.authenticatedLocalRootCustody)?.authenticatedLocalRootCustody);
     // A claimed host Workflow reuses the Account bootstrap for credentials.
     // Ingress knows its source. A Session origin still owns its own placement.
-    const hostWorkflow = input.rpcContext?.admittedHostWorkflowRequester === true
-        || input.actionContext?.admittedHostWorkflowRequester === true
-        || localContexts.some(local => local?.admittedHostWorkflowRequester === true);
+    const hostWorkflow = Boolean(input.rpcContext?.admittedHostWorkflowRequester
+        || input.actionContext?.admittedHostWorkflowRequester
+        || localContexts.some(local => local?.admittedHostWorkflowRequester));
     return {
         sessionOrigin,
         agentSource: !!sessionOrigin
@@ -215,7 +215,9 @@ export function selectHostRequesterExecutionIdentity(input: HostRequesterExecuti
             separationRequired: requester.data.accountId !== hostAccount.custodianAccountId,
             ...(input.hostAccountAutomation ? { accountAutomation: true as const } : {}) };
     }
-    const admission = context?.machineAdmission;
+    const admission = context?.machineAdmission ?? context?.admittedHostWorkflowRequester
+        ?? context?.localActionContext?.admittedHostWorkflowRequester
+        ?? input.actionContext?.inheritedLocalActionContext?.admittedHostWorkflowRequester;
     const session = input.sessionRequester && RequesterWorkAttributionV1Schema.safeParse(input.sessionRequester);
     if (input.sessionRequester && !session?.success) return unknown('session_requester_unavailable');
     const originalRequester = input.actionContext?.verifiedExternalActionRequester;

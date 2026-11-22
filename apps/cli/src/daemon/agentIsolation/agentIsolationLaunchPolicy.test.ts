@@ -391,7 +391,7 @@ describe('held Agent isolation launch admission', () => {
     it('keeps admitted host Workflow custody as automation through SDK children without lending it to Session or foreign work', () => {
         const machineAdmission = { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
             installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const };
-        const actionContext = { authority: 'account_automation' as const, admittedHostWorkflowRequester: true as const,
+        const actionContext = { authority: 'account_automation' as const, admittedHostWorkflowRequester: machineAdmission,
             machineAdmission, requesterWorkAttributionV1: { serverId: 'srv_home', accountId: 'owner',
                 machineId: 'machine', installationId: 'installation' }, verifyMachineAdmissionCurrent: async () => true };
         const input = { hostHomeServerIdentityId: 'srv_home', hostCustodianAccountId: 'owner',
@@ -405,8 +405,10 @@ describe('held Agent isolation launch admission', () => {
             actionContext: { ...actionContext, actionCaller: { kind: 'session', sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 } } }))).toBe(false);
         expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
             actionContext: { ...actionContext, machineAdmission: { ...machineAdmission, actorAccountId: 'member', role: 'use' } } }))).toBe(false);
+        expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
+            actionContext: { ...actionContext, machineAdmission: undefined } }))).toBe(true);
         expect(selectHostRequesterExecutionIdentity({ ...input, actionContext: { ...actionContext,
-            machineAdmission: undefined } })).toMatchObject({ kind: 'unknown' });
+            machineAdmission: undefined, admittedHostWorkflowRequester: undefined } })).toMatchObject({ kind: 'unknown' });
     });
     it('consumes authenticated local root custody without lending it to signed, foreign or Session work', () => {
         const authenticatedLocalRootCustody = { serverIdentityId: 'srv_home', accountId: 'owner',
@@ -572,7 +574,7 @@ describe('held Agent isolation launch admission', () => {
         expect(selectHostRequesterExecutionIdentity({ ...input, rpcContext: { ...rpcContext, sessionActionOrigin: origin } }))
             .toMatchObject({ kind: 'isolated', separationRequired: false });
         expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
-            rpcContext: { ...rpcContext, sessionActionOrigin: origin, admittedHostWorkflowRequester: true },
+            rpcContext: { ...rpcContext, sessionActionOrigin: origin, admittedHostWorkflowRequester: rpcContext.machineAdmission },
         }))).toBe(false);
         expect(selectHostRequesterExecutionIdentity({ actionContext: { machineAdmission: rpcContext.machineAdmission,
             authority: 'account_automation', actionCaller: caller, verifyMachineAdmissionCurrent: async () => true },
@@ -611,11 +613,11 @@ describe('held Agent isolation launch admission', () => {
                 rpcContext: { ...rpcContext, callerInputAuthorization: workflow } });
             expect(isHostRequesterUnrestrictedOwner(identity)).toBe(principal.kind === 'host');
             expect(isHostRequesterUnrestrictedOwner(selectHostRequesterExecutionIdentity({ ...input,
-                rpcContext: { ...rpcContext, callerInputAuthorization: workflow, admittedHostWorkflowRequester: true },
+                rpcContext: { ...rpcContext, callerInputAuthorization: workflow, admittedHostWorkflowRequester: rpcContext.machineAdmission },
             }))).toBe(principal.kind === 'host');
         }
         expect(selectHostRequesterExecutionIdentity({ ...input, rpcContext: {
-            ...rpcContext, admittedHostWorkflowRequester: true, callerInputAuthorization: nonsession,
+            ...rpcContext, admittedHostWorkflowRequester: rpcContext.machineAdmission, callerInputAuthorization: nonsession,
             machineAdmission: { ...rpcContext.machineAdmission, actorAccountId: 'other-account' },
         } })).toMatchObject({ kind: 'unknown' });
     });

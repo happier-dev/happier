@@ -614,7 +614,7 @@ export function startAutomationWorker(params: {
       const selectedActionExecutor = requester ? createCliActionExecutorFromCredentials({ credentials: executionCredentials,
         readCredentials: async () => executionCredentials, machineId: params.machineId,
         workflowRequesterCustody: createWorkflowRequesterCustody({ credentials: executionCredentials,
-          attribution: requester.attribution, happyHomeDir: configuration.happyHomeDir,
+          attribution: requester.attribution, machineAdmission: requester.machineAdmission, happyHomeDir: configuration.happyHomeDir,
           serverHttpBaseUrl: resolveServerHttpBaseUrl(), homeServerIdentityId: params.requesterHomeServerIdentityId }),
         isAutomationRunCurrent: caller => activeExecutions.get(caller.runId)?.automationId === caller.automationId,
         ...(params.machineAdmissionTransport ? { machineAdmissionTransport: params.machineAdmissionTransport } : {}) }) : actionExecutor;

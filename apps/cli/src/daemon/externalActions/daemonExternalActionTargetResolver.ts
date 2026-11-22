@@ -32,12 +32,10 @@ import type { ResolveExternalActionTarget } from './executeExternalAction';
 import { rethrowRequesterHomeReadFailure } from "@/daemon/sessionEncryption/requesterCurrentness";
 import { timeApprovalPhase, withApprovalActionTrace } from './webLatencyTrace';
 import { createCredentialedWorkflowActionAdmissionReader, createCredentialedWorkflowRunEncryptionResolver,
-  type createWorkflowActionAdmissionReader } from '../workflows/workflowActionAdmission';
+  readWorkflowActionInvocationEffect, type createWorkflowActionAdmissionReader } from '../workflows/workflowActionAdmission';
 import { isWorkflowDiscussionModelReservationCurrent,
   type WorkflowDiscussionModelReservationCustody } from '../workflows/recovery';
 import { createWorkflowRunStorageClient } from '../workflows/workflowRunStorageClient';
-import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
-import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 
 type CurrentMachineExecutionOrigin = Readonly<{
   serverIdentityId: string;
@@ -253,12 +251,11 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
                 ...(signal ? { signal } : {}) } });
             const invocation = await admission?.readActionInvocation('approval_replay');
             const execution = invocation?.progress.execution;
-            // Contributed leaves retain their qualified id; their signed approval uses action.invoke.
-            const contributed = origin.actionId === 'action.invoke'
-              ? ActionInvokeInputSchema.safeParse(request?.v === 2 ? request.actionArgs : actionInput) : null;
-            const qualifiedActionId = contributed?.success ? formatQualifiedPluginActionId(contributed.data.action) : null;
+            const effect = readWorkflowActionInvocationEffect(execution);
+            const approvedEffect = readWorkflowActionInvocationEffect({ kind: 'action', actionId: origin.actionId,
+              input: request?.v === 2 ? request.actionArgs : actionInput });
             if (!admission || admission.run.ownerAccountId !== input.accountId || execution?.kind !== 'action'
-              || (execution.actionId !== origin.actionId && execution.actionId !== qualifiedActionId)
+              || !effect || effect.actionId !== approvedEffect?.actionId
               || execution.actionRequestId !== origin.requestId) return stale('workflow_authorization_changed');
             // The signature above binds the prepared effect. This read recovers
             // only its accepted ceiling, never fresh authority over its operands.

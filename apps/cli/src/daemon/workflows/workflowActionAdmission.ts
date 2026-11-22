@@ -16,6 +16,18 @@ import { readObservedAccountEncryptionCurrentnessWitness } from '@/api/client/ac
 import { readRequesterAccountActionContext } from '../sessionEncryption/requesterAccountActionContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
+import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+
+/** A qualified leaf and action.invoke retain the same contributed effect. */
+export function readWorkflowActionInvocationEffect(execution: Pick<NonNullable<WorkflowInvocationBindingRowV1['progress']['execution']>, 'kind'> &
+  Readonly<{ actionId?: string; input?: unknown }> | undefined):
+  Readonly<{ actionId: string; input: unknown }> | null {
+  if (execution?.kind !== 'action' || !execution.actionId) return null;
+  if (execution.actionId !== 'action.invoke') return { actionId: execution.actionId, input: execution.input };
+  const contributed = ActionInvokeInputSchema.safeParse(execution.input);
+  return contributed.success ? { actionId: formatQualifiedPluginActionId(contributed.data.action), input: contributed.data.input } : null;
+}
 
 function record(value: unknown): Readonly<Record<string, unknown>> {
   return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as Readonly<Record<string, unknown>> : {};

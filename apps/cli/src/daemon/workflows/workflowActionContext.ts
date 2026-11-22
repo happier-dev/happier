@@ -149,7 +149,7 @@ export function createWorkflowActionContextResolver(
       ...(requester?.machineAdmission && !context.runtimeAccountId
         ? { runtimeAccountId: requester.machineAdmission.actorAccountId } : {}),
       ...(requester?.machineAdmission && execution.authorization.principal.kind === 'host'
-        ? { admittedHostWorkflowRequester: true as const } : {}),
+        ? { admittedHostWorkflowRequester: requester.machineAdmission } : {}),
       defaultSessionId: execution.originSessionId ?? null,
       workspaceWrites: execution.role?.workspaceWrites ?? 'allow',
       externalActionTarget: context.externalActionTarget ?? { kind: 'machine' as const, machineId: execution.workspace.machineId,

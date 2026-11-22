@@ -74,7 +74,7 @@ export type RpcHandlerContext = Readonly<{
     /** Private data opened after the signed retained-copy route was admitted. */
     retainedCheckoutTeardown?: Readonly<{ data: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').RetainedCheckoutTeardownDataV1 | null }>;
     /** The installed ingress retained a claimed host Workflow's Account custody for this exact typed operation. */
-    admittedHostWorkflowRequester?: true;
+    admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
     /** Direct SCM workspace placement retained by receiving admission for this call. */
     directScmWorkspaceRequester?: Extract<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'isolated' }>;
     /** Exact host capture returned by Machine admission; never parsed from a request. */
@@ -179,7 +179,7 @@ export const RPC_ADMISSION_PREDICATES = [
 export type RpcAdmissionPredicate = (typeof RPC_ADMISSION_PREDICATES)[number];
 
 export type RpcAuthorizationResult =
-    | Readonly<{ ok: true; workspaceSyncPrivateExecution?: RpcHandlerContext['workspaceSyncPrivateExecution']; admittedHostWorkflowRequester?: true;
+    | Readonly<{ ok: true; workspaceSyncPrivateExecution?: RpcHandlerContext['workspaceSyncPrivateExecution']; admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
         directScmWorkspaceRequester?: RpcHandlerContext['directScmWorkspaceRequester'] }>
     | Readonly<{ ok: false; error: string; errorCode?: string; admissionPredicate?: RpcAdmissionPredicate;
         failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1 }>;

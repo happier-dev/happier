@@ -1534,7 +1534,7 @@ export class RpcHandlerManager {
                 signal.throwIfAborted();
                 handlerExecutionId = this.beginHandlerExecution(method);
                 return await handler(params, Object.freeze({
-                    ...(options?.admissionResult?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: true } : {}),
+                    ...(options?.admissionResult?.admittedHostWorkflowRequester ? { admittedHostWorkflowRequester: options.admissionResult.admittedHostWorkflowRequester } : {}),
                     ...(directScmWorkspaceRequester ? { directScmWorkspaceRequester } : {}),
                     ...(options?.admissionResult?.workspaceSyncPrivateExecution
                         ? { workspaceSyncPrivateExecution: options.admissionResult.workspaceSyncPrivateExecution } : {}),

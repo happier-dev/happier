@@ -1478,6 +1478,7 @@ describe('createDaemonMachineBootstrapRuntime', () => {
         invoke: expect.any(Function),
       }),
       runActionOperation: expect.any(Function),
+      resolveActionRequesterContext: expect.any(Function),
     });
     expect(coordinateWorkflowRun).toHaveBeenCalledOnce();
     // The claim's requester custody is released when the claim settles.

@@ -58,6 +58,7 @@ import { readInstallationIdentityIfExistsSync } from '../identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { projectDaemonRequesterWorkAttribution, type RequesterWorkAttributionV1 } from '../lifecycle/requesterWorkAttribution';
 import { createWorkflowRunMachineTransport } from '../workflows/workflowMachineTransport';
+import { retainWorkflowRequesterCredentials, retireWorkflowRequesterCredentials } from '../workflows/requesterCustody';
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 
 /** The installed host's passive source Action composition; it never reads a remote OS path. */
@@ -702,6 +703,13 @@ export function createDaemonMachineBootstrapRuntime(
           try {
             const savedSecretOperationContext = await requesterTransport.resolveSavedSecretOperationContext();
             if (!savedSecretOperationContext) throw Object.assign(new Error('source_unavailable'), { code: 'source_unavailable' });
+            // The Run captures its admitted role independently of future trigger
+            // edits, using the existing direct-Run custody and retirement owner.
+            if (selectedAttribution) await retainWorkflowRequesterCredentials({ scopeId: claim.runId,
+              credentials: selectedCredentials, attribution: selectedAttribution,
+              happyHomeDir: configuration.happyHomeDir,
+              homeServerIdentityId: await params.resolveCurrentServerIdentityId?.() ?? undefined,
+              machineAdmission: savedSecretOperationContext.machineAdmission });
             const coordinate = params.createWorkflowRunCoordinatorForMachine!({
               machineId: runtimeMachineId,
               requesterCredentials: selectedCredentials,
@@ -714,7 +722,16 @@ export function createDaemonMachineBootstrapRuntime(
               resolveActionRequesterContext: requesterTransport.resolveActionRequesterContext,
             });
             return await coordinate(claim);
-          } finally { await requesterTransport.dispose(); }
+          } finally {
+            await requesterTransport.dispose();
+            if (selectedAttribution) await retireWorkflowRequesterCredentials({ scopeId: claim.runId,
+              ...selectedAttribution, happyHomeDir: configuration.happyHomeDir,
+              serverHttpBaseUrl: readMachineSkillHomeUrl() }).catch(() => {
+                // Retirement intent is already private and durable. Home
+                // unavailability cannot change the admitted Run's result.
+                logger.warnLocalFile('[Workflow] Requester custody retirement deferred', { runId: claim.runId });
+              });
+          }
         }
         : null;
       const worker = startAutomationWorker({

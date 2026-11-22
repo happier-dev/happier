@@ -366,3 +366,45 @@ it.each(['retirement', 'observer'] as const)('cancels a pending custody storage 
     await app.close(); await rm(directory, { recursive: true, force: true });
   }
 });
+
+
+it('preserves a claimed Run admission when its trigger is resaved and never upgrades legacy roleless custody', async () => {
+  const app = fastify();
+  const origin = 'http://workflow-run-admission.test';
+  const directory = await mkdtemp(join(tmpdir(), 'workflow-run-admission-'));
+  const attribution = { serverId: 'home', accountId: 'guest', machineId: 'machine', installationId: 'installation' };
+  const credentials: StoredCredentials = { token: 'guest-token', encryption: null };
+  const binding = { ...attribution, happyHomeDir: directory, serverHttpBaseUrl: origin, homeServerIdentityId: 'srv_home' };
+  app.get('/v1/account/profile', async () => ({ id: attribution.accountId }));
+  app.get('/v1/account/encryption/currentness', async () => ({ mode: 'plain', version: 1, updatedAt: 1,
+    signingKeyFingerprint: null, contentKeyFingerprint: null }));
+  let machineReads = 0;
+  app.get('/v1/machines/:id', async (_request, reply) => { machineReads++; return reply.code(403).send({ error: 'forbidden' }); });
+  await app.ready();
+  const restore = installAxiosFastifyAdapter({ app, origin });
+  const userAdmission = { actorAccountId: attribution.accountId, custodianAccountId: 'custodian', role: 'use' as const };
+  const managerAdmission = { ...userAdmission, role: 'manage' as const };
+  const retain = (scopeId: string, machineAdmission?: typeof userAdmission | typeof managerAdmission, automationId?: string) =>
+    retainWorkflowRequesterCredentials({ ...binding, scopeId, attribution, credentials, machineAdmission, automationId });
+  try {
+    await retain('trigger', userAdmission, 'automation');
+    await retain('claimed-run', userAdmission);
+    await retain('legacy-run');
+    // A new schedule admission affects future occurrences; reclaiming the
+    // already accepted Run cannot replace that Run's original Machine role.
+    await retain('trigger', managerAdmission, 'automation');
+    await retain('claimed-run', managerAdmission);
+    await retain('legacy-run', managerAdmission);
+    const recovered = await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'claimed-run' });
+    const trigger = await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'trigger' });
+    const legacy = await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'legacy-run' });
+    expect(recovered?.machineAdmission).toEqual(userAdmission);
+    expect(trigger?.machineAdmission).toEqual(managerAdmission);
+    expect(legacy?.machineAdmission).toBeUndefined();
+    expect(await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'claimed-run', installationId: 'replacement' })).toBeNull();
+    expect(await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'claimed-run', accountId: 'other' })).toBeNull();
+    expect(await acquireWorkflowRequesterCredentials({ ...binding, scopeId: 'claimed-run', homeServerIdentityId: 'srv_other' })).toBeNull();
+    await recovered?.release(); await trigger?.release(); await legacy?.release();
+    expect(machineReads).toBe(0);
+  } finally { restore(); await app.close(); await rm(directory, { recursive: true, force: true }); }
+});

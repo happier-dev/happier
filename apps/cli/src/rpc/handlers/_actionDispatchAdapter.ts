@@ -168,7 +168,7 @@ export function buildActionExecutorContextForRpc(
         ...(params.requestStartedAtMs === undefined ? {} : { requestStartedAtMs: params.requestStartedAtMs }),
         ...(params.machineAdmission ? { machineAdmission: params.machineAdmission } : {}),
         ...(params.admittedHostWorkflowRequester || localActionContext?.admittedHostWorkflowRequester
-            ? { admittedHostWorkflowRequester: true as const } : {}),
+            ? { admittedHostWorkflowRequester: params.admittedHostWorkflowRequester ?? localActionContext?.admittedHostWorkflowRequester } : {}),
         ...(params.verifyMachineAdmissionCurrent ? { verifyMachineAdmissionCurrent: params.verifyMachineAdmissionCurrent } : {}),
         ...(params.requesterSessionBootstrap ? { requesterSessionBootstrap: params.requesterSessionBootstrap } : {}),
         ...(params.sessionActionOrigin ? { sessionActionOrigin: params.sessionActionOrigin } : {}),

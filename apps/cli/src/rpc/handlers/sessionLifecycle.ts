@@ -378,7 +378,8 @@ async function resolveProductionSessionSpawnNewActionExecutor(params: Readonly<{
         serverApiUrl: requester.serverHttpBaseUrl,
         machineId: requester.attribution.machineId,
         workflowRequesterCustody: createWorkflowRequesterCustody({ credentials: requester.credentials,
-            attribution: requester.attribution, happyHomeDir: configuration.happyHomeDir,
+            attribution: requester.attribution, machineAdmission: requester.savedSecretOperationContext.machineAdmission,
+            happyHomeDir: configuration.happyHomeDir,
             homeServerIdentityId: requester.homeServerIdentityId, serverHttpBaseUrl: requester.serverHttpBaseUrl }),
         readCredentials: async () => await requester.isCurrent() ? requester.credentials : null,
         actionsSettingsProvider: {
@@ -462,7 +463,8 @@ export function registerSessionSpawnNewRpcHandlers(params: Readonly<{
                             await retainWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
                                 automationId: parsed.data.input.automationId,
                                 happyHomeDir: boundary.happyHomeDir, credentials: admitted.credentials,
-                                attribution: admitted.attribution, homeServerIdentityId: admitted.homeServerIdentityId });
+                                attribution: admitted.attribution, homeServerIdentityId: admitted.homeServerIdentityId,
+                                machineAdmission: context.machineAdmission });
                         } else {
                             await retireWorkflowRequesterCredentials({ scopeId: parsed.data.input.scopeId,
                                 happyHomeDir: boundary.happyHomeDir, ...admitted.attribution,

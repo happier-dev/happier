@@ -320,7 +320,7 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
         ...(requesterWorkAttributionV1 ? { workflowRequesterCustody: createWorkflowRequesterCustody({
           credentials: params.credentials, attribution: requesterWorkAttributionV1,
           happyHomeDir: configuration.happyHomeDir, serverHttpBaseUrl: readBaseUrl(),
-          homeServerIdentityId: input.serverIdentityId,
+          homeServerIdentityId: input.serverIdentityId, machineAdmission: savedSecretOperationContext?.machineAdmission,
         }) } : {}),
         machineAdmissionTransport: input.machineAdmissionTransport,
         machineActionDirectTargetTransport: input.machineActionDirectTargetTransport,

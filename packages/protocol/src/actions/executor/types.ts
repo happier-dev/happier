@@ -784,8 +784,9 @@ export type ActionExecutorContext = Readonly<{
   /** Original receiving Machine custody, retained in-process through approval; never accepted from Action input. */
   machineAdmission?: import('../../rpc/socket.js').SocketRpcMachineAdmissionContextV1;
 
-  /** Claimed host Workflow custody, qualified by its retained Machine admission; never an Action input or Session authority. */
-  admittedHostWorkflowRequester?: true;
+  /** Original host Workflow Machine custody, retained privately across consent; never an Action input or Session authority. */
+  admittedHostWorkflowRequester?: Readonly<Pick<import('../../rpc/socket.js').SocketRpcMachineAdmissionContextV1,
+    'actorAccountId' | 'custodianAccountId' | 'machineId' | 'installationId' | 'role'>>;
 
   /** Authenticated private-root identity retained in-process; never an Action/RPC DTO or persisted approval origin. */
   authenticatedLocalRootCustody?: Readonly<{
