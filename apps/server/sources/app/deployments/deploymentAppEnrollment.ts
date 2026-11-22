@@ -32,7 +32,7 @@ export async function admitDeploymentAppEnrollmentInTx(tx: Tx, input: Deployment
         || !isOwnServerDeploymentTarget(row.targetLink) || row.operation === 'teardown') {
         return { ok: false as const, error: 'deployment_access_denied' as const };
     }
-    if (row.cancelRequestedAt || !deploymentInProgressStates().includes(row.state)) {
+    if (row.requestedByAccountId === null || row.cancelRequestedAt || !deploymentInProgressStates().includes(row.state)) {
         return { ok: false as const, error: 'deployment_conflict' as const };
     }
     if (continuation.pairingPublicKey && continuation.existingMachineId) return { ok: false as const, error: 'deployment_invalid' as const };

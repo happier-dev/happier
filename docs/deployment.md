@@ -10,17 +10,21 @@ Erasure itself deletes no deployment rows.
 Only a solely Account-owned, dependency-closed graph is purged. Source ownership
 and audience come from the Source owner; receipt occupancy and native absence
 come from the existing receipt and teardown owners. A tombstoned Environment
-still needs complete teardown evidence for its targets. Detach-and-keep-running
-does not prove retirement. Live controller custody, in-progress work, foreign or
-Team ownership, shared content, or incoming foreign lineage refuses the purge
-without deleting part of the graph. The HTTP 409 code is
+still needs complete teardown evidence for its targets. A running workload or
+retained provider resource still needs cleanup. Live controller custody,
+in-progress work, foreign or Team ownership, shared content, or incoming foreign
+lineage refuses the purge without deleting part of the graph. The HTTP 409 code is
 `account_erasure_deployment_cleanup_required`; finish teardown or resolve the
-shared dependencies before retrying. Team-owned graphs and other people's history
-are never deleted or reassigned by this owner.
+shared dependencies before retrying.
 
-This is an unpublished 0.3 error-contract addition. Matching Protocol, server and
-app readers deploy together; no database migration or released-version adapter
-is introduced.
+Settled Receipts belong to their Environment's history. Erasing the requester
+clears their attribution from retained Receipts. If the requester
+owns a private Artifact still referenced by a foreign Environment, its content
+dependency remains. Once that Environment is retired and unshared, its owner
+can erase the Environment and Receipt without touching the foreign Artifact.
+The Artifact can then be erased with its own Account. This requires no transfer
+of Artifact ownership, keys or content. A 0.3 server migration makes Receipt
+attribution nullable and asks the database to clear it when the Account is erased.
 
 ## Browser exception setup (0.3 development)
 

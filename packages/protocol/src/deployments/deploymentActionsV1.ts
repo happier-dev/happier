@@ -202,7 +202,7 @@ export const DeploymentReceiptMetadataV1Schema = lazyZodSchema(() => z.strictObj
   v: z.literal(1), id: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
   targetLinkId: DeploymentIdentifierV1Schema, revision: DeploymentRevisionV1Schema,
   operation: DeploymentReceiptOperationV1Schema, state: DeploymentStateV1Schema,
-  requestKey: DeploymentIdentifierV1Schema, requestedByAccountId: DeploymentIdentifierV1Schema,
+  requestKey: DeploymentIdentifierV1Schema, requestedByAccountId: z.nullable(DeploymentIdentifierV1Schema),
   actionOperationId: DeploymentIdentifierV1Schema,
   /** Immutable admitted Workflow cause; never supplied by the receipt request body. */
   originRunId: z.optional(DeploymentIdentifierV1Schema),
@@ -660,7 +660,7 @@ export const DeploymentReceiptListInputV1Schema = lazyZodSchema(() => z.strictOb
   ...deploymentEnvironmentReadAddress,
   teardownRequestKey: z.optional(DeploymentReceiptMetadataV1Schema.shape.requestKey),
   state: z.optional(DeploymentReceiptMetadataV1Schema.shape.state),
-  actorAccountId: z.optional(DeploymentReceiptMetadataV1Schema.shape.requestedByAccountId),
+  actorAccountId: z.optional(DeploymentIdentifierV1Schema),
   requestedAtFromMs: z.optional(DeploymentTimestampV1Schema),
   requestedAtToMs: z.optional(DeploymentTimestampV1Schema),
   operation: z.optional(DeploymentReceiptMetadataV1Schema.shape.operation),

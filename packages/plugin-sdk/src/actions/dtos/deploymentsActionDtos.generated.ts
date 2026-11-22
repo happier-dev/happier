@@ -14821,7 +14821,7 @@ export type DeploymentsActionResultById = {
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
-            requestedByAccountId: string;
+            requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
             contentArtifactId: string;
@@ -15295,7 +15295,7 @@ export type DeploymentsActionResultById = {
                 operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
                 state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
                 requestKey: string;
-                requestedByAccountId: string;
+                requestedByAccountId: null | string;
                 actionOperationId: string;
                 requestedAtMs: number;
                 contentArtifactId: string;
@@ -15646,7 +15646,7 @@ export type DeploymentsActionResultById = {
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
-            requestedByAccountId: string;
+            requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
             contentArtifactId: string;
@@ -15823,7 +15823,7 @@ export type DeploymentsActionResultById = {
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
-            requestedByAccountId: string;
+            requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
             contentArtifactId: string;
@@ -15950,7 +15950,7 @@ export type DeploymentsActionResultById = {
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
-            requestedByAccountId: string;
+            requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
             contentArtifactId: string;
@@ -15984,7 +15984,7 @@ export type DeploymentsActionResultById = {
             operation: 'deploy' | 'promote' | 'rollback' | 'teardown';
             state: 'cancelled' | 'failed' | 'outcome_unknown' | 'queued' | 'running' | 'running_unverified' | 'succeeded';
             requestKey: string;
-            requestedByAccountId: string;
+            requestedByAccountId: null | string;
             actionOperationId: string;
             requestedAtMs: number;
             contentArtifactId: string;

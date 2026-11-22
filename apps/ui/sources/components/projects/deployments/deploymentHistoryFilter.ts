@@ -27,7 +27,7 @@ function scalarField<Key extends keyof DeploymentHistoryFilter>(
   id: Key,
   parse: (value: unknown) => NonNullable<DeploymentHistoryFilter[Key]>,
   options: () => readonly NonNullable<DeploymentHistoryFilter[Key]>[],
-  fact: (facts: Facts) => string,
+  fact: (facts: Facts) => string | null,
 ) {
   return defineEntityFilterFieldV1<
     DeploymentHistoryFilter,

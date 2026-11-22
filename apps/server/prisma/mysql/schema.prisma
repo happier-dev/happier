@@ -3987,8 +3987,9 @@ model Deployment {
     operation String
     state String
     requestKey String
-    requestedByAccountId String
-    requestedByAccount Account @relation(fields: [requestedByAccountId], references: [id], onDelete: Restrict)
+    /// Attribution is cleared when the requester is erased; custody stays with the Environment.
+    requestedByAccountId String?
+    requestedByAccount Account? @relation(fields: [requestedByAccountId], references: [id], onDelete: SetNull)
     actionOperationId String
     /// Admitted Workflow cause, independent of requester and eventual approver.
     originRunId String?
@@ -4021,6 +4022,7 @@ model Deployment {
     @@unique([environmentId, requestKey])
     @@index([environmentId, requestedAt, id])
     @@index([environmentId, state, id])
+    @@index([requestedByAccountId, state])
     @@index([actionOperationId])
     @@index([acceptedControllerMachineId, state, id])
     @@index([acceptedBuildMachineId, state, id])

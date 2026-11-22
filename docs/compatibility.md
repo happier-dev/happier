@@ -7967,6 +7967,9 @@ Deployment cleanup uses the same precondition path with HTTP 409
 `account_erasure_deployment_cleanup_required`. Its sole owner validates retirement
 and private dependency closure before retirement, then purges the graph after
 blob cleanup and before Artifacts and Machines; see [deployment erasure](deployment.md#account-erasure-03-development).
+In 0.3 development, retained Deployment Receipts report `requestedByAccountId: null`
+after the requester is erased. Earlier development clients require a string.
+Reload their Receipt readers with the server. The actor filter still takes an Account ID.
 A typed database failure in the final deletion transaction preserves that partial
 result after the retirement transaction committed. Revocation is immediate. An
 active Home owner resumes cleanup through `home.accounts.delete` for the same

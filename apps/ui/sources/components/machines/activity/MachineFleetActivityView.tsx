@@ -179,13 +179,12 @@ export function MachineFleetActivityView() {
           const actor = activityItemActor(item);
           return actor?.actorKind === 'person' ? [actor.accountId] : [];
         }),
-        ...state.items.flatMap((item) =>
-          item.kind === 'receipt'
-            ? [item.receipt.requestedByAccountId]
-            : item.operation.scope.sessionId
-              ? []
-              : [item.operation.scope.accountId],
-        ),
+        ...state.items.flatMap((item) => {
+          const accountId = item.kind === 'receipt'
+            ? item.receipt.requestedByAccountId
+            : item.operation.scope.sessionId ? null : item.operation.scope.accountId;
+          return accountId === null ? [] : [accountId];
+        }),
       ]),
     ],
     [actorAccountId, state.items],

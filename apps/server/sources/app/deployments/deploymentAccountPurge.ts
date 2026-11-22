@@ -23,6 +23,11 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     accountId: string; preflight?: boolean;
 }>): Promise<PurgeDecision> {
     const { accountId } = input;
+    const busy = deploymentInProgressStates();
+    // A requester can still have an in-flight operation on another Source.
+    // Settled authorship is history and adds no Source to this Account's scope.
+    if (await tx.deployment.findFirst({ where: { requestedByAccountId: accountId, state: { in: busy } },
+        select: { id: true } })) return refused();
     const artifacts = await tx.artifact.findMany({ where: { accountId }, select: { id: true } });
     const references = await readProjectSourceContentReferencesInTx(tx, { artifactIds: artifacts.map(row => row.id) });
     const authored = await tx.deploymentEnvironment.findMany({ where: { createdByAccountId: accountId },
@@ -30,8 +35,6 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const ownedSources = await tx.projectSource.findMany({ where: { createdByAccountId: accountId } });
     const sourceIds = new Set([...ownedSources.map(row => row.id), ...authored.map(row => row.projectSourceId),
         ...references.map(row => row.projectSourceId)]);
-    for (const row of await tx.deployment.findMany({ where: { requestedByAccountId: accountId },
-        select: { environment: { select: { projectSourceId: true } } } })) sourceIds.add(row.environment.projectSourceId);
     for (const row of await tx.deploymentTargetLink.findMany({ where: { createdByAccountId: accountId },
         select: { environment: { select: { projectSourceId: true } } } })) sourceIds.add(row.environment.projectSourceId);
     for (const row of await tx.deploymentDomain.findMany({ where: { createdByAccountId: accountId },
@@ -73,10 +76,10 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const receipts = environments.flatMap(row => row.deployments);
     const receiptIds = receipts.map(row => row.id);
     const receiptSet = new Set(receiptIds);
-    const artifactIds = [...new Set([...environments.map(row => row.contentArtifactId), ...links.map(row => row.contentArtifactId),
-        ...receipts.map(row => row.contentArtifactId), ...environments.flatMap(row => row.domains.map(domain => domain.contentArtifactId)),
-        ...sources.flatMap(row => row.deploymentDefaults?.contentArtifactId ? [row.deploymentDefaults.contentArtifactId] : [])])];
-    const busy = new Set(deploymentInProgressStates());
+    const definitionArtifactIds = new Set([...environments.map(row => row.contentArtifactId), ...links.map(row => row.contentArtifactId),
+        ...environments.flatMap(row => row.domains.map(domain => domain.contentArtifactId)),
+        ...sources.flatMap(row => row.deploymentDefaults?.contentArtifactId ? [row.deploymentDefaults.contentArtifactId] : [])]);
+    const artifactIds = [...new Set([...definitionArtifactIds, ...receipts.map(row => row.contentArtifactId)])];
     for (const source of sources) {
         if (!source.deploymentDefaults && source.deploymentEnvironments.length === 0) continue;
         const parsed = sourceFromRow(source);
@@ -97,9 +100,10 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
             || row.principals.some(principal => principal.createdByAccountId !== accountId
                 || principal.principalKind !== 'account' || principal.principalId !== accountId)
             || row.domains.some(domain => domain.createdByAccountId !== accountId || !domain.deletedAt || !linkSet.has(domain.targetLinkId))
-            || row.deployments.some(receipt => receipt.requestedByAccountId !== accountId || busy.has(receipt.state))) return refused();
+            || row.deployments.some(receipt => busy.includes(receipt.state))) return refused();
         for (const link of row.targetLinks) {
             if (link.createdByAccountId !== accountId
+                || link.state === 'provisioned'
                 || link.machineId && !machineIds.has(link.machineId)
                 || link.machines.some(member => !machineIds.has(member.machineId))
                 || link.predecessorTargetLinkId && !linkSet.has(link.predecessorTargetLinkId)
@@ -109,15 +113,28 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     }
     // Incoming lineage and private content references must close over this
     // graph before any FK is cleared. Artifact sharing remains Artifact-owned.
+    const purgeArtifactIds: string[] = [];
     for (const ids of portableQueryChunks({ values: artifactIds, bindingsPerValue: 1 })) {
         const rows = await tx.artifact.findMany({ where: { id: { in: [...ids] } }, include: {
             grants: true, keyEnvelopes: true, publicShare: true, signedInLink: true, templateAcceptedVersions: true,
         } });
-        if (rows.length !== ids.length || rows.some(row => row.accountId !== accountId || row.publicShare || row.signedInLink
-            || row.templateAcceptedVersions.length || row.grants.some(grant => grant.principalKind !== 'account' || grant.accountId !== accountId)
-            || row.keyEnvelopes.some(envelope => envelope.recipientAccountId !== accountId))) return refused();
-        const refs = await readProjectSourceContentReferencesInTx(tx, { artifactIds: [...ids] });
+        if (rows.length !== ids.length) return refused();
+        const ownedIds: string[] = [];
+        for (const row of rows) {
+            if (row.accountId !== accountId) {
+                // Drop the retired Receipt's reference to a foreign Artifact.
+                // Its bytes and ownership remain with that Artifact's Account.
+                if (definitionArtifactIds.has(row.id)) return refused();
+                continue;
+            }
+            if (row.publicShare || row.signedInLink || row.templateAcceptedVersions.length
+                || row.grants.some(grant => grant.principalKind !== 'account' || grant.accountId !== accountId)
+                || row.keyEnvelopes.some(envelope => envelope.recipientAccountId !== accountId)) return refused();
+            ownedIds.push(row.id);
+        }
+        const refs = await readProjectSourceContentReferencesInTx(tx, { artifactIds: ownedIds });
         if (refs.some(ref => !sourceIds.has(ref.projectSourceId))) return refused();
+        purgeArtifactIds.push(...ownedIds);
     }
     for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1 })) {
         for (const field of ['previewTemplateEnvironmentId', 'previewCompanionOfEnvironmentId'] as const) {
@@ -175,6 +192,6 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     await forIds(environmentIds, ids => tx.deploymentEnvironmentDeployer.deleteMany({ where: { environmentId: { in: ids } } }));
     await forIds(environmentIds, ids => tx.deploymentEnvironment.deleteMany({ where: { id: { in: ids } } }));
     await forIds([...sourceIds], ids => tx.projectDeploymentDefaults.deleteMany({ where: { projectSourceId: { in: ids } } }));
-    await forIds(artifactIds, ids => tx.artifact.deleteMany({ where: { id: { in: ids } } }));
+    await forIds(purgeArtifactIds, ids => tx.artifact.deleteMany({ where: { id: { in: ids }, accountId } }), 1);
     return { status: 'ok' as const };
 }
