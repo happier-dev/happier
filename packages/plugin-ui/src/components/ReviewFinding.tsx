@@ -117,7 +117,8 @@ export type HappierReviewFindingBodyProps = Readonly<{
   rowId: string;
   finding: ReviewFinding;
   currentBodyMarkdown?: string;
-  labels: Readonly<{ where: string; verification: string; conversation: string }>;
+  /** `suggestedFix` titles a fix given only in words; Where titles the patched code (it falls back to `where`). */
+  labels: Readonly<{ where: string; suggestedFix?: string; verification: string; conversation: string }>;
   notice?: ReactNode;
   reviewers?: ReactNode;
   conversation: ReactNode;
@@ -151,7 +152,7 @@ export function HappierReviewFindingBody(props: HappierReviewFindingBodyProps) {
       </View>
       {where ? props.renderWhere ? props.renderWhere(finding) : (
         <View testID={`review-finding-where:${rowId}`} style={styles.section}>
-          {heading(props.labels.where)}
+          {heading(finding.patch ? props.labels.where : props.labels.suggestedFix ?? props.labels.where)}
           {finding.patch ? <DiffViewer unifiedDiff={finding.patch} filePath={finding.filePath} label={location ?? props.labels.where} /> : null}
           {finding.suggestion && !finding.patch ? markdown(finding.suggestion, 'suggestion') : null}
         </View>

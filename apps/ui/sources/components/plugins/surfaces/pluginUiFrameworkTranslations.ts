@@ -67,6 +67,8 @@ export function resolvePluginUiFrameworkTranslations(): Readonly<Record<string, 
         'happier.plugin-ui.sessionCard.reading': t('common.loading'),
         'happier.plugin-ui.sessionCard.missing': t('errors.sessionNotFound'),
         'happier.plugin-ui.sessionCard.unavailable': t('common.unavailable'),
+        'happier.plugin-ui.review.suggestedFix': t('reviewWalkthrough.detail.suggestedFix'),
+        'happier.plugin-ui.review.at': t('reviewWalkthrough.detail.revisionAt'),
         'happier.plugin-ui.modalHeader.close': t('common.close'),
         // A segmented choice whose value follows a default announces it ("Ask, default").
         'happier.plugin-ui.segmented.inherited': t('capabilities.detail.inheritedValue'),

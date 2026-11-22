@@ -62,6 +62,8 @@ function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly
     previousRound: number; runId: string; lifetime: ServerAccountScopeLifetime; execute: Execution['execute'];
     /** Retry only these reviewers of the round (they did not finish); absent repeats the whole roster. */
     retried?: readonly ReviewRetriedReviewer[];
+    /** The retried reviewers are the round's whole roster. */
+    retriedEveryone?: boolean;
 }>) {
     const [preview, setPreview] = React.useState<WorkflowPreview>({ kind: 'loading' });
     // A Review started before reviewer retry existed refuses it; the same dialog then offers the ordinary New round.
@@ -120,7 +122,8 @@ function WorkflowReviewNewRoundDialog(props: CustomModalInjectedProps & Readonly
                 agentId={resolveBundledAgentIdFromContributionIdentity(reviewer.launch.agentTarget.identity)} /> : null,
             continuity: row.continuity, costConsent: costForReviewer(preview.inventory, reviewer) };
     });
-    return <ReviewNewRoundDialog {...props} reviewers={reviewers} retrying={retriedReviewers?.map(reviewer => reviewer.name)} ready={preview.kind === 'ready'} loading={preview.kind === 'loading'}
+    return <ReviewNewRoundDialog {...props} reviewers={reviewers} retrying={retriedReviewers?.map(reviewer => reviewer.name)}
+        retryingEveryone={Boolean(retriedReviewers && props.retriedEveryone)} ready={preview.kind === 'ready'} loading={preview.kind === 'loading'}
         reason={preview.kind === 'failed' ? preview.message : null} onRetry={preview.kind === 'failed' ? retry : undefined}
         onStart={async costConsent => {
             if (preview.kind !== 'ready') return { ok: false, message: t('common.unavailable') };
@@ -235,7 +238,8 @@ export function useReviewNewRound(input: Readonly<{
     const retry = React.useCallback((reviewers: readonly ReviewRetriedReviewer[]) => {
         if (!retryAvailable || !previous || !workflow || !execution.binding || reviewers.length === 0) return;
         Modal.show({ component: WorkflowReviewNewRoundDialog, props: { previousRound: previous.ordinal, runId: workflow.runId,
-            lifetime: execution.binding, execute: execution.execute, retried: reviewers } });
+            lifetime: execution.binding, execute: execution.execute, retried: reviewers,
+            retriedEveryone: previous.reviewerIds.every(id => reviewers.some(reviewer => reviewer.reviewerId === id)) } });
     }, [execution.binding, execution.execute, previous, retryAvailable, workflow]);
     return { available, open, retry: retryAvailable ? retry : null, approval: execution.approval };
 }

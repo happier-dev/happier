@@ -28,7 +28,7 @@ import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveAc
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
 import { beginClipboardWriteFromUi } from '@/utils/ui/clipboard';
 import { projectReviewFindingRoots } from './reviewFindingRoots';
-import { reviewRoundReviewerName } from '../reviewRoundReviewers';
+import { reviewRosterOf, reviewRoundReviewerName } from '../reviewRoundReviewers';
 export { projectReviewFindingRoots } from './reviewFindingRoots';
 import type { ReviewFindingBulkDecisionResult } from '@/sync/domains/reviews/comments/reviewRunComments';
 
@@ -102,6 +102,8 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
     members: readonly Member[];
     /** The Review resource supplies sealed findings; it supplies no Session follow-up authority. */
     record?: Readonly<{ round: ReviewFindingRoundContextV1 & Readonly<{ reviewerDisplayNames?: Readonly<Record<string, string>> }>;
+        /** The Review's roster (`reviewRosterOf`), so a finding names its reviewer as every round does. */
+        roster?: ReturnType<typeof reviewRosterOf>;
         comments: readonly ReviewCommentV1[] }>;
     reviewerCount: number;
     scope: ServerAccountScope | null;
@@ -419,7 +421,7 @@ export function useReviewFindingsModel<const Member extends ReviewFindingsMember
         const appearances = row.comment.appearances?.filter(appearance => appearance.roundOrdinal === record.round.roundOrdinal) ?? [];
         const reviewers = appearances.map(appearance => {
             const member = memberByRunId.get(appearance.runId);
-            return { label: member?.reviewerLabel ?? reviewRoundReviewerName(record.round, appearance.reviewerId), backendId: member?.backendId ?? '' };
+            return { label: member?.reviewerLabel ?? reviewRoundReviewerName(record.round, appearance.reviewerId, record.roster), backendId: member?.backendId ?? '' };
         });
         return {
             rowId: row.rowId, finding: row.finding,

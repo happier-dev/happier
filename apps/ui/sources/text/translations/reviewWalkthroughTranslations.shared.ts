@@ -235,6 +235,14 @@ export type ReviewWalkthroughTranslations = {
         reviewerDidntFinish: string;
         retryUnfinished: (params: Count) => string;
         retryRoundDescriptionMany: string;
+        retryRoundDescriptionAll: string;
+        reasonLaunchFailed: string;
+        reasonStopped: string;
+        reasonFindingsNotSaved: string;
+        reasonStoppedEarly: string;
+        reasonNoResult: string;
+        suggestedFix: string;
+        revisionAt: string;
         reviewers: string;
         reviewersReadRepository: string;
         reviewersReadComparison: string;
@@ -517,6 +525,14 @@ export const en: ReviewWalkthroughTranslations = {
         reviewerDidntFinish: 'Didn’t finish',
         retryUnfinished: ({ count }) => count === 2 ? 'Retry both' : `Retry ${count} reviewers`,
         retryRoundDescriptionMany: 'Only these reviewers read the code again, in a new round. The others’ results stay as they are.',
+        retryRoundDescriptionAll: 'These reviewers read the code again, in a new round.',
+        reasonLaunchFailed: 'Couldn’t start',
+        reasonStopped: 'Stopped',
+        reasonFindingsNotSaved: 'Its findings weren’t all saved',
+        reasonStoppedEarly: 'Stopped before reading everything',
+        reasonNoResult: 'Its result couldn’t be read',
+        suggestedFix: 'Suggested fix',
+        revisionAt: 'at',
         reviewers: 'Reviewers',
         reviewersReadRepository: 'Each read the whole repository.',
         reviewersReadComparison: 'Each read the same changes.',

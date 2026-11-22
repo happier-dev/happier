@@ -75,7 +75,7 @@ describe('public Review finding presentation', () => {
     } finally { mounted.unmount(); }
   });
   it('says the place once: Where draws only the fix, never the facts line\'s file:line again (U8 R4 C1)', () => {
-    const labels = { where: 'Where', verification: 'How it was verified', conversation: 'Conversation' };
+    const labels = { where: 'Where', suggestedFix: 'Suggested fix', verification: 'How it was verified', conversation: 'Conversation' };
     const { patch: _patch, ...unpatched } = finding;
     const draw = (shown: ReviewFinding) => inSurface(<publicUi.HappierReviewFindingBody rowId="f1" finding={shown} labels={labels}
       reviewers={null} conversation={null} />);
@@ -83,6 +83,9 @@ describe('public Review finding presentation', () => {
     try {
       const where = byId(suggested.container, 'review-finding-where:f1')!;
       expect(where.textContent).toContain('Keep the draft until save resolves');
+      // A fix in words alone is titled as what it is (U8 R5 C2); Where titles the patched code.
+      expect(where.textContent).toContain('Suggested fix');
+      expect(where.textContent).not.toContain('Where');
       expect(where.textContent).not.toContain('src/editor.ts');
     } finally { suggested.unmount(); }
     const placeOnly = mountThroughReactNativeWeb(draw(unpatched));

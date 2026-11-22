@@ -37,6 +37,8 @@ export type HappierReviewSummaryHostProps = Readonly<{
    * primary (Reviews: implementing leads only once every finding is decided).
    */
   leadsPage?: boolean;
+  /** The revision the Review read, as the host admitted it (a pull request's reviewed head): "Review at 9c1e4b2". */
+  reviewedAt?: string | null;
 }>;
 
 function jsonProjection<T>(): PluginUiResourceProjection<T> {
@@ -53,7 +55,7 @@ const actorName = (actor: ReviewCommentV1['author']) => actor.kind === 'user' ? 
 
 /** An admitted Review's shared summary and disclosure. Writes stay in the existing native Review. */
 export const HappierReviewSummaryHost = React.forwardRef<HappierReviewSummaryHandle, HappierReviewSummaryHostProps>(
-function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
+function HappierReviewSummaryHost({ reviewId, leadsPage, reviewedAt }, ref) {
   const text = usePluginTranslation();
   const host = usePluginHostApi();
   const { palette } = resolveHappierWorkTheme(usePluginTheme());
@@ -111,6 +113,8 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
       paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx }}>
       {failed ? <ErrorState title={unavailable} onRetry={retry} /> : qualityGlance === null ? <LoadingState /> : <>
         <HappierReviewSummary heading={text('happier.plugin-ui.review.heading', 'Review')} subject={null}
+          revision={reviewedAt ? { label: text('happier.plugin-ui.review.at', 'at'),
+            value: /^[0-9a-f]{40,64}$/i.test(reviewedAt) ? reviewedAt.slice(0, 7) : reviewedAt } : null}
           glance={qualityGlance} rows={(window?.rows ?? []).map(value => {
             // Where it is, as the Review page's rows say it. The author here is only an id, never shown as a name.
             const location = formatHappierReviewFindingLocation(value.finding);
@@ -131,6 +135,7 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
           <HappierReviewFindingBody rowId={row.rowId} finding={row.finding}
             currentBodyMarkdown={readReviewFindingRevisedBodyV1(row.comment)}
             labels={{ where: text('happier.plugin-ui.review.where', 'Where'),
+              suggestedFix: text('happier.plugin-ui.review.suggestedFix', 'Suggested fix'),
               verification: text('happier.plugin-ui.review.verification', 'How it was verified'),
               conversation: text('happier.plugin-ui.review.conversation', 'Conversation') }}
             conversation={<Stack gap="small">

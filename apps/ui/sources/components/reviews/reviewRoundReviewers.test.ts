@@ -4,7 +4,8 @@ import { ReviewArtifactBodyV1Schema } from '@happier-dev/protocol/reviews/review
 import settledRound from '@/dev/testkit/fixtures/settledReviewRound.json';
 import historicalRound from '@/dev/testkit/fixtures/historicalReviewRound.json';
 import twoStepRound from '@/dev/testkit/fixtures/twoStepPartialReviewRound.json';
-import { projectReviewRoundReviewers, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerRowCount } from './reviewRoundReviewers';
+import { projectReviewRoundReviewers, reviewRosterOf, reviewRoundReviewerName, reviewRoundReviewerOutcomeLabel, reviewRoundReviewerReasonWords,
+  reviewRoundReviewerRowCount, reviewRoundUnfinishedReviewers } from './reviewRoundReviewers';
 
 it('uses the sealed reviewer result and timing after settlement, even while its continued execution still runs', () => {
   // Captured real createReviewRecordPortV1.start/settle output (P02 producer e, 2026-11-22).
@@ -27,13 +28,13 @@ it('keeps captured historical Review A names without inventing individual result
     backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'default', retentionPolicy: 'resumable',
     runClass: 'long_lived', ioMode: 'streaming', status: 'running', startedAtMs: round.startedAt });
   expect(projectReviewRoundReviewers(round, new Map([[runId, { run, findingsCount: 99 }]]))).toEqual([
-    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, findingsCount: null, run: null },
+    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, reason: null, findingsCount: null, run: null },
   ]);
   // The older completed neighbor also has no individual facts, even if its execution has since succeeded.
   expect(projectReviewRoundReviewers({ ...round, state: 'completed' }, new Map([[runId, {
     run: { ...run, status: 'succeeded', finishedAtMs: round.finishedAt! }, findingsCount: 99,
   }]]))).toEqual([
-    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, findingsCount: null, run: null },
+    { reviewerId: 'step-1-reviewer-1', name: 'Claude', named: true, agentId: 'claude', outcome: null, reason: null, findingsCount: null, run: null },
   ]);
   // A producer explicitly recording no outcomes is authoritative; only an absent field preserves the older roster.
   expect(projectReviewRoundReviewers({ ...round, reviewerOutcomes: [] }, undefined)).toEqual([]);
@@ -60,4 +61,26 @@ it('names same-Agent reviewers through the catalog with their mark and step, wit
   ]);
   // A recorded name that is not an Agent (an engine label) stays as recorded, with no mark.
   expect(reviewRoundReviewerName({ reviewerIds: ['a'], reviewerDisplayNames: { a: 'CodeRabbit' } }, 'a')).toBe('CodeRabbit');
+});
+
+it('names a reviewer once per Review across rounds, names a lone unfinished reviewer, and says why it did not finish (U8 R5 P7, P8, reason)', async () => {
+  const { t } = await import('@/text');
+  const first = ReviewArtifactBodyV1Schema.parse(twoStepRound).rounds[0]!;
+  // Round 2 from "Retry Claude · step 2": the same roster slot, alone, settled with P02's typed reason (887367bc64d).
+  const second = ReviewArtifactBodyV1Schema.parse({ v: 1, rounds: [{ ...first, ordinal: 2, reviewerIds: ['step-2-reviewer-1'],
+    reviewerDisplayNames: { 'step-2-reviewer-1': 'claude' }, reviewerOutcomes: [{ reviewerId: 'step-2-reviewer-1', displayName: 'claude',
+      outcome: 'partial', reason: { run: 'failed', runtimeIssue: { source: 'usage_limit', code: 'usage_limit' } } }] }] }).rounds[0]!;
+  const [only] = projectReviewRoundReviewers(second, undefined, reviewRosterOf([first, second]));
+  expect(only!.name).toBe(t('reviewWalkthrough.detail.reviewerInStep', { name: 'Claude', step: 2 }));
+  expect(reviewRoundReviewerName(second, 'step-2-reviewer-1', reviewRosterOf([first, second]))).toBe(only!.name);
+  // The reason in words from the runtime-issue owner, never its code; one with no typed cause names how the run ended.
+  expect(only!.reason).toEqual(expect.any(String));
+  expect(only!.reason).not.toContain('usage_limit');
+  expect(reviewRoundReviewerReasonWords({ run: 'launch_failed' })).toBe(t('reviewWalkthrough.detail.reasonLaunchFailed'));
+  expect(reviewRoundReviewerReasonWords(undefined)).toBeNull();
+  // An older one-reviewer Partial round has no individual result, yet its only reviewer is the one that didn't finish.
+  const historical = ReviewArtifactBodyV1Schema.parse(historicalRound).rounds[0]!;
+  expect(reviewRoundUnfinishedReviewers(historical, projectReviewRoundReviewers(historical, undefined)).map(reviewer => reviewer.name))
+    .toEqual(['Claude']);
+  expect(reviewRoundUnfinishedReviewers({ ...historical, state: 'completed' }, projectReviewRoundReviewers(historical, undefined))).toEqual([]);
 });

@@ -145,7 +145,7 @@ it('shows a fixed finding as Fixed, counts it on its chip and never offers to im
   } finally { await screen.unmount(); }
 });
 
-it('offers no primary from a Review still loading: never New round, and the slot stays taken until the real one lands (G)', async () => {
+it('offers no primary from a Review still loading: never New round, and no placeholder until the real one lands (G, U8 R5 B6)', async () => {
   const reviewId = 'loading-primary-review';
   const accepted = buildReviewCommentFixture({ id: 'loading-accepted', threadId: 'loading-accepted', reviewId,
     accountId: 'alice', state: 'open', reviewTriageStatus: 'accept', roundOrdinal: 1, findingIdentity: 'a'.repeat(64),
@@ -185,11 +185,10 @@ it('offers no primary from a Review still loading: never New round, and the slot
     await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
     expect(primary()?.title ?? null).not.toBe(newRound);
     expect(primary()?.onPress ? primary()?.disabled === true || primary()?.loading === true : true).toBe(true);
-    // The person is known, the findings are not: the slot is held pending, still not New round.
+    // The person is known, the findings are not: no primary yet, and no grey placeholder held for one (U8 R5 B6).
     await act(async () => { detailRead.open(); });
     await vi.waitFor(() => expect(screen.findAllByType(ReviewDetailView)).toHaveLength(1));
-    expect(primary()).toMatchObject({ loading: true, disabled: true });
-    expect(primary()?.title).not.toBe(newRound);
+    expect(primary()).toBeNull();
     // Both known: the real primary takes the same slot.
     await act(async () => { commentsRead.open(); });
     await vi.waitFor(() => expect(primary()?.title).toBe(t('runPage.review.implementFixes', { count: 1 })));

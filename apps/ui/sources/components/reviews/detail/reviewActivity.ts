@@ -5,7 +5,7 @@ import {
   readReviewFindingDecisionV1,
   type ReviewFindingDecisionV1,
 } from '@happier-dev/protocol/reviews/reviewTriageStatus';
-import { projectReviewRoundReviewers, type ReviewRoundReviewerOutcome, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
+import { projectReviewRoundReviewers, reviewRosterOf, type ReviewRoundReviewerOutcome, type ReviewRoundReviewerRead } from '../reviewRoundReviewers';
 
 type Round = Pick<
   ReviewArtifactV1['rounds'][number],
@@ -69,6 +69,8 @@ export function projectReviewActivity(
   }>,
 ): readonly ReviewActivityEvent[] {
   const events: ReviewActivityEvent[] = [];
+  // One name per reviewer across the Review's rounds, as its round card and notice say it.
+  const roster = reviewRosterOf(input.rounds);
   for (const round of input.rounds) {
     events.push({
       id: `round:${round.ordinal}:start`,
@@ -87,7 +89,7 @@ export function projectReviewActivity(
         round: round.ordinal,
         state: round.state,
       });
-    for (const reviewer of projectReviewRoundReviewers(round, input.runReads)) {
+    for (const reviewer of projectReviewRoundReviewers(round, input.runReads, roster)) {
       if (reviewer.outcome === null || reviewer.outcome === 'running' || reviewer.finishedAt === undefined) continue;
       events.push({ id: `reviewer:${round.ordinal}:${reviewer.reviewerId}`, at: reviewer.finishedAt,
         actor: { kind: 'reviewer', name: reviewer.name, agentId: reviewer.agentId }, kind: 'reviewerFinished', outcome: reviewer.outcome });

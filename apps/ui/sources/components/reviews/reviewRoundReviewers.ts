@@ -1,9 +1,11 @@
 import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import type { ReviewArtifactV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewArtifactV1, ReviewRoundReviewerOutcomeV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { readReviewReviewerSlotV1 } from '@happier-dev/protocol/reviews/reviewStart';
+import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
 import { resolveAgentIdFromFlavor, type AgentId } from '@/agents/catalog/catalog';
+import { presentExecutionRunFailureSummary } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { t } from '@/text';
 
 type ReviewRound = ReviewArtifactV1['rounds'][number];
@@ -25,6 +27,8 @@ export type ReviewRoundReviewer = Readonly<{
   agentId: AgentId | null;
   /** Settled result, open-round execution progress, or unknown for older rounds without individual results. */
   outcome: ReviewRoundReviewerOutcome | null;
+  /** Why it didn't finish, in words ("Usage limit reached"), from its settled reason; null when none was recorded. */
+  reason: string | null;
   runId?: string;
   startedAt?: number;
   finishedAt?: number;
@@ -55,6 +59,44 @@ export function reviewRoundReviewerOutcomeLabel(outcome: ReviewRoundReviewerOutc
 }
 
 type NamedRound = Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames'>;
+type ReviewerReason = ReviewRoundReviewerOutcomeV1['reason'];
+
+/**
+ * Why a reviewer didn't finish, in words, from its settled reason (P02 887367bc64d): the runtime issue or run error
+ * through the run-failure owner's words ("Usage limit reached"), else how its run or its publishing ended. One map for
+ * the notice and the Runs row, so a person can tell whether Retry will help.
+ */
+export function reviewRoundReviewerReasonWords(reason: ReviewerReason | undefined): string | null {
+  if (!reason) return null;
+  const issue = reason.runtimeIssue ? SessionRuntimeIssueV1Schema.safeParse({ v: 1, scope: 'primary_session', status: 'failed',
+    occurredAt: 0, source: reason.runtimeIssue.source, code: reason.runtimeIssue.code }).data : undefined;
+  const failure = issue || reason.errorCode ? presentExecutionRunFailureSummary({ code: reason.errorCode ?? issue!.code,
+    ...(issue ? { runtimeIssueV1: issue } : {}) }) : null;
+  if (failure?.summary) return failure.summary;
+  if (reason.run === 'launch_failed') return t('reviewWalkthrough.detail.reasonLaunchFailed');
+  if (reason.run === 'cancelled') return t('reviewWalkthrough.detail.reasonStopped');
+  if (reason.materialization) return t('reviewWalkthrough.detail.reasonFindingsNotSaved');
+  if (reason.reviewOutcome === 'partial') return t('reviewWalkthrough.detail.reasonStoppedEarly');
+  if (reason.reviewOutcome === 'failed' || reason.reviewOutcome === 'unavailable') return t('reviewWalkthrough.detail.reasonNoResult');
+  return null;
+}
+
+/**
+ * Every reviewer the Review named across its rounds, with the names they recorded: a reviewer keeps one name in every
+ * round ("Claude · step 2" in round 1 and in its retry round), so disambiguation reads the whole roster.
+ */
+export function reviewRosterOf(rounds: readonly Pick<ReviewRound, 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes'>[]): NamedRound {
+  const reviewerIds: string[] = [];
+  const reviewerDisplayNames: Record<string, string> = {};
+  for (const round of rounds) {
+    for (const id of [...round.reviewerIds, ...(round.reviewerOutcomes ?? []).map(outcome => outcome.reviewerId)]) {
+      if (!reviewerIds.includes(id)) reviewerIds.push(id);
+    }
+    Object.assign(reviewerDisplayNames, round.reviewerDisplayNames,
+      Object.fromEntries((round.reviewerOutcomes ?? []).flatMap(outcome => outcome.displayName ? [[outcome.reviewerId, outcome.displayName]] : [])));
+  }
+  return { reviewerIds, reviewerDisplayNames };
+}
 
 /** The name a round recorded for a reviewer, read as an Agent when it is one ("claude" is Claude, with its mark). */
 function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ base: string | null; agentId: AgentId | null }> {
@@ -69,13 +111,16 @@ function recordedReviewer(round: NamedRound, reviewerId: string): Readonly<{ bas
  * ran them in different steps ("Claude · step 2"), else by their order ("Claude 2"). The positional id
  * ("step-1-reviewer-1") is an internal key and is never shown.
  */
-export function reviewRoundReviewerIdentity(round: NamedRound, reviewerId: string): Readonly<{ name: string; named: boolean; agentId: AgentId | null }> {
-  const { base, agentId } = recordedReviewer(round, reviewerId);
+export function reviewRoundReviewerIdentity(round: NamedRound, reviewerId: string,
+  roster: NamedRound = round): Readonly<{ name: string; named: boolean; agentId: AgentId | null }> {
+  const own = recordedReviewer(round, reviewerId);
+  const { base, agentId } = own.base ? own : recordedReviewer(roster, reviewerId);
   if (!base) {
     const index = round.reviewerIds.indexOf(reviewerId);
     return { name: t('reviewWalkthrough.detail.reviewerRun', { count: index >= 0 ? index + 1 : 1 }), named: false, agentId };
   }
-  const namesakes = round.reviewerIds.filter(id => recordedReviewer(round, id).base === base);
+  // Namesakes across the whole Review, so a reviewer retried alone in a later round keeps its step.
+  const namesakes = roster.reviewerIds.filter(id => recordedReviewer(roster, id).base === base);
   const position = namesakes.indexOf(reviewerId);
   if (namesakes.length < 2 || position < 0) return { name: base, named: true, agentId };
   const steps = namesakes.map(id => readReviewReviewerSlotV1(id)?.stepIndex);
@@ -85,8 +130,8 @@ export function reviewRoundReviewerIdentity(round: NamedRound, reviewerId: strin
     : t('reviewWalkthrough.detail.reviewerOrdinal', { name: base, count: position + 1 }) };
 }
 
-export function reviewRoundReviewerName(round: NamedRound, reviewerId: string): string {
-  return reviewRoundReviewerIdentity(round, reviewerId).name;
+export function reviewRoundReviewerName(round: NamedRound, reviewerId: string, roster?: NamedRound): string {
+  return reviewRoundReviewerIdentity(round, reviewerId, roster).name;
 }
 
 /** How many reviewer rows the round's Runs draws: its settled results, or its started reviewer runs while it runs. */
@@ -110,18 +155,21 @@ export function reviewCommentEngineName(engineId: string, index: number): string
 export function projectReviewRoundReviewers(
   round: Pick<ReviewRound, 'state' | 'reviewerIds' | 'reviewerDisplayNames' | 'reviewerOutcomes' | 'runs'>,
   reads: ReadonlyMap<string, ReviewRoundReviewerRead> | undefined,
+  /** The whole Review's roster (`reviewRosterOf`), so names stay the same across rounds; this round alone otherwise. */
+  roster?: NamedRound,
 ): readonly ReviewRoundReviewer[] {
   if (round.state !== 'running') {
     if (round.reviewerOutcomes === undefined) return round.reviewerIds.map(reviewerId => ({
-      reviewerId, ...reviewRoundReviewerIdentity(round, reviewerId), outcome: null, findingsCount: null, run: null,
+      reviewerId, ...reviewRoundReviewerIdentity(round, reviewerId, roster), outcome: null, reason: null, findingsCount: null, run: null,
     }));
     // A settled result keeps its own recorded name and facts; a continued execution's later state never overrides them.
     const named = { reviewerIds: round.reviewerOutcomes.map(reviewer => reviewer.reviewerId), reviewerDisplayNames: {
       ...round.reviewerDisplayNames, ...Object.fromEntries(round.reviewerOutcomes.flatMap(reviewer =>
         reviewer.displayName ? [[reviewer.reviewerId, reviewer.displayName]] : [])) } };
     return round.reviewerOutcomes.map(reviewer => ({
-      reviewerId: reviewer.reviewerId, ...reviewRoundReviewerIdentity(named, reviewer.reviewerId),
-      outcome: reviewer.outcome, runId: reviewer.runId, startedAt: reviewer.startedAt, finishedAt: reviewer.finishedAt,
+      reviewerId: reviewer.reviewerId, ...reviewRoundReviewerIdentity(named, reviewer.reviewerId, roster ?? named),
+      outcome: reviewer.outcome, reason: reviewRoundReviewerReasonWords(reviewer.reason),
+      runId: reviewer.runId, startedAt: reviewer.startedAt, finishedAt: reviewer.finishedAt,
       findingsCount: null, run: null,
     }));
   }
@@ -131,10 +179,23 @@ export function projectReviewRoundReviewers(
     const status = read?.run?.status ?? null;
     const ended: ReviewRoundReviewerOutcome | null = status === null || status === 'running' ? null
       : status === 'succeeded' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed';
-    return { reviewerId, ...reviewRoundReviewerIdentity(round, reviewerId), outcome: ended ?? 'running',
+    return { reviewerId, ...reviewRoundReviewerIdentity(round, reviewerId, roster), outcome: ended ?? 'running', reason: null,
       runId: reference?.runId, startedAt: read?.run?.startedAtMs, finishedAt: read?.run?.finishedAtMs,
       findingsCount: read?.findingsCount ?? null, run: read?.run ?? null };
   });
+}
+
+/**
+ * The reviewers a settled round says didn't finish: those whose result says so, or, in an older one-reviewer round
+ * that ended partial or failed with no individual result, its only reviewer (it is the one that didn't finish).
+ */
+export function reviewRoundUnfinishedReviewers<Reviewer extends Pick<ReviewRoundReviewer, 'outcome'>>(
+  round: Pick<ReviewRound, 'state'>, reviewers: readonly Reviewer[],
+): readonly Reviewer[] {
+  const known = reviewers.filter(isReviewRoundReviewerUnfinished);
+  if (known.length > 0) return known;
+  return (round.state === 'partial' || round.state === 'failed') && reviewers.length === 1 && reviewers[0]!.outcome === null
+    ? reviewers : [];
 }
 
 /** A reviewer the round names as not having finished (partial, failed or stopped): it can be retried. Unknown is not unfinished. */

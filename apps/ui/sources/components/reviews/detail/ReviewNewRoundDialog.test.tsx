@@ -54,11 +54,13 @@ describe('New round paid confirmation', () => {
 
 describe('Retrying reviewers that did not finish', () => {
   const titles: string[] = [];
+  const subtitles: string[] = [];
   const startNothing = async () => ({ ok: true as const });
-  function RetryHarness(props: Readonly<{ retried: readonly string[]; onRetry?: () => void; reason?: string | null }>) {
+  function RetryHarness(props: Readonly<{ retried: readonly string[]; everyone?: boolean; onRetry?: () => void; reason?: string | null }>) {
     const [chrome, setChrome] = React.useState<CustomModalChromeConfig | null>(null);
     if (chrome?.kind === 'card' && typeof chrome.title === 'string') titles.push(chrome.title);
-    return <><ReviewNewRoundDialog previousRound={1} retrying={props.retried}
+    if (chrome?.kind === 'card' && typeof chrome.subtitle === 'string') subtitles.push(chrome.subtitle);
+    return <><ReviewNewRoundDialog previousRound={1} retrying={props.retried} retryingEveryone={props.everyone === true}
       reviewers={props.retried.map(name => ({ id: name, label: name, mark: null, continuity: null }))}
       ready={false} reason={props.reason ?? null} onRetry={props.onRetry}
       onStart={startNothing} onClose={onClose} setChrome={setChrome} />
@@ -89,5 +91,12 @@ describe('Retrying reviewers that did not finish', () => {
       expect(titles.at(-1)).toBe(t('reviewWalkthrough.detail.retryUnfinished', { count: 2 }));
       expect(screen.findByTestId('review-new-round:reviewer:Claude · step 2')).not.toBeNull();
     } finally { await screen.unmount(); }
+  });
+
+  it('says no "others" stay when every reviewer of the round is retried (U8 R5 P10)', async () => {
+    const { t } = await import('@/text');
+    subtitles.length = 0;
+    const screen = await renderScreen(<RetryHarness retried={['Claude · step 1', 'Claude · step 2']} everyone />);
+    try { expect(subtitles.at(-1)).toBe(t('reviewWalkthrough.detail.retryRoundDescriptionAll')); } finally { await screen.unmount(); }
   });
 });

@@ -2,6 +2,7 @@ import { memo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { HappierPressable } from '../interaction/Pressable.js';
+import { useOptionalHappierUiTheme } from '../../environment/context.js';
 import { HAPPIER_PAGE_METRICS } from '../layout/pageMetrics.js';
 import type { HappierReviewSeverity } from '../status/ReviewSeverity.js';
 import { HappierFactLine } from './FactLine.js';
@@ -86,6 +87,8 @@ export type HappierReviewSummaryProps = Readonly<{
   headMark?: ReactNode;
   /** What was reviewed ("this session", "#2481"); `null` when the host already names it. */
   subject: string | null;
+  /** The revision it reviewed, after the heading ("at 9c1e4b2", lab pr-verdict): the word, then the sha in the code face. */
+  revision?: Readonly<{ label: string; value: string }> | null;
   /** The Review's one state word on the head's right ("Needs decision"). */
   status?: Readonly<{ label: string; tone: HappierReviewTone }> | null;
   glance: HappierReviewGlance;
@@ -201,6 +204,7 @@ export const HappierReviewSummary = memo(function HappierReviewSummary(
 ) {
   const theme = useHappierWorkTheme(props.theme);
   const { Text } = resolveHappierWorkHost(props.host);
+  const codeFamily = useOptionalHappierUiTheme()?.typography.code.fontFamily;
   const statusColor = props.status
     ? (toneColor(props.status.tone, theme) ?? theme.colors.secondaryText)
     : null;
@@ -211,6 +215,13 @@ export const HappierReviewSummary = memo(function HappierReviewSummary(
         <Text role="cardTitle" style={{ color: theme.colors.text }}>
           {props.heading}
         </Text>
+        {props.revision ? (
+          <Text testID="review-summary:revision" role="cardWord" numberOfLines={1}
+            style={[styles.subject, { color: theme.colors.secondaryText }]}>
+            {`${props.revision.label} `}
+            <Text role="cardWord" style={codeFamily ? { fontFamily: codeFamily } : undefined}>{props.revision.value}</Text>
+          </Text>
+        ) : null}
         {props.subject ? (
           <Text
             role="cardWord"

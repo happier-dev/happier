@@ -46,6 +46,8 @@ type ReviewNewRoundDialogProps = CustomModalInjectedProps &
     onRetry?: () => void;
     /** The reviewers being retried (they didn't finish), by the page's names: the dialog says only they run again. */
     retrying?: readonly string[];
+    /** The retry runs every reviewer of the round, so no "others" keep their results ("Retry both"). */
+    retryingEveryone?: boolean;
   }>;
 
 function continuityLabel(reviewer: ReviewNewRoundReviewer): string | null {
@@ -80,8 +82,9 @@ export function ReviewNewRoundDialog(
   // Strings, so a caller's new array of the same names does not publish new chrome.
   const title = !retried ? t('reviewWalkthrough.detail.newRound') : retried.length === 1
     ? t('reviewWalkthrough.detail.retryReviewer', { name: retried[0]! }) : t('reviewWalkthrough.detail.retryUnfinished', { count: retried.length });
-  const subtitle = t(!retried ? 'reviewWalkthrough.detail.newRoundDescription' : retried.length === 1
-    ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.retryRoundDescriptionMany');
+  const subtitle = t(!retried ? 'reviewWalkthrough.detail.newRoundDescription'
+    : props.retryingEveryone && retried.length > 1 ? 'reviewWalkthrough.detail.retryRoundDescriptionAll'
+      : retried.length === 1 ? 'reviewWalkthrough.detail.retryRoundDescription' : 'reviewWalkthrough.detail.retryRoundDescriptionMany');
   const start = React.useCallback(async () => {
     setBusy(true);
     setFailure(null);

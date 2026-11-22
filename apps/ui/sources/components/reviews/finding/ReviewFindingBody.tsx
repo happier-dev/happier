@@ -72,7 +72,8 @@ export function ReviewFindingBody(
       currentBodyMarkdown={props.currentBodyMarkdown}
       theme={theme}
       host={FINDING_BODY_HOST}
-      labels={{ where: t('runPage.review.where'), verification: t('runPage.review.howItWasVerified'), conversation: t('runPage.review.conversation') }}
+      labels={{ where: t('runPage.review.where'), suggestedFix: t('reviewWalkthrough.detail.suggestedFix'),
+        verification: t('runPage.review.howItWasVerified'), conversation: t('runPage.review.conversation') }}
       renderMarkdown={(markdown, role) => <MarkdownView markdown={markdown}
         textStyle={role === 'cause' ? finding.whyItMatters ? styles.cause : styles.impact : styles.prose} />}
       renderWhere={() => <ReviewFindingWhere finding={finding} rowId={props.rowId} />}
@@ -145,7 +146,8 @@ function ReviewFindingWhere(
         emphasis="semiBold"
         style={styles.label}
       >
-        {t('runPage.review.where')}
+        {/* A fix in words alone is titled as what it is; Where titles the patched code (U8 R5 C2). */}
+        {finding.patch ? t('runPage.review.where') : t('reviewWalkthrough.detail.suggestedFix')}
       </Text>
       {finding.patch ? (
         <ReviewFindingCode unifiedDiff={finding.patch} path={finding.filePath ?? null} />

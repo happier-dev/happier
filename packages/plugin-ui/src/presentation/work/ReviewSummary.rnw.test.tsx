@@ -71,3 +71,13 @@ it('uses the requested-verdict fact for a finding-free people Review', () => {
   expect(authorBarrel.projectHappierReviewGlance(undefined, { ...review, needsYou: { requestedVerdict: false } }, words))
     .toMatchObject({ sentence: words.noFindings, tone: 'quiet' });
 });
+
+it('says on the title line which revision was reviewed, the sha in the code face (U8 R5 T3, lab pr-verdict)', () => {
+  const mounted = mountThroughReactNativeWeb(inSurface(<HappierReviewSummary testID="pr-review" heading="Review" subject={null}
+    revision={{ label: 'at', value: '9c1e4b2' }} glance={{ sentence: 'Nothing to fix', tone: 'quiet', facts: [] }}
+    rows={[]} reviewers="" />));
+  try {
+    const revision = byTestId(mounted.container, 'review-summary:revision')!;
+    expect(revision.textContent).toBe('at 9c1e4b2');
+  } finally { mounted.unmount(); }
+});
