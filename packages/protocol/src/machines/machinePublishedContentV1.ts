@@ -230,7 +230,8 @@ export function parseMachinePublishedMetadataV1(value: unknown, incumbent?: Mach
   if (!parsed.success || !hasCanonicalPublishedShape(snapshot, parsed.data)) {
     throw Object.assign(new Error('Unsupported Machine metadata publication'), { retryable: false });
   }
-  return parsed.data;
+  // The dynamic shape keeps the static field types except for values copied from the typed incumbent.
+  return parsed.data as MachinePublishedMetadataV1;
 }
 
 export function parseMachinePublishedDaemonStateV1(value: unknown): MachinePublishedDaemonStateV1 {
