@@ -532,6 +532,7 @@ export function ConnectedAccountPurposeTargetChooser(props: Readonly<{
       }) : undefined}
       accessoryLayout={fieldColors ? 'adaptive' : undefined}
       fieldAccessory={fieldColors ? true : undefined}
+      rightElementPassive
       accessibilityLabel={triggerAccessibilityLabel}
       showChevron={!fieldColors}
       disabled={props.disabled}
