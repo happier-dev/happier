@@ -590,7 +590,9 @@ function resolveUsagePageNotice(
   const { pending, failure, newerServer, partial } = facts;
   // The page Retry also recovers Views. A refusal without a Retry yields to the Views recovery.
   if (failure && (!layouts || (failure.retryable && retry))) {
-    return { testID: 'usage-page.header.failed', reason: failure.reason, tone: failure.quiet ? 'neutral' : 'warning',
+    // When the saved views could not be read either, the one notice says both: its Retry rereads both (J-B8).
+    const reason = layouts ? [failure.reason, t('usage.board.page.viewsReadFailed')].join(' · ') : failure.reason;
+    return { testID: 'usage-page.header.failed', reason, tone: failure.quiet && !layouts ? 'neutral' : 'warning',
       // The page still shows what arrived: on a phone the line says "Partial" with Details beside its Retry (#9).
       short: t('usage.board.charts.coveragePartialShort'),
       // The one Retry, which also rereads the views and Sessions that failed: bodies with nothing to draw only

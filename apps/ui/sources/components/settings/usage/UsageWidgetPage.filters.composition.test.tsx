@@ -1052,6 +1052,10 @@ describe('mounted Usage page scope commands', () => {
                 expect(reader!.readCurrentUiContext()!.commands.map(command => command.title)).toContain(t('usage.board.page.retryRead'));
             });
             expect(retryControls().map(node => node.props.testID)).toEqual(['usage-page.header.retry']);
+            // The one notice discloses both failures: the ownership consequence and the unread saved views (J-B8).
+            const both = screen.findHostByTestId(`${noticeId}-text`)?.props.accessibilityLabel;
+            expect(both).toContain(t('connectedServices.errors.quotaOwnershipUnproven', {}));
+            expect(both).toContain(t('usage.board.page.viewsReadFailed'));
             const readsBeforeRetry = savedViewsReads;
             savedViewsFailed = false;
             await screen.pressByTestIdAsync('usage-page.header.retry');
