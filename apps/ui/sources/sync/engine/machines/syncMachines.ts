@@ -114,6 +114,20 @@ export type FetchedMachineRow = Readonly<{
     updatedAt: number;
 }>;
 
+/** A row is the viewer's own unless its published access names another custodian. */
+export function isMachineRowOwnedBy(machine: Pick<FetchedMachineRow, 'access'>, viewerAccountId: string | null): boolean {
+    if (machine.access === undefined) return true;
+    const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machine.access);
+    return access.success && access.data.custodian.accountId === viewerAccountId;
+}
+
+/** The Account's own rows, revoked included: the census an Account-wide conversion must cover. */
+export async function fetchOwnedMachineRows(params: Parameters<typeof fetchMachineRows>[0] & Readonly<{
+    accountId: string;
+}>): Promise<readonly FetchedMachineRow[]> {
+    return (await fetchMachineRows(params)).filter(row => isMachineRowOwnedBy(row, params.accountId));
+}
+
 export async function fetchMachineRows(params: Readonly<{
     credentials: AuthCredentials;
     request?: (path: string, init: RequestInit) => Promise<Response>;
@@ -589,7 +603,7 @@ export async function fetchAndApplyMachines(params: {
         if (machine.access === undefined) return machine;
         const access = AccessibleMachineAccessStoredReadV1Schema.safeParse(machine.access);
         return { ...machine, access: access.success ? access.data : undefined,
-            isShared: !access.success || access.data.custodian.accountId !== viewerAccountId };
+            isShared: !isMachineRowOwnedBy(machine, viewerAccountId) };
     });
     const accessLockedReason = (machine: FetchedMachineRow): MachineLockedReason | null => {
         if (!machine.isShared && machine.access === undefined) return null;

@@ -15,7 +15,7 @@ import { AccountEncryptionMigrateRequestSchema, AccountEncryptionMigrateSettings
     createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
 import { accountEncryptionSettingsHistoryUnavailable, type AccountEncryptionSettingsHistoryMigrationCandidate } from './buildAccountEncryptionSettingsHistoryDirective';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
-import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
+import { fetchOwnedMachineRows } from '@/sync/engine/machines/syncMachines';
 import { fetchAccountEncryptionMigrationKvInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationKvInventory';
 import { createArtifactAccessApi, fetchArtifactBlob, stageArtifactBlobAccountEncryptionConversion, cancelArtifactBlobAccountEncryptionConversion } from '@/sync/api/artifacts/apiArtifacts';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
@@ -259,10 +259,11 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             privateLabelsInventory,
             managedMachinePresetsInventory,
         ] = await Promise.all([
-            fetchMachineRows({
+            fetchOwnedMachineRows({
                 credentials,
                 request: homeRequest,
                 fresh: true,
+                accountId,
             }),
             fetchAccountEncryptionMigrationKvInventory({ namespace: 'todo', credentials, request: homeRequest, scope: capturedRequest }),
             fetchAccountEncryptionMigrationKvInventory({ namespace: 'workspace', credentials, request: homeRequest, scope: capturedRequest }),
