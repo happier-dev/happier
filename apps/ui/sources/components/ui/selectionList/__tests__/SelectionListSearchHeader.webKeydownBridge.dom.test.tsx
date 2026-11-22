@@ -149,6 +149,35 @@ vi.mock('react-native', async () => {
 // timeout. A cold transform under shared-host load is not a failed keyboard bridge.
 const { SelectionListSearchHeader } = await import('../SelectionListSearchHeader');
 
+describe('SelectionListSearchHeader placeholder', () => {
+    it('ends a placeholder too long for the field with an ellipsis instead of clipping it mid-word', async () => {
+        const container = document.createElement('div');
+        document.body.append(container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <SelectionListSearchHeader
+                        value=""
+                        onChangeText={() => {}}
+                        placeholder="Search or run a command…"
+                        canPop={false}
+                        inputSuffix={<span>This Home</span>}
+                        testID="hdr"
+                    />,
+                );
+            });
+            const input = container.querySelector<HTMLInputElement>('[data-testid="hdr:input"]');
+            expect(input?.style.textOverflow).toBe('ellipsis');
+        } finally {
+            await act(async () => {
+                root.unmount();
+            });
+            container.remove();
+        }
+    });
+});
+
 describe('SelectionListSearchHeader web keydown bridge', () => {
     it('dispatches Tab keydown through a DOM ref bridge when React Native Web filters keyboard props', async () => {
         const container = document.createElement('div');

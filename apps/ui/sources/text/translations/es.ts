@@ -9499,7 +9499,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["es"].placeholder,
+    placeholder: 'Busca o ejecuta un comando…',
     noCommandsFound: "No se encontraron comandos",
     activationFailed: "No se pudo completar ese comando.",
         shortcutsHelpTitle: 'Atajos de teclado',

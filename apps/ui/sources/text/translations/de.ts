@@ -9511,7 +9511,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     commandPalette: {
-        placeholder: fileContentSearchTranslations["de"].placeholder,
+        placeholder: 'Suchen oder Befehl ausführen…',
         noCommandsFound: 'Keine Befehle gefunden',
         activationFailed: 'Dieser Befehl konnte nicht ausgeführt werden.',
         shortcutsHelpTitle: 'Tastenkürzel',

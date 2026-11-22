@@ -9605,7 +9605,7 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["pt"].placeholder,
+    placeholder: 'Pesquisar ou executar um comando…',
     noCommandsFound: "Nenhum comando encontrado",
     activationFailed: "Não foi possível concluir esse comando.",
         shortcutsHelpTitle: 'Atalhos de teclado',

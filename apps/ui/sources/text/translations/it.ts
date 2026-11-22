@@ -9724,7 +9724,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["it"].placeholder,
+    placeholder: 'Cerca o esegui un comando…',
     noCommandsFound: "Nessun comando trovato",
     activationFailed: "Impossibile completare il comando.",
         shortcutsHelpTitle: 'Scorciatoie da tastiera',

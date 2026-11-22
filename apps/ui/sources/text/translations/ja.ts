@@ -9797,7 +9797,7 @@ localTailscale: {
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["ja"].placeholder,
+    placeholder: '検索またはコマンドを実行…',
     noCommandsFound: "コマンドが見つかりません",
     activationFailed: "そのコマンドを実行できませんでした。",
         shortcutsHelpTitle: 'キーボードショートカット',

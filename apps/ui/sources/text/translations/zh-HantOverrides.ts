@@ -7899,7 +7899,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     commandPalette: {
-        placeholder: fileContentSearchTranslations["zh-Hant"].placeholder,
+        placeholder: '搜尋或執行命令…',
         noCommandsFound: '找不到命令',
         activationFailed: '無法完成該命令。',
         shortcutsHelpTitle: '鍵盤快速鍵',

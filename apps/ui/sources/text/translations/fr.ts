@@ -9339,7 +9339,7 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["fr"].placeholder,
+    placeholder: 'Rechercher ou lancer une commande…',
     noCommandsFound: "Aucune commande trouvée",
     activationFailed: "Cette commande n’a pas pu être effectuée.",
         shortcutsHelpTitle: 'Raccourcis clavier',

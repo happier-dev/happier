@@ -11028,7 +11028,7 @@ const enUniversalSearch = {
 };
 
 const enCommandPalette = {
-  placeholder: fileContentSearchTranslations['en'].placeholder,
+  placeholder: 'Search or run a command…',
   noCommandsFound: 'No commands found',
   activationFailed: 'That command could not be completed.',
   shortcutsHelpTitle: 'Keyboard shortcuts',

@@ -14,6 +14,10 @@ import type { SelectionListTextEllipsizeMode } from './_types';
 
 const IS_WEB = Platform.OS === 'web';
 
+/** RN-web passes `textOverflow` to the DOM input; React Native's TextStyle has no such field. */
+type WebPlaceholderOverflowStyle = Pick<TextStyle, 'color'> & Readonly<{ textOverflow: 'ellipsis' }>;
+const WEB_PLACEHOLDER_OVERFLOW: WebPlaceholderOverflowStyle = { textOverflow: 'ellipsis' };
+
 /**
  * RUX-10 — Web-only TextStyle augmentation.
  *
@@ -123,6 +127,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         lineHeight: Platform.select({ ios: 20, default: 22 }),
         color: theme.colors.input.text,
         paddingVertical: 0,
+        // A placeholder longer than the field (Search's beside its scope chip on a phone) ends in an ellipsis
+        // instead of being cut mid-word; native single-line inputs already do this.
+        ...(IS_WEB ? (WEB_PLACEHOLDER_OVERFLOW as TextStyle) : null),
     },
     /**
      * Standard native/web input: an opaque, flexing TextInput with no visual

@@ -9334,7 +9334,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["pl"].placeholder,
+    placeholder: 'Szukaj lub uruchom polecenie…',
     noCommandsFound: "Nie znaleziono poleceń",
     activationFailed: "Nie udało się wykonać tego polecenia.",
         shortcutsHelpTitle: 'Skróty klawiaturowe',

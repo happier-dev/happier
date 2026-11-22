@@ -1177,7 +1177,7 @@ export function UniversalSearchController(props: UniversalSearchControllerProps)
         inputPlaceholder: source === 'files' ? t('projects.code.goToFile') : t('commandPalette.placeholder'),
         // Text in files with no folder lists the recent ones; with none, it says how to get one.
         emptyStateLabel: source === 'fileContent' && !workspaceScope ? t('universalSearch.content.noFolder')
-            : source === 'fileContent' && query.length === 0 ? t('commandPalette.placeholder') : t('selectionList.emptyMatch'),
+            : source === 'fileContent' && query.length === 0 ? t('universalSearch.content.placeholder') : t('selectionList.emptyMatch'),
         sections,
         ...(!replaceSections && searchSections.virtualizedOptionSource ? { virtualizedOptionSource: searchSections.virtualizedOptionSource } : {}),
         // The review is the Machine's answer for the typed query; the field never narrows it further.

@@ -9952,7 +9952,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["ru"].placeholder,
+    placeholder: 'Поиск или выполнение команды…',
     noCommandsFound: "Команды не найдены",
     activationFailed: "Не удалось выполнить эту команду.",
         shortcutsHelpTitle: 'Сочетания клавиш',

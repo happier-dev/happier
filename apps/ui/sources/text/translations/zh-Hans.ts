@@ -9167,7 +9167,7 @@ export const zhHans: TranslationStructure = {
   },
 
   commandPalette: {
-    placeholder: fileContentSearchTranslations["zh-Hans"].placeholder,
+    placeholder: '搜索或运行命令…',
     noCommandsFound: "未找到命令",
     activationFailed: "无法完成该命令。",
         shortcutsHelpTitle: '键盘快捷键',

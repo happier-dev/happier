@@ -8834,7 +8834,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
     },
 
     commandPalette: {
-        placeholder: fileContentSearchTranslations["ca"].placeholder,
+        placeholder: 'Cerca o executa una ordre…',
         noCommandsFound: 'No s\'han trobat comandes',
         activationFailed: 'No s’ha pogut completar aquesta comanda.',
         shortcutsHelpTitle: 'Dreceres de teclat',
