@@ -607,7 +607,9 @@ export function SessionHandoffPickerModal({ onClose, setChrome, onResolve, sessi
                 <SurfaceStateCard
                     testID="session-handoff-retained-history"
                     kind="warning"
-                    size="line"
+                    // The sheet's whole body: why it can't move, then what Continue does, each its own sentence
+                    // (a line state would join them with " · ").
+                    layout="inline"
                     title={t('machineRequester.handoffUnavailable')}
                     reason={t('machineRequester.resumeElsewhere', { machine: sourceMachine ? getMachineSentenceName(sourceMachine) : currentSessionMetadata?.host ?? t('status.unknown') })}
                     action={{ testID: 'session-handoff-retained-history:continue', label: t('common.continue'), onPress: continueElsewhere }}
