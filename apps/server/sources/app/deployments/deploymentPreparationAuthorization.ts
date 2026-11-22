@@ -1527,9 +1527,14 @@ const PREPARATION_CONTENT_SLOTS: readonly DeploymentPreparationContentSlotV1[] =
 // Only this admitted preparation's own outputs: their ids derive from the signed invocation,
 // so another preparation, an unrelated Artifact or a Create candidate can never match.
 async function isPreparationOutputArtifactIdInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
-    admission: CreateAdmission | TemplateAdmission, artifactId: string, bindingsChild: boolean): Promise<boolean> {
+    admission: CreateAdmission | TemplateAdmission, artifactId: string, bindingsChild: boolean,
+    templateEnvironmentId: string | null): Promise<boolean> {
     if (bindingsChild) return artifactId === createDeploymentPreparationContentArtifactIdV1(binding, 'bindings');
     if (PREPARATION_CONTENT_SLOTS.some(slot => artifactId === createDeploymentPreparationContentArtifactIdV1(binding, slot))) return true;
+    // The Template bindings child shares its candidate (the id its own admission binds) under this root.
+    if (admission.operation === 'template') return templateEnvironmentId !== null
+        && artifactId === createDeploymentEnvironmentContentArtifactIdV1({ ...binding,
+            actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, environmentId: templateEnvironmentId });
     if (admission.operation !== 'create' || !admission.preview) return false;
     const links = await tx.deploymentTargetLink.findMany({ where: { environmentId: admission.preview.templateEnvironmentId },
         select: { id: true } });
@@ -1542,8 +1547,10 @@ async function allowsTeamOwnerArtifactPreparationInTx(tx: Tx, binding: ExternalA
     admission: CreateAdmission | TemplateAdmission, owner: ProjectSourceOwnerV1 | null,
     { artifactId, step }: NonNullable<ReturnType<typeof readDeploymentPreparationArtifactRoute>>,
     method: string, proof: Readonly<{ body?: unknown; routeInput?: unknown }>, bindingsChild = false,
+    templateEnvironmentId: string | null = null,
 ): Promise<boolean> {
-    if (owner?.kind !== 'team' || !await isPreparationOutputArtifactIdInTx(tx, binding, admission, artifactId, bindingsChild)) return false;
+    if (owner?.kind !== 'team' || !await isPreparationOutputArtifactIdInTx(tx, binding, admission, artifactId, bindingsChild,
+        templateEnvironmentId)) return false;
     const artifact = await tx.artifact.findUnique({ where: { id: artifactId }, select: { kind: true, accountId: true } });
     if (!artifact || artifact.accountId !== binding.accountId
         || artifact.kind !== null && artifact.kind !== DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1
@@ -2033,7 +2040,8 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
             const artifactRoute = readDeploymentPreparationArtifactRoute(proof.path);
             if (artifactRoute?.step !== undefined) {
                 const owner = admission.newProject?.owner ?? (scope.source ? sourceOwner(scope.source) : null);
-                return allowsTeamOwnerArtifactPreparationInTx(tx, binding, admission, owner, artifactRoute, method, proof);
+                return allowsTeamOwnerArtifactPreparationInTx(tx, binding, admission, owner, artifactRoute, method, proof,
+                    false, environmentId ?? null);
             }
         }
         if (method === 'GET' && proof.body === undefined) {

@@ -19,6 +19,7 @@ import {
     EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
     EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
     EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+    createDeploymentEnvironmentContentArtifactIdV1,
     projectDeploymentPreparationAdmissionV1,
 } from '@happier-dev/protocol/actions/externalActionApi';
 import {
@@ -26,7 +27,7 @@ import {
     encodeExternalActionResolvedTargetV1,
     signExternalActionMachineRequestV1,
 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
     createDeploymentPreparationContentArtifactIdV1, type DeploymentPreparationContentSlotV1,
 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
@@ -212,5 +213,104 @@ describe('signed deployment preparation for a Team Project Source', () => {
                 expect((await grant(control, another)).statusCode, 'non-deployment kind even at the exact ID').toBe(401);
             }, { authentication: 'real' });
         });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('shares the %s Template bindings candidate of this invocation under its root', async encryptionMode => {
+        const actionId = DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1;
+        const account = await db.account.create({ data: { encryptionMode,
+            ...(encryptionMode === 'e2ee' ? createSignedAccountContentBinding() : {}) } });
+        const custodian = await db.account.create({ data: { encryptionMode, ...createSignedAccountContentBinding() } });
+        const team = await db.team.create({ data: { name: 'Bindings Team' } });
+        const teamOwner = { kind: 'team' as const, teamId: team.id };
+        await db.teamMembership.createMany({ data: [
+            { teamId: team.id, accountId: account.id, role: 'owner' }, { teamId: team.id, accountId: custodian.id, role: 'member' },
+        ] });
+        const installationKey = nacl.sign.keyPair();
+        const machineId = randomUUID();
+        const installationId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: custodian.id, installationId,
+            installationPublicKey: new Uint8Array(installationKey.publicKey),
+            metadata: encodePlainMachineStoredContent({ host: 'Team carrier', platform: 'linux',
+                happyCliVersion: 'test', homeDir: '/tmp', happyHomeDir: '/tmp/happier' }),
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin',
+            createdByAccountId: custodian.id }), accessLevel: 'admin', machineId } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, account.id, { serverId, requestKey: randomUUID(),
+            name: 'Team bindings destination', owner: teamOwner }));
+        if (!source.ok) throw new Error(source.error);
+        const wrapKey = (dataKey: Uint8Array, recipientPublicKey: Uint8Array) => privacyKit.encodeBase64(
+            sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey, randomBytes: nacl.randomBytes }));
+        const publication = (id: string) => {
+            const dataKey = nacl.randomBytes(32);
+            const body = ArtifactJsonCreateHttpInputV1Schema.parse({ id, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1,
+                header: encryptionMode === 'plain' ? encodePlainArtifactStoredContent({ kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1.slice('v1:other:'.length), title: '' })
+                    : privacyKit.encodeBase64(nacl.randomBytes(48)),
+                body: encryptionMode === 'plain' ? encodePlainArtifactStoredContent({ body: '{}' }) : privacyKit.encodeBase64(nacl.randomBytes(48)),
+                dataEncryptionKey: encryptionMode === 'plain' ? ARTIFACT_PLAIN_DATA_KEY_MARKER : wrapKey(dataKey, account.contentPublicKey!) });
+            return { body, dataKey, storedBytes: { header: privacyKit.decodeBase64(body.header), body: privacyKit.decodeBase64(body.body),
+                dataEncryptionKey: privacyKit.decodeBase64(body.dataEncryptionKey) } };
+        };
+        const current = publication(randomUUID());
+        const content = await db.artifact.create({ data: { ...current.storedBytes, id: current.body.id, accountId: account.id,
+            kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 } });
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id, createdByAccountId: account.id,
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId,
+            contentArtifactId: content.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
+        const unrelated = publication(randomUUID());
+        await db.artifact.create({ data: { ...unrelated.storedBytes, id: unrelated.body.id, accountId: account.id } });
+        const target = { kind: 'machine' as const, machineId };
+        const mint = async () => {
+            const requestId = randomUUID();
+            const input = { mode: 'apply' as const, serverId, machineId, projectSourceId: source.source.id,
+                templateRef: { sourceId: 'apps', itemId: 'web', version: '1', ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } },
+                environment: { kind: 'existing' as const, environmentId: environment.id, expectedRevision: environment.revision },
+                target: { kind: 'new' as const, installationId }, destination: { kind: 'stored' as const }, bindings: [] };
+            return auth.mintExternalActionExecutionAuthorization({
+                serverIdentityId: serverId, accountId: account.id, authentication: { kind: 'account', tokenEpoch: account.tokenEpoch },
+                actionId, requestId, target, machineId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1({ v: 1, requestId, target, input }),
+                deploymentPreparationAdmission: projectDeploymentPreparationAdmissionV1(actionId, input),
+            }, { input });
+        };
+        const apply = await mint();
+        const another = await mint();
+        const bindingsId = (authorization: typeof apply) => createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding,
+            actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, environmentId: environment.id });
+
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            // The bindings child publishes its candidate and shares it under the root's signed carrier.
+            const request = (method: 'GET' | 'POST' | 'PUT', path: string, body?: object, authorization = apply) =>
+                app.inject({ method, url: path, ...(body === undefined ? {} : { payload: body }),
+                    headers: { ...currentAccountStoredContentCompatibilityHeaders,
+                        [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token,
+                        [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: actionId,
+                        [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(target),
+                        [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                            authorizationToken: authorization.token, effectActionId: actionId, target,
+                            requestId: authorization.binding.requestId, installationId, method, path, body, privateKey: installationKey.secretKey,
+                        }),
+                    } });
+            const grant = (artifactId: string, authorization = apply) => request('PUT', `/v1/artifacts/${artifactId}/access/grants`,
+                { artifactId, principal: teamOwner, accessLevel: 'admin' }, authorization);
+            expect((await grant(unrelated.body.id)).statusCode, 'unrelated requester-owned unkinded Artifact').toBe(401);
+            const artifactId = bindingsId(apply);
+            const created = publication(artifactId);
+            expect((await request('POST', '/v1/artifacts', created.body)).statusCode).toBe(200);
+            expect((await grant(artifactId)).statusCode, 'grant on this invocation’s bindings candidate').toBe(200);
+            expect((await grant(artifactId, another)).statusCode, 'another invocation').toBe(401);
+            expect(bindingsId(another)).not.toBe(artifactId);
+            if (encryptionMode === 'e2ee') {
+                const census = await request('GET', `/v1/artifacts/${artifactId}/access/recipients`);
+                expect(census.statusCode, 'recipient census of this invocation’s bindings candidate').toBe(200);
+                expect(ArtifactAccessRecipientCensusResponseV1Schema.parse(census.json()).recipients)
+                    .toContainEqual(expect.objectContaining({ recipientAccountId: custodian.id }));
+                const envelope = await request('POST', `/v1/artifacts/${artifactId}/access/key-envelopes`, { artifactId,
+                    expectedDataEncryptionKey: created.body.dataEncryptionKey, recipientKeyEnvelopes: [{ recipientAccountId: custodian.id,
+                        encryptedDataKey: wrapKey(created.dataKey, custodian.contentPublicKey!),
+                        recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(custodian.contentPublicKey!) }] });
+                expect(envelope.statusCode, 'key envelope on this invocation’s bindings candidate').toBe(200);
+                expect((await request('GET', `/v1/artifacts/${unrelated.body.id}/access/recipients`)).statusCode).toBe(401);
+            }
+        }, { authentication: 'real' });
     });
 });
