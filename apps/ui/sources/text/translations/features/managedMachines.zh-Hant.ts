@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "正在載入機器預設組合…",
         loadFailed: "無法載入機器預設組合。請再試一次。",
         keyPendingTitle: "與你分享的預設組合",
-        keyPendingReason: "團隊管理員下次開啟機器預設組合後，你就可以使用它。",
+        keyPendingReason: "團隊管理員開啟 Happier 後，你就可以使用它。",
         archiveFailed: "無法封存此預設組合。",
         ownerPersonal: "你的",
         futureOnly: "修改只適用於新機器。現有機器保留原本的選擇。",

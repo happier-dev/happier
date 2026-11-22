@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { t } from '@/text';
 import { ManagedNativeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/operations/v1';
-import { describeManagedActionFailureDiagnostic, describeManagedObservationDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
+import { describeManagedActionFailureDiagnostic, describeManagedObservationDiagnostic, describeManagedOperationDiagnostic, describeManagedPresetAvailabilityFailure, describeManagedPresetKeyPending } from './managedNativeFailurePresentation';
+import { MACHINE_PRESET_TEAM_KEY_PENDING } from '@/sync/domains/machines/presets/machinePresetReadFailure';
 
 describe('managed native failure Details', () => {
     it('shows the retained cleanup failure in pending acquisition operation and observation Details', () => {
@@ -98,5 +99,10 @@ describe('managed native failure Details', () => {
                 stderr: 'failed to download template:ubuntu: no such file or directory' } } });
         expect(diagnostic).toContain('restart');
         expect(diagnostic).toContain('no such file or directory');
+    });
+    it('presents a preset waiting for its key as a state with no code behind Details', () => {
+        expect(describeManagedPresetKeyPending(MACHINE_PRESET_TEAM_KEY_PENDING)).toEqual({
+            title: t('machinePresets.keyPendingTitle'), reason: t('machinePresets.keyPendingReason') });
+        expect(describeManagedPresetKeyPending('permission_denied')).toBeNull();
     });
 });

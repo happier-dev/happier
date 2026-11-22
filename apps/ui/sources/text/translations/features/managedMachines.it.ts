@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Caricamento dei preset…",
         loadFailed: "Impossibile caricare i preset. Riprova.",
         keyPendingTitle: "Preset condiviso con te",
-        keyPendingReason: "Potrai usarlo quando un membro che gestisce il team aprirà di nuovo i preset delle macchine.",
+        keyPendingReason: "Potrai usarlo quando chi gestisce il team avrà Happier aperto.",
         archiveFailed: "Impossibile archiviare questo preset.",
         ownerPersonal: "Tuo",
         futureOnly: "Le modifiche valgono per le nuove macchine. Quelle esistenti mantengono le loro scelte.",

@@ -1168,7 +1168,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
                     title={keyPending?.title ?? (presetQuery.state.error && !loadingCatalog ? t('machinePresets.loadFailed')
                         : unreadableController ? t('managedMachines.add.controllerUnreadable', { controller: unreadableController })
                         : loadingCatalog ? t('managedMachines.providers.loading') : readError ? describeManagedProvisionerFailure(readError) : t('managedMachines.providers.unavailable'))}
-                    reason={keyPending?.reason} diagnosticCode={keyPending?.diagnosticCode ?? readError} testID="managed-config.catalog"
+                    reason={keyPending?.reason} diagnosticCode={keyPending ? undefined : readError} testID="managed-config.catalog"
                     {...(readError && !loadingCatalog && !keyPending ? { action: { label: t('common.retry'),
                         onPress: presetQuery.state.error ? retry : catalog.refresh } } : {})} />
             </ItemGroup>

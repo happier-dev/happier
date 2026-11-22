@@ -530,7 +530,7 @@ export const managedMachinesEn = {
         loading: "Loading machine presets…",
         loadFailed: "Machine presets couldn’t load. Try again.",
         keyPendingTitle: "Preset shared with you",
-        keyPendingReason: "You can use it after a Team manager next opens Machine presets.",
+        keyPendingReason: "You can use it once a Team manager has Happier open.",
         archiveFailed: "This preset couldn’t be archived.",
         ownerPersonal: "Yours",
         futureOnly: "Edits apply to new machines. Existing machines keep their choices.",

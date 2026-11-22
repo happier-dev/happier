@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Cargando ajustes predefinidos…",
         loadFailed: "No se pudieron cargar los ajustes predefinidos. Inténtalo de nuevo.",
         keyPendingTitle: "Ajuste predefinido compartido contigo",
-        keyPendingReason: "Podrás usarlo cuando alguien que gestione el equipo vuelva a abrir los ajustes predefinidos de máquinas.",
+        keyPendingReason: "Podrás usarlo cuando alguien que gestione el equipo tenga Happier abierto.",
         archiveFailed: "No se pudo archivar este ajuste predefinido.",
         ownerPersonal: "Tuyo",
         futureOnly: "Los cambios se aplican a máquinas nuevas. Las existentes conservan sus opciones.",

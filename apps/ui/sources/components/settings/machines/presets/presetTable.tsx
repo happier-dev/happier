@@ -59,9 +59,10 @@ export type PresetTableItem = Readonly<{
 
 export type PresetTableHost = 'presets' | 'sandboxes';
 
+/** A body this Account cannot read yet: its image is unknown, so the cell shows the table's empty-value dash. */
 const NO_IMAGE: PresetImageState = Object.freeze({
   kind: 'none',
-  word: '',
+  word: '—',
   tone: 'quiet',
   line: null,
   next: null,
@@ -421,8 +422,8 @@ function PresetPhoneLine(
         // Where it runs isn't known yet: the type's provider line stands in, so the row keeps its second line.
         <PresetPlaceLine item={props.item} />
       )}
-      {image.word === '' ? null : <Text style={styles.quiet}>·</Text>}
-      {image.word === '' ? null : image.tone === 'quiet' ? (
+      <Text style={styles.quiet}>·</Text>
+      {image.tone === 'quiet' ? (
         <Text numberOfLines={1} style={styles.cell}>{image.word}</Text>
       ) : (
         <Status

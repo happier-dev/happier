@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "正在加载机器预设…",
         loadFailed: "无法加载机器预设。请重试。",
         keyPendingTitle: "与你共享的预设",
-        keyPendingReason: "团队管理员下次打开机器预设后，你就可以使用它。",
+        keyPendingReason: "团队管理员打开 Happier 后，你就可以使用它。",
         archiveFailed: "无法归档此预设。",
         ownerPersonal: "你的",
         futureOnly: "修改仅适用于新机器。现有机器保留原有选择。",

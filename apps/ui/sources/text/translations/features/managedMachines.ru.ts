@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Загрузка пресетов…",
         loadFailed: "Не удалось загрузить пресеты. Попробуйте ещё раз.",
         keyPendingTitle: "Пресет, которым с вами поделились",
-        keyPendingReason: "Им можно будет пользоваться, когда администратор команды снова откроет пресеты машин.",
+        keyPendingReason: "Станет доступен, когда у администратора команды будет открыт Happier.",
         archiveFailed: "Не удалось архивировать этот пресет.",
         ownerPersonal: "Ваш",
         futureOnly: "Изменения применяются к новым машинам. Существующие сохраняют свой выбор.",

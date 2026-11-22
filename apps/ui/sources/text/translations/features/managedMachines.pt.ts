@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Carregando predefinições…",
         loadFailed: "Não foi possível carregar as predefinições. Tente novamente.",
         keyPendingTitle: "Predefinição partilhada contigo",
-        keyPendingReason: "Vais poder usá-la quando alguém que gere a equipa voltar a abrir as predefinições de máquinas.",
+        keyPendingReason: "Vais poder usá-la quando alguém que gere a equipa tiver o Happier aberto.",
         archiveFailed: "Não foi possível arquivar esta predefinição.",
         ownerPersonal: "Sua",
         futureOnly: "As edições valem para novas máquinas. As existentes mantêm suas escolhas.",

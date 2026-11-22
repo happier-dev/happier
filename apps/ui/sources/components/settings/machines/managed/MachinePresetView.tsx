@@ -293,7 +293,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
         <SurfaceStateCard testID="machine-preset.read-state" kind={detail.state.loading ? 'loading' : teamDenied ? 'denied' : 'unavailable'}
             title={keyPending?.title ?? (detail.state.loading ? t('machinePresets.loading') : teamDenied || detail.state.error === 'permission_denied'
                 || detail.state.error === 'preset_not_found' || detail.state.error === 'signed_out' ? t('machinePresets.accessLost') : t('machinePresets.loadFailed'))}
-            reason={keyPending?.reason} diagnosticCode={keyPending?.diagnosticCode ?? detail.state.error}
+            reason={keyPending?.reason} diagnosticCode={keyPending ? undefined : detail.state.error}
             action={detail.state.loading || keyPending ? undefined : { label: t('common.retry'), onPress: detail.refresh }} />
     </ItemList>;
 
@@ -356,7 +356,7 @@ function MachinePresetViewBody(props: Readonly<{ serverId: string; presetId: str
                 action={{ label: t('common.retry'), onPress: configuration.refresh }} /> : null}
             {detail.state.error ? <SurfaceStateCard testID="machine-preset.refresh-error" kind="unavailable" size="line" lineLayout="notice"
                 title={keyPending?.title ?? t('machinePresets.loadFailed')} reason={keyPending?.reason}
-                diagnosticCode={keyPending?.diagnosticCode ?? detail.state.error}
+                diagnosticCode={keyPending ? undefined : detail.state.error}
                 action={keyPending ? undefined : { label: t('common.retry'), onPress: detail.refresh }} /> : null}
             {conflict || mutationError || refusal ? <SurfaceStateCard testID="machine-preset.mutation-error" kind="error" size="line"
                 title={conflict ? t('machinePresets.conflict') : refusal === 'permission_denied' ? t('machinePresets.accessLost')

@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Wczytywanie ustawień maszyn…",
         loadFailed: "Nie udało się wczytać ustawień maszyn. Spróbuj ponownie.",
         keyPendingTitle: "Udostępnione Ci ustawienie maszyny",
-        keyPendingReason: "Będzie gotowe do użycia, gdy osoba zarządzająca zespołem ponownie otworzy ustawienia maszyn.",
+        keyPendingReason: "Użyjesz go, gdy osoba zarządzająca zespołem będzie mieć otwarte Happier.",
         archiveFailed: "Nie udało się zarchiwizować tego ustawienia.",
         ownerPersonal: "Twoje",
         futureOnly: "Zmiany dotyczą nowych maszyn. Istniejące zachowują swoje wybory.",

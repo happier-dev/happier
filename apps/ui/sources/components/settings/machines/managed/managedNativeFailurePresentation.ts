@@ -91,12 +91,14 @@ export function describeManagedPresetAvailabilityFailure(code: string): string {
     return describeManagedAcquisitionRefusal(code) ?? t('managedMachines.options.unavailable');
 }
 
-/** The Home admitted the read, but the current Account has yet to receive this Team preset's key. */
+/**
+ * The Home admitted the read, but the current Account has yet to receive this Team preset's key. Waiting is not a
+ * failure, so its surfaces show the title and reason only: no code behind Details and no Retry.
+ */
 export function describeManagedPresetKeyPending(code: string | null | undefined) {
     return code === MACHINE_PRESET_TEAM_KEY_PENDING ? {
         title: t('machinePresets.keyPendingTitle'),
         reason: t('machinePresets.keyPendingReason'),
-        diagnosticCode: 'content_unavailable',
     } : null;
 }
 

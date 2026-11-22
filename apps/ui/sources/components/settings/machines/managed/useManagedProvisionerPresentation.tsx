@@ -314,7 +314,8 @@ export type ManagedPresetMarkSource = Pick<OpenedManagedMachinePresetV1, 'teamAc
 /**
  * A preset's mark (the rail, the machine picker, its page header): the provisioner its launch names, read
  * through its controller's projection like the preset page, at the size the row draws it. A setup-only
- * preset creates nothing, so it has no provider: it carries the setup glyph instead, never a guessed one.
+ * preset creates nothing, so it has no provider: it carries the setup glyph instead, never a guessed one. A preset
+ * this Account cannot open yet has an unknown launch: it carries the plain preset glyph, as an unmarked offer does.
  */
 export function ManagedPresetMark(props: Readonly<{
     serverId: string;
@@ -325,7 +326,8 @@ export function ManagedPresetMark(props: Readonly<{
     const { theme } = useUnistyles();
     const { creation, presentation } = useManagedPresetMarkPresentation(props);
     return creation ? presentation.markAt(props.size)
-        : <Icon name={MACHINE_SETUP_PRESET_GLYPH} size={props.size} color={theme.colors.text.secondary} />;
+        : <Icon name={'kind' in props.preset && props.preset.kind === 'private_content_unavailable' ? MANAGED_PRESET_GLYPH : MACHINE_SETUP_PRESET_GLYPH}
+            size={props.size} color={theme.colors.text.secondary} />;
 }
 
 /** A preset's provisioner as its mark reads it: the same identity-only read serves its mark and its cost. */
@@ -430,3 +432,5 @@ export function useManagedPresetFacts(props: Readonly<{
 
 /** The glyph a setup-only preset stands under (lab `setup/over` Tools row): what it sets up, not who makes it. */
 export const MACHINE_SETUP_PRESET_GLYPH = 'wrench';
+/** The glyph a preset stands under when its provider has no mark to draw (an unmarked offer, an unopened preset). */
+export const MANAGED_PRESET_GLYPH = 'stack';

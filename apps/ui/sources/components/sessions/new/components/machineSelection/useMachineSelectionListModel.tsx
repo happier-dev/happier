@@ -28,6 +28,7 @@ import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import { MANAGED_PRESET_GLYPH } from '@/components/settings/machines/managed/useManagedProvisionerPresentation';
 import { isOpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import type { MachineIsolationWorkKind } from '@/components/machines/security/isolation/machineIsolationChoices';
 import { describeMachineRowIsolation, readMachineRowIsolation } from '@/components/sessions/new/placement/machineRowIsolation';
@@ -820,7 +821,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                     ...(offer.unavailableText === undefined && offer.subtitleLine ? { subtitleContent: offer.subtitleLine(
                         purpose === 'finite' ? t('managedMachines.picker.createdOnRun') : undefined) } : {}),
                     // A preset carries its provider's mark; "One-off machine…" reads as making a new one.
-                    icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : 'stack'} size={24} color={theme.colors.text.secondary} />,
+                    icon: offer.mark ?? <Icon name={offer.kind === 'one-off' ? 'plus-circle' : MANAGED_PRESET_GLYPH} size={24} color={theme.colors.text.secondary} />,
                     ...(offer.id === inheritedPresetOptionId ? { rightAccessory: (
                         <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{params.managedPlacementSourceLabel}</Text>
                     ) } : offer.cost ? { rightAccessory: offer.cost } : {}),

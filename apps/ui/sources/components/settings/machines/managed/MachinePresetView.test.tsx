@@ -549,8 +549,9 @@ describe('reachable preset detail', () => {
     });
     const screen = await renderSettingsView(<MachinePresetView serverId={serverId} presetId={preset.id} />);
     try {
-      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.read-state-diagnostic-content_unavailable')).not.toBeNull());
-      expect(screen.findByTestId('machine-preset.read-state-reason')).not.toBeNull();
+      await waitForHomeGovernance(() => expect(screen.findByTestId('machine-preset.read-state-reason')).not.toBeNull());
+      // Waiting for a key is not a failure: no code and no Details disclosure.
+      expect(screen.findAll(node => String(node.props?.testID ?? '').startsWith('machine-preset.read-state-diagnostic'))).toHaveLength(0);
       expect(screen.findByTestId('machine-preset.read-state-action')).toBeNull();
       expect(screen.tree.findAllByType(MachinePresetDetail)).toHaveLength(0);
     } finally { await screen.unmount(); }

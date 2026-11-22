@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Chargement des préréglages…",
         loadFailed: "Impossible de charger les préréglages. Réessaie.",
         keyPendingTitle: "Préréglage partagé avec toi",
-        keyPendingReason: "Tu pourras l’utiliser dès qu’une personne qui gère l’équipe ouvrira à nouveau les préréglages de machines.",
+        keyPendingReason: "Tu pourras l’utiliser dès qu’une personne qui gère l’équipe aura Happier ouvert.",
         archiveFailed: "Impossible d’archiver ce préréglage.",
         ownerPersonal: "À toi",
         futureOnly: "Les modifications s’appliquent aux nouvelles machines. Les machines existantes gardent leurs choix.",

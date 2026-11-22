@@ -520,7 +520,7 @@ export const managedMachines: ManagedMachinesTranslations = {
         loading: "Rechnervorlagen werden geladen…",
         loadFailed: "Rechnervorlagen konnten nicht geladen werden. Versuche es erneut.",
         keyPendingTitle: "Mit dir geteilte Vorlage",
-        keyPendingReason: "Du kannst sie verwenden, sobald ein Teammitglied mit Verwaltungsrechten das nächste Mal die Rechnervorlagen öffnet.",
+        keyPendingReason: "Du kannst sie nutzen, sobald jemand aus der Teamverwaltung Happier offen hat.",
         archiveFailed: "Diese Vorlage konnte nicht archiviert werden.",
         ownerPersonal: "Deine",
         futureOnly: "Änderungen gelten für neue Rechner. Bestehende behalten ihre Auswahl.",
