@@ -28,8 +28,6 @@ import { FirstOpenOwnsWelcomePaint, FirstOpenWelcomeEpoch } from '@/components/o
 
 type WelcomePoseMove = Readonly<{ from: WelcomePlanetGeometry; startS: number }>;
 
-const hiddenUnderOpening = { opacity: 0 };
-
 function sampleWelcomePose(move: WelcomePoseMove, target: WelcomePlanetGeometry, seconds: number) {
   const progress = easeInOutCubic((seconds - move.startS) / stepMotionTiming.forwardS);
   return interpolateWelcomePlanetPose(move.from, target, progress);
@@ -120,7 +118,18 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
     poseMove.current = null;
     settle();
   }, [settle]);
+  // In-app, the opening's planet falls here, beneath the Welcome's text, while the scene above draws its digits.
+  const openingPlanet = React.useMemo(
+    () => (pane && openingPaint?.planet ? openingPaint.planet.create(pane) : null),
+    [openingPaint, pane],
+  );
   const scene = React.useMemo(() => {
+    if (openingPlanet) {
+      return (seconds: number) => {
+        const layer = openingPlanet(seconds);
+        return layer ? [layer] : [];
+      };
+    }
     if (!geometry) return [];
     const planet = planetGlyphLayer({
       geometry,
@@ -135,10 +144,13 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
       layers.push(pose === geometry ? planet : planetGlyphLayer({ ...planet, geometry: pose }));
       return layers;
     };
-  }, [fieldLayer, geometry, props.phone]);
+  }, [fieldLayer, geometry, openingPlanet, props.phone]);
+  const openingDurationS = openingPaint?.planet?.durationS;
   const motion = React.useMemo<GlyphMotion>(
     () =>
-      epoch === null || mode !== 'animated'
+      openingDurationS !== undefined && arrivalEpoch !== null
+        ? { kind: 'transition', epoch: arrivalEpoch, durationS: openingDurationS }
+        : epoch === null || mode !== 'animated'
         ? null
         : {
             kind: 'field-calm',
@@ -147,7 +159,7 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
             readDurationS,
             onSettled: settlePoseAndField,
           },
-    [epoch, mode, readDurationS, settlePoseAndField],
+    [arrivalEpoch, epoch, mode, openingDurationS, readDurationS, settlePoseAndField],
   );
   return (
     <View
@@ -165,8 +177,6 @@ export const WelcomeAtmosphere = React.memo(function WelcomeAtmosphere(
           motion={motion}
           warmWhenHidden={arrivalEpoch !== null}
           onReady={openingPaint?.onPainted}
-          // The in-app opening paints over it until the hand-off.
-          style={openingPaint ? hiddenUnderOpening : undefined}
           testID="welcome-planet"
         />
       ) : null}

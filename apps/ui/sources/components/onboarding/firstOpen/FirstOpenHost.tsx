@@ -55,7 +55,8 @@ export function FirstOpenHost({ opening, children, bootPending = false }: Readon
             handOffWhenPainted.current = false;
             settle();
         },
-    }), [settle]);
+        planet: scene ? { create: scene.createOpeningPlanet, durationS: scene.openingSceneSeconds } : undefined,
+    }), [scene, settle]);
     const fadeToRest = useCallback(() => {
         opacity.setValue(0.65);
         setPhase('still');

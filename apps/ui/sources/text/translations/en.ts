@@ -19367,7 +19367,7 @@ const enSetupOnboarding = {
   authLostAccessSubtitle: 'Your options on this Home',
   webRelayHostHandoffTitle: 'Create a Personal Home on your machine',
   webRelayHostHandoffBody:
-    'Use the desktop app or run the CLI command on the machine that will host your Personal Home. When it is ready, connect this device using its pairing flow.',
+    "A browser can’t host your Home. Run one command on the machine that will host it, or use the desktop app for a guided setup.",
   webDesktopOnlyTitle: 'Desktop app required',
   webDesktopOnlyBody:
     'Open the desktop app to set up this machine. The web app can show status, but it can’t install or configure the background service.',

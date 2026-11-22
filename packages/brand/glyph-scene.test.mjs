@@ -120,6 +120,24 @@ test('the two step fronts draw digits only in sampled ink cells', () => {
     assert.deepEqual(Array.from(frame.sprites.at), [20, 72]);
 });
 
+test('the opening band is a sparse row behind its front that thins away, across the same height', () => {
+    const rect = { x: 0, y: 0, width: 240, height: 480 };
+    const options = { mode: 'decode', shape: 'horizontal', rect, front: 240, band: 150, ragged: 0, alpha: 0.4, ink: [200, 100, 50, 255] };
+    const draw = (layer) => glyphFrame({ view: { w: 240, h: 480 }, dpr: 1, theme: 'dark', layers: [layer] }).sprites;
+    const solid = draw(frontGlyphLayer(options));
+    const sparse = draw(frontGlyphLayer({ ...options, sparse: true }));
+    const cells = Array.from(sparse.glyph, (_, n) => ({ y: sparse.at[2 * n + 1], alpha: sparse.rgba[4 * n + 3] }));
+    assert.ok(cells.length > 0);
+    assert.ok(cells.length < solid.glyph.length * 0.5, `${cells.length} of ${solid.glyph.length}`);
+    // The band keeps its height (front ± band); the leading rows sit above the front as it climbs.
+    assert.ok(cells.every(({ y }) => y > 240 - 150 && y < 240 + 150));
+    const meanAlpha = (from, to) => {
+        const share = cells.filter(({ y }) => y >= from && y < to);
+        return share.reduce((sum, { alpha }) => sum + alpha, 0) / share.length;
+    };
+    assert.ok(meanAlpha(290, 390) < meanAlpha(190, 290), 'it thins away behind the front');
+});
+
 test('opening mark cells lock and depart on the same times their travellers are authored against', () => {
     const layer = markGlyphLayer({ centre: { x: 120, y: 120 }, size: 108, ink: 'sunrise',
         cellTimeline: new Float32Array([120, 126, 0.5, 1.25, 144, 148, 0.75, 1.5]) });

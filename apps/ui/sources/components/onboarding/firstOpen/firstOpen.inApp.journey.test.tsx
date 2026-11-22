@@ -285,7 +285,8 @@ it('holds the scene over a phone Welcome until the Welcome planet has painted un
             expect(welcomePlanet()).toBeTruthy();
         });
         expect(scene()).toBeTruthy();
-        expect(getComputedStyle(welcomePlanet()!).opacity).toBe('0');
+        // The Welcome's own surface, beneath its text, draws the opening's planet; the scene above draws the digits.
+        expect(getComputedStyle(welcomePlanet()!).opacity).not.toBe('0');
         // The opening and its build run to their end; the build releases its keyframes as it settles.
         const handOffs = () => performance.getEntriesByName('first_open:destination-handoff').length;
         const handOffsBefore = handOffs();

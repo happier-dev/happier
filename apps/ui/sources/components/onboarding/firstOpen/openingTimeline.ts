@@ -17,12 +17,12 @@ const cell = [8, 16] as const;
 const particleStride = 8;
 const greyFloatInk = [126, 120, 134, 125] as const;
 
-type OpeningGeometry = Readonly<{
-    width: number;
-    height: number;
+type OpeningFrame = Readonly<{ width: number; height: number; windowRect?: GlyphRect }>;
+type OpeningGeometry = OpeningFrame & Readonly<{
     theme: 'dark' | 'light';
-    windowRect?: GlyphRect;
     cursor?: GlyphPoint;
+    /** In-app, the Welcome's own surface draws the planet under its text (`createOpeningPlanet`). */
+    planet?: boolean;
 }>;
 
 function progress(time: number, from: number, to: number): number {
@@ -61,11 +61,10 @@ type Travel = Readonly<{
     grey: boolean;
 }>;
 
-/** Builds the start tables once. Every sample uses the same clock for the mark, travellers and planet. */
-export function createOpeningTimeline({ width, height, theme, windowRect, cursor }: OpeningGeometry):
-    (seconds: number) => readonly GlyphLayer[] {
+/** Where the mark stands and how the planet falls to the pose and look the Welcome draws in this window. */
+function openingPlacement({ width, height, windowRect }: OpeningFrame) {
     const target = windowRect ?? { x: 0, y: 0, width, height };
-    // The planet lands on the pose and look the Welcome draws in this window; the in-app compact window is a phone.
+    // The in-app compact window is a phone.
     const compact = unauthShellLayoutFor(target.width) === 'compact';
     const phone = compact && !windowRect;
     const centre = { x: width / 2, y: height * (phone ? 0.42 : 0.46) };
@@ -76,6 +75,29 @@ export function createOpeningTimeline({ width, height, theme, windowRect, cursor
         const k = cubicOut(progress(time, fallStart, fallEnd) ** 1.5);
         return { cx: mix(centre.x, end.x, k), cy: mix(centre.y, end.y, k), R: mix(radius, rest.R, k) };
     };
+    const planetAt = (seconds: number) => {
+        if (seconds < 1.55) return null;
+        const { cx, cy, R } = fallAt(seconds);
+        const impactSeconds = seconds - contact;
+        const dy = impactSeconds >= 0 && impactSeconds < 0.24 ? 1.5 * Math.sin(Math.PI * impactSeconds / 0.24) : 0;
+        const glow = impactSeconds >= 0 ? 0.5 * Math.exp(-impactSeconds / 0.12) : 0;
+        return planetGlyphLayer({
+            geometry: { ...rest, cx, cy: cy + dy, R, glow: (rest.glow ?? 1) + glow },
+            digits: true, soft: compact, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
+        });
+    };
+    return { phone, centre, radius, end, fallAt, planetAt };
+}
+
+/** The opening's planet alone, on the scene's clock, for the surface that draws it beneath the Welcome's text. */
+export function createOpeningPlanet(frame: OpeningFrame): (seconds: number) => GlyphLayer | null {
+    return openingPlacement(frame).planetAt;
+}
+
+/** Builds the start tables once. Every sample uses the same clock for the mark, travellers and planet. */
+export function createOpeningTimeline({ width, height, theme, windowRect, cursor, planet = true }: OpeningGeometry):
+    (seconds: number) => readonly GlyphLayer[] {
+    const { phone, centre, radius, end, fallAt, planetAt } = openingPlacement({ width, height, windowRect });
     const mark = markGlyphLayer({ centre, size: 2 * radius / 1.05, ink: 'sunrise', retypeS: 1.2 });
     // Source cells come from the real brand sampler so the opening never traces a second mark.
     const raster = glyphFrame({ view: { w: width, h: height }, cell, dpr: 1, theme, layers: [mark] });
@@ -235,15 +257,8 @@ export function createOpeningTimeline({ width, height, theme, windowRect, cursor
                 turn: sine(progress(seconds, turnStart, turnEnd)),
             });
         }
-        if (seconds >= 1.55) {
-            const impactSeconds = seconds - contact;
-            const dy = impactSeconds >= 0 && impactSeconds < 0.24 ? 1.5 * Math.sin(Math.PI * impactSeconds / 0.24) : 0;
-            const glow = impactSeconds >= 0 ? 0.5 * Math.exp(-impactSeconds / 0.12) : 0;
-            layers.push(planetGlyphLayer({
-                geometry: { ...rest, cx, cy: cy + dy, R, glow: (rest.glow ?? 1) + glow },
-                digits: true, soft: compact, assemble: { startS: 1.55, durationS: 2.38 - 1.55 },
-            }));
-        }
+        const planetLayer = planet ? planetAt(seconds) : null;
+        if (planetLayer) layers.push(planetLayer);
         for (const bucket of buckets) bucket.offset = 0;
         for (const travel of travels) {
             if (seconds < travel.emit || seconds >= travel.arrival) continue;

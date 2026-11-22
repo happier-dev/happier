@@ -122,6 +122,7 @@ export function createStepMotionScene(input: Readonly<{
                 band: t.band * openingSoft, ragged: (building ? 0.14 : t.ragged) * t.band,
                 alpha: (animation.grammar === 'opening' ? 0.4 : t.alpha) * openingSoft,
                 ink, mode: 'decode', inkMap: building ? undefined : incomingInk ?? noInk, cover,
+                sparse: animation.grammar === 'opening',
             }));
         }
         if (travellers && source && target && p > 0 && p < 0.97) {

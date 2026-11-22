@@ -3,7 +3,7 @@ import { welcomePlanetPose } from '@happier-dev/brand/planet-placement';
 import { describe, expect, it } from 'vitest';
 import { visualAt } from '@/components/ui/motion/stepMotion/stepMotionChoreography';
 import { stepMotionTiming } from '@/components/ui/motion/stepMotion/stepMotionTiming';
-import { createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
+import { createOpeningPlanet, createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
 
 describe('first-open scene timing', () => {
     it('finishes building the real window on the lab swap beat', () => {
@@ -50,6 +50,17 @@ describe('first-open scene timing', () => {
         expect(planet?.geometry.cx).toBeCloseTo(pose.cx, 6);
         expect(planet?.geometry.cy).toBeCloseTo(pose.cy, 6);
         expect(planet?.geometry.R).toBeCloseTo(pose.R, 6);
+    });
+
+    it('hands the in-app planet to the surface beneath the Welcome text, on the same clock and pose', () => {
+        const frame = { width: 390, height: 844 };
+        const withPlanet = createOpeningTimeline({ ...frame, theme: 'dark' });
+        const withoutPlanet = createOpeningTimeline({ ...frame, theme: 'dark', planet: false });
+        const planet = createOpeningPlanet(frame);
+        for (const seconds of [1.0, 1.6, 2.2, 2.7, openingSceneSeconds]) {
+            expect(withoutPlanet(seconds).some(layer => layer.kind === 'planet')).toBe(false);
+            expect(planet(seconds) ?? undefined).toEqual(withPlanet(seconds).find(layer => layer.kind === 'planet'));
+        }
     });
 
     it('turns the same mark cells it assembled and removes them progressively', () => {

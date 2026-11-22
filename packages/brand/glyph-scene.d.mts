@@ -51,6 +51,8 @@ export type FrontGlyphOptions = Readonly<{
     /** Lift the sampled leaving ink after the climbing front passes it. */
     climbProgress?: number;
     cover?: GlyphInk;
+    /** The opening climb's band: a sparse share of cells behind the front, thinning away, across the same height. */
+    sparse?: boolean;
 }>;
 export type PlanetGlyphLayer = PlanetGlyphOptions & Readonly<{ kind: 'planet'; intensity: PlanetIntensity }>;
 export type MarkGlyphLayer = MarkGlyphOptions & { kind: 'mark' };

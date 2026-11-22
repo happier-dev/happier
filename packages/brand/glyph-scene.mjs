@@ -440,7 +440,7 @@ function sampleStepTravellers(out, layer, time, palette) {
 }
 
 function sampleFront(out, grid, layer, time, palette) {
-    const { rect, origin, shape, front, band, ragged, alpha, ink, mode, inkMap, cover, climbProgress } = layer;
+    const { rect, origin, shape, front, band, ragged, alpha, ink, mode, inkMap, cover, climbProgress, sparse } = layer;
     const area = rect ?? { x: 0, y: 0, width: out.width / out.dpr, height: out.height / out.dpr };
     const ox = origin?.x ?? area.x + area.width / 2, oy = origin?.y ?? area.y + area.height / 2;
     const [dw, dh] = grid.cell;
@@ -468,6 +468,17 @@ function sampleFront(out, grid, layer, time, palette) {
                     writeSprite(out, (x + (seed - 0.5) * 6 * travel) * out.dpr, (y - rise) * out.dpr,
                         digitOf(i, j, step), color, 0.32 * Math.sin(Math.PI * travel) * (0.6 + 0.4 * seed) * inkWeight);
                 }
+            }
+            if (sparse) {
+                // The opening climb: nothing ahead of the leading rows, then a sparse share of cells that thins away
+                // behind the front, so the page shows through just behind it. `into` runs 0 → 2.4 across the band.
+                const into = (1 - edge / band) * 1.2;
+                if (into <= 0 || into >= 2.4 || cellHash(i + 5, j + 9) >= 0.45 || cellHash(i + 77, j + 13) >= clamp(into) ** 0.7) continue;
+                const color = ink === 'sunrise' ? gradient(palette.body, y / (out.height / out.dpr), out.ink) : ink;
+                const fade = smooth(into / 0.6) * (1 - smooth((into - 1.2) / 1.2)) * mix(1, 0.65, smooth(into - 0.35));
+                writeSprite(out, x * out.dpr, y * out.dpr, digitOf(i, j, step), color,
+                    alpha * fade * mix(0.72, 1.3, cellHash(i + 7, j + 29)) * inkWeight);
+                continue;
             }
             const frontAmount = Math.max(0, 1 - Math.abs(edge) / band);
             if (frontAmount <= 0) continue;

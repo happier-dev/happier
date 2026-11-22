@@ -8,7 +8,7 @@ import type { GlyphSurfaceWarmup } from '@/components/atmosphere/glyph/glyphSurf
 import { FIRST_RUN_WORKFLOW_LAYER } from '@/components/ui/motion/stepMotion/StepMotionLayer';
 import { playBuild, skipStepMotion, useOpeningBuildGlyphs } from '@/components/ui/motion/stepMotion/StepMotionStage';
 
-import { createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
+import { createOpeningPlanet, createOpeningTimeline, openingClimbSeconds, openingSceneSeconds } from './openingTimeline';
 
 const heldFrame = { kind: 'elapsed', durationS: 0, paused: true } as const;
 
@@ -33,6 +33,8 @@ export function FirstOpenScene(props: Readonly<{
         width, height, theme: appearance,
         windowRect: props.placement?.windowRect,
         cursor: props.placement?.cursor ? { x: props.placement.cursor[0], y: props.placement.cursor[1] } : undefined,
+        // In-app, the Welcome draws the planet beneath its own text (`createOpeningPlanet`).
+        planet: props.placement !== undefined,
     }), [width, height, appearance, props.placement]);
     const build = useOpeningBuildGlyphs();
     const { epoch, holding } = props;
@@ -62,4 +64,4 @@ export function buildFirstOpenDestination(epoch: number, options?: Readonly<{ in
     });
 }
 
-export { skipStepMotion as skipFirstOpenDestination };
+export { skipStepMotion as skipFirstOpenDestination, createOpeningPlanet, openingSceneSeconds };
