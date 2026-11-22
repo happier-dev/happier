@@ -379,8 +379,9 @@ export function useMachinePresetConfiguration(input: Readonly<{
 
 /** Every collection surface projects the one Account-owned machines-sync resource. */
 export function useMachinePresets(serverIds: readonly string[], onApprovalPending?: (approval: ActionApprovalRegistration, serverId: string) => void,
-    filter?: MachinePresetCollectionFilter) {
+    filter?: MachinePresetCollectionFilter & Readonly<{ demandContent?: boolean }>) {
     const sharedWithTeamId = filter?.sharedWithTeamId;
+    const demandContent = filter?.demandContent !== false;
     const presented = useLayoutPresentationActive();
     const accountScopes = useServerCredentialAccountScopeStates(serverIds);
     const requestedIdsKey = JSON.stringify(serverIds);
@@ -409,7 +410,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
         ? subscribeMachinePresets(requestedIds, notify) : () => {}, [presented, requestedIds]);
     const statesByServerId = React.useSyncExternalStore(subscribe, readSnapshot, readSnapshot);
     React.useEffect(() => {
-        if (!presented) return;
+        if (!presented || !demandContent) return;
         const releases: Array<() => void> = [];
         for (const [serverId, scope] of accountScopes) {
             const homeId = getServerProfileById(serverId)?.serverIdentityId;
@@ -418,7 +419,7 @@ export function useMachinePresets(serverIds: readonly string[], onApprovalPendin
             }
         }
         return () => { for (const release of releases) release(); };
-    }, [presented, accountScopes, sharedWithTeamId]);
+    }, [presented, demandContent, accountScopes, sharedWithTeamId]);
     const refresh = React.useCallback(() => {
         for (const serverId of requestedIds) invalidateMachinePresets(serverId);
     }, [requestedIds]);

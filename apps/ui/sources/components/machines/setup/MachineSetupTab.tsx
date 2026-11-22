@@ -324,7 +324,7 @@ function MachineSetupRoot(
                   const openedSource = opened?.source;
                   // The setup owner decides whether an attached preset's setup changed or went away; the row only says so.
                   const reference = source.reference;
-                  const update = reference.kind === 'accountPreset' || reference.kind === 'accountPresetOpaque'
+                  const update = reference.kind === 'accountPresetOpaque'
                     ? setup.presetUpdates.find((entry) => entry.presetId === reference.presetId) ?? null
                     : null;
                   return (
