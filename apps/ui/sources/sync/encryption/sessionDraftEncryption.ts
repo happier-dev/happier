@@ -1,5 +1,7 @@
-import { SessionDraftPrivatePayloadV2StoredSchema, SessionDraftStoredContentEnvelopeV2Schema, SessionDraftStoredContentEnvelopeV2StoredSchema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, isAccountOwnedDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import { SessionDraftPrivatePayloadV2StoredSchema, SessionDraftStoredContentEnvelopeV2Schema, SessionDraftStoredContentEnvelopeV2StoredSchema, createSessionDraftPrivatePayloadV2, canonicalSessionDraftAddressV2, isAccountOwnedDraftAddressV2, type SessionDraftAddressV2, type SessionDraftDocumentV2, type SessionDraftPrivatePayloadV2, type SessionDraftStoredContentEnvelopeV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { createAccountScopedBlobOpener, sealAccountScopedBlobCiphertext, type AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+
+import { resolveStoredContentKindForSessionEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 
 import type { SessionDraftRepositoryCipher } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { SessionDraftContextUnavailableError } from '@/sync/ops/sessionDrafts/sessionDraftCipherError';
@@ -31,6 +33,10 @@ function parseBoundPayload(address: SessionDraftAddressV2, value: unknown, encry
     if (!parsed.success) return null;
     const payload = parsed.data;
     if (encryptedEpoch !== undefined && payload.v !== encryptedEpoch) return null;
+    return readBoundPayload(address, payload);
+}
+
+function readBoundPayload(address: SessionDraftAddressV2, payload: SessionDraftPrivatePayloadV2): SessionDraftDocumentV2 | null {
     if (canonicalSessionDraftAddressV2(payload.address) !== canonicalSessionDraftAddressV2(address)) return null;
     return payload.document;
 }
@@ -84,7 +90,7 @@ export function createSessionDraftCipher(
             content = parsed.data;
             if (isAccountOwnedDraftAddressV2(address)) {
                 if (options.accountMode === 'plain') {
-                    return content.t === 'plain' ? parseBoundPayload(address, content.v) : null;
+                    return content.t === 'plain' ? readBoundPayload(address, content.v) : null;
                 }
                 if (content.t !== 'encrypted') return null;
                 if (!openAccountDraft) return null;
@@ -95,6 +101,8 @@ export function createSessionDraftCipher(
             if (!context) throw new SessionDraftContextUnavailableError();
             // Drafts retain their existing unavailable-context exception contract.
             if (context.mode === 'e2ee' && !context.encryption) throw new SessionDraftContextUnavailableError();
+            if (content.t !== resolveStoredContentKindForSessionEncryptionMode(context.mode)) return null;
+            if (content.t === 'plain') return readBoundPayload(address, content.v);
             const opened = await openSessionStoredContent(context, content);
             return opened.status === 'ready' ? parseBoundPayload(address, opened.value) : null;
         },

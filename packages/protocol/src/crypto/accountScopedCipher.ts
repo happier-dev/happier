@@ -152,11 +152,12 @@ export function resolveAccountContentSecretKey(material: AccountScopedCryptoMate
 
 function resolveSharedAccountContentSecretKey(material: AccountScopedCryptoMaterial): Uint8Array {
   if (material.type === 'dataKey') return material.machineKey;
+  const secret = material.secret;
   const retained = derivedMachineKeyByMaterial.get(material);
-  if (retained && retained.secret.length === material.secret.length
-    && retained.secret.every((byte, index) => byte === material.secret[index])) return retained.machineKey;
-  const machineKey = deriveAccountMachineKeyFromRecoverySecret(material.secret);
-  derivedMachineKeyByMaterial.set(material, { secret: material.secret.slice(), machineKey });
+  if (retained && retained.secret.length === secret.length
+    && retained.secret.every((byte, index) => byte === secret[index])) return retained.machineKey;
+  const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+  derivedMachineKeyByMaterial.set(material, { secret: secret.slice(), machineKey });
   return machineKey;
 }
 

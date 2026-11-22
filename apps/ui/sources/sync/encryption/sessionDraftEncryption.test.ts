@@ -35,6 +35,31 @@ function document(kind: 'session' | 'newSession'): SessionDraftDocumentV1 {
 }
 
 describe('sessionDraftEncryption', () => {
+    it.each(['session', 'newSession'] as const)('validates a plain %s draft body once on open', async kind => {
+        const cipher = createSessionDraftCipher({
+            accountMode: 'plain',
+            accountCryptoMaterial: null,
+            getSessionContext: () => ({ mode: 'plain' }),
+            randomBytes: length => new Uint8Array(length),
+        });
+        const address = kind === 'session' ? sessionAddress : newAddress;
+        const authored = document(kind);
+        const envelope = await cipher.seal(address, authored);
+        expect(envelope.t).toBe('plain');
+        if (envelope.t !== 'plain') throw new Error('Expected a plain draft envelope');
+
+        // A full payload validation computes its UTF-8 size. Count only work on this draft.
+        const encoded = vi.spyOn(TextEncoder.prototype, 'encode');
+        try {
+            await expect(cipher.open(address, envelope)).resolves.toEqual(authored);
+            const payloadValidations = encoded.mock.calls.filter(([input]) =>
+                typeof input === 'string' && input.includes('"composer"') && input.includes('"hello"'));
+            expect(payloadValidations).toHaveLength(1);
+        } finally {
+            encoded.mockRestore();
+        }
+    });
+
     it.each(['plain', 'e2ee'] as const)('keeps Discussion drafts under the Account cipher without a Session (%s)', async accountMode => {
         const cipher = createSessionDraftCipher({ accountMode,
             accountCryptoMaterial: accountMode === 'plain' ? null : { type: 'dataKey', machineKey: new Uint8Array(32).fill(42) },
