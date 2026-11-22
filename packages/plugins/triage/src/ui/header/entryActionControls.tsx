@@ -469,8 +469,10 @@ export function TriageEntryActionControls(
     }
     return key === null ? primary.label : text(key, primary.label);
   })();
-  const startWithLabel = startTarget?.agent == null ? undefined
-    : text('plugins.triage.surface.actions.withAgent', '{action} with {agent}', { action: primaryWords, agent: startTarget.agent.label });
+  // While this entry's own default settles, the last settled agent for the same action holds the label's width.
+  const agentLabel = startTarget === null ? startChoices.settlingAgentLabel : startTarget.agent?.label;
+  const startWithLabel = agentLabel === undefined ? undefined
+    : text('plugins.triage.surface.actions.withAgent', '{action} with {agent}', { action: primaryWords, agent: agentLabel });
   const recentRows = startChoices.recentSessions.status !== 'ready' ? []
     : startChoices.recentSessions.items.filter((row) => row.serverId !== undefined).slice(0, START_MENU_RECENT_ROWS);
   // Lab t1: recent Sessions under their own label, then the way to every Session; with none, only that way.

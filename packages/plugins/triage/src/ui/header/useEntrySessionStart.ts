@@ -30,10 +30,16 @@ export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOpti
  * while its own read revalidates instead of drawing "Fix" and growing (last-known value while refreshing).
  */
 const LAST_DEFAULT_TARGETS = new Map<string, TriageEntrySessionStartTargetV1>();
+/**
+ * The agent half of that target depends on the action alone (its profile), not on the entry's repository: an entry
+ * in a repository not opened yet still names the last settled agent while its own read settles, so the primary keeps
+ * its settled width from first paint ("Review with Claude", F10) instead of growing under the row.
+ */
+const LAST_DEFAULT_AGENT_LABELS = new Map<string, string>();
 
 export function useTriageEntrySessionStartChoices(
     input: TriageEntrySessionStartChoiceInputV1 & Readonly<{ menuOpen: boolean }>,
-): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; recentSessions: TriageRecentSessionsV1 }> {
+): Readonly<{ defaultTarget: TriageEntrySessionStartTargetV1; recentSessions: TriageRecentSessionsV1; settlingAgentLabel?: string }> {
     const host = usePluginHostApi() as unknown as TriageEntrySessionStartChoicesHostV1;
     const targetKey = [input.action?.profileId, input.action?.workspaceMode, input.repository?.kind,
         input.repository?.deployment, input.repository?.repository].map((part) => String(part ?? '')).join('\u001f');
@@ -58,6 +64,7 @@ export function useTriageEntrySessionStartChoices(
         }, { signal: lifetime.signal }).then((result) => {
             if (lifetime.signal.aborted) return;
             if (result.status === 'ready') LAST_DEFAULT_TARGETS.set(targetKey, result);
+            if (result.status === 'ready' && result.agent != null) LAST_DEFAULT_AGENT_LABELS.set(`${profileId}\u001f${workspaceMode}`, result.agent.label);
             setDefaultTarget(result);
         });
         return () => lifetime.abort();
@@ -72,5 +79,7 @@ export function useTriageEntrySessionStartChoices(
             .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
         return () => lifetime.abort();
     }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
-    return { defaultTarget, recentSessions };
+    const settlingAgentLabel = defaultTarget.status === 'loading'
+        ? LAST_DEFAULT_AGENT_LABELS.get(`${String(profileId ?? '')}\u001f${String(workspaceMode ?? '')}`) : undefined;
+    return { defaultTarget, recentSessions, ...(settlingAgentLabel === undefined ? {} : { settlingAgentLabel }) };
 }
