@@ -408,14 +408,17 @@ describe('one selected money basis across Usage bodies', () => {
   });
   it('keeps the private footprint as an accounted-token proxy with no fabricated estimate', async () => {
     const props = mountedCosts(false, 2093005);
+    const accounting = props.slice.accounting!;
     const slice = resolveUsagePageAggregation({ queries: [props.query],
-      accounting: [{ query: props.query, status: 'available', value: props.slice.accounting! }],
+      accounting: [{ query: props.query, status: 'available', value: { ...accounting, totals: {
+        ...accounting.totals, tokens: { ...accounting.totals.tokens, total: null, measured: { total: 4186010, fromParts: true } },
+      } } }],
       howYouWork: [{ query: props.query, asOfMs: day, detail: { status: 'available', facts: [] } }],
     }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderScreen(<UsageFootprintWidget {...props} slice={slice} id="usage_footprint" testID="footprint" />);
     // A caption-size fact with its proxy note, never the widget's large figure (acceptance 11-22 #26).
     expect(screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'footprint.tokens')).toBeUndefined();
-    expect(screen.getTextContent()).toContain(formatTokenCount(slice.accounting!.totals.tokens.total));
+    expect(screen.getTextContent()).toContain(formatTokenCount(4186010));
     expect(screen.getTextContent()).toContain(t('usage.board.howYouWork.footprintProxyDetail'));
     const datum = screen.findAllByType(ChartDatum).find(row => row.props.testID === 'footprint.tokens.detail');
     expect(datum?.props.datum.value).toContain('4,186,010');
@@ -515,7 +518,7 @@ describe('one selected money basis across Usage bodies', () => {
     const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: accounting }] }, bundledUsageModelPriceCatalog).results[0]!;
     const screen = await renderControls(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     expect(screen.findByType(HappierDataRows).props.rows).toHaveLength(1);
-    expect(screen.getTextContent()).toContain(t('usage.board.page.sourceKindFromLogs'));
+    expect(screen.getTextContent()).toContain(t('usage.board.sources.coverageHowFromLogs'));
     // Every row's status is the one the caveat line under the rows already says: it is said once, there (USAGE-ACCEPT 1118 #14).
     expect(screen.findByType(HappierDataRows).props.rows[0][1]).not.toContain(t('usage.board.page.factIncomplete'));
     // The caveat is one compact line; its reasons are one press away, never a paragraph under the rows.
@@ -530,23 +533,32 @@ describe('one selected money basis across Usage bodies', () => {
     const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'complete' as const,
         reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: true }, ranked: [], sources: [...sources] } } }] }, bundledUsageModelPriceCatalog).results[0]!;
-    const rowsOf = async (sources: readonly CoverageSource[]) => (await renderScreen(<UsageSourceCoverageWidget {...props}
-      id="usage_source_coverage" testID="coverage" slice={coverageOf(sources)} />)).findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
+    const tableOf = async (sources: readonly CoverageSource[]) => (await renderScreen(<UsageSourceCoverageWidget {...props}
+      id="usage_source_coverage" testID="coverage" slice={coverageOf(sources)} />)).findByType(HappierDataRows).props;
+    const rowsOf = async (sources: readonly CoverageSource[]) => (await tableOf(sources)).rows as readonly (readonly string[])[];
     // Two installed Agents with distinct routing identities that display under the same name stay two rows.
     expect(usageAgentTitle('research-tool')).toBe(usageAgentTitle('research_tool'));
     const twins = await rowsOf([{ ...source, source: 'native:research-tool', machineId: 'm1' }, { ...source, source: 'native:research_tool', machineId: 'm2' }]);
     expect(twins.map(([title]) => title)).toEqual([usageAgentTitle('research-tool'), usageAgentTitle('research_tool')]);
-    // One Agent with two capture kinds is one row, and both captures are named in its detail.
-    const claude = await rowsOf([{ ...source, source: 'claude-assistant-usage' }, { ...source, source: 'claude-sdk-result' }]);
-    expect(claude).toHaveLength(1);
-    expect(claude[0]![0]).toBe(usageAgentTitle('claude'));
-    expect(claude[0]![1]).toContain(usageSourceTitle('claude-assistant-usage'));
-    expect(claude[0]![1]).toContain(usageSourceTitle('claude-sdk-result'));
-    // One Agent with a single capture still names that capture in its detail ("Measured" says how, not which).
-    const summaries = await rowsOf([{ ...source, source: 'claude-sdk-result' }]);
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]![0]).toBe(usageAgentTitle('claude'));
-    expect(summaries[0]![1]).toContain(usageSourceTitle('claude-sdk-result'));
+    // One Agent with two capture kinds is one row. Its visible line says how its usage is known (acceptance 1122 #9);
+    // the captures stay its spoken detail.
+    const claude = await tableOf([{ ...source, source: 'claude-assistant-usage' }, { ...source, source: 'claude-sdk-result' }]);
+    expect(claude.rows).toHaveLength(1);
+    expect(claude.rows[0]![0]).toBe(usageAgentTitle('claude'));
+    expect(claude.rows[0]![1]).toContain(t('usage.board.sources.coverageHowMeasured'));
+    expect(claude.rows[0]![1]).not.toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude.rowDatums[0].value).toContain(usageSourceTitle('claude-assistant-usage'));
+    expect(claude.rowDatums[0].value).toContain(usageSourceTitle('claude-sdk-result'));
+    // One Agent with a single capture still names that capture in its spoken detail ("Measured" says how, not which).
+    const summaries = await tableOf([{ ...source, source: 'claude-sdk-result' }]);
+    expect(summaries.rows).toHaveLength(1);
+    expect(summaries.rows[0]![0]).toBe(usageAgentTitle('claude'));
+    expect(summaries.rowDatums[0].value).toContain(usageSourceTitle('claude-sdk-result'));
+    // A row with no capture fact says that how it is counted is not known; logs say they are read from logs.
+    const unknown = await rowsOf([{ ...source, source: 'acp-usage-update', captureKind: undefined }]);
+    expect(unknown[0]![1]).toContain(t('usage.board.sources.coverageHowUnknown'));
+    const logs = await rowsOf([{ ...source, source: 'codex-native-accounting', captureKind: 'from_logs' }]);
+    expect(logs[0]![1]).toContain(t('usage.board.sources.coverageHowFromLogs'));
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
@@ -559,7 +571,8 @@ describe('one selected money basis across Usage bodies', () => {
       slice={coverageOf([...Array.from({ length: 30 }, (_, index) => ({ ...source, source: 'claude-assistant-usage', machineId: `machine-${index}` })), { ...source, source: 'codex-token-count' }])} />);
     expect(twins.findByType(HappierDataRows).props.rows).toHaveLength(2);
     expect(twins.getTextContent()).toContain('30');
-    expect(twins.getTextContent()).not.toContain(t('usage.board.page.sourceKindMeasured'));
+    // How the usage is known is said in plain words even while its coverage is unknown (acceptance 1122 #9).
+    expect(twins.getTextContent()).toContain(t('usage.board.sources.coverageHowMeasured'));
     const runtime = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf([
         { ...source, source: 'runtime:codex', machineId: 'codex-machine' },

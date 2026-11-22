@@ -134,6 +134,21 @@ describe('UsageGlance', () => {
     await screen.unmount();
   });
 
+  it('shows an expired successful reading as old with its last value, time and reset', async () => {
+    const snapshot = makeQuotaSnapshot({
+      serviceId: 'openai-codex', profileId: 'work', meterId: 'weekly', fetchedAt, staleAfterMs: 120_000,
+    });
+    boundary.plainRead.mockImplementation(async () => plainQuotaResponse({
+      ...snapshot, meters: snapshot.meters.map(meter => ({ ...meter, resetsAt: Date.now() + 60 * 60_000 })),
+    }));
+    const screen = await renderGlance(connectedCodexSession());
+    const row = screen.findAllByType(Item).find(item => item.props.testID === 'usage.quota');
+    expect.soft(row?.props.detail).toMatch(/60%.*reset/i);
+    expect.soft(row?.props.subtitle).toMatch(/reading is old.*as of/i);
+    expect(screen.findByTestId('usage.quota.retry')).toBeNull();
+    await screen.unmount();
+  });
+
   it('keeps the last good value with its as-of after a failed refresh', async () => {
     const session = connectedCodexSession();
     const screen = await renderGlance(session);
@@ -159,6 +174,8 @@ describe('UsageGlance', () => {
     expect(screen.getTextContent()).toContain('60%');
     // The refresh failure sits in the row's own caption beside its as-of, with Retry; no separate tile.
     expect(screen.findByTestId('usage.quota.reason')).not.toBeNull();
+    // The caption wraps rather than truncating its as-of away (acceptance 1122 #35).
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'usage.quota')?.props.subtitleLines).toBe(0);
     expect(screen.findByTestId('usage.quota.retry')).not.toBeNull();
     expect(screen.findByTestId('usage.stale')).toBeNull();
     await refresher.unmount();

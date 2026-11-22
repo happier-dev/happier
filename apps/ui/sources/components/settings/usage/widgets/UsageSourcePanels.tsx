@@ -20,9 +20,10 @@ const statusKeys = {
   unknown: 'usage.board.sources.coverageUnknown', unsupported: 'usage.board.sources.unsupported',
   pending: 'usage.board.page.loading', error: 'usage.board.sources.failed',
 } as const;
+/** How a capture's usage is known, in plain words (acceptance 1122 #9); a capture with no such fact is "not known". */
 const captureKeys = {
-  measured: 'usage.board.page.sourceKindMeasured', from_logs: 'usage.board.page.sourceKindFromLogs',
-  not_added: 'usage.board.page.sourceKindNotAdded',
+  measured: 'usage.board.sources.coverageHowMeasured', from_logs: 'usage.board.sources.coverageHowFromLogs',
+  not_added: 'usage.board.sources.coverageHowNotAdded',
 } as const;
 
 /** Witnessed accounting coverage, never a guessed Agent support table or a second discovery read. */
@@ -61,8 +62,8 @@ type CoverageGroup = { agentId: string | null; title: string; captures: Set<stri
 
 /**
  * Coverage shows one row per Agent (its routing identity, through the source's declaration; the title is display
- * only), with the capture or captures it reports through named in the row's detail. A capture that names no Agent keeps its
- * own row. Several capture paths can share an Agent and a Machine.
+ * only). Its line says how its usage is known; the capture or captures it comes from are its spoken detail. A
+ * capture that names no Agent keeps its own row. Several capture paths can share an Agent and a Machine.
  */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
   const groups: CoverageGroup[] = [];
@@ -85,15 +86,16 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
     group.kinds.add(source.captureKind ?? null);
     if (COVERAGE_STATUS_RANK.indexOf(status) < COVERAGE_STATUS_RANK.indexOf(group.status)) group.status = status;
   }
-  // One status per row, the most limiting one; how it is captured only when every machine captures it the same way.
+  // One status per row, the most limiting one.
   const shared = partialSaid && groups.every(group => group.status === 'partial');
   return groups.map(({ title, captures, kinds, status, machines, unbound }) => {
-    const kind = kinds.size === 1 ? [...kinds][0] : null;
-    const capture = kind && (kind !== 'measured' || status === 'available') ? t(captureKeys[kind]) : null;
-    // Which capture(s) the Agent's usage comes from: one capture its name, several the list (how is a separate fact).
-    return { title, label: [captures.size > 0 ? [...captures].join(', ') : null,
-      !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
-      capture, shared ? null : t(statusKeys[status])].filter(Boolean).join(' · ') };
+    // The visible line says how the Agent's usage is known; which captures it comes from is the row's spoken detail.
+    const known = [...kinds].filter((kind): kind is keyof typeof captureKeys => kind !== null);
+    const how = known.length > 0 ? known.map(kind => t(captureKeys[kind])).join(', ') : t('usage.board.sources.coverageHowUnknown');
+    return { title,
+      label: [how, !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
+        shared ? null : t(statusKeys[status])].filter(Boolean).join(' · '),
+      ...(captures.size > 0 ? { detail: [...captures].join(', ') } : {}) };
   });
 }
 

@@ -126,7 +126,11 @@ export function UsageFootprintBody(props: UsageFootprintBodyProps) {
   </View>;
 }
 
-export type UsageSourceCoverageRow = Readonly<{ title: string; label: string; count?: number }>;
+export type UsageSourceCoverageRow = Readonly<{
+  title: string; label: string; count?: number;
+  /** Secondary detail the row speaks after its line (which captures it comes from), never a second visible line. */
+  detail?: string;
+}>;
 export type UsageSourceCoverageBodyProps = Readonly<{
   theme: HappierUiTheme; label: string; columns: readonly [string, string]; rows: readonly UsageSourceCoverageRow[];
   /** Empty state and private controls remain host-owned; populated source/status markup is shared. */
@@ -139,7 +143,9 @@ export function UsageSourceCoverageBody(props: UsageSourceCoverageBodyProps) {
     {props.rows.length ? <>
       <HappierDataRows theme={props.theme} testID={props.testID ? `${props.testID}.rows` : undefined} label={props.label}
         columns={props.columns.map(label => ({ label }))}
-        rows={props.rows.map(row => [(row.count ?? 1) > 1 ? `${row.title} ×${row.count}` : row.title, row.label])} />
+        rows={props.rows.map(row => [(row.count ?? 1) > 1 ? `${row.title} ×${row.count}` : row.title, row.label])}
+        {...(props.rows.some(row => row.detail) ? { rowDatums: props.rows.map(row => row.detail
+          ? { label: row.title, value: [row.label, row.detail].filter(Boolean).join(' · ') } : null) } : {})} />
       {props.showAll}
     </> : props.empty}
     {props.detail}

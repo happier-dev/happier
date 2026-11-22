@@ -78,6 +78,8 @@ export function UsageGlance(
                 {...(quotaRefreshFailedAsOf !== null ? {
                   subtitle: `${t('connectedServices.errors.quotaRefreshFailed')} · ${t('settingsOverview.asOf', { time: formatAsOfTime(quotaRefreshFailedAsOf) })}`,
                   subtitleTestID: `${props.testID}.quota.reason`,
+                  // The failure and its as-of wrap under the name; the value keeps the trailing column (acceptance 1122 #35).
+                  subtitleLines: 0,
                   subtitleAccessory: retry,
                 } : {})}
                 detail={
@@ -103,6 +105,7 @@ export function UsageGlance(
                 title={readSessionAgentLabel(props.session) ?? t('sessionCompanion.sections.usage')}
                 subtitle={t('usage.board.page.readFailedTitle')}
                 subtitleTestID={`${props.testID}.quota.reason`}
+                subtitleLines={0}
                 subtitleAccessory={retry}
               />
             ) : null}
