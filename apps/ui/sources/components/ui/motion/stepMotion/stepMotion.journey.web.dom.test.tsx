@@ -1,6 +1,7 @@
 /** @vitest-environment jsdom */
 import * as React from 'react';
 import { act } from 'react';
+import { createPortal } from 'react-dom';
 import { createRoot } from 'react-dom/client';
 import { assert, expect, it, vi } from 'vitest';
 import { glyphFrame } from '@happier-dev/brand/glyph-scene';
@@ -576,6 +577,8 @@ it('captures the approved step before the presentation loads and dissolves it wh
                 <div ref={node => { atmosphere = node ?? undefined; }}>Planet</div>
                 <header ref={node => { wordmark = node; }}>Happier</header>
                 <StepMotionLayer layerKey="workflow" webChrome={webChrome} webAtmosphere={webAtmosphere}>
+                    {createPortal(<div role="tooltip">Sign-in help</div>, document.body)}
+                    {createPortal(<div style={{ visibility: 'hidden' }} role="tooltip">Hidden help</div>, document.body)}
                     <input aria-label="Pairing link" defaultValue="a long pairing link" />
                     <button onClick={() => {
                         holdFirstArrivalStep();
@@ -598,6 +601,11 @@ it('captures the approved step before the presentation loads and dissolves it wh
         expect(copy?.textContent).toContain('Happier');
         expect(copy?.textContent).toContain('Planet');
         expect(copy?.textContent).toContain('Approved');
+        const heldTooltip = copy?.querySelector<HTMLElement>('[role="tooltip"]');
+        expect(heldTooltip?.textContent).toBe('Sign-in help');
+        expect(heldTooltip?.style.left).toBe('20px');
+        expect(heldTooltip?.style.top).toBe('40px');
+        expect(copy?.textContent).not.toContain('Hidden help');
         expect(copy?.querySelector('input')?.scrollLeft).toBe(liveInput.scrollLeft);
         const heldSpinner = copy?.querySelector('[data-spinner]');
         assert(heldSpinner);
@@ -609,6 +617,7 @@ it('captures the approved step before the presentation loads and dissolves it wh
         expect(applyHome).toHaveBeenCalledTimes(1);
         expect(isHomeArrivalMotionPending()).toBe(true);
         expect(container.querySelector('button')).toBeNull();
+        expect([...document.body.querySelectorAll('[role="tooltip"]')]).toEqual([heldTooltip]);
         expect(frozenEffects).toHaveLength(0);
         expect(copy?.isConnected).toBe(true);
         await act(async () => presentHome());

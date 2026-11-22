@@ -89,6 +89,28 @@ export function copyStepAtmosphere(layer: StepMotionLayerHandle, backdrop?: stri
   return atmosphere ? copyRegion(atmosphere, captureElementFlightRect(atmosphere), true) : undefined;
 }
 
+export function copyStepChrome(root: HTMLElement, chrome: readonly HTMLElement[], backdrop?: string) {
+  const copies = chrome.map(region => copyRegion(region, captureElementFlightRect(region), backdrop !== undefined));
+  if (!backdrop) return copies;
+
+  // The full-page Home backing also replaces help bubbles painted outside the step by a portal.
+  for (const tooltip of root.ownerDocument.querySelectorAll<HTMLElement>('[role="tooltip"]')) {
+    if (root.contains(tooltip) || chrome.some(region => region.contains(tooltip))) continue;
+    const style = getComputedStyle(tooltip);
+    if (style.visibility === 'hidden' || style.visibility === 'collapse') continue;
+    let opacity = Number(style.opacity || 1);
+    for (let parent = tooltip.parentElement; parent && opacity > 0; parent = parent.parentElement) {
+      opacity *= Number(getComputedStyle(parent).opacity || 1);
+    }
+    const rect = captureElementFlightRect(tooltip);
+    if (opacity === 0 || rect.width <= 0 || rect.height <= 0) continue;
+    const copy = copyRegion(tooltip, rect, true);
+    copy.style.opacity = String(opacity);
+    copies.push(copy);
+  }
+  return copies;
+}
+
 /**
  * The cross-fade's outgoing step on web: the layer and its chrome as they stand at the press, so the
  * departing step stays painted until the next one has risen in. Native has no synchronous copy.
@@ -100,9 +122,7 @@ export function copyStepLayer(layer: StepMotionLayerHandle, backdrop?: string): 
   if (rect.width <= 0 || rect.height <= 0) return null;
   const clone = copyRegion(root, rect, backdrop !== undefined);
   const webAtmosphere = copyStepAtmosphere(layer, backdrop);
-  const webChrome = (layer.webChrome?.(backdrop ? 'shell' : undefined) ?? []).map((region) =>
-    copyRegion(region, captureElementFlightRect(region), backdrop !== undefined),
-  );
+  const webChrome = copyStepChrome(root, layer.webChrome?.(backdrop ? 'shell' : undefined) ?? [], backdrop);
   return {
     clone,
     rect,

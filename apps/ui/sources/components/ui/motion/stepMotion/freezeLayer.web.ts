@@ -1,7 +1,7 @@
 import { captureElementFlightRect } from '../rectFlight';
 import { findWebStepAnchor } from './capturePressedElement.web';
 import { paintQrInk, paintStepInk } from './paintStepInk.web';
-import { copyRegion, copyStepAtmosphere, mountPaintCopy } from './stepPaintCopy';
+import { copyRegion, copyStepAtmosphere, copyStepChrome, mountPaintCopy } from './stepPaintCopy';
 import type { StepAnchor, StepFreeze, StepGrid, StepMotionLayerHandle, StepWebLeaf } from './stepMotionTypes';
 
 const paintedContent = 'h1, h2, h3, [role="heading"], [role="button"], [role="link"], a, button, input, textarea, img, svg';
@@ -88,7 +88,7 @@ export function freezeStepLayer(
     const clone = copyRegion(root, rect, backdrop !== undefined);
     const webAtmosphere = copyStepAtmosphere(layer, backdrop);
     const chrome = layer.webChrome?.(backdrop ? 'shell' : undefined) ?? [];
-    const webChrome = chrome.map(region => copyRegion(region, captureElementFlightRect(region), backdrop !== undefined));
+    const webChrome = copyStepChrome(root, chrome, backdrop);
     for (const { element, rect } of pressedChrome) {
         if (!chrome.some(region => region === element || region.dataset.testid === element.dataset.testid)) {
             webChrome.push(copyRegion(element, rect, backdrop !== undefined));
