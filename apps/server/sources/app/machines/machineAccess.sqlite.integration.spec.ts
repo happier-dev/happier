@@ -11,6 +11,7 @@ import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { observePrismaReads } from '@/testkit/observePrismaReads';
 import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
 import * as access from './machineAccess';
+import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { applyMachineReplacement } from './applyMachineReplacement';
 import { validateMachineReplacement } from './validateMachineReplacement';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
@@ -1421,6 +1422,78 @@ describe('Machine current access (real SQLite)', () => {
         expect(await inTx(tx => access.removeMachineAccessGrantInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id, principal: { kind: 'account', accountId: recipient.id }, leave: true }))).toEqual({ kind: 'inherited_access_remains', role: 'use' });
         await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBeNull();
+    });
+
+    describe('scoped Team candidates with enrolled managed guests', () => {
+        async function teamFixture() {
+            const f = await fixture(); const member = await account();
+            const homeId = await getOrCreateServerIdentityId();
+            const team = await db.team.create({ data: { name: 'Team' } });
+            await db.teamMembership.create({ data: { teamId: team.id, accountId: f.owner.id, role: 'member' } });
+            const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+            const group = await db.teamGroup.create({ data: { teamId: team.id, name: storedPlainPrivateLabel('Group') } });
+            await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
+            const machine = async () => (await fixture()).machine;
+            // A second controller the same owner can share; the cast bridges Prisma's JSON read and write types for a copied row.
+            const ownedMachine = async () => {
+                const { id: _id, createdAt: _createdAt, updatedAt: _updatedAt, ...row } = await db.machine.findUniqueOrThrow({ where: { id: f.machine.id } });
+                return db.machine.create({ data: { ...row, id: crypto.randomUUID(), installationId: crypto.randomUUID() } as never });
+            };
+            // Each guest is an enrolled managed Machine behind the given controller.
+            const guestOf = async (controller: { id: string; installationId: string | null }) => {
+                const guest = await machine();
+                await db.managedMachine.create({ data: { homeId, custodianAccountId: f.owner.id,
+                    controllerMachineId: controller.id, controllerInstallationId: controller.installationId ?? 'install',
+                    admittedActionRequestId: crypto.randomUUID(), admittedInput: { acquisitionMode: 'resource-bound' },
+                    launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'guest', choices: {} },
+                    resource: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+                    allocation: 'bound', retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, enrolledMachineId: guest.id } });
+                return guest;
+            };
+            const principal = { team: { kind: 'team' as const, teamId: team.id }, group: { kind: 'group' as const, teamId: team.id, groupId: group.id } };
+            const share = (machineId: string, arm: 'team' | 'group') => inTx(tx => access.setMachineAccessGrantInTx(tx,
+                { actorAccountId: f.owner.id, machineId, principal: principal[arm], level: 'view' }));
+            const revoke = (machineId: string, arm: 'team' | 'group') => inTx(tx => access.removeMachineAccessGrantInTx(tx,
+                { actorAccountId: f.owner.id, machineId, principal: principal[arm] }));
+            const scoped = () => inTx(tx => access.listScopedTeamMachineCandidatesInTx(tx, member.id, team.id));
+            return { f, member, team, machine, ownedMachine, guestOf, share, revoke, scoped };
+        }
+        const scope = (team: boolean, group: boolean) => resourceTeamShareScopeV1({ team, group });
+
+        it('reads each enrolled-guest edge level once when a controller is shared through both the Team and its group', async () => {
+            const t = await teamFixture();
+            const guest = await t.guestOf(t.f.machine);
+            await t.share(t.f.machine.id, 'team');
+            await t.share(t.f.machine.id, 'group');
+            const reads = await inTx(async tx => {
+                const observed = observePrismaReads(tx, ['managedMachine']);
+                const result = await access.listScopedTeamMachineCandidatesInTx(observed.tx, t.member.id, t.team.id);
+                return { result, count: observed.reads.filter(read => read === 'managedMachine.findMany').length };
+            });
+            expect(reads.result).toEqual(new Map([[t.f.machine.id, scope(true, true)], [guest.id, scope(true, true)]].sort(([a], [b]) => a.localeCompare(b))));
+            // One read finds the guest, one confirms the guest has no guests of its own.
+            expect(reads.count).toBe(2);
+        });
+
+        it('keeps each arm\'s controllers and guests when the other arm is revoked, and handles single and empty arms', async () => {
+            const t = await teamFixture();
+            const guest = await t.guestOf(t.f.machine);
+            const teamOnly = await t.ownedMachine(); const teamOnlyGuest = await t.guestOf(teamOnly);
+            await t.share(t.f.machine.id, 'team');
+            await t.share(t.f.machine.id, 'group');
+            await t.share(teamOnly.id, 'team');
+            const expected = (entries: Array<[string, ReturnType<typeof scope>]>) => new Map(entries.sort(([a], [b]) => a.localeCompare(b)));
+            expect(await t.scoped()).toEqual(expected([[t.f.machine.id, scope(true, true)], [guest.id, scope(true, true)],
+                [teamOnly.id, scope(true, false)], [teamOnlyGuest.id, scope(true, false)]]));
+            await t.revoke(t.f.machine.id, 'team');
+            expect(await t.scoped()).toEqual(expected([[t.f.machine.id, scope(false, true)], [guest.id, scope(false, true)],
+                [teamOnly.id, scope(true, false)], [teamOnlyGuest.id, scope(true, false)]]));
+            await t.share(t.f.machine.id, 'team');
+            await t.revoke(t.f.machine.id, 'group');
+            // The group arm is now empty.
+            expect(await t.scoped()).toEqual(expected([[t.f.machine.id, scope(true, false)], [guest.id, scope(true, false)],
+                [teamOnly.id, scope(true, false)], [teamOnlyGuest.id, scope(true, false)]]));
+        });
     });
 
     it('projects a Group grant label only through the recipient-safe private-label field', async () => {

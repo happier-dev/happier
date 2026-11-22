@@ -41,7 +41,7 @@ import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from '
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 import { classifyMachineAvailabilityState, readMachineOnlineAvailabilityDiagnostic } from './machineStateGuards';
-import { MACHINE_PERMISSION_FACTS_SELECT, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, readMachineRoleGraphForMachinesInTx, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { MACHINE_PERMISSION_FACTS_SELECT, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, readMachineRoleGraphForMachinesInTx, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx, readManagedGuestEdgesInTx, closeOverManagedGuests } from './machineRole';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
@@ -212,10 +212,12 @@ export async function listScopedTeamMachineCandidatesInTx(tx: Tx, actorAccountId
         tx.machineGrant.findMany({ where: { principalKind: 'team', ...grants.team }, select: { machineId: true } }),
         tx.machineGrant.findMany({ where: { principalKind: 'group', ...grants.group }, select: { machineId: true } }),
     ]);
-    const [teamIds, groupIds] = await Promise.all([
-        expandMachineIdsWithManagedGuestsInTx(tx, teams.map(row => row.machineId)),
-        expandMachineIdsWithManagedGuestsInTx(tx, groups.map(row => row.machineId)),
-    ]);
+    // One edge read covers both arms; each arm keeps its own closure.
+    const teamRoots = teams.map(row => row.machineId);
+    const groupRoots = groups.map(row => row.machineId);
+    const edges = await readManagedGuestEdgesInTx(tx, [...teamRoots, ...groupRoots]);
+    const teamIds = closeOverManagedGuests(teamRoots, edges);
+    const groupIds = closeOverManagedGuests(groupRoots, edges);
     const team = new Set(teamIds);
     const group = new Set(groupIds);
     return new Map([...new Set([...teamIds, ...groupIds])].sort().map(id => [id,

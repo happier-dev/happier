@@ -161,20 +161,38 @@ function inheritMachineRoles(graph: ReadonlyMap<string, MachinePermissionFacts>,
     return roles;
 }
 
-/** Candidate discovery and grant/membership effects follow the same stored controller edges. */
-export async function expandMachineIdsWithManagedGuestsInTx(tx: Tx, machineIds: readonly string[]): Promise<string[]> {
-    const result = new Set(machineIds);
-    let pending = [...result];
+/** Every stored controller → enrolled guest edge reachable from `machineIds`, read once per level. */
+export async function readManagedGuestEdgesInTx(tx: Tx, machineIds: readonly string[]): Promise<Map<string, string[]>> {
+    const guestsByController = new Map<string, string[]>();
+    const visited = new Set(machineIds);
+    let pending = [...visited];
     while (pending.length > 0) {
         const next: string[] = [];
         for (const ids of portableQueryChunks({ values: pending, bindingsPerValue: 1 })) {
             const guests = await tx.managedMachine.findMany({ where: { controllerMachineId: { in: [...ids] }, enrolledMachineId: { not: null } },
-                select: { enrolledMachineId: true } });
-            for (const guest of guests) if (guest.enrolledMachineId && !result.has(guest.enrolledMachineId)) {
-                result.add(guest.enrolledMachineId); next.push(guest.enrolledMachineId);
+                select: { controllerMachineId: true, enrolledMachineId: true } });
+            for (const guest of guests) {
+                if (!guest.enrolledMachineId) continue;
+                guestsByController.set(guest.controllerMachineId, [...(guestsByController.get(guest.controllerMachineId) ?? []), guest.enrolledMachineId]);
+                if (!visited.has(guest.enrolledMachineId)) { visited.add(guest.enrolledMachineId); next.push(guest.enrolledMachineId); }
             }
         }
         pending = next;
     }
+    return guestsByController;
+}
+
+/** The Machines reachable from `machineIds` through already-read controller edges. */
+export function closeOverManagedGuests(machineIds: readonly string[], guestsByController: ReadonlyMap<string, readonly string[]>): string[] {
+    const result = new Set(machineIds);
+    const pending = [...result];
+    for (let id = pending.pop(); id !== undefined; id = pending.pop()) {
+        for (const guest of guestsByController.get(id) ?? []) if (!result.has(guest)) { result.add(guest); pending.push(guest); }
+    }
     return [...result].sort();
+}
+
+/** Candidate discovery and grant/membership effects follow the same stored controller edges. */
+export async function expandMachineIdsWithManagedGuestsInTx(tx: Tx, machineIds: readonly string[]): Promise<string[]> {
+    return closeOverManagedGuests(machineIds, await readManagedGuestEdgesInTx(tx, machineIds));
 }
