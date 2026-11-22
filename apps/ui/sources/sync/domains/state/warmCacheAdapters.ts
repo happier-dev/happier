@@ -1,6 +1,7 @@
 import {
     hasUnreadActivityForSessionViewer,
     normalizeSessionViewerCompatibility,
+    projectAdmittedSessionViewerCompatibility,
 } from '@/sync/domains/session/readState/sessionViewer';
 import {
     areResponsibleAccountSummariesEqual,
@@ -209,8 +210,7 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
     const access = entry.effectiveAccess == null
         ? entry.effectiveAccess
         : projectAdmittedSessionAccess(entry.effectiveAccess);
-    const viewer = normalizeSessionViewerCompatibility({
-        viewer: entry.viewer,
+    const viewer = projectAdmittedSessionViewerCompatibility(entry.viewer, {
         access,
         accessLevel: entry.accessLevel,
     });

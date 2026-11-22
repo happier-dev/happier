@@ -27,12 +27,19 @@ type NormalizedSessionViewerCompatibility =
 export function normalizeSessionViewerCompatibility(
     session: SessionViewerTrackingInput,
 ): NormalizedSessionViewerCompatibility {
-    if (session.viewer !== undefined) {
-        const parsed = createStoredReadSchema(SessionViewerProjectionV1Schema).safeParse(session.viewer);
-        return parsed.success
-            ? { kind: 'current', viewer: parsed.data }
-            : { kind: 'untracked' };
-    }
+    if (session.viewer === undefined) return projectAdmittedSessionViewerCompatibility(undefined, session);
+    const parsed = createStoredReadSchema(SessionViewerProjectionV1Schema).safeParse(session.viewer);
+    return parsed.success
+        ? projectAdmittedSessionViewerCompatibility(parsed.data, session)
+        : { kind: 'untracked' };
+}
+
+/** Applies released viewer compatibility after the caller has admitted the current viewer. */
+export function projectAdmittedSessionViewerCompatibility(
+    viewer: SessionViewerProjectionV1 | undefined,
+    session: Omit<SessionViewerTrackingInput, 'viewer'>,
+): NormalizedSessionViewerCompatibility {
+    if (viewer !== undefined) return { kind: 'current', viewer };
     // A sourced access projection is current-generation evidence. If its
     // required viewer companion is absent, do not reinterpret even an owner
     // access role through the released fallback.

@@ -19,6 +19,8 @@ import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadat
 import { SessionRuntimeActivityProjectionSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionEffectiveAccessV1Schema } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { SessionGuardStateV1StoredSchema } from '@happier-dev/protocol/machines/guard/sessionGuardStateV1';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import { SessionViewerProjectionV1Schema } from '@happier-dev/protocol/sessions/personal/viewer';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function makeWindowRenderable(id: string, meaningfulActivityAt: number): SessionListRenderableSession {
@@ -297,7 +299,12 @@ describe('warmCacheAdapters', () => {
             seq: 8, lastViewedSessionSeq: 0, hasUnreadMessages: true, viewer,
         });
         const cached = buildSessionListCacheEntryFromRenderable(renderable);
-        const restored = buildSessionListRenderableFromCacheEntry(SessionListCacheEntryV1Schema.parse(cached));
+        const admitted = SessionListCacheEntryV1Schema.parse(cached);
+        const viewerParse = vi.spyOn(createStoredReadSchema(SessionViewerProjectionV1Schema), 'safeParse');
+        const restored = buildSessionListRenderableFromCacheEntry(admitted);
+        const repeatedParses = viewerParse.mock.calls.length;
+        viewerParse.mockRestore();
+        expect(repeatedParses).toBe(0);
         expect(restored.viewer).toEqual(viewer);
         expect(restored.hasUnreadMessages).toBe(false);
         const changed = buildSessionListCacheEntryFromRenderable({ ...renderable, viewer: { ...viewer, relevance: { relevant: false, reasons: [] } } }, cached);
