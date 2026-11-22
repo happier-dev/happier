@@ -6,6 +6,7 @@ import {
   type HealthCheckDefinitionV1,
   readHealthCheckHttpTargetV1,
 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
+import { isLoopbackHostname } from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { readDeploymentDomainHostnameV1, type DeploymentDomainContentV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, HEALTH_CHECK_KINDS_V1, type HealthCheckKindV1 } from '@happier-dev/protocol/deployments/healthCheckV1';
@@ -148,10 +149,15 @@ export function serviceCheckAutomationExecutionContext(settings: ServiceCheckSet
   return settings?.observerMachineId ? { machineId: settings.observerMachineId, directory: '~' } : undefined;
 }
 
+type ServiceCheckTitleTarget =
+  | Readonly<{ kind: 'host' | 'service'; label: string }>
+  | Readonly<{ kind: 'environment'; id: string }>;
+
 export type ServiceCheckDefinitionFacts = Readonly<{
   checkId: string;
   name: string | null;
   targetLabel: string | null;
+  titleTarget: ServiceCheckTitleTarget | null;
   periodMs: number;
   domainId: string | null;
   address: string | null;
@@ -207,7 +213,16 @@ export function readServiceCheckDefinitions(
     const address = domain ? target?.url ?? null : http?.success ? http.data.endpoint : tcp?.success ? `${tcp.data.host}:${tcp.data.port}` : null;
     const labelUrl = target ? new URL(target.url) : null;
     if (labelUrl) { labelUrl.search = ''; labelUrl.hash = ''; }
+    const targetHost = labelUrl?.hostname ?? hostname ?? (tcp?.success ? tcp.data.host : dns?.success ? dns.data.hostname : null);
+    let titleTarget: ServiceCheckTitleTarget | null = null;
+    if (targetHost) {
+      if (!isLoopbackHostname(targetHost)) titleTarget = { kind: 'host', label: targetHost };
+      else if (domain?.content.target?.service) titleTarget = { kind: 'service', label: domain.content.target.service };
+      else if (source.subject.kind === 'machineService') titleTarget = { kind: 'service', label: source.subject.serviceId };
+      else titleTarget = { kind: 'environment', id: source.subject.environmentId };
+    }
     return {
+      titleTarget,
       checkId: check.checkId, name: options.kindName?.(check.kind) ?? null,
       targetLabel: labelUrl ? formatDeploymentLiveAddress(labelUrl.href) : address ?? (dns?.success ? `${dns.data.recordType} ${dns.data.hostname}`
         : keyFlow?.success ? keyFlowTargetLabel(keyFlow.data) : null),
@@ -565,20 +580,26 @@ export function formatServiceCheckPeriod(ms: number): string {
 }
 
 /**
- * What a saved Check is called wherever it is listed or picked: a named Key flow by its name ("Checkout"), every other
- * check by what it checks (a host, a path, routes), else its saved name. `identifier` says the title is an address.
+ * The heading uses a name the Check kind actually owns, an external hostname, or a kind and local subject.
+ * The Automation name can be a generated storage label, so it is only a fallback for an unopened picker option.
  */
 export function serviceCheckTitle(
-  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'keyFlow' | 'name'> | null,
-  savedName: string,
+  definition: Pick<ServiceCheckDefinitionFacts, 'targetLabel' | 'titleTarget' | 'keyFlow' | 'name'> | null,
+  environmentNames?: ReadonlyMap<string, string>,
+  unopenedOptionName?: string,
 ): Readonly<{ title: string; identifier: boolean }> {
-  const name = definition?.keyFlow?.name;
-  if (name) return { title: name, identifier: false };
-  if (definition?.targetLabel != null) return { title: definition.targetLabel, identifier: true };
-  return {
-    title: workflowTriggerDisplayNameV1({ name: savedName }) ?? definition?.name ?? t('projects.deployments.services.checkPageTitle'),
-    identifier: false,
-  };
+  const fallback = t('projects.deployments.services.checkPageTitle');
+  if (!definition) {
+    return { title: workflowTriggerDisplayNameV1({ name: unopenedOptionName }) ?? fallback, identifier: false };
+  }
+  const { keyFlow, targetLabel, titleTarget } = definition;
+  if (keyFlow?.name) return { title: keyFlow.name, identifier: false };
+  if (keyFlow && targetLabel) return { title: targetLabel, identifier: true };
+  if (titleTarget?.kind === 'host') return { title: titleTarget.label, identifier: true };
+  const kind = definition.name ?? fallback;
+  const subject = titleTarget?.kind === 'service' ? titleTarget.label
+    : titleTarget?.kind === 'environment' ? environmentNames?.get(titleTarget.id) : null;
+  return { title: subject ? [kind, subject].join(' · ') : kind, identifier: false };
 }
 
 type ListedCheck = Readonly<{
@@ -598,8 +619,10 @@ export type ServiceCheckCollectorTrend = Readonly<{
 
 export type ServiceCheckListFacts = Readonly<{
   title: string;
-  /** The title is what the check reaches (a host, a path, routes), drawn as an identifier; a name is drawn as a name. */
+  /** Show a hostname or route in identifier typography. */
   titleIdentifier: boolean;
+  /** The checked endpoint or routes, available separately from the heading. */
+  targetLabel: string | null;
   kind: string | null;
   every: string | null;
   lastResult: string | null;
@@ -629,8 +652,7 @@ export type ServiceCheckListFacts = Readonly<{
 }>;
 
 /**
- * One Checks row (lab svcChk, MONITOR-LAB-1115 A1): named by what it checks (its definition's target, else the saved
- * name), its kind, how often it runs, and the shown target's results: a failing target first, else the definition's,
+ * One Checks row with its name, kind, cadence and the shown target's results: a failing target first, else the definition's,
  * else the first. Its bars, response, cause and failing time are that target's; the uptime is the row's lowest.
  */
 export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_CHECK_ROW_BARS): ServiceCheckListFacts {
@@ -649,10 +671,12 @@ export function serviceCheckListFacts(row: ListedCheck, slots: number = SERVICE_
   const newest = recent?.results[0]?.observedAt;
   const collectorTrend = keyFlow && observerMachineId !== null && newest !== undefined
     ? { collectorMachineId: observerMachineId, config: keyFlow, until: newest } : null;
-  const named = serviceCheckTitle(definition ? { ...definition, keyFlow } : null, row.native.name);
+  const named = serviceCheckTitle(definition ? { ...definition, keyFlow } : null,
+    row.definitionFacts.kind === 'available' ? row.definitionFacts.environmentNames : undefined);
   return {
     title: named.title,
     titleIdentifier: named.identifier,
+    targetLabel: definition?.targetLabel ?? null,
     kind: definition?.name ?? null,
     every: definition ? formatServiceCheckPeriod(definition.periodMs) : null,
     lastResult: word ? [word, shown?.result.latencyMs === undefined ? null : formatServiceCheckLatency(shown.result.latencyMs)]

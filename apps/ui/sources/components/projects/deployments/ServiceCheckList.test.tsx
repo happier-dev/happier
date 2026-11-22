@@ -33,7 +33,7 @@ const result = (status: 'up' | 'down' | 'degraded', minutesAgo: number, latencyM
 const row = (key: string, target: string, lastResults: unknown, enabled = true) => ({
   kind: 'configuredCheck', key, scope: { serverId: 'server-1', accountId: 'account-1' }, automationId: `a-${key}`, triggerId: `t-${key}`,
   native: { name: `${target} availability`, templateVersion: 1, enabled, triggers: [] },
-  definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: key, name: 'HTTP', targetLabel: target, periodMs: 60_000, domainId: null }] },
+  definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: key, name: 'HTTP', targetLabel: target, titleTarget: { kind: 'host', label: new URL('https://' + target).hostname }, periodMs: 60_000, domainId: null }] },
   lastResults,
 }) as never;
 const results = (status: 'up' | 'down' | 'degraded', latencyMs: number) => ({ kind: 'available', checks: [{ checkId: 'c', result: result(status, 1, latencyMs),
@@ -56,7 +56,7 @@ it('Monitoring lists what needs the person first, says healthy checks quietly, a
   const text = screen.getTextContent();
   expect(text.indexOf('Needs you')).toBeGreaterThanOrEqual(0);
   // The failing check stands in Needs you, before the Checks section and the healthy rows.
-  expect(text.indexOf('n8n.acme.dev')).toBeLessThan(text.indexOf('billing.acme.dev/health'));
+  expect(text.indexOf('n8n.acme.dev')).toBeLessThan(text.indexOf('billing.acme.dev'));
   expect(text.indexOf('n8n.acme.dev')).toBeGreaterThan(text.indexOf('Needs you'));
   expect(text).toContain('Down');
   expect(text).toContain('Paused');
@@ -103,7 +103,7 @@ it('says the observing Machine stopped checking only while its presence owner sa
     { sourceServerId: scope.serverId, sourceAccountId: scope.accountId });
   const watched = { ...(row('down', 'n8n.acme.dev', results('down', 900)) as object), scope,
     definitionFacts: { kind: 'available', observerMachineId: observer.id,
-      checks: [{ checkId: 'down', name: 'HTTP', targetLabel: 'n8n.acme.dev', periodMs: 60_000, domainId: null }] } } as never;
+      checks: [{ checkId: 'down', name: 'HTTP', targetLabel: 'n8n.acme.dev', titleTarget: { kind: 'host', label: 'n8n.acme.dev' }, periodMs: 60_000, domainId: null }] } } as never;
   const screen = await renderScreen(
     <ServiceCheckList testID="monitoring.checks" rows={[watched]} scope={scope as never} selection={SELECTION} accessibilityLabel="Checks" />,
   );
@@ -125,7 +125,7 @@ it('lists a failing check before healthy ones without sections', async () => {
   );
   const text = screen.getTextContent();
   expect(text).not.toContain('Needs you');
-  expect(text.indexOf('n8n.acme.dev')).toBeLessThan(text.indexOf('billing.acme.dev/health'));
+  expect(text.indexOf('n8n.acme.dev')).toBeLessThan(text.indexOf('billing.acme.dev'));
 });
 
 // MONITOR-ACCEPT-1116 F6: until results and the definition arrive, a row never says the saved automation's name it
@@ -150,7 +150,7 @@ it('names a failing Key flow by its flow and says its measurement, as Failing ra
   const measured = (minutesAgo: number, value: number) => ({ ...result(value > 800 ? 'degraded' : 'up', minutesAgo, value),
     measurements: { measure: 'p95', unit: 'ms', basis: 'metric_points', producers: [], completeness: 'complete', reasons: [], value,
       window: { since: NOW - (minutesAgo + 10) * 60_000, until: NOW - minutesAgo * 60_000 } } });
-  const flow = { ...(row('flow', 'POST /checkout', { kind: 'available', checks: [{ checkId: 'flow', result: measured(1, 1420),
+  const flow = { ...(row('flow', 'billing.acme.dev', { kind: 'available', checks: [{ checkId: 'flow', result: measured(1, 1420),
     recentResults: [measured(3, 240), measured(2, 1380), measured(1, 1420)], recentResultsCoverage: 'complete',
     failingSince: NOW - 2 * 60_000, failureStreak: 2, history: { lastObservedAt: NOW, uptimePercent: 99.4, days: [] } }] }) as object),
   definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'flow', name: 'Key flow', targetLabel: 'POST /checkout',

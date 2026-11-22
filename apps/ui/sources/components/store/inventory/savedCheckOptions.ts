@@ -48,13 +48,11 @@ export function projectSavedServiceCheckOptions(
         const definitions = detail ? readServiceCheckDefinitions(detail.storedDefinition) : null;
         if (definitions?.length === 0) return [];
         const definition = definitions?.[0] ?? null;
-        const named = serviceCheckTitle(definition, native.name);
+        const named = serviceCheckTitle(definition, undefined, native.name);
         const savedName = workflowTriggerDisplayNameV1(native);
-        const description = definition?.keyFlow
+        const description = definition?.targetLabel && named.title !== definition.targetLabel
           ? definition.targetLabel
-          : named.title !== savedName
-            ? savedName
-            : null;
+          : named.title !== savedName ? savedName : null;
         return [
           {
             automationId: native.id,

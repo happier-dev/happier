@@ -3,7 +3,7 @@ import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deploym
 import { isHealthCheckEventSourceV1 } from '@happier-dev/protocol/deployments/healthCheckSourceV1';
 import { readServiceCheckDefinitions, type ServiceCheckDefinitionFacts } from '@/components/projects/deployments/serviceCheckPresentation';
 import { useDeploymentAccountController } from '@/components/projects/deployments/useDeploymentProject';
-import { useDeploymentDomainPage } from '@/components/projects/deployments/useDeploymentReads';
+import { useDeploymentCollection, useDeploymentDomainPage } from '@/components/projects/deployments/useDeploymentReads';
 import { fetchAccountEncryptionCurrentness } from '@/sync/api/account/apiAccountEncryptionMode';
 import { resolveAutomationRunDetailAccountMaterial } from '@/sync/domains/automations/automationRunDetailInspection';
 import { retainAutomationDefinitionDetailsDemand } from '@/sync/domains/automations/automationReadDemand';
@@ -19,7 +19,8 @@ import { HappyError } from '@/utils/errors/errors';
 
 export type ConfiguredCheckDefinitionFacts =
     | Readonly<{ kind: 'loading' | 'unavailable' }>
-    | Readonly<{ kind: 'available'; checks: readonly Pick<ServiceCheckDefinitionFacts, 'checkId' | 'name' | 'targetLabel' | 'periodMs' | 'domainId' | 'keyFlow'>[];
+    | Readonly<{ kind: 'available'; checks: readonly Pick<ServiceCheckDefinitionFacts, 'checkId' | 'name' | 'targetLabel' | 'titleTarget' | 'periodMs' | 'domainId' | 'keyFlow'>[];
+        environmentNames?: ReadonlyMap<string, string>;
         /** The Machine assigned to run the source's checks; null until assigned, or when results arrive by webhook. */
         observerMachineId: string | null }>;
 export const CONFIGURED_CHECK_DEFINITION_LOADING: ConfiguredCheckDefinitionFacts = Object.freeze({ kind: 'loading' });
@@ -122,7 +123,16 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
     const needsDomains = base.some(entry => entry.checks?.some(check => check.domainId !== null));
     const domainDemand = React.useMemo(() => ({ mounted: presented && needsDomains, visible: presented && needsDomains, focused: presented && needsDomains }),
         [presented, needsDomains]);
-    const controller = useDeploymentAccountController(lifetime, needsDomains, domainDemand);
+    const localEnvironmentIds = React.useMemo(() => base.flatMap(entry => entry.checks?.flatMap(check =>
+        check.titleTarget?.kind === 'environment' ? [check.titleTarget.id] : []) ?? []), [base]);
+    const needsNames = presented && localEnvironmentIds.length > 0;
+    const nameDemand = React.useMemo(() => ({ mounted: needsNames, visible: needsNames, focused: needsNames }), [needsNames]);
+    const readDemand = needsNames ? nameDemand : domainDemand;
+    const controller = useDeploymentAccountController(lifetime, needsDomains || needsNames, readDemand);
+    const environmentPage = useDeploymentCollection(controller, nameDemand, { environmentIds: localEnvironmentIds });
+    const environments = environmentPage.snapshot.value?.items;
+    const environmentNames = React.useMemo(() => environments
+        ? new Map(environments.map(row => [row.environment.id, row.title])) : undefined, [environments]);
     const domainPage = useDeploymentDomainPage(controller, domainDemand);
     const domains = domainPage.snapshot.value?.items ?? NO_DOMAINS;
     const byTrigger = React.useMemo(() => {
@@ -142,11 +152,11 @@ export function useConfiguredCheckDefinitions(lifetime: ServerAccountScopeLifeti
                 const declaration = manifest?.contributes.healthCheckKinds?.find(candidate => candidate.id === kind.localId);
                 return declaration ? resolvePluginLocalizedText({ projection, pluginId: kind.pluginId, value: declaration.title }) : null;
             } });
-            return [entry.key, checks ? { kind: 'available', checks: checks.map(({ checkId, name, targetLabel, periodMs, domainId, keyFlow }) =>
-                ({ checkId, name, targetLabel, periodMs, domainId, keyFlow })),
+            return [entry.key, checks ? { kind: 'available', checks: checks.map(({ checkId, name, targetLabel, titleTarget, periodMs, domainId, keyFlow }) =>
+                ({ checkId, name, targetLabel, titleTarget, periodMs, domainId, keyFlow })), environmentNames,
                 observerMachineId: entry.observation?.kind === 'durablePush' ? null : entry.observation?.watcher?.machineId ?? null } : UNAVAILABLE];
         }));
-    }, [base, domains, reader]);
+    }, [base, domains, reader, environmentNames]);
     return { byTrigger, read, retry, domainsPending: needsDomains && domainPage.snapshot.status !== 'ready',
         domainContinuation: needsDomains && domainPage.hasNextPage ? domainPage.nextPage : undefined };
 }

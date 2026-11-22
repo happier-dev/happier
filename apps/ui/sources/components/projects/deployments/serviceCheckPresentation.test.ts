@@ -322,18 +322,31 @@ describe('Services → Checks rows (lab svcChk: named by what they check, Every,
     ]);
   });
 
-  it('names a row by the target its definition checks, with its kind, cadence and latest result', async () => {
+  it.each([
+    { endpoint: 'http://127.0.0.1:33237/api/v1/events', subject: { kind: 'environment', environmentId: 'prod' },
+      title: 'HTTP · Production', address: '127.0.0.1:33237/api/v1/events' },
+    { endpoint: 'http://[::1]:8080/ready', subject: { kind: 'machineService', machineId: 'machine', serviceId: 'orders-api' },
+      title: 'HTTP · orders-api', address: '[::1]:8080/ready' },
+    { endpoint: 'https://shop.example:8443/ready', subject: { kind: 'environment', environmentId: 'prod' },
+      title: 'shop.example', address: 'shop.example:8443/ready' },
+  ])('names a row from the checked host or local subject and keeps the endpoint secondary ($title)', async ({ endpoint, subject, title, address }) => {
     const { serviceCheckListFacts } = await import('./serviceCheckPresentation');
+    const checks = readServiceCheckDefinitions({ sourceConfig: { v: 1, subject, checks: [{
+      checkId: 'c1', kind: { pluginId: 'happier.machine.services', localId: 'http' }, binding: { kind: 'healthCheck' },
+      config: { endpoint, expectStatus: 200 }, periodMs: 300_000, consecutiveFailuresBeforeAlerting: 2,
+    }] } }, {
+      kindName: () => 'HTTP',
+    });
+    expect(checks).not.toBeNull();
     const facts = serviceCheckListFacts({
-      native: { name: 'Workflow triggers' },
-      definitionFacts: { kind: 'available', observerMachineId: null, checks: [{ checkId: 'c1', name: 'HTTP check', targetLabel: 'shop.example/ready', periodMs: 300_000, domainId: null }] },
+      native: { name: 'Event observation' },
+      definitionFacts: { kind: 'available', observerMachineId: null, checks: checks!,
+        environmentNames: new Map([['prod', 'Production']]) },
       lastResults: { kind: 'available', checks: [{ checkId: 'c1', result: { status: 'down', observedAt: today, latencyMs: 1200, evidence: { kind: 'none' } } as never }] },
-    } as never);
-    expect(facts.title).toBe('shop.example/ready');
-    expect(facts.kind).toBe('HTTP check');
+    });
+    expect(facts).toMatchObject({ title, targetLabel: address, kind: 'HTTP', lastTone: 'danger' });
     expect(facts.every).toMatch(/5/);
     expect(facts.lastResult).toMatch(/1[.,]2/);
-    expect(facts.lastTone).toBe('danger');
   });
 
   it('a row draws the failing check among its targets: its recent bars, response, cause, failing time and usual response', async () => {
