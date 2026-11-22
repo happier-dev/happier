@@ -510,17 +510,32 @@ describe('Project Local Changes', () => {
         const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
         expect(boundary.snapshotReads).toContainEqual(expect.objectContaining({ kind: 'targeted_action_rpc', target: workspaceAddressFromRefV2(checkout) }));
     });
-    it('keeps managed Scripts unavailable while the inspection owner requires a Machine checkout', async () => {
+    it('renders managed Scripts unavailable alongside Checkouts on Overview', async () => {
         const { ProjectBuiltinWidgetBody } = await import('./ProjectBuiltinWidgetBody');
         const { UnavailableInstalledWidget } = await import('@/components/widgets/InstalledWidgetSurface');
+        const { WidgetGlanceRow } = await import('@/components/widgets/glance/WidgetGlanceRow');
         const { workspaceAddressFromRefV2 } = await import('@happier-dev/protocol/workspaces/workspaceRefResolutionV1');
         const checkout = { v: 2 as const, kind: 'managed' as const, id: 'managed-scripts', serverId: runtime.serverId,
             managedId: 'guest', controller: { machineId: 'm1', installationId: 'project-test-installation' },
             rootPath: '/repo', projectKey: 'project', createdAtMs: 1 };
-        const screen = await renderScreen(<runtime.Wrapper><ProjectBuiltinWidgetBody id="project_scripts"
-            checkout={checkout} workspace={workspaceAddressFromRefV2(checkout)} testID="managed-scripts" /></runtime.Wrapper>);
+        const sibling = { ...checkout, id: 'managed-sibling', managedId: 'other-guest' };
+        applyProjectAccountRowsFixture(storage, { workspaceRefs: [checkout, sibling] });
+        const siblingSnapshot = snapshot([]);
+        storage.getState().updateWorkspaceScmSnapshot(workspaceScopeFromProject(sibling, sibling.rootPath),
+            { ...siblingSnapshot, branch: { ...siblingSnapshot.branch, head: 'guest-branch' } });
+        const routeParams = { workspaceRefId: checkout.id, serverId: checkout.serverId };
+        const workspace = workspaceAddressFromRefV2(checkout);
+        const screen = await renderScreen(<runtime.Wrapper><DestinationInstanceHost tabId="project-overview"
+            ref={{ kind: 'project', params: routeParams }} pathname={`/projects/${checkout.id}/overview`} focused visible
+            navigation={{ push: boundary.navigate, replace: boundary.navigate, back: boundary.navigate, setParams: () => {} }}>
+            <ProjectBuiltinWidgetBody id="project_scripts" checkout={checkout} workspace={workspace} testID="managed-scripts" />
+            <ProjectBuiltinWidgetBody id="project_checkouts" checkout={checkout} workspace={workspace} testID="managed-checkouts" />
+        </DestinationInstanceHost></runtime.Wrapper>);
         expect(screen.findAllByType(UnavailableInstalledWidget).map(node => node.props.unresolved)).toContainEqual({
             state: 'unavailable', reasonCode: 'widget_type_unavailable' });
+        expect(screen.findAllByType(WidgetGlanceRow).find(node => node.props.testID === 'managed-checkouts.checkout:managed-sibling')
+            ?.props.title).toBe('guest-branch');
+        expect(boundary.navigate).not.toHaveBeenCalled();
     });
     it('keeps Checkouts to three rows, the ones that need the person first, until the person asks for the rest', async () => {
         const worktrees = ['one', 'two', 'three', 'four', 'five'].map(name => ({ id: name, path: `/repo/${name}`, branch: name, isCurrent: false }));
