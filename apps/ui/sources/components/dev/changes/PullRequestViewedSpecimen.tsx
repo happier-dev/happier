@@ -31,6 +31,7 @@ function specimenViewedSource(mode: ViewedMode): ScmFileViewedSource {
         getFile: state.getFile, subscribeFile: state.subscribeFile, getSnapshot: state.getSnapshot,
         subscribeStatus: state.subscribeStatus, subscribeChanges: state.subscribeChanges, getViewedPaths: state.getViewedPaths,
         getViewedPathsRevision: state.getViewedPathsRevision,
+        getChangedSinceViewedCount: state.getChangedSinceViewedCount,
         refresh: async () => {},
         setViewed: async (path, viewed) => {
             const previous = state.getFile(path);
@@ -60,7 +61,7 @@ function PullRequestViewedFrame(props: Readonly<{ phone: boolean; mode: ViewedMo
         rootPath: comparison.repository.rootPath,
         renderHeader: (coverage: ChangedFilesReviewCoverage, facts?: ChangedFilesReviewHeaderFacts) => (
             <ScmComparisonHeader viewLabel={t('scmComparison.view.files')} scopeLabel="#2481" coverage={coverage}
-                reviewed={facts?.viewed ?? null} stacked={props.phone} accessory={props.hideViewed === undefined ? undefined
+                reviewed={facts?.viewed ?? null} changedSinceViewedCount={facts?.changedSinceViewedCount} stacked={props.phone} accessory={props.hideViewed === undefined ? undefined
                     : <ScmComparisonHeaderToggle testID="review-changes:hide-viewed" icon="eye-slash" label={t('hunkReview.hideViewed')}
                         value={hidden} onChange={setHidden} />} />
         ) }), [comparison, props.phone, props.hideViewed, hidden]);

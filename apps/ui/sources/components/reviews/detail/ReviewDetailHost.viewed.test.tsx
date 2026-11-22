@@ -261,3 +261,28 @@ it('names each reviewer of the round by its place when the round recorded no nam
     await screen.unmount();
   }
 });
+
+it('says how many files changed since you viewed them when the head moved past your marks', async () => {
+  const screen = await renderReview(undefined, ['dismissed', 'viewed', 'unviewed']);
+  const { WorkspaceScmReviewBody } = await import('@/components/projects/scm/WorkspaceScmReviewBody');
+  try {
+    await screen.pressByTestIdAsync('review-detail:tab:changes');
+    await vi.waitFor(() => expect(screen.findAllByType(WorkspaceScmReviewBody)).toHaveLength(1), { timeout: 10_000 });
+    await act(async () => {
+      screen.findAllByType(WorkspaceScmReviewBody)[0]?.findAll((node) => typeof node.props.onLayout === 'function')[0]
+        ?.props.onLayout({ nativeEvent: { layout: { width: 1200, height: 800 } } });
+    });
+    // The shared fact sentence draws its count in its own run, so the words and the count are checked apart.
+    await vi.waitFor(() => expect(textOf(screen, 'scm-comparison-changed-since-viewed'))
+      .toContain('file changed since you viewed it'), { timeout: 10_000 });
+    expect(textOf(screen, 'scm-comparison-changed-since-viewed')).toContain('1');
+  } finally {
+    await screen.unmount();
+  }
+});
+
+function textOf(screen: Awaited<ReturnType<typeof renderReview>>, testID: string): string {
+  const node = screen.findByTestId(testID);
+  return node ? node.findAll((child) => typeof child.type === 'string').flatMap((child) => child.children)
+    .filter((child): child is string => typeof child === 'string').join('') : '';
+}

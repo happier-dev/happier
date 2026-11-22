@@ -32,6 +32,7 @@ export type Labels = Readonly<{
   filesLeft: (params: Count) => string;
   viewed: string;
   viewedChanged: string;
+  viewedChangedCount: (params: Count) => string;
   viewedNotSaved: string;
   viewedA11y: (params: Name) => string;
   viewedCount: (params: Readonly<{ count: number; total: number }>) => string;
@@ -120,6 +121,7 @@ export const hunkReviewTranslations = {
     filesLeft: ({ count }) => (count === 1 ? '1 file left' : `${count} files left`),
     viewed: 'Viewed',
     viewedChanged: 'Changed since viewed',
+    viewedChangedCount: ({ count }) => (count === 1 ? '1 file changed since you viewed it' : `${count} files changed since you viewed them`),
     viewedNotSaved: 'Not saved to GitHub',
     viewedA11y: ({ name }) => `${name}, viewed on GitHub`,
     viewedCount: ({ count, total }) => `${count} of ${total} viewed`,

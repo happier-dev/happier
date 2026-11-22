@@ -239,6 +239,7 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
                     unavailableCount={reading.source.unavailableCount} mark={props.analysisMark} /> : null}
                 reviewed={<>{reading && (props.marksAvailable || props.marksPending) ? <WalkthroughReviewedFact count={reading.reviewedCount} total={reading.stops.length} pending={!props.marksAvailable} /> : null}
                     {facts?.viewed ?? null}</>}
+                changedSinceViewedCount={facts?.changedSinceViewedCount}
                 stacked={stacked} accessory={<>
                     {reading ? <ScmComparisonExplainToggle value={props.explain} onChange={props.onExplainChange} /> : null}
                     {facts?.viewedFilter ?? null}

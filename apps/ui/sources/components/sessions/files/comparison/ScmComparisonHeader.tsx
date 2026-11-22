@@ -34,6 +34,8 @@ export type ScmComparisonHeaderProps = Readonly<{
     reviewed?: React.ReactNode;
     /** The Explain switch, offered once a walkthrough exists (U3). */
     accessory?: React.ReactNode;
+    /** Files whose Viewed mark a newer change cleared ("2 files changed since you viewed them"); 0 or absent says nothing. */
+    changedSinceViewedCount?: number;
     /** Narrow widths: one coverage fact per line, the accessory row under them. */
     stacked?: boolean;
     /** Inside a page that already names and counts the comparison (a Review): no eyebrow and no source fact. */
@@ -64,6 +66,14 @@ export const ScmComparisonHeader = React.memo(function ScmComparisonHeader(props
                     {props.analysis ?? null}
                     {props.reviewed ?? null}
                 </View>
+                {props.changedSinceViewedCount ? (
+                    <View style={[styles.coverage, props.stacked ? styles.coverageStacked : null]}>
+                        <ScmComparisonFact testID="scm-comparison-changed-since-viewed" icon="clock-counter-clockwise" tone="warning">
+                            <ScmComparisonFactSentence sentence={t('hunkReview.viewedChangedCount', { count: props.changedSinceViewedCount })}
+                                counts={[props.changedSinceViewedCount]} />
+                        </ScmComparisonFact>
+                    </View>
+                ) : null}
                 {props.stacked && props.accessory ? <View style={styles.accessoryRow}>{props.accessory}</View> : null}
             </View>
             {!props.stacked && props.accessory ? <View style={styles.accessory}>{props.accessory}</View> : null}

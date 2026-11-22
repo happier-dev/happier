@@ -139,6 +139,10 @@ export function ReviewDetailView(
     props.rounds.find((item) => item.ordinal === props.selectedRound) ??
     props.rounds.at(-1) ??
     null;
+  // The score line speaks only with something to say: the round's score, or a partial round's reviewer scores behind
+  // its "No score" (each one press away). A bare "No score" at rest is not a fact worth a line.
+  const qualityReviewers = props.qualityReviewers ?? props.quality?.reviewers ?? NO_QUALITY_REVIEWERS;
+  const showsQuality = Boolean(props.quality) || (props.qualityUnavailableReason === 'partial' && qualityReviewers.length > 0);
   return (
     <ItemList testID={props.testID ?? 'review-detail'} pageColumn="wide">
       <PageHeader
@@ -155,12 +159,12 @@ export function ReviewDetailView(
         testID="review-detail:header"
       />
       <PageContentColumn style={styles.column}>
-        {props.glance || props.quality || props.notice ? (
+        {props.glance || showsQuality || props.notice ? (
           // The glance stands on the sections' sheet edge; the notice line brings that edge itself, so both glyphs align.
           <View style={styles.lead}>
-            {props.glance || props.quality ? <View style={styles.leadInset}>
+            {props.glance || showsQuality ? <View style={styles.leadInset}>
               {props.glance ? <ReviewGlanceLine glance={props.glance} /> : null}
-              {props.quality ? <ReviewQualityLines quality={props.quality} /> : null}
+              {showsQuality ? <ReviewQualityLines quality={props.quality ?? null} reviewers={qualityReviewers} /> : null}
             </View> : null}
             {props.notice ?? null}
           </View>
@@ -221,30 +225,42 @@ export function ReviewGlanceLine(
  * facts line under the verdict, the score the Host combined and how ("Lowest of 3 reviewers"); each reviewer's
  * score and reason one press away. It is the reviewers' judgement, never a gate, so it stays in ink.
  */
-function ReviewQualityLines(props: Readonly<{ quality: ReviewRoundQualityV1 }>) {
-  const { quality } = props;
-  const presentation = presentReviewRoundQualityV1(quality);
+const NO_QUALITY_REVIEWERS: readonly ReviewRoundReviewerQualityV1[] = Object.freeze([]);
+
+function ReviewQualityLines(props: Readonly<{
+  /** The settled aggregate; `null` for a partial round, which shows no number (lab scene 7 "No score"). */
+  quality: ReviewRoundQualityV1 | null;
+  /** Every reviewer's own score and reason, kept even when the round has no aggregate. */
+  reviewers: readonly ReviewRoundReviewerQualityV1[];
+}>) {
+  const { quality, reviewers } = props;
+  const presentation = quality ? presentReviewRoundQualityV1(quality) : null;
   const [expanded, setExpanded] = React.useState(false);
-  const count = quality.reviewers.length;
-  const basis = count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
-    : 'reviewWalkthrough.detail.qualityLowest', { count }) : null;
-  const disclosure = expanded ? t('reviewWalkthrough.detail.qualityShowLess')
+  const count = reviewers.length;
+  // A partial round's notice line says who didn't finish; the score line only says there is no score.
+  const basis = !quality ? null
+    : count > 1 ? t(quality.aggregation === 'median' ? 'reviewWalkthrough.detail.qualityMedian'
+      : 'reviewWalkthrough.detail.qualityLowest', { count }) : null;
+  const disclosure = count === 0 ? null : expanded ? t('reviewWalkthrough.detail.qualityShowLess')
     : t(count > 1 ? 'reviewWalkthrough.detail.qualityShowAll' : 'reviewWalkthrough.detail.qualityShowReason');
   return (
     <View testID="review-detail:quality" style={styles.quality}>
       <View style={styles.qualityLine}>
         <Text variant="meta" style={styles.participantQuiet}>
-          <Text testID="review-detail:quality-score">{t('reviewWalkthrough.detail.quality', { score: presentation.displayScore })}</Text>
+          <Text testID="review-detail:quality-score">{presentation
+            ? t('reviewWalkthrough.detail.quality', { score: presentation.displayScore })
+            : t('reviewWalkthrough.detail.qualityNoScore')}</Text>
           {basis ? <>{' · '}<Text testID="review-detail:quality-basis">{basis}</Text></> : null}
-          {' · '}
+          {disclosure ? ' · ' : null}
         </Text>
-        <TextLinkButton size="meta" testID="review-detail:quality-each" expanded={expanded} label={disclosure}
-          onPress={() => setExpanded(open => !open)} />
+        {disclosure ? <TextLinkButton size="meta" testID="review-detail:quality-each" expanded={expanded} label={disclosure}
+          onPress={() => setExpanded(open => !open)} /> : null}
       </View>
-      {expanded ? quality.reviewers.map(reviewer => (
+      {expanded ? reviewers.map((reviewer, index) => (
         <View key={reviewer.reviewerId} style={styles.qualityReviewer} testID={`review-detail:quality-reviewer:${reviewer.reviewerId}`}>
           <Text variant="meta" emphasis="medium" style={styles.qualityReviewerScore}>
-            {t('reviewWalkthrough.detail.qualityOutOf', { score: reviewer.score })}
+            {reviewer.displayName ?? t('reviewWalkthrough.detail.qualityReviewerFallback', { n: index + 1 })}
+            {' '}{t('reviewWalkthrough.detail.qualityOutOf', { score: reviewer.score })}
           </Text>
           <Text variant="meta" style={styles.qualityReviewerReason}>{reviewer.rationale}</Text>
         </View>

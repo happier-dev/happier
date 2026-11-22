@@ -99,7 +99,8 @@ export function CapturedComparisonFilesView(props: Readonly<{
         const scopeLabel = source ? resolveFilesComparisonLabel(source, null) : t('scmComparison.view.files');
         const renderHeader: NonNullable<ReviewProps['comparisonChrome']>['renderHeader'] = props.comparisonChrome?.renderHeader
             ?? ((coverage, facts) => <ScmComparisonHeader viewLabel={t('scmComparison.view.files')} scopeLabel={scopeLabel} coverage={coverage}
-                reviewed={facts?.viewed ?? null} accessory={facts?.viewedFilter ?? null} />);
+                reviewed={facts?.viewed ?? null} accessory={facts?.viewedFilter ?? null}
+                changedSinceViewedCount={facts?.changedSinceViewedCount} />);
         return { renderBarLeading: () => null,
             indexPlacement: 'stream', ...props.comparisonChrome, rootPath: props.comparison.repository.rootPath, renderFileNotes,
             renderHeader };

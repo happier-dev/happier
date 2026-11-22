@@ -161,3 +161,19 @@ it('passes partial-round score evidence and the typed reason through the mounted
     await screen.unmount();
   }
 });
+
+it('says "No score" for a partial round and names each reviewer under Show all', async () => {
+  const screen = await renderReview(undefined, 'partial');
+  try {
+    await vi.waitFor(() => expect(textOf(screen, 'review-detail:quality-score')).toBe('No score'));
+    // Who didn't finish is said once, on the page's notice line, not again beside the score.
+    expect(screen.findHostByTestId('review-detail:quality-basis')).toBeNull();
+    expect(textOf(screen, 'review-detail:partial')).toContain('Not every reviewer finished');
+    await screen.pressByTestIdAsync('review-detail:quality-each');
+    expect(textOf(screen, 'review-detail:quality-reviewer:step-1-reviewer-1')).toContain('Codex 4/5');
+    // A reviewer without a recorded name gets the generic label, never its positional id.
+    expect(textOf(screen, 'review-detail:quality')).not.toContain('step-1-reviewer');
+  } finally {
+    await screen.unmount();
+  }
+});
