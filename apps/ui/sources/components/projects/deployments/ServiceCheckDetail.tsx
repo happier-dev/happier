@@ -399,6 +399,8 @@ export function ServiceCheckDetail(
               input: { selectedCheckId: addressEdit.checkId },
               chooseWatcher: addressEdit.field === 'from' && setupSeed.observation.kind !== 'durablePush',
               onSettled: finishAddressSetup,
+              // The check's own sheet, not the Event it watches ("Health status changed") (PAGE-ACCEPT-176 R11-D3).
+              heading: { title: t(`${k}.editCheck`), originLabel: t(`${k}.checkFrom`) },
               // A wait names what it reads and where, never a bare spinner (saved Kuma/Gatus edits, live sweep #193).
               waitingTitle: machineName => t(`${k}.checkEditOpening`, { machine: machineName ?? observer ?? t('machine.unnamedMachine') }),
               renderUnavailable: (retry, machineName) => showRecovery(

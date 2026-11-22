@@ -35,6 +35,7 @@ import { REVEAL_DELAY_MS, useSettingReveal } from '@/components/settings/shell/S
 import { useWorkflowTriggerSets } from '@/components/workflows/triggers/useWorkflowTriggerSets';
 import { subjectStarterEventSeed } from '@/components/workflows/triggers/subjectTriggerStarters';
 import { AddCheckSetup } from './AddCheckSetup';
+import { INLINE_ADD_OPEN, useInlineAddDraftField } from './inlineAddDraft';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
@@ -184,7 +185,9 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       />
     ) : null;
     const checkLifetime = editing ? props.lifetime ?? null : null;
-    const [openingCheckSetup, setOpeningCheckSetup] = React.useState(false);
+    // An open Add check survives the page recomposing at another width (R11-D2): the sheet opens again on remount.
+    const [openingCheckSetup, setOpeningCheckSetup] = useInlineAddDraftField(
+      `${detail.environment.serverId}:${detail.environment.id}:add-check`, INLINE_ADD_OPEN, false);
 
     return (
       <>

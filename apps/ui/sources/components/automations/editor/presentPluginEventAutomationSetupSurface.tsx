@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { PluginModalCardFooterSlot, PluginModalCardFooterSlotContext, usePluginModalCardFooterSlot } from '@/components/plugins/surfaces/pluginModalCardFooterSlot';
 
 import {
     PluginUiEphemeralInputSettlementV1Schema,
@@ -20,6 +21,9 @@ import {
 import { readPluginSurfaceEphemeralMountBinding } from '@/components/plugins/surfaces/pluginSurfaceMountBinding';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { Text } from '@/components/ui/text/Text';
+import { useUnistyles } from 'react-native-unistyles';
+import { useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { PluginMachineExecutionOriginPickerProvider } from '@/components/settings/machines/PluginMachineExecutionOriginSelector';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal';
@@ -94,6 +98,8 @@ type SetupSurfaceModalProps = Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
     title: string;
     description?: string;
+    /** The host's name for the Machine this setup runs on ("Check from"), shown as the sheet's first field. */
+    originLabel?: string;
     presentation: PluginEphemeralInputSurfacePresentation;
     launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
@@ -128,18 +134,23 @@ function PluginEventAutomationSetupSurfaceModal(
             settle,
         })
     ), [settle]);
+    // A form that offers its own footer (its Cancel and primary together) takes the card's footer, pinned beside the
+    // card's edge; until then, and for forms without one, the card keeps its Cancel (PAGE-ACCEPT-176 R11-D1).
+    const footerSlot = usePluginModalCardFooterSlot();
     const footer = React.useMemo(() => (
-        <View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end' }}>
-            <RoundButton
-                testID="plugin-event-automation-setup-surface-cancel"
-                accessibilityLabel={t('common.cancel')}
-                title={t('common.cancel')}
-                size="normal"
-                display="inverted"
-                onPress={() => settle({ kind: 'cancelled' })}
-            />
-        </View>
-    ), [settle]);
+        <PluginModalCardFooterSlot store={footerSlot} fallback={
+            <View style={{ alignItems: 'center', flexDirection: 'row', justifyContent: 'flex-end' }}>
+                <RoundButton
+                    testID="plugin-event-automation-setup-surface-cancel"
+                    accessibilityLabel={t('common.cancel')}
+                    title={t('common.cancel')}
+                    size="normal"
+                    display="inverted"
+                    onPress={() => settle({ kind: 'cancelled' })}
+                />
+            </View>
+        } />
+    ), [footerSlot, settle]);
     const phone = useDeviceType() === 'phone';
     const chrome = React.useMemo(() => resolvePluginEphemeralInputSurfaceChrome({
         title: props.title, description: props.description, presentation: props.presentation, phone, footer,
@@ -171,13 +182,30 @@ function PluginEventAutomationSetupSurfaceModal(
     });
     const host = <PluginSurfaceHost ephemeralMount={ephemeralMount} machineId={props.machineId} serverId={props.serverId}
         launchInput={props.launchInput} />;
+    const origin = props.originLabel ? <SetupOriginRow label={props.originLabel} machineId={props.machineId}
+        serverId={props.serverId} /> : null;
     // The picker owns its plugin's Run-on picker, so an offline Machine's "Choose another" opens it here.
     return (
+        <PluginModalCardFooterSlotContext.Provider value={footerSlot.set}>
         <PluginMachineExecutionOriginPickerProvider pluginId={setupSurface.contribution.pluginId}>
             {/* A setup form stands on the card's content edge, in line with its title and footer; a picker's rows run to
                 the card edge themselves (ROWS-FLEET-OPS-177 F4: the health setup form sat flush against the card). */}
-            {props.presentation === 'setup' ? <View style={SETUP_SURFACE_INSET}>{host}</View> : host}
+            {props.presentation === 'setup' ? <View style={SETUP_SURFACE_INSET}>{origin}{host}</View> : host}
         </PluginMachineExecutionOriginPickerProvider>
+        </PluginModalCardFooterSlotContext.Provider>
+    );
+}
+
+/** Where the setup runs, as the sheet's first field (the composer preselects the surface's Machine). */
+function SetupOriginRow(props: Readonly<{ label: string; machineId: string; serverId: string | null }>) {
+    const { theme } = useUnistyles();
+    const machine = useServerScopedMachineLabel(props.serverId, props.machineId);
+    // It stands on the form's own edge and rhythm, as the plugin's fields below it do: a label over its value.
+    return (
+        <View testID="plugin-event-automation-setup-surface-origin" style={{ gap: theme.space.s4, paddingBottom: theme.space.s16 }}>
+            <Text variant="body" emphasis="medium" style={{ color: theme.colors.text.primary }}>{props.label}</Text>
+            <Text variant="meta" style={{ color: theme.colors.text.secondary }}>{machine ?? t('machine.unnamedMachine')}</Text>
+        </View>
     );
 }
 
@@ -191,6 +219,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
     surface: DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1;
     title: string;
     description?: string;
+    originLabel?: string;
     presentation: PluginEphemeralInputSurfacePresentation;
     launchInput?: PluginUiLaunchInputV1;
     projection: DaemonMergedProjectionInputs;
@@ -247,6 +276,7 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
                 surface: params.surface,
                 title: params.title,
                 description: params.description,
+                ...(params.originLabel ? { originLabel: params.originLabel } : {}),
                 presentation: params.presentation,
                 launchInput: params.launchInput,
                 projection: params.projection,
@@ -263,6 +293,8 @@ export async function presentPluginEphemeralInputSurface(params: Readonly<{
     });
 }
 
+export type SetupSurfaceHeading = Readonly<{ title: string; description?: string; originLabel?: string }>;
+
 export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     eligibleEvent: DaemonContributionRegistryProjectionAutomationEligibleEventV1;
     projection: DaemonMergedProjectionInputs;
@@ -272,8 +304,8 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     signal?: AbortSignal;
     commandBridge?: BaseModalConfig['commandBridge'];
     launchInput?: PluginUiLaunchInputV1;
-    /** The host's own name for this setup (Add check), in place of the Event's trigger wording. */
-    heading?: Readonly<{ title: string; description?: string }>;
+    /** The host's own name for this setup (Add check), in place of the Event's trigger wording, and for its Machine. */
+    heading?: SetupSurfaceHeading;
 }>): Promise<PluginEventAutomationSetupSurfaceSettlement> {
     const surface = params.eligibleEvent.setupSurface;
     if (!surface) return Promise.resolve({ kind: 'cancelled' });
@@ -281,6 +313,7 @@ export function presentPluginEventAutomationSetupSurface(params: Readonly<{
     return presentPluginEphemeralInputSurface({
         ...rest, surface, title: heading?.title ?? params.eligibleEvent.event.title,
         description: heading ? heading.description : params.eligibleEvent.event.description ?? undefined,
+        ...(heading?.originLabel ? { originLabel: heading.originLabel } : {}),
         presentation: 'setup',
     });
 }

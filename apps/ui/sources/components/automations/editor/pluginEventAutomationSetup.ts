@@ -44,7 +44,7 @@ import {
 } from './pluginEventAutomationWebhookEndpoint';
 import { validatePluginEventAutomationSetupResult } from './pluginEventAutomationSetupResult';
 import { EVENT_OBSERVER_BINDING_UNAVAILABLE, resolvePluginEventAutomationObserverMaterialization } from './pluginEventAutomationObservationBinding';
-import { presentPluginEventAutomationSetupSurface } from './presentPluginEventAutomationSetupSurface';
+import { presentPluginEventAutomationSetupSurface, type SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 
 export type PluginEventAutomationSetupFailure = Readonly<{
     code: string;
@@ -244,7 +244,7 @@ export async function configurePluginEventAutomationSetup(params: Readonly<{
     initialSetupSeed?: PluginUiOpenAutomationEventRequestV1;
     requireNativeRenderer?: boolean;
     /** The host's name for the native setup surface; the Event's own title otherwise. */
-    surfaceHeading?: Readonly<{ title: string; description?: string }>;
+    surfaceHeading?: SetupSurfaceHeading;
     /** A saved source edit passes these values only to its native renderer. */
     savedSourceRendererInput?: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
     /** The saved source is the initial draft when editing an existing Event. */

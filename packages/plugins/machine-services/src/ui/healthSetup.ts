@@ -10,7 +10,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, resolvePluginLoc
     type PluginJsonSchemaValidator } from '@happier-dev/plugin-sdk/manifest';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
-    Banner, Button, Column, Columns, Field, Row, Select, SelectionTiles, Stack, Text, TextField,
+    Banner, Button, Column, Columns, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
     defineUiSurface, usePluginHostApi, usePluginTranslation, type IconName,
 } from '@happier-dev/plugin-ui';
 import { CapabilityEndpointAddressControls, SavedHeartbeatControls } from './HeartbeatSetupControls.js';
@@ -254,7 +254,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
     }>>({ alerts: props.sourceOptions.alerts });
     const { alerts, testContext: preparedSource, destinationSelectionContext } = alertDraft;
-    const setAlerts = (next: SourceOptions['alerts']) => setAlertDraft(current => ({ ...current, alerts: next }));
+    const [alertsEdited, setAlertsEdited] = useState(false);
+    const setAlerts = (next: SourceOptions['alerts']) => {
+        setAlertDraft(current => ({ ...current, alerts: next }));
+        setAlertsEdited(true);
+    };
     const [previewUnavailable, setPreviewUnavailable] = useState(false);
     const [previewAttempt, setPreviewAttempt] = useState(0);
     useEffect(() => {
@@ -416,12 +420,14 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             required: false, placeholder: 'All systems operational', testID: 'health-setup-keyword' })] : []),
     ];
 
-    // One primary Save (PAGE-ACCEPT-176 R10-D1): a saved check the person opened saves changes; Add check adds the check
-    // entered, or saves an Environment's alerts while nothing new is entered; a Domain's default checks are enabled. A
-    // source opened for editing with no check chosen still offers both, since it may edit its check or add another.
-    const editingSaved = props.selectedCheckId !== undefined || selectedCheckId !== null;
-    const savesChanges = !nativeDomain && (editingSaved
-        || (addingNew && editedDraft === null && props.subject.kind === 'environment'));
+    // One primary, in the card's footer beside Cancel (PAGE-ACCEPT-176 R10-D1, R11-D1, R11-D3):
+    // - a saved check opened to edit (the check's own sheet) saves changes, and its kind stays fixed;
+    // - a new check reads "Add check" from the start; only alerts changed with no check entered save as changes;
+    // - a Domain's default checks are enabled;
+    // - a source opened for editing with no check chosen keeps both, since it may edit its check or add another.
+    const editingCheck = props.selectedCheckId !== undefined;
+    const editingSaved = editingCheck || selectedCheckId !== null;
+    const savesChanges = !nativeDomain && (editingSaved || (addingNew && editedDraft === null && alertsEdited));
     const offersBoth = !nativeDomain && !editingSaved && !addingNew;
     const submit = async (input: HealthCheckSetupInputV1) => {
         setSaving(true);
@@ -443,19 +449,21 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             onPress: async () => { if (candidate.success) await submit(candidate.data); } });
 
     // What to check leads: the saved check being edited, its kind and that kind's fields; alerts, what happens when it
-    // needs attention and the one Save follow.
+    // needs attention and the one Save follow. A check opened to edit is its own sheet: no other saved check to pick
+    // and its kind fixed.
     return h(Stack, { gap: 'large', testID: 'health-setup-form' },
-        selectedCheck ? h(SavedHealthCheckControls, { subject: props.subject, checks: existing, check: selectedCheck,
+        selectedCheck && !editingCheck ? h(SavedHealthCheckControls, { subject: props.subject, checks: existing, check: selectedCheck,
             onSelect: selectSavedCheck, signal: props.signal }) : null,
         // Two kinds a row at most, one on a phone: each tile's title and line read whole.
-        h(SelectionTiles<SetupKind>, { accessibilityLabel: t(`${K}.kind`, 'Kind of check'), testID: 'health-setup-kind',
+        editingCheck ? null : h(SelectionTiles<SetupKind>, { accessibilityLabel: t(`${K}.kind`, 'Kind of check'), testID: 'health-setup-kind',
             value: draft.contributedKind ? null : draft.kind,
             onChange: (kind: SetupKind) => set({ kind, contributedKind: undefined, contributedValidator: undefined }), maximumColumns: 2,
+            minimumTileWidth: 220,
             options: KINDS.filter(kind => !props.sourceOptions.domain || kind.id === 'http' || isMonitorKind(kind.id))
                 .map(kind => ({ id: kind.id, icon: kind.icon, title: kind.id === 'http' && props.sourceOptions.domain ? 'HTTP and certificate' : kind.title,
                 ...(kind.id === 'http' && props.sourceOptions.domain ? {} : { titleKey: `${K}.kind.${kind.id}` }),
                 subtitle: kind.subtitle, subtitleKey: `${K}.kind.${kind.id}.subtitle` })) }),
-        h(Row, { justify: 'flex-start' }, h(Button, { title: t(`${K}.more`, 'More checks'), variant: 'plain', busy: loadingKinds, disabled: loadingKinds,
+        editingCheck ? null : h(Row, { justify: 'flex-start' }, h(Button, { title: t(`${K}.more`, 'More checks'), variant: 'plain', busy: loadingKinds, disabled: loadingKinds,
             onPress: async () => {
                 const kinds = await readInstalledKinds();
                 if (kinds?.[0] && !savedContributedKind) selectContributed(kinds[0]);
@@ -500,8 +508,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: t(`${K}.saveRefused`, 'This check can’t be added right now. Your entries are kept here.') }) : null,
-        offersBoth ? saveChanges('secondary') : null,
-        h(Row, { justify: 'flex-end' }, primary));
+        h(ModalCardFooterActions, { cancel: { testID: 'health-setup-cancel', disabled: saving,
+            onPress: () => { void host.settleEphemeralInput({ kind: 'cancelled' }, { signal: props.signal }); } } },
+            offersBoth ? saveChanges('secondary') : null, primary));
 }
 
 function HealthCheckSetupSurface(context: RenderContext): ReactElement {

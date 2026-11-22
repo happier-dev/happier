@@ -92,7 +92,7 @@ export function AddCheckSetup(
           newSourceSetup={{
             seed,
             // The sheet is named for what the person is doing, not the Event it enrolls ("Health status changed").
-            heading: { title: t('projects.deployments.settingsSections.addCheck') },
+            heading: { title: t('projects.deployments.settingsSections.addCheck'), originLabel: t('projects.deployments.services.checkFrom') },
             onSettled,
             waitingTitle: (machineName, phase) => phase === 'applying'
               ? t('projects.deployments.services.addCheckSaving')

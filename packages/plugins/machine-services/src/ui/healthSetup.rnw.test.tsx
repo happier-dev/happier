@@ -762,26 +762,46 @@ it.each([false, true])('saves and reopens Environment notification choices with 
     alerts: savedAlerts, investigation };
   await mounted?.dispose();
   const reopened = await mount({ initialInput: saved });
-  expect((await reopened.page.getByRole('button', { name: 'Save changes' })).state?.disabled ?? false).toBe(false);
+  // Reopened with checks, alerts save as changes; with none yet it is an Add check, whose one primary is Add check (R11-D1).
+  if (hasCheck) expect((await reopened.page.getByRole('button', { name: 'Save changes' })).state?.disabled ?? false).toBe(false);
+  else expect(await reopened.page.queryByRole('button', { name: 'Save changes' })).toBeUndefined();
   await expect(reopened.page.getByText(hasCheck ? 'Off' : 'saved-slack')).resolves.toBeDefined();
   expect(reopened.settled).toEqual([]);
 });
 
-// PAGE-ACCEPT-176 R10-D1: Add check offers one primary Save. With nothing new entered an Environment's alerts save as
-// changes; once a check is entered, the one button adds it.
-it('offers one primary Save on an Environment Add check: Save changes until a check is entered, then Add check', async () => {
+// PAGE-ACCEPT-176 R10-D1, R11-D1: a new check's one primary reads "Add check" from the start, beside Cancel; only alerts
+// changed with no check entered save as changes.
+it('reads Add check from the start of an Environment Add check, and Save changes only for alerts alone', async () => {
   const environment = { kind: 'environment', environmentId: 'production' } as const;
   const { page, settled } = await mount({ initialInput: { v: 1, subject: environment } }, {}, async () => ({
     mode: 'preview', sourceConfig: { v: 1, subject: environment, alerts: { channels: [], phases: ['open'] } },
     destinationSelectionContext: { serverId: 'home', machineId: 'controller' },
   }));
   const names = async () => (await page.getAllByRole('button')).map(button => button.name);
-  await vi.waitFor(async () => expect(await names()).toContain('Save changes'));
-  expect(await names()).not.toContain('Add check');
+  await expect(page.getByText('Off')).resolves.toBeDefined();
+  expect(await names()).toEqual(expect.arrayContaining(['Cancel', 'Add check']));
+  expect(await names()).not.toContain('Save changes');
   await type('Endpoint', 'https://shop.example.test/health');
-  expect(await names()).toContain('Add check');
   expect(await names()).not.toContain('Save changes');
   await act(async () => { await page.press(await addButton(page)); });
   expect(settled).toEqual([expect.objectContaining({ kind: 'completed', input: expect.objectContaining({
     checks: [expect.objectContaining({ config: expect.objectContaining({ endpoint: 'https://shop.example.test/health' }) })] }) })]);
+});
+
+// PAGE-ACCEPT-176 R11-D3: a saved check opened to edit is its own sheet: no other saved check to pick, its kind fixed,
+// one Save beside Cancel; Cancel settles nothing written.
+it('edits a saved check in its own sheet with one Save and a Cancel that writes nothing', async () => {
+  const first = { checkId: 'first-http', kind: { pluginId: MACHINE_SERVICES_PLUGIN_ID, localId: 'http' },
+    binding: { kind: 'healthCheck' }, config: { endpoint: 'https://other.example.test', expectStatus: 200 },
+    periodMs: 60_000, consecutiveFailuresBeforeAlerting: 1 };
+  const saved = { ...first, checkId: 'shop-check', config: { endpoint: 'https://shop.example.test', expectStatus: 200 } };
+  const { page, settled } = await mount({ initialInput: { v: 1, subject, checks: [first, saved], selectedCheckId: saved.checkId } });
+  const names = async () => (await page.getAllByRole('button')).map(button => button.name);
+  await vi.waitFor(async () => expect(await names()).toContain('Save changes'));
+  expect((await names()).some(name => name?.startsWith('Saved check'))).toBe(false);
+  expect(await names()).not.toContain('Add check');
+  expect(await names()).not.toContain('More checks');
+  expect((await page.getAllByRole('radio')).some(tile => tile.name?.startsWith('TCP'))).toBe(false);
+  await act(async () => { await page.press(await page.getByRole('button', { name: 'Cancel' })); });
+  expect(settled).toEqual([{ kind: 'cancelled' }]);
 });

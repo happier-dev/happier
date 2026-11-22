@@ -1,4 +1,5 @@
 import * as React from 'react';
+import type { SetupSurfaceHeading } from './presentPluginEventAutomationSetupSurface';
 import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
@@ -91,7 +92,7 @@ type NativeSourceCancelled = Readonly<{ kind: 'cancelled' }>;
 export type NewNativeSourceSetup = Readonly<{
     seed: PluginUiOpenAutomationEventRequestV1;
     /** What the host calls this setup (Add check); the Event's trigger title otherwise. */
-    heading?: Readonly<{ title: string; description?: string }>;
+    heading?: SetupSurfaceHeading;
     onSettled: (settlement: (NativeSourceConfigured & Readonly<{ observationOnly: Readonly<{ kind: 'observationOnly' }> }>)
         | NativeSourceCancelled) => void;
 }>;
@@ -289,6 +290,8 @@ export function usePluginEventAutomationComposer(params: Readonly<{
         input: NonNullable<PluginUiOpenAutomationEventRequestV1['setupInput']>;
         chooseWatcher: boolean;
         onSettled: (settlement: NativeSourceConfigured | NativeSourceCancelled) => void;
+        /** What the host calls this edit (Edit check); the Event's trigger title otherwise. */
+        heading?: SetupSurfaceHeading;
     }>;
     /** The surface's Machine (a workflow's Runs on): a new Event watches from its installation unless the person picks another. */
     defaultWatcherMachineId?: string | null;
@@ -891,10 +894,11 @@ export function usePluginEventAutomationComposer(params: Readonly<{
             const previousFailure = sourceFailure;
             setSourceStatus('settingUp');
             setSourceFailure(null);
+            const setupHeading = (params.newSourceSetup ?? params.savedSourceSetup)?.heading;
             const configured = await configurePluginEventAutomationSetup({
                 commandBridge,
                 requireNativeRenderer: params.newSourceSetup !== undefined,
-                ...(params.newSourceSetup?.heading ? { surfaceHeading: params.newSourceSetup.heading } : {}),
+                ...(setupHeading ? { surfaceHeading: setupHeading } : {}),
                 savedSourceRendererInput: params.savedSourceSetup?.input,
                 ...(params.savedSourceSetup || params.newSourceSetup ? {
                     onApplying: () => { if (!setupScope.signal.aborted) setSourceStatus('applying'); },

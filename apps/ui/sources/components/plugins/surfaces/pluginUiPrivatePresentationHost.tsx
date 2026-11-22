@@ -2,6 +2,7 @@ import { useCollectionShownFieldKeys } from '@/components/ui/lists/collection/us
 import { CodeEditor } from '@/components/ui/code/editor/CodeEditor';
 import type { HappierCodeEditorRequest } from '@happier-dev/plugin-ui/presentation';
 import { SHARE_SHEET_HOST } from '@/components/sharing/shareSheetHost';
+import { PluginModalCardFooterSlotContext } from './pluginModalCardFooterSlot';
 import { useShareGrantRowPresentation } from '@/components/sharing/sharePresentationHost';
 import type { PluginSurfaceActionControls } from './pluginSurfaceActionControls';
 import { PluginAutomationSubjectPicker } from './PluginAutomationSubjectPicker';
@@ -482,6 +483,9 @@ function createPluginUiPrivatePresentationRenderers(direction?: PluginUiIconDire
     },
     useModalCardPhoneSheet() {
         return useSheetDismiss() !== null;
+    },
+    useModalCardFooterSlot() {
+        return React.useContext(PluginModalCardFooterSlotContext);
     },
     // The web picker reaches this host through shared collection controls while
     // its module is still loading. Resolve its binding when a host is consumed.
