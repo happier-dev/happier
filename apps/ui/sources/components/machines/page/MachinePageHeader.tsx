@@ -15,7 +15,6 @@ import { MachineReplacementOutputSchema } from '@happier-dev/protocol/actions/sp
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { MachineReplacementPickerModal, type MachineReplacementPickerCandidate } from '@/components/machines/MachineReplacementPickerModal';
-import { useAccountEncryptionMode } from '@/components/settings/account/useAccountEncryptionMode';
 import type { ManagedMachineHeaderIdentity } from '@/components/settings/machines/managed/ManagedMachineSections';
 import { showMachineShareSheet } from '@/components/sharing/machines/MachineSharingSection';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -101,9 +100,17 @@ function replacementCandidateSubtitle(machine: Machine, label: string): string {
         .filter((part): part is string => Boolean(part)).join(' · ');
 }
 
+function projectMachineEncryptionFact(machine: Machine): PageHeaderMetaFact | null {
+    const mode = machine.access?.resourceMode ?? machine.storageMode;
+    if (!mode) return null;
+    return mode === 'e2ee'
+        ? { key: 'encryption', icon: 'lock', text: t('settingsAccount.endToEndEncrypted'), testID: 'machine-detail-encryption' }
+        : { key: 'encryption', icon: 'lock-open', text: t('settingsAccount.notEndToEndEncrypted'), testID: 'machine-detail-encryption' };
+}
+
 /**
- * The facts under a machine's name (R2, MPG-5): presence, OS and CPU, the encryption of the Account
- * it belongs to (stated both ways), then the CLI, host and replacement facts it already had. A machine
+ * The facts under a machine's name (R2, MPG-5): presence, OS and CPU, its published encryption mode,
+ * then the CLI, host and replacement facts it already had. A machine
  * Happier created states its power and provider facts instead of a bare "Online". Plan 20's host facts
  * (cores and memory, uptime while online) follow the platform; plan 50 appends keep-awake here.
  */
@@ -115,7 +122,6 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     managedMeta: readonly PageHeaderMetaFact[] | undefined;
     /** A created machine's power word (Asleep, Starting…) from its presence owner: it leads the facts in place of Online. */
     managedPowerWord?: string | null;
-    encryptionMode: 'e2ee' | 'plain' | null;
     replacedByMachineLabel: string | null;
     /** The machine's published host facts (plan 20): cores and memory, and when it booted. */
     hostFacts?: MachineVitalsHostFactsV1 | null;
@@ -167,11 +173,8 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
     // Managed identity has provider/native facts; the raw host remains in the machine's technical details. A guest
     // Happier created keeps its generated host there too when this Account can't read its managed record.
     if (input.managedMeta === undefined && !machine.managedMachineRef && host && machine.metadata?.displayName && host !== machine.metadata.displayName) facts.push({ key: 'host', text: host });
-    if (input.encryptionMode) {
-        facts.push(input.encryptionMode === 'e2ee'
-            ? { key: 'encryption', icon: 'lock', text: t('settingsAccount.endToEndEncrypted'), testID: 'machine-detail-encryption' }
-            : { key: 'encryption', icon: 'lock-open', text: t('settingsAccount.notEndToEndEncrypted'), testID: 'machine-detail-encryption' });
-    }
+    const encryption = projectMachineEncryptionFact(machine);
+    if (encryption) facts.push(encryption);
     const cliVersion = machine.daemonState?.cliVersion;
     if (cliVersion) facts.push({ key: 'cli', text: t('machineDetailPage.cliVersionFact', { version: cliVersion }) });
     if (input.replacedByMachineLabel) {
@@ -187,12 +190,10 @@ export function composeMachinePageHeaderFacts(input: Readonly<{
 export function composeMachineShareSubtitle(input: Readonly<{
     machine: Machine;
     managedMeta: readonly Pick<PageHeaderMetaFact, 'key' | 'text'>[] | undefined;
-    encryptionMode: 'e2ee' | 'plain' | null;
 }>): string {
     const kind = input.managedMeta?.find(fact => fact.key === 'managed-kind')?.text ?? t('machines.sharing.kind');
     const platform = formatOSPlatform(input.machine.metadata?.platform);
-    const encryption = input.encryptionMode === 'e2ee' ? t('settingsAccount.endToEndEncrypted')
-        : input.encryptionMode === 'plain' ? t('settingsAccount.notEndToEndEncrypted') : null;
+    const encryption = projectMachineEncryptionFact(input.machine)?.text;
     return [kind, platform, encryption].filter(Boolean).join(' · ');
 }
 
@@ -239,9 +240,6 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         void executeWorkspaceUiAction({ actionId: 'workspace.tabs.open', input: { href: editRolesHref, replace: true } },
             href => router.push(href));
     }, [editRolesHref, router]);
-    const encryptionMode = useAccountEncryptionMode({
-        enabled: !target.isServerSwitching && areServerProfileIdentifiersEquivalent(target.activeServerId, target.serverId),
-    });
     const replacement = useMachineReplacementActions(target, machineAccountScope);
     // What the machine publishes (plan 20): its sentence under the name and, when it needs you, its one action.
     const published = useMachineHeadlineResources(target.serverId, machine);
@@ -289,12 +287,11 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         online: target.online && !runtimePresence?.showStatus,
         managedPowerWord,
         managedMeta: props.managedIdentity?.meta,
-        encryptionMode,
         replacedByMachineLabel: replacement.replacedByMachineLabel,
         hostFacts: published?.host ?? null,
         roleEnvironments,
         onOpenEnvironment: openRoleEnvironment,
-    }) : [], [language, encryptionMode, machine, managedPowerWord, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
+    }) : [], [language, machine, managedPowerWord, props.managedIdentity?.meta, published?.host, replacement.replacedByMachineLabel, target.online, runtimePresence?.showStatus, roleEnvironments, openRoleEnvironment]);
 
     // Entity-header anatomy: presence in the meta, every machine action in one `⋯`.
     const { onRename, renaming } = props;
@@ -323,14 +320,14 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
             // Centred, not hung from the ⋯: hung from the title row it covered the facts it shares (lab m-share S).
             onSelect: () => showMachineShareSheet({ machineId: machine.id, machineName: target.machineSentenceName,
                 scope: activeAccountScope, shared: machine.isShared === true,
-                subtitle: composeMachineShareSubtitle({ machine, managedMeta: props.managedIdentity?.meta, encryptionMode }) }),
+                subtitle: composeMachineShareSubtitle({ machine, managedMeta: props.managedIdentity?.meta }) }),
         }] : [];
         // A leading needs-you action takes the third button's place, so the row keeps its size and the title never wraps.
         const terminal: PageHeaderMenuAction[] = terminalInMenu ? [{ id: 'open-terminal', testID: 'machine-detail-menu-open-terminal',
             title: t('machineDetailPage.openTerminalAction'), onSelect: handleOpenTerminal }] : [];
         if (!canManageMachine(machine)) return [...terminal, ...share];
         return [...terminal, rename, ...share, ...environmentApply, ...replacement.menuActions];
-    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, encryptionMode, props.managedIdentity?.meta, onRename, renaming, replacement.menuActions, router, target.serverId]);
+    }, [terminalInMenu, handleOpenTerminal, language, activeAccountScope, machine, props.managedIdentity?.meta, onRename, renaming, replacement.menuActions, router, target.serverId]);
 
     const fallbackDescription = props.managedIdentity?.description ?? t('machineDetailPage.description');
     return (

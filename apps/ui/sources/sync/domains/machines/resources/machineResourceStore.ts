@@ -224,7 +224,7 @@ export function createMachineResourceStore(clients: MachineResourceClients, nowM
         defaultSnapshotClient: clients.snapshotClient, defaultWatchClient: clients.watchClient,
         retainState: true, watchAfterRefresh: true,
         subscribeRecovery: subscribeMachineRpcRecovery,
-        shouldWatch: state => (state.status === 'ready' || state.status === 'slow'
+        shouldWatch: state => !state.failure?.recovery && (state.status === 'ready' || state.status === 'slow'
             || (state.status === 'error' && state.errorCode === MACHINE_RPC_TIMEOUT_ERROR_CODE)) && state.snapshot?.state === 'reporting',
         refresh: async ({ input, state, snapshotClient, signal }): Promise<MachineResourceState> => {
             if (unsupported.has(machineKey(input))) return retainState(state, { ...state, status: 'not_reported' });

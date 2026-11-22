@@ -31,7 +31,7 @@ describe('machine page header facts', () => {
   it('keeps generated hosts out of managed identity facts while retaining ordinary machine host facts', () => {
     const machine = createMachineFixture();
     machine.metadata = { ...machine.metadata!, displayName: 'Build box', host: 'lima-generated-host' };
-    const input = { machine, online: true, encryptionMode: null, replacedByMachineLabel: null } as const;
+    const input = { machine, online: true, replacedByMachineLabel: null } as const;
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: [] }).map(fact => fact.key)).not.toContain('host');
     expect(composeMachinePageHeaderFacts({ ...input, managedMeta: undefined })).toContainEqual({ key: 'host', text: 'lima-generated-host' });
     // A guest Happier created whose managed record this Account cannot read still has a generated host, never a name.
@@ -40,7 +40,7 @@ describe('machine page header facts', () => {
   });
   it('leads a created machine\'s facts with its power word, once, before its kind (lab m-detail)', () => {
     const facts = composeMachinePageHeaderFacts({ machine: createMachineFixture(), online: false, managedPowerWord: 'Asleep',
-      managedMeta: [{ key: 'managed-kind', text: 'Lima machine' }], encryptionMode: null, replacedByMachineLabel: null });
+      managedMeta: [{ key: 'managed-kind', text: 'Lima machine' }], replacedByMachineLabel: null });
     expect(facts.slice(0, 2)).toEqual([
       { key: 'presence', text: 'Asleep', testID: 'machine-detail-presence' },
       { key: 'managed-kind', text: 'Lima machine' },
@@ -53,7 +53,6 @@ describe('machine page header facts', () => {
         machine: createMachineFixture({ isShared, access: access(owner) }),
         online: true,
         managedMeta: undefined,
-        encryptionMode: 'e2ee',
         replacedByMachineLabel: null,
       }).map((fact) => fact.key);
     // Identity first (lab m-share T "Online · Ben's · End-to-end encrypted"): the owner leads the facts after presence.
@@ -66,7 +65,7 @@ describe('machine page header facts', () => {
     const machine = createMachineFixture();
     const env = (environmentId: string, title: string, roles: readonly ('runtime' | 'controller' | 'build' | 'edge' | 'data')[]) =>
       ({ environmentId, title, projectSourceId: 'src', roles });
-    const facts = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, encryptionMode: null,
+    const facts = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined,
       replacedByMachineLabel: null, roleEnvironments: [env('e1', 'Production', ['build', 'controller']),
         env('e2', 'Staging', ['controller', 'runtime']), env('e3', 'Docs', ['edge'])] });
     // The Services tab's reading order; runtime and data are services, not roles the header names.
@@ -76,7 +75,7 @@ describe('machine page header facts', () => {
     expect(facts.find(fact => fact.key === 'role-controller')?.accessibilityLabel).toContain('Staging');
     // A role serving one Environment links to it; one serving several can't say which, so it is plain text.
     const opened: string[] = [];
-    const linked = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, encryptionMode: null,
+    const linked = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined,
       replacedByMachineLabel: null, roleEnvironments: [env('e1', 'Production', ['controller']), env('e3', 'Docs', ['edge', 'controller'])],
       onOpenEnvironment: (environment) => opened.push(environment.environmentId) });
     linked.find(fact => fact.key === 'role-edge')?.onPress?.();
@@ -85,17 +84,23 @@ describe('machine page header facts', () => {
     expect(linked.find(fact => fact.key === 'role-edge')?.text).toBe(t('machineServices.roles.role.edge'));
     expect(opened).toEqual(['e3']);
     expect(linked.find(fact => fact.key === 'role-controller')?.onPress).toBeUndefined();
-    const none = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined, encryptionMode: null,
+    const none = composeMachinePageHeaderFacts({ machine, online: true, managedMeta: undefined,
       replacedByMachineLabel: null, roleEnvironments: [env('e4', 'Shop', ['runtime', 'data'])] });
     expect(none.some(fact => fact.key.startsWith('role-'))).toBe(false);
   });
   it('gives the share sheet the short identity line: kind, OS and encryption, without presence, size or CLI (lab m-share S)', () => {
     const base = createMachineFixture();
-    const machine = createMachineFixture({ metadata: { ...base.metadata!, platform: 'linux', arch: 'x64' },
+    const machine = createMachineFixture({ storageMode: 'e2ee', metadata: { ...base.metadata!, platform: 'linux', arch: 'x64' },
       daemonState: { ...(base.daemonState as object), cliVersion: '0.3.0' } });
-    const subtitle = (managedMeta: readonly { key: string; text: string }[] | undefined) => composeMachineShareSubtitle({ machine, encryptionMode: 'e2ee',
-      managedMeta });
+    const subtitle = (managedMeta: readonly { key: string; text: string }[] | undefined) => composeMachineShareSubtitle({ machine, managedMeta });
     expect(subtitle([{ key: 'managed-kind', text: 'Lima machine' }])).toBe(['Lima machine', 'Linux', t('settingsAccount.endToEndEncrypted')].join(' · '));
     expect(subtitle(undefined)).toBe([t('machines.sharing.kind'), 'Linux', t('settingsAccount.endToEndEncrypted')].join(' · '));
+  });
+  it('labels a permission-only shared Machine with its published Plain mode in the header and share sheet', () => {
+    const machine = createMachineFixture({ isShared: true, storageMode: 'e2ee', access: { ...access('Ben'), resourceMode: 'plain' } });
+    const input = { machine, online: true, managedMeta: undefined, replacedByMachineLabel: null } as const;
+    expect(composeMachinePageHeaderFacts(input).find(fact => fact.key === 'encryption')?.text)
+      .toBe(t('settingsAccount.notEndToEndEncrypted'));
+    expect(composeMachineShareSubtitle(input)).toContain(t('settingsAccount.notEndToEndEncrypted'));
   });
 });

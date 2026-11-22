@@ -4,7 +4,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createDeferred, renderScreen } from '@/dev/testkit';
-import { readRpcRequestDisposition, socketRpcCodec } from '@happier-dev/sync-client';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, readRpcRequestDisposition, socketRpcCodec } from '@happier-dev/sync-client';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { MachineVitalsGetInputV1Schema, MachineVitalsSnapshotV1Schema } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -306,6 +306,41 @@ function destination(serverId: string, visible: boolean, focused = visible, over
         children: React.createElement(ResourceProbe, { serverId, overview, expectedAccountId }),
     });
 }
+
+it('presents enrollment recovery before a Run, even with retained Vitals, and clears it on recovery', async () => {
+    await withMachineHome(async home => {
+        const snapshot = vitals();
+        const watch = createDeferred<MachineCall>();
+        let recovered = false;
+        home.setAnswer(async call => {
+            if (call.method === RPC_METHODS.MACHINES_VITALS_GET) await call.reply(snapshot);
+            if (call.method === RPC_METHODS.DAEMON_VITALS_WATCH && !recovered) watch.resolve(call);
+            if (call.method === RPC_METHODS.MACHINES_VITALS_HISTORY_GET) await call.reply({
+                range: '1h', bucketMs: 60_000, points: [], today: { rxBytes: 0, txBytes: 0 },
+            });
+        });
+        const screen = await renderScreen(destination(home.serverId, true));
+        const probe = () => screen.findByType('ResourceProbe').props;
+        try {
+            const activeWatch = await watch.promise;
+            expect(probe().summary).toMatchObject({ kind: 'reporting' });
+            const recovery = { kind: 'needs_recovery', reason: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED,
+                step: 'keep_encryption_keys_and_reconnect' };
+            await act(async () => {
+                activeWatch.refuse(ACCOUNT_MODE_DOWNGRADE_UNVERIFIED);
+                await vi.waitFor(() => expect(probe().details.failure).toMatchObject({ recovery }));
+            });
+            expect(probe().details.snapshot).toEqual(snapshot);
+            expect(probe().summary).toEqual(recovery);
+            recovered = true;
+            await act(async () => {
+                clearMachineRequestReachabilityForMachine({ serverId: home.serverId, accountId: 'owner' }, 'shared-machine');
+                await vi.waitFor(() => expect(probe().summary).toMatchObject({ kind: 'reporting' }));
+            });
+            expect(probe().details.failure).toBeUndefined();
+        } finally { await screen.unmount(); }
+    });
+});
 
 it('keeps pending Vitals admission through unchanged mounted destination renders and dispatches its original read', async () => {
     await withMachineHome(async home => {

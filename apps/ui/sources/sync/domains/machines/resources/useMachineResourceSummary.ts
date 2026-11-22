@@ -10,6 +10,7 @@ import type { MachineResourceKey, MachineVitalsView } from './machineRpc';
 import { readMachineResourceObservation, type MachineResourceObservation, type MachineVitalsPublication } from './machineResourceAvailability';
 import { readMachineMonitoringMode } from './useMachineMonitoringMode';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import type { MachineEnrollmentRecovery } from '../machineDaemonRpcErrors';
 
 export type MachineResourceAvailability =
     | Readonly<{ kind: 'reporting'; summary: MachineResourceSummaryV1 | null; freshness: 'live' | 'held' | 'stale';
@@ -20,7 +21,8 @@ export type MachineResourceAvailability =
     | Readonly<{ kind: 'never_sampled' }>
     | Readonly<{ kind: 'monitoring_off' }>
     | Readonly<{ kind: 'unavailable'; errorCode?: string }>
-    | Readonly<{ kind: 'not_reported'; reason: 'older_happier' | 'unsupported' }>;
+    | Readonly<{ kind: 'not_reported'; reason: 'older_happier' | 'unsupported' }>
+    | MachineEnrollmentRecovery;
 
 const NEVER_SAMPLED: MachineResourceAvailability = { kind: 'never_sampled' };
 const MONITORING_OFF: MachineResourceAvailability = { kind: 'monitoring_off' };
@@ -85,6 +87,7 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
     const online = hasMachine ? presence.reachability === 'reachable' : true;
     return React.useMemo<MachineResourceAvailability | null>(() => {
         if (!target.accountMatches) return null;
+        if (state.failure?.recovery) return state.failure.recovery;
         if (monitoring === 'off') return MONITORING_OFF;
         if (state.status === 'not_reported') return OLDER_HAPPIER;
         if (observation.unsupported) return UNSUPPORTED;
