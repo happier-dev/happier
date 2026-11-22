@@ -1,6 +1,6 @@
 import { deliverExternalActionRequest } from './deliverExternalActionRequest';
 export { deliverExternalActionRequest } from './deliverExternalActionRequest';
-import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectCheckoutRemovalActionIdV1, isProjectSessionDefaultsPreparationReadActionIdV1, isReviewAgentRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { SCM_WORKTREE_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/scmActionIdsV1';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseExternalActionResponseEnvelopeV1, readExternalActionResponseExecutionV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -1925,6 +1925,7 @@ export async function projectExternalActionRequesterHttpAuthorization(input: Rea
     || authorization.binding.actionId === 'execution.run.ensure'
     || authorization.binding.actionId === 'execution.run.send'
     || authorization.binding.actionId === 'execution.run.ensure_or_start'
+    || isReviewAgentRunActionIdV1(authorization.binding.actionId)
     || isScmDiffSummaryRunAction(authorization.binding.actionId)
     ? input.forwardedMove ?? (requesterContext ? {
       credentials: requesterContext.credentials,

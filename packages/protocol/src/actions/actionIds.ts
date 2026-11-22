@@ -38,6 +38,11 @@ export function isReviewRecordWriteActionIdV1(actionId: string): boolean {
 export function isReviewRunStartActionIdV1(actionId: string): boolean {
   return actionId === REVIEW_NEW_ROUND_ACTION_ID_V1 || actionId === 'review.follow_up';
 }
+/** Review roots that admit or continue an Agent Run using the requester's preparation reads. */
+export function isReviewAgentRunActionIdV1(actionId: string): boolean {
+  return actionId === REVIEW_START_ACTION_ID_V1 || isReviewRunStartActionIdV1(actionId)
+    || actionId === 'review.walkthrough' || actionId === 'review.explain_findings';
+}
 /** Inventory roots that observe the selected Machine's Agent prerequisites. */
 export function isMachineAgentInventoryReadActionIdV1(actionId: string): boolean {
   return actionId === 'machines.agents.list' || actionId === 'review.engines.list';

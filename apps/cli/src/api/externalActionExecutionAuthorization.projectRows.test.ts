@@ -14,7 +14,8 @@ import { resolveProjectSetupAcceptedWorkspace } from '@/workspaces/projectSetup/
 import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
 
-it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, ...ACTION_IDS.filter(isProjectCheckoutRemovalActionIdV1)])(
+it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, ...ACTION_IDS.filter(isProjectCheckoutRemovalActionIdV1),
+    'review.start', 'review.new_round', 'review.follow_up', 'review.walkthrough', 'review.explain_findings'])(
     'reads the admitted requester source association through its own Account HTTP custody for %s', async actionId => {
     const app = fastify();
     const channel = await createRequesterCurrentnessSocketHarness();
@@ -64,5 +65,11 @@ it.each([SCM_WORKTREE_CREATE_ACTION_ID_V1, ...ACTION_IDS.filter(isProjectCheckou
         const writeHeaders = await carrier.requesterHttpProjection.createRequestHeaders({ effectActionId: actionId,
             method: 'POST', path: `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/mutate`, body: {} });
         expect(writeHeaders).not.toHaveProperty('Authorization');
+        const childHeaders = await carrier.requesterHttpProjection.createRequestHeaders({ effectActionId: 'execution.run.start',
+            method: 'POST', path: `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, body: {} });
+        expect(childHeaders).not.toHaveProperty('Authorization');
+        await requester.dispose();
+        expect(await carrier.requesterHttpProjection.createRequestHeaders({ effectActionId: actionId,
+            method: 'POST', path: `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, body: {} })).toBeNull();
     } finally { await requester?.dispose(); restore(); await channel.close(); await app.close(); }
 });
