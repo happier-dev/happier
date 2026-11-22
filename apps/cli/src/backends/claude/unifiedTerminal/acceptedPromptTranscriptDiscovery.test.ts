@@ -1695,7 +1695,7 @@ describe('createClaudeUnifiedAcceptedPromptTranscriptDiscovery', () => {
     } as unknown as RawJSONLines])).toBe(false);
   });
 
-  it('does not consume meta continuation transcript rows as provider-accepted input', () => {
+  it.each([{ isMeta: true }, { isSynthetic: true }])('does not consume provider-generated text as accepted input (%j)', provenance => {
     const prompt = GENERIC_CONTINUATION_RESUME_PROMPT;
     const discovery = createClaudeUnifiedAcceptedPromptTranscriptDiscovery({
       acceptedPromptWindowMs: 5_000,
@@ -1707,7 +1707,7 @@ describe('createClaudeUnifiedAcceptedPromptTranscriptDiscovery', () => {
     expect(discovery.consumeMatchingTranscript([{
       type: 'user',
       uuid: 'meta-continuation-prompt',
-      isMeta: true,
+      ...provenance,
       timestamp: new Date(10_100).toISOString(),
       message: {
         role: 'user',

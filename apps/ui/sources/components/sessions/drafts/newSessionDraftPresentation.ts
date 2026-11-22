@@ -1,16 +1,35 @@
 import type { NewSessionDraftProjection } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { DEFAULT_AGENT_ID, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
+import { isActionOperationInFlight } from '@/sync/domains/actionOperations/actionOperationSelectors';
+import type { PersistedNewSessionOperationIdentity } from '@/sync/domains/actionOperations/actionOperationReentry';
 import { t, type TranslationKey } from '@/text';
 import { resolveSessionDraftStatusKey } from './sessionDraftStatusPresentation';
+
+/**
+ * Where a draft stands in the launch it handed to the Action-operation owner: still starting, failed
+ * to start, or settled while that owner still holds the draft's custody. Only the owner's operation
+ * answers this; local launch metadata alone is not evidence that anything is running.
+ */
+export type NewSessionDraftLaunchState = 'launching' | 'failed' | 'settled';
+
+export function resolveNewSessionDraftLaunchState(
+    identity: PersistedNewSessionOperationIdentity | null | undefined,
+): NewSessionDraftLaunchState | null {
+    if (!identity) return null;
+    if (isActionOperationInFlight(identity.operation)) return 'launching';
+    return identity.operation.state === 'failed' ? 'failed' : 'settled';
+}
 
 export type NewSessionDraftRowPresentation = Readonly<{
     title: string;
     statusKey: TranslationKey | null;
+    statusTone: 'danger' | null;
 }>;
 
 export type NewSessionDraftSummaryNames = Readonly<{
     unavailableMachineIds?: ReadonlySet<string>;
     attachmentNeedsAttentionDraftIds?: ReadonlySet<string>;
+    launchStateByDraftId?: ReadonlyMap<string, NewSessionDraftLaunchState>;
 }>;
 
 function readAuthoringValue(draft: NewSessionDraftProjection, fieldId: string): unknown {
@@ -46,21 +65,32 @@ export function resolveNewSessionDraftAgentId(draft: NewSessionDraftProjection) 
     return resolveAgentIdFromFlavor(readNonblankString(readAuthoringValue(draft, 'agentId'))) ?? DEFAULT_AGENT_ID;
 }
 
-function resolveStatusKey(
+type ResolvedDraftStatus = Readonly<{ key: TranslationKey; tone: 'danger' | null }>;
+
+function resolveStatus(
     draft: NewSessionDraftProjection,
     names: NewSessionDraftSummaryNames,
-): TranslationKey | null {
+): ResolvedDraftStatus | null {
+    // What this draft is doing right now outranks how it is syncing: the launch the user just
+    // started, or the one that could not start, is the fact they are looking for.
+    const launchState = names.launchStateByDraftId?.get(draft.draftId) ?? null;
+    if (launchState === 'launching') return { key: 'sessionDrafts.status.starting', tone: null };
+    if (launchState === 'failed') return { key: 'sessionDrafts.status.startFailed', tone: 'danger' };
     if (draft.status === 'conflict' || draft.status === 'offline' || draft.status === 'error') {
-        return resolveSessionDraftStatusKey(draft.status);
+        const key = resolveSessionDraftStatusKey(draft.status);
+        return key ? { key, tone: draft.status === 'error' ? 'danger' : null } : null;
     }
     const machineId = readNonblankString(readAuthoringValue(draft, 'machineId'));
     if (machineId && names.unavailableMachineIds?.has(machineId)) {
-        return 'sessionDrafts.status.machineUnavailable';
+        return { key: 'sessionDrafts.status.machineUnavailable', tone: null };
     }
     if (names.attachmentNeedsAttentionDraftIds?.has(draft.draftId)) {
-        return 'sessionDrafts.status.attachmentNeedsAttention';
+        return { key: 'sessionDrafts.status.attachmentNeedsAttention', tone: null };
     }
-    if (draft.status === 'pending') return resolveSessionDraftStatusKey(draft.status);
+    if (draft.status === 'pending') {
+        const key = resolveSessionDraftStatusKey(draft.status);
+        return key ? { key, tone: null } : null;
+    }
     return null;
 }
 
@@ -72,8 +102,10 @@ export function buildNewSessionDraftRowPresentation(
     const automationName = readAutomationName(draft);
     const folderName = safeFinalPathSegment(readAuthoringValue(draft, 'directory'));
     const title = promptLine ?? automationName ?? folderName ?? t('sessionDrafts.untitled');
+    const status = resolveStatus(draft, names);
     return {
         title,
-        statusKey: resolveStatusKey(draft, names),
+        statusKey: status?.key ?? null,
+        statusTone: status?.tone ?? null,
     };
 }

@@ -5,6 +5,7 @@ import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import { isPlainMachineDataKeyMarker, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol';
 import type { Metadata, Session } from '@/sync/domains/state/storageTypes';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { isSessionListViewportRowDemanded } from '@/sync/domains/session/listing/sessionListViewportDemand';
 import { buildPendingChangedSessionPatch } from './pendingChangedSessionPatch';
 import { isSessionVisible } from '@/sync/domains/session/activeViewingSession';
 import { computeNextSessionSeqFromUpdate } from '@/sync/domains/session/sequence/realtimeSessionSeq';
@@ -1691,13 +1692,12 @@ export async function handleUpdateContainer(params: {
                     shouldContinue,
                 });
                 const sessionEncryption = encryption.getSessionEncryption(updateData.body.id);
-                if (!fullContentConsumerActive && sessionEncryption) {
-                    // The list already has a stale-while-revalidate metadata projection, while
-                    // update-session carries the complete encrypted metadata envelope. Decrypting
-                    // that detail for every hidden session duplicates the snapshot hydrator's work
-                    // and can monopolize the JS/crypto workers. Keep the public projection current
-                    // and let the existing onSessionVisible force refresh hydrate the latest
-                    // envelope when a detail surface actually consumes it.
+                if (
+                    !fullContentConsumerActive
+                    && sessionEncryption
+                    && !isSessionListViewportRowDemanded(sourceServerId, updateData.body.id)
+                ) {
+                    // Keep offscreen projections current without decrypting every encrypted metadata update.
                     markSessionStateHydrationDeferred?.(updateData.body.id);
                     syncPerformanceTelemetry.count('sync.socket.sessions.metadataHydration.deferred', {
                         sessions: 1,

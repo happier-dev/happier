@@ -2,8 +2,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionListViewItem } from './sessionListViewData';
 import { filterSessionListViewDataByStorageKind } from './filterSessionListViewDataByStorageKind';
+import { buildSessionListRenderableMetadata } from './sessionListRenderable';
+import { buildSessionListCacheEntryFromRenderable, buildSessionListRenderableFromCacheEntry } from '@/sync/domains/state/warmCacheAdapters';
+import { SessionListCacheEntryV1Schema } from '@/sync/domains/state/warmCachePersistence';
+import { readDirectSessionLink } from '../directSessions/readDirectSessionLink';
 
-function makeSession(id: string, direct: boolean): SessionListViewItem {
+function makeSession(id: string, direct: boolean): Extract<SessionListViewItem, { type: 'session' }> {
     return {
         type: 'session',
         serverId: 'server-a',
@@ -25,6 +29,19 @@ function makeSession(id: string, direct: boolean): SessionListViewItem {
 }
 
 describe('filterSessionListViewDataByStorageKind', () => {
+    it('shows a fresh Direct session in the Direct tab before a native transcript can be linked, including on warm start', () => {
+        const fresh = makeSession('starting-direct', false);
+        const metadata = { path: '/workspace', host: 'machine', flavor: 'claude', directTranscriptPendingV1: true as const };
+        expect(readDirectSessionLink(metadata)).toBeNull();
+        fresh.session.metadata = buildSessionListRenderableMetadata(metadata);
+        const cached = SessionListCacheEntryV1Schema.parse(buildSessionListCacheEntryFromRenderable(fresh.session));
+        const warm = { ...fresh, session: buildSessionListRenderableFromCacheEntry(cached) };
+        for (const row of [fresh, warm]) {
+            expect(filterSessionListViewDataByStorageKind([row], 'direct')).toContainEqual(row);
+            expect(filterSessionListViewDataByStorageKind([row], 'persisted')).toEqual([]);
+        }
+    });
+
     it('keeps only direct sessions and the headers that still own visible rows', () => {
         const groupKey = 'server:server-a:day:2026-03-05';
         const source: SessionListViewItem[] = [

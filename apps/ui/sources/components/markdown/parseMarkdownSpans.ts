@@ -1,8 +1,8 @@
 import type { MarkdownSpan } from "./parseMarkdown";
 import { normalizeMarkdownLinkUrl } from './enriched/enrichedMarkdownLinkHandling';
 
-// Updated pattern to handle nested markdown and asterisks
-const pattern = /(\*\*(.*?)(?:\*\*|$))|(\*(.*?)(?:\*|$))|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`(.*?)(?:`|$))/g;
+// Streaming repair completes partial markup before parsing. Keep literal delimiters in finished text.
+const pattern = /(\*\*(.+?)\*\*)|(\*([^\s*](?:[^*]*[^\s*])?)\*)|(\[([^\]]+)\](?:\(([^)]+)\))?)|(`([^`]+)`)/g;
 
 const autoLinkPattern = /\b((?:https?:\/\/|www\.)[^\s<]+)/g;
 const trailingPunctuationPattern = /[.,)\]}]+$/;

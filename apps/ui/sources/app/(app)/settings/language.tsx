@@ -60,14 +60,8 @@ export default function LanguageSettingsScreen() {
         );
 
         if (confirmed) {
-            // Update the preference
-            const newPreference = newLanguage === 'auto' ? null : newLanguage;
-            setPreferredLanguage(newPreference);
-
-            // Small delay to ensure setting is saved
-            setTimeout(() => {
-                reloadApp();
-            }, 100);
+            setPreferredLanguage(newLanguage === 'auto' ? null : newLanguage);
+            await reloadApp();
         }
     };
 

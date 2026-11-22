@@ -24,7 +24,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
 
-    handler.handleModeChange('yolo');
+    handler.admitPromptPermissionMode('yolo');
 
     expect(session.setLastPermissionMode).not.toHaveBeenCalled();
   });
@@ -47,7 +47,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     // Ensure the request is actually pending before switching modes.
     expect(Object.keys(client.agentState.requests)).toContain('toolu_mode_change_1');
 
-    handler.handleModeChange('yolo');
+    handler.admitPromptPermissionMode('yolo');
 
     const result = await withTimeout(pending, 1_000);
     expect(result).toMatchObject({ behavior: 'allow' });
@@ -73,7 +73,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
 
     expect(Object.keys(client.agentState.requests)).toContain('toolu_mode_change_2');
 
-    handler.handleModeChange('safe-yolo');
+    handler.admitPromptPermissionMode('safe-yolo');
 
     expect(client.agentState.requests['toolu_mode_change_2']).toBeDefined();
     await client.rpcHandlerManager.getHandler('permission')?.({ id: 'toolu_mode_change_2', approved: false } as any);
@@ -85,7 +85,7 @@ describe('Claude PermissionHandler - mode change auto-approve', () => {
     const { PermissionHandler } = await import('./permissionHandler');
     const handler = new PermissionHandler(session);
 
-    handler.handleModeChange('yolo');
+    handler.admitPromptPermissionMode('yolo');
 
     await expect(
       withTimeout(handler.handleToolCall(

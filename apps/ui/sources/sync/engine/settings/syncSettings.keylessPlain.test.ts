@@ -6,8 +6,9 @@ import { settingsDefaults, settingsParse, type Settings } from '@/sync/domains/s
 import { AIBackendProfileSchema } from '@/sync/domains/profiles/profileCompatibility';
 import { buildProfileSaveSettingsDelta } from '@/sync/domains/profiles/profileMutations';
 import { storage } from '@/sync/domains/state/storage';
+import { loadPendingAccountSettings, savePendingAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { savePendingSettings } from '@/sync/domains/state/persistence';
-import { syncSettings } from './syncSettings';
+import { applySettingsLocalDelta, syncSettings } from './syncSettings';
 
 const boundary = vi.hoisted(() => ({ serverFetch: vi.fn() }));
 vi.mock('@/sync/http/client', () => ({ serverFetch: boundary.serverFetch }));
@@ -71,6 +72,44 @@ describe('syncSettings without account encryption material', () => {
         expect(storage.getState().settings).toMatchObject({ analyticsOptOut: true, secrets: [secret] });
         expect(storage.getState().settingsVersion).toBe(5);
         expect(clearPendingSettings).toHaveBeenCalledWith({});
+    });
+
+    it.each(['en', null])('replays a language change to %s after restarting before the settings flush', async (preferredLanguage) => {
+        const scope = { serverId: 'server-language', accountId: 'account-language' };
+        storage.getState().activateSettingsScope(scope);
+        storage.getState().applySettingsLocal({ preferredLanguage: 'zh-Hans' });
+        savePendingAccountSettings(scope, {});
+        serve({ t: 'plain', v: { preferredLanguage: 'zh-Hans', analyticsOptOut: true } });
+        let pendingSettings: Partial<Settings> = {};
+
+        applySettingsLocalDelta({
+            delta: { preferredLanguage },
+            settingsSecretsKey: null,
+            getPendingSettings: () => pendingSettings,
+            setPendingSettings: (next) => { pendingSettings = next; },
+            // The runtime restarts before the scheduled flush can run.
+            schedulePendingSettingsFlush: () => {},
+        });
+
+        expect(storage.getState().settings.preferredLanguage).toBe(preferredLanguage);
+        const restoredPendingSettings = loadPendingAccountSettings(scope);
+        expect(restoredPendingSettings).toEqual({ preferredLanguage });
+
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        await syncSettings({
+            credentials,
+            encryption,
+            settingsScope: scope,
+            pendingSettings: restoredPendingSettings,
+            clearPendingSettings: (next) => savePendingAccountSettings(scope, next),
+        });
+        const post = boundary.serverFetch.mock.calls.find(([, init]) => init?.method === 'POST');
+        expect(JSON.parse(String(post?.[1]?.body))).toEqual({
+            content: { t: 'plain', v: { preferredLanguage, analyticsOptOut: true } },
+            expectedVersion: 4,
+        });
+        expect(storage.getState().settings).toMatchObject({ preferredLanguage, analyticsOptOut: true });
+        expect(loadPendingAccountSettings(scope)).toEqual({});
     });
 
     it('fails explicitly before opening encrypted settings without material', async () => {

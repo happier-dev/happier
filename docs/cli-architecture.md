@@ -143,10 +143,17 @@ structured-question projection to preserve Claude's exact displayed scopes;
 the original tool or plan remains in the transcript. Plan controls require a
 live matching request, including after reconnect.
 
+Native permission identity excludes Claude's changing unattended safety countdown.
+The displayed warning remains intact; a changed command, warning or permission
+scope still replaces the request and prevents answering an older prompt.
+The request retains the warning captured when published; Claude owns the timeout.
+
 The existing screen probe observes native rendering and the existing terminal
 drivers navigate verified forms. App question responses are acknowledged only
 after Claude's correlated structured result matches. Native tool results,
 including cancellation results without a completion hook, retire the app waiter.
+Native reviews match the hook-owned questions, requested answers and Submit/Cancel
+controls; the optional “Ready to submit your answers?” prose is not required.
 Terminal successes record the observed answer instead of a canceled request.
 Unknown forms and conflicting local drafts fail closed to terminal interaction.
 This is development source behavior, not a released-channel guarantee.
@@ -200,13 +207,13 @@ development source; they do not establish preview or stable availability.
 settlement. Closing a segment freezes its completion or interruption intent and
 separates it from subsequent output. A rejected terminal write retains the full
 snapshot for the next flush with the same local id; unresolved delivery is recorded
-in the default file log. While closed snapshots remain, the writer subscribes to
-the session's existing connection-state events and retries them when its transport
-comes online, including a reconnect that races an in-flight failed write. Retries
-reuse the same local id and terminal state through the session commit queue, without
-waiting for pending-input readiness or a new prompt. The subscription ends when
-the snapshots settle or the writer is discarded. This retention is process-local;
-it does not provide recovery after process exit or replacement of the session client.
+in the default file log. The session retries retained snapshots during connection
+convergence, after the replacement socket settles its Runtime Activity publisher
+registration on relays that support the publisher fence. The writer waits for
+any in-flight attempt, then retries with the original local id and terminal state.
+Pending input materialization becomes eligible once the replay attempt settles.
+The subscription ends when the snapshots settle or the writer is discarded.
+Retention lasts for the lifetime of the session client in the current process.
 
 `createKeyedStreamedTranscriptBridge` keeps writers with active, in-flight, or failed
 segments and releases only drained writers. Codex tool boundaries wait for admission
@@ -1691,12 +1698,18 @@ Herdr-specific transport lives in `integrations/herdr`. The adapter uses direct 
 launch, styled screen capture, input, process inspection, and terminal attachment.
 Runtime detection requires a stable Herdr release at or after `0.9.2`, and attach
 and startup also verify the running server's version before using it.
+In development source, Stop and liveness checks for an existing Herdr pane use the
+recorded socket and terminal ID independently of executable detection.
 In the development source, standalone Claude unified uses the default Herdr server,
 matching `happier herdr`; recovery of a retained attachment keeps its recorded server namespace. Daemon
 requests retain their explicitly selected namespace. Generated agent names label
 the panes rather than creating separate Herdr servers.
 Claude unified reuses the existing composer parser and prompt-submission verifier;
 successful terminal writes are not provider acceptance acknowledgements.
+The development parser recognizes Claude's bordered `↑ N more` composer viewport
+when a small terminal hides the prompt marker. Submission verifies the visible
+prompt text through that same parser, without requiring a terminal attachment or
+resize; an unrelated visible draft remains protected.
 In development source, normal and shell prompts share one active-input selection and
 wrapped-text reader. Shell input is verification-only: it cannot make the terminal
 ready for an ordinary message, and only a request starting with `!` can authorize
@@ -1789,6 +1802,12 @@ deadlines and cancellation remain available. A guarded refusal to signal never
 authorizes an unsafe kill: Stop rechecks positive runner exit before deciding
 that termination is incomplete. Transport timeout or disconnect still does not
 prove physical termination.
+When a hosted launch reports a separate runner PID, Stop and planned restart
+use that runner's own process witness for signaling and exit observation. The
+launcher remains the tracking key until exit or promotion, so cleanup settles
+the original tracked session. On POSIX, a terminal hangup now enters the runner's
+existing shutdown path, giving it a chance to close its publisher before the
+terminal host forcibly terminates the process.
 In current 0.2 development source, Stop actions retain the original tool caller
 through approval replay and carry optional diagnostic source fields to the daemon.
 The authenticated HTTP and machine-RPC receivers record their own transport;
@@ -1812,10 +1831,14 @@ remote serviceability projection does not block retirement of the old local
 evidence. That projection remains untouched. Remote-only recovery without captured
 local custody still refuses a changed target; transport failures remain retryable.
 
-On Linux, startup migration always considers explicitly tracked daemon-owned
-session processes. Sweeping untracked processes from the daemon's cgroup additionally
-requires a service-managed startup in an actual service cgroup; a manually started
-daemon must not transfer unrelated processes from a shared SSH or editor scope.
+On Linux, new daemon-spawned runners use a systemd user scope when the provisioned
+`happier-jobs.slice` policy is available. Otherwise the runner launches directly
+and inherits the launching process's cgroup. The installed daemon service uses
+`KillMode=process` so direct children can survive a daemon restart. Reattachment
+tracks existing sessions in their current cgroups.
+
+The daemon strips the retired self-migration flag from child environments and masks
+it in tmux windows so an older runner snapshot cannot reactivate cgroup writes.
 
 For child-owned same-pane launches, the shared terminal runtime owns the native
 process. Claude unified, runner-managed Codex/OpenCode TUIs, and standalone native
@@ -2537,6 +2560,8 @@ Sessions can be started by:
 - Remote requests over RPC (from mobile/web via machine connection).
 
 Daemon session spawning uses `registerCommonHandlers` to expose a controlled RPC surface (shell commands, file operations, search/diff helpers).
+
+In development builds, the regular daemon runner inherits the daemon's D-Bus session address and the tmux runner carries it in its essential window environment. Claude's Agent SDK and unified-terminal launches both use `buildClaudeSubprocessEnv`, which preserves that address. Additional session variables use the existing explicit spawn environment.
 
 In development builds, Claude's metadata producer supplies its explicit non-secret native account-directory override to `createSessionMetadata`, which publishes it in `nativeAgentEnvironmentV1`. `resolveSessionRuntimeSnapshot` restores it before spawn environment validation, with explicit incoming overrides taking precedence. `sessionNativeEnvironment` owns the allowlist also consumed by durable respawn descriptors; arbitrary shell variables and credentials are not copied into metadata. The shared factory does not infer native directories from another Agent's ambient environment. Older session metadata without this optional field retains its existing behavior.
 

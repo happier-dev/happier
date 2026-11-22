@@ -257,6 +257,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     host: z.string().nullable().optional(),
     machineId: z.string().nullable().optional(),
     flavor: z.string().nullable().optional(),
+    directTranscriptPendingV1: z.literal(true).optional().catch(undefined),
     directSessionV1: z.object({
         v: z.literal(1),
         providerId: z.string().optional(),

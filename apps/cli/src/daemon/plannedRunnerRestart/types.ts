@@ -57,6 +57,7 @@ export type PlannedRunnerRestartSignalActivityGateResult =
 
 export type PlannedRunnerRestartSignalRequest = Readonly<{
   tracked: TrackedSession;
+  runnerPid: number;
   shouldSignal: () => boolean | Promise<boolean>;
   onSignalFailure: (error: unknown) => void;
   onProcessAlreadyMissing: () => void;

@@ -226,6 +226,7 @@ function readMetadataResult(value: unknown): Record<string, unknown> | null {
 async function persistAdapterMetadataResult(
   params: RouteSessionUsageLimitRecoveryControlParams,
   result: unknown,
+  observedTiming: boolean,
 ): Promise<unknown> {
   const nextMetadata = readMetadataResult(result);
   if (
@@ -241,6 +242,7 @@ async function persistAdapterMetadataResult(
     rawSession: params.rawSession,
     currentMetadata: params.metadata ?? {},
     nextMetadata,
+    ...(observedTiming ? { mode: 'observed_timing' } : {}),
   });
 
   return {
@@ -294,6 +296,7 @@ export function buildRecoveryIntentFromUsageLimitIssue(params: Readonly<{
     occurredAtMs: issue.occurredAt,
     resetAtMs: issue.usageLimit.resetAtMs,
     retryAfterMs: issue.usageLimit.retryAfterMs,
+    windows: issue.usageLimit.allWindows,
   });
 
   return {
@@ -562,11 +565,11 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
   const adapterAgentId = resolveAgentIdFromFlavor(params.request?.provider) ?? resolveAgentId(context.metadata);
   const adapter = await resolveAdapter(adapterAgentId);
   const recovery = parseRecoveryIntent(context.metadata, params.rawSession);
-  const dueAtMs = recovery?.nextCheckAtMs ?? recovery?.resetAtMs;
-  // A known reset authorizes the ordinary continuation even when this provider has
-  // no quota-read API. Provider probes can prove earlier readiness, but do not own time.
+  // A provider-reported reset can drive continuation. A fallback nextCheckAtMs
+  // only wakes recovery and must route to the provider probe when one exists.
   const useTimedRecovery = operation === 'checkNow' && (
-    !adapter?.checkNow || (typeof dueAtMs === 'number' && dueAtMs <= Date.now())
+    !adapter?.checkNow || (recovery?.resetAtMs != null
+      && (recovery.nextCheckAtMs ?? recovery.resetAtMs) <= Date.now())
   );
   const timedAdapter = useTimedRecovery ? createBackoffSessionUsageLimitRecoveryControlAdapter({
     providerId: adapterAgentId ?? readLatestUsageLimitFailureIssue(params.rawSession)?.provider ?? 'unknown',
@@ -597,7 +600,11 @@ export async function routeSessionUsageLimitRecoveryCheckNow(
         nextCheckAtMs: adapterRecovery.resumePromptMode === 'off' ? null : Date.now(),
       } } }
     : adapterResult;
-  const result = await persistAdapterMetadataResult(params, preparedResult);
+  const result = await persistAdapterMetadataResult(
+    { ...params, metadata: context.metadata },
+    preparedResult,
+    adapterStatus === 'waiting' && adapterRecovery?.status === 'waiting',
+  );
   const resultMetadata = readMetadataResult(result);
   const normalizedResult = operationResult(params, result);
   const readyRecovery = parseRecoveryIntent(resultMetadata ?? context.metadata);

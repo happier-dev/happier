@@ -1,4 +1,5 @@
 import type { TrackedSession } from '@/daemon/types';
+import { readTrackedSessionRunner } from '@/daemon/sessionRunnerProcessIdentity';
 import { hasActiveSessionRuntimeActivity, type SessionRunnerRestartDisabledReason, type SessionRuntimeActivityState } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { readTerminalAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
@@ -63,7 +64,7 @@ function isActivePid(value: unknown): value is number {
 export function summarizeSessionRunnerEndpoint(tracked: TrackedSession): RestartSessionRunnerEndpointSummary {
   const runnerIdentity = resolveSessionRunnerEntrypointIdentityFromProcessCommand(tracked.processCommand);
   return {
-    pid: tracked.pid,
+    pid: readTrackedSessionRunner(tracked).pid,
     cliVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,
     processCommandHash: normalizeString(tracked.processCommandHash) || null,
     entrypointVersion: runnerIdentity.status === 'known' ? runnerIdentity.entrypointVersion ?? null : null,
@@ -127,7 +128,7 @@ function validateRestartContext(input: Readonly<{
 
   if (
     isActivePid(input.request.expectedRunnerPid) &&
-    input.request.expectedRunnerPid !== tracked.pid
+    input.request.expectedRunnerPid !== readTrackedSessionRunner(tracked).pid
   ) {
     return skipped('runner_identity_changed', sessionId);
   }

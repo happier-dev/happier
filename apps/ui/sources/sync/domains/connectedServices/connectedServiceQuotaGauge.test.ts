@@ -1018,7 +1018,7 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(quotaSnapshot?.accountLabel).toBe('codex-main');
     });
 
-    it('prefers session runtime quota evidence over launch-time connected profile polling', () => {
+    it('keeps a fixed connected profile when fresh runtime evidence names a different login', () => {
         const launchTimeProfileSnapshot = snapshot([
             meter({ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100 }),
         ]);
@@ -1048,9 +1048,57 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
             },
         });
 
-        expect(selected?.sourceKind).toBe('native_runtime_evidence');
-        expect(selected?.snapshot.profileId).toBe('backup');
-        expect(selected?.snapshot.meters[0]?.remainingPct).toBe(18);
+        expect(selected?.snapshot).toBe(launchTimeProfileSnapshot);
+    });
+
+    it.each([
+        { profileId: 'backup', runtimeProfileId: 'backup', runtimeFetchedAt: 2_000, sourceKind: 'connected_service_profile' },
+        { profileId: 'backup', runtimeProfileId: 'backup', runtimeFetchedAt: 4_000, sourceKind: 'native_runtime_evidence' },
+        { profileId: 'native:other', runtimeProfileId: 'backup', runtimeFetchedAt: 2_000, sourceKind: 'connected_service_profile' },
+        { profileId: 'acct:unproved', runtimeProfileId: null, runtimeFetchedAt: 2_000, sourceKind: 'connected_service_profile' },
+    ])('selects $sourceKind for fixed profile $profileId with issue profile $runtimeProfileId at $runtimeFetchedAt', ({
+        profileId, runtimeProfileId, runtimeFetchedAt, sourceKind,
+    }) => {
+        const connectedSnapshot = {
+            ...snapshot([meter({ meterId: 'weekly', label: 'Weekly', used: 10, limit: 100 })]),
+            profileId,
+            fetchedAt: 3_000,
+            fetchedAtMs: 3_000,
+        };
+        const selected = selectConnectedServiceSessionProviderUsageGaugeSource({
+            providerId: 'codex',
+            connectedServiceSnapshot: connectedSnapshot,
+            connectedServiceRefProvenance: 'connected_binding_profile',
+            runtimeIssue: {
+                v: 1,
+                scope: 'primary_session',
+                status: 'failed',
+                code: 'usage_limit',
+                source: 'usage_limit',
+                occurredAt: runtimeFetchedAt,
+                provider: 'codex',
+                usageLimit: {
+                    v: 1,
+                    resetAtMs: 5_000,
+                    retryAfterMs: null,
+                    quotaScope: 'account',
+                    recoverability: 'wait',
+                    limitCategory: 'usage_limit',
+                    ...(runtimeProfileId ? {
+                        quotaSnapshotRef: { serviceId: 'openai-codex', profileId: runtimeProfileId, groupId: 'main', fetchedAtMs: runtimeFetchedAt },
+                    } : {}),
+                    effectiveMeterId: 'weekly',
+                    effectiveRemainingPct: 18,
+                },
+            },
+        });
+
+        expect(selected?.sourceKind).toBe(sourceKind);
+        if (sourceKind === 'connected_service_profile') {
+            expect(selected?.snapshot).toBe(connectedSnapshot);
+        } else {
+            expect(selected?.snapshot.meters[0]?.remainingPct).toBe(18);
+        }
     });
 
     it('keeps fresher connected account usage ahead of stale runtime quota evidence', () => {

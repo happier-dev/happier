@@ -12,10 +12,40 @@ export function getConnectedServiceReaderRoom(raw: unknown): string {
         : RELEASED_CONNECTED_SERVICE_READER_ROOM;
 }
 
+function userScopedRoom(userId: string): string {
+    return `user-scoped:${userId}`;
+}
+
+function sessionUpdateRoom(userId: string, sessionId: string): string {
+    // Update containers carry per-account cursors and can contain recipient-specific data.
+    return `session:${sessionId}:${userId}`;
+}
+
+function narrowerSessionInterestRoom(userId: string): string {
+    return `narrow-session-interest:${userId}`;
+}
+
+function accountSocketSessionInterestRoom(userId: string, sessionId: string): string {
+    return `account-socket-session-interest:${sessionId}:${userId}`;
+}
+
+export function getSessionUpdateTargets(userId: string, sessionId: string): ReadonlyArray<{
+    rooms: string[];
+    except?: string;
+}> {
+    // Keep the released rooms reachable during mixed relay-worker deployments.
+    // Narrowed account sockets are excluded from the first send and can only match the second.
+    return [
+        { rooms: [sessionUpdateRoom(userId, sessionId), userScopedRoom(userId)], except: narrowerSessionInterestRoom(userId) },
+        { rooms: [accountSocketSessionInterestRoom(userId, sessionId)] },
+    ];
+}
+
 export function getSocketRooms(params: {
     userId: string;
     clientType: SocketClientType;
     sessionId?: string | undefined;
+    sessionUpdateInterest?: string | undefined;
     machineId?: string | undefined;
     connectedServiceIds?: unknown;
 }): string[] {
@@ -27,7 +57,11 @@ export function getSocketRooms(params: {
 
     if (params.clientType === "user-scoped") {
         rooms.push(`user:${params.userId}`);
-        rooms.push(`user-scoped:${params.userId}`);
+        rooms.push(userScopedRoom(params.userId));
+        if (params.sessionUpdateInterest) {
+            rooms.push(narrowerSessionInterestRoom(params.userId));
+            rooms.push(accountSocketSessionInterestRoom(params.userId, params.sessionUpdateInterest));
+        }
     }
 
     if (params.clientType === "session-scoped") {
@@ -39,9 +73,7 @@ export function getSocketRooms(params: {
         // containers (they contain per-account cursors and may contain recipient-specific data). We still join it for future
         // broadcast-safe session events.
         rooms.push(`session:${params.sessionId}`);
-
-        // Per-account session room (safe for recipient-specific updates).
-        rooms.push(`session:${params.sessionId}:${params.userId}`);
+        rooms.push(sessionUpdateRoom(params.userId, params.sessionId));
     }
 
     if (params.clientType === "machine-scoped") {

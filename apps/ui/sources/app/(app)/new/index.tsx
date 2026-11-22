@@ -30,6 +30,7 @@ import { ComposerAuxiliaryFrame } from '@/components/sessions/shell/view/Compose
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import {
     deleteSessionDraft,
+    getSessionDraftErrorReason,
     getSessionDraftSnapshot,
     setOrdinaryEntryDraftId,
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
@@ -233,8 +234,11 @@ function NewSessionScreenForDraft(props: Readonly<{ draftId: string }>) {
 
     const draftConflictBanner = useSessionDraftConflictComposerBanner(draftSnapshot?.conflict ?? null);
     const draftSyncStatusBadge = React.useMemo(
-        () => buildSessionDraftSyncStatusBadge(draftSnapshot?.status ?? 'clean'),
-        [draftSnapshot?.status],
+        () => buildSessionDraftSyncStatusBadge(
+            draftSnapshot?.status ?? 'clean',
+            draftScope ? { readErrorReason: () => getSessionDraftErrorReason(draftScope, draftAddress) } : undefined,
+        ),
+        [draftAddress, draftScope, draftSnapshot?.status],
     );
     const composerTopContent = draftScope && draftSnapshot?.materialized && draftSnapshot.conflict && !draftConflictBanner.collapsed ? (
         <ComposerAuxiliaryFrame>

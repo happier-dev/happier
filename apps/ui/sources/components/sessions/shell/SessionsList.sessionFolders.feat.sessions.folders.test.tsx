@@ -498,6 +498,10 @@ describe('SessionsList session folders shell', () => {
                 machineId: 'machine_a',
                 directory: '/repo',
                 spawnServerId: 'server_a',
+                targetFolderId: 'folder_a',
+                targetFolderMachineId: 'machine_a',
+                targetFolderRootPath: '/repo',
+                targetFolderServerId: 'server_a',
             },
         });
     });

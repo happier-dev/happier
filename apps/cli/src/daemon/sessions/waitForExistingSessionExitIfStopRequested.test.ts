@@ -112,8 +112,8 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
 
     const readRunState = vi.fn(async () => 'dead' as const);
     const onExitObserved = vi.fn();
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    const pidToTrackedSession = new Map<number, TrackedSession>([
+      [1, { pid: 1, startedBy: 'terminal', happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
     ]);
 
     await waitForExistingSessionExitIfStopRequested({
@@ -147,8 +147,8 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
       markExitObserved();
       resolveExit = resolve;
     }));
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    const pidToTrackedSession = new Map<number, TrackedSession>([
+      [1, { pid: 1, startedBy: 'terminal', happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
     ]);
     let completed = false;
 
@@ -177,8 +177,8 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
 
     const readRunState = vi.fn(async () => 'dead' as const);
     const onExitObserved = vi.fn();
-    const pidToTrackedSession = new Map<number, any>([
-      [6480, { happySessionId: 'sess-reattached' }],
+    const pidToTrackedSession = new Map<number, TrackedSession>([
+      [6480, { pid: 6480, startedBy: 'terminal', happySessionId: 'sess-reattached' }],
     ]);
 
     await waitForExistingSessionExitIfStopRequested({

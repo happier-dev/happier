@@ -5,6 +5,8 @@ import { HappyError } from '@/utils/errors/errors';
 import { serverFetch } from '@/sync/http/client';
 import { runtimeFetchWithServerReachability } from '@/sync/runtime/connectivity/serverReachabilityRuntimeFetch';
 import { z } from 'zod';
+import { Platform } from 'react-native';
+import { requireOptionalNativeModule } from 'expo-modules-core';
 
 export async function registerPushToken(
     credentials: AuthCredentials,
@@ -14,6 +16,10 @@ export async function registerPushToken(
     const API_ENDPOINT = (opts.apiEndpoint ?? '').trim().replace(/\/+$/, '');
     const CLIENT_SERVER_URL = (opts.clientServerUrl ?? '').trim().replace(/\/+$/, '');
     const path = '/v1/push-tokens';
+    // Token platform alone cannot establish support after an OTA update.
+    const androidActionPresentationV1 = Platform.OS === 'android'
+        && requireOptionalNativeModule<{ androidActionPresentationV1?: boolean }>('ExpoNotificationCategoriesModule')
+            ?.androidActionPresentationV1 === true;
 
     const run = async () => {
         const endpointCredentials = (() => {
@@ -41,7 +47,11 @@ export async function registerPushToken(
                 'Authorization': `Bearer ${effectiveCredentials.token}`,
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify(CLIENT_SERVER_URL ? { token, clientServerUrl: CLIENT_SERVER_URL } : { token }),
+            body: JSON.stringify({
+                token,
+                ...(CLIENT_SERVER_URL ? { clientServerUrl: CLIENT_SERVER_URL } : {}),
+                ...(androidActionPresentationV1 ? { androidActionPresentationV1: true } : {}),
+            }),
         });
 
         if (!response.ok) {

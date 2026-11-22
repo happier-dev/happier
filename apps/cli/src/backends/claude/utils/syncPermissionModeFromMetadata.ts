@@ -8,7 +8,7 @@ export function syncClaudePermissionModeFromMetadata(opts: {
     lastPermissionMode: PermissionMode;
     lastPermissionModeUpdatedAt: number;
   };
-  permissionHandler: { handleModeChange: (mode: PermissionMode, updatedAt?: number) => void };
+  permissionHandler: { applyMetadataPermissionMode: (mode: PermissionMode, updatedAt: number) => void };
 }): PermissionMode | null {
   const resolved = resolvePermissionIntentFromMetadataSnapshot({
     metadata: opts.session.client.getMetadataSnapshot(),
@@ -21,7 +21,7 @@ export function syncClaudePermissionModeFromMetadata(opts: {
     intent: opts.session.lastPermissionMode,
     updatedAt: opts.session.lastPermissionModeUpdatedAt,
   };
-  opts.permissionHandler.handleModeChange(updated.intent, updated.updatedAt);
+  opts.permissionHandler.applyMetadataPermissionMode(updated.intent, updated.updatedAt);
   return updated.intent;
 }
 

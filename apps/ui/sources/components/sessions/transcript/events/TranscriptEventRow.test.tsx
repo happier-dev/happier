@@ -2,7 +2,8 @@ import { StyleSheet } from 'react-native';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
-import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture, renderScreen } from '@/dev/testkit';
+import { storage } from '@/sync/domains/state/storage';
 import { rawRecordSchema, type AgentEvent } from '@/sync/typesRaw/schemas';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
@@ -15,6 +16,14 @@ const eventRowMocks = vi.hoisted(() => ({
     modalAlert: vi.fn(),
     modalConfirm: vi.fn(),
 }));
+
+const terminalDraftSession = createSessionFixture({
+    active: true,
+    agentState: {
+        controlledByUser: false,
+        capabilities: { terminalComposerDraftPresent: true, terminalComposerClearSupported: true },
+    },
+});
 
 vi.mock('@/sync/ops/actions/defaultActionExecutor', () => ({
     createDefaultActionExecutor: () => ({
@@ -73,48 +82,59 @@ describe('TranscriptEventRow', () => {
         eventRowMocks.modalConfirm.mockResolvedValue(true);
     });
 
-    it('renders typed terminal composer draft blocked events with the clear-composer action', async () => {
-        const event = parseProtocolValidAgentEvent({
+    it.each([
+        {
             type: 'terminal-composer-draft-blocked',
             reason: 'idle_draft_guard',
             stateAtMs: 1781788925696,
             message: 'Your queued message is waiting: the terminal composer holds an unsent draft.',
-        });
-
-        const screen = await renderScreen(
-            <TranscriptEventRow
-                event={event}
-                sessionId="session-1"
-            />,
-        );
-
-        expect(screen.findByProps({ testID: 'transcript-event-terminal-composer-draft-blocked' })).toBeTruthy();
-        expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeTruthy();
-
-        await screen.pressByTestIdAsync('transcriptEvent.clearTerminalComposer');
-
-        expect(eventRowMocks.modalConfirm).toHaveBeenCalledTimes(1);
-        expect(eventRowMocks.actionExecute).toHaveBeenCalledWith(
-            'session.terminalComposer.clear',
-            { sessionId: 'session-1', expectedStateAtMs: 1781788925696 },
-            expect.objectContaining({ defaultSessionId: 'session-1', surface: 'ui_button' }),
-        );
-    });
-
-    it('renders legacy terminal composer draft session messages with the clear-composer action', async () => {
-        const event = parseProtocolValidAgentEvent({
+        },
+        {
             type: 'message',
             message: 'Your queued message is waiting: the terminal composer holds an unsent draft. Clear the draft in the terminal to deliver it.',
-        });
+        },
+    ] satisfies AgentEvent[])('offers the clear-composer action for $type while a live draft is reported', async (draftEvent) => {
+        const previousSessions = storage.getState().sessions;
+        const { id } = terminalDraftSession;
+        storage.setState({ sessions: { ...previousSessions, [id]: terminalDraftSession } });
+        try {
+            const event = parseProtocolValidAgentEvent(draftEvent);
+            const screen = await renderScreen(<TranscriptEventRow event={event} sessionId={id} />);
 
-        const screen = await renderScreen(
-            <TranscriptEventRow
-                event={event}
-                sessionId="session-1"
-            />,
-        );
+            expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeTruthy();
+            await screen.pressByTestIdAsync('transcriptEvent.clearTerminalComposer');
 
-        expect(screen.findByTestId('transcriptEvent.clearTerminalComposer')).toBeTruthy();
+            expect(eventRowMocks.modalConfirm).toHaveBeenCalledTimes(1);
+            expect(eventRowMocks.actionExecute).toHaveBeenCalledWith(
+                'session.terminalComposer.clear',
+                event.type === 'terminal-composer-draft-blocked' ? { sessionId: id, expectedStateAtMs: event.stateAtMs } : { sessionId: id },
+                expect.objectContaining({ defaultSessionId: id, surface: 'ui_button' }),
+            );
+            await screen.unmount();
+        } finally {
+            storage.setState({ sessions: previousSessions });
+        }
+    });
+
+    it('keeps the draft event visible without offering to clear an inactive session', async () => {
+        const previousSessions = storage.getState().sessions;
+        const session = { ...terminalDraftSession, active: false };
+        storage.setState({ sessions: { ...previousSessions, [session.id]: session } });
+        try {
+            const event = parseProtocolValidAgentEvent({
+                type: 'terminal-composer-draft-blocked',
+                reason: 'idle_draft_guard',
+                stateAtMs: 42,
+                message: 'Terminal draft blocked delivery.',
+            });
+            const screen = await renderScreen(<TranscriptEventRow event={event} sessionId={session.id} />);
+
+            expect(screen.findByTestId('transcript-event-terminal-composer-draft-blocked')).toBeTruthy();
+            expect(Boolean(screen.findByTestId('transcriptEvent.clearTerminalComposer'))).toBe(false);
+            await screen.unmount();
+        } finally {
+            storage.setState({ sessions: previousSessions });
+        }
     });
 
     it('derives started context compaction loading from the phase', async () => {

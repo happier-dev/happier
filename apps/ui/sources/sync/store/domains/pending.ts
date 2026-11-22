@@ -126,6 +126,14 @@ function isLocallyOwnedUncommittedOutboundProjection<S extends PendingDomainDepe
     return collectCommittedUserLocalIds(state, sessionId, new Set([localId])).size === 0;
 }
 
+export function hasUncommittedLocalOutboundProjection(
+    state: Pick<PendingDomain, 'sessionPending'> & PendingDomainDependencies,
+    sessionId: string,
+): boolean {
+    return state.sessionPending?.[sessionId]?.messages.some((message) =>
+        isLocallyOwnedUncommittedOutboundProjection(state, sessionId, message)) ?? false;
+}
+
 /**
  * A bulk server write speaks for exactly the rows it names — queued AND discarded. Omitting the
  * discarded side made this a second, less-informed decision-maker over the preservation question

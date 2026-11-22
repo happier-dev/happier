@@ -20,6 +20,7 @@ function hostSignature(snapshot: SessionDraftSnapshot | null): string {
         .join('|');
     return JSON.stringify({
         materialized: snapshot.materialized,
+        status: snapshot.status,
         authoring: authoringSignature,
         conflict: snapshot.conflict,
         localSupplement: snapshot.localSupplement,
@@ -29,7 +30,7 @@ function hostSignature(snapshot: SessionDraftSnapshot | null): string {
 /**
  * Screen-level New Session projection. Composer-only repository revisions deliberately retain
  * the previous snapshot identity: the prompt leaf observes text separately, while authoring,
- * launch custody, conflict, and materialization changes still rerender their host surfaces.
+ * launch custody, status, conflict, and materialization changes still rerender their host surfaces.
  */
 export function useNewSessionDraftHostSnapshot(
     scope: ServerAccountScope | null,

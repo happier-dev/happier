@@ -2428,6 +2428,7 @@ export class ConnectedServiceQuotasCoordinator {
     persistDurably?: boolean;
     refreshError?: ProviderAccountUsageDiagnosticV1;
     onPersistenceAccepted?: () => void;
+    forceFreshness?: boolean;
   }>): Promise<ProviderAccountUsageSnapshotV1 | null> {
     return await recordFetchedQuotaSnapshotAsAccountUsage({
       accountUsageStore: this.accountUsageStore,
@@ -4618,6 +4619,7 @@ export class ConnectedServiceQuotasCoordinator {
             sourceProviderAccountId: readCredentialAccountIdentity(record)?.providerAccountId ?? null,
             groupContexts,
             groupTargets: directGroupTargets,
+            forceFreshness: forcedRefresh,
             onPersistenceAccepted: completeScheduledRefresh,
           });
           pendingSoftSwitchTargets.push(...directGroupTargets);

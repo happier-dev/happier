@@ -4,7 +4,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { ModalPortalTargetProvider, useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 
@@ -58,6 +58,45 @@ installPopoverCommonModuleMocks({
 });
 
 describe('Popover nested modal portal target', () => {
+    it('keeps clicks inside a portaled popover from activating its React ancestors', async () => {
+        const { Popover } = await import('./Popover');
+        const anchor = document.createElement('button');
+        const container = document.createElement('div');
+        const onUnderlyingRowClick = vi.fn();
+        const onAction = vi.fn();
+        document.body.append(anchor, container);
+        const root = createRoot(container);
+        try {
+            await act(async () => {
+                root.render(
+                    <div onClick={onUnderlyingRowClick}>
+                        <Popover
+                            open
+                            anchorRef={{ current: anchor }}
+                            backdrop={false}
+                            portal={{ web: true, native: false }}
+                        >
+                            {() => <button data-testid="popover-action" onClick={onAction}>Edit tag</button>}
+                        </Popover>
+                    </div>,
+                );
+            });
+
+            const action = document.querySelector('[data-testid="popover-action"]');
+            expect(action).not.toBeNull();
+            await act(async () => {
+                action!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+            });
+
+            expect(onAction).toHaveBeenCalledOnce();
+            expect(onUnderlyingRowClick).not.toHaveBeenCalled();
+        } finally {
+            await act(async () => { root.unmount(); });
+            anchor.remove();
+            container.remove();
+        }
+    });
+
     it('provides a popover-local modal portal target to portaled popover content', async () => {
         const { Popover } = await import('./Popover');
         const parentModalTarget = document.createElement('div');

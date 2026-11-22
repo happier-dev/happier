@@ -28,7 +28,7 @@ import { readCodexRateLimitsSnapshot } from '../readCodexRateLimitsSnapshot';
 import type { CodexAppServerClient } from '../client/createCodexAppServerClient';
 import {
   isCodexRateLimitSnapshotExhausted,
-  readEarliestCodexRateLimitResetAtMs,
+  readLatestExhaustedCodexRateLimitResetAtMs,
 } from '../rateLimitSnapshot';
 import { readCodexEnvironmentAuthTokens } from '../../cli/auth/readCodexEnvironmentAuthState';
 import { mapCodexRateLimitResetCreditsToQuotaRecoveryCredits } from '../../quota/codexQuotaRecoveryCredits';
@@ -114,6 +114,7 @@ function buildRecoveryIntentFromLatestUsageLimitIssue(
     occurredAtMs: issueParsed.data.occurredAt,
     resetAtMs: issueParsed.data.usageLimit.resetAtMs,
     retryAfterMs: issueParsed.data.usageLimit.retryAfterMs,
+    windows: issueParsed.data.usageLimit.allWindows,
   });
 
   return {
@@ -169,8 +170,8 @@ function buildNextIntent(params: Readonly<{
     ...params.intent,
     status: 'waiting',
     attemptCount,
-    resetAtMs: params.resetAtMs ?? params.intent.resetAtMs,
-    nextCheckAtMs: params.resetAtMs ?? params.intent.nextCheckAtMs ?? params.intent.resetAtMs,
+    resetAtMs: params.resetAtMs,
+    nextCheckAtMs: params.resetAtMs,
     lastProbeError: null,
     ...(params.recoveryCredits ? { recoveryCredits: params.recoveryCredits } : {}),
   };
@@ -296,7 +297,7 @@ export function createCodexAppServerUsageLimitRecoveryControlAdapter(deps: Reado
     const nextIntent = buildNextIntent({
       intent,
       exhausted,
-      resetAtMs: readEarliestCodexRateLimitResetAtMs(controlResult.value),
+      resetAtMs: readLatestExhaustedCodexRateLimitResetAtMs(controlResult.value),
       recoveryCredits,
     });
     return {

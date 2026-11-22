@@ -227,8 +227,18 @@ describe('resolveToolHeaderTextPresentation (real known tools)', () => {
         expect(model.subtitle).toBe('task_1');
     });
 
-    it('capitalizes simple lowercase tool names (skill)', () => {
-        const tool = makeToolCall({ name: 'skill', input: {} });
+    it('shows the invoked Claude skill in the title before a result arrives', () => {
+        const tool = makeToolCall({
+            name: 'Skill',
+            state: 'running',
+            input: { skill: ' claude-conversations ', args: 'search recent sessions' },
+        });
+        const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
+        expect(model.title).toBe('Skill: claude-conversations');
+    });
+
+    it.each([{}, { skill: ' ' }, { skill: 42 }])('keeps the generic Skill title for unusable input %j', (input) => {
+        const tool = makeToolCall({ name: 'skill', input });
         const model = resolveToolHeaderTextPresentation({ tool, metadata: null });
         expect(model.title).toBe('Skill');
     });

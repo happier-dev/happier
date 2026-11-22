@@ -31,7 +31,6 @@ import { claimSessionRunnerOwnership, withSessionRunnerOwnership } from '@/daemo
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import { maybePassthroughProviderCliInfoRequest, passthroughProviderCliArgs } from '@/cli/providerCliPassthrough';
-import { selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup } from '@/daemon/platform/linux/daemonSpawnedSessionCgroupSelfMigration';
 import {
   overlayDirectConnectedServiceEnvironment,
   resolveDirectConnectedServiceEnvironment,
@@ -175,13 +174,6 @@ ${chalk.bold.cyan(`${agentId} CLI Options (from \`${providerHelpCommand}\`):`)}
       const profileQuery = parsed.profileQuery ?? '';
       const extraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
       const startedBy = resolved.startedBy ?? 'terminal';
-
-      const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
-      if (selfMigration) {
-        logger.debug('[session] Self-migrated daemon-spawned runner out of daemon service cgroup', {
-          migration: selfMigration,
-        });
-      }
 
       const normalizedExistingSessionId = typeof existingSessionId === 'string' ? existingSessionId.trim() : '';
       if (normalizedExistingSessionId) {

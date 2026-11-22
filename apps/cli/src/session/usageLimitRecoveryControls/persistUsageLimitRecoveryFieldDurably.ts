@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+
 import {
   SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY,
   SessionUsageLimitRecoveryV1Schema,
@@ -12,6 +14,8 @@ import {
   mergeUsageLimitRecoveryExplicitRearm,
   mergeUsageLimitRecoveryRearm,
 } from './mergeUsageLimitRecoveryIntent';
+
+type UsageLimitRecoveryFieldMergeMode = 'converge' | 'rearm' | 'explicit_rearm' | 'cancel' | 'observed_timing';
 
 function hasOwn(metadata: Record<string, unknown>, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(metadata, key);
@@ -60,7 +64,7 @@ export function mergeUsageLimitRecoveryFieldIntoMetadata(input: Readonly<{
   latestMetadata: Record<string, unknown>;
   baseMetadata: Record<string, unknown>;
   candidateMetadata: Record<string, unknown>;
-  mode?: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel';
+  mode?: UsageLimitRecoveryFieldMergeMode;
 }>): Record<string, unknown> {
   const key = SESSION_USAGE_LIMIT_RECOVERY_METADATA_KEY;
   const candidateHasField = hasOwn(input.candidateMetadata, key);
@@ -95,6 +99,25 @@ export function mergeUsageLimitRecoveryFieldIntoMetadata(input: Readonly<{
       || !hasSameUsageLimitRecoveryIdentity(parsedCandidate.data, parsedBase.data)
     ) return input.latestMetadata;
   }
+  // A current probe can replace its own earlier timing, including with an unknown
+  // reset. Preserve concurrent changes to the attempt before applying the reading.
+  if (input.mode === 'observed_timing' && parsedLatest.success && parsedCandidate.success) {
+    const parsedBase = SessionUsageLimitRecoveryV1Schema.safeParse(input.baseMetadata[key]);
+    if (parsedBase.success && hasSameUsageLimitRecoveryIdentity(parsedBase.data, parsedCandidate.data)) {
+      if (!isDeepStrictEqual(parsedLatest.data, parsedBase.data)) return input.latestMetadata;
+      const merged = mergeUsageLimitRecoveryIntent(parsedLatest.data, parsedCandidate.data);
+      if (merged) {
+        return {
+          ...input.latestMetadata,
+          [key]: {
+            ...merged,
+            resetAtMs: parsedCandidate.data.resetAtMs,
+            nextCheckAtMs: parsedCandidate.data.nextCheckAtMs,
+          },
+        };
+      }
+    }
+  }
   const merged = parsedCandidate.success && (input.mode === 'rearm' || input.mode === 'explicit_rearm')
     ? input.mode === 'explicit_rearm'
       ? mergeUsageLimitRecoveryExplicitRearm(parsedLatest.success ? parsedLatest.data : null, parsedCandidate.data)
@@ -112,7 +135,7 @@ export async function persistUsageLimitRecoveryFieldDurably(params: Readonly<{
   rawSession: RawSessionRecord;
   currentMetadata: Record<string, unknown>;
   nextMetadata: Record<string, unknown>;
-  mode?: 'converge' | 'rearm' | 'explicit_rearm' | 'cancel';
+  mode?: UsageLimitRecoveryFieldMergeMode;
 }>): Promise<Record<string, unknown>> {
   const persisted = await updateSessionMetadataWithRetry({
     token: params.token,

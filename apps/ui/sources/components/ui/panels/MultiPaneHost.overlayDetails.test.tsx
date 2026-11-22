@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { describe, expect, it, vi } from 'vitest';
-import renderer, { act } from 'react-test-renderer';
+import { act } from 'react-test-renderer';
+import { StyleSheet } from 'react-native';
 import { MultiPaneHost } from './MultiPaneHost';
 import { renderScreen } from '@/dev/testkit';
 
@@ -30,6 +31,10 @@ describe('MultiPaneHost (overlayDetails)', () => {
 
         const overlayWrapper = overlay.parent;
         expect(readZIndex(overlayWrapper?.props?.style)).toBeGreaterThan(0);
+        // The resizer extends outside the pane, so its outer shell cannot clip it.
+        expect(StyleSheet.flatten(overlayWrapper?.props.style)?.overflow).not.toBe('hidden');
+        expect(overlay.findAll((node) => StyleSheet.flatten(node.props.style)?.overflow === 'hidden').length)
+            .toBeGreaterThan(0);
 
         await screen.pressByTestIdAsync('multi-pane-details-scrim');
         expect(onCloseDetails).toHaveBeenCalledTimes(0);
