@@ -1811,6 +1811,36 @@ describe('the mounted PRs & Issues surface', () => {
         }
     });
 
+    it('shows a confirmed Machine outage while another source is still reading', async () => {
+        const harness = createHarness();
+        const shell = await mountSurface(renderShellSurface, harness, 'triage-list-pending-outage',
+            sourceContextFixture(harness), { directAccountData: true });
+        await settleWindow('view', shell);
+        await loadRemainingPage(shell);
+
+        const offline = 'This operation is unavailable on MacBook Pro. Reconnect it or choose another machine with Run on.';
+        harness.state.listInvocationFailure = sourceInstanceId => sourceInstanceId === INSTANCE_A
+            ? new PluginError({ code: 'unavailable', message: offline, retryable: true,
+                diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] }) : null;
+        let release!: () => void;
+        harness.state.scanBGate = new Promise<void>(resolve => { release = resolve; });
+        const snapshot = () => readTriageListWindowSnapshot(shell.context.hostApi, harness.ephemeralSharedScope);
+        let refresh!: Promise<unknown>;
+        try {
+            await act(async () => {
+                refresh = refreshTriageListWindow('manual', shell.context.hostApi, harness.ephemeralSharedScope);
+                await vi.waitFor(() => expect(snapshot().unreadableSources?.some(source =>
+                    source.sourceInstanceId === INSTANCE_A && source.code === 'unavailable')).toBe(true));
+            });
+            expect(snapshot().pending).not.toBe('idle');
+            await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
+            const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
+            expect(statusLines).toContain(`${offline} Showing the last known list. 1 source needs attention.`);
+        } finally {
+            await act(async () => { release(); await refresh; });
+        }
+    });
+
     it('keeps different connection causes in Manage sources behind the compact failure line', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });

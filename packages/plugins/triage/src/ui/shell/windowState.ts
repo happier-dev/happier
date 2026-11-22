@@ -674,13 +674,17 @@ export function resolveTriageListShellState(
       wholeScanFailure?.sources ?? []);
     const readingSources = viewHealth.body.coverage === 'partial'
       && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
-    const failedIds = new Set(readingSources ? [] : viewHealth.selectedFailures.map(source => source.sourceInstanceId));
+    // An explicit Machine refusal can be shown as soon as it arrives, even if other reads are pending.
+    const visibleFailures = readingSources
+      ? viewHealth.selectedFailures.filter(source => source.machineUnreachable === true)
+      : viewHealth.selectedFailures;
+    const failedIds = new Set(visibleFailures.map(source => source.sourceInstanceId));
     const retainedRows = failedIds.size > 0 && window.rows.some(row => row.observations.some(observation =>
       failedIds.has(observation.sourceInstanceId)));
     const failure = failedIds.size === 0 ? null
-      : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures,
+      : Object.freeze({ kind: 'sources' as const, sources: visibleFailures,
         ...(retainedRows ? { retainedRows: true as const } : {}) });
-    if (window.rows.length === 0 && readingSources) return Object.freeze({ kind: 'initial' });
+    if (window.rows.length === 0 && failure === null && readingSources) return Object.freeze({ kind: 'initial' });
     return Object.freeze({
       kind: 'window',
       window,
