@@ -5,13 +5,15 @@ export type SessionListStorageFilter = SessionStorageKind | 'all';
 
 type SessionStorageMetadataShape = {
     metadata?: {
+        directTranscriptPendingV1?: unknown;
         directSessionV1?: unknown;
     } | null;
 };
 
 function isDirectSessionMetadata(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
-    const directSessionV1 = (value as { directSessionV1?: unknown }).directSessionV1;
+    const { directTranscriptPendingV1, directSessionV1 } = value as NonNullable<SessionStorageMetadataShape['metadata']>;
+    if (directTranscriptPendingV1 === true) return true;
     if (!directSessionV1 || typeof directSessionV1 !== 'object') return false;
     return (directSessionV1 as { v?: unknown }).v === 1;
 }

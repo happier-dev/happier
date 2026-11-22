@@ -1,4 +1,5 @@
 import { logger } from '@/ui/logger'
+import { readSessionTranscriptStorage } from '@/agent/runtime/readSessionTranscriptStorage';
 import { buildSessionEventContent } from './sessionEventContent';
 import { EventEmitter } from 'node:events'
 import axios from 'axios';
@@ -1025,12 +1026,7 @@ export class ApiSessionClient extends EventEmitter {
 	            this.encryptionKey = session.encryptionKey;
 	            this.encryptionVariant = session.encryptionVariant;
 	        }
-	        this.transcriptStorage = (() => {
-	            const raw = typeof process.env.HAPPIER_TRANSCRIPT_STORAGE === 'string'
-	                ? process.env.HAPPIER_TRANSCRIPT_STORAGE.trim().toLowerCase()
-	                : '';
-	            return raw === 'direct' ? 'direct' : 'persisted';
-	        })();
+	        this.transcriptStorage = readSessionTranscriptStorage();
         this.startedByDaemonProcess = (() => {
             const idx = process.argv.indexOf('--started-by');
             if (idx < 0) return false;

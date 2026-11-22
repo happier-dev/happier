@@ -2602,7 +2602,9 @@ export async function runClaudeUnifiedTerminalSession<Mode extends EnhancedMode 
               // feeds the centralized goal source; never reaches the visible transcript.
               opts.onRawTranscriptValue?.(value, observation);
             },
-            proveAcceptedMainTranscript: (value) => confirmPromptAcceptedFromTranscript([value]),
+            onMainTranscriptForPromptAcceptance: (value) => {
+              confirmPromptAcceptedFromTranscript([value]);
+            },
             onSubagentFileCollectorChanged: opts.onSubagentFileCollectorChanged,
             onSessionFound: opts.onSessionFound,
             validateSessionStart: (sessionInfo) => {

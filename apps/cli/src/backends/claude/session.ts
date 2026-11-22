@@ -46,6 +46,8 @@ import {
 import { ClaudeConnectedServiceAuthGroupRequestFence } from './connectedServices/claudeConnectedServiceAuthGroupRequestFence';
 import type { SessionProviderInputConsumer } from '@/agent/runtime/sessionInput/types';
 import { readJsonlFileForward } from '@/api/directSessions/filePaging/jsonlForwardReader';
+import { readClaudeTranscriptRecordSessionId } from './utils/readClaudeTranscriptRecordSessionId';
+import { readSessionTranscriptStorage } from '@/agent/runtime/readSessionTranscriptStorage';
 
 export type SessionFoundInfo = {
     sessionId: string;
@@ -99,7 +101,7 @@ function buildClaudeDirectSessionMetadata(params: Readonly<{
     sessionId: string;
     transcriptPath: string | null;
 }>): Metadata {
-    if (process.env.HAPPIER_TRANSCRIPT_STORAGE !== 'direct') return params.metadata;
+    if (readSessionTranscriptStorage() !== 'direct') return params.metadata;
 
     const machineId = typeof params.metadata.machineId === 'string' ? params.metadata.machineId.trim() : '';
     if (!machineId) return params.metadata;
@@ -110,7 +112,7 @@ function buildClaudeDirectSessionMetadata(params: Readonly<{
         configDir,
     });
 
-    return {
+    const metadata: Metadata = {
         ...params.metadata,
         directSessionV1: {
             v: 1,
@@ -125,6 +127,8 @@ function buildClaudeDirectSessionMetadata(params: Readonly<{
             linkedAtMs: Date.now(),
         },
     };
+    delete metadata.directTranscriptPendingV1;
+    return metadata;
 }
 
 function clearClaudeLastAssistantUuid(metadata: Metadata): Metadata {
@@ -157,33 +161,6 @@ function readRecord(value: unknown): Record<string, unknown> | null {
         : null;
 }
 
-function readTrimmedString(value: unknown): string | null {
-    return typeof value === 'string' && value.trim().length > 0
-        ? value.trim()
-        : null;
-}
-
-function readClaudeTranscriptRecordSessionId(record: Record<string, unknown>): string | null {
-    if (record.type === 'system' && record.subtype === 'init') {
-        return readTrimmedString(record.session_id);
-    }
-
-    const sessionId = readTrimmedString(record.sessionId);
-    if (!sessionId) return null;
-
-    switch (record.type) {
-        case 'last-prompt':
-        case 'mode':
-        case 'permission-mode':
-        case 'system':
-        case 'user':
-        case 'assistant':
-            return sessionId;
-        default:
-            return null;
-    }
-}
-
 async function readClaudeTranscriptProofSessionId(path: string): Promise<string | null> {
     let proofSessionId: string | null = null;
     let offsetBytes = 0;
@@ -198,9 +175,7 @@ async function readClaudeTranscriptProofSessionId(path: string): Promise<string 
                 maxOversizeLineBytes: Number.POSITIVE_INFINITY,
             });
             for (const item of page.items) {
-                const record = readRecord(item.value);
-                if (!record) continue;
-                const rowSessionId = readClaudeTranscriptRecordSessionId(record);
+                const rowSessionId = readClaudeTranscriptRecordSessionId(item.value);
                 if (!rowSessionId) continue;
                 if (proofSessionId && proofSessionId !== rowSessionId) return null;
                 proofSessionId = rowSessionId;
