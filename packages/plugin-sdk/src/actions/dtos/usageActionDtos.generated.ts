@@ -416,7 +416,7 @@ export type UsageActionInputById = {
             backendModes?: string[] | undefined;
         };
         format: 'csv' | 'json' | 'text';
-        fields: ('activity' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
+        fields: ('activity' | 'agentCostBasis' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
     };
     readonly "usage.coach.apply": {
         query: {
@@ -3961,7 +3961,7 @@ export type UsageActionResultById = {
         mediaType: string;
         fileName: string;
         base64: string;
-        fields: ('activity' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
+        fields: ('activity' | 'agentCostBasis' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
         asOfMs: null | number;
     };
     readonly "usage.recap.export": {
@@ -7676,6 +7676,10 @@ export type UsageActionResultById = {
                     complete: boolean;
                     source: string;
                 }[];
+                agentCostBasis?: undefined | {
+                    agentId: string;
+                    kinds: ('estimated' | 'invoice' | 'reported' | 'unpriced')[];
+                }[];
                 priceCatalog?: undefined | {
                     v: 1;
                     models: Record<string, {
@@ -7882,6 +7886,7 @@ export type UsageActionResultById = {
                                 reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                 estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                             };
+                            agentIds?: string[] | undefined;
                         }[];
                     }> | undefined;
                     countedPricing?: boolean | undefined;
@@ -7975,6 +7980,7 @@ export type UsageActionResultById = {
                                     reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                     estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                 };
+                                agentIds?: string[] | undefined;
                             }[];
                         };
                         sources?: undefined | {
@@ -8061,6 +8067,7 @@ export type UsageActionResultById = {
                                         reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                         estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                     };
+                                    agentIds?: string[] | undefined;
                                 }[];
                             };
                         }[];
@@ -8674,6 +8681,7 @@ export type UsageActionResultById = {
                                     reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                     estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                 };
+                                agentIds?: string[] | undefined;
                             }[];
                         }> | undefined;
                     };
@@ -12497,6 +12505,10 @@ export type UsageActionResultById = {
                         complete: boolean;
                         source: string;
                     }[];
+                    agentCostBasis?: undefined | {
+                        agentId: string;
+                        kinds: ('estimated' | 'invoice' | 'reported' | 'unpriced')[];
+                    }[];
                     priceCatalog?: undefined | {
                         v: 1;
                         models: Record<string, {
@@ -12703,6 +12715,7 @@ export type UsageActionResultById = {
                                     reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                     estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                 };
+                                agentIds?: string[] | undefined;
                             }[];
                         }> | undefined;
                         countedPricing?: boolean | undefined;
@@ -12796,6 +12809,7 @@ export type UsageActionResultById = {
                                         reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                         estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                     };
+                                    agentIds?: string[] | undefined;
                                 }[];
                             };
                             sources?: undefined | {
@@ -12877,6 +12891,7 @@ export type UsageActionResultById = {
                                             reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                             estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                         };
+                                        agentIds?: string[] | undefined;
                                     }[];
                                 };
                             }[];
@@ -13490,6 +13505,7 @@ export type UsageActionResultById = {
                                         reported: 'covered' | 'plain' | 'total' | 'unavailable';
                                         estimated: 'covered' | 'plain' | 'total' | 'unavailable';
                                     };
+                                    agentIds?: string[] | undefined;
                                 }[];
                             }> | undefined;
                         };
@@ -16866,7 +16882,7 @@ export type UsageActionResultById = {
         mediaType: string;
         fileName: string;
         base64: string;
-        fields: ('activity' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
+        fields: ('activity' | 'agentCostBasis' | 'breakdowns' | 'contributions' | 'costFacts' | 'costPresentation' | 'coverage' | 'engineTimeline' | 'insights' | 'leaders' | 'messageStats' | 'modelTimeline' | 'priceCatalog' | 'renewals' | 'resets' | 'scopeKeys' | 'series' | 'tokenCategories' | 'totals')[];
         asOfMs: null | number;
     };
     readonly "usage.coach.apply": {

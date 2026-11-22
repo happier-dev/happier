@@ -8,7 +8,7 @@ import { projectUsageAgentAccountingCalendar, rebaseUsageAgentAccountingCalendar
 import { resolveUsageBucketBounds } from './usageCalendar.js';
 import { summarizeUsageExecutionSources } from './usageSourceSummary.js';
 import { projectPublicProfileAccounting, resolvePublicProfileArtifactPeriod } from '../account/publicProfileAccounting.js';
-import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates, type UsagePricingPopulationStates } from './usagePricingPopulation.js';
+import { buildUsagePricingPopulation, priceUsagePricingPopulation, resolveUsagePricingPopulationStates, withoutUsagePricingAgentIds, type UsagePricingPopulationStates } from './usagePricingPopulation.js';
 import { compareUsageRankedLeaders, decorateUsageBreakdownList, groupUsageLeaderSources, groupUsageTimelineContributions, hasUsageEventCounts, selectUsageLeaderTokenFrontier, usageTimelinePartitionKey, type UsageAnalyticsPricingPartitions, type UsagePricingRank, type UsageLeaderDimension } from './usageLeaderProjection.js';
 import { addUsageMoney, readUsageMoney, usageMoneyFromNumber, usageMoneyToNumber } from './usageMoney.js';
 import { buildUsageSummaryCalendarPricing, repriceUsageSummaryCalendarPricing } from './usageSummaryCalendarPricing.js';
@@ -93,7 +93,8 @@ function* buildSummaryPricing(value: UsageAnalyticsQueryResponse, rows: readonly
     const complete = hasCompleteUsageCostEvidence(value);
     const pricing: Record<string, UsagePricingPopulation> = { totals: admitted
         ? complete ? admitted.totals : { groups: admitted.totals.groups.map(group => ({ ...group, complete: false })) }
-        : buildUsagePricingPopulation(rows, shared, complete) };
+        : buildUsagePricingPopulation(rows, shared, complete, value.coverage !== undefined) };
+    const wholePopulation = withoutUsagePricingAgentIds(pricing.totals!);
     yield;
     const rankedPricing: RankedPricing = {};
     const rowsForBucket = groupUsageTimelineContributions(rows,
@@ -101,7 +102,7 @@ function* buildSummaryPricing(value: UsageAnalyticsQueryResponse, rows: readonly
     yield;
     for (const [index, bucket] of (value.series ?? []).entries()) {
         const selected = rowsForBucket(bucket);
-        pricing[`series:${index}`] = selected.length === rows.length ? pricing.totals!
+        pricing[`series:${index}`] = selected.length === rows.length ? wholePopulation
             : admitted?.series.get(usageTimelinePartitionKey('series', bucket)) ?? buildUsagePricingPopulation(selected, shared);
         yield;
     }
@@ -121,7 +122,7 @@ function* buildSummaryPricing(value: UsageAnalyticsQueryResponse, rows: readonly
             entries: entries.filter((entry): entry is UsageAnalyticsBreakdownEntry => entry.tokens !== undefined && entry.cost !== undefined) });
     }
     for (const [dimension, outputs] of demands) {
-        Object.assign(rankedPricing, buildRankedPricing(rows, dimension, outputs, false, shared, pricing.totals, admitted?.ranked.get(dimension)));
+        Object.assign(rankedPricing, buildRankedPricing(rows, dimension, outputs, false, shared, wholePopulation, admitted?.ranked.get(dimension)));
         yield;
     }
     for (const family of ['modelTimeline', 'engineTimeline'] as const) for (const [index, bucket] of (value[family] ?? []).entries()) {
@@ -199,7 +200,8 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
     if (calendar) {
         if (query.population === 'public_eligible_personal') accountingCalendar = { value: calendar };
         else {
-            const grouped = buildUsageSummaryCalendarPricing(calendar, rows, query, groupedPricing.pricing?.totals);
+            const grouped = buildUsageSummaryCalendarPricing(calendar, rows, query, groupedPricing.pricing?.totals
+                && withoutUsagePricingAgentIds(groupedPricing.pricing.totals));
             accountingCalendar = { value: grouped.value, pricing: grouped.populations };
         }
         yield;
@@ -217,7 +219,7 @@ export function* projectUsageAnalyticsSummarySteps(value: UsageAnalyticsQueryRes
     };
     for (const [index, group] of accountRows.entries()) {
         const population = groupedPricing.pricing ? group.rows.length === rows.length
-            ? groupedPricing.pricing.totals! : buildUsagePricingPopulation(group.rows) : undefined;
+            ? withoutUsagePricingAgentIds(groupedPricing.pricing.totals!) : buildUsagePricingPopulation(group.rows) : undefined;
         if (groupedPricing.pricing && population) groupedPricing.pricing[`account:${index}`] = population;
         const priced = group.rows.flatMap(row => {
             const basis = resolveUsageCostBasis(row.cost, 'api_equivalent');
@@ -293,7 +295,7 @@ export function repriceUsageAnalyticsSummary(value: UsageAnalyticsQueryResponse,
         breakdowns, leaders,
         modelTimeline: value.modelTimeline?.map((bucket, index) => ({ ...bucket, leaders: ranked(`modelTimeline:${index}`, bucket.leaders.length) ?? bucket.leaders })),
         engineTimeline: value.engineTimeline?.map((bucket, index) => ({ ...bucket, leaders: ranked(`engineTimeline:${index}`, bucket.leaders.length) ?? bucket.leaders })),
-        costFacts: total.facts, coverage,
+        costFacts: total.facts, agentCostBasis: total.agentCostBasis.length ? total.agentCostBasis : undefined, coverage,
         costPresentation: total.selected ? { mode, effectiveUsd: total.selected.amountUsd, currency: total.selected.currency, source: total.selected.source } : undefined,
         insights,
         summary: { ...summary, costMode: mode, catalogRevision: catalog.provenance.revision,

@@ -15969,6 +15969,7 @@ settingsSession: {
             coverageAvailable: "Informat",
             coverageUnknown: "Cobertura desconeguda",
             coverageHowMeasured: "Mesurat a partir del que informa el proveïdor",
+            coverageHowEstimated: "Estimat a partir dels preus",
             coverageHowFromLogs: "Llegit dels registres de les sessions",
             coverageHowNotAdded: "Encara no es compta",
             coverageHowUnknown: "No se sap com es compta",

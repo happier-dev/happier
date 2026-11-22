@@ -17895,6 +17895,7 @@ settingsSession: {
             coverageAvailable: "Зарегистрировано",
             coverageUnknown: "Полнота данных неизвестна",
             coverageHowMeasured: "Измерено по данным провайдера",
+            coverageHowEstimated: "Оценено по ценам",
             coverageHowFromLogs: "Прочитано из журналов сессий",
             coverageHowNotAdded: "Пока не учитывается",
             coverageHowUnknown: "Неизвестно, как учитывается",

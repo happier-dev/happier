@@ -13,7 +13,7 @@ import { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './u
 export { hasCompleteUsageCostEvidence, repriceUsageAnalyticsCoverage } from './usageAnalyticsDemandProjection.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { repriceUsageAnalyticsSummary } from './usageSummary.js';
-import { buildUsagePricedProjectionSteps } from './usagePricingPopulation.js';
+import { buildUsagePricedProjectionSteps, withoutUsagePricingAgentIds } from './usagePricingPopulation.js';
 import { usageModelCostOperandKey, type UsagePricingReuse } from './usagePricingReuse.js';
 export { createUsagePricingReuse, type UsagePricingReuse, type UsagePricingReuseCheckpoint } from './usagePricingReuse.js';
 export { projectUsageAnalyticsSummary, projectUsageAnalyticsSummarySteps } from './usageSummary.js';
@@ -180,11 +180,12 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
     contributions.push({ ...row, cost });
     if (shouldYield()) yield;
   }
-  const { total: totalPartition, project: buildPartition } = yield* buildUsagePricedProjectionSteps(contributions, mode, shouldYield);
+  const { total: totalPartition, project: buildPartition } = yield* buildUsagePricedProjectionSteps(contributions, mode, shouldYield, undefined, value.coverage !== undefined);
   const totalPopulation = totalPartition.population;
   const partitions: UsageAnalyticsPricingPartitions = { totals: totalPopulation, series: new Map(), ranked: new Map(), timelines: new Map() };
+  const sharedPartition = { ...totalPartition, population: withoutUsagePricingAgentIds(totalPopulation) };
   const pricePartition = function* (rows: readonly UsageAnalyticsContribution[]) {
-    return rows.length === contributions.length ? totalPartition
+    return rows.length === contributions.length ? sharedPartition
       : yield* buildPartition(rows);
   };
   const totalCost = totalPartition.cost;
@@ -217,7 +218,9 @@ export function* repriceUsageAnalyticsResponseSteps(value: UsageAnalyticsQueryRe
     const { cacheSavingsUsd: _oldSavings, ...otherInsights } = insights;
     insights = { ...otherInsights, ...(cacheSavingsComplete ? { cacheSavingsUsd: usageMoneyToNumber(cacheSavings) } : {}) };
   }
-  const response = { ...value, totals, contributions, costFacts: groupedFacts, priceCatalog: catalog, costPresentation, coverage, insights,
+  const { agentCostBasis } = totalPartition;
+  const response = { ...value, totals, contributions, costFacts: groupedFacts,
+    agentCostBasis: agentCostBasis.length ? agentCostBasis : undefined, priceCatalog: catalog, costPresentation, coverage, insights,
     series: ranking.series,
     breakdowns: ranking.breakdowns, leaders: ranking.leaders, modelTimeline: ranking.modelTimeline, engineTimeline: ranking.engineTimeline };
   Object.defineProperty(totals.cost, usagePageCostProjectionBasis, { value: { response, mode, catalog, overrides, partitions } });

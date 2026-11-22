@@ -2,7 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { areSameAgentRoutingIdentity } from '@happier-dev/agents';
 import { HappierDataMetric, UsageSourceCoverageBody } from '@happier-dev/plugin-ui/presentation';
-import type { UsageAnalyticsCoverage } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageAnalyticsCoverage, UsageAnalyticsQueryResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasurements } from '@happier-dev/protocol/usage/usageAggregation';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { usageSourceAgentId } from '@/sync/domains/usage/usageLabels';
@@ -20,11 +20,13 @@ const statusKeys = {
   unknown: 'usage.board.sources.coverageUnknown', unsupported: 'usage.board.sources.unsupported',
   pending: 'usage.board.page.loading', error: 'usage.board.sources.failed',
 } as const;
-/** How a capture's usage is known, in plain words (acceptance 1122 #9); a capture with no such fact is "not known". */
-const captureKeys = {
-  measured: 'usage.board.sources.coverageHowMeasured', from_logs: 'usage.board.sources.coverageHowFromLogs',
-  not_added: 'usage.board.sources.coverageHowNotAdded',
-} as const;
+type AgentCostBasis = NonNullable<UsageAnalyticsQueryResponse['agentCostBasis']>;
+const costBasisKeys = {
+  reported: 'usage.board.sources.coverageHowMeasured',
+  estimated: 'usage.board.sources.coverageHowEstimated',
+  invoice: 'usage.board.page.kindInvoice',
+  unpriced: 'usage.board.page.kindUnpriced',
+} as const satisfies Record<AgentCostBasis[number]['kinds'][number], string>;
 
 /** Witnessed accounting coverage, never a guessed Agent support table or a second discovery read. */
 export function UsageSourceCoverageWidget(props: UsageBodyProps) {
@@ -35,7 +37,8 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const description = props.slice.accounting ? usageCoverageDescription(props.slice, ['accounting']) : null;
   const summary = props.slice.accounting ? usageCoverageSummary(props.slice, ['accounting']) : null;
   // A status every row shares is said once, by the caveat line under the rows, never again on each row.
-  const rows = React.useMemo(() => groupCoverageRows(props.slice.accounting?.coverage?.sources ?? [], summary === usagePartialHistoryLabel()),
+  const rows = React.useMemo(() => groupCoverageRows(props.slice.accounting?.coverage?.sources ?? [],
+    props.slice.accounting?.agentCostBasis ?? [], summary === usagePartialHistoryLabel()),
     [props.slice.accounting, summary]);
   const led = leadingUsageRows(rows, expanded);
   // The caveat is one compact line; its sources and reasons are one press away (detail on demand), never a paragraph.
@@ -57,15 +60,15 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
     </View> : null} />;
 }
 
-type CoverageGroup = { agentId: string | null; title: string; captures: Set<string>; kinds: Set<keyof typeof captureKeys | null>;
+type CoverageGroup = { agentId: string | null; title: string; captures: Set<string>;
   status: CoverageStatus; machines: Set<string>; unbound: boolean };
 
 /**
  * Coverage shows one row per Agent (its routing identity, through the source's declaration; the title is display
- * only). Its line says how its usage is known; the capture or captures it comes from are its spoken detail. A
+ * only). Its line describes the accounting population's cost basis. A
  * capture that names no Agent keeps its own row. Several capture paths can share an Agent and a Machine.
  */
-function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], partialSaid: boolean) {
+function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][], costBasis: AgentCostBasis, partialSaid: boolean) {
   const groups: CoverageGroup[] = [];
   for (const source of sources) {
     const agentId = usageSourceAgentId(source.source);
@@ -77,21 +80,21 @@ function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][n
       ? row.agentId === null && row.title === title
       : row.agentId !== null && areSameAgentRoutingIdentity(row.agentId, agentId));
     if (!group) {
-      group = { agentId, title, captures: new Set(), kinds: new Set(), status, machines: new Set(), unbound: false };
+      group = { agentId, title, captures: new Set(), status, machines: new Set(), unbound: false };
       groups.push(group);
     }
     if (agentId !== null) group.captures.add(usageSourceTitle(source.source));
     if (source.machineId) group.machines.add(source.machineId);
     else group.unbound = true;
-    group.kinds.add(source.captureKind ?? null);
     if (COVERAGE_STATUS_RANK.indexOf(status) < COVERAGE_STATUS_RANK.indexOf(group.status)) group.status = status;
   }
   // One status per row, the most limiting one.
   const shared = partialSaid && groups.every(group => group.status === 'partial');
-  return groups.map(({ title, captures, kinds, status, machines, unbound }) => {
-    // The visible line says how the Agent's usage is known; which captures it comes from is the row's spoken detail.
-    const known = [...kinds].filter((kind): kind is keyof typeof captureKeys => kind !== null);
-    const how = known.length > 0 ? known.map(kind => t(captureKeys[kind])).join(', ') : t('usage.board.sources.coverageHowUnknown');
+  return groups.map(({ agentId, title, captures, status, machines, unbound }) => {
+    const kinds = agentId === null ? [] : [...new Set(costBasis
+      .filter(basis => areSameAgentRoutingIdentity(agentId, basis.agentId)).flatMap(basis => basis.kinds))];
+    const how = kinds.length ? kinds.map(kind => t(costBasisKeys[kind])).join(' · ')
+      : t('usage.board.sources.coverageHowUnknown');
     return { title,
       label: [how, !unbound && machines.size > 1 ? t('usage.board.page.machinesCount', { count: machines.size }) : null,
         shared ? null : t(statusKeys[status])].filter(Boolean).join(' · '),

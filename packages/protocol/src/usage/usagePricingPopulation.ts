@@ -2,7 +2,7 @@ import type { UsageAnalyticsContribution, UsageObservationCost, UsageObservation
 import { addUsageCost, aggregateUsageContributionCosts, addUsageMeasuredTokens, createUsageCostAccumulator, createUsageCostPartitionAccumulator, addUsageTokens, createEmptyUsageCost, resolveUsageContributionCosts, selectResolvedUsageCost, usageCostAggregationBasis, type AggregatedUsageCost } from './usageAggregation.js';
 import { createUsageModelCostEstimator, priceUsageObservation } from './usageCost.js';
 import type { UsagePricingReuse } from './usagePricingReuse.js';
-import { hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
+import { createUsageAgentCostBasis, hasUnresolvedUsageReportedTotalScope, resolveUsageCostBasis, resolveUsageCostFacts, serializeUsageCostBasis, type UsageCostMode } from './usageCostFacts.js';
 import { createUsageSourceCostFacts } from './usageCostFactTotals.js';
 import type { UsageModelPriceCatalog, UsageModelPriceOverridesV1 } from './usageModelPriceCatalog.js';
 import { hasZeroUsageTokens, resolveUsageTokenCategories } from './usageTokenCategories.js';
@@ -15,7 +15,7 @@ const tokenFields = ['input', 'output', 'reasoning', 'cacheRead', 'cacheWrite', 
 const moneyFields = ['reportedUsd', 'estimatedUsd', 'invoiceUsd'] as const;
 /** The canonical pricing projector reads only these admitted, tariff-independent operands. */
 export type UsagePricingOperand = Pick<UsageAnalyticsContribution,
-    'id' | 'modelId' | 'tokenCategories' | 'tokens' | 'cost' | 'eventCount' | 'observedAtMs'>;
+    'id' | 'modelId' | 'tokenCategories' | 'tokens' | 'cost' | 'eventCount' | 'observedAtMs'> & Partial<Pick<UsageAnalyticsContribution, 'agentId'>>;
 export type UsagePricingPopulationStates = ReadonlyMap<UsageCostMode, ReadonlyMap<UsagePricingOperand, UsageObservationCost>>;
 export type UsagePricingOperandSelection = Group['selection'];
 
@@ -30,10 +30,10 @@ export function projectUsagePricingOperandSelections(rows: readonly UsagePricing
 
 /** Retained selection states enter the existing group accumulator, never another money fold. */
 export function buildUsageAdmittedPricingPopulation(rows: readonly UsagePricingOperand[],
-    selections: ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection>, complete = true): UsagePricingPopulation {
+    selections: ReadonlyMap<UsagePricingOperand, UsagePricingOperandSelection>, complete = true, includeAgentIds = false): UsagePricingPopulation {
     const noReportCosts: UsagePricingPopulationStates = new Map();
     const steps = prepareUsagePricingPopulationSteps(rows, complete, row =>
-        prepareUsagePricingOperand(row, noReportCosts, undefined, selections.get(row)));
+        prepareUsagePricingOperand(row, noReportCosts, undefined, selections.get(row)), undefined, undefined, includeAgentIds);
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value.population;
@@ -121,8 +121,10 @@ function prepareUsagePricingOperand(row: UsagePricingOperand, shared: UsagePrici
 type PrepareUsagePricingOperand = (row: UsagePricingOperand) => ReturnType<typeof prepareUsagePricingOperand>;
 
 /** Group only tariff/availability/raw-fact dimensions, never event ids or times. */
-export function buildUsagePricingPopulation(rows: readonly UsagePricingOperand[], sharedStates = resolveUsagePricingPopulationStates(rows), complete = true): UsagePricingPopulation {
-    const steps = prepareUsagePricingPopulationSteps(rows, complete, row => prepareUsagePricingOperand(row, sharedStates));
+export function buildUsagePricingPopulation(rows: readonly UsagePricingOperand[], sharedStates = resolveUsagePricingPopulationStates(rows),
+    complete = true, includeAgentIds = false): UsagePricingPopulation {
+    const steps = prepareUsagePricingPopulationSteps(rows, complete, row => prepareUsagePricingOperand(row, sharedStates),
+        undefined, undefined, includeAgentIds);
     let next = steps.next();
     while (!next.done) next = steps.next();
     return next.value.population;
@@ -138,15 +140,15 @@ export function buildUsagePricedPartition(rows: readonly UsagePricingOperand[], 
 }
 
 function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
-    admit: PrepareUsagePricingOperand, shouldYield?: () => boolean) {
-    const { population, prices, resolvedCost } = yield* prepareUsagePricingPopulationSteps(rows, true, admit, mode, shouldYield);
+    admit: PrepareUsagePricingOperand, shouldYield?: () => boolean, includeAgentIds = false) {
+    const { population, prices, resolvedCost, agentCostBasis } = yield* prepareUsagePricingPopulationSteps(rows, true, admit, mode, shouldYield, includeAgentIds);
     // Selected provenance follows the witnessed row order, including interleaved
     // covered facts. Compact grouping is a separate operand, not a new ordering
     // of that canonical rich fold.
     const cost = rows.length === 0 ? aggregateUsageContributionCosts([], mode)
         : resolvedCost!;
     const priced = prices.filter(price => price.api !== undefined);
-    return { population, cost,
+    return { population, cost, agentCostBasis,
         allPriced: prices.every(price => price.api !== undefined),
         hasPrices: prices.some(price => price.api !== undefined),
         api: prices.reduce((sum, price) => addUsageMoney(sum, price.api ?? usageMoneyFromNumber(0)), usageMoneyFromNumber(0)),
@@ -155,7 +157,7 @@ function* buildUsagePricedPartitionSteps(rows: readonly UsagePricingOperand[], m
 
 /** The total's admission fixes the monetary operands for all of its subsets. */
 export function* buildUsagePricedProjectionSteps(rows: readonly UsagePricingOperand[], mode: UsageCostMode,
-    shouldYield?: () => boolean, states: UsagePricingPopulationStates = resolveUsagePricingPopulationStates(rows)):
+    shouldYield?: () => boolean, states: UsagePricingPopulationStates = resolveUsagePricingPopulationStates(rows), includeAgentIds = false):
     Generator<void, {
         total: ReturnType<typeof buildUsagePricedPartition>;
         project: (subset: readonly UsagePricingOperand[]) => Generator<void, ReturnType<typeof buildUsagePricedPartition>, void>;
@@ -165,28 +167,33 @@ export function* buildUsagePricedProjectionSteps(rows: readonly UsagePricingOper
         const operand = prepareUsagePricingOperand(row, states, mode);
         admitted.set(row, operand);
         return operand;
-    }, shouldYield);
+    }, shouldYield, includeAgentIds);
     return { total, project: (subset: readonly UsagePricingOperand[]) =>
         buildUsagePricedPartitionSteps(subset, mode, row => admitted.get(row)!, shouldYield) };
 }
 
 function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[], complete: boolean,
-    admit: PrepareUsagePricingOperand, selectedMode?: UsageCostMode, shouldYield?: () => boolean) {
+    admit: PrepareUsagePricingOperand, selectedMode?: UsageCostMode, shouldYield?: () => boolean, includeAgentIds = false) {
     const includePrices = selectedMode !== undefined;
+    const agentBasis = includePrices && includeAgentIds ? createUsageAgentCostBasis() : undefined;
     let observedCost: UsageObservationCost;
     const resolvedCosts = selectedMode === undefined ? undefined
         : createUsageCostPartitionAccumulator(createEmptyUsageCost(), selectedMode, () => observedCost);
     const grouped = new Map<string, { group: Group; costs?: ReturnType<typeof createUsageCostAccumulator>;
-        api?: ReturnType<typeof createUsageMoneyAccumulator>; allPriced: boolean; source?: string }>();
+        api?: ReturnType<typeof createUsageMoneyAccumulator>; allPriced: boolean; source?: string; agentIds?: Set<string> }>();
     for (const row of rows) {
         const { categories, cost, raw, states, signature, selected } = admit(row);
         resolvedCosts?.add(cost, selected);
+        if (agentBasis && row.agentId && (states.auto === 'plain' || states.auto === 'total')) {
+            agentBasis.add([row.agentId], resolveUsageCostFacts(cost));
+        }
         const partition = grouped.get(signature);
         const api = includePrices && cost.apiEquivalentUsd !== undefined
             ? readUsageMoney(cost, 'apiEquivalentUsd', cost.apiEquivalentUsd) : undefined;
         if (partition) {
             partition.costs ??= createUsageCostAccumulator(partition.group.cost);
             partition.costs.add(raw);
+            if (includeAgentIds && row.agentId) (partition.agentIds ??= new Set()).add(row.agentId);
             const group = partition.group;
             group.tokens = addUsageMeasuredTokens(group.tokens, row.tokens);
             group.categories = categories && group.categories ? addUsageTokens(group.categories, categories) : categories;
@@ -201,6 +208,7 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
             }
         } else {
             grouped.set(signature, { allPriced: api !== undefined,
+                ...(includeAgentIds && row.agentId ? { agentIds: new Set([row.agentId]) } : {}),
                 ...(includePrices ? { api: createUsageMoneyAccumulator(api ?? usageMoneyFromNumber(0)), source: cost.pricingSource } : {}),
                 group: { modelId: row.modelId, categories,
             categoryUnits: {}, cost: raw, costUnits: {}, tokens: row.tokens,
@@ -211,9 +219,10 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
     }
     const groups: Group[] = [];
     let observed: ReturnType<typeof createUsageCostAccumulator> | undefined;
-    for (const { group, costs } of grouped.values()) {
+    for (const { group, costs, agentIds } of grouped.values()) {
         const cost = costs?.value() ?? group.cost;
-        groups.push({ ...group, cost, categoryUnits: group.categories ? units(group.categories, tokenFields) : {}, costUnits: costUnits(cost) });
+        groups.push({ ...group, cost, categoryUnits: group.categories ? units(group.categories, tokenFields) : {}, costUnits: costUnits(cost),
+            ...(agentIds ? { agentIds: [...agentIds].sort() } : {}) });
         if (selectedMode !== undefined) {
             if (observed) observed.add(cost);
             else observed = createUsageCostAccumulator(cost);
@@ -221,12 +230,19 @@ function* prepareUsagePricingPopulationSteps(rows: readonly UsagePricingOperand[
         if (shouldYield?.()) yield;
     }
     if (selectedMode !== undefined) observedCost = observed?.value() ?? createEmptyUsageCost();
-    return { population: { groups }, prices: includePrices ? [...grouped.values()].map(partition => ({
+    return { population: { groups }, agentCostBasis: agentBasis?.values() ?? [], prices: includePrices ? [...grouped.values()].map(partition => ({
         api: partition.allPriced ? partition.api!.value() : undefined, source: partition.source,
     })) : [], resolvedCost: resolvedCosts?.value() };
 }
 
-/** Combine already-admitted partitions in group space, without revisiting events. */
+/** Non-total projections reuse the same tariff operands without the totals-only identity evidence. */
+export function withoutUsagePricingAgentIds(population: UsagePricingPopulation): UsagePricingPopulation {
+    return population.groups.some(group => group.agentIds)
+        ? { groups: population.groups.map(({ agentIds: _agentIds, ...group }) => group) }
+        : population;
+}
+
+/** Combine admitted partitions in group space, without revisiting events. */
 export function mergeUsagePricingPopulations(populations: readonly UsagePricingPopulation[]): UsagePricingPopulation {
     const grouped = new Map<string, Group>();
     for (const population of populations) for (const group of population.groups) {
@@ -237,6 +253,7 @@ export function mergeUsagePricingPopulations(populations: readonly UsagePricingP
         const categories = previous.categories && group.categories
             ? addUsageTokens(restore(previous.categories, previous.categoryUnits), restore(group.categories, group.categoryUnits)) : null;
         grouped.set(key, { ...previous, cost, costUnits: costUnits(cost), categories,
+            ...(group.agentIds ? { agentIds: [...new Set([...previous.agentIds ?? [], ...group.agentIds])].sort() } : {}),
             categoryUnits: categories ? units(categories, tokenFields) : {}, tokens: addUsageMeasuredTokens(previous.tokens, group.tokens),
             contributionCount: previous.contributionCount + group.contributionCount, eventCount: previous.eventCount + group.eventCount,
             asOfMs: Math.min(previous.asOfMs, group.asOfMs), complete: previous.complete && group.complete });
@@ -253,6 +270,7 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
     let pricedContributionCount = 0;
     const pricingSources = new Set<string>();
     const facts = createUsageSourceCostFacts();
+    const agentBasis = createUsageAgentCostBasis();
     const estimateCost = createUsageModelCostEstimator(catalog, overrides, reuse);
     for (const group of population.groups) {
         const categories = group.categories ? restore(group.categories, group.categoryUnits) : null;
@@ -268,7 +286,11 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
         }
         const base = { tokens: group.tokens, eventCount: group.eventCount,
             asOfMs: group.asOfMs, complete: group.complete };
-        for (const fact of resolveUsageCostFacts(cost)) facts.add({ ...base, ...fact, currency: fact.kind === 'api_equivalent' ? 'USD' : fact.currency }, group.contributionCount);
+        const existing = resolveUsageCostFacts(cost);
+        if (group.agentIds && (group.selection.auto === 'plain' || group.selection.auto === 'total')) {
+            agentBasis.add(group.agentIds, existing);
+        }
+        for (const fact of existing) facts.add({ ...base, ...fact, currency: fact.kind === 'api_equivalent' ? 'USD' : fact.currency }, group.contributionCount);
         if (!estimate && cost.apiEquivalentUsd === undefined) facts.add({ ...base, kind: 'unpriced', currency: 'USD', amountUsd: null,
             source: categories ? 'model_price_unknown' : 'token_categories_unknown', complete: false }, group.contributionCount);
         // The producer already admitted each group's report selection. A missing
@@ -283,5 +305,5 @@ export function priceUsagePricingPopulation(population: UsagePricingPopulation, 
     const projectedFacts = facts.values();
     return { cost: serializeUsageCostBasis(total, mode), selected, selectedCost: selectResolvedUsageCost(total, mode),
         pricedContributionCount, pricingSources: [...pricingSources].sort(), apiEquivalentUsd: total.apiEquivalentUsd ?? null,
-        facts: projectedFacts, cacheSavingsUsd: usageMoneyToNumber(savings), cacheSavingsComplete };
+        facts: projectedFacts, agentCostBasis: agentBasis.values(), cacheSavingsUsd: usageMoneyToNumber(savings), cacheSavingsComplete };
 }

@@ -17592,6 +17592,7 @@ settingsSession: {
             coverageAvailable: "已报告",
             coverageUnknown: "覆盖情况未知",
             coverageHowMeasured: "根据提供方报告计量",
+            coverageHowEstimated: "按价格估算",
             coverageHowFromLogs: "从会话日志读取",
             coverageHowNotAdded: "尚未计入",
             coverageHowUnknown: "不清楚如何计入",

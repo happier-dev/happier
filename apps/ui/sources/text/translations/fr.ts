@@ -17821,6 +17821,7 @@ settingsSession: {
             coverageAvailable: "Rapporté",
             coverageUnknown: "Couverture inconnue",
             coverageHowMeasured: "Mesuré d'après ce que le fournisseur indique",
+            coverageHowEstimated: "Estimé à partir des prix",
             coverageHowFromLogs: "Lu dans les journaux de ses sessions",
             coverageHowNotAdded: "Pas encore compté",
             coverageHowUnknown: "On ne sait pas comment c'est compté",

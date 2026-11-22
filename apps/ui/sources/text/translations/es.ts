@@ -17947,6 +17947,7 @@ settingsSession: {
             coverageAvailable: "Registrado",
             coverageUnknown: "Cobertura desconocida",
             coverageHowMeasured: "Medido a partir de lo que informa el proveedor",
+            coverageHowEstimated: "Estimado a partir de los precios",
             coverageHowFromLogs: "Leído de los registros de sus sesiones",
             coverageHowNotAdded: "Aún no se cuenta",
             coverageHowUnknown: "No se sabe cómo se cuenta",

@@ -18227,6 +18227,7 @@ settingsSession: {
             coverageAvailable: "報告済み",
             coverageUnknown: "網羅性不明",
             coverageHowMeasured: "プロバイダーの報告から計測",
+            coverageHowEstimated: "価格に基づく推定",
             coverageHowFromLogs: "セッションログから読み取り",
             coverageHowNotAdded: "まだ集計されていません",
             coverageHowUnknown: "集計方法は不明です",

@@ -21327,6 +21327,7 @@ const enUsage = {
       coverageAvailable: PUBLIC_USAGE_ORIGINAL_COPY_EN.sources.coverageAvailable,
       coverageUnknown: PUBLIC_USAGE_ORIGINAL_COPY_EN.sources.coverageUnknown,
       coverageHowMeasured: "Measured from what the provider reports",
+      coverageHowEstimated: "Estimated from prices",
       coverageHowFromLogs: "Read from its session logs",
       coverageHowNotAdded: "Not counted yet",
       coverageHowUnknown: "Not known how it's counted",
