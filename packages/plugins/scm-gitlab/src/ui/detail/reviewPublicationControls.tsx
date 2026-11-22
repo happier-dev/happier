@@ -1,10 +1,14 @@
 import * as React from 'react';
+import {
+  buildReviewCommentPublicationEntryV1, buildReviewPublicationSummaryV1, serializeReviewPublicationSummaryForForgeV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
 import {
   Banner,
   Button,
   Form,
   MarkdownEditor,
+  ReviewPublicationSummaryPreview,
   Row,
   Stack,
   Status,
@@ -12,6 +16,7 @@ import {
   Action,
   projectPluginActionControlExecutionV1,
   isPluginActionConfirmationDeclined,
+  useHappierReviewPublicationEvidence,
   usePluginTranslation,
   type PluginActionExecution,
   type PluginTranslate,
@@ -72,16 +77,6 @@ function publicationTargetOf(
   };
 }
 
-function publicationEntry(proposal: GitlabStringReviewProposalV1) {
-  return {
-    happierCommentId: proposal.id,
-    expectedServerRevision: proposal.serverRevision,
-    anchor: proposal.anchor,
-    snapshot: proposal.snapshot,
-    body: proposal.body,
-  };
-}
-
 function mutationTargetOf(input: TriageDetailSurfaceInputV1) {
   return {
     v: 1 as const,
@@ -105,7 +100,7 @@ export function buildGitlabMergeRequestReviewPublicationInputV1(
       target: publicationTargetOf(input, null),
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
-      entries: proposals.map(publicationEntry),
+      entries: proposals.map(buildReviewCommentPublicationEntryV1),
       verdict,
     },
     ...(acknowledgedPreexistingDraftIds === undefined
@@ -127,7 +122,7 @@ export function buildGitlabMergeRequestReviewCommentCreateInputV1(
       target: publicationTargetOf(input, null),
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
-      entries: [publicationEntry(proposal)],
+      entries: [buildReviewCommentPublicationEntryV1(proposal)],
       verdict: null,
     },
   });
@@ -146,7 +141,7 @@ export function buildGitlabMergeRequestThreadReplyInputV1(
       target: publicationTargetOf(input, { kindId: 'review-thread', targetId: discussionId }),
       baseRevision: null,
       headRevision: null,
-      entries: [publicationEntry(proposal)],
+      entries: [buildReviewCommentPublicationEntryV1(proposal)],
       verdict: null,
     },
   });
@@ -163,7 +158,7 @@ export function buildGitlabIssueCommentPublicationInputV1(
       target: publicationTargetOf(input, null),
       baseRevision: null,
       headRevision: null,
-      entries: [publicationEntry(proposal)],
+      entries: [buildReviewCommentPublicationEntryV1(proposal)],
       verdict: null,
     },
   });
@@ -372,6 +367,8 @@ export function GitlabMergeRequestPublicationControls({
   const [verdict, setVerdict] = React.useState<GitlabVerdictChoice>('none');
   const [summary, setSummary] = React.useState('');
   const [acknowledgement, setAcknowledgement] = React.useState<readonly string[] | null>(null);
+  const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
+  const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
 
   React.useEffect(() => {
     if (proposals.status !== 'ready') return;
@@ -383,15 +380,23 @@ export function GitlabMergeRequestPublicationControls({
 
   React.useEffect(() => {
     setAcknowledgement(null);
-  }, [selectedIds, summary, verdict]);
+  }, [includeWalkthrough, quality, selectedIds, summary, verdict, walkthrough]);
 
   const selected = proposals.proposals.filter((proposal) => selectedIds.includes(proposal.id));
   const summaryBody = summary.trim();
-  const verdictValue: GitlabMergeRequestReviewPublicationInputV1['publicationPlan']['verdict'] = verdict === 'none'
+  const headRevision = input.observation.snapshot.reviewRevision?.headSha;
+  const publication = verdict === 'none' || !headRevision || summaryBody === ''
+    ? null : { kind: verdict, summary: buildReviewPublicationSummaryV1({
+        verdict: { kind: verdict, body: summaryBody },
+        headRevision,
+        findings: selected.flatMap(proposal => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
+        reviewId: input.admittedReview?.reviewId,
+        quality,
+        walkthrough: includeWalkthrough ? walkthrough : undefined,
+      }) };
+  const verdictValue: GitlabMergeRequestReviewPublicationInputV1['publicationPlan']['verdict'] = publication === null
     ? null
-    : summaryBody === ''
-      ? null
-      : { kind: verdict, body: summaryBody };
+    : { kind: publication.kind, body: serializeReviewPublicationSummaryForForgeV1(publication.summary) };
   const verdictNeedsBody = verdict !== 'none' && summaryBody === '';
   const submitPayload = buildGitlabMergeRequestReviewPublicationInputV1(
     input,
@@ -494,6 +499,11 @@ export function GitlabMergeRequestPublicationControls({
           onChange={setSummary}
         />
       </Form.Field>
+      {verdict !== 'none' && walkthrough?.length ? <Form.Toggle
+        label={text('plugins.gitlab.ui.publication.includeWalkthrough', 'Include the walkthrough')}
+        value={includeWalkthrough} onChange={setIncludeWalkthrough} /> : null}
+      {submitPayload?.publicationPlan.verdict && publication
+        ? <ReviewPublicationSummaryPreview testID="gitlab-review-publication-preview" parts={publication.summary} /> : null}
       {verdictNeedsBody ? (
         <Text
           variant="micro"

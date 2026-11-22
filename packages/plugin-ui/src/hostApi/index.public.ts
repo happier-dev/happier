@@ -5,9 +5,12 @@ import {
   useSyncExternalStore,
 } from 'react';
 import type { ResourceContent } from '@happier-dev/plugin-sdk/ui';
+import type { ReviewPrRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
+import type { ReviewPublicationWalkthroughStopV1 } from '@happier-dev/protocol/reviews/comments/actions';
 
 import { usePluginHostApiResourceActive, usePluginHostApiResourceStore } from './context.js';
 import { usePluginHostReadiness, type PluginUiHostReadiness } from './readiness.public.js';
+import { reviewDetailProjection } from './reviewDetailProjection.js';
 export { usePluginHostReadiness, type PluginUiHostReadiness } from './readiness.public.js';
 import type {
   PluginUiResourceEntry,
@@ -215,6 +218,23 @@ export function useLivePluginResourceProjection<T, Selected>(
   );
   const value = useSyncExternalStore(subscribe, selected.getSnapshot, selected.getSnapshot);
   return useMemo(() => ({ value, getSnapshot: selected.getSnapshot, refresh }), [value, selected, refresh]);
+}
+
+/** Publication evidence of the admitted round, available only while its Review Resource is fresh. */
+export function useHappierReviewPublicationEvidence(
+  reviewId: string | undefined,
+  roundOrdinal: number | undefined,
+): Readonly<{ quality?: ReviewPrRoundQualityV1; walkthrough?: readonly ReviewPublicationWalkthroughStopV1[] }> {
+  const detail = useLivePluginResourceProjection(
+    { hostRead: 'review.get', input: { reviewId: reviewId ?? '' } },
+    reviewDetailProjection,
+    snapshot => snapshot.freshness === 'fresh' ? snapshot.value : undefined,
+    { enabled: reviewId !== undefined && roundOrdinal !== undefined },
+  ).value;
+  return {
+    quality: detail?.roundQuality?.roundOrdinal === roundOrdinal ? detail?.roundQuality : undefined,
+    walkthrough: detail?.roundWalkthrough?.roundOrdinal === roundOrdinal ? detail?.roundWalkthrough?.stops : undefined,
+  };
 }
 
 /** Read/refresh the current Resource snapshot without opening a watch. */

@@ -1,7 +1,9 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ACTION_ID_FAMILIES_V1 } from '../../actions/actionIds.js';
-import { REVIEW_FINDING_SUMMARY_PLACEMENT_V1 } from '../reviewFindingClassification.js';
+import { REVIEW_FINDING_SUMMARY_PLACEMENT_V1, type ReviewFindingSeverity } from '../reviewFindingClassification.js';
+import { presentReviewRoundQualityV1, type ReviewRoundQualityScoresV1 } from '../reviewQualityPresentationV1.js';
+import { HAPPIER_HOSTED_WEBAPP_URL_V1 } from '../../server/urls/hostedWebappUrl.js';
 
 import {
   ReviewCommentAttachEvidenceRequestV1Schema,
@@ -306,6 +308,89 @@ export const ReviewCommentPublicationVerdictV1Schema = lazyZodSchema(() => z.str
   body: z.string().check(z.minLength(1)),
 }));
 export type ReviewCommentPublicationVerdictV1 = z.infer<typeof ReviewCommentPublicationVerdictV1Schema>;
+
+function publicationText(value: string): string {
+  return value.replace(/\s+/gu, ' ').trim().replace(/[\\*_`\[\]<>]/gu, '\\$&');
+}
+
+function publicationLink(label: string, href?: string): string {
+  if (!href) return label;
+  try {
+    const target = new URL(href);
+    if (target.protocol === 'https:' || target.protocol === 'http:') {
+      return `[${label}](${target.href.replace(/[()]/g, char => char === '(' ? '%28' : '%29')})`;
+    }
+  } catch { /* Stale or missing destinations leave a plain label. */ }
+  return label;
+}
+
+export type ReviewPublicationWalkthroughStopV1 = Readonly<{ title: string; explanationMarkdown: string }>;
+
+export type ReviewPublicationSummaryInputV1 = Readonly<{
+  verdict: ReviewCommentPublicationVerdictV1;
+  headRevision: string;
+  findings: readonly Readonly<{ title: string; severity: ReviewFindingSeverity; happierCommentId?: string; href?: string }>[];
+  walkthrough?: readonly ReviewPublicationWalkthroughStopV1[];
+  reviewId?: string;
+  quality?: ReviewRoundQualityScoresV1 | null;
+}>;
+
+export type ReviewPublicationSummaryPartsV1 = Readonly<{
+  bodyMarkdown: string;
+  walkthrough: Readonly<{ title: string; markdown: string }> | null;
+  footerMarkdown: string;
+}>;
+
+/** Formats the same verdict content for the mounted preview and forges. */
+export function buildReviewPublicationSummaryV1(input: ReviewPublicationSummaryInputV1): ReviewPublicationSummaryPartsV1 {
+  const { verdict, findings, walkthrough } = input;
+  const verdictLabel = { approve: 'Approve', requestChanges: 'Request changes', comment: 'Comment' }[verdict.kind];
+  const blockers = findings.filter(finding => finding.severity === 'blocker');
+  const shouldFix = findings.filter(finding => finding.severity !== 'blocker' && finding.severity !== 'nit');
+  const nits = findings.length - blockers.length - shouldFix.length;
+  const findingGroup = (title: string, entries: typeof findings) => entries.length > 0
+    ? [`**${title}**`, ...entries.map(finding => `- ${publicationLink(publicationText(finding.title), finding.href)}`)].join('\n')
+    : '';
+  const quality = presentReviewRoundQualityV1(input.quality ?? null);
+  const qualityLine = quality ? [
+    `Quality: ${quality.displayScore}/5 (${quality.aggregation}).`,
+    `Reviewer scores: ${quality.reviewers.map(({ displayName, score }) => displayName ? `${publicationText(displayName)} ${score}` : `${score}`).join(', ')}.`,
+  ].join(' ') : '';
+  const stops = walkthrough?.map(stop => {
+    const firstParagraph = stop.explanationMarkdown.trim().split(/\n\s*\n/u, 1)[0] ?? '';
+    const firstSentence = firstParagraph.split(/(?<=[.!?])\s/u, 1)[0] ?? '';
+    const title = publicationText(stop.title).replace(/[.!?]$/u, '');
+    return `- **${title}.** ${publicationText(firstSentence)}`;
+  }) ?? [];
+  const openHref = input.reviewId && `${HAPPIER_HOSTED_WEBAPP_URL_V1}/artifacts/${encodeURIComponent(input.reviewId)}`;
+  const firstFix = blockers.find(finding => finding.happierCommentId)?.happierCommentId
+    ?? shouldFix.find(finding => finding.happierCommentId)?.happierCommentId;
+  const fixHref = openHref && firstFix ? `${openHref}?thread=${encodeURIComponent(firstFix)}` : null;
+  const links = [openHref && publicationLink('Open in Happier', openHref),
+    fixHref && publicationLink('Fix in Happier', fixHref)].filter(Boolean).join(' · ');
+  return {
+    bodyMarkdown: [
+      `**${verdictLabel} · ${findings.length} ${findings.length === 1 ? 'finding' : 'findings'}**`,
+      `Head: ${publicationText(input.headRevision)}`,
+      verdict.body.trim(),
+      findingGroup('Blockers', blockers),
+      findingGroup('Should fix', shouldFix),
+      nits > 0 ? `${nits} ${nits === 1 ? 'nit' : 'nits'}` : '',
+      qualityLine,
+    ].filter(Boolean).join('\n\n'),
+    walkthrough: stops.length > 0 ? {
+      title: `Walkthrough · ${stops.length} ${stops.length === 1 ? 'stop' : 'stops'}`,
+      markdown: stops.join('\n'),
+    } : null,
+    footerMarkdown: [links, 'Reviewed with Happier'].filter(Boolean).join('\n\n'),
+  };
+}
+
+export function serializeReviewPublicationSummaryForForgeV1(parts: ReviewPublicationSummaryPartsV1): string {
+  const { bodyMarkdown, walkthrough, footerMarkdown } = parts;
+  if (!walkthrough) return `${bodyMarkdown}\n\n${footerMarkdown}`;
+  return `${bodyMarkdown}\n\n<details>\n<summary>${walkthrough.title}</summary>\n\n${walkthrough.markdown}\n\n</details>\n\n${footerMarkdown}`;
+}
 
 const ReviewCommentPublicationPlanShapeV1 = {
   target: ReviewCommentPublicationTargetV1Schema,

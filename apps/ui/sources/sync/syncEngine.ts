@@ -9856,9 +9856,16 @@ class Sync {
         } finally { this.artifactInventoryUnfinished.delete(unfinished); }
     }
 
-    public async fetchArtifactWithBody(artifactId: string, options?: Readonly<{ fresh?: boolean }>): Promise<DecryptedArtifact | null> {
+    public async fetchArtifactWithBody(artifactId: string, options?: Readonly<{
+        fresh?: boolean;
+        expectedScope?: ServerAccountScope;
+        signal?: AbortSignal;
+        prepareRecipientKeys?: boolean;
+    }>): Promise<DecryptedArtifact | null> {
         if (!this.credentials) return null;
-        return this.withArtifactReadAuthority(undefined, params => fetchArtifactWithBodyFromApi({ ...params, artifactId, fresh: options?.fresh }));
+        return this.withArtifactReadAuthority(options?.signal, params => fetchArtifactWithBodyFromApi({
+            ...params, artifactId, fresh: options?.fresh, prepareRecipientKeys: options?.prepareRecipientKeys,
+        }), options?.expectedScope);
     }
 
     /** Exact header demand and Account-change repair share the same batch/decode/publication owner. */

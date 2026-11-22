@@ -178,7 +178,7 @@ async function mountControl(kind: MountedControl, options?: Readonly<{
             contentType: 'application/json',
             digest: `sha256:${'1'.repeat(64)}`,
             bytes: new TextEncoder().encode(JSON.stringify({
-              roundQuality: { roundOrdinal: 1, aggregation: 'median', score: 3.5, reviewers: [{ score: 2 }, { score: 5 }] },
+              roundQuality: { roundOrdinal: 1, aggregation: 'median', score: 3.5, reviewers: [{ displayName: 'Claude', score: 2 }, { displayName: 'Codex', score: 5 }] },
               ...(options.withWalkthrough ? { roundWalkthrough: { roundOrdinal: 1, stops: [
                 { title: 'Retry ownership', explanationMarkdown: 'The new scheduler owns retries. Keep this extra detail in Happier.' },
               ] } } : {}),
@@ -390,7 +390,7 @@ describe('mounted GitLab Review publication controls', () => {
     await expect(detail.getByText('Add a summary before publishing this verdict.')).resolves.toBeDefined();
   });
 
-  it.each([false, true])('sends the same formatted verdict body shown in the publication preview (walkthrough=%s)', async withWalkthrough => {
+  it.each([false, true])('previews the verdict as Markdown with a native Walkthrough fold (walkthrough=%s)', async withWalkthrough => {
     const detail = await mountControl('merge-request', {
       input: { ...INPUT, admittedReview: { reviewId: 'selected-review', roundOrdinal: 1 } },
       withWalkthrough,
@@ -410,13 +410,19 @@ describe('mounted GitLab Review publication controls', () => {
       box.dispatchEvent(new Event('input', { bubbles: true }));
     });
     const readPreview = () => document.body.querySelector('[data-testid="gitlab-review-publication-preview"]')?.textContent;
-    await vi.waitFor(() => expect(readPreview()).toContain('Quality: 3/5 (median). Reviewer scores: 2, 5.'));
+    await vi.waitFor(() => expect(readPreview()).toContain('Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.'));
+    const walkthroughLabel = 'Walkthrough · 1 stop';
     if (withWalkthrough) {
-      await vi.waitFor(() => expect(readPreview()).toContain('<summary>Walkthrough · 1 stop</summary>'));
+      const fold = await detail.getByRole('button', { name: walkthroughLabel });
+      expect(readPreview()).not.toContain('The new scheduler owns retries.');
+      await act(async () => detail.press(fold));
       expect(readPreview()).toContain('The new scheduler owns retries.');
       expect(readPreview()).not.toContain('Keep this extra detail in Happier.');
+      const include = await detail.getByRole('switch', { name: 'Include the walkthrough' });
+      await act(async () => detail.press(include));
+      expect(readPreview()).not.toContain(walkthroughLabel);
       await act(async () => detail.press(await detail.getByRole('switch', { name: 'Include the walkthrough' })));
-      expect(readPreview()).not.toContain('<summary>Walkthrough · 1 stop</summary>');
+      expect(readPreview()).toContain(walkthroughLabel);
     }
     const preview = readPreview();
     expect(preview).toContain(authored);
@@ -424,11 +430,22 @@ describe('mounted GitLab Review publication controls', () => {
     expect(preview).toContain('Reviewed with Happier');
     expect(preview).toContain('[Open in Happier](https://cloud.happier.dev/artifacts/selected-review)');
     expect(preview).toContain('[Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)');
+    expect(preview).not.toContain('<details>');
 
     await act(async () => detail.controls.press('Submit review'));
+    const submittedBody = [
+      '**Request changes · 1 finding**',
+      `Head: ${HEAD}`,
+      authored,
+      '**Should fix**\n- Keep retry state consistent',
+      'Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.',
+      ...(withWalkthrough ? [`<details>\n<summary>${walkthroughLabel}</summary>\n\n- **Retry ownership.** The new scheduler owns retries.\n\n</details>`] : []),
+      '[Open in Happier](https://cloud.happier.dev/artifacts/selected-review) · [Fix in Happier](https://cloud.happier.dev/artifacts/selected-review?thread=review-comment-1)',
+      'Reviewed with Happier',
+    ].join('\n\n');
     expect(recorded.at(-1)).toMatchObject({
       action: actionRef(GITLAB_TRIAGE_MUTATION_ACTION_IDS.mergeRequestSubmitReview),
-      input: { publicationPlan: { verdict: { kind: 'requestChanges', body: preview } } },
+      input: { publicationPlan: { verdict: { kind: 'requestChanges', body: submittedBody } } },
     });
   });
 

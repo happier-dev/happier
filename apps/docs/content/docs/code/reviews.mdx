@@ -116,6 +116,26 @@ for a finding. A reviewer's verdict and its native evidence remain separate
 from your decision. [Manual review comments](/code/review-comments) still let
 you annotate exact lines and send selected notes to an Agent.
 
+## Publish a review summary
+
+In the development GitHub and GitLab Publish controls, preview the verdict and
+expand the Walkthrough before you approve the write with your connected forge
+account. The formatter includes the selected verdict, captured head, finding
+counts, and any summary you wrote. **Open in Happier** opens an admitted Review.
+**Fix in Happier** opens a selected finding in that Review so you can decide
+how to address it.
+
+Plugin authors can import `buildReviewPublicationSummaryV1` from
+`@happier-dev/plugin-sdk/reviews` to build the preview parts. Pass the captured head
+and the approved findings, including their canonical comment IDs as
+`happierCommentId`. When your surface has an admitted Review ID, captured
+Walkthrough stops, or completed round quality, pass them as `reviewId`,
+`walkthrough`, and `quality`. Use `ReviewPublicationSummaryPreview` from
+`@happier-dev/plugin-ui` to show the parts and
+`serializeReviewPublicationSummaryForForgeV1` for the approved forge write.
+The formatter adds the “Reviewed with Happier” footer and uses the same
+whole-number quality display as Review detail.
+
 ## Stop, recover and review again
 
 Stop cancels the selected work. Findings already returned remain subject to

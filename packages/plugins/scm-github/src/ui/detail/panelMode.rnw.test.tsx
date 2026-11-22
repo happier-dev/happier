@@ -373,6 +373,8 @@ describe('the GitHub detail as Triage panels', () => {
         'happier.plugin-ui.review.glance.toDecide.other': '{count} constats à trancher',
         'happier.plugin-ui.review.glance.findingsCount.other': '{count} constats',
         'happier.plugin-ui.review.glance.allDecided': decided,
+        'happier.plugin-ui.review.glance.quality': 'Qualité {score}/5',
+        'happier.plugin-ui.review.glance.reviewerScores': 'Notes des réviseurs : {scores}',
         'happier.plugin-ui.workStatus.needsYou': needsYou,
         'happier.plugin-ui.review.open': open,
       } } : {}),
@@ -381,12 +383,15 @@ describe('the GitHub detail as Triage panels', () => {
         if (id !== 'review.get') return undefined;
         reads.push(input);
         return { review: { reviewId: 'owned-pr-review', state: 'completed', counts: { total: 7, needsDecision } },
-          human: { needsYou: { needsYou: true } } };
+          human: { needsYou: { needsYou: true } },
+          roundQuality: { roundOrdinal: 1, aggregation: 'median', score: 3.5, reviewers: [{ displayName: 'Claude', score: 2 }, { displayName: 'Codex', score: 5 }] } };
       },
     });
     await expect(fixture.getByText(verdict)).resolves.toBeDefined();
     await expect(fixture.getByText(count)).resolves.toBeDefined();
     await expect(fixture.getByText(needsYou)).resolves.toBeDefined();
+    await expect(fixture.getByText(direct ? 'Qualité 3/5' : 'Quality 3/5')).resolves.toBeDefined();
+    await expect(fixture.getByText(direct ? 'Notes des réviseurs : Claude 2, Codex 5' : 'Reviewer scores: Claude 2, Codex 5')).resolves.toBeDefined();
     expect(new Set(reads.map(input => JSON.stringify(input)))).toEqual(new Set([JSON.stringify({ reviewId: 'owned-pr-review' })]));
     needsDecision = 0;
     await act(async () => { fixture.invalidateResource({ hostRead: 'review.get', input: { reviewId: 'owned-pr-review' } }, `sha256:${'d'.repeat(64)}`); });

@@ -1,6 +1,9 @@
 import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
-import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { openReviewArtifactV1, projectReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
+import type { ReviewPrRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
+import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { getStorage } from '@/sync/domains/state/storageStore';
 import { isAuthoritativeScopedSnapshotRefusalKind } from '@/sync/domains/scope/scopedSnapshotFacts';
 import { getReviewDetailSnapshot, reviewDetailKey, subscribeReviewDetail, type ReviewDetailData } from '@/sync/store/domains/reviews/detail';
 
@@ -44,10 +47,49 @@ export function createPluginReviewDetailHostReadStore(input: Readonly<{
             });
         } finally { signal?.removeEventListener('abort', abort); unsubscribe(); release(); }
     };
+    const readRoundEvidence = async (value: ReviewDetailData, signal?: AbortSignal) => {
+        const { review } = value;
+        if (review.subjectKind !== 'pull_request' || (review.state !== 'completed' && review.state !== 'partial')) return undefined;
+        try {
+            const { sync } = await import('@/sync/sync');
+            const artifact = await sync.fetchArtifactWithBody(review.reviewId, {
+                expectedScope: input.lifetime.scope, signal, prepareRecipientKeys: false,
+            });
+            if (!artifact?.isDecrypted || !input.lifetime.isCurrent() || signal?.aborted) return undefined;
+            const record = openReviewArtifactV1({ artifactId: artifact.id,
+                header: artifact.rawHeader ?? artifact.header ?? {}, body: artifact.body });
+            const round = record.rounds.find(candidate => candidate.ordinal === review.currentRoundOrdinal);
+            const { settings, settingsScope } = getStorage().getState();
+            const aggregation = areServerAccountScopesEqual(settingsScope, input.lifetime.scope)
+                ? settings.reviewQualityAggregation : 'lowest';
+            const quality = projectReviewRoundQualityV1(round, aggregation);
+            const roundOrdinal = review.currentRoundOrdinal;
+            const roundQuality: ReviewPrRoundQualityV1 | undefined = quality ? {
+                roundOrdinal, aggregation: quality.aggregation, score: quality.score,
+                reviewers: quality.reviewers.map(({ displayName, score }) => ({ displayName, score })),
+            } : undefined;
+            const walkthrough = round?.comparisonCapture
+                ? await (await import('@/sync/ops/scmDiffSummary/readCapturedScmWalkthrough'))
+                    .readCapturedScmWalkthrough(round.comparisonCapture, input.lifetime, signal).catch(error => {
+                        if (!input.lifetime.isCurrent() || signal?.aborted) throw error;
+                        return undefined;
+                    })
+                : undefined;
+            const roundWalkthrough = walkthrough?.stops.length ? {
+                roundOrdinal, stops: walkthrough.stops.map(({ title, explanationMarkdown }) => ({ title, explanationMarkdown })),
+            } : undefined;
+            return { roundQuality, roundWalkthrough };
+        } catch (error) {
+            if (!input.lifetime.isCurrent() || signal?.aborted) throw error;
+            // Locked or unavailable Review content leaves metadata and findings available.
+            return undefined;
+        }
+    };
     const store = createPluginUiResourceStore({ accountLifetime: input.lifetime, client: {
         async readResource(resource, options) {
             const value = await readSnapshot(reviewIdFor(resource), options?.signal);
-            const bytes = new TextEncoder().encode(JSON.stringify(value));
+            const evidence = await readRoundEvidence(value, options?.signal);
+            const bytes = new TextEncoder().encode(JSON.stringify(evidence ? { ...value, ...evidence } : value));
             return { contentType: 'application/json', bytes, digest: computePluginUiArtifactSha256DigestV1(bytes) };
         },
         async watchResource(resource, listener, options) {
@@ -60,7 +102,14 @@ export function createPluginReviewDetailHostReadStore(input: Readonly<{
                 const snapshot = getReviewDetailSnapshot(key);
                 if (snapshot.error || snapshot.status === 'ready' && !snapshot.stale) listener({ kind: 'invalidated' });
             });
-            const dispose = () => { unsubscribe(); release(); options?.signal?.removeEventListener('abort', dispose); };
+            const unsubscribeSettings = getStorage().subscribe(() => {
+                const review = getReviewDetailSnapshot(key).data?.review;
+                if (review?.subjectKind === 'pull_request' && review.state === 'completed') listener({ kind: 'invalidated' });
+            }, { settings: ['reviewQualityAggregation'], settingsScope: true });
+            const dispose = () => {
+                unsubscribe(); unsubscribeSettings(); release();
+                options?.signal?.removeEventListener('abort', dispose);
+            };
             options?.signal?.addEventListener('abort', dispose, { once: true });
             if (options?.signal?.aborted) dispose();
             return { dispose };

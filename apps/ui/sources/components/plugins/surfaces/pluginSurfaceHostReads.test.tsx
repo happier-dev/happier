@@ -184,6 +184,69 @@ describe('mounted native and hosted host reads', () => {
             expect(home!.requests.filter(request => request.path.split('?')[0] === '/v1/reviews/comments')).toHaveLength(1);
         } finally { release?.dispose(); native.dispose(); }
     });
+    it('projects the admitted PR Review’s completed round scores and retained Walkthrough', async () => {
+        const reviewId = 'scored-pr-review';
+        const resource = { hostRead: 'review.get', input: { reviewId } } satisfies PluginUiHostReadReferenceV1;
+        const source = { kind: 'revisionRange', baseOid: 'b'.repeat(40), headOid: 'c'.repeat(40) } as const;
+        const comparisonId = 'a'.repeat(64);
+        const machineId = 'machine-for-reviewed-code';
+        const cwd = '/repo';
+        const reviewerQuality = [
+            { reviewerId: 'reviewer-one', displayName: 'Claude', score: 2, rationale: 'Private reason one' },
+            { reviewerId: 'reviewer-two', score: 5, rationale: 'Private reason two' },
+        ];
+        const artifact = createPlainArtifactHttpFixture({
+            id: reviewId, title: 'PR Review', isDecrypted: true, headerVersion: 1, bodyVersion: 1, seq: 1,
+            createdAt: 1, updatedAt: 2, sessions: [],
+            rawHeader: { kind: 'review.v1', v: 1, reviewId, title: 'PR Review' },
+            body: JSON.stringify({ v: 1, rounds: [
+                { ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['older'], runs: [],
+                    reviewerQuality: [{ reviewerId: 'older', score: 4, rationale: 'Earlier round' }] },
+                { ordinal: 2, state: 'completed', startedAt: 3, finishedAt: 4, reviewerIds: reviewerQuality.map(row => row.reviewerId),
+                    runs: [], reviewerQuality, comparisonId, comparisonCapture: {
+                        target: { kind: 'machine', machineId }, input: { cwd, source, comparisonId },
+                    } },
+            ] }),
+        }, 'account-a');
+        const { native, lifetime } = await mount(async request => {
+            if (request.url.pathname === '/v1/reviews/get') return Response.json({
+                review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'pull_request',
+                    sourceKind: 'direct', state: 'completed', currentRoundOrdinal: 2, startedAt: 3, finishedAt: 4,
+                    createdAt: 1, updatedAt: 4, counts: { total: 0, needsDecision: 0 } },
+                human: { reviewId, roundOrdinal: 2, requests: [], verdicts: [],
+                    needsYou: { reviewId, roundOrdinal: 2, reason: 'review_needs_you', needsYou: false,
+                        requestedVerdict: false, pendingDecisions: false, canSubmitVerdict: false } },
+            });
+            if (request.url.pathname === '/v1/artifacts/read') return createArtifactReadBatchHttpResponse(request.body,
+                id => id === reviewId ? { ok: true, artifactId: id, artifact } : { ok: false, artifactId: id, error: 'not_found' });
+            if (request.url.pathname === `/v1/artifacts/${reviewId}`) return Response.json(projectArtifactBoundaryReadRow(artifact));
+            return undefined;
+        }, true, resource, undefined, 'happier.scm.forge.github');
+        const { loadSavedScmDiffSummaryResult, retireScmDiffSummaryScope } = await import('@/sync/ops/scmDiffSummary/generate');
+        const stop = { id: 'retry', title: 'Retry ownership', explanationMarkdown: 'The new scheduler owns retries.', changeRefs: [] };
+        loadSavedScmDiffSummaryResult({ machineId, scope: lifetime.scope, result: {
+            resultId: 'walkthrough-retained', revision: 1, canUndo: false, output: {
+                success: true, sourceKey: comparisonId, metadata: { source, sourceKey: comparisonId },
+                comparison: { id: comparisonId, source, repository: { rootPath: cwd },
+                    endpoints: { before: source.baseOid, after: source.headOid },
+                    inventory: { state: 'complete', files: [], reasons: [] } },
+                requestedOutputs: ['walkthrough'], outputs: { walkthrough: { state: 'complete',
+                    value: { title: 'The captured Walkthrough', intro: '', stops: [stop], otherChangeRefs: [] } } },
+                analysis: { suppliedChangeRefs: [], analysedChangeRefs: [], remainingChangeRefs: [] },
+            },
+        } });
+        try {
+            const content = await native.api.readResource(resource);
+            const body = new TextDecoder().decode(content.bytes);
+            expect(JSON.parse(body)).toMatchObject({
+                roundQuality: { roundOrdinal: 2, aggregation: 'lowest', score: 2, reviewers: [{ displayName: 'Claude', score: 2 }, { score: 5 }] },
+                roundWalkthrough: { roundOrdinal: 2, stops: [{ title: stop.title, explanationMarkdown: stop.explanationMarkdown }] },
+            });
+            expect(body).not.toContain('Private reason');
+            expect(body).not.toContain('reviewer-one');
+        } finally { retireScmDiffSummaryScope(lifetime.scope); native.dispose(); }
+    });
+
     it('admits Review detail through its original Action and propagates the canonical Account refusal', async () => {
         let enabled = false;
         const resource = { hostRead: 'review.get', input: { reviewId: 'selected-review' } } satisfies PluginUiHostReadReferenceV1;

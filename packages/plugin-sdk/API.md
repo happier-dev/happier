@@ -2969,6 +2969,8 @@
 | `./reviews` | `ReviewFindingsV2` | type | daemon |
 | `./reviews` | `ReviewFindingsV2Schema` | value | daemon |
 | `./reviews` | `ReviewNarratorEngineOption` | type | any |
+| `./reviews` | `ReviewPublicationSummaryInputV1` | type | any |
+| `./reviews` | `ReviewPublicationSummaryPartsV1` | type | any |
 | `./reviews` | `ReviewScmScopeBaseRefSourceV1` | type | daemon |
 | `./reviews` | `ReviewScmScopeBaseRefSourceV1Schema` | value | daemon |
 | `./reviews` | `ReviewScmScopeBaseRefV1` | type | daemon |
@@ -2995,6 +2997,7 @@
 | `./reviews` | `WorkspaceAnchorSnapshotV1` | type | daemon |
 | `./reviews` | `WorkspaceAnchorV1` | type | daemon |
 | `./reviews` | `buildReviewCommentPublicationEntryV1` | value | any |
+| `./reviews` | `buildReviewPublicationSummaryV1` | value | any |
 | `./reviews` | `createReviewCommentFingerprint` | value | any |
 | `./reviews` | `createReviewCommentLinkedIssueIdV1` | value | any |
 | `./reviews` | `createReviewCommentPublicationSettlementRequestV1` | value | any |
@@ -3015,6 +3018,7 @@
 | `./reviews` | `reviewCommentPublicationTargetMatchesV1` | value | any |
 | `./reviews` | `reviewReviewerIdsForStartV1` | value | daemon |
 | `./reviews` | `reviewReviewersForEngineIdsV1` | value | daemon |
+| `./reviews` | `serializeReviewPublicationSummaryForForgeV1` | value | any |
 | `./reviews` | `validateReviewCommentPublicationClaimAgainstPlanV1` | value | any |
 | `./reviews` | `validateReviewCommentPublicationResultAgainstPlanV1` | value | any |
 | `./scm` | `GitFileLineage` | type | any |

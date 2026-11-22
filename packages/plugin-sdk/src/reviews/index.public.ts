@@ -60,6 +60,12 @@ export { readReviewStartActionResultV1, reviewReviewerIdsForStartV1, reviewRevie
 export { createReviewCommentFingerprint } from './comments.js';
 export { createReviewCommentLinkedIssueIdV1 } from './comments.js';
 export { buildReviewCommentPublicationEntryV1, ReviewFindingSeverityProtocolSchema } from './comments.js';
+export {
+  buildReviewPublicationSummaryV1,
+  serializeReviewPublicationSummaryForForgeV1,
+  type ReviewPublicationSummaryInputV1,
+  type ReviewPublicationSummaryPartsV1,
+} from './comments.js';
 export { createReviewCommentPublicationSettlementRequestV1 } from './comments.js';
 export { parseReviewFindingsV2 } from './projections.js';
 export { produceScmPullRequestReviewScope } from './scope.js';

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  buildReviewPublicationSummaryV1,
   createReviewCommentPrincipalSigningInputV1,
   REVIEW_COMMENT_ACTION_IDS_V1,
   REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
@@ -14,6 +15,7 @@ import {
   ReviewCommentPrincipalHeaderV1Schema,
   ReviewCommentPublicationTargetV1Schema,
   reviewCommentPublicationTargetMatchesV1,
+  serializeReviewPublicationSummaryForForgeV1,
   stringifyReviewCommentPrincipalCanonicalJsonV1,
 } from './actions.js';
 import { getActionSpec } from '../../actions/actionSpecs.js';
@@ -21,6 +23,59 @@ import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema
 import Ajv from 'ajv';
 
 describe('review comment operation contracts', () => {
+  it('formats one verdict summary as Markdown and a separate Walkthrough from the selected Review evidence', () => {
+    const reviewers = [{ displayName: 'Claude', score: 2 }, { displayName: 'Codex', score: 5 }];
+    const summary = buildReviewPublicationSummaryV1({
+      verdict: { kind: 'requestChanges', body: 'Please address the timeout.' },
+      headRevision: '4f2c1a9',
+      findings: [
+        { title: 'Timeout can overflow', severity: 'blocker', happierCommentId: 'finding-7', href: 'https://forge.test/pull/1#thread-7' },
+        { title: 'Prefer consistent spelling', severity: 'nit' },
+      ],
+      walkthrough: [{ title: 'Back off', explanationMarkdown: 'Retries wait longer. Later attempts also use jitter.' }],
+      quality: { aggregation: 'median', score: 3.5, reviewers },
+      reviewId: 'review-1',
+    });
+    expect(summary).toEqual({
+      bodyMarkdown: [
+        '**Request changes · 2 findings**',
+        'Head: 4f2c1a9',
+        'Please address the timeout.',
+        '**Blockers**\n- [Timeout can overflow](https://forge.test/pull/1#thread-7)',
+        '1 nit',
+        'Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.',
+      ].join('\n\n'),
+      walkthrough: { title: 'Walkthrough · 1 stop', markdown: '- **Back off.** Retries wait longer.' },
+      footerMarkdown: [
+        '[Open in Happier](https://cloud.happier.dev/artifacts/review-1) · [Fix in Happier](https://cloud.happier.dev/artifacts/review-1?thread=finding-7)',
+        'Reviewed with Happier',
+      ].join('\n\n'),
+    });
+    expect(serializeReviewPublicationSummaryForForgeV1(summary)).toBe(`**Request changes · 2 findings**
+
+Head: 4f2c1a9
+
+Please address the timeout.
+
+**Blockers**
+- [Timeout can overflow](https://forge.test/pull/1#thread-7)
+
+1 nit
+
+Quality: 3/5 (median). Reviewer scores: Claude 2, Codex 5.
+
+<details>
+<summary>Walkthrough · 1 stop</summary>
+
+- **Back off.** Retries wait longer.
+
+</details>
+
+[Open in Happier](https://cloud.happier.dev/artifacts/review-1) · [Fix in Happier](https://cloud.happier.dev/artifacts/review-1?thread=finding-7)
+
+Reviewed with Happier`);
+  });
+
   it('accepts an explicit selected finding set, including an empty selection', () => {
     expect(ReviewCommentListRequestV1Schema.parse({ reviewId: 'review', commentIds: [] }).commentIds).toEqual([]);
     expect(ReviewCommentListRequestV1Schema.parse({ reviewId: 'review', commentIds: ['selected'] }).commentIds).toEqual(['selected']);

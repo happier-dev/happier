@@ -1,9 +1,10 @@
 import * as React from 'react';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
-import type { PluginActionResultById } from '@happier-dev/plugin-sdk/actions';
+import { presentReviewRoundQualityV1 } from '@happier-dev/protocol/reviews/reviewQualityPresentationV1';
 import { readReviewFindingDecisionV1, type ReviewCommentV1, type ReviewFinding } from '@happier-dev/plugin-sdk/reviews';
 import { useLivePluginResourceProjection, type PluginUiResourceProjection, type PluginUiResourceProjectionSnapshot } from '../hostApi/index.js';
 import { usePluginHostApi } from '../hostApi/context.js';
+import { reviewDetailProjection } from '../hostApi/reviewDetailProjection.js';
 import { HappierReviewSummary, projectHappierReviewGlance } from '../presentation/work/ReviewSummary.js';
 import { HappierPageSheet } from '../presentation/layout/PageSection.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
@@ -37,7 +38,6 @@ function jsonProjection<T>(): PluginUiResourceProjection<T> {
     return previous && pluginJsonValuesEqual(previous, next) ? previous : next;
   } };
 }
-const reviewDetailProjection = jsonProjection<PluginActionResultById['review.get']>();
 const findingsProjection = jsonProjection<HappierReviewFindingWindow>();
 const select = <T,>(snapshot: PluginUiResourceProjectionSnapshot<T>) => snapshot;
 const actorName = (actor: ReviewCommentV1['author']) => actor.kind === 'user' ? actor.userId
@@ -67,6 +67,12 @@ function HappierReviewSummaryHost({ reviewId }, ref) {
     findingsCount: count => text(`happier.plugin-ui.review.glance.findingsCount.${count === 1 ? 'one' : 'other'}`,
       count === 1 ? '1 finding' : '{count} findings', { count }),
   });
+  const quality = presentReviewRoundQualityV1(detail.freshness === 'fresh' ? detail.value?.roundQuality ?? null : null);
+  const qualityGlance = glance && quality ? { ...glance, facts: [...glance.facts,
+    text('happier.plugin-ui.review.glance.quality', 'Quality {score}/5', { score: quality.displayScore }),
+    text('happier.plugin-ui.review.glance.reviewerScores', 'Reviewer scores: {scores}',
+      { scores: quality.reviewers.map(({ displayName, score }) => displayName ? `${displayName} ${score}` : `${score}`).join(', ') }),
+  ] } : glance;
   const decisionWord = (decision: ReturnType<typeof readReviewFindingDecisionV1>) => {
     switch (decision) {
       case 'accept': return text('happier.plugin-ui.review.decision.accept', 'Implement fix');
@@ -87,10 +93,10 @@ function HappierReviewSummaryHost({ reviewId }, ref) {
   return <HappierPageSheet colors={palette} rowDividers={false}>
     <Stack gap="small" style={{ paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
       paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx }}>
-      {glance === null ? detail.error ? <ErrorState title={unavailable} /> : <LoadingState /> : <>
+      {qualityGlance === null ? detail.error ? <ErrorState title={unavailable} /> : <LoadingState /> : <>
         <HappierReviewSummary heading={text('happier.plugin-ui.review.heading', 'Review')} subject={null}
           status={detail.value?.human.needsYou.needsYou ? { label: resolveHappierWorkStatusBucketLabel('needs_you', text), tone: 'attention' } : undefined}
-          glance={glance} rows={(window?.rows ?? []).map(value => ({ rowId: value.rowId,
+          glance={qualityGlance} rows={(window?.rows ?? []).map(value => ({ rowId: value.rowId,
             severity: value.finding.severity, severityLabel: severityWord(value.finding.severity),
             title: value.finding.title, reviewer: actorName(value.comment.author), accessibilityLabel: value.finding.title }))}
           onOpenRow={id => setOpened(current => current === id ? null : id)} reviewers=""

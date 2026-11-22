@@ -1409,6 +1409,7 @@ Declaration: `dist/index.d.ts`
 - type `ReviewCommentProposalQueryV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalReadV1` from `dist/index.d.ts`
 - type `ReviewCommentProposalWithBodyV1` from `dist/index.d.ts`
+- value `ReviewPublicationSummaryPreview` from `dist/index.d.ts`
 - value `ReviewSeverity` from `dist/index.d.ts`
 - type `ReviewSeverityProps` from `dist/index.d.ts`
 - value `Row` from `dist/index.d.ts`
@@ -3387,6 +3388,7 @@ Declaration: `dist/components/index.d.ts`
 - type `ReturnedAnswerQuestion` from `dist/components/index.d.ts`
 - value `ReturnedAnswerQuote` from `dist/components/index.d.ts`
 - type `ReturnedAnswerQuoteProps` from `dist/components/index.d.ts`
+- value `ReviewPublicationSummaryPreview` from `dist/components/index.d.ts`
 - value `ReviewSeverity` from `dist/components/index.d.ts`
 - type `ReviewSeverityProps` from `dist/components/index.d.ts`
 - value `Row` from `dist/components/index.d.ts`
@@ -4094,6 +4096,7 @@ Declaration: `dist/hostApi/index.d.ts`
 - value `useComposerView` from `dist/hostApi/index.d.ts`
 - value `useExecutePluginAction` from `dist/hostApi/index.d.ts`
 - value `useFindSurfaceRegistration` from `dist/hostApi/index.d.ts`
+- value `useHappierReviewPublicationEvidence` from `dist/hostApi/index.d.ts`
 - value `useHostPeopleDirectory` from `dist/hostApi/index.d.ts`
 - value `useHostTaskShareSheet` from `dist/hostApi/index.d.ts`
 - value `useLivePluginResource` from `dist/hostApi/index.d.ts`

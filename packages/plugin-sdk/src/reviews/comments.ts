@@ -541,6 +541,12 @@ export type ReviewCommentSensitiveTextRedactionOptionsV1 = ReviewCommentSensitiv
 export { createReviewCommentFingerprintV1 as createReviewCommentFingerprint };
 export { createReviewCommentLinkedIssueIdV1 };
 export { buildReviewCommentPublicationEntryV1 };
+export {
+    buildReviewPublicationSummaryV1,
+    serializeReviewPublicationSummaryForForgeV1,
+    type ReviewPublicationSummaryInputV1,
+    type ReviewPublicationSummaryPartsV1,
+} from '@happier-dev/protocol/reviews/comments/actions';
 export { createReviewCommentPublicationSettlementRequestV1 };
 export { validateReviewCommentPublicationClaimAgainstPlanV1 };
 export { validateReviewCommentPublicationResultAgainstPlanV1 };

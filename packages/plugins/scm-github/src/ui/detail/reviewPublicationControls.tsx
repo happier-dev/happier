@@ -1,9 +1,12 @@
 import * as React from 'react';
 import {
-  Banner, Button, Form, Stack, Status, usePluginTranslation,
+  Banner, Button, Form, ReviewPublicationSummaryPreview, Stack, Status, Text, useHappierReviewPublicationEvidence, usePluginTranslation,
   type ReviewCommentProposalReadV1,
 } from '@happier-dev/plugin-ui';
-import { parseReviewCommentPublicationPlanV1, type ReviewCommentPublicationPlanV1 } from '@happier-dev/plugin-sdk/reviews';
+import {
+  buildReviewCommentPublicationEntryV1, buildReviewPublicationSummaryV1, parseReviewCommentPublicationPlanV1,
+  serializeReviewPublicationSummaryForForgeV1, type ReviewCommentPublicationPlanV1,
+} from '@happier-dev/plugin-sdk/reviews';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js';
 import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from '../../triage/contribution.js';
@@ -100,13 +103,7 @@ export function SingleProposalPublicationWrite({
       }),
       baseRevision: null,
       headRevision: null,
-      entries: Object.freeze([Object.freeze({
-        happierCommentId: proposal.id,
-        expectedServerRevision: proposal.serverRevision,
-        anchor: proposal.anchor,
-        snapshot: proposal.snapshot,
-        body: proposal.body,
-      })]),
+      entries: Object.freeze([buildReviewCommentPublicationEntryV1(proposal)]),
       verdict: null,
     });
   }, [input, kind, proposalRead, proposals, selectedId, threadId]);
@@ -188,6 +185,8 @@ export function PullRequestReviewPublicationWrite({
   const { proposals, status: proposalRead } = publicationProposals;
   const [selectedIds, setSelectedIds] = React.useState<readonly string[]>([]);
   const [verdictBody, setVerdictBody] = React.useState('');
+  const [includeWalkthrough, setIncludeWalkthrough] = React.useState(true);
+  const { quality, walkthrough } = useHappierReviewPublicationEvidence(input.admittedReview?.reviewId, input.admittedReview?.roundOrdinal);
   React.useEffect(() => {
     if (proposalRead !== 'ready') return;
     setSelectedIds((selected) => {
@@ -196,24 +195,23 @@ export function PullRequestReviewPublicationWrite({
     });
   }, [proposalRead, proposals]);
 
-  const publicationPlan = React.useMemo<ReviewCommentPublicationPlanV1 | null>(() => {
+  const publication = React.useMemo(() => {
     if (proposalRead !== 'ready') return null;
     const revision = input.observation.snapshot.reviewRevision;
     if (revision === undefined) return null;
-    const entries = proposals.flatMap((proposal) => (
-      selectedIds.includes(proposal.id) && typeof proposal.body === 'string'
-        ? [{
-          happierCommentId: proposal.id,
-          expectedServerRevision: proposal.serverRevision,
-          anchor: proposal.anchor,
-          snapshot: proposal.snapshot,
-          body: proposal.body,
-        }]
-        : []
-    ));
-    const body = verdictBody.trim();
-    if (body === '') return null;
-    return parseReviewCommentPublicationPlanV1({
+    const selected = proposals.filter(proposal => selectedIds.includes(proposal.id));
+    const entries = selected.map(buildReviewCommentPublicationEntryV1);
+    const authoredBody = verdictBody.trim();
+    if (authoredBody === '') return null;
+    const summary = buildReviewPublicationSummaryV1({
+      verdict: { kind: verdict, body: authoredBody },
+      headRevision: revision.headSha,
+      findings: selected.flatMap(proposal => proposal.finding ? [{ ...proposal.finding, happierCommentId: proposal.id }] : []),
+      reviewId: input.admittedReview?.reviewId,
+      quality,
+      walkthrough: includeWalkthrough ? walkthrough : undefined,
+    });
+    const plan = parseReviewCommentPublicationPlanV1({
       target: Object.freeze({
         providerId: 'github',
         ...githubReviewPublicationCredential(input.instance.binding),
@@ -228,14 +226,15 @@ export function PullRequestReviewPublicationWrite({
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
       entries: Object.freeze(entries),
-      verdict: Object.freeze({ kind: verdict, body }),
+      verdict: Object.freeze({ kind: verdict, body: serializeReviewPublicationSummaryForForgeV1(summary) }),
     });
-  }, [input, proposalRead, proposals, selectedIds, verdict, verdictBody]);
+    return { plan, summary };
+  }, [includeWalkthrough, input, proposalRead, proposals, quality, selectedIds, verdict, verdictBody, walkthrough]);
   const payload = React.useMemo(
-    () => publicationPlan === null
+    () => publication === null
       ? null
-      : buildGithubPullRequestReviewPublicationInputV1(input, publicationPlan),
-    [input, publicationPlan],
+      : buildGithubPullRequestReviewPublicationInputV1(input, publication.plan),
+    [input, publication],
   );
   const standaloneCommentPlan = React.useMemo<ReviewCommentPublicationPlanV1 | null>(() => {
     if (proposalRead !== 'ready') return null;
@@ -258,13 +257,7 @@ export function PullRequestReviewPublicationWrite({
       }),
       baseRevision: revision.baseSha,
       headRevision: revision.headSha,
-      entries: Object.freeze([Object.freeze({
-        happierCommentId: proposal.id,
-        expectedServerRevision: proposal.serverRevision,
-        anchor: proposal.anchor,
-        snapshot: proposal.snapshot,
-        body: proposal.body,
-      })]),
+      entries: Object.freeze([buildReviewCommentPublicationEntryV1(proposal)]),
       verdict: null,
     });
   }, [input, proposalRead, proposals, selectedIds]);
@@ -335,6 +328,9 @@ export function PullRequestReviewPublicationWrite({
         required
         onChange={setVerdictBody}
       />
+      {walkthrough?.length ? <Form.Toggle label={text('plugins.github.ui.mutations.review.includeWalkthrough', 'Include the walkthrough')}
+        value={includeWalkthrough} onChange={setIncludeWalkthrough} /> : null}
+      {publication ? <ReviewPublicationSummaryPreview parts={publication.summary} /> : null}
       <WriteControl
         localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestSubmitReview}
         payload={payload}
