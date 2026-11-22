@@ -339,7 +339,7 @@ export function createStopSession(params: Readonly<{
     };
     const retireLegacyAttachmentAfterPositiveDeath = async (
       legacyAttachment: LegacyTerminalAttachmentInfo,
-      options: Readonly<{ runnerExitProven: boolean; trackedPids: readonly number[] }>,
+      options: Readonly<{ runnerExitProven: boolean; exitedRunnerPids: readonly number[] }>,
     ): Promise<StopSessionResult> => {
       const handle = buildLegacyTerminalAttachmentHostHandle(
         legacyAttachment,
@@ -354,7 +354,7 @@ export function createStopSession(params: Readonly<{
           && typeof persistedWindowsPid === 'number'
           && Number.isSafeInteger(persistedWindowsPid)
           && persistedWindowsPid > 0
-          && options.trackedPids.includes(persistedWindowsPid);
+          && options.exitedRunnerPids.includes(persistedWindowsPid);
         if (
           !exactWindowsRunnerExited
           && (legacyAttachment.terminal.mode !== 'plain' || !options.runnerExitProven)
@@ -390,7 +390,7 @@ export function createStopSession(params: Readonly<{
       if (attachmentInfo?.version === 1) {
         return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
           runnerExitProven: false,
-          trackedPids: [],
+          exitedRunnerPids: [],
         });
       }
       if (!isPidFallback && params.recoverStrandedTerminalControlServiceability) {
@@ -730,7 +730,7 @@ export function createStopSession(params: Readonly<{
     if (attachmentInfo?.version === 1) {
       return await retireLegacyAttachmentAfterPositiveDeath(attachmentInfo, {
         runnerExitProven: true,
-        trackedPids: pidsToStop,
+        exitedRunnerPids: Array.from(expectedByTrackingPid.values(), ({ runner }) => runner.pid),
       });
     }
     return { status: 'stopped' };

@@ -1371,7 +1371,13 @@ describe('createStopSession', () => {
     expect(removeAttachmentInfo).not.toHaveBeenCalled();
   });
 
-  it('retires a legacy Windows attachment after the exact persisted runner is proven exited', async () => {
+  it.each([
+    { recordedPid: 444, separateRunner: false, retired: true },
+    { recordedPid: 445, separateRunner: true, retired: true },
+    { recordedPid: 444, separateRunner: true, retired: false },
+  ])('only retires a legacy Windows attachment for the process that exited ($recordedPid, separate runner $separateRunner)', async ({
+    recordedPid, separateRunner, retired,
+  }) => {
     const { createStopSession } = await import('./stopSession');
     const attachmentInfo: TerminalAttachmentInfo = {
       version: 1,
@@ -1381,7 +1387,7 @@ describe('createStopSession', () => {
         requested: 'windows_terminal',
         windows: {
           host: 'windows_terminal',
-          pid: 444,
+          pid: recordedPid,
           windowId: 'happier-window-1',
         },
       },
@@ -1393,6 +1399,10 @@ describe('createStopSession', () => {
         [444, {
           startedBy: 'daemon',
           pid: 444,
+          ...(separateRunner ? {
+            sessionRunnerPid: 445,
+            processInstanceFingerprint: 'reported-runner-generation',
+          } : {}),
           happySessionId: attachmentInfo.sessionId,
           processCommandHash: 'windows-command',
         } as any],
@@ -1403,10 +1413,16 @@ describe('createStopSession', () => {
       waitForTrackedRunnersExit: vi.fn(async () => true),
     });
 
-    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual({ status: 'stopped' });
-    expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
-      expectedLegacyAttachment: attachmentInfo,
-    }));
+    await expect(stop(attachmentInfo.sessionId)).resolves.toEqual(retired
+      ? { status: 'stopped' }
+      : { status: 'incomplete', reason: 'legacy_attachment' });
+    if (retired) {
+      expect(removeAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
+        expectedLegacyAttachment: attachmentInfo,
+      }));
+    } else {
+      expect(removeAttachmentInfo).not.toHaveBeenCalled();
+    }
   });
 
   it('retires a stranded legacy attachment when its exact terminal host is already dead', async () => {
