@@ -62,6 +62,8 @@ type PendingInactiveSessionActivationParams = Readonly<{
   requestId: string;
   pendingVersion: number;
   spawnSessionForInternalResume: PendingSessionResumePort;
+  /** Settles when the guest publishes startup isolation, or returns false if the connection retires first. */
+  waitForStartupAgentIsolation?: () => Promise<boolean>;
   /** This discovery pass may revisit a broker refusal once its endpoint is acknowledged. */
   retryAfterEndpointPublication?: Promise<boolean>;
   /** Supplied only by the canonical requester runtime resolver, never a pending hint. */
@@ -156,6 +158,10 @@ async function activateAtAdmittedHome(params: PendingInactiveSessionActivationPa
   }
   if ((rawSession.pendingCount ?? 0) < 1) {
     return { status: 'not-needed', reason: 'pending-resolved' };
+  }
+  if (authorization.managedWakeTargetV1 && params.waitForStartupAgentIsolation
+    && !await params.waitForStartupAgentIsolation()) {
+    return { status: 'not-needed', reason: 'spawn-retryable' };
   }
 
   const pendingEligibility = await readPendingQueueV2ActivationEligibilityFromServer({

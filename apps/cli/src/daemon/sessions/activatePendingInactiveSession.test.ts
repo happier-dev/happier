@@ -81,6 +81,37 @@ function createSession(active: boolean) {
 }
 
 describe('activatePendingInactiveSession', () => {
+  it('keeps admitted managed wake input pending until the guest settles startup isolation', async () => {
+    const session = createSession(false);
+    vi.mocked(fetchSessionByIdCompat).mockResolvedValue({ ...session, pendingActivationAuthorization: {
+      ...session.pendingActivationAuthorization, managedWakeTargetV1: {
+        homeId: 'home', managedId: 'guest', enrolledMachineId: 'machine-1', expectedIntentRevision: 1,
+        origin: { kind: 'session-input', session: { homeId: 'home', sessionId: session.id },
+          pendingRequestId: session.pendingActivationAuthorization.requestId, requestedAt: 10 },
+        reason: 'admitted-work',
+      },
+    } });
+    vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');
+    const startup = Promise.withResolvers<boolean>();
+    let ready = false;
+    const spawnSessionForInternalResume = vi.fn(async (): Promise<SpawnSessionResult> => ready
+      ? { type: 'success', sessionId: session.id }
+      : { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+        errorMessage: 'Isolation startup has yet to settle' });
+    const input = { credentials: tokenOnlyCredentials, machineId: 'machine-1', sessionId: session.id,
+      requestId: session.pendingActivationAuthorization.requestId, pendingVersion: 9,
+      waitForStartupAgentIsolation: () => startup.promise, spawnSessionForInternalResume };
+    const activation = activatePendingInactiveSession(input);
+    // The next turn gives the Home round trips and a premature spawn time to finish.
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(spawnSessionForInternalResume).not.toHaveBeenCalled();
+    expect(reportPendingSessionActivationFailure).not.toHaveBeenCalled();
+    ready = true;
+    startup.resolve(true);
+    await expect(activation).resolves.toEqual({ status: 'activated' });
+    expect(spawnSessionForInternalResume).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes the same closed requester refusal to pending settlement and activation attention', async () => {
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSession(false));
     vi.mocked(readPendingQueueV2ActivationEligibilityFromServer).mockResolvedValue('eligible');

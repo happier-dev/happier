@@ -1132,6 +1132,11 @@ export class ApiMachineClient {
     private readonly actionOperationRuntime: HostActionOperationRuntime;
     private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
     private agentIsolationEffects: AgentIsolationEffectDependencies | null = null;
+    private startupAgentIsolation: {
+        settlement: ReturnType<typeof Promise.withResolvers<boolean>>;
+        controller: AbortController;
+        started: boolean;
+    } | null = null;
 
     /** Member whose own folder holds this path; null off a separate-users Machine or outside member folders. */
     async readMemberFolderOwner(path: string) {
@@ -1334,6 +1339,9 @@ export class ApiMachineClient {
 
     private teardownActiveSocket(): void {
         this.machineAdminAccessInspectedTransport = null;
+        this.startupAgentIsolation?.controller.abort();
+        this.startupAgentIsolation?.settlement.resolve(false);
+        this.startupAgentIsolation = null;
         this.sessionMessageReplyRecovery?.controller.abort();
         this.sessionMessageReplyRecovery = null;
         this.sessionMessageReplyRecoverySupported = false;
@@ -3598,14 +3606,25 @@ export class ApiMachineClient {
         });
     }
 
+    /** Wait for this guest connection's startup observation to settle. The
+     * launch owner still decides whether the resulting isolation status admits work. */
+    async waitForStartupAgentIsolation(): Promise<boolean> {
+        const startup = this.startupAgentIsolation;
+        if (!startup || !await startup.settlement.promise) return false;
+        return this.startupAgentIsolation === startup;
+    }
+
     private qualifyStartupAgentIsolation(): void {
+        const startup = this.startupAgentIsolation;
         const effects = this.agentIsolationEffects;
         const socket = this.socket;
         const generation = this.activeTransportGeneration;
-        if (!effects || !socket?.connected || this.machineControlRunningGeneration !== generation) return;
+        if (!startup || startup.started || !effects || !socket?.connected || this.machineControlRunningGeneration !== generation) return;
+        startup.started = true;
+        const signal = startup.controller.signal;
         const snapshot = this.getAgentIsolationSnapshot();
-        void observeUnqualifiedAgentIsolationNativeReadiness({ snapshot, effects }).then(async status => {
-            if (!status) return;
+        void observeUnqualifiedAgentIsolationNativeReadiness({ snapshot, effects, signal }).then(async status => {
+            if (!status || signal.aborted) return;
             await this.publishAgentIsolationStatus(status, () => {
                 const current = this.getAgentIsolationSnapshot();
                 // Startup proof cannot overwrite a later Apply, policy change,
@@ -3615,7 +3634,9 @@ export class ApiMachineClient {
                     && current.memberProvisioning === snapshot.memberProvisioning
                     && isDeepStrictEqual(current.status, snapshot.status);
             });
-        }).catch(() => logger.warn('[API MACHINE] Startup Agent isolation qualification unavailable'));
+        }).catch(() => {
+            if (!signal.aborted) logger.warn('[API MACHINE] Startup Agent isolation qualification unavailable');
+        }).finally(() => startup.settlement.resolve(!signal.aborted));
     }
 
     private async inspectMachineAdminAccess(options: DaemonMachineAdminAccessRoutes) {
@@ -6034,6 +6055,8 @@ export class ApiMachineClient {
                     });
                     this.connectedClientRpcMethods.clear();
                     this.socket = socket;
+                    this.startupAgentIsolation = { settlement: Promise.withResolvers<boolean>(),
+                        controller: new AbortController(), started: false };
                     this.installSocketEventHandlers(
                         socket,
                         transportGeneration,

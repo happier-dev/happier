@@ -273,6 +273,7 @@ describe('ApiMachineClient connect ordering', () => {
     const first = socket(), second = socket();
     bindApiSessionSocketSequenceMock(ioMock, [first, second]);
     const client = new ApiMachineClient('test-token', machine, { runtimeId: 'successor' });
+    const releaseNativeProbe = createDeferred<void>();
     let probes = 0;
     const run: AgentIsolationReadinessSystem['run'] = async (command, args, options) => {
       if (command === 'getent') {
@@ -282,6 +283,7 @@ describe('ApiMachineClient connect ordering', () => {
           : 'happier-agent:x:999:988::/var/lib/happier-agent:/usr/sbin/nologin\n', stderr: '' };
       }
       probes++;
+      await releaseNativeProbe.promise;
       if (!options?.inputBytes) throw new Error('Expected native readiness frame');
       const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }));
       const authorization = Buffer.from(frame.selectedMaterials.find(file => file.relativePath === 'files/headers')!.contentBase64,
@@ -315,6 +317,10 @@ describe('ApiMachineClient connect ordering', () => {
     try {
       client.connect();
       await acknowledge(first);
+      const startup = client.waitForStartupAgentIsolation();
+      const sharedWait = client.waitForStartupAgentIsolation();
+      let deliveryMayContinue = false;
+      void startup.then(current => { deliveryMayContinue = current; });
       await vi.waitFor(() => expect(states.length).toBeGreaterThan(0));
       expect(states[0]).toMatchObject({ runtimeId: 'successor', agentIsolation: { kind: enabled ? 'unavailable' : 'disabled' } });
       expect(machine.daemonState?.startedAt).not.toBe(1);
@@ -326,6 +332,12 @@ describe('ApiMachineClient connect ordering', () => {
       }
       const status = !enabled ? { kind: 'disabled' } : missing
         ? { kind: 'unavailable', code: 'agent_user_missing' } : { kind: 'effective' };
+      if (enabled && !missing) {
+        await vi.waitFor(() => expect(probes).toBe(1));
+        expect(deliveryMayContinue).toBe(false);
+      }
+      releaseNativeProbe.resolve();
+      await expect(Promise.all([startup, sharedWait])).resolves.toEqual([true, true]);
       await vi.waitFor(() => expect(client.getAgentIsolationSnapshot()).toMatchObject({ enabled, status }));
       expect(probes).toBe(enabled && !missing ? 1 : 0);
       const qualified = machine.daemonState;
@@ -337,7 +349,7 @@ describe('ApiMachineClient connect ordering', () => {
       expect(machine.daemonState).toEqual(qualified);
       expect(states).toHaveLength(settled);
       expect(probes).toBe(enabled && !missing ? 1 : 0);
-    } finally { await client.shutdown(); get.mockRestore(); post.mockRestore(); }
+    } finally { releaseNativeProbe.resolve(); await client.shutdown(); get.mockRestore(); post.mockRestore(); }
   });
 
   it('drops a retained busy/idle decision from the Machine document at startup publication', async () => {

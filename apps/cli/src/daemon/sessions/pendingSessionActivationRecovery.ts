@@ -33,6 +33,7 @@ export async function activateRequesterPendingSession(params: Readonly<{
   resolveCurrentMachineExecutionOriginContext(): Promise<CurrentMachineExecutionOriginContext | null>;
   onActivationRejected?: (event: PendingInactiveSessionActivationRejected) => Promise<void>;
   spawnSessionForInternalResume: PendingSessionResumePort;
+  waitForStartupAgentIsolation?: () => Promise<boolean>;
   retryAfterEndpointPublication?: Promise<boolean>;
 }>): Promise<void> {
   const { binding, hint } = params;
@@ -48,6 +49,7 @@ export async function activateRequesterPendingSession(params: Readonly<{
     const result = await activatePendingInactiveSession({ credentials: bootstrap.credentials,
       machineId: params.machineId, sessionId: current.sessionId, requestId: current.requestId,
       pendingVersion: hint?.pendingVersion ?? current.pendingVersion, requester: bootstrap,
+      waitForStartupAgentIsolation: params.waitForStartupAgentIsolation,
       retryAfterEndpointPublication: params.retryAfterEndpointPublication,
       expectedTarget: current.target,
       resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext,

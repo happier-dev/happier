@@ -1893,6 +1893,7 @@ export async function bootstrapMachineSyncRuntime(
           return [];
         }
       };
+      const waitForStartupAgentIsolation = () => connectedApiMachine.waitForStartupAgentIsolation();
       const activateRequesterSession = async (
         binding: Pick<RequesterSessionCredentialBinding, 'sessionId' | 'attribution'>,
         hint?: PendingSessionActivationInput,
@@ -1902,7 +1903,7 @@ export async function bootstrapMachineSyncRuntime(
         if (!params.resolveRequesterSessionRuntimeContext || !params.releaseRequesterSessionRuntimeContext
           || !params.resolveCurrentMachineExecutionOriginContext
           || binding.attribution.machineId !== params.machineId) return;
-        await activateRequesterPendingSession({ ...params, binding, hint, retryAfterEndpointPublication, pendingBootstrap,
+        await activateRequesterPendingSession({ ...params, binding, hint, waitForStartupAgentIsolation, retryAfterEndpointPublication, pendingBootstrap,
           resolveRequesterSessionRuntimeContext: params.resolveRequesterSessionRuntimeContext,
           releaseRequesterSessionRuntimeContext: params.releaseRequesterSessionRuntimeContext,
           resolveCurrentMachineExecutionOriginContext: params.resolveCurrentMachineExecutionOriginContext });
@@ -1928,6 +1929,7 @@ export async function bootstrapMachineSyncRuntime(
           sessionId: hint.sessionId,
           requestId: hint.requestId,
           pendingVersion: hint.pendingVersion,
+          waitForStartupAgentIsolation,
           retryAfterEndpointPublication,
           spawnSessionForInternalResume: params.spawnSessionForInternalResume,
           onActivationRejected: params.onActivationRejected,

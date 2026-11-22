@@ -1082,7 +1082,11 @@ second review. During an admitted native Start, an ordinary Account Send can
 enter Pending immediately and arm delivery when its guest is available. A Send
 that needs the installed Action receiver waits on the original invocation for
 guest registration. Both paths use the existing Pending admission and issue no
-additional Start. New-Session Send uses
+additional Start. After a managed wake, the guest's Pending activation waits for
+its startup Agent isolation observation to settle on the current connection.
+Activation re-reads the exact Pending row and authorization before resuming the
+Session. A disconnected guest leaves the input waiting for reconnect recovery.
+New-Session Send uses
 the verified Session-spawn Action as its accepted input before the Session exists;
 the server keeps the encrypted first-message content opaque.
 Null-controller resources use the canonical managed-role custodian decision;
