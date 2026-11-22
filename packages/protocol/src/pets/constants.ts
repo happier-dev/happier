@@ -69,7 +69,7 @@ export const PET_PACKAGE_LIMITS_V1 = Object.freeze({
   maxCanonicalPackageBytes: 6 * 1024 * 1024,
   maxPreCanonicalImportBytes: 16 * 1024 * 1024,
   maxImportedPetsPerAccount: 20,
-  maxImportedPetBytesPerAccount: 100 * 1024 * 1024,
+  maxImportedPetBytesPerAccount: 100_000_000,
   maxImportedPetsPerDevice: 20,
   maxImportedPetBytesPerDevice: 100 * 1024 * 1024,
 });

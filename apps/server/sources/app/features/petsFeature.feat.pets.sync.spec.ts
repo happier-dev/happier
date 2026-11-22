@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BUILT_IN_PET_IDS_V1, PET_SYNC_SUPPORTED_MEDIA_TYPES_V1 } from "@happier-dev/protocol";
+import { BUILT_IN_PET_IDS_V1, PET_PACKAGE_LIMITS_V1, PET_SYNC_SUPPORTED_MEDIA_TYPES_V1 } from "@happier-dev/protocol";
 
 import { resolveFeaturesFromEnv } from "./registry";
 
@@ -41,13 +41,14 @@ describe("features/petsFeature", () => {
     });
 
     it("surfaces bounded pets import limits as capabilities without using them as gates", () => {
+        const configuredAccountBytes = PET_PACKAGE_LIMITS_V1.maxImportedPetBytesPerAccount - 1;
         const result = resolveFeaturesFromEnv({
             HAPPIER_FEATURE_PETS_SYNC__ENABLED: "1",
             HAPPIER_FEATURE_PETS_SYNC__MAX_MANIFEST_BYTES: "16384",
             HAPPIER_FEATURE_PETS_SYNC__MAX_CANONICAL_SPRITESHEET_BYTES: "5242880",
             HAPPIER_FEATURE_PETS_SYNC__MAX_CANONICAL_PACKAGE_BYTES: "6291456",
             HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PETS_PER_ACCOUNT: "20",
-            HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PET_BYTES_PER_ACCOUNT: "104857600",
+            HAPPIER_FEATURE_PETS_SYNC__MAX_IMPORTED_PET_BYTES_PER_ACCOUNT: String(configuredAccountBytes),
         } as NodeJS.ProcessEnv);
 
         expect(result.capabilities?.pets?.limits).toEqual(expect.objectContaining({
@@ -55,7 +56,7 @@ describe("features/petsFeature", () => {
             maxCanonicalSpritesheetBytes: 5_242_880,
             maxCanonicalPackageBytes: 6_291_456,
             maxImportedPetsPerAccount: 20,
-            maxImportedPetBytesPerAccount: 104_857_600,
+            maxImportedPetBytesPerAccount: configuredAccountBytes,
         }));
     });
 
@@ -76,7 +77,7 @@ describe("features/petsFeature", () => {
             maxCanonicalPackageBytes: expect.any(Number),
             maxPreCanonicalImportBytes: expect.any(Number),
             maxImportedPetsPerAccount: expect.any(Number),
-            maxImportedPetBytesPerAccount: expect.any(Number),
+            maxImportedPetBytesPerAccount: 100_000_000,
             maxImportedPetsPerDevice: expect.any(Number),
             maxImportedPetBytesPerDevice: expect.any(Number),
         }));
