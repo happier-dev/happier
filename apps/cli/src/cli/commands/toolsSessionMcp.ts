@@ -5,7 +5,7 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import type { connectSessionMcpClient } from '@/mcp/runtime/sessionMcpLocalClient';
-import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, type SessionMcpAgentContext,
+import { SESSION_MCP_CONTEXT_FILE_ENV, sessionActionTransportUnavailable, SessionMcpUnavailableError, type SessionMcpAgentContext,
   SESSION_MCP_ACTION_REQUEST_ID_META_KEY, SESSION_MCP_TOOL_SOURCES_META_KEY,
   SESSION_MCP_TOOL_SOURCE_META_KEY, SESSION_MCP_TOOL_WARNINGS_META_KEY } from '@/mcp/runtime/sessionMcpLocalContext';
 
@@ -40,6 +40,17 @@ function transportFailure(error: unknown): ToolFailure {
   }
   const code = error && typeof error === 'object' && 'code' in error && error.code === 'not_authenticated'
     ? 'not_authenticated' : 'mcp_socket_access_unavailable';
+  if (error instanceof SessionMcpUnavailableError && error.socketFailure) {
+    const { errno, reason } = error.socketFailure;
+    return {
+      ok: false, errorCode: code,
+      error: reason === 'socket_denied'
+        ? "The Agent's sandbox blocked the Session connection, so use the Agent's native Happier tool or run the Action from a shell without the sandbox."
+        : code,
+      failureCause: { phase: 'session_mcp.connect', errorClass: 'Error', errorCode: errno,
+        nativeErrorReason: reason, httpStatus: null },
+    };
+  }
   return { ok: false, errorCode: code, error: code };
 }
 

@@ -6641,6 +6641,9 @@ the app-server's `thread/start`, `thread/resume`, and `thread/fork` requests.
 Restricted launches apply the native confinement policy at process startup and
 bind the allowed MCP servers on the thread. The bearer selects the parent or
 Run's exact catalog when both bridges belong to the same Session holder.
+An Agent shell whose native sandbox disables network access cannot reach the
+Session MCP socket when that policy blocks local connections. Use the Agent's
+native Happier tool to run the same Action in that Session.
 Anonymous peer proof still refuses ambiguous registrations. The Session message writer
 (`buildOutboundSessionMessagePayload`) redacts each live registration bearer by
 exact value before storage. Where no socket transport exists (Windows), the

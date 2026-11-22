@@ -6,7 +6,7 @@ import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } fr
 import { z } from 'zod/mini';
 import { loadUndici } from '@/utils/loadUndici';
 import { SessionMcpAgentContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
-    type SessionMcpAgentContext } from './sessionMcpLocalContext';
+    type SessionMcpAgentContext, type SessionMcpSocketFailure } from './sessionMcpLocalContext';
 
 // Client side of the Session MCP socket (bridges and `happier tools`). Kept apart from the
 // listener in `sessionMcpLocalTransport.ts` so a runner hosting the server does not load the
@@ -22,6 +22,15 @@ export async function readSessionMcpContextFromEnvironment(
     } catch {
         throw new SessionMcpUnavailableError('mcp_socket_access_unavailable', { phase: 'context_read' });
     }
+}
+
+function readSocketConnectFailure(error: unknown): SessionMcpSocketFailure | undefined {
+    // Undici fetch wraps the OS connect error in its TypeError cause.
+    const cause: unknown = error instanceof TypeError ? error.cause : error;
+    const errno = cause instanceof Error && 'code' in cause ? cause.code : undefined;
+    if (errno === 'EPERM' || errno === 'EACCES') return { errno, reason: 'socket_denied' };
+    if (errno === 'ENOENT' || errno === 'ECONNREFUSED') return { errno, reason: 'socket_absent' };
+    return undefined;
 }
 
 /** The SDK owns MCP framing; Undici directs every HTTP/SSE request to the Session's socket (or loopback endpoint). */
@@ -69,8 +78,10 @@ export async function connectSessionMcpClient(context: SessionMcpAgentContext, s
             if (error instanceof CredentialRequestRedirectError) throw error;
         }
         signal?.throwIfAborted();
+        const socketFailure = 'socketPath' in context ? readSocketConnectFailure(error) : undefined;
         throw new SessionMcpUnavailableError(error instanceof StreamableHTTPError
             && (error.code === 401 || error.code === 403) ? 'not_authenticated' : 'mcp_socket_access_unavailable',
-        { phase: 'client_connect', ...(error instanceof StreamableHTTPError ? { httpStatus: error.code } : {}) });
+        { phase: 'client_connect', ...(error instanceof StreamableHTTPError ? { httpStatus: error.code } : {}),
+            ...(socketFailure ? { socketFailure } : {}) });
     }
 }

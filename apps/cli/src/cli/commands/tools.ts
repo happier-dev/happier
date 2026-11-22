@@ -81,7 +81,8 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
         const listed = await listSessionMcpTools(signal);
         if (!listed.ok) {
           if (!json) throw new Error(listed.error);
-          await printJsonEnvelope({ ok: false, kind, error: { code: listed.errorCode, message: listed.error } }, { exitCode: 1 });
+          await printJsonEnvelope({ ok: false, kind, error: { code: listed.errorCode, message: listed.error,
+            ...(listed.failureCause ? { failureCause: listed.failureCause } : {}) } }, { exitCode: 1 });
           return;
         }
         if (json) await printJsonEnvelope({ ok: true, kind, data: { sources: listed.sources, warnings: listed.warnings } });
@@ -192,6 +193,7 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
             error: {
               code: result.errorCode,
               message: result.error,
+              ...(useSessionMcp && 'failureCause' in result && result.failureCause ? { failureCause: result.failureCause } : {}),
               ...(presentation ? { details: { message: presentation.message, messageTrust: presentation.messageTrust } } : {}),
               ...(candidates ? { candidates } : {}),
             },

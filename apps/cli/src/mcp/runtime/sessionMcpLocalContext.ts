@@ -19,12 +19,17 @@ export function supportsSessionMcpLocalTransport(): boolean {
     return process.platform !== 'win32';
 }
 
+export type SessionMcpSocketFailure =
+    | Readonly<{ errno: 'EPERM' | 'EACCES'; reason: 'socket_denied' }>
+    | Readonly<{ errno: 'ENOENT' | 'ECONNREFUSED'; reason: 'socket_absent' }>;
+
 export class SessionMcpUnavailableError extends Error {
     readonly code: 'mcp_socket_access_unavailable' | 'not_authenticated';
     readonly phase?: 'context_read' | 'client_connect';
     readonly httpStatus?: number;
+    readonly socketFailure?: SessionMcpSocketFailure;
     constructor(code: 'mcp_socket_access_unavailable' | 'not_authenticated' = 'mcp_socket_access_unavailable',
-        diagnostic?: Readonly<{ phase: 'context_read' | 'client_connect'; httpStatus?: number }>) {
+        diagnostic?: Readonly<{ phase: 'context_read' | 'client_connect'; httpStatus?: number; socketFailure?: SessionMcpSocketFailure }>) {
         // MCP forwards Error.message to the native client. Keep that projection
         // content-free: never include the context path, bearer or response body.
         super([diagnostic?.phase, diagnostic?.httpStatus === undefined ? undefined
@@ -32,6 +37,7 @@ export class SessionMcpUnavailableError extends Error {
         this.code = code;
         this.phase = diagnostic?.phase;
         this.httpStatus = diagnostic?.httpStatus;
+        this.socketFailure = diagnostic?.socketFailure;
         this.name = 'SessionMcpUnavailableError';
     }
 }
