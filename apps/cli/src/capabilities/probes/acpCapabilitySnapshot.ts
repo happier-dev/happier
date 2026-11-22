@@ -1,4 +1,5 @@
 import type { AcpProbeResult } from './acpProbe';
+import { normalizeAcpMcpCapabilities, type AcpMcpCapabilities } from '@/agent/acp/normalizeAcpMcpCapabilities';
 import { normalizeCapabilityProbeError } from '@/capabilities/utils/normalizeCapabilityProbeError';
 
 type PromptCapabilitiesSnapshot = Readonly<{
@@ -7,25 +8,12 @@ type PromptCapabilitiesSnapshot = Readonly<{
   embeddedContext: boolean;
 }>;
 
-type McpCapabilitiesSnapshot = Readonly<{
-  http: boolean;
-  sse: boolean;
-}>;
-
 function normalizePromptCapabilities(raw: unknown): PromptCapabilitiesSnapshot {
   const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
   return {
     image: value.image === true,
     audio: value.audio === true,
     embeddedContext: value.embeddedContext === true,
-  };
-}
-
-function normalizeMcpCapabilities(raw: unknown): McpCapabilitiesSnapshot {
-  const value = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
-  return {
-    http: value.http === true,
-    sse: value.sse === true,
   };
 }
 
@@ -45,7 +33,7 @@ export function buildAcpCapabilitySnapshot(
         loadSession: boolean;
         sessionCapabilities: Record<string, unknown>;
         promptCapabilities: PromptCapabilitiesSnapshot;
-        mcpCapabilities: McpCapabilitiesSnapshot;
+        mcpCapabilities: AcpMcpCapabilities;
       }>;
     }>
   | Readonly<{
@@ -69,9 +57,9 @@ export function buildAcpCapabilitySnapshot(
     loadSession,
     agentCapabilities: {
       loadSession,
-      sessionCapabilities: normalizeSessionCapabilities((capabilities as any).sessionCapabilities),
-      promptCapabilities: normalizePromptCapabilities((capabilities as any).promptCapabilities),
-      mcpCapabilities: normalizeMcpCapabilities((capabilities as any).mcpCapabilities),
+      sessionCapabilities: normalizeSessionCapabilities(capabilities.sessionCapabilities),
+      promptCapabilities: normalizePromptCapabilities(capabilities.promptCapabilities),
+      mcpCapabilities: normalizeAcpMcpCapabilities(capabilities.mcpCapabilities),
     },
   };
 }
