@@ -1369,7 +1369,7 @@ asset-integrity checks. Go source diagnostics use the existing drift classifier,
 so correcting a failed native build resumes pending preparation; configuration and
 OS errors still fail fast. Installed vendor tools retain their lifecycle.
 
-The development CLIProxyAPI companion embeds SDK v8.0.61 and builds with Go
+The development CLIProxyAPI companion embeds SDK v8.0.80 and builds with Go
 1.26.10, selected by its managed-runtime `go.mod`. Catalog generation projects that
 SDK version into the wrapper health identity and plugin compatibility catalog;
 notices are generated from the compiled dependency closure, including published

@@ -21,6 +21,7 @@ import * as publicPackage from './index.js';
 import { PLUGIN_MANIFEST } from './manifest.js';
 import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './provider/managedContract.js';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
+import { CLIPROXYAPI_STATIC_MODEL_SDK_VERSION } from './provider/staticModels.generated.js';
 
 type ManagedPurpose = 'openai-upstream' | 'anthropic-upstream';
 
@@ -38,7 +39,7 @@ const healthySnapshot = Object.freeze({
 const healthyIdentity = Object.freeze({
   v: 1,
   contractVersion: 'happier.cliproxyapi-managed/v3',
-  sdkVersion: 'v8.0.61',
+  sdkVersion: CLIPROXYAPI_STATIC_MODEL_SDK_VERSION,
   wrapperBuildVersion: 'cliproxyapi-test-build',
   protocols: Object.freeze([
     'openai-chat',

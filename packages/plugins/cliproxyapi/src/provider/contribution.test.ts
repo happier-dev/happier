@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { ProviderContributionV1Schema } from '@happier-dev/protocol';
 
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from './contribution.js';
+import { CLIPROXYAPI_STATIC_MODEL_SDK_VERSION } from './staticModels.generated.js';
 
 describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
   it('publishes the Gemini key route with its native header and credential-free catalog', () => {
@@ -189,7 +190,7 @@ describe('CLIPROXYAPI_PROVIDER_CONTRIBUTION', () => {
       catalog: {
         source: 'probe',
         manualModelPolicy: 'allowed',
-        sourceRegistryVersion: 'v8.0.61:header-facts-families-v7',
+        sourceRegistryVersion: `${CLIPROXYAPI_STATIC_MODEL_SDK_VERSION}:header-facts-families-v7`,
         probes: [{
           endpointTemplateId: 'cliproxyapi-openai-responses',
           path: '/v1/models',

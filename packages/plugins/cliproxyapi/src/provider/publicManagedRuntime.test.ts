@@ -23,6 +23,7 @@ import type {
 
 import { CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES } from './managedContract.js';
 import { CLIPROXYAPI_PUBLIC_MANAGED_PROVIDER_RUNTIME } from './publicManagedRuntime.js';
+import { CLIPROXYAPI_STATIC_MODEL_SDK_VERSION } from './staticModels.generated.js';
 
 type ManagedPurpose = typeof CLIPROXYAPI_MANAGED_PURPOSE_FAMILIES[number]['purpose'];
 
@@ -94,7 +95,7 @@ function healthyIdentity(_boundPurposes: readonly ManagedPurpose[]) {
   return Object.freeze({
     v: 1,
     contractVersion: 'happier.cliproxyapi-managed/v3',
-    sdkVersion: 'v8.0.61',
+    sdkVersion: CLIPROXYAPI_STATIC_MODEL_SDK_VERSION,
     wrapperBuildVersion: 'cliproxyapi-test-build',
     protocols: [...new Set(families.flatMap((family) => family.protocols))],
     purposes: families.map((family) => Object.freeze({
@@ -738,7 +739,7 @@ describe('CLIProxyAPI managed runtime bound-purpose launch snapshot', () => {
             expect(await responseStatus(result.service, route, 'POST', testCase.unboundModelId)).toBeGreaterThanOrEqual(400);
           }
           expect(requestAuthEffects.count).toBe(0);
-          // SDK v8.0.61 starts catalog updaters and Antigravity's sentinel-only
+          // The embedded SDK starts catalog updaters and Antigravity's sentinel-only
           // probe even for sparse consumers. Keep those probes enabled; the
           // proxy refuses their CONNECTs and the broker remains untouched.
           expect(outboundTargets.filter((target) => ![

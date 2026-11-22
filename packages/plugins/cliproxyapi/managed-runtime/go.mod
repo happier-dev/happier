@@ -13,12 +13,12 @@ require (
 	// upstream's internal/ packages, so no import or compile-time gate can
 	// catch drift: a header name the new pin derives but the strip-list omits
 	// reaches the upstream with the caller's value instead of the lease's.
-	github.com/router-for-me/CLIProxyAPI/v8 v8.0.61
+	github.com/router-for-me/CLIProxyAPI/v8 v8.0.80
 )
 
 require (
 	cloud.google.com/go/compute/metadata v0.3.0 // indirect
-	github.com/MoeForge/moego v0.1.0-alpha.1 // indirect
+	github.com/MoeForge/moego v0.1.0-alpha.4 // indirect
 	github.com/andybalholm/brotli v1.2.7 // indirect
 	github.com/bytedance/sonic v1.11.6 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect

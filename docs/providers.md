@@ -2707,7 +2707,7 @@ model id stays listed when protocol presentations use different display names.
 Aliases that identify different canonical models remain ambiguous. Session and Run
 launches still carry their actual Agent target and apply its compatibility rules.
 
-In 0.3 development, the managed wrapper embeds CLIProxyAPI v8.0.61. Its
+In 0.3 development, the managed wrapper embeds CLIProxyAPI v8.0.80. Its
 Go module owns the SDK selection; catalog generation derives both the TypeScript
 compatibility rows and the wrapper SDK identity from that selection. The private
 wrapper contract remains v3. Connected Services remains the credential acquisition
