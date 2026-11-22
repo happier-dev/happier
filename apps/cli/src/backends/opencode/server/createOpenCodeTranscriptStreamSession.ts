@@ -21,7 +21,7 @@ type StreamedTranscriptEphemeralDeltaOptions = Readonly<{
 }>;
 
 export type OpenCodeTranscriptStreamSessionSource = Readonly<{
-  subscribeToSessionConnectionState?: StreamedTranscriptWriterSession['subscribeToSessionConnectionState'];
+  subscribeToTranscriptReplayReady?: StreamedTranscriptWriterSession['subscribeToTranscriptReplayReady'];
   sendAgentMessage: (
     provider: ACPProvider,
     body: ACPMessageData,
@@ -78,7 +78,7 @@ export function createOpenCodeTranscriptStreamSession(params: Readonly<{
   const sendEphemeral = params.session.sendAgentMessageEphemeral?.bind(params.session);
   const sendEphemeralDelta = params.session.sendAgentMessageEphemeralDelta?.bind(params.session);
   return {
-    subscribeToSessionConnectionState: params.session.subscribeToSessionConnectionState?.bind(params.session),
+    subscribeToTranscriptReplayReady: params.session.subscribeToTranscriptReplayReady?.bind(params.session),
     sendAgentMessage: (provider, body, opts) =>
       params.session.sendAgentMessage(provider, body, {
         ...opts,

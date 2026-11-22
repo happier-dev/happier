@@ -207,13 +207,13 @@ development source; they do not establish preview or stable availability.
 settlement. Closing a segment freezes its completion or interruption intent and
 separates it from subsequent output. A rejected terminal write retains the full
 snapshot for the next flush with the same local id; unresolved delivery is recorded
-in the default file log. While closed snapshots remain, the writer subscribes to
-the session's existing connection-state events and retries them when its transport
-comes online, including a reconnect that races an in-flight failed write. Retries
-reuse the same local id and terminal state through the session commit queue, without
-waiting for pending-input readiness or a new prompt. The subscription ends when
-the snapshots settle or the writer is discarded. This retention is process-local;
-it does not provide recovery after process exit or replacement of the session client.
+in the default file log. The session retries retained snapshots during connection
+convergence, after the replacement socket settles its Runtime Activity publisher
+registration on relays that support the publisher fence. The writer waits for
+any in-flight attempt, then retries with the original local id and terminal state.
+Pending input materialization becomes eligible once the replay attempt settles.
+The subscription ends when the snapshots settle or the writer is discarded.
+Retention lasts for the lifetime of the session client in the current process.
 
 `createKeyedStreamedTranscriptBridge` keeps writers with active, in-flight, or failed
 segments and releases only drained writers. Codex tool boundaries wait for admission

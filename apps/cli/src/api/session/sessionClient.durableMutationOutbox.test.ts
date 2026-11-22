@@ -1081,42 +1081,90 @@ describe('ApiSessionClient durable mutation outbox', () => {
     await client.close();
   });
 
-  it.each(['offline', 'late-failure', 'discarded', 'opencode', 'deferred', 'deferred-before-attach'] as const)('publishes a streamed final after reconnect without another turn (%s)', async (scenario) => {
+  it.each(['offline', 'late-failure', 'discarded', 'opencode', 'deferred', 'deferred-before-attach', 'publisher-readiness'] as const)('publishes a streamed final after reconnect without another turn (%s)', async (scenario) => {
     useRealSupervisor = true;
+    const withPublisher = scenario === 'publisher-readiness';
     vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
-      features: { sharing: { pendingQueueV2: { enabled: true } } }, capabilities: {},
+      features: { sharing: { pendingQueueV2: { enabled: true } } },
+      capabilities: withPublisher ? { session: { runtimeActivity: { protocolVersion: 2 }, pendingInput: { protocolVersion: 1 } } } : {},
     }), { status: 200 })));
     const stored = new Map<string, unknown>();
     const firstAck = createDeferred<void>();
+    const reconnectActivity = createDeferred<void>();
+    const reconnectActivityAck = createDeferred<void>();
+    const finalAttempt = createDeferred<void>();
+    const finalAck = createDeferred<void>();
     let messageAttempts = 0;
     let committedMessageSeq = 0;
-    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: async (event, payload) => {
-      if (event === 'message') {
-        const message = payload as { localId: string; message: unknown };
-        // Deferred attachment can also publish its startup-flush warning. Track
-        // only the final's identity when checking replay and duplicate delivery.
-        if (message.localId === 'final-segment') {
-          messageAttempts += 1;
-          if (scenario === 'late-failure' && messageAttempts === 1) {
-            await firstAck.promise;
-            return { ok: false, error: 'write_failed' };
+    let pendingClaims = 0;
+    const createSocket = (replacement: boolean) => {
+      let publisherRegistered = false;
+      return createApiSessionSocketStub({ connected: !replacement, emitWithAck: async (event, payload) => {
+        if (event === 'session-runtime-activity-snapshot') {
+          const request = payload as { sessionId: string; mutationId: string; snapshot: { state: string; activeCount: number } };
+          if (replacement) {
+            reconnectActivity.resolve();
+            await reconnectActivityAck.promise;
           }
-          stored.set(message.localId, message.message);
+          publisherRegistered = true;
+          return { status: 'applied', sessionId: request.sessionId, mutationId: request.mutationId,
+            projection: { ...request.snapshot, observedAt: 1, revision: 1 } };
         }
-        return { ok: true, id: message.localId, localId: message.localId, seq: ++committedMessageSeq };
-      }
-      return { ok: true };
-    } });
+        if (event === 'pending-materialize-next') {
+          pendingClaims += 1;
+          if (!publisherRegistered) return { ok: false, error: 'forbidden' };
+          return { ok: true, didMaterialize: false, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 2 };
+        }
+        if (event === 'session-runtime-activity-close') return { status: 'closed', sessionId: 'offline-final' };
+        if (event === 'message') {
+          const message = payload as { localId: string; message: unknown };
+          // Deferred attachment can also publish its startup-flush warning. Track
+          // only the final's identity when checking replay and duplicate delivery.
+          if (message.localId === 'final-segment') {
+            messageAttempts += 1;
+            if (withPublisher) {
+              if (!publisherRegistered) return { ok: false, error: 'forbidden' };
+              finalAttempt.resolve();
+              await finalAck.promise;
+            }
+            if (scenario === 'late-failure' && messageAttempts === 1) {
+              await firstAck.promise;
+              return { ok: false, error: 'write_failed' };
+            }
+            stored.set(message.localId, message.message);
+          }
+          return { ok: true, id: message.localId, localId: message.localId, seq: ++committedMessageSeq };
+        }
+        return { ok: true };
+      } });
+    };
+    const initialSocket = createSocket(false);
+    sessionSocketStub = initialSocket;
+    if (withPublisher) sessionSocketStubFactory = () => transportCreationCount === 1 ? initialSocket : createSocket(true);
     userSocketStub = createApiSessionSocketStub({ connected: false });
     const { ApiSessionClient } = await import('./sessionClient');
     const { createCurrentSessionTranscriptPort } = await import('./createCurrentSessionTranscriptPort');
     const { createStreamedTranscriptWriter } = await import('./streamedTranscriptWriter');
-    const client = new ApiSessionClient('tok', createPlainSessionFixture({ id: 'offline-final' }));
+    const fixture = createPlainSessionFixture({ id: 'offline-final', ...(withPublisher ? {
+      pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1,
+    } : {}) });
+    const lifecycle = withPublisher
+      ? await (await import('@/agent/runtime/initializeBackendRunSession')).createBackendRunRuntimeActivityLifecycle(undefined)
+      : null;
+    const start = createDeferred<void>();
+    if (withPublisher) sessionConnectionGate = start.promise;
+    const client = new ApiSessionClient('tok', withPublisher ? {
+      ...fixture, metadata: { ...fixture.metadata, machineId: 'machine-1' },
+    } : fixture, lifecycle?.clientConfig());
     let transcriptSession: StreamedTranscriptWriterSession = scenario === 'opencode'
       ? (await import('@/backends/opencode/server/createOpenCodeTranscriptStreamSession')).createOpenCodeTranscriptStreamSession({
         session: client, baseMeta: {},
       })
       : createCurrentSessionTranscriptPort(() => client);
+    if (withPublisher) {
+      transcriptSession = (await import('@/backends/claude/remote/createClaudeRemoteStreamedTranscriptSession'))
+        .createClaudeRemoteStreamedTranscriptSession(client);
+    }
     let deferredToAttach: DeferredApiSessionClient | null = null;
     if (scenario === 'deferred' || scenario === 'deferred-before-attach') {
       const { DeferredApiSessionClient } = await import('@/agent/runtime/startup/DeferredApiSessionClient');
@@ -1129,11 +1177,13 @@ describe('ApiSessionClient durable mutation outbox', () => {
         .createClaudeRemoteStreamedTranscriptSession(deferred);
     }
     const writer = createStreamedTranscriptWriter({
-      provider: scenario === 'opencode' ? 'opencode' : 'codex', session: transcriptSession,
+      provider: scenario === 'opencode' ? 'opencode' : withPublisher ? 'claude' : 'codex', session: transcriptSession,
       makeLocalId: () => 'final-segment', initialCheckpointDelayMs: 60_000,
     });
     const reconnect = createDeferred<void>();
     try {
+      await lifecycle?.attachSession(client);
+      start.resolve();
       await expect.poll(() => realSupervisorConnectedCompletion).not.toBeNull();
       await realSupervisorConnectedCompletion;
       let inFlightFlush: Promise<unknown> | null = null;
@@ -1157,6 +1207,16 @@ describe('ApiSessionClient durable mutation outbox', () => {
       if (scenario === 'discarded') writer.discard();
       reconnect.resolve();
       await expect.poll(() => client.getEphemeralStreamConnectionEpoch(), { timeout: 10_000 }).toBe(2);
+      if (withPublisher) {
+        await reconnectActivity.promise;
+        expect(messageAttempts).toBe(0);
+        reconnectActivityAck.resolve();
+        await finalAttempt.promise;
+        await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
+          .resolves.toMatchObject({ type: 'retryable_transport' });
+        expect(pendingClaims).toBe(0);
+        finalAck.resolve();
+      }
       firstAck.resolve();
       await inFlightFlush;
       if (scenario === 'discarded') {
@@ -1169,14 +1229,24 @@ describe('ApiSessionClient durable mutation outbox', () => {
       });
       await expect.poll(() => writer.hasPendingSegments()).toBe(false);
       expect(stored.size).toBe(1);
+      if (withPublisher) {
+        await realSupervisorConnectedCompletion;
+        await expect(client.materializeNextPendingMessageSafely({ reconcileWhenEmpty: 'force' }))
+          .resolves.toMatchObject({ type: 'no_pending' });
+        expect(pendingClaims).toBe(1);
+      }
       disconnectSessionTransport?.();
       await expect.poll(() => client.getEphemeralStreamConnectionEpoch(), { timeout: 10_000 }).toBe(3);
       await realSupervisorConnectedCompletion;
       expect(messageAttempts).toBe(scenario === 'late-failure' ? 2 : 1);
     } finally {
+      start.resolve();
       reconnect.resolve();
       firstAck.resolve();
+      reconnectActivityAck.resolve();
+      finalAck.resolve();
       writer.discard();
+      await lifecycle?.dispose();
       await client.close();
     }
   });
