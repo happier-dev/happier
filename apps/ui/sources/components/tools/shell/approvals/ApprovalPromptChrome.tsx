@@ -12,6 +12,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { projectWorkColors } from '@/components/work/status/workStatusTreatment';
+import { ScrollEdgeFades } from '@/components/ui/scroll/ScrollEdgeFades';
 
 const renderText: HappierApprovalPromptTextRender = (input) => (
   <Text style={input.style as StyleProp<TextStyle>} numberOfLines={input.numberOfLines}>{input.text}</Text>
@@ -108,11 +109,17 @@ export const ApprovalPromptChrome = React.memo(function ApprovalPromptChrome(
   const report = room?.report;
   const onMeasure = React.useCallback((heights: ApprovalPromptCardHeights) => report?.(cardId, heights), [cardId, report]);
   React.useEffect(() => () => report?.(cardId, null), [cardId, report]);
+  const cardSurface = theme.colors.surface.elevated;
+  // Facts hidden by the card's bound fade into its surface (the composer card stack's own fade), never a hard cut.
+  const renderFactsEdgeFade = React.useCallback((edges: Readonly<{ top: boolean; bottom: boolean }>) => (
+    <ScrollEdgeFades color={cardSurface} edges={edges} />
+  ), [cardSurface]);
   return (
     <HappierApprovalPromptChrome
       {...props}
       maxHeight={room ? room.boundFor(cardId) : undefined}
       onMeasure={room ? onMeasure : undefined}
+      renderFactsEdgeFade={renderFactsEdgeFade}
       cardRadius={theme.parts.approvalCard.radius}
       spacing={{ small: theme.space.s8, medium: theme.space.s12 }}
       typography={readPluginUiHostTypography()}

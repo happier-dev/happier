@@ -2,7 +2,7 @@ import { View } from 'react-native';
 import { describe, expect, it } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../../rnwMount.testSupport.js';
-import { HappierApprovalPromptChrome, type HappierApprovalPromptChromeProps } from './ApprovalPromptChrome.js';
+import { HappierApprovalPromptChrome, resolveHappierApprovalFactsEdges, type HappierApprovalPromptChromeProps } from './ApprovalPromptChrome.js';
 
 const base: HappierApprovalPromptChromeProps = {
   title: 'Open machine terminal',
@@ -73,6 +73,29 @@ describe('HappierApprovalPromptChrome', () => {
       expect(factsScroller!.contains(decision)).toBe(false);
       expect(card.contains(decision)).toBe(true);
     } finally { mounted.unmount(); }
+  });
+
+  it('fades bounded facts at the edge that hides more, and only when real facts are hidden', () => {
+    const at = (offset: number) => resolveHappierApprovalFactsEdges({ viewport: 120, content: 300, offset, threshold: 8 });
+    expect(at(0)).toEqual({ top: false, bottom: true });
+    expect(at(90)).toEqual({ top: true, bottom: true });
+    expect(at(180)).toEqual({ top: true, bottom: false });
+    // The body's own few pixels of inset are not hidden facts.
+    expect(resolveHappierApprovalFactsEdges({ viewport: 120, content: 126, offset: 0, threshold: 8 })).toEqual({ top: false, bottom: false });
+  });
+
+  it('draws the host fade over the scrolling facts of a pinned card, in place of the hairline', () => {
+    const edges: unknown[] = [];
+    const view = mountThroughReactNativeWeb(<HappierApprovalPromptChrome {...base} testID="card" maxHeight={240}
+      renderFactsEdgeFade={(value) => { edges.push(value); return <View testID="fade" />; }} footer={<View testID="decision" />}>
+      <View testID="facts" />
+    </HappierApprovalPromptChrome>);
+    try {
+      expect(view.container.querySelector('[data-testid="fade"]')).not.toBeNull();
+      expect(edges.at(-1)).toEqual({ top: false, bottom: false });
+      const facts = view.container.querySelector('[data-testid="card-facts"]')!;
+      expect(facts.contains(view.container.querySelector('[data-testid="fade"]'))).toBe(false);
+    } finally { view.unmount(); }
   });
 
   it('never clips the facts of a card that has no decision to pin', () => {

@@ -69,7 +69,25 @@ export type HappierApprovalPromptChromeProps = Readonly<{
   /** The host's type faces; omitted, the mounted environment's (a numeric weight without either). */
   typography?: HappierUiTypography | null;
   renderText?: HappierApprovalPromptTextRender;
+  /**
+   * Bounded facts that do not fit fade at the edge that hides more (the host's own scroll-edge fade), instead of
+   * the hard cut a hairline over the decision marks. Omitted, the hairline stays.
+   */
+  renderFactsEdgeFade?: (edges: HappierApprovalFactsEdges) => ReactNode;
 }>;
+
+export type HappierApprovalFactsEdges = Readonly<{ top: boolean; bottom: boolean }>;
+
+/** Which edges of bounded facts hide more: a few pixels of the body's own inset (`threshold`) never count as hidden. */
+export function resolveHappierApprovalFactsEdges(input: Readonly<{
+  viewport: number; content: number; offset: number; threshold: number;
+}>): HappierApprovalFactsEdges {
+  const hidden = input.content - input.viewport;
+  if (hidden <= input.threshold) return NO_FACTS_EDGES;
+  return { top: input.offset > 1, bottom: input.offset < hidden - 1 };
+}
+
+const NO_FACTS_EDGES: HappierApprovalFactsEdges = Object.freeze({ top: false, bottom: false });
 
 // The mark's slot and its gap to the words: with the card inset they set the column the facts and the
 // decision start on, so everything under the title lines up with it.
@@ -105,8 +123,12 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // Bounded facts that do not fit show a hairline over the pinned decision: there is more above it.
   const [factsViewport, setFactsViewport] = useState(0);
   const [factsContent, setFactsContent] = useState(0);
+  const [factsOffset, setFactsOffset] = useState(0);
   // Only real facts count as hidden; a few pixels of the body's own bottom inset do not.
   const factsClipped = pinned && factsContent - factsViewport > step;
+  const renderFade = props.renderFactsEdgeFade;
+  // With a fade the hidden facts say so themselves; the hairline marks the cut only when there is none.
+  const factsRuled = factsClipped && !renderFade;
   // A bounded card never gets shorter than its head and its decision: when the bound is tighter (several
   // requests share a tray), the card keeps both whole and its host scrolls between cards instead.
   const [headHeight, setHeadHeight] = useState(0);
@@ -114,7 +136,7 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // changes, so measuring the padded, hairlined wrapper would miss the pad and rule the clipped state adds
   // and leave the facts one line short of the room they were counted for.
   const [decisionContent, setDecisionContent] = useState(0);
-  const decisionHeight = decisionContent > 0 ? decisionContent + inset + (factsClipped ? step + 1 : 0) : 0;
+  const decisionHeight = decisionContent > 0 ? decisionContent + inset + (factsRuled ? step + 1 : 0) : 0;
   const boundedMinHeight = headHeight + decisionHeight;
   const onMeasure = props.onMeasure;
   const naturalHeight = bounded && headHeight > 0 ? headHeight + decisionHeight + factsContent : 0;
@@ -154,16 +176,22 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
         {props.headerAccessory}
       </View>
       {!hasBody ? null : pinned ? (
-        <ScrollView testID={props.testID ? `${props.testID}-facts` : undefined} style={{ flexShrink: 1, minHeight: 0 }}
-          contentContainerStyle={bodyStyle} nestedScrollEnabled
-          onLayout={(event) => setFactsViewport(event.nativeEvent.layout.height)}
-          onContentSizeChange={(_width, height) => setFactsContent(height)}>
-          {props.children}
-        </ScrollView>
+        <View style={{ flexShrink: 1, minHeight: 0 }}>
+          <ScrollView testID={props.testID ? `${props.testID}-facts` : undefined} style={{ flexShrink: 1, minHeight: 0 }}
+            contentContainerStyle={bodyStyle} nestedScrollEnabled
+            scrollEventThrottle={renderFade ? 16 : undefined}
+            onScroll={renderFade ? (event) => setFactsOffset(event.nativeEvent.contentOffset.y) : undefined}
+            onLayout={(event) => setFactsViewport(event.nativeEvent.layout.height)}
+            onContentSizeChange={(_width, height) => setFactsContent(height)}>
+            {props.children}
+          </ScrollView>
+          {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
+            content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES) : null}
+        </View>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
       {/* The decisions span the card from its edge (lab mb B): a phone's stacked choices are full width. */}
       {props.footer ? <View style={{ flexShrink: 0, paddingLeft: inset, paddingRight: inset, paddingBottom: compact ? step : inset,
-        ...(factsClipped ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
+        ...(factsRuled ? { borderTopWidth: 1, borderTopColor: props.colors.border, paddingTop: step } : null) }}>
         <View onLayout={bounded ? (event) => setDecisionContent(event.nativeEvent.layout.height) : undefined}>{props.footer}</View>
       </View> : null}
     </View>
