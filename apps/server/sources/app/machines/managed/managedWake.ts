@@ -22,7 +22,7 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { jsonPathEquals } from '@/storage/jsonPathFilter';
 import { markAccountChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { readWorkflowRunOriginWakeCandidatesInTx } from '@/app/workflows/workflowRunAttention';
-import { ManagedMachineError, hasBoundManagedLifecycle, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedController, resolveManagedMachineRoleInTx, type StoredManagedMachine } from './managedRows';
+import { ManagedMachineError, hasBoundManagedLifecycle, projectManagedMachine, requireManagedControllerInTx, sameManagedInput, readManagedAdmissionState, readManagedController, resolveManagedMachineRoleInTx, type StoredManagedMachine } from './managedRows';
 import { forwardRpcCall } from '@/app/api/socket/rpc/forwardRpcCall';
 import type { RpcAckResponseEmitter } from '@/app/api/socket/rpc/_types';
 import { readMachineDaemonSocketIdentity } from '@/app/machines/machineDaemonPresence';
@@ -402,22 +402,44 @@ export async function readManagedWakeTargets(input: Readonly<{
         const managedRows = input.managedIds
             ? (await Promise.all(portableQueryChunks({ values: input.managedIds, bindingsPerValue: 1, fixedBindings: 10 }).map(readRows))).flat()
             : await readRows();
+        const settledWakeRevisions = new Map<string, number>();
         const candidateIds = new Set(managedRows.flatMap(row => {
             const projected = projectManagedMachine(row);
-            return row.enrolledMachineId && (projected.submittedNativeEffect
-                || resolveManagedMachineRuntimeV1(projected, row.enrolledMachineId,
-                    row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) })).inspectionRequired) ? [row.id] : [];
+            if (!row.enrolledMachineId || !projected.submittedNativeEffect
+                && !resolveManagedMachineRuntimeV1(projected, row.enrolledMachineId,
+                    row.enrolledMachine !== null && isMachineReachableV1({ machine: serializeMachinePresence(row.enrolledMachine) })).inspectionRequired) {
+                return [];
+            }
+            const admission = readManagedAdmissionState(row.admittedInput).currentAdmission;
+            // The settled native wake covers the inputs already queued for its
+            // prior intent revision while the enrolled daemon reconnects.
+            if (admission?.kind === 'policy' && admission.wakeSettled
+                && admission.request.purpose.kind === 'accepted-input-start'
+                && row.intentRevision === admission.request.expectedIntentRevision + 1
+                && !projected.submittedNativeEffect && resolveManagedMachineRuntimeV1(projected, null).ready
+                && admission.request.purpose.target.enrolledMachineId === row.enrolledMachineId
+                && sameManagedInput(admission.request.controller, request.controller)
+                && sameManagedInput(admission.request.purpose.target.controller, projected.controller)) {
+                settledWakeRevisions.set(row.id, admission.request.purpose.target.expectedIntentRevision);
+            }
+            return [row.id];
         }));
         const machineIds = new Set(managedRows.flatMap(row => row.enrolledMachineId ? [row.enrolledMachineId] : []));
         const targets: ManagedWakeTargetV1[] = [];
         const originAccountIds = await resolveCurrentMachineRecipientAccountIdsInTx(tx, request.controller.machineId);
         // Accepted origins retain their original controller. Select by immutable
         // managed identity; the current row remains the controller-custody authority.
-        for (const ids of portableQueryChunks({ values: managedRows.map(row => row.id), bindingsPerValue: 2, fixedBindings: 4 })) {
+        for (const ids of portableQueryChunks({ values: managedRows.map(row => row.id),
+            bindingsPerValue: settledWakeRevisions.size === 0 ? 2 : 4, fixedBindings: 4 })) {
             const sessions = await tx.session.findMany({ where: { pendingActivationStatus: 'waiting',
                 pendingActivationRequestId: { not: null },
                 AND: [{ pendingActivationManagedTarget: jsonPathEquals(['homeId'], request.homeId) }],
-                OR: ids.map(id => ({ pendingActivationManagedTarget: jsonPathEquals(['managedId'], id) })),
+                OR: ids.map(id => {
+                    const pendingActivationManagedTarget = jsonPathEquals(['managedId'], id);
+                    const settledRevision = settledWakeRevisions.get(id);
+                    return settledRevision === undefined ? { pendingActivationManagedTarget } : { pendingActivationManagedTarget,
+                        NOT: { pendingActivationManagedTarget: jsonPathEquals(['expectedIntentRevision'], settledRevision) } };
+                }),
             }, select: { id: true, accountId: true } });
             for (const session of sessions) {
                 const current = await readPendingManagedWakeTargetInTx(tx, session.id);

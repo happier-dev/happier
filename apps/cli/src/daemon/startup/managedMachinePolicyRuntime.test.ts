@@ -177,6 +177,43 @@ describe('daemon managed policy census transport', () => {
                     domainRef: { kind: 'managedMachine', id: machine.id } }]));
         } finally { await runtime.stop(); }
     });
+
+    it('keeps the open wake decision when a different waiting Send comes first in the census', async () => {
+        const controller = { machineId: 'controller', installationId: 'installation' };
+        const machine = ManagedMachineV1Schema.parse({
+            id: 'managed', homeId: 'home', custodianAccountId: 'owner', controller, enrolledMachineId: 'guest',
+            launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            allocation: 'bound', resource: { contributionRef: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, value: {} },
+            creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
+        });
+        const wake = (id: string) => ManagedWakeTargetV1Schema.parse({
+            homeId: machine.homeId, managedId: machine.id, enrolledMachineId: machine.enrolledMachineId,
+            expectedIntentRevision: 1, controller, reason: 'admitted-work',
+            origin: { kind: 'session-input', session: { homeId: machine.homeId, sessionId: id }, pendingRequestId: id, requestedAt: 1 },
+        });
+        const first = wake('first');
+        const second = wake('second');
+        let targets = [first];
+        const decisions: Array<{ target: typeof first; signal: AbortSignal }> = [];
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            readCensus: async () => ({ machines: [machine], targets }),
+            executePolicy: async ({ purpose, signal }) => {
+                if (purpose.kind !== 'accepted-input-start' || !signal) throw new Error('Expected a held Start');
+                decisions.push({ target: purpose.target, signal });
+                await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+                return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+            },
+        });
+        try {
+            await runtime.notifyChanged();
+            expect(decisions.map(decision => decision.target)).toEqual([first]);
+            targets = [second, first];
+            await runtime.notifyChanged();
+            expect(decisions.map(decision => decision.target)).toEqual([first]);
+            expect(decisions[0]?.signal.aborted).toBe(false);
+        } finally { await runtime.stop(); }
+    });
     it('accepts an Account-owned row and target without assigning the observing daemon as controller', async () => {
         const signing = nacl.sign.keyPair();
         const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',

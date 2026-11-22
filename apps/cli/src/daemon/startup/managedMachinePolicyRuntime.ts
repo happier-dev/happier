@@ -89,7 +89,12 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
         const firstWakeTargets = new Map<string, ManagedMachinePolicyCensus['targets'][number]>();
         for (const target of census.targets) {
             const { managedId } = target;
-            if (!firstWakeTargets.has(managedId)) firstWakeTargets.set(managedId, target);
+            const incumbent = active.get(managedId);
+            // The census can reorder waiters while the same Ask is open.
+            if (!firstWakeTargets.has(managedId) || incumbent && !incumbent.cancel.signal.aborted
+                && isDeepStrictEqual(incumbent.signature.origin, target.origin)) {
+                firstWakeTargets.set(managedId, target);
+            }
         }
         if (managedIds === null) {
             managedIdByEnrolledMachineId.clear();

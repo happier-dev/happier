@@ -244,6 +244,13 @@ describe('finite managed wake original Action authority (real storage)', () => {
             const { activatePendingInactiveSession } =
                 await importCli<typeof import('../../../../../cli/src/daemon/sessions/activatePendingInactiveSession')>(
                     '../../../../../cli/src/daemon/sessions/activatePendingInactiveSession');
+            let onWakeReport: (() => Promise<void> | undefined) | undefined;
+            app.addHook('onSend', async (request, reply, payload) => {
+                if (request.url.endsWith('/controller/report-intent') && reply.statusCode === 200) {
+                    await onWakeReport?.();
+                }
+                return payload;
+            });
             const origin = await app.listen({ host: '127.0.0.1', port: 0 });
             const token = await auth.createToken(accountId, undefined, { kind: 'account', authority: 'present_user' });
             const credentials = { token, encryption: null };
@@ -318,14 +325,26 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 },
                 onUnavailable: error => { wakeErrors.push(error); },
             });
+            // Home can publish its committed settlement before the reply
+            // reaches the operation that issued the native effect.
+            const notifyWakeSettlement = vi.fn(() => policy.notifyChanged({ currentnessOnly: true }));
+            onWakeReport = notifyWakeSettlement;
             try {
                 await policy.notifyChanged();
                 expect(wakeRuns).toHaveLength(1);
                 await Promise.all(wakeRuns);
+                expect(notifyWakeSettlement).toHaveBeenCalledTimes(1);
                 expect(wakeErrors).toEqual([]);
                 expect(applyNativeStart).toHaveBeenCalledTimes(1);
                 expect(await db.managedMachine.findUniqueOrThrow({ where: { id: test.row.id }, select: { observation: true } }))
                     .toMatchObject({ observation: { power: 'running' } });
+                // READY194: the controller has finished waking the native guest,
+                // and its daemon has yet to register. The four Sends still wait.
+                expect(await db.machine.findUniqueOrThrow({ where: { id: machineId }, select: { active: true } }))
+                    .toEqual({ active: false });
+                expect((await census()).targets).toEqual([]);
+                await policy.notifyChanged();
+                expect(wakeRuns).toHaveLength(1);
             } finally { await policy.stop(); }
 
             await db.machine.update({ where: { id: machineId }, data: { active: true } });

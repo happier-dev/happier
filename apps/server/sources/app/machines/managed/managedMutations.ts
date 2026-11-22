@@ -181,7 +181,8 @@ async function readOrAdmitManagedPolicy(params: Readonly<{ custodianAccountId: s
         const pending = admitted.submittedEffect;
         const currentAdmission = { kind: 'policy' as const, request: input };
         if (readManagedCurrentRequestId(row) === input.requestId) {
-            if (!sameManagedInput(admitted.currentAdmission, currentAdmission)) throw new ManagedMachineError('request_conflict');
+            if (admitted.currentAdmission?.kind !== 'policy'
+                || !sameManagedInput(admitted.currentAdmission.request, input)) throw new ManagedMachineError('request_conflict');
             return { ...projectManagedAdmissionCarrier(row), requestId: input.requestId, replayed: true };
         }
         const previousPurpose = admitted.currentAdmission?.kind === 'policy' ? admitted.currentAdmission.request.purpose : undefined;
@@ -539,6 +540,17 @@ export async function reportManagedIntent(canonical: ManagedControllerIntentRepo
         const admitted = readManagedAdmissionState(row.admittedInput);
         const pending = readManagedIntentReportAuthority(row, canonical);
         if (!pending) throw new ManagedMachineError("request_conflict");
+        const settleSubmittedEffect = (observation: ManagedControllerIntentReportV1['observation']) => {
+            const { submittedEffect: _settled, ...retained } = admitted;
+            const current = retained.currentAdmission;
+            if (observation?.availability === 'present' && observation.power === 'running' && observation.storage !== 'lost'
+                && canonical.result.kind !== 'refused'
+                && current?.kind === 'policy' && current.request.purpose.kind === 'accepted-input-start'
+                && current.request.requestId === pending.requestId && row.intentRevision === pending.expectedIntentRevision) {
+                return { ...retained, currentAdmission: { ...current, wakeSettled: true as const } };
+            }
+            return retained;
+        };
         const publishManagedTerminalPresence = async (observation: ManagedControllerIntentReportV1['observation']): Promise<void> => {
             const scope = endedGuest(row, pending.intent, observation);
             if (!scope) return;
@@ -627,8 +639,7 @@ export async function reportManagedIntent(canonical: ManagedControllerIntentRepo
                     ? { disposition: 'pending', reason: 'native_effect_unknown' }
                     : getActivePrismaRuntime().DbNull;
             } else {
-                const { submittedEffect: _settled, ...currentAdmission } = admitted;
-                data.admittedInput = currentAdmission;
+                data.admittedInput = settleSubmittedEffect(observedSettlement ? currentObservation : undefined);
                 if (currentObservation?.availability === 'absent') data.cleanup = getActivePrismaRuntime().DbNull;
                 else if (row.archivedAt === null && !preservesNewerCleanup) data.cleanup = canonical.result.kind === 'refused' && ownsCleanup
                     ? { disposition: 'unavailable', reason: 'native_effect_refused' }
@@ -758,8 +769,7 @@ export async function reportManagedIntent(canonical: ManagedControllerIntentRepo
                 ? { disposition: "pending", reason: ('code' in canonical.result ? canonical.result.code : undefined) ?? "native_effect_unknown" }
                 : getActivePrismaRuntime().DbNull;
         } else {
-            const { submittedEffect: _settled, ...currentAdmission } = admitted;
-            data.admittedInput = currentAdmission;
+            data.admittedInput = settleSubmittedEffect(observedSettlement ? currentObservation : undefined);
             if (currentObservation?.availability === "absent") data.cleanup = getActivePrismaRuntime().DbNull;
             else if (row.archivedAt === null && !preservesNewerCleanup) data.cleanup = canonical.result.kind === "refused" && ownsCleanup
                 ? { disposition: "unavailable", reason: canonical.result.code }
