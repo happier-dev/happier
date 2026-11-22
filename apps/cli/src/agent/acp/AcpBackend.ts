@@ -1160,6 +1160,13 @@ export class AcpBackend implements AgentBackend {
       releaseToolCalls: (ids) => {
         if (current()) for (const id of ids) this.providerToolContexts.delete(id);
       },
+      releaseClaimedUpdates: (updates) => {
+        if (!current()) return;
+        for (const update of updates) {
+          void this.handleSessionUpdate({ sessionId, update } as SessionNotification, undefined, { releasedByProvider: true })
+            .catch((error: unknown) => logger.debug('[AcpBackend] Failed to handle a released provider update:', error));
+        }
+      },
       beginContinuation: ({ id, turnId }): AcpProviderTurnSink | null => {
         const context = this.providerContinuations.get(id);
         if (!current() || !context || !readNonBlankOpaqueIdentifier(turnId)
@@ -2558,7 +2565,11 @@ export class AcpBackend implements AgentBackend {
   }
 
   /** Normalize updates through the shared publishers, admitting journal output only for its captured provider generation. */
-  private async handleSessionUpdate(params: SessionNotification, providerGeneration?: number): Promise<void> {
+  private async handleSessionUpdate(
+    params: SessionNotification,
+    providerGeneration?: number,
+    options?: Readonly<{ releasedByProvider?: boolean }>,
+  ): Promise<void> {
     const raw = asRecord(params) ?? {};
     const updateCandidates: unknown[] = [];
 
@@ -2608,7 +2619,7 @@ export class AcpBackend implements AgentBackend {
       return;
     }
 
-    const unclaimedUpdateCandidates = providerGeneration === undefined
+    const unclaimedUpdateCandidates = providerGeneration === undefined && !options?.releasedByProvider
       ? this.withholdProviderClaimedUpdates(raw.sessionId, updateCandidates)
       : updateCandidates;
     if (unclaimedUpdateCandidates.length === 0) return;
@@ -3307,7 +3318,13 @@ export class AcpBackend implements AgentBackend {
       this.pendingTurnOutcome = null;
       resolve(outcome);
     }
-    if (this.providerSource) void this.catchUpProviderTurns().catch((error: unknown) => {
+    this.retryProviderTurnAdmission();
+  }
+
+  /** Let the provider source admit continuations it was refused while another turn or prompt RPC owned the session. */
+  private retryProviderTurnAdmission(): void {
+    if (!this.providerSource) return;
+    void this.catchUpProviderTurns().catch((error: unknown) => {
       this.emit({ type: 'status', status: 'error', detail: error instanceof Error ? error.message : 'Provider observation failed', error });
     });
   }
@@ -3687,6 +3704,7 @@ export class AcpBackend implements AgentBackend {
       void activePromptRpc.settled.then(() => {
         if (this.activePromptRpc === activePromptRpc) {
           this.activePromptRpc = null;
+          this.retryProviderTurnAdmission();
         }
       });
       const finalResponseEvidence: Promise<AcpPromptExactFinalResponseEvidence> = Promise.race([

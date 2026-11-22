@@ -15,6 +15,8 @@ export type AcpProviderTurnSourceHost = Readonly<{
   beginContinuation(input: Readonly<{ id: string; turnId: string }>): AcpProviderTurnSink | null;
   /** The native journal has crossed the parent terminal and all task registrations. */
   releaseToolCalls(toolCallIds: readonly string[]): void;
+  /** Return claimed live updates that no continuation will publish to generic handling, in arrival order. */
+  releaseClaimedUpdates(updates: readonly SessionUpdate[]): void;
   fail(error: Error): void;
 }>;
 
@@ -22,7 +24,8 @@ export type AcpProviderTurnSource = Readonly<{
   catchUp(input?: Readonly<{ permissionToolCallId?: string; foregroundActive?: boolean; signal?: AbortSignal }>): Promise<void>;
   /**
    * Offer a live, non-replayed ACP update for the active session before generic turn filtering.
-   * Returning true transfers it to the source, which may publish it only through an admitted continuation sink.
+   * Returning true transfers it to the source, which must publish it through an admitted continuation sink
+   * or hand it back with `releaseClaimedUpdates`.
    */
   claimLiveUpdate?(update: SessionUpdate, context: Readonly<{ foregroundActive: boolean }>): boolean;
   dispose(): void | Promise<void>;

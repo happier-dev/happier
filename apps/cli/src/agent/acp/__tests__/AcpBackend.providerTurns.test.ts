@@ -7,6 +7,7 @@ import type { AcpBackend } from '../AcpBackend';
 import { createAcpBackend } from '../createAcpBackend';
 import type { AcpProviderTurnSource, AcpProviderTurnSourceHost } from '../backend/turn/providerTurns';
 import { createAcpTestTransportHandler, writeAcpTestAgentScript } from '../testkit/subprocessHarness';
+import type { SessionUpdate } from '../updates/types';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { createDeferred } from '@/testkit/async/deferred';
 import { isPidAlive } from '@/testkit/process/spawn';
@@ -16,6 +17,12 @@ import type { AgentMessage } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
 
 type LiveUpdateClaim = NonNullable<AcpProviderTurnSource['claimLiveUpdate']>;
+
+function messageText(update: SessionUpdate): unknown {
+    return update.sessionUpdate === 'agent_message_chunk'
+        ? (update.content as { text?: unknown } | undefined)?.text
+        : undefined;
+}
 
 function agent(directory: string): string {
     return writeAcpTestAgentScript({
@@ -290,9 +297,7 @@ describe('ACP provider continuation ownership', () => {
         await fixture(async ({ backend, events, setClaimLiveUpdate }) => {
             const offered: Array<Readonly<{ update: unknown; foregroundActive: boolean }>> = [];
             setClaimLiveUpdate((update, { foregroundActive }) => {
-                const text = update.sessionUpdate === 'agent_message_chunk'
-                    ? (update.content as { text?: unknown } | undefined)?.text
-                    : undefined;
+                const text = messageText(update);
                 offered.push({ update: text ?? update.sessionUpdate, foregroundActive });
                 return text === 'FOREGROUND' || text === 'LATE_FOREGROUND';
             });
@@ -314,6 +319,62 @@ describe('ACP provider continuation ownership', () => {
             await backend.cancel('owned');
             expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
             expect(offered).toEqual([]);
+        });
+    });
+
+    it('handles updates the source hands back as generic updates without offering them again', async () => {
+        await fixture(async ({ backend, host, events, setClaimLiveUpdate }) => {
+            const offered: unknown[] = [];
+            let withheld: SessionUpdate | undefined;
+            setClaimLiveUpdate((update, { foregroundActive }) => {
+                offered.push(messageText(update) ?? update.sessionUpdate);
+                if (!foregroundActive && messageText(update) === 'LATE_FOREGROUND') {
+                    withheld = update;
+                    return true;
+                }
+                if (foregroundActive && withheld) {
+                    const released = withheld;
+                    withheld = undefined;
+                    host().releaseClaimedUpdates([released]);
+                }
+                return false;
+            });
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            await backend.requestExtension('test/late', {});
+            await expect.poll(() => withheld).toBeDefined();
+            events.length = 0;
+            offered.length = 0;
+
+            await backend.sendPrompt('owned', 'second');
+            await backend.waitForResponseComplete();
+
+            expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'LATE_FOREGROUND' }));
+            expect(offered).not.toContain('LATE_FOREGROUND');
+        });
+    });
+
+    it('retries provider admission once the prompt RPC releases the session', async () => {
+        await fixture(async ({ backend, host, events, setCatchUp }) => {
+            const admissions: Array<'refused' | 'admitted'> = [];
+            let resumable = false;
+            setCatchUp(async () => {
+                if (!resumable) return;
+                host().registerContinuation({ id: 'task', parentToolCallId: '0:background' });
+                const sink = host().beginContinuation({ id: 'task', turnId: 'native-1' });
+                admissions.push(sink ? 'admitted' : 'refused');
+                if (!sink) return;
+                resumable = false;
+                await sink.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'RESUMED' } });
+                await sink.finish({ kind: 'completed', stopReason: 'end_turn' });
+            });
+            resumable = true;
+            await backend.sendPrompt('owned', 'start background');
+            await backend.waitForResponseComplete();
+
+            await expect.poll(() => admissions.at(-1)).toBe('admitted');
+            expect(admissions[0]).toBe('refused');
+            expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'RESUMED' }));
         });
     });
 

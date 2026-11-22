@@ -23,6 +23,8 @@ type Continuation = {
   readonly toolCalls: ToolCallTerminality;
   /** Running calls started since Agy's latest generation; Agy waits for them or moves them to the background. */
   readonly awaitedToolCalls: Set<string>;
+  /** The finish queued behind earlier deliveries; output that arrives before it runs cancels it. */
+  pendingFinish: object | null;
   settleTimer: ReturnType<typeof setTimeout> | null;
   stallTimer: ReturnType<typeof setTimeout> | null;
 };
@@ -64,7 +66,7 @@ export function createAgyBackgroundContinuationSource(
   return async (host) => {
     const foregroundToolCalls: ToolCallTerminality = new Map();
     const backgroundTasks = new Set<string>();
-    // A settled task's update, and what follows it, while the host is still releasing the previous turn.
+    // A settled task's update, and what follows it, while another turn or prompt RPC still owns the session.
     const unadmittedUpdates: SessionUpdate[] = [];
     let continuation: Continuation | null = null;
     let continuationCount = 0;
@@ -106,16 +108,24 @@ export function createAgyBackgroundContinuationSource(
     };
 
     const finish = (open: Continuation, reason: string) => {
-      if (continuation !== open) return;
+      if (continuation !== open || open.pendingFinish) return;
       clearTimers(open);
-      continuation = null;
-      if (!isLive()) return;
-      logger.debug(`[AgyContinuation] Finished ${open.turnId}: ${reason}`);
+      const request = {};
+      open.pendingFinish = request;
       enqueue(async () => {
-        // Runs after earlier deliveries, once the host has witnessed every tool call the continuation started.
+        if (continuation !== open || open.pendingFinish !== request) return;
+        continuation = null;
+        if (!isLive()) return;
+        logger.debug(`[AgyContinuation] Finished ${open.turnId}: ${reason}`);
+        // Earlier deliveries have settled, so the host has witnessed every tool call the continuation started.
         retainBackgroundTasks(open.toolCalls);
         await open.sink.finish(COMPLETED_CONTINUATION);
       });
+    };
+
+    const armSettleTimer = (open: Continuation) => {
+      clearSettleTimer(open);
+      open.settleTimer = startTimer(generationSettleMs, () => finish(open, 'no output followed the last generation'));
     };
 
     const restartStallTimer = (open: Continuation) => {
@@ -131,12 +141,19 @@ export function createAgyBackgroundContinuationSource(
       open.stallTimer = startTimer(stallMs, onStall);
     };
 
+    /** Output that arrives before a queued finish runs belongs to the same continuation. */
+    const reopen = (open: Continuation) => {
+      if (!open.pendingFinish) return;
+      open.pendingFinish = null;
+      // The queued finish already found Agy quiet, so only further generation progress extends the continuation.
+      armSettleTimer(open);
+    };
+
     const observeProgress = (open: Continuation, update: SessionUpdate) => {
       if (update.sessionUpdate === 'usage_update') {
         // Agy generates again only once the calls it started have finished or moved to the background.
         open.awaitedToolCalls.clear();
-        clearSettleTimer(open);
-        open.settleTimer = startTimer(generationSettleMs, () => finish(open, 'no output followed the last generation'));
+        armSettleTimer(open);
       } else if (GENERATION_PROGRESS_UPDATES.has(update.sessionUpdate ?? '')) {
         clearSettleTimer(open);
       }
@@ -167,10 +184,21 @@ export function createAgyBackgroundContinuationSource(
       continuationCount += 1;
       logger.debug(`[AgyContinuation] Agy resumed on its own as ${turnId}`);
       const open: Continuation = {
-        turnId, sink, toolCalls: new Map(), awaitedToolCalls: new Set(), settleTimer: null, stallTimer: null,
+        turnId, sink, toolCalls: new Map(), awaitedToolCalls: new Set(), pendingFinish: null, settleTimer: null, stallTimer: null,
       };
       continuation = open;
       for (const update of unadmittedUpdates.splice(0)) deliver(open, update);
+    };
+
+    /** A prompt that starts before buffered updates were admitted absorbs them, as Agy folds the resumed work into it. */
+    const releaseUnadmittedUpdates = () => {
+      if (unadmittedUpdates.length === 0) return;
+      const released = unadmittedUpdates.splice(0);
+      for (const update of released) {
+        const taskId = toolCallIdOf(update);
+        if (taskId && isTerminalToolStatus(update.status)) backgroundTasks.delete(taskId);
+      }
+      host.releaseClaimedUpdates(released);
     };
 
     const settleForegroundTurn = () => {
@@ -179,10 +207,7 @@ export function createAgyBackgroundContinuationSource(
 
     /** Agy folds a task that settles during a prompt into that prompt's turn. */
     const observeForegroundUpdate = (update: SessionUpdate) => {
-      for (const unadmitted of unadmittedUpdates.splice(0)) {
-        const taskId = toolCallIdOf(unadmitted);
-        if (taskId) backgroundTasks.delete(taskId);
-      }
+      releaseUnadmittedUpdates();
       const toolCallId = toolCallIdOf(update);
       if (!toolCallId) return;
       if (!backgroundTasks.has(toolCallId)) recordToolCall(foregroundToolCalls, toolCallId, update);
@@ -191,7 +216,9 @@ export function createAgyBackgroundContinuationSource(
 
     return {
       async catchUp(input) {
-        if (isLive() && !input?.foregroundActive) {
+        if (isLive() && input?.foregroundActive) {
+          releaseUnadmittedUpdates();
+        } else if (isLive()) {
           settleForegroundTurn();
           admitContinuation();
         }
@@ -205,6 +232,7 @@ export function createAgyBackgroundContinuationSource(
         }
         settleForegroundTurn();
         if (continuation) {
+          reopen(continuation);
           deliver(continuation, update);
           return true;
         }

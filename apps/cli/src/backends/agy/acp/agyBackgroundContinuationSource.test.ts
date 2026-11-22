@@ -1,11 +1,14 @@
 import { setTimeout as delay } from 'node:timers/promises';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { AcpBackend } from '@/agent/acp/AcpBackend';
+import type { AcpProviderTurnSourceHost } from '@/agent/acp/backend/turn/providerTurns';
 import { createAcpBackend } from '@/agent/acp/createAcpBackend';
 import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
+import type { SessionUpdate } from '@/agent/acp/updates/types';
 import type { AgentMessage } from '@/agent/core';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderEnforcedPermissionHandler';
+import { createDeferred } from '@/testkit/async/deferred';
 import { FakePermissionSession } from '@/testkit/backends/permissionHandler';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { isPidAlive } from '@/testkit/process/spawn';
@@ -105,13 +108,16 @@ function agyAgent(directory: string): string {
               }, endTurn);
             }
           } else if (message.method === 'test/finish-build') {
-            const followUp = message.params.chain ? 'call_tests' : 'call_verify';
+            const { chain, plan } = message.params;
+            const followUp = chain ? 'call_tests' : 'call_verify';
+            const reportPlan = () => notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
             settle('call_build', 'build ok');
-            if (message.params.plan) notify({ sessionUpdate: 'plan', entries: [{ content: 'Verify the build', status: 'in_progress', priority: 'medium' }] });
+            if (plan === 'first') reportPlan();
             usage();
             runCommand(followUp, () => {
               if (followUp === 'call_verify') settle('call_verify', 'verified');
               say(followUp === 'call_verify' ? 'The build is verified.' : 'Tests are running.');
+              if (plan === 'last') reportPlan();
               usage();
               ok(message.id, { resumed: true });
             }, permission => ok(message.id, { resumed: false, permission }));
@@ -218,6 +224,33 @@ describe('createAgyBackgroundContinuationSource', () => {
     });
   });
 
+  it('keeps a finishing continuation open for a background command that settles while its output drains', async () => {
+    await fixture(async ({ backend, events, permissionSession }) => {
+      await promptBuild(backend, permissionSession);
+      const planReached = createDeferred();
+      const planGate = createDeferred();
+      backend.setPlanStatePublisher(async () => {
+        planReached.resolve();
+        await planGate.promise;
+      });
+      events.length = 0;
+
+      const resumed = backend.requestExtension('test/finish-build', { chain: true, plan: 'last' });
+      await approvePendingPermission(permissionSession);
+      expect(await resumed).toEqual({ resumed: true });
+      await planReached.promise;
+      await delay(TEST_TIMING.generationSettleMs * 3);
+      await backend.requestExtension('test/finish-tests', {});
+      await delay(TEST_TIMING.generationSettleMs * 3);
+      planGate.resolve();
+
+      await expect.poll(() => finishedTurns(events)).toHaveLength(1);
+      expect(events).toContainEqual(expect.objectContaining({ type: 'tool-result', callId: 'call_tests' }));
+      expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'All tests passed.' }));
+      expect(events.at(-1)).toEqual(IDLE_AFTER_TURN);
+    });
+  });
+
   it('withdraws resumed work that no background command of an admitted turn explains', async () => {
     await fixture(async ({ backend, events, permissionSession }) => {
       await promptBuild(backend, permissionSession, 'build in the foreground');
@@ -252,7 +285,7 @@ describe('createAgyBackgroundContinuationSource', () => {
       backend.setPlanStatePublisher(async () => { throw new Error('Plan store unavailable'); });
       events.length = 0;
 
-      void backend.requestExtension('test/finish-build', { plan: true }).catch(() => undefined);
+      void backend.requestExtension('test/finish-build', { plan: 'first' }).catch(() => undefined);
 
       await expect.poll(() => events).toContainEqual(expect.objectContaining({ type: 'status', status: 'error' }));
       await expect.poll(() => isPidAlive(agentPid)).toBe(false);
@@ -273,5 +306,43 @@ describe('createAgyBackgroundContinuationSource', () => {
       expect(events.at(-1)).toEqual({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
       expect(await backend.requestExtension('test/status', {})).toEqual(expect.objectContaining({ closes: 1, loads: 1 }));
     });
+  });
+});
+
+describe('createAgyBackgroundContinuationSource while the host refuses admission', () => {
+  it('hands claimed updates back to generic handling when the next prompt starts first', async () => {
+    const released: SessionUpdate[] = [];
+    const host: AcpProviderTurnSourceHost = {
+      sessionId: SESSION_ID,
+      cwd: '/',
+      env: {},
+      signal: new AbortController().signal,
+      registerContinuation: vi.fn(() => true),
+      beginContinuation: vi.fn(() => null),
+      releaseToolCalls: vi.fn(),
+      releaseClaimedUpdates: (updates) => { released.push(...updates); },
+      fail: vi.fn(),
+    };
+    const source = await createAgyBackgroundContinuationSource(TEST_TIMING)(host);
+    const buildStarted: SessionUpdate = { sessionUpdate: 'tool_call', toolCallId: 'call_build', status: 'in_progress' };
+    const buildSettled: SessionUpdate = { sessionUpdate: 'tool_call_update', toolCallId: 'call_build', status: 'completed' };
+    const generationEnded: SessionUpdate = { sessionUpdate: 'usage_update' };
+
+    expect(source.claimLiveUpdate?.(buildStarted, { foregroundActive: true })).toBe(false);
+    await source.catchUp({ foregroundActive: false });
+    expect(host.registerContinuation).toHaveBeenCalledWith({ id: 'call_build', parentToolCallId: 'call_build' });
+
+    expect(source.claimLiveUpdate?.(buildSettled, { foregroundActive: false })).toBe(true);
+    expect(source.claimLiveUpdate?.(generationEnded, { foregroundActive: false })).toBe(true);
+    expect(host.beginContinuation).toHaveBeenCalledTimes(2);
+    expect(released).toEqual([]);
+
+    await source.catchUp({ foregroundActive: true });
+    expect(released).toEqual([buildSettled, generationEnded]);
+
+    await source.catchUp({ foregroundActive: false });
+    expect(source.claimLiveUpdate?.(buildSettled, { foregroundActive: false })).toBe(false);
+    expect(host.beginContinuation).toHaveBeenCalledTimes(2);
+    await source.dispose();
   });
 });
