@@ -62,6 +62,7 @@ type SaveDefaults = (next: ManagedSessionDefaultsV1) => void;
 type RowState = Readonly<{
   serverId: string;
   teamId: string;
+  connectedServicesTeamResourcesOnly: boolean;
   defaults: ManagedSessionDefaultsV1;
   editable: boolean;
   /** Something else is in flight, or the Home cannot take a write right now. */
@@ -180,6 +181,7 @@ export const TeamMemberDefaultsSection = React.memo(
     const row: RowState = {
       serverId: context.scope.serverId,
       teamId: 'address' in context ? context.address.teamId : '',
+      connectedServicesTeamResourcesOnly: true,
       defaults,
       editable,
       disabled: busy || !props.writable,
@@ -665,9 +667,9 @@ const ModelDefaultRow = React.memo(function ModelDefaultRow(
 });
 
 /**
- * The Agent's connected-service purposes. A Team default is chosen for other
- * people, so only this Team's shared resources (or none) are offered, never the
- * viewer's own accounts; a default never grants access to what it names.
+ * Shared defaults offer only this Team's resources; private Project defaults
+ * also offer the viewer's own accounts and groups through the same chooser.
+ * A default never grants access to what it names.
  */
 const ConnectedServiceDefaultRows = React.memo(
   function ConnectedServiceDefaultRows(
@@ -725,32 +727,34 @@ const ConnectedServiceDefaultRows = React.memo(
               testID={`${props.testID}:${declaration.purpose}`}
               localizedTextPluginId={identity.pluginId}
               declaration={{ ...declaration, required: false }}
-              value={null}
+              value={current?.target ?? null}
               teamResourceValue={current?.teamResource ?? null}
               teamCredentialCatalog={teamCatalog}
-              teamResourcesOnly
+              teamResourcesOnly={state.connectedServicesTeamResourcesOnly}
               noneLabel={t('teams.settings.memberDefaults.none')}
               description={
                 props.conflicts.has(purposeKey) ? state.conflictNote : undefined
               }
               onReload={catalog.reload}
               disabled={!state.editable || state.disabled}
-              onChange={(_target, teamResource) => {
+              onChange={(target, teamResource) => {
                 if (!state.editable || state.disabled) return;
                 state.save(
                   withConnectedService(
                     state.defaults,
                     key,
                     purposeKey,
-                    teamResource
+                    target || teamResource
                       ? {
                           purpose,
                           service: declaration.service,
-                          target: null,
-                          teamResource: {
-                            teamId: teamResource.teamId,
-                            selection: teamResource.selection,
-                          },
+                          target,
+                          teamResource: teamResource
+                            ? {
+                                teamId: teamResource.teamId,
+                                selection: teamResource.selection,
+                              }
+                            : null,
                         }
                       : null,
                   ),
@@ -873,6 +877,7 @@ export const ProjectSessionDefaultsSection = React.memo(function ProjectSessionD
   const row: RowState = {
     serverId: props.serverId,
     teamId: props.teamId ?? '',
+    connectedServicesTeamResourcesOnly: shared,
     defaults,
     editable: props.editable,
     disabled: props.busy,
