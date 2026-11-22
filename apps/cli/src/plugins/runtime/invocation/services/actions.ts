@@ -29,7 +29,7 @@ import type {
     PluginInvocationSurface,
 } from '@happier-dev/plugin-sdk/interactions';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isPluginRetainedInputActionIdV1, isScmReviewWorkspaceMaterializationActionIdV1, SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { GITHUB_EVENT_SETUP_ACTIONS_V1 } from '@happier-dev/protocol/automations/event-setup-result';
 import { ConnectedAccountActionFormTeamSelectionV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { isJsonObject, sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
@@ -770,6 +770,15 @@ export function createPluginInvocationActionsService(params: Readonly<{
             }) ?? actionExecutor
             : actionExecutor;
         const executionRunWorkflowRunId = readWorkflowRunId();
+        const pressedTargets = source?.sessionTargetsV1?.targets;
+        const pressedSession = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && params.seed.presentUserIntent === 'confirmed'
+            && pressedTargets?.length === 1 ? pressedTargets[0] : undefined;
+        const sendHome = sessionAddress?.serverId ?? source?.serverId;
+        const pressedSend = pressedSession && parsedPluginInput.data && typeof parsedPluginInput.data === 'object'
+            && 'sessionId' in parsedPluginInput.data && parsedPluginInput.data.sessionId === pressedSession.sessionId
+            && areServerProfileIdentifiersEquivalent(pressedSession.serverId, sendHome,
+                identifier => identifier === source?.serverId || identifier === source?.serverIdentityId ? source?.serverIdentityId : undefined)
+            ? pressedSession.sessionId : undefined;
         const executionContext = {
             ...(workspaceOperation ? { operationOwnerUpdate: { update: update => {
                 workspaceOperation.operationOwnerUpdate.update(update);
@@ -818,6 +827,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
             surface: executionSurface,
             ...(canonicalActionId !== 'action.invoke' || requestId === undefined ? {} : { operationRequestId: requestId }),
             authority: 'account_automation',
+            ...(pressedSend ? { presentUserSessionSend: pressedSend } : {}),
             actionCaller,
             ...(executionSurface === 'agent'
                 && (actionId === 'session.needs_you.raise' || actionId === 'session.user_action.answer')

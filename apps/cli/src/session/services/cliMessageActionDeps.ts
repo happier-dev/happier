@@ -720,7 +720,7 @@ export function createCliMessageActionDeps(
         const protectedResult = await sendSessionMessage({
           ...(readExecutionRun ? { readExecutionRun } : {}),
           explicitMessageSend: true,
-          ...(context?.authority ? { executionAuthority: context.authority } : {}),
+          executionAuthority: context?.presentUserSessionSend ? 'present_user' : context?.authority,
           ...(context?.externalActionExecutionAuthorization ? { callerInputAuthorization: context.externalActionExecutionAuthorization } : {}),
           credentials: params.credentials,
           idOrPrefix: sessionId,

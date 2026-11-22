@@ -3003,6 +3003,11 @@ receives its own admission. Plugins cannot supply that snapshot or an unrelated
 tuple. Account retirement and cancellation close the picker. These are development
 source contracts, pending package and loaded-runtime validation.
 
+A host-attested person press on an Action with one admitted Session gives its
+built-in `session.message.send` person authority for that exact Session and Home.
+The Send retains the plugin caller and input constraints. The press expires with
+the invocation.
+
 In unreleased 0.3 source, `selectActionInput({hostAction:{action:'review.start',
 projection:'composition'},sessionId,serverId,draft})` opens the shared Review
 composer with an incomplete JSON seed. Submission returns

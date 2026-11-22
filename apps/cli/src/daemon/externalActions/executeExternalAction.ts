@@ -5,7 +5,7 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { apiTokenEncryptionAccessRequired, retainApiTokenDeploymentContentAccess } from '@/auth/apiTokenDeploymentCustody';
 import { prepareApiTokenDeploymentAccountProjection } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionFamily';
-import { isWorkspaceSyncRelationshipWriteActionId, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId, SESSION_MESSAGE_SEND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/operations/addressV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -664,6 +664,7 @@ async function executeExternalActionRequest(input: Readonly<{
   // Surface selects this Account's Require and a named Session opens delegated
   // decisions, so those facts come only from this Account's own admitted invocation.
   const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
+  const pressedSend = requesterContext?.invocation?.presentUserSessionSend;
   const sessionCreationDefaults = managedSessionCreationTag ? controllerInvocation?.sessionCreationDefaults : ownInvocation?.sessionCreationDefaults;
   const actionSurface = sessionActionOrigin || workflowActionOrigin ? 'agent' : apiTokenPrincipal ? 'api'
     : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface);
@@ -1004,6 +1005,9 @@ async function executeExternalActionRequest(input: Readonly<{
         ? resolveExternalActionRootInvocationAuthority(admittedAuthorization)
         : input.principal.authority,
     actionCaller: pluginCaller ?? sessionActionOrigin?.caller ?? invocation?.caller ?? { kind: 'host' },
+    ...(pressedSend && actionId.data === SESSION_MESSAGE_SEND_ACTION_ID_V1 && accountPrincipal?.authentication.kind === 'account'
+      && !sessionActionOrigin && !workflowActionOrigin && pressedSend === readRecord(decodedInput).sessionId
+      ? { presentUserSessionSend: pressedSend } : {}),
     ...(invocation ? { callerPermissionMode: invocation.callerPermissionMode,
       ...(invocationAttribution.actionRequestAttributionV1 ? { actionRequestAttributionV1: invocationAttribution.actionRequestAttributionV1 } : {}),
       ...(!envelope.data.managedCreationCodec && invocation.presentUserConfirmation

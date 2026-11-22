@@ -6090,7 +6090,11 @@ describe('client Action declared SessionTarget admission', () => {
                     session: { serverId: targetHome, sessionId: 'reviewed-session' },
                     result: { status: 'accepted', localId: 'configured-handoff-input' } } });
                 expect(sent).toHaveLength(1);
-                expect(sent[0]).toMatchObject({ serverId: targetHome, sessionId: 'reviewed-session' });
+                expect(sent[0]).toMatchObject({ serverId: targetHome, sessionId: 'reviewed-session',
+                    context: { authority: 'account_automation',
+                        presentUserSessionSend: expectConfirmation ? 'reviewed-session' : undefined },
+                    actionCaller: { kind: 'plugin', pluginId: PLUGIN_MANIFEST.id },
+                });
                 if (recent) expect(newSessionNavigation).not.toHaveBeenCalled();
             }
         } finally {
@@ -6356,6 +6360,68 @@ async function runMountedHomeApproval(custody: PluginSourceCustodyV1, retireBefo
 }
 
 describe('plugin-surface action branch selection', () => {
+    it.each(['exact press', 'automation', 'another Session', 'another Home', 'another Action'] as const)(
+        'projects person authority only on the exact nested Session Send (%s)', async scenario => {
+            const automation = scenario === 'automation';
+            const otherAction = scenario === 'another Action';
+            const sessionId = scenario === 'another Session' ? 'other-session' : 'pressed-session';
+            const serverId = rpcHomes.get('server-client-action')!.id;
+            const admittedHome = scenario === 'another Home' ? rpcHomes.get('server-wire')!.id : serverId;
+            const attempts: (ActionExecutorContext | undefined)[] = [];
+            const activation = createClientActionActivation({ dangerLevel: 'safe',
+                sessionTarget: { field: 'sessionId', cardinality: 'one' },
+                handler: (_input, context) => otherAction
+                    ? context.ui.executeAction('notifications.notify_me', { message: 'A different Action' })
+                    : context.ui.executeAction('session.message.send', { sessionId, message: 'Continue this Session',
+                        idempotencyKey: 'composed-pressed-send' }),
+            });
+            const createPort = (invocationSurface: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['invocationSurface'],
+                hostAction?: Parameters<typeof createCurrentUiContextVoiceToolPort>[0]['hostAction']) => createCurrentUiContextVoiceToolPort({
+                invocationSurface, hostAction, readProjection: () => activation.projection, readNavigationBinding: () => null,
+                reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            });
+            const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+                listContributedActionDefinitions: () => createPort('ui').listCurrentContributedActionDefinitions?.() ?? [],
+                resolveSessionReference: async ({ sessionId }) => ({ kind: 'unique', address: { sessionId: sessionId!, serverId: admittedHome } }),
+                sessionSendMessage: async request => {
+                    attempts.push(request.context);
+                    return request.context?.presentUserSessionSend === request.sessionId
+                        ? { status: 'accepted', localId: 'admitted-message' }
+                        : { status: 'held', code: 'session_input_target_unavailable', localId: 'held-message' };
+                },
+                notificationsNotifyMe: async (_input, context) => {
+                    attempts.push(context);
+                    return { attemptedChannels: 1, deliveredChannels: 1 };
+                },
+                invokeContributedAction: request => executeCurrentUiContextContributedAction(request, {
+                    execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: request.context,
+                }),
+            }));
+            const unregister = registerCurrentUiContextActionPort(createPort);
+            try {
+                await activation.composition.reconcile([activation.activation]);
+                const result = await dispatchPluginSurfaceAction({
+                    action: { pluginId: activation.action.pluginId, localId: activation.action.id },
+                    input: { sessionId: 'pressed-session' }, clientAction: {},
+                    resolveContributedAction: resolveExactClientAction(activation.action),
+                    hostAction: { execute: Object.assign(executor.execute, { prepare: executor.prepare }), context: {
+                        serverId, authority: automation ? 'account_automation' : 'present_user', actionCaller: { kind: 'host' },
+                    } },
+                });
+                expect(attempts, JSON.stringify(result)).toHaveLength(1);
+                expect(attempts[0]).toMatchObject({ authority: 'account_automation', actionCaller: { kind: 'plugin' } });
+                if (scenario === 'exact press') {
+                    expect(attempts[0]?.presentUserSessionSend).toBe('pressed-session');
+                    expect(result).toMatchObject({ ok: true, result: { status: 'accepted' } });
+                } else {
+                    expect(attempts[0]).not.toHaveProperty('presentUserSessionSend');
+                    expect(result).toMatchObject(otherAction
+                        ? { ok: true, result: { deliveredChannels: 1 } }
+                        : { ok: true, result: { status: 'held', code: 'session_input_target_unavailable' } });
+                }
+            } finally { unregister(); await activation.composition.unload(); }
+        });
+
     it('admits a bounded mounted Plugin continuation without inheriting present-user authority', async () => {
         const admitted: unknown[] = [];
         const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');

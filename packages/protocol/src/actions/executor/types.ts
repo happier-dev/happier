@@ -898,6 +898,8 @@ export type ActionExecutorContext = Readonly<{
    * it is never Action input and never inferred from a client-provided surface.
    */
   authority?: ActionRequiredAuthority;
+  /** Exact Session of a host-admitted person press spent by the built-in plugin Send. */
+  presentUserSessionSend?: string;
 
   /**
    * Exact dangerous Action whose direct-surface present-user confirmation has

@@ -188,6 +188,18 @@ describe('requester bootstrap installation confidentiality', () => {
     }
   });
 
+  it('relays the confirmed Session Send without changing the plugin caller or its other Actions', () => {
+    const account = { accountId: 'requester', serverId: 'home' };
+    const target = { kind: 'machine' as const, machineId: 'machine' };
+    const caller = { kind: 'plugin' as const, pluginId: 'acme.agent', contributionLocalId: 'send' };
+    const context = { surface: 'plugin' as const, authority: 'account_automation' as const, actionCaller: caller,
+      presentUserSessionSend: 'clicked-session' };
+    expect(bootstrap.projectExternalActionRequesterInvocationV1({ actionId: 'session.message.send', context, account, target }))
+      .toEqual({ caller, surface: 'plugin', authority: 'account_automation', presentUserSessionSend: 'clicked-session' });
+    expect(bootstrap.projectExternalActionRequesterInvocationV1({ actionId: 'action.spec.get', context, account, target }))
+      .toEqual({ caller, surface: 'plugin', authority: 'account_automation' });
+  });
+
   it.each(['own_account', 'unknown', 'other_account', 'other_home', 'terminal', 'api', 'session', 'workflow', 'plugin', 'transport_plugin'] as const)(
     'qualifies private host attribution against its admitted credential (%s)', kind => {
     const invocation = bootstrap.ExternalActionRequesterInvocationV1Schema.parse({
