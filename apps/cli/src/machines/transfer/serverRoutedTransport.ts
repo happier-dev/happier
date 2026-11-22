@@ -52,8 +52,6 @@ const TRANSFER_MANIFEST_HASH_HARD_MAX_CHARS = 128;
 // Request-side open envelopes must include a manifestHash field (protocol shape), but the
 // requester does not know the payload's real manifest hash yet. Use a stable, valid sentinel.
 const TRANSFER_OPEN_MANIFEST_HASH_SENTINEL = `sha256:${'0'.repeat(64)}`;
-const TRANSFER_OPEN_RETRY_INITIAL_DELAY_MS = 200;
-const TRANSFER_OPEN_RETRY_MAX_DELAY_MS = 2000;
 
 export type MachineTransferChannel = Readonly<{
   serverId?: string;
