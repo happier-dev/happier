@@ -945,7 +945,11 @@ export function applySettingsLocalDelta(params: {
         stripLocalOnlyAccountSettings(delta) as Record<string, unknown>,
     ) as Partial<Settings>;
     const nextPending = { ...getPendingSettings(), ...deltaForServer };
-    if (Object.keys(deltaForServer).length > 0 && (params.durability === 'immediate' || params.themeProfileMigration)) {
+    // The language picker can reload the runtime as soon as this write returns.
+    const changesPreferredLanguage = 'preferredLanguage' in deltaForServer
+        && deltaForServer.preferredLanguage !== currentSettings.preferredLanguage;
+    if (Object.keys(deltaForServer).length > 0
+        && (changesPreferredLanguage || params.durability === 'immediate' || params.themeProfileMigration)) {
         const scope = storage.getState().settingsScope;
         if (scope) {
             const previous = loadPendingAccountSettingsState(scope).themeProfileMigration;
