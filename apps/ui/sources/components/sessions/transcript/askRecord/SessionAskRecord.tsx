@@ -608,6 +608,11 @@ export function SessionAskRecordContent(
           ))}
         </View>
       ) : null}
+      {targets.some((target) => target.status === 'held' && target.code === 'held_by_person') ? (
+        <Text variant="meta" style={[styles.hint, { color: theme.colors.text.tertiary }]}>
+          {t('errors.sessionHeldByPerson')}
+        </Text>
+      ) : null}
       {record.origin === 'composer' && targets.some((target) => target.status === 'failed') ? (
         <Text
           variant="meta"

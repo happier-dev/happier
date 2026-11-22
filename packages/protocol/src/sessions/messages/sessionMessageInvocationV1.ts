@@ -62,9 +62,11 @@ export function projectSessionMessageInvocationV1(input: Readonly<{
           code: !leaf.result.ok ? leaf.result.errorCode ?? 'action_failed' : 'unavailable' } };
       const result = sent.data;
       const outcome = result.status === 'replied' ? result.outcome : undefined;
+      const heldCauseCode = result.status === 'held' && result.failureCause && 'errorCode' in result.failureCause
+        ? result.failureCause.errorCode : undefined;
       return { target: leaf.target, ...('localId' in result ? { localId: result.localId }
         : input.requestLocalId ? { localId: input.requestLocalId } : {}),
-        immediate: { status: result.status, ...('code' in result ? { code: result.code } : {}),
+        immediate: { status: result.status, ...('code' in result ? { code: heldCauseCode ?? result.code } : {}),
           ...(outcome ? { outcome: outcome.kind } : {}),
           ...(outcome && 'messageRef' in outcome ? { resultRef: outcome.messageRef } :
             outcome && 'publicationRef' in outcome ? { resultRef: outcome.publicationRef } : {}) } };

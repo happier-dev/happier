@@ -11,6 +11,7 @@ import { projectSessionMessageInvocationV1 } from '@happier-dev/protocol/session
 import { SessionMessageReplyReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
+import { t } from '@/text';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
@@ -62,6 +63,20 @@ function answerReplies(serverId: string, outcomes: Readonly<Record<string, 'answ
 const label = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) => screen.findHostByTestId(`${id}:label`)?.children.join('') ?? null;
 
 describe('Ask record row', () => {
+    it('explains a person-held receipt through the invocation projection and clears the explanation for an accepted send', async () => {
+        const serverId = await homes.addHome({ name: 'Held record', serverUrl: 'https://ask-record.test', accountId: 'alice', currentAccount: true });
+        await activateHome(serverId);
+        const held = { ok: true, result: { status: 'held', localId: 'attempt', code: 'session_input_target_unavailable',
+            failureCause: { phase: 'session.message.send', errorClass: 'UnknownThrownValue', errorCode: 'held_by_person', httpStatus: null } } } as const satisfies ActionExecuteResult;
+        const view = (result: ActionExecuteResult) => <AppSessionTranscriptSourceProvider sessionId="source" serverId={serverId}>
+            <SessionAskRecord message={composerEntry(serverId, 'a', [['a', result]], 'none')} sessionId="source" serverId={serverId} />
+        </AppSessionTranscriptSourceProvider>;
+        const screen = await renderScreen(view(held));
+        expect(screen.getTextContent()).toContain(t('errors.sessionHeldByPerson'));
+        await screen.update(view(accepted));
+        expect(screen.getTextContent()).not.toContain(t('errors.sessionHeldByPerson'));
+        await screen.unmount();
+    });
     it('clears the failed-target hint after the same-original retry receipt and then shows its returned answer', async () => {
         const serverId = await homes.addHome({ name: 'Ask record', serverUrl: 'https://ask-record.test', accountId: 'alice', currentAccount: true });
         await activateHome(serverId);
