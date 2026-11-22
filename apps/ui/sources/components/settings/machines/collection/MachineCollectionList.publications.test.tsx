@@ -1,12 +1,14 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import type { Machine } from '@/sync/domains/state/storageTypes';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/protocol/account/encryptionMode';
 import { afterEach, expect, it, vi } from 'vitest';
 
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installMachinesSettingsCommonModuleMocks } from '../machinesSettingsTestHelpers';
 
 const home = createHomeGovernanceHarness();
@@ -26,10 +28,7 @@ const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/se
 
 afterEach(() => standardCleanup());
 
-// A busy Account's Machines publish daemon state all day (resource transitions and guard). The
-// Machines list column shows names, presence and each row's own summary; a publication that changes none of those
-// is not a reason to redraw the column or any row.
-it('keeps the Machines list column quiet for daemon publications it does not show', async () => {
+async function mountRail(onRender: React.ProfilerOnRenderCallback = () => {}) {
     await home.reset();
     const profileId = await home.addHome({
         name: 'Studio Home', serverUrl: 'https://studio.example',
@@ -45,18 +44,23 @@ it('keeps the Machines list column quiet for daemon publications it does not sho
     const daemonState = { status: 'running', pid: 7, startedAt: 1, contributionRegistryProjectionRevision: 1 } as Machine['daemonState'];
     const quiet = createMachineFixture({ id: 'studio-quiet', active: false, activeAt: 0, daemonState, daemonStateVersion: 1,
         metadata: { ...createMachineFixture().metadata!, displayName: 'Quiet', host: 'quiet.internal', platform: 'linux' } });
-    let busy: Machine = createMachineFixture({ id: 'studio-busy', active: false, activeAt: 0, daemonState, daemonStateVersion: 1,
+    const busy = createMachineFixture({ id: 'studio-busy', active: false, activeAt: 0, daemonState, daemonStateVersion: 1,
         metadata: { ...createMachineFixture().metadata!, displayName: 'Busy', host: 'busy.internal', platform: 'linux' } });
-    storage.setState({
-        machines: { [quiet.id]: quiet, [busy.id]: busy },
-        machineListByServerId: { [profileId]: [quiet, busy] },
-        machineListStatusByServerId: { [profileId]: 'idle' },
-    });
-    let commits = 0;
-    const screen = await renderScreen(<React.Profiler id="rail" onRender={() => { commits += 1; }}><MachineCollectionRail /></React.Profiler>);
+    await publishMachineInventoryForTest({ serverId: profileId, accountId: 'account-a' }, [quiet, busy]);
+    const screen = await renderScreen(<React.Profiler id="rail" onRender={onRender}><MachineCollectionRail /></React.Profiler>);
     await waitForHomeGovernance(() => {
         expect(screen.getTextContent()).toContain('Busy');
     });
+    return { screen, profileId, busy };
+}
+
+// A busy Account's Machines publish daemon state all day (resource transitions and guard). The
+// Machines list column shows names, presence and each row's own summary; a publication that changes none of those
+// is not a reason to redraw the column or any row.
+it('keeps the Machines list column quiet for daemon publications it does not show', async () => {
+    let commits = 0;
+    const { screen, profileId, busy: initialBusy } = await mountRail(() => { commits += 1; });
+    let busy = initialBusy;
     // A daemon-only publication: the version advances while every fact the column shows stays equal.
     const publish = async () => {
         busy = { ...busy, daemonStateVersion: (busy.daemonStateVersion ?? 0) + 1 };
@@ -76,4 +80,25 @@ it('keeps the Machines list column quiet for daemon publications it does not sho
     await act(async () => storage.getState().applyMachines([{ ...busy, metadataVersion: busy.metadataVersion + 1,
         metadata: { ...busy.metadata!, displayName: 'Renamed' } }], false, { sourceServerId: profileId }));
     expect(screen.getTextContent()).toContain('Renamed');
+});
+
+it('shows and clears enrollment recovery for an offline Machine in the Machines list column', async () => {
+    const { screen, profileId, busy } = await mountRail();
+    const warning = 'machineDetailPage.recovery.enrollmentRequired';
+    const rowLabel = () => screen.tree.findAll(node => node.props.testID === `settings.machines.row.${profileId}.${busy.id}`
+        && typeof node.props.accessibilityLabel === 'string')[0]?.props.accessibilityLabel;
+    await waitForHomeGovernance(() => expect(rowLabel()).toContain('settingsOverview.machineOffline'));
+    await act(async () => storage.getState().applyMachines([{ ...busy,
+        operationProtocolCapabilities: { enrollmentRecovery: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED },
+        operationProtocolCapabilitiesRevision: 1,
+    }], false, { sourceServerId: profileId, sourceAccountId: 'account-a' }));
+    // Readiness is independently visible even though the affected Machine stays offline.
+    expect(screen.getTextContent()).toContain(warning);
+    expect(rowLabel()).toContain('settingsOverview.machineOffline');
+    expect(rowLabel()).toContain(warning);
+    await act(async () => storage.getState().applyMachines([{ ...busy,
+        operationProtocolCapabilities: { enrollmentRecovery: null },
+        operationProtocolCapabilitiesRevision: 2,
+    }], false, { sourceServerId: profileId, sourceAccountId: 'account-a' }));
+    expect(screen.getTextContent()).not.toContain(warning);
 });

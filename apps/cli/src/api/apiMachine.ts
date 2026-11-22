@@ -1039,6 +1039,11 @@ export class ApiMachineClient {
     private agentCatalogObservation: AgentProviderCatalogObservationService | null = null;
     private readonly projectAgentInventoryPublication = createMachineAgentInventoryPublication();
     private activeTransportGeneration = 0;
+    private enrollmentRecoveryPublication?: Readonly<{
+        recovery: typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED | null;
+        generation: number;
+        completion: Promise<void>;
+    }>;
     private machineAdminAccessRoutes: DaemonMachineAdminAccessRoutes | null = null;
     private machineAdminAccessInspectedTransport: Readonly<{ generation: number; codec: MachineContentCodec }> | null = null;
     private sessionMessageReplyRecovery: {
@@ -5979,6 +5984,9 @@ export class ApiMachineClient {
                     const socket = this.socket;
                     const transportGeneration =
                         this.activeTransportGeneration;
+                    if (!isReconnect && this.machine.operationProtocolCapabilities?.enrollmentRecovery === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED) {
+                        this.publishEnrollmentRecovery(null);
+                    }
                     if (isReconnect && this.lifecycleDependencies.loadMachine) {
                         this.retireMachineContent();
                         const failure = await timeWebLatencyPhase('machine.startup.refreshContent', () => this.refreshMachineFromServer());
@@ -6725,11 +6733,29 @@ export class ApiMachineClient {
         }
     }
 
+    private publishEnrollmentRecovery(recovery: typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED | null): void {
+        const socket = this.socket;
+        if (!socket?.connected) return;
+        const generation = this.activeTransportGeneration;
+        const previous = this.enrollmentRecoveryPublication;
+        if (previous?.generation === generation && previous.recovery === recovery) return;
+        // Order the refusal and its clear on the same authenticated transport.
+        const completion = (previous?.generation === generation ? previous.completion : Promise.resolve()).then(async () => {
+            if (this.socket !== socket || this.activeTransportGeneration !== generation || !socket.connected) return;
+            await publishMachineOperationProtocolCapabilitiesOnSocket({ socket, machineId: this.machine.id, enrollmentRecovery: recovery });
+        }).catch(error => {
+            if (this.enrollmentRecoveryPublication?.completion === completion) this.enrollmentRecoveryPublication = undefined;
+            logger.debug('[API MACHINE] Enrollment recovery publication failed', { error: serializeAxiosErrorForLog(error) });
+        });
+        this.enrollmentRecoveryPublication = { recovery, generation, completion };
+    }
+
     private retireMachineContent(refusal?: typeof ACCOUNT_MODE_DOWNGRADE_UNVERIFIED): void {
         const serviceWatchesChanged = this.machineContentReady;
         this.heldOwnMachineChangeCursor = undefined;
         this.machineContentContext = { codec: this.machineContentCodec, ready: false };
         this.rpcHandlerManager.retireEncryptionContext(refusal);
+        if (refusal) this.publishEnrollmentRecovery(refusal);
         this.notifyMachineMetadataChanged({ serviceWatchesChanged });
     }
 
@@ -6778,6 +6804,10 @@ export class ApiMachineClient {
             this.machine = { ...next, metadata: publication.metadata, daemonState: this.discardUnverifiedIrohEndpoint(next.daemonState) };
             this.machineContentContext = { codec, ready: true };
             this.rpcHandlerManager.adoptEncryptionContext(this.machine);
+            if (this.enrollmentRecoveryPublication?.recovery === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED
+                || next.operationProtocolCapabilities?.enrollmentRecovery === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED) {
+                this.publishEnrollmentRecovery(null);
+            }
             this.notifyMachineMetadataChanged({ serviceWatchesChanged: !previousContext.ready || publication.change.serviceWatchesChanged });
         } catch (error) {
             // Transient reads provide no contrary key/owner evidence. Preserve

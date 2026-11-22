@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createMachineFixture, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/protocol/account/encryptionMode';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { MachinePageState } from './machinePageContext';
@@ -185,6 +186,21 @@ it('uses the page Home credential scope rather than treating a reachable Machine
     const order = screen.findAll(node => node.type === MachineProjectWorkSection || node.type === vitalsType)
         .map(node => node.type === vitalsType ? 'vitals' : 'work');
     expect(order).toEqual(['work', 'vitals']);
+    const refusedMachine = {
+        ...machine,
+        operationProtocolCapabilities: { enrollmentRecovery: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED },
+        operationProtocolCapabilitiesRevision: 1,
+    };
+    await screen.update(frame({ ...state, target: { ...state.target, machine: { ...refusedMachine, isShared: false } } }));
+    expect(screen.findByTestId('machine-detail-enrollment-recovery')).not.toBeNull();
+    expect(screen.getTextContent()).toMatch(/happier\s+auth\s+keep-encryption-keys/);
+    await screen.update(frame({ ...state, target: { ...state.target, machine: { ...refusedMachine, isShared: true } } }));
+    expect(screen.findByTestId('machine-detail-enrollment-recovery')).not.toBeNull();
+    expect(screen.getTextContent()).toContain(t('machineDetailPage.recovery.enrollmentMember'));
+    expect(screen.getTextContent()).not.toMatch(/happier\s+auth\s+keep-encryption-keys/);
+    await screen.update(frame({ ...state, target: { ...state.target, machine: { ...refusedMachine,
+        operationProtocolCapabilities: { enrollmentRecovery: null }, operationProtocolCapabilitiesRevision: 2 } } }));
+    expect(screen.findByTestId('machine-detail-enrollment-recovery')).toBeNull();
     await act(async () => { recordMachineRequestFailed({ ...authority.getCurrent().binding!.scope, machineId: machine.id }); });
     await screen.update(frame(state, false));
     // Offline is said once, by the quiet banner above what the machine last reported (lab `rv` OS 3), never by the

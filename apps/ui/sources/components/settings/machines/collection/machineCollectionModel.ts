@@ -8,6 +8,7 @@ import { t } from '@/text';
 import { reconcileStableRows } from '@/hooks/session/reconcileStableRows';
 import { linkMachineActivity, readMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { compareMachineListOrder } from '@/sync/domains/machines/machineListOrder';
+import { readMachineEnrollmentRecovery, type MachineEnrollmentRecovery } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ManagedMachinePresetListEntryV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { describeManagedCreation, isManagedMachineListArchived, managedMachineEnrolledDetailId } from '../managed/managedCreationPresentation';
@@ -71,6 +72,7 @@ type MachineCollectionRowPresentation = Readonly<{
     presenceWord?: string;
     /** Why this device cannot read the machine, when it is locked. */
     reason: string | null;
+    enrollmentRecovery?: MachineEnrollmentRecovery;
     ownership: string | null;
     /** Whose machine it is, when someone shared it with you (their display name). */
     ownerName: string | null;
@@ -282,6 +284,7 @@ export function buildMachineCollection(input: Readonly<{
                     status: presence.status,
                     presence: presence.label,
                     reason: describeMachineLockedReason(machine),
+                    enrollmentRecovery: readMachineEnrollmentRecovery(machine.operationProtocolCapabilities) ?? undefined,
                     ownership: describeMachineSharedOwnership(machine),
                     ownerName: machine.isShared ? machine.access?.custodian?.displayName ?? null : null,
                     ...(machine.installationId ? { sandboxCount: readHostMachineSandboxCount(sandboxCounts,

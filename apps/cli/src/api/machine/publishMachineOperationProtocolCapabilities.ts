@@ -1,4 +1,4 @@
-import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineUpdateOperationProtocolCapabilitiesRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
+import { MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1, MachineRuntimeFactsPublicationRequestV1Schema, MachineUpdateOperationProtocolCapabilitiesResponseV1Schema, type MachineRuntimeFactsPublicationRequestV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol';
 import type { Socket } from 'socket.io-client';
 
@@ -15,18 +15,15 @@ export const CURRENT_SESSION_RUNTIME_OPERATION_PROTOCOL_CAPABILITIES_V1 = Object
   sessionFollow: { contextV1: true },
 }) satisfies MachineOperationProtocolCapabilitiesV1;
 
-/** Replaces the exact Machine's persisted capability projection through its authenticated socket. */
+/** Publishes facts for the exact Machine through its authenticated socket. */
 export async function publishMachineOperationProtocolCapabilitiesOnSocket(input: Readonly<{
   socket: Socket<ServerToDaemonEvents, DaemonToServerEvents>;
   machineId: string;
-  capabilities: MachineOperationProtocolCapabilitiesV1;
-}>): Promise<number> {
-  const request = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.parse({
-    machineId: input.machineId,
-    capabilities: input.capabilities,
-  });
+}> & MachineRuntimeFactsPublicationRequestV1): Promise<number> {
+  const { socket, ...publication } = input;
+  const request = MachineRuntimeFactsPublicationRequestV1Schema.parse(publication);
   const raw = await emitSocketWithAck({
-    socket: input.socket,
+    socket,
     event: MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
     payload: request,
     // Publication waits for the server's transaction/recovery outcome. The

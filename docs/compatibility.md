@@ -12847,6 +12847,11 @@ malformed known value withdraws only that leaf's support; valid siblings remain
 available. Exact version tuples and other known values are still validated, while
 unknown outer and nested properties retain the existing drop-on-read policy.
 Authenticated complete-projection publication and event admission stay strict.
+On current 0.3 Homes the same installed-Machine event accepts a separate
+`enrollmentRecovery` publication for the Account-mode refusal or its explicit
+clear. Capability replacement preserves this independently owned leaf. Older
+Homes may refuse the new write arm, and older readers ignore the extra stored
+leaf. The recovery fact is presentation-only.
 Admission V3 advertisement still uses the existing Home Pending V3 negotiation:
 the immutable `server-v0.2.17` and `server-v0.2.17-preview.1` source and inspected
 moving predecessor advertise Pending V2, so they receive primary-only admission.

@@ -10,7 +10,7 @@ import type { MachineResourceKey, MachineVitalsView } from './machineRpc';
 import { readMachineResourceObservation, type MachineResourceObservation, type MachineVitalsPublication } from './machineResourceAvailability';
 import { readMachineMonitoringMode } from './useMachineMonitoringMode';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
-import type { MachineEnrollmentRecovery } from '../machineDaemonRpcErrors';
+import { readMachineEnrollmentRecovery, type MachineEnrollmentRecovery } from '../machineDaemonRpcErrors';
 
 export type MachineResourceAvailability =
     | Readonly<{ kind: 'reporting'; summary: MachineResourceSummaryV1 | null; freshness: 'live' | 'held' | 'stale';
@@ -39,6 +39,8 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
     // Exact facts of the row, not the record: a daemon publication that changes none of them renders nothing.
     const hasMachine = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => selectMachine(state) !== null, [selectMachine]));
     const metadata = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) => selectMachine(state)?.metadata ?? null, [selectMachine]));
+    const publishedRecovery = storage(React.useCallback((state: Parameters<typeof resolveServerScopedMachine>[0]) =>
+        readMachineEnrollmentRecovery(selectMachine(state)?.operationProtocolCapabilities), [selectMachine]));
     const monitoring = React.useMemo(() => readMachineMonitoringMode(metadata), [metadata]);
     const viewed = target.enabled;
     const key = React.useMemo(() => ({ ...target.key, view: 'summary' as const }), [target.key]);
@@ -87,7 +89,8 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
     const online = hasMachine ? presence.reachability === 'reachable' : true;
     return React.useMemo<MachineResourceAvailability | null>(() => {
         if (!target.accountMatches) return null;
-        if (state.failure?.recovery) return state.failure.recovery;
+        const recovery = publishedRecovery === undefined ? state.failure?.recovery : publishedRecovery;
+        if (recovery) return recovery;
         if (monitoring === 'off') return MONITORING_OFF;
         if (state.status === 'not_reported') return OLDER_HAPPIER;
         if (observation.unsupported) return UNSUPPORTED;
@@ -100,7 +103,7 @@ export function useMachineResourceSummary(input: MachineResourceKey): MachineRes
         return { kind: 'reporting', summary: state.summary, freshness,
             ...(readStatus ? { readStatus } : {}),
             attention: publishedAttention ?? state.snapshot?.attention ?? null };
-    }, [available, monitoring, observation, online, publishedAttention, state, target.accountMatches, viewed]);
+    }, [available, monitoring, observation, online, publishedAttention, publishedRecovery, state, target.accountMatches, viewed]);
 }
 
 /** A surface's retained summaries are being revalidated by the same demand owner. */

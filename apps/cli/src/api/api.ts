@@ -82,7 +82,7 @@ import { decodeBase64, encodeBase64, encrypt, decrypt, getRandomBytes } from './
 import { PushNotificationClient } from './pushNotifications';
 import { configuration } from '@/configuration';
 import { assertSessionEncryptionModeAllowedByEffectiveClientRequirement } from '@/settings/accountSettings/resolveEffectiveClientEncryptionRequirement';
-import { readStoredCredentials, type Credentials, type StoredCredentials } from '@/persistence';
+import { readAccountE2eeCustody, readStoredCredentialCustodyForServerId, readStoredCredentials, type Credentials, type StoredCredentials } from '@/persistence';
 import {
   readSessionMetadataLayoutVersion,
   tryReadApiSessionMetadataForLayout,
@@ -101,6 +101,7 @@ import { resolveServerHttpBaseUrl } from './client/serverHttpBaseUrl';
 import { createDiscussionAutonomousCheckInReader } from '@/discussions/discussionActionDeps';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { readAccountEncryptionModeOnce } from './client/accountEncryptionMode';
+import { isAccountModeDowngradeUnverifiedError } from '@happier-dev/sync-client';
 import { resolveConnectedServicesServerApiTimeoutMs } from './client/connectedServicesServerApiTimeout';
 import { SessionCreationPlacementError } from './session/sessionCreationPlacementError';
 import {
@@ -985,10 +986,29 @@ export class ApiClient {
     authorization?: ExternalActionExecutionAuthorizationV1;
     effectActionId?: string }>): Promise<Machine | null> {
     if (options?.authorization) return ApiClient.getRequesterMachine(machineId, { ...options, authorization: options.authorization });
+    return this.getOwnMachine(machineId, options);
+  }
+
+  private async getOwnMachine(
+    machineId: string,
+    options?: Readonly<{ signal?: AbortSignal }>,
+    daemonServerId?: string,
+  ): Promise<Machine | null> {
     options?.signal?.throwIfAborted();
     const accountMode = await this.getAccountEncryptionMode({ signal: options?.signal });
     const raw = await this.readPublishedMachineRow(machineId, options);
-    return raw ? this.decodePublishedMachine(machineId, raw, accountMode) : null;
+    if (!raw) return null;
+    try {
+      return this.decodePublishedMachine(machineId, raw, accountMode);
+    } catch (error) {
+      if (daemonServerId === undefined || !isAccountModeDowngradeUnverifiedError(error)) throw error;
+      // A running daemon can observe the owner's local keep-keys decision without
+      // changing its authenticated Home identity or issuing another Home read.
+      const stored = await readStoredCredentialCustodyForServerId(daemonServerId).catch(() => null);
+      options?.signal?.throwIfAborted();
+      if (stored?.token !== this.credential.token || readAccountE2eeCustody(stored) !== 'historical') throw error;
+      return ApiClient.decodePublishedMachineForAuthority(machineId, raw, accountMode, stored);
+    }
   }
 
   /** A private projection supplies crypto; the original carrier supplies every outward request. */
@@ -1647,6 +1667,7 @@ export class ApiClient {
     }>,
     lifecycleDependencies?: ApiMachineClientLifecycleDependencies,
   ): Promise<ApiMachineClient> {
+    const serverId = configuration.activeServerId;
     // Only the daemon creates Machine clients; session runners must not load this tree.
     const { ApiMachineClient } = await import('./apiMachine');
     const { prepareProjectOpenReceiptPersistence } = await import('@/daemon/actionOperations/projectOpenReceiptPersistence');
@@ -1671,7 +1692,7 @@ export class ApiClient {
         resolveCurrentServerIdentityId: lifecycleDependencies?.resolveCurrentServerIdentityId ?? (() => {
           return readServerIdentityIdFromFeaturesSnapshot(this.getCachedServerFeaturesSnapshot?.()) ?? null;
         }),
-        loadMachine: lifecycleDependencies?.loadMachine ?? ((options) => this.getMachine(machine.id, options)),
+        loadMachine: lifecycleDependencies?.loadMachine ?? ((options) => this.getOwnMachine(machine.id, options, serverId)),
         createCapabilitiesApiClient:
           lifecycleDependencies?.createCapabilitiesApiClient
           ?? (async (credentials) => await ApiClient.create(credentials)),

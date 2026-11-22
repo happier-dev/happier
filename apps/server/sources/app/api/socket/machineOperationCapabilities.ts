@@ -3,8 +3,8 @@ import type { Socket } from 'socket.io';
 import type { Prisma } from '@prisma/client';
 import {
     MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1,
-    MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
-    type MachineOperationProtocolCapabilitiesV1,
+    MachineRuntimeFactsPublicationRequestV1Schema,
+    type MachineRuntimeFactsPublicationRequestV1,
 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { afterTx, inReadSnapshot, inTx, type Tx } from '@/storage/inTx';
 import { markAccountsChanged } from '@/app/changes/markAccountChanged';
@@ -67,7 +67,7 @@ async function readMachineCapabilitiesPublicationInTx(tx: Tx, input: Readonly<{
     accountId: string;
     machineId: string;
     socket: Socket;
-    capabilities: MachineOperationProtocolCapabilitiesV1;
+    publication: MachineRuntimeFactsPublicationRequestV1;
     isCurrent?: () => Promise<boolean>;
 }>) {
     if (input.isCurrent && !await input.isCurrent()) return { kind: 'unavailable' as const };
@@ -84,15 +84,23 @@ async function readMachineCapabilitiesPublicationInTx(tx: Tx, input: Readonly<{
     if (!machine || classifyMachineAvailabilityState(machine) !== 'available') {
         return { kind: 'unavailable' as const };
     }
+    const stored = machine.operationProtocolCapabilities;
+    const previous = stored && typeof stored === 'object' && !Array.isArray(stored) ? stored : {};
+    const capabilities = 'capabilities' in input.publication
+        ? {
+            ...input.publication.capabilities,
+            ...(previous.enrollmentRecovery !== undefined ? { enrollmentRecovery: previous.enrollmentRecovery } : {}),
+        }
+        : { ...previous, enrollmentRecovery: input.publication.enrollmentRecovery };
     const expectedRevision = machine.operationProtocolCapabilitiesRevision;
     if (expectedRevision !== null && expectedRevision > 0
-        && isDeepStrictEqual(machine.operationProtocolCapabilities, input.capabilities)) {
+        && isDeepStrictEqual(stored, capabilities)) {
         return { kind: 'unchanged' as const, revision: expectedRevision };
     }
-    return { kind: 'change_required' as const, expectedRevision, installationId: admission.installationId };
+    return { kind: 'change_required' as const, expectedRevision, installationId: admission.installationId, capabilities };
 }
 
-/** The installed current daemon replaces the complete projection; omission withdraws a leaf. */
+/** The installed current daemon publishes capabilities and Account-mode recovery facts. */
 export function registerMachineOperationCapabilitiesHandler(accountId: string, socket: Socket, options: Readonly<{
     isCurrent?: () => Promise<boolean>;
 }>): void {
@@ -100,7 +108,7 @@ export function registerMachineOperationCapabilitiesHandler(accountId: string, s
         request: unknown,
         callback?: (response: unknown) => void,
     ) => {
-        const parsed = MachineUpdateOperationProtocolCapabilitiesRequestV1Schema.safeParse(request);
+        const parsed = MachineRuntimeFactsPublicationRequestV1Schema.safeParse(request);
         const machineId = parsed.success ? resolveMachineScopedPayloadMachineId(socket, parsed.data.machineId) : null;
         if (!parsed.success || !machineId) {
             callback?.({ v: 1, result: 'error', code: 'invalid_request' });
@@ -114,7 +122,7 @@ export function registerMachineOperationCapabilitiesHandler(accountId: string, s
                 return;
             }
             const readPublication = (tx: Tx) => readMachineCapabilitiesPublicationInTx(tx, {
-                accountId, machineId, socket, capabilities: parsed.data.capabilities, isCurrent: options.isCurrent,
+                accountId, machineId, socket, publication: parsed.data, isCurrent: options.isCurrent,
             });
             let observed = await inReadSnapshot(readPublication, { transactionClass: 'machine-operation-capabilities-read' });
             if (observed.kind === 'unchanged') {
@@ -143,9 +151,9 @@ export function registerMachineOperationCapabilitiesHandler(accountId: string, s
                     afterTx(tx, () => callback?.({ v: 1, result: 'success', revision: admitted.revision }));
                     return;
                 }
-                const { expectedRevision, installationId } = admitted;
+                const { expectedRevision, installationId, capabilities } = admitted;
                 const nextRevision = await writeMachineCapabilitiesInTx(tx, { accountId, machineId, installationId,
-                    expectedRevision, capabilities: parsed.data.capabilities, recipientAccountIds });
+                    expectedRevision, capabilities, recipientAccountIds });
                 if (nextRevision === null) {
                     const fresh = await tx.machine.findFirst({ where: { accountId, id: machineId },
                         select: { revokedAt: true, replacedByMachineId: true, installationId: true } });

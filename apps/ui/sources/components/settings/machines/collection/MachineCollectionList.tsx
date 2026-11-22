@@ -60,7 +60,7 @@ import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { ManagedMachineReadApprovalNotice } from '../managed/ManagedMachineReadApprovalNotice';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
 import { useMachineResourceFleetAttention } from '@/sync/domains/machines/resources/useMachineResourceFleetAttention';
-import { MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
+import { MachineEnrollmentRecoveryLine, MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
 import { useThisComputerServiceSummary } from '../localControl/useThisComputerServiceSummary';
 
@@ -195,9 +195,9 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
     // says Offline, its last-seen time staying in the accessible name and on its page.
     const railWord = row.reason ?? (row.kind === 'managed' || row.presenceSource?.managedPresence ? row.presenceWord
         : row.fleetPresence?.online === false ? t('machineDetailPage.offline') : row.presenceWord) ?? row.ownership;
-    // Only a reachable machine that needs attention has a second line: its word and the one value behind it.
+    // Show required enrollment recovery independently of live resources and presence.
     const needsAttention = useMachineRowNeedsAttention(row.serverId, row.kind === 'machine' ? row.machineId : '');
-    const liveSummary = row.kind === 'machine' && row.online && needsAttention;
+    const liveSummary = !row.enrollmentRecovery && row.kind === 'machine' && row.online && needsAttention;
     return (
         rail ? (
             // One line (lab m-defaults rail): the name, then its one word at the row's end. A machine whose live summary
@@ -211,7 +211,7 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
                 // One line with or without a qualifier: a wrapping name ("Docker container") drew under its end word.
                 titleLines={1}
                 detail={liveSummary ? undefined : railWord ?? undefined}
-                subtitle={liveSummary ? (
+                subtitle={row.enrollmentRecovery ? <MachineEnrollmentRecoveryLine /> : liveSummary ? (
                     <MachineResourceLiveDemand
                         machineKeys={[{ serverId: row.serverId, machineId: row.machineId }]}
                         detail="summary" enabled viewportRef={summaryRef}>
@@ -226,7 +226,8 @@ const MachineListRow = React.memo(function MachineListRow(props: Readonly<{
                     </View>}
                     </MachineResourceLiveDemand>
                 ) : undefined}
-                accessibilityLabel={[row.title, statusLine(row, true)].filter(Boolean).join(', ')}
+                accessibilityLabel={[row.title, statusLine(row, true),
+                    row.enrollmentRecovery ? t('machineDetailPage.recovery.enrollmentRequired') : null].filter(Boolean).join(', ')}
                 icon={(
                     <HappierCollectionListMark rowRole="catalogRow">
                         <Icon name={resolveMachineKindGlyph({ isThisComputer, platform: row.platform })} size={20} color={theme.colors.text.secondary} />

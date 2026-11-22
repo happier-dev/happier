@@ -1,6 +1,7 @@
 import { isRpcMethodNotFoundError, isRpcError, readRpcErrorCode, type RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/protocol/account/encryptionMode';
+import type { MachineOperationProtocolCapabilitiesV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 
 const accountModeRecovery = {
     kind: 'needs_recovery',
@@ -9,6 +10,12 @@ const accountModeRecovery = {
 } as const;
 
 export type MachineEnrollmentRecovery = typeof accountModeRecovery;
+
+/** Absent means the daemon has not published an observation; null supersedes held RPC failures. */
+export function readMachineEnrollmentRecovery(capabilities: MachineOperationProtocolCapabilitiesV1 | null | undefined): MachineEnrollmentRecovery | null | undefined {
+    const recovery = capabilities?.enrollmentRecovery;
+    return recovery === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED ? accountModeRecovery : recovery;
+}
 
 export type MachineDaemonRpcFailure = Readonly<{
     ok: false;

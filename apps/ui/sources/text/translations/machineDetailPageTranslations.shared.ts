@@ -222,6 +222,9 @@ export const english = {
         replacedByFact: ({ machine }: { machine: string }) => `Replaced by ${machine}`,
         /** One recovery per state on the Machine page: the row says what is wrong, the button what fixes it. */
         recovery: {
+            enrollmentRequired: "Encryption change needs confirmation",
+            enrollmentOwner: ({ command }: { command: string }) => `On this machine, run ${command} to keep the keys for older encrypted history, then reconnect the daemon.`,
+            enrollmentMember: "Ask the machine owner to confirm the encryption change on this machine.",
             restartDaemon: "Restart",
             daemonDown: "Happier isn’t responding",
             updateAvailable: "A newer Happier is ready",

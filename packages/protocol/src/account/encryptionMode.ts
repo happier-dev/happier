@@ -3,6 +3,8 @@ import { z } from '../zodRuntimePolicy.js';
 
 import { AccountEncryptionModeSchema } from '../features/payload/capabilities/encryptionCapabilities.js';
 
+export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
+
 export const AccountEncryptionModeResponseSchema = lazyZodSchema(() => z.strictObject({
   mode: AccountEncryptionModeSchema,
   updatedAt: z.number().check(z.int(), z.minimum(0)),

@@ -90,7 +90,7 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conn
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import { homeDomainActionTransportV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
-import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '@happier-dev/sync-client';
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 import { createHttpTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
@@ -2182,8 +2182,10 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             metadata: { host: 'host', platform: 'linux', happyCliVersion: '0.0.0', homeDir: '/home', happyHomeDir: '/home/.happier', happyLibDir: '/lib' },
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
         };
-        const socket = createMachineSocket();
+        const publish = vi.fn(async (_event: string, _payload: unknown) => ({ v: 1, result: 'success', revision: 1 }));
+        const socket = createMachineSocket({ emitWithAck: publish });
         bindApiSessionSocketMock(mockIo, socket);
+        const storedCustody = vi.spyOn(persistence, 'readStoredCredentialCustodyForServerId').mockResolvedValue(null);
         mockAccountGet(async url => {
             if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
             if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'acc-1' } };
@@ -2192,7 +2194,8 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             } };
             if (url.endsWith(`/v1/machines/${machine.id}`)) return { status: 200, data: { machine: {
                 id: machine.id, storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                metadata: null, metadataVersion: 1, daemonState: null, daemonStateVersion: 1,
+                metadata: encodePlainMachineStoredContent(machine.metadata), metadataVersion: 1,
+                daemonState: null, daemonStateVersion: 1,
             } } };
             throw new Error(`unexpected url: ${url}`);
         });
@@ -2213,7 +2216,27 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
                 .toMatchObject({ errorCode: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED });
             expect(await rpc.handleRequest(request)).toMatchObject({ errorCode: RPC_ERROR_CODES.UPDATE_REQUIRED });
             expect(handler).not.toHaveBeenCalled();
+            await vi.waitFor(() => expect(publish).toHaveBeenCalledWith('machine-update-operation-protocol-capabilities', {
+                machineId: machine.id, enrollmentRecovery: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED,
+            }));
+            expect(publish.mock.calls.filter(([, payload]) =>
+                typeof payload === 'object' && payload !== null && 'enrollmentRecovery' in payload)).toHaveLength(1);
+
+            // The command's persisted local acknowledgment, seen by the same running daemon on reconnect.
+            storedCustody.mockResolvedValue({
+                token: 'token', encryption: { type: 'legacy', secret: machine.encryptionKey },
+                accountE2eeCustody: 'historical',
+            });
+            socket.trigger('disconnect', 'transport close');
+            socket.trigger('connect');
+            await vi.waitFor(() => expect(client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready' }));
+            await vi.waitFor(() => expect(publish).toHaveBeenCalledWith('machine-update-operation-protocol-capabilities', {
+                machineId: machine.id, enrollmentRecovery: null,
+            }));
+            await rpc.handleRequest(request, undefined, 'authenticated_home_socket');
+            expect(handler).toHaveBeenCalledOnce();
         } finally {
+            storedCustody.mockRestore();
             await client.shutdown();
         }
     });

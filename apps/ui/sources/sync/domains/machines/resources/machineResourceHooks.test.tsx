@@ -287,6 +287,31 @@ describe('machine resource visibility and demand', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('shows and clears Machine enrollment recovery from a cold row with Monitoring Off', async () => {
+        const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
+        const { createMachineFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { MachineResourcesPolicyV1Schema } = await import('@happier-dev/protocol/machines/resources/machineResourcesPolicyV1');
+        const machine = createMachineFixture({ id: 'off-enrollment-recovery', active: true, activeAt: Date.now() });
+        const reason = 'account_mode_downgrade_unverified';
+        const publish = async (enrollmentRecovery: typeof reason | null, revision: number) => {
+            const operationProtocolCapabilities = { ...machine.operationProtocolCapabilities, enrollmentRecovery };
+            await publishMachineInventoryForTest({ serverId: homeA, accountId: 'owner' }, [{
+                ...machine, metadata: { ...machine.metadata!,
+                    resourcesPolicyV1: MachineResourcesPolicyV1Schema.parse({ v: 1, monitoring: { mode: 'off' } }) },
+                operationProtocolCapabilities, operationProtocolCapabilitiesRevision: revision,
+            }]);
+        };
+        await publish(reason, 1);
+        const hook = await renderHook(() => useMachineResourceSummary({ serverId: homeA, machineId: machine.id }));
+        try {
+            expect(hook.getCurrent()).toEqual({ kind: 'needs_recovery', reason, step: 'keep_encryption_keys_and_reconnect' });
+            await act(async () => { await publish(null, 2); });
+            expect(hook.getCurrent()).toEqual({ kind: 'monitoring_off' });
+            expect(boundary.rpc).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
     it('reads row-local published availability without creating value reads or live demand', async () => {
         const { useMachineResourceSummary } = await import('./useMachineResourceSummary');
         const { storage } = await import('@/sync/domains/state/storageStore');

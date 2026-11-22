@@ -58,7 +58,7 @@ import { useMachineAttention } from '@/sync/domains/machines/resources/useMachin
 import { MachinesNeedsYouList } from '@/components/machines/attention/MachinesNeedsYouList';
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
 import { describeFleetDescription, describeFleetTitle, describeMachineAttentionWord, describeMachineReasonDetail, readMachinePublishedResources, selectAttentionSubjects, selectFleetLookSubjects, selectHeadlineReason } from '@/components/machines/summary/machineResourceSentences';
-import { MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
+import { MachineEnrollmentRecoveryLine, MachineListRowSummary, useMachineRowNeedsAttention } from '@/components/machines/summary/MachineListRowSummary';
 import { MACHINE_CARD_METRICS_HEIGHT_PX, MachineCardBody } from './MachineCardBody';
 import { useMachineIndexCardAttention } from './machineIndexCardAttention';
 import { MachineSummaryStrip, machineSummaryMetricTitle } from '@/components/machines/summary/MachineSummaryStrip';
@@ -511,6 +511,7 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
         // A wide row with nothing to say there returns no line, so the list draws its name on one centre line.
         ...(view === 'grid' ? {} : { byline: (item: MachineIndexItem, layout?: Readonly<{ fieldColumns: boolean }>) => {
             if (!layout?.fieldColumns) return <MachineIndexListLine item={item} />;
+            if (item.enrollmentRecovery) return <MachineEnrollmentRecoveryLine />;
             const line = describeMachineIndexFacts(item);
             return line ? <Text testID={`machines.index.facts.${item.key}`} numberOfLines={1} style={stylesheet.quiet}>{line}</Text> : null;
         } }),
@@ -555,7 +556,8 @@ function useMachineIndexAnatomy(view: MachinesIndexView, style: MachineSummarySt
                 } } : {}),
             },
         } : {}),
-        accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, view === 'grid' ? description(item) : item.presence].filter(Boolean).join(', '),
+        accessibilityLabel: (item) => [item.title, describeWhere(item), item.facts, view === 'grid' ? description(item) : item.presence,
+            item.enrollmentRecovery ? t('machineDetailPage.recovery.enrollmentRequired') : null].filter(Boolean).join(', '),
         testID: (item) => `machines.index.row.${item.key}`,
         columnTitles: { title: t('allMachines.columnMachine') },
         };
@@ -572,6 +574,7 @@ const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Rea
     // The same per-machine owner as the list column's row, from the daemon's published facts: the page's fleet
     // attention arrives seconds later, so reading it here said "No work" first (WAVE-ACCEPT-1118D d1).
     const attention = useMachineRowNeedsAttention(item.serverId, machineKeyOf(item).machineId);
+    if (item.enrollmentRecovery) return <MachineEnrollmentRecoveryLine />;
     const quiet = item.reason ?? (item.online ? null : item.presence);
     if (quiet !== null) return <Text numberOfLines={1} style={stylesheet.quiet}>{quiet}</Text>;
     if (!attention) return <MachineWorkCell item={item} />;
@@ -581,7 +584,7 @@ const MachineIndexListLine = React.memo(function MachineIndexListLine(props: Rea
     </MachineIndexMeter>;
 });
 
-/** A wide row's second line: what the machine is (its owner or platform, then cores and memory), never its status. */
+/** A wide row's ordinary second line: what the machine is (its owner or platform, then cores and memory). */
 function describeMachineIndexFacts(item: MachineIndexItem): string | null {
     return [describeWhere(item), item.facts].filter(Boolean).join(' · ') || null;
 }
@@ -593,6 +596,7 @@ const MachineIndexCardStatus = React.memo(function MachineIndexCardStatus(props:
 }>) {
     const { theme } = useUnistyles();
     const { item } = props;
+    if (item.enrollmentRecovery) return <MachineEnrollmentRecoveryLine />;
     const reason = props.entry ? selectHeadlineReason(props.entry.attention) : null;
     if (reason) {
         return (

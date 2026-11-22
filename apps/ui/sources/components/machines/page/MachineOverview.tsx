@@ -17,6 +17,7 @@ import { ManagedMachineStateRow, type ManagedLifecycleHandlers } from '@/compone
 import { readProjectedManagedAsleepWake } from '@/sync/domains/pending/managedWakeProjection';
 import { CheckoutReachabilityScope } from '@/components/workspaces/reachability/checkoutReachability';
 import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { readMachineEnrollmentRecovery } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { MachineWhatRunsHereSection } from './MachineWhatRunsHereSection';
 import { t } from '@/text';
@@ -31,6 +32,7 @@ import type { MachinePageTabBodyProps } from './machinePageTabQuery';
 
 /** The CLI commands the offline checks name; commands are never translated, so they are matched literally. */
 const OFFLINE_HELP_COMMANDS = ['happier daemon status', 'happier self update'] as const;
+const KEEP_ENCRYPTION_KEYS_COMMAND = 'happier auth keep-encryption-keys';
 
 /** The offline checks, one point per line of the translated help, with each command in the mono role. */
 function offlineHelpPoints() {
@@ -75,6 +77,7 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
     const reachabilityScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
 
     if (!machine) return null;
+    const enrollmentRecovery = readMachineEnrollmentRecovery(machine.operationProtocolCapabilities);
     const runtimePresence = describeMachineRuntimePresence(machine, undefined,
         projectMachineManagedPresence(machine, managedEnrolled.machine), machineAccountScope);
     // A created machine whose Happier went quiet says so once, on its recovery row with Restart (TH D6): the vitals
@@ -106,7 +109,16 @@ export function MachineOverview(props: MachinePageTabBodyProps) {
             {/* An offline machine is a fact, not a fault: the vitals body below says it once, in its quiet banner above
                 what the machine last reported (lab `rv` OS 3). Only a machine that is online but still cannot start
                 sessions gets the checks. */}
-            {props.online && !runtimePresence.showStatus && !canSpawn ? (
+            {enrollmentRecovery ? (
+                <AttentionBanner
+                    testID="machine-detail-enrollment-recovery"
+                    tone="warning"
+                    title={t('machineDetailPage.recovery.enrollmentRequired')}
+                    {...(machine.isShared === false
+                        ? { points: [splitHappierBannerPoint(t('machineDetailPage.recovery.enrollmentOwner', { command: KEEP_ENCRYPTION_KEYS_COMMAND }), [KEEP_ENCRYPTION_KEYS_COMMAND])] }
+                        : { description: t('machineDetailPage.recovery.enrollmentMember') })}
+                />
+            ) : props.online && !runtimePresence.showStatus && !canSpawn ? (
                 <AttentionBanner
                     testID="machine-detail-unavailable"
                     tone="warning"

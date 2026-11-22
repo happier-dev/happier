@@ -1,4 +1,5 @@
 import {
+    ACCOUNT_MODE_DOWNGRADE_UNVERIFIED,
     AccountEncryptionCurrentnessResponseSchema,
     type AccountEncryptionCurrentnessResponse,
 } from '@happier-dev/protocol/account/encryptionMode';
@@ -17,7 +18,7 @@ export function sameAccountEncryptionIdentity(a: AccountEncryptionIdentity, b: A
         && a.signingKeyFingerprint === b.signingKeyFingerprint && a.contentKeyFingerprint === b.contentKeyFingerprint;
 }
 
-export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
+export { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED };
 
 /**
  * This device's own custody of Account E2EE material. Historical custody is

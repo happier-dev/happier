@@ -7,6 +7,7 @@ import { Typography } from '@/constants/Typography';
 import { useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { t } from '@/text';
 
 import { describeMachineAttentionFigure, describeMachineAttentionWord, readMachinePublishedResources, selectHeadlineReason } from './machineResourceSentences';
 import { buildMachineSummaryInstruments, resolveMachineAttentionWordColor } from './machineSummaryStripModel';
@@ -31,6 +32,15 @@ export function useMachineRowNeedsAttention(serverId: string, machineId: string)
     return published !== null && selectHeadlineReason(published.attention) !== null;
 }
 
+export function MachineEnrollmentRecoveryLine(props: Readonly<{ testID?: string }>) {
+    const { theme } = useUnistyles();
+    return (
+        <Text testID={props.testID} numberOfLines={1} style={[stylesheet.word, { color: resolveMachineAttentionWordColor(theme.colors) }]}>
+            {t('machineDetailPage.recovery.enrollmentRequired')}
+        </Text>
+    );
+}
+
 /**
  * The second line of a machine's row (the list column, a phone's All machines): what needs attention, labelled by its
  * word, with the one value behind it in the same attention tone ("Short on memory · 82%"); otherwise the quiet word
@@ -51,6 +61,7 @@ export const MachineListRowSummary = React.memo(function MachineListRowSummary(p
     const headline = published && props.online ? selectHeadlineReason(published.attention) : null;
     const summary = availability?.kind === 'reporting' ? availability.summary : null;
     const instruments = React.useMemo(() => summary ? buildMachineSummaryInstruments(summary) : null, [summary]);
+    if (availability?.kind === 'needs_recovery') return <MachineEnrollmentRecoveryLine testID={props.testID} />;
     if (headline) {
         const figure = describeMachineAttentionFigure(headline, instruments);
         return (

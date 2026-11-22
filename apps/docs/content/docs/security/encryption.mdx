@@ -148,6 +148,11 @@ no one on your account made the change, don't continue. On a computer, run
 `happier auth keep-encryption-keys`, or sign in again without the key. This is the
 current 0.3 development flow.
 
+In 0.3 development, the Machines list and the affected Machine’s Overview show
+when its running daemon needs that confirmation, including with Monitoring Off.
+Run the command on the affected Machine and reconnect the daemon. If someone
+else owns the Machine, ask them to confirm the change there.
+
 **Forget the old encryption key** explicitly removes that device's historical key.
 Its confirmation lists known encrypted Sessions, triggers and run history; if the
 list cannot be loaded, the key is kept. Older encrypted Sessions on that device

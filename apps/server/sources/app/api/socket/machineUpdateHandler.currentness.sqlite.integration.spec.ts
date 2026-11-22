@@ -584,6 +584,55 @@ describe("Machine authority mutations on an established socket", () => {
         });
     });
 
+    it("publishes enrollment recovery to current Machine readers independently of content and other capabilities", async () => {
+        const { owner, manager } = await createSharedMetadataFixture();
+        const stranger = await createEstablishedMachineFixture("readiness-stranger");
+        const event = MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1;
+        const recovery = "account_mode_downgrade_unverified";
+        const capabilities = { sessionFollow: { contextV1: true } };
+        expect(await emit(owner, event, { capabilities })).toHaveBeenCalledWith({ v: 1, result: "success", revision: 1 });
+        const futureCapability = { futureRuntimeProtocol: { protocolVersions: [99] } };
+        await db.machine.update({ where: { id: owner.machineId }, data: {
+            operationProtocolCapabilities: { ...capabilities, ...futureCapability },
+        } });
+        const beforeRecipient = (await db.account.findUniqueOrThrow({ where: { id: manager.accountId } })).seq;
+
+        expect(await emit(stranger, event, { machineId: owner.machineId, enrollmentRecovery: recovery }))
+            .toHaveBeenCalledWith({ v: 1, result: "error", code: "invalid_request" });
+        expect(await emit(owner, event, { enrollmentRecovery: recovery }))
+            .toHaveBeenCalledWith({ v: 1, result: "success", revision: 2 });
+        expect((await db.account.findUniqueOrThrow({ where: { id: manager.accountId } })).seq).toBeGreaterThan(beforeRecipient);
+        expect((await db.machine.findUniqueOrThrow({ where: { id: owner.machineId } })).operationProtocolCapabilities)
+            .toEqual({ ...capabilities, ...futureCapability, enrollmentRecovery: recovery });
+
+        const nextCapabilities = { ...capabilities, sessionSpawn: { protocolVersions: [1] } };
+        expect(await emit(owner, event, { capabilities: { ...nextCapabilities, ...futureCapability } }))
+            .toHaveBeenCalledWith({ v: 1, result: "error", code: "invalid_request" });
+        expect(await emit(owner, event, { capabilities: nextCapabilities }))
+            .toHaveBeenCalledWith({ v: 1, result: "success", revision: 3 });
+        await withAuthenticatedTestApp(machinesRoutes, async app => {
+            const read = (accountId: string) => app.inject({ method: "GET", url: `/v1/machines/${owner.machineId}`,
+                headers: { "x-test-user-id": accountId, ...currentAccountStoredContentCompatibilityHeaders } });
+            for (const id of [owner.accountId, manager.accountId]) {
+                const response = await read(id);
+                expect(response.statusCode).toBe(200);
+                expect(MachinePublishedRowV1Schema.parse(response.json().machine)).toMatchObject({
+                    operationProtocolCapabilities: { ...nextCapabilities, enrollmentRecovery: recovery },
+                    metadataVersion: 0, daemonStateVersion: 0,
+                });
+            }
+            expect((await read(stranger.accountId)).statusCode).toBe(404);
+
+            expect(await emit(owner, event, { enrollmentRecovery: null }))
+                .toHaveBeenCalledWith({ v: 1, result: "success", revision: 4 });
+            expect(MachinePublishedRowV1Schema.parse((await read(manager.accountId)).json().machine)).toMatchObject({
+                operationProtocolCapabilities: { ...nextCapabilities, enrollmentRecovery: null },
+            });
+            expect(await emit(owner, event, { enrollmentRecovery: null }))
+                .toHaveBeenCalledWith({ v: 1, result: "success", revision: 4 });
+        });
+    });
+
     it("uses the admitted socket without token verifications for metadata writes", async () => {
         const subject = await createEstablishedMachineFixture("metadata");
         const verifications = vi.spyOn(auth, "verifyTokenForRoute");

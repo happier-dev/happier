@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED } from '../account/encryptionMode.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 export const MachineOperationProtocolVersionsV1Schema = lazyZodSchema(() => z.readonly(z
@@ -48,6 +49,8 @@ export const MachineIrohEndpointCapabilityV1Schema = lazyZodSchema(() => z.reado
     protocolVersions: MachineOperationProtocolVersionsV1Schema,
   }))));
 
+const MachineEnrollmentRecoverySchema = lazyZodSchema(() => z.nullable(z.literal(ACCOUNT_MODE_DOWNGRADE_UNVERIFIED)));
+
 const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z.strictObject({
     // Installed ingress enforces the admitted requester's execution/file boundary
     // or refuses before effects. This is not native setup/effectiveness evidence.
@@ -87,6 +90,8 @@ const MachineOperationProtocolCapabilitiesV1ObjectSchema = lazyZodSchema(() => z
       contextV1: z.literal(true),
       wakeOnHumanChangeV1: z.optional(z.literal(true)),
     }))),
+    // The installed daemon's Account-mode refusal. Null records recovery; absent means unobserved.
+    enrollmentRecovery: z.optional(MachineEnrollmentRecoverySchema),
   }));
 
 export const MachineOperationProtocolCapabilitiesV1Schema = defineStoredReadProjection(
@@ -113,7 +118,7 @@ export type MachineOperationProtocolCapabilityV1 = z.infer<
 export type MachineOperationProtocolCapabilitiesV1 = z.infer<
   typeof MachineOperationProtocolCapabilitiesV1Schema
 >;
-export type MachineOperationProtocolCapabilityNameV1 = keyof MachineOperationProtocolCapabilitiesV1;
+export type MachineOperationProtocolCapabilityNameV1 = Exclude<keyof MachineOperationProtocolCapabilitiesV1, 'enrollmentRecovery'>;
 export type MachineIrohEndpointAuthorityV1 = Readonly<{
   endpointId: string;
   relayUrls?: readonly string[];
@@ -162,12 +167,23 @@ const MachineOperationProtocolCapabilityMachineIdSchema = lazyZodSchema(() => z
  */
 export const MachineUpdateOperationProtocolCapabilitiesRequestV1Schema = lazyZodSchema(() => z.readonly(z.strictObject({
     machineId: z.optional(MachineOperationProtocolCapabilityMachineIdSchema),
-    capabilities: MachineOperationProtocolCapabilitiesV1Schema,
+    capabilities: z.readonly(z.omit(MachineOperationProtocolCapabilitiesV1ObjectSchema, { enrollmentRecovery: true })),
   })));
 
 export type MachineUpdateOperationProtocolCapabilitiesRequestV1 = z.infer<
   typeof MachineUpdateOperationProtocolCapabilitiesRequestV1Schema
 >;
+
+/** The recovery observation has its own write arm, independent of handler registration. */
+export const MachineRuntimeFactsPublicationRequestV1Schema = lazyZodSchema(() => z.union([
+  MachineUpdateOperationProtocolCapabilitiesRequestV1Schema,
+  z.readonly(z.strictObject({
+    machineId: z.optional(MachineOperationProtocolCapabilityMachineIdSchema),
+    enrollmentRecovery: MachineEnrollmentRecoverySchema,
+  })),
+]));
+
+export type MachineRuntimeFactsPublicationRequestV1 = z.infer<typeof MachineRuntimeFactsPublicationRequestV1Schema>;
 
 export const MachineUpdateOperationProtocolCapabilitiesResponseV1Schema = lazyZodSchema(() => z.readonly(z
   .discriminatedUnion('result', [
