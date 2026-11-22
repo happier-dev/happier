@@ -19628,6 +19628,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Escolha onde ${name} é executado`,
         linkLead: ({ name }: { name: string }) => `${name} é implantado nesta máquina. Nada inicia até você implantar.`,
         linkConfirm: ({ machine }: { machine: string }) => `Vincular ${machine}`,
+        linkMachinesOnly: "As plataformas implementam a partir de um repositório. Para usar uma, mova esta definição para um repositório nas Definições.",
         linkRefused: ({ machine }: { machine: string }) => `${machine} não foi vinculado`,
         linkAction: "Vincular…",
         runsOnNone: "Nenhuma máquina ainda",

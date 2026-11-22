@@ -19522,6 +19522,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Elige dónde se ejecuta ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} se despliega en esta máquina. Nada arranca hasta que despliegues.`,
         linkConfirm: ({ machine }: { machine: string }) => `Vincular ${machine}`,
+        linkMachinesOnly: "Las plataformas despliegan desde un repositorio. Para usar una, mueve esta definición a un repositorio en Ajustes.",
         linkRefused: ({ machine }: { machine: string }) => `${machine} no se vinculó`,
         linkAction: "Vincular…",
         runsOnNone: "Aún no hay máquina",

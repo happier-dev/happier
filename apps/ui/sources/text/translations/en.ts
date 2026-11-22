@@ -22928,6 +22928,7 @@ const enProjects = {
       linkTitle: ({ name }: { name: string }) => `Choose where ${name} runs`,
       linkLead: ({ name }: { name: string }) => `${name} deploys to this Machine. Nothing starts until you deploy.`,
       linkConfirm: ({ machine }: { machine: string }) => `Link ${machine}`,
+      linkMachinesOnly: "Platforms deploy from a repository. To use one, move this definition to a repository in Settings.",
       linkRefused: ({ machine }: { machine: string }) => `${machine} wasn’t linked`,
       linkAction: "Link…",
       runsOnNone: "No machine yet",

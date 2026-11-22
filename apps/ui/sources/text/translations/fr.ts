@@ -19396,6 +19396,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Choisir où ${name} s’exécute`,
         linkLead: ({ name }: { name: string }) => `${name} se déploie sur cette Machine. Rien ne démarre avant un déploiement.`,
         linkConfirm: ({ machine }: { machine: string }) => `Lier ${machine}`,
+        linkMachinesOnly: "Les plateformes déploient depuis un dépôt. Pour en utiliser une, déplacez cette définition dans un dépôt depuis les Réglages.",
         linkRefused: ({ machine }: { machine: string }) => `${machine} n’a pas été lié`,
         linkAction: "Lier…",
         runsOnNone: "Aucune machine pour l’instant",

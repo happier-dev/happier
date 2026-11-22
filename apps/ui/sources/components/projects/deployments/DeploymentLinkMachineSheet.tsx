@@ -30,6 +30,10 @@ export type DeploymentLinkMachineSheetInput = Readonly<{
   serverId: string;
   /** Preselected when it can host the Environment: it already runs the Environment's tasks. */
   suggestedMachineId: string | null;
+  /** The Machine the Environment is linked to now: linking it again changes nothing, so it is never the offer. */
+  linkedMachineId?: string | null;
+  /** A stored definition runs only on Machines; the sheet says why no platform is offered (PAGE-ACCEPT-176 R11-D11). */
+  storedDefinition?: boolean;
   /** Links the chosen Machine through the page's target-membership hook. */
   run: (
     machine: DeploymentLinkMachine,
@@ -62,13 +66,14 @@ function DeploymentLinkMachineSheet(
     chosenId !== null ? machines.find((machine) => machine.id === chosenId) ?? null :
     machines.find((machine) => machine.id === props.suggestedMachineId) ?? (machines.length === 1 ? machines[0] : null);
   const chosenName = chosen ? getMachineDisplayName(chosen, machines) : null;
+  const alreadyLinked = chosen !== null && chosen !== undefined && chosen.id === props.linkedMachineId;
   const [retention, setRetention] =
     React.useState<DeploymentRetentionChoiceValue>('alwaysOn');
   const [busy, setBusy] = React.useState(false);
   const [refused, setRefused] = React.useState<string | null>(null);
   const { onClose, onApproval, run } = props;
   const confirm = async () => {
-    if (busy || !chosen) return;
+    if (busy || !chosen || alreadyLinked) return;
     setBusy(true);
     setRefused(null);
     const outcome = await run({
@@ -94,7 +99,7 @@ function DeploymentLinkMachineSheet(
         testID="project-deployments.link.confirm"
         size="normal"
         loading={busy}
-        disabled={busy || !chosen}
+        disabled={busy || !chosen || alreadyLinked}
         title={
           chosenName
             ? t('projects.deployments.linkConfirm', { machine: chosenName })
@@ -123,6 +128,10 @@ function DeploymentLinkMachineSheet(
         <Text style={deploymentSheetStyles.lead}>
           {t('projects.deployments.linkLead', { name: props.name })}
         </Text>
+        {props.storedDefinition ? (
+          <SurfaceStateCard testID="project-deployments.link.machinesOnly" size="line" kind="unavailable"
+            title={t('projects.deployments.linkMachinesOnly')} />
+        ) : null}
         {machines.length === 0 && chosenId === null ? (
           <DeploymentMachinesEmpty serverId={props.serverId} testID="project-deployments.link" empty={
             <SurfaceStateCard

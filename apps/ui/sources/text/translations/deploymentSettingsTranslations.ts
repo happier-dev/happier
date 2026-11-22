@@ -145,6 +145,8 @@ export type DeploymentSettingsTranslations = Readonly<{
   privateSharingHappierNetwork: string;
   privateSharingHappierNetworkBody: string;
   privateSharingHappierNetworkPending: string;
+  privateSharingStop: string;
+  privateSharingStopConsequence: (params: Readonly<{ service: string }>) => string;
   privateSharingJoinedNetworkBody: string;
   privateSharingReviewBodyHappier: string;
   privateSharingWho: string;
@@ -293,6 +295,8 @@ export const deploymentSettingsTranslations = {
     privateSharingHappierNetwork: "Happier network",
     privateSharingHappierNetworkBody: "Your Machines reach it privately through Happier. No VPN needed.",
     privateSharingHappierNetworkPending: "Not available yet",
+    privateSharingStop: "Stop sharing",
+    privateSharingStopConsequence: ({ service }: Readonly<{ service: string }>) => `${service} stops being shared at this environment’s next deploy. Anything that reaches it then loses the connection.`,
     privateSharingJoinedNetworkBody: "Apps on this network reach it at its private address.",
     privateSharingReviewBodyHappier: "The next deployment publishes this port on this Machine only. Your other Machines reach it through Happier.",
     privateSharingWho: "Who can use it",

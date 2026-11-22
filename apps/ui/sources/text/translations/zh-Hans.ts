@@ -19142,6 +19142,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `选择 ${name} 的运行位置`,
         linkLead: ({ name }: { name: string }) => `${name} 会部署到这台机器。在你部署之前不会启动任何内容。`,
         linkConfirm: ({ machine }: { machine: string }) => `关联 ${machine}`,
+        linkMachinesOnly: "平台从代码仓库部署。要使用平台，请在设置中将此定义移到代码仓库。",
         linkRefused: ({ machine }: { machine: string }) => `未能关联 ${machine}`,
         linkAction: "关联…",
         runsOnNone: "尚无机器",

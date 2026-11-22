@@ -19476,6 +19476,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Выберите, где работает ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} развёртывается на этой машине. Ничего не запустится, пока вы не развернёте.`,
         linkConfirm: ({ machine }: { machine: string }) => `Привязать ${machine}`,
+        linkMachinesOnly: "Платформы развёртывают из репозитория. Чтобы использовать платформу, перенесите это определение в репозиторий в настройках.",
         linkRefused: ({ machine }: { machine: string }) => `${machine} не привязана`,
         linkAction: "Привязать…",
         runsOnNone: "Машины пока нет",

@@ -19524,6 +19524,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Scegli dove viene eseguito ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} viene distribuito su questa macchina. Non parte nulla finché non distribuisci.`,
         linkConfirm: ({ machine }: { machine: string }) => `Collega ${machine}`,
+        linkMachinesOnly: "Le piattaforme eseguono il deploy da un repository. Per usarne una, sposta questa definizione in un repository nelle Impostazioni.",
         linkRefused: ({ machine }: { machine: string }) => `${machine} non è stato collegato`,
         linkAction: "Collega…",
         runsOnNone: "Ancora nessuna macchina",

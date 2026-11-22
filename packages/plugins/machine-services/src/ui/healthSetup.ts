@@ -10,7 +10,7 @@ import { compilePluginJsonSchema, isValidPluginJsonSchemaValue, resolvePluginLoc
     type PluginJsonSchemaValidator } from '@happier-dev/plugin-sdk/manifest';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
-    Banner, Button, Column, Columns, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
+    Banner, Button, CodeBlock, Column, Columns, Field, ModalCardFooterActions, Row, Select, SelectionTiles, Stack, Text, TextField,
     defineUiSurface, usePluginHostApi, usePluginTranslation, type IconName,
 } from '@happier-dev/plugin-ui';
 import { CapabilityEndpointAddressControls, SavedHeartbeatControls } from './HeartbeatSetupControls.js';
@@ -34,11 +34,14 @@ type SetupKind = HealthCheckKindV1 | MonitorKind;
 const KINDS: readonly Readonly<{ id: SetupKind; title: string; subtitle: string; icon: IconName }>[] = [
     { id: 'http', title: 'HTTP', subtitle: 'A page answers with a status or a word', icon: 'globe' },
     { id: 'tcp', title: 'TCP', subtitle: 'A port accepts connections', icon: 'link' },
-    { id: 'dns', title: 'DNS', subtitle: 'A name resolves to what you expect', icon: 'globe' },
+    // Each kind its own mark, so a tile reads at a glance (PAGE-ACCEPT-176 R11-D2).
+    { id: 'dns', title: 'DNS', subtitle: 'A name resolves to what you expect', icon: 'list' },
     { id: 'certificate', title: 'Certificate', subtitle: 'Valid, and renewing in time', icon: 'locked' },
-    { id: 'heartbeat', title: 'Heartbeat', subtitle: 'Your job pings Happier on schedule', icon: 'waveform' },
-    ...monitorKinds.map(id => ({ id, title: monitorDefinitions[id].title, subtitle: monitorDefinitions[id].description, icon: 'waveform' as const })),
+    { id: 'heartbeat', title: 'Heartbeat', subtitle: 'Your job pings Happier on schedule', icon: 'heart' },
+    ...monitorKinds.map(id => ({ id, title: monitorDefinitions[id].title, subtitle: monitorDefinitions[id].description,
+        icon: id === 'uptime-kuma' ? 'pulse' as const : 'chart' as const })),
 ];
+const GATUS_BODY = '{"endpointGroup":"[ENDPOINT_GROUP]","endpointName":"[ENDPOINT_NAME]","status":"[ALERT_TRIGGERED_OR_RESOLVED]"}';
 const MINUTE = 60_000;
 const PERIODS = [[MINUTE, '1 minute'], [5 * MINUTE, '5 minutes'], [15 * MINUTE, '15 minutes'], [60 * MINUTE, '1 hour']] as const;
 const THRESHOLDS = [[1, 'The first failure'], [2, '2 failures in a row'], [3, '3 failures in a row'], [5, '5 failures in a row']] as const;
@@ -431,8 +434,14 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 required: false, testID: 'health-setup-endpoint-group' }),
             text(t(`${K}.endpointName`, 'Endpoint name'), draft.endpointName ?? '', value => set({ endpointName: value }), {
                 testID: 'health-setup-endpoint-name' }),
-            h(Text, { key: 'gatus-template', tone: 'secondary', value: t(`${K}.monitor.gatusTemplate`,
-                'In Gatus, use the custom POST body: {"endpointGroup":"[ENDPOINT_GROUP]","endpointName":"[ENDPOINT_NAME]","status":"[ALERT_TRIGGERED_OR_RESOLVED]"}. Set Content-Type to application/json.') }),
+            // How to connect Gatus waits one press away, with its body as copyable code (PAGE-ACCEPT-176 R11-D2).
+            h(Button, { key: 'gatus-how', variant: 'plain', testID: 'health-setup-gatus-how',
+                title: gatusHowOpen ? t(`${K}.monitor.gatusHowHide`, 'Hide how to connect Gatus') : t(`${K}.monitor.gatusHow`, 'How to connect Gatus'),
+                onPress: () => setGatusHowOpen(open => !open) }),
+            gatusHowOpen ? h(Stack, { key: 'gatus-template', gap: 'small' },
+                h(Text, { tone: 'secondary', value: t(`${K}.monitor.gatusTemplateLead`,
+                    'In Gatus, add a custom alert that sends POST with Content-Type application/json and this body:') }),
+                h(CodeBlock, { code: GATUS_BODY, language: 'json', selectable: true })) : null,
         ]),
         cadence[1]!,
     ] : draft.kind === 'tcp' ? [

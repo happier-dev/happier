@@ -19632,6 +19632,7 @@ settingsSession: {
             linkTitle: ({ name }: { name: string }) => `Wählen, wo ${name} läuft`,
             linkLead: ({ name }: { name: string }) => `${name} wird auf diesem Rechner bereitgestellt. Nichts startet, bevor du bereitstellst.`,
             linkConfirm: ({ machine }: { machine: string }) => `${machine} verknüpfen`,
+            linkMachinesOnly: "Plattformen deployen aus einem Repository. Um eine zu nutzen, verschiebe diese Definition in den Einstellungen in ein Repository.",
             linkRefused: ({ machine }: { machine: string }) => `${machine} wurde nicht verknüpft`,
             linkAction: "Verknüpfen…",
             runsOnNone: "Noch kein Rechner",

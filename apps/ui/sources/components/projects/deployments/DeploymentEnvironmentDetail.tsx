@@ -714,6 +714,8 @@ export const DeploymentEnvironmentDetail = React.memo(
         name: detail.content.name,
         serverId: props.serverId,
         suggestedMachineId: detail.environment.controllerMachineId,
+        linkedMachineId: detail.runtimeTargetLink?.source.kind === 'host' ? detail.runtimeTargetLink.machines[0] ?? null : null,
+        storedDefinition: detail.content.definition.kind === 'stored',
         run: (machine) => disposition.link(machine, { confirmed: true }),
         onApproval: review.request,
       });

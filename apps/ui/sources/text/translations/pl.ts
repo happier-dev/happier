@@ -19347,6 +19347,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `Wybierz, gdzie działa ${name}`,
         linkLead: ({ name }: { name: string }) => `${name} jest wdrażane na tej maszynie. Nic nie startuje, dopóki nie wdrożysz.`,
         linkConfirm: ({ machine }: { machine: string }) => `Połącz ${machine}`,
+        linkMachinesOnly: "Platformy wdrażają z repozytorium. Aby użyć platformy, przenieś tę definicję do repozytorium w Ustawieniach.",
         linkRefused: ({ machine }: { machine: string }) => `Nie połączono ${machine}`,
         linkAction: "Połącz…",
         runsOnNone: "Jeszcze bez maszyny",

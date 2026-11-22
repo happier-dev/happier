@@ -19436,6 +19436,7 @@ settingsSession: {
         linkTitle: ({ name }: { name: string }) => `${name} を実行する場所を選択`,
         linkLead: ({ name }: { name: string }) => `${name} はこのマシンにデプロイされます。デプロイするまで何も起動しません。`,
         linkConfirm: ({ machine }: { machine: string }) => `${machine} を紐付け`,
+        linkMachinesOnly: "プラットフォームはリポジトリからデプロイします。使うには、設定でこの定義をリポジトリに移動してください。",
         linkRefused: ({ machine }: { machine: string }) => `${machine} を紐付けできませんでした`,
         linkAction: "紐付け…",
         runsOnNone: "まだマシンがありません",

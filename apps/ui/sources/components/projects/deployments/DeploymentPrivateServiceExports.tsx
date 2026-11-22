@@ -31,7 +31,7 @@ import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import type { VariableReferenceEnvironments } from './DeploymentVariablesPanel';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
-import { buildPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
+import { buildPrivateServiceExportPatch, buildStopPrivateServiceExportPatch, listPrivateServiceExportServices, privateServiceExportAuthoring,
   readPrivateServiceSharingScheme, type PrivateServiceExportAuthoring, type PrivateServiceExportReach } from './privateServiceExport';
 
 const id = 'project-deployments.environment.privateSharing';
@@ -67,6 +67,11 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
           .filter(entry => entry.environmentId !== props.detail.environment.id) },
       title: t('projects.deployments.settingsSections.privateSharingAdd'), testID: `${id}.modal` });
   };
+  const openShare = (entry: ServiceExport) => {
+    if (!editing) return;
+    showDeploymentSheet({ component: PrivateServiceExportDetailSheet, props: { detail: props.detail, editing, entry },
+      title: entry.service, testID: `${id}.detailModal` });
+  };
   return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.privateSharingTitle')}
     surface={exports.length === 0 && authoring.kind === 'ready' ? 'none' : 'sheet'}
     description={t('projects.deployments.settingsSections.privateSharingBody')}
@@ -74,8 +79,10 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
       title={t('projects.deployments.settingsSections.privateSharingAdd')} onPress={open} /> : undefined}>
     {/* A share reads as the service and who can reach it; its port and export name are the Advanced details
         (PAGE-ACCEPT-176 R10-D5). */}
+    {/* A saved share opens its own sheet: what is shared, who reaches it, and Stop sharing (PAGE-ACCEPT-176 R10-D5). */}
     {exports.map(entry => <Item key={entry.key} testID={`${id}.export:${entry.key}`} title={entry.service}
-      subtitle={privateServiceExportReachLabel(entry)} mode="info" />)}
+      subtitle={privateServiceExportReachLabel(entry)}
+      {...(editing && authoring.kind === 'ready' ? { onPress: () => openShare(entry) } : { mode: 'info' as const })} />)}
     {/* A repository-defined Environment shares a service from its Compose file: the row leads to the agent that edits
         that file (the Environment's own Prepare with an agent), so sharing never ends at a sentence (PAGE-ACCEPT-176 R9-D2). */}
     {authoring.kind === 'unavailable' && authoring.reason === 'repository' && props.lifetime
@@ -104,6 +111,39 @@ export function privateServiceExportUnavailableReason(
     case 'multipleMachines': return t('projects.deployments.settingsSections.privateSharingMultipleMachines');
     case 'readOnly': case 'platformTarget': return null;
   }
+}
+
+/** One saved share: what it shares and who reaches it, and the one way to stop it, said with what that closes. */
+function PrivateServiceExportDetailSheet(props: Readonly<{
+  detail: DeploymentEnvironmentReadDetailV1;
+  editing: DeploymentEnvironmentEditing;
+  entry: ServiceExport;
+}> & CustomModalInjectedProps) {
+  const { onClose, editing, setChrome, entry } = props;
+  const change = useDeploymentChangePress({ request: artifactId => { onClose(); editing.review.request(artifactId); } }, () => {
+    editing.onChanged(); onClose();
+  });
+  const stop = () => {
+    void change.press(async () => editing.actions.updateEnvironment(props.detail.environment,
+      buildStopPrivateServiceExportPatch(props.detail.content, entry.key)));
+  };
+  const footer = <ModalCardFooterActions cancel={{ onPress: onClose, disabled: change.running }}>
+    <RoundButton testID={`${id}.stop`} title={t('projects.deployments.settingsSections.privateSharingStop')} size="normal"
+      display="destructive" disabled={change.running} loading={change.running} onPress={stop} />
+  </ModalCardFooterActions>;
+  React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
+  React.useEffect(() => () => setChrome?.(null), [setChrome]);
+  return <ListPresentationProvider value="page" pageInsets="contained"><View testID={`${id}.detail`} style={deploymentSheetStyles.body}>
+    <ItemGroup description={t('projects.deployments.settingsSections.privateSharingStopConsequence', { service: entry.service })}>
+      <Item title={t('projects.deployments.settingsSections.privateSharingService')} detail={entry.service} mode="info" />
+      <Item title={t('projects.deployments.settingsSections.privateSharingWho')} detail={privateServiceExportReachLabel(entry)} mode="info" />
+      <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={entry.key} mode="info" />
+      <Item title={t('projects.deployments.settingsSections.privateSharingPort')} detail={String(entry.containerPort)} mode="info" />
+    </ItemGroup>
+    {change.outcome?.kind === 'refused' ? <SurfaceStateCard testID={`${id}.stopRefused`} size="line" kind="error"
+      title={deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
+    {setChrome ? null : footer}
+  </View></ListPresentationProvider>;
 }
 
 type SheetInput = Readonly<{
