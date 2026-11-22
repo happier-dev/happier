@@ -2,6 +2,7 @@ import { createServer, Socket, type Socket as SocketType } from 'node:net';
 import { PassThrough } from 'node:stream';
 import { once } from 'node:events';
 import { existsSync } from 'node:fs';
+import { spawn as spawnChildProcess } from 'node:child_process';
 
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -103,7 +104,10 @@ class FakePeerIdentityChild implements ProcessCustodyPeerIdentityChild {
 
     on(event: 'error', listener: (error: Error) => void): void;
     on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): void;
-    on(event: 'error' | 'close', listener: ((error: Error) => void) | ((code: number | null, signal: NodeJS.Signals | null) => void)): void {
+    on(event: 'exit', listener: () => void): void;
+    on(event: 'error' | 'close' | 'exit', listener: ((error: Error) => void) | ((code: number | null, signal: NodeJS.Signals | null) => void)): void {
+        // A fake helper's end is its close; the deadline path's exit observation needs no fake.
+        if (event === 'exit') return;
         if (event === 'error') {
             this.errorListeners.push(listener as (error: Error) => void);
             if (this.outcome.error) queueMicrotask(() => this.emitError(this.outcome.error as Error));
@@ -239,6 +243,20 @@ describe('local IPC peer identity invocation boundary', () => {
         });
         expect(identity).toBeNull();
         expect(children[0]?.killedWith).toContain('SIGKILL');
+    });
+
+    it('keeps the answer of a helper that finished while this process was busy past the deadline', async () => {
+        // W21-B: a session host's 15 s synchronous module load let the expired deadline run
+        // before the already-exited helper's output, refusing its own daemon (peer_identity_unproven).
+        // A real child process is the OS boundary whose exit arrives as I/O, not as a timer.
+        const answer = '{"pid":4242,"t":"peer-identity","uid":1000,"v":1}\n';
+        const spawn: ProcessCustodyPeerIdentitySpawn = () => spawnChildProcess(process.execPath,
+            ['-e', `process.stdout.write(${JSON.stringify(answer)})`], { stdio: ['ignore', 'pipe', 'pipe'] });
+        const identity = observeLocalIpcPeerIdentity({
+            socket: makeSocket(), executablePath: 'custody', timeoutMs: 50, spawn });
+        const busyUntil = Date.now() + 2_500;
+        while (Date.now() < busyUntil) { /* the host's event loop is blocked; the helper runs and exits */ }
+        await expect(identity).resolves.toEqual({ pid: 4242, uid: 1000 });
     });
 
     it('kills a helper that exceeds the bounded stdout cap and answers null', async () => {

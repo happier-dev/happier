@@ -589,6 +589,7 @@ export type ProcessCustodyPeerIdentityChild = {
     readonly stdout: NodeJS.ReadableStream | null;
     on(event: 'error', listener: (error: Error) => void): unknown;
     on(event: 'close', listener: (code: number | null, signal: NodeJS.Signals | null) => void): unknown;
+    on(event: 'exit', listener: () => void): unknown;
     kill(signal?: NodeJS.Signals | number): boolean;
 };
 
@@ -661,6 +662,7 @@ export async function observeLocalIpcPeerIdentity(input: Readonly<{
         const chunks: Buffer[] = [];
         let totalBytes = 0;
         let killed = false;
+        let exited = false;
         const finish = (result: ProcessCustodyPeerIdentity | null) => {
             if (settled) return;
             settled = true;
@@ -673,9 +675,16 @@ export async function observeLocalIpcPeerIdentity(input: Readonly<{
             resolve(result);
         };
         const timer = setTimeout(() => {
-            killed = true;
-            child.kill('SIGKILL');
-            finish(null);
+            // The deadline bounds the helper, not this process: when the event loop was blocked
+            // past it (a long synchronous module load), this timer runs before the helper's
+            // already-delivered exit. Read that pending I/O first; an exited helper settles on
+            // its close (code and output still decide), a running one is killed.
+            setImmediate(() => {
+                if (settled || exited) return;
+                killed = true;
+                child.kill('SIGKILL');
+                finish(null);
+            });
         }, Math.max(1, input.timeoutMs ?? PEER_IDENTITY_TIMEOUT_MS));
         timer.unref();
         child.stdout?.on('data', (chunk: Buffer | string) => {
@@ -688,6 +697,7 @@ export async function observeLocalIpcPeerIdentity(input: Readonly<{
             }
             chunks.push(typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk);
         });
+        child.on('exit', () => { exited = true; });
         child.on('error', () => finish(null));
         child.on('close', (code, signal) => {
             if (killed) return;
