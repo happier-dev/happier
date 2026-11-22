@@ -6,6 +6,7 @@ import { createProviderSettingsAccountHarness, createProviderSettingsHarness,
     installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 
 const account = createProviderSettingsAccountHarness();
@@ -198,10 +199,26 @@ describe('Provider connection usage data resource', () => {
         await resource.refresh();
         const before = resource.getCurrent();
         await account.home.requireUiApproval(serverId, 'providers.usage.refresh');
-        await expect(resource.refresh()).rejects.toMatchObject({ code: 'approval_request_created' });
-        expect(resource.getCurrent()).toBe(before);
-        expect(requests()).toHaveLength(1);
-        resource.dispose();
+        const screen = await renderMountedCurrentUiContext(null, { withModalProvider: true });
+        try {
+            const pending = resource.refresh();
+            void pending.catch(() => {});
+            const control = await waitForHomeGovernance(() => {
+                const button = screen.findByTestId('actions.confirmation-review.decision-approve')
+                    ?? screen.findByTestId('web-modal-confirm');
+                expect(button).toBeTruthy();
+                return button!;
+            });
+            expect(resource.getCurrent()).toBe(before);
+            expect(requests()).toHaveLength(1);
+            await screen.pressByTestIdAsync(control.props.testID);
+            await expect(pending).resolves.toBe(before);
+            expect(resource.getCurrent()).toBe(before);
+            expect(requests()).toHaveLength(2);
+        } finally {
+            resource.dispose();
+            await screen.unmount();
+        }
     });
     it('does no hidden work, shares concurrent explicit refreshes through the Action and stays idle after settlement', async () => {
         const hidden = await setup();
