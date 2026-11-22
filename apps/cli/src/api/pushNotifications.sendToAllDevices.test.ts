@@ -130,6 +130,43 @@ describe('PushNotificationClient.sendToAllDevicesAsync', () => {
     expect(sendPushNotificationsAsyncSpy.mock.calls[0][0][0].data).toMatchObject({ accountId: 'account-a' });
   });
 
+  it('uses app-owned Android presentation only for registered action recipients', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [
+      { id: 'android', token: 'ExponentPushToken[a]', androidActionPresentationV1: true },
+      { id: 'legacy', token: 'ExponentPushToken[b]' },
+    ] } });
+    const data = { kind: 'permission', sessionId: 'session', requestId: 'request', occurrenceId: 'occurrence' };
+    const client = new PushNotificationClient('t', 'https://api.example.test');
+    await client.sendToAllDevicesAsync('Permission', 'Run Bash', data);
+
+    const [android, legacy] = sendPushNotificationsAsyncSpy.mock.calls[0][0];
+    const { permissionRequestV1: categoryId } = PUSH_NOTIFICATION_CATEGORY_IDS;
+    const { permissionRequestsV1: channelId } = PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS;
+    expect(android).toEqual({
+      to: 'ExponentPushToken[a]', priority: 'high', _contentAvailable: true,
+      data: { ...data, serverUrl: 'https://api.example.test', androidActionPresentationV1: { title: 'Permission', body: 'Run Bash', categoryId, channelId, sound: 'default' } },
+    });
+    expect(legacy).toMatchObject({ title: 'Permission', body: 'Run Bash', categoryId, channelId });
+
+    await client.sendToAllDevicesAsync('Finished', 'Session is ready', { kind: 'ready' });
+    expect(sendPushNotificationsAsyncSpy.mock.calls[1][0][0]).toMatchObject({ title: 'Finished', body: 'Session is ready' });
+  });
+
+  it('bounds the actual Android wire payload and downgrades oversized inline questions', async () => {
+    vi.mocked(axios.get).mockResolvedValue({ data: { tokens: [
+      { id: 'android', token: 'ExponentPushToken[a]', androidActionPresentationV1: true },
+    ] } });
+    const data = { kind: 'user_action', occurrenceId: 'occurrence', questionAnswerV1: { kind: 'choices', questionKey: 'pick', values: ['a', 'b'] } };
+    await new PushNotificationClient('t').sendToAllDevicesAsync('Question', 'Review ' + '🧪"'.repeat(1500), data);
+
+    const message = sendPushNotificationsAsyncSpy.mock.calls[0][0][0];
+    expect(Buffer.byteLength(JSON.stringify(message), 'utf8')).toBeLessThanOrEqual(4096);
+    expect(message.data).toMatchObject({ occurrenceId: 'occurrence', androidActionPresentationV1: {
+      body: expect.stringMatching(/^Review .*…$/u), categoryId: PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1,
+    } });
+    expect(message.data).not.toHaveProperty('questionAnswerV1');
+  });
+
   it.each([
     [{ kind: 'choices', questionKey: 'pick', values: ['a'] }, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1],
     [{ kind: 'choices', questionKey: 'pick', values: ['a', 'b'] }, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1],

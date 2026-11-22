@@ -1,6 +1,5 @@
-import { NotificationQuestionAnswerV1Schema } from '@happier-dev/protocol';
 import axios from 'axios'
-import { boundExpoPushMessage } from './boundExpoPushMessage'
+import { boundExpoPushMessage, type RequestedExpoPushMessage } from './boundExpoPushMessage'
 import { logger } from '@/ui/logger'
 import { Expo, ExpoPushMessage } from 'expo-server-sdk'
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload'
@@ -15,8 +14,10 @@ import {
 import {
     collectExpoPushTokensMarkedUnregistered,
     getExpoErrorCode,
+    NotificationQuestionAnswerV1Schema,
     PUSH_NOTIFICATION_ANDROID_CHANNEL_IDS,
     PUSH_NOTIFICATION_CATEGORY_IDS,
+    resolveNotificationQuestionCategoryId,
     type PushNotificationTestResult,
 } from '@happier-dev/protocol'
 
@@ -31,6 +32,7 @@ export interface PushToken {
     id: string
     token: string
     clientServerUrl?: string | null
+    androidActionPresentationV1?: boolean
     createdAt: number
     updatedAt: number
 }
@@ -74,11 +76,7 @@ function resolveCategoryIdFromPushData(data: Record<string, unknown> | undefined
     if (kind === 'permission') return PUSH_NOTIFICATION_CATEGORY_IDS.permissionRequestV1
     if (kind === 'user_action') {
         const question = NotificationQuestionAnswerV1Schema.safeParse(data?.questionAnswerV1);
-        if (question.success) {
-            if (question.data.kind === 'text') return PUSH_NOTIFICATION_CATEGORY_IDS.questionTextV1;
-            return [PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1,
-                PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices3V1][question.data.values.length - 1];
-        }
+        if (question.success) return resolveNotificationQuestionCategoryId(question.data);
         return PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1;
     }
     return undefined
@@ -104,8 +102,6 @@ function sanitizeNotificationSubtitle(raw: string): string {
 }
 
 function resolveIosSubtitleFromPushData(data: Record<string, unknown> | undefined): string | undefined {
-    const categoryId = resolveCategoryIdFromPushData(data)
-    if (!categoryId) return undefined
     const tool = typeof data?.tool === 'string' ? sanitizeNotificationSubtitle(data.tool) : ''
     return tool ? tool : undefined
 }
@@ -236,7 +232,7 @@ export class PushNotificationClient {
      * Send push notification via Expo Push API with retry
      * @param messages - Array of push messages to send
      */
-    async sendPushNotifications(messages: ExpoPushMessage[]): Promise<PushNotificationSendResult> {
+    async sendPushNotifications(messages: RequestedExpoPushMessage[]): Promise<PushNotificationSendResult> {
         const debugPush = isPushDebugEnabled()
         if (debugPush) logger.debug(`Sending ${messages.length} push notifications`)
         const invalidTokens = new Set<string>()
@@ -447,14 +443,14 @@ export class PushNotificationClient {
             const accountId = typeof subject === 'string' ? subject.trim() : ''
             const { accountId: _untrustedAccountId, ...callerData } = data ?? {}
             const scopedData = accountId ? { ...callerData, accountId } : callerData
+            const categoryId = resolveCategoryIdFromPushData(data)
+            const channelId = resolveAndroidChannelIdFromPushData(data)
+            const subtitle = categoryId ? resolveIosSubtitleFromPushData(data) : undefined
 
             // Create messages for all tokens
-            const messages: ExpoPushMessage[] = tokens.map((token, index) => {
+            const messages: RequestedExpoPushMessage[] = tokens.map((token, index) => {
                 if (debugPush) logger.debug(`[PUSH] Creating message ${index + 1} for token`)
                 const baseUrl = normalizeClientServerUrl(token.clientServerUrl) ?? this.baseUrl
-                const categoryId = resolveCategoryIdFromPushData(data);
-                const channelId = resolveAndroidChannelIdFromPushData(data);
-                const subtitle = resolveIosSubtitleFromPushData(data);
                 return {
                     to: token.token,
                     title,
@@ -464,6 +460,7 @@ export class PushNotificationClient {
                     priority: 'high',
                     categoryId,
                     channelId,
+                    androidActionPresentationV1: token.androidActionPresentationV1 === true,
                     subtitle,
                     badge: badgeCount ?? undefined,
                 }

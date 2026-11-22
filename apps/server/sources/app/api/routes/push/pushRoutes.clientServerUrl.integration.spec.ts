@@ -156,6 +156,24 @@ describe("pushRoutes (clientServerUrl) (integration)", () => {
         }
     });
 
+    it("replaces Android presentation support when the same Expo token is re-registered", async () => {
+        const app = createTestApp();
+        const account = await db.account.create({ data: { publicKey: "pk_push_presentation" } });
+        const headers = { authorization: `Bearer ${await auth.createToken(account.id)}` };
+        const token = "ExponentPushToken[presentation]";
+        const register = async (presentation = {}) => app.inject({
+            method: "POST", url: "/v1/push-tokens", headers, payload: { token, ...presentation },
+        });
+        const getTokens = async () => (await app.inject({ method: "GET", url: "/v1/push-tokens", headers })).json().tokens;
+
+        expect((await register()).statusCode).toBe(200);
+        expect(await getTokens()).toEqual([expect.objectContaining({ token })]);
+        expect((await register({ androidActionPresentationV1: true })).statusCode).toBe(200);
+        expect(await getTokens()).toEqual([expect.objectContaining({ token, androidActionPresentationV1: true })]);
+        expect((await register()).statusCode).toBe(200);
+        expect((await getTokens())[0]).not.toHaveProperty('androidActionPresentationV1');
+    });
+
     it("returns clientServerUrl=null when the client hint is invalid", async () => {
         const app = createTestApp();
         const account = await db.account.create({ data: { publicKey: "pk_push_2" } });

@@ -1,4 +1,4 @@
-import { PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol';
+import { NOTIFICATION_QUESTION_CHOICES, PUSH_NOTIFICATION_ACTION_IDS, PUSH_NOTIFICATION_CATEGORY_IDS } from '@happier-dev/protocol';
 import { t } from '@/text';
 import type { ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
 import { notificationPermissionActionsOpenApp } from './notificationBackgroundTaskState';
@@ -38,13 +38,9 @@ export async function configureNotificationCategories(
             options: { opensAppToForeground: true },
         },
     ]).catch(() => { console.warn('[notifications] Answer notification category registration unavailable'); });
-    const choiceActions = [PUSH_NOTIFICATION_ACTION_IDS.questionChoice1V1,
-        PUSH_NOTIFICATION_ACTION_IDS.questionChoice2V1, PUSH_NOTIFICATION_ACTION_IDS.questionChoice3V1];
-    const choiceCategories = [PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices1V1,
-        PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices2V1, PUSH_NOTIFICATION_CATEGORY_IDS.questionChoices3V1];
-    for (const [index, category] of choiceCategories.entries()) {
-        await Notifications.setNotificationCategoryAsync(category, choiceActions.slice(0, index + 1).map((identifier, choice) => ({
-            identifier, buttonTitle: String(choice + 1), options: permissionOptions,
+    for (const [index, { categoryId }] of NOTIFICATION_QUESTION_CHOICES.entries()) {
+        await Notifications.setNotificationCategoryAsync(categoryId, NOTIFICATION_QUESTION_CHOICES.slice(0, index + 1).map(({ actionId }, choice) => ({
+            identifier: actionId, buttonTitle: String(choice + 1), options: permissionOptions,
         }))).catch(() => { console.warn('[notifications] Question choice category registration unavailable'); });
     }
     await Notifications.setNotificationCategoryAsync(PUSH_NOTIFICATION_CATEGORY_IDS.questionTextV1, [{

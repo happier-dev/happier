@@ -319,3 +319,122 @@ diff --git a/node_modules/expo-notifications/ios/EXNotifications/Notifications/E
    open func willPresent(_ notification: UNNotification, completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) -> Bool {
      self.sendEvent(onDidReceiveNotification, serializedNotification(notification))
      return false
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/NotificationData.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/NotificationData.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/NotificationData.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/NotificationData.kt
+@@ -1,6 +1,7 @@
+ package expo.modules.notifications.notifications.model
+ 
+ import org.json.JSONArray
++import org.json.JSONException
+ import org.json.JSONObject
+ 
+ /*
+@@ -9,23 +10,33 @@
+ *
+ * https://docs.expo.dev/versions/latest/sdk/notifications/#android-push-notification-payload-specification
+ * */
+-@JvmInline
+-value class NotificationData(private val data: Map<String, String>) {
++class NotificationData(private val data: Map<String, String>) {
++  val body: JSONObject? = try {
++    data["body"]?.let { JSONObject(it) }
++  } catch (e: JSONException) {
++    null
++  }
++
++  // Expo's push service wraps application data as a JSON string in FCM's
++  // data["body"]. Separate presentation metadata from the session route.
++  private val actionPresentation = (body?.remove("androidActionPresentationV1") as? JSONObject)
++    ?.takeIf {
++      (it.opt("title") is String || it.opt("body") is String)
++        && !(it.opt("categoryId") as? String).isNullOrBlank()
++        && !(it.opt("channelId") as? String).isNullOrBlank()
++    }
++
++  val hasActionPresentation: Boolean
++    get() = actionPresentation != null
++
+   val title: String?
+-    get() = data["title"]
++    get() = data["title"] ?: actionPresentation?.opt("title") as? String
+ 
+   val message: String?
+-    get() = data["message"]
+-
+-  val body: JSONObject?
+-    get() = try {
+-      data["body"]?.let { JSONObject(it) }
+-    } catch (e: Exception) {
+-      null
+-    }
++    get() = data["message"] ?: actionPresentation?.opt("body") as? String
+ 
+   val sound: String?
+-    get() = data["sound"]
++    get() = data["sound"] ?: actionPresentation?.opt("sound") as? String
+ 
+   val shouldPlayDefaultSound: Boolean
+     get() = sound == null
+@@ -56,10 +67,13 @@
+     get() = data["autoDismiss"]?.toBoolean() ?: true
+ 
+   val categoryId: String?
+-    get() = data["categoryId"]
++    get() = actionPresentation?.opt("categoryId") as? String ?: data["categoryId"]
++
++  val channelId: String?
++    get() = data["channelId"] ?: actionPresentation?.opt("channelId") as? String
+ 
+   val subText: String?
+-    get() = data["subtitle"]
++    get() = data["subtitle"] ?: actionPresentation?.opt("subtitle") as? String
+ 
+   val badge: Int?
+     get() = data["badge"]?.toIntOrNull()
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/RemoteNotificationContent.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/RemoteNotificationContent.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/RemoteNotificationContent.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/RemoteNotificationContent.kt
+@@ -63,7 +63,9 @@
+   // They are not supported by FCM but were previously implemented by JSONNotificationContentBuilder.java.
+   override val isAutoDismiss = notificationData.autoDismiss
+ 
+-  val isDataOnly = remoteMessage.notification == null
++  // A visible action notification uses the ordinary Expo foreground policy
++  // even though Firebase received it as a data-only message.
++  val isDataOnly = remoteMessage.notification == null && !notificationData.hasActionPresentation
+ 
+   override val categoryId = notificationData.categoryId
+ 
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/model/triggers/FirebaseNotificationTrigger.kt
+@@ -9,6 +9,7 @@
+ import com.google.firebase.messaging.RemoteMessage
+ import expo.modules.notifications.notifications.RemoteMessageSerializer
+ import expo.modules.notifications.notifications.interfaces.NotificationTrigger
++import expo.modules.notifications.notifications.model.NotificationData
+ 
+ /**
+  * A trigger representing an incoming remote Firebase notification.
+@@ -22,7 +23,7 @@
+ 
+   @RequiresApi(api = Build.VERSION_CODES.O)
+   override fun getNotificationChannel(): String? {
+-    val channelId = remoteMessage.notification?.channelId ?: remoteMessage.data["channelId"]
++    val channelId = remoteMessage.notification?.channelId ?: NotificationData(remoteMessage.data).channelId
+     return channelId ?: super.getNotificationChannel()
+   }
+ 
+diff --git a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/categories/ExpoNotificationCategoriesModule.kt b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/categories/ExpoNotificationCategoriesModule.kt
+--- a/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/categories/ExpoNotificationCategoriesModule.kt
++++ b/node_modules/expo-notifications/android/src/main/java/expo/modules/notifications/notifications/categories/ExpoNotificationCategoriesModule.kt
+@@ -61,6 +61,8 @@
+ 
+   override fun definition() = ModuleDefinition {
+     Name("ExpoNotificationCategoriesModule")
++
++    Constant("androidActionPresentationV1") { true }
+ 
+     AsyncFunction("getNotificationCategoriesAsync") { promise: Promise ->
+       getCategories(

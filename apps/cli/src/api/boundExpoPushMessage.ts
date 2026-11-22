@@ -6,9 +6,26 @@ import type { ExpoPushMessage } from 'expo-server-sdk';
 // conversion is service-owned and can still return MessageTooBig.
 const MAX_EXPO_MESSAGE_BYTES = 4096;
 
-export function boundExpoPushMessage(message: ExpoPushMessage): ExpoPushMessage {
-    const byteLength = (value: ExpoPushMessage) => Buffer.byteLength(JSON.stringify(value), 'utf8');
-    if (byteLength(message) <= MAX_EXPO_MESSAGE_BYTES) return message;
+export type RequestedExpoPushMessage = ExpoPushMessage & { androidActionPresentationV1?: boolean };
+
+function toExpoWireMessage(message: RequestedExpoPushMessage): ExpoPushMessage {
+    const { androidActionPresentationV1, ...standard } = message;
+    if (!androidActionPresentationV1 || !standard.categoryId || !standard.channelId) return standard;
+
+    // Top-level presentation fields let Firebase display the notification
+    // before Expo can attach its registered actions. Pass them inside the
+    // data-only message for the Android native presenter to consume.
+    const { title, body, subtitle, categoryId, channelId, sound, badge: _badge, ...transport } = standard;
+    return {
+        ...transport,
+        _contentAvailable: true,
+        data: { ...transport.data, androidActionPresentationV1: { title, body, subtitle, categoryId, channelId, sound } },
+    };
+}
+
+export function boundExpoPushMessage(message: RequestedExpoPushMessage): ExpoPushMessage {
+    const byteLength = (value: RequestedExpoPushMessage) => Buffer.byteLength(JSON.stringify(toExpoWireMessage(value)), 'utf8');
+    if (byteLength(message) <= MAX_EXPO_MESSAGE_BYTES) return toExpoWireMessage(message);
 
     const bounded = { ...message };
     // Numbered buttons require the complete mapping. If that whole notification
@@ -17,7 +34,7 @@ export function boundExpoPushMessage(message: ExpoPushMessage): ExpoPushMessage 
         const { questionAnswerV1: _question, ...data } = bounded.data;
         bounded.data = data;
         bounded.categoryId = PUSH_NOTIFICATION_CATEGORY_IDS.userActionRequestV1;
-        if (byteLength(bounded) <= MAX_EXPO_MESSAGE_BYTES) return bounded;
+        if (byteLength(bounded) <= MAX_EXPO_MESSAGE_BYTES) return toExpoWireMessage(bounded);
     }
     // Preserve identifiers and actions exactly. Shorten only presentation text,
     // retaining the beginning of the body where request formatters put the action.
@@ -37,7 +54,7 @@ export function boundExpoPushMessage(message: ExpoPushMessage): ExpoPushMessage 
             else high = middle - 1;
         }
         bounded[field] = points.slice(0, low).join('') + '…';
-        return bounded;
+        return toExpoWireMessage(bounded);
     }
 
     throw new Error('Expo notification routing metadata exceeds the 4096-byte outbound payload budget');

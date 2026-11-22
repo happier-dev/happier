@@ -52,6 +52,8 @@ Platform details:
 - **iOS** can show the tool/request name as a notification subtitle
 - **Android** uses dedicated channels for permission requests and action requests so users can tune them separately at the OS level
 
+Development builds add app-rendered Android action buttons to remote permission and input requests when the Android app, relay, and CLI all support the updated delivery path. This requires a new Android app build.
+
 ## Webhook notifications
 
 Expo push is not the only delivery channel. You can send the same remote activity events to your own HTTP endpoint — a bot, an internal dashboard, a home-automation hook — from **Settings → Notifications → Webhook notifications**.

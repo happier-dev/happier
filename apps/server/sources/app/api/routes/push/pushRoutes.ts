@@ -26,6 +26,7 @@ export function pushRoutes(app: Fastify) {
             body: z.object({
                 token: z.string(),
                 clientServerUrl: z.string().optional(),
+                androidActionPresentationV1: z.boolean().optional(),
             }),
             response: {
                 200: z.object({
@@ -39,18 +40,17 @@ export function pushRoutes(app: Fastify) {
         preHandler: app.authenticate
     }, async (request, reply) => {
         const userId = request.userId;
-        const { token } = request.body;
-        const rawClientServerUrl = (request.body as any)?.clientServerUrl;
+        const { token, clientServerUrl: rawClientServerUrl } = request.body;
+        const androidActionPresentationV1 = request.body.androidActionPresentationV1 === true;
         const clientServerUrl =
             rawClientServerUrl === undefined ? undefined : normalizeClientServerUrl(rawClientServerUrl);
 
         try {
-            const update: Record<string, unknown> = {
+            const update = {
                 updatedAt: new Date(),
+                androidActionPresentationV1,
+                ...(clientServerUrl === undefined ? {} : { clientServerUrl }),
             };
-            if (clientServerUrl !== undefined) {
-                update.clientServerUrl = clientServerUrl;
-            }
 
             await db.accountPushToken.upsert({
                 where: {
@@ -64,6 +64,7 @@ export function pushRoutes(app: Fastify) {
                     accountId: userId,
                     token: token,
                     clientServerUrl: clientServerUrl ?? null,
+                    androidActionPresentationV1,
                 }
             });
 
@@ -137,6 +138,7 @@ export function pushRoutes(app: Fastify) {
                     createdAt: t.createdAt.getTime(),
                     updatedAt: t.updatedAt.getTime(),
                     clientServerUrl: t.clientServerUrl ?? null,
+                    ...(t.androidActionPresentationV1 ? { androidActionPresentationV1: true } : {}),
                 }))
             });
         } catch (error) {

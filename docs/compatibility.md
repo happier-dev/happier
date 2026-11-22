@@ -892,6 +892,18 @@ needs neither predecessor patch nor its source-build overrides.
 
 ### Inline question replies and notification presentation (development)
 
+Android remote action notifications in development use Expo data-only delivery
+when the existing push-token registration advertises the native
+`androidActionPresentationV1` capability. The CLI bounds the actual wire
+payload and preserves the selected category, channel, and request routing data.
+The native Expo presenter attaches the registered actions and applies the
+existing foreground policy. Firebase's automatic display bypasses that
+presenter for standard notification messages delivered in the background.
+This path requires the updated Android binary, relay, and CLI. Registrations
+without the capability continue to receive standard messages. Re-registering
+the same token without the capability clears it, including after an Android
+binary downgrade. iOS and non-action notifications use standard delivery.
+
 The existing structured-question descriptor normalizer projects supported single
 questions into optional `questionAnswerV1` notification data. Static native
 categories offer up to three numbered choices, whose complete mapping remains in
