@@ -5,16 +5,16 @@ import type { ExecutionRunProfileBoundedCompleteResult } from '../ExecutionRunIn
 type ResultDecodeFailure = Extract<ReturnType<typeof decodeExecutionRunProfileResult>, { ok: false }>;
 
 /**
- * A refused result names why: the decoder's reason and the schema pointers it failed at. Those are schema words,
- * never the output itself, so the run record can say whether the model or the contract was wrong (AUTO-FIX-W16: a
- * deploy_suggestion run failed `invalid_output` with nothing kept to decide it).
+ * A refused result names why: the decoder's reason and where in the schema its first issue failed. Only the schema
+ * side is kept (schema path, keyword, and AJV's schema-worded message), never the instance pointer, which can name a
+ * key the model wrote, and only the one issue the summary reads (AUTO-FIX-W16 item 4, REVIEW-DELTA7 F2).
  */
 export function invalidProfileResultOutput(lead: string, decoded: ResultDecodeFailure): ExecutionRunProfileBoundedCompleteResult {
   const first = decoded.issues?.[0];
+  const issue = first ? { schemaPath: first.schemaPath, keyword: first.keyword, message: first.message } : null;
   return {
     status: 'failed',
-    summary: `${lead} (${decoded.reason}${first ? `: ${first.pointer || '/'} ${first.message}` : ''}).`,
-    toolResultOutput: { error: { code: 'invalid_output', reason: decoded.reason,
-      ...(decoded.issues?.length ? { issues: decoded.issues } : {}) } },
+    summary: `${lead} (${decoded.reason}${issue ? `: ${issue.schemaPath} ${issue.message}` : ''}).`,
+    toolResultOutput: { error: { code: 'invalid_output', reason: decoded.reason, ...(issue ? { issue } : {}) } },
   };
 }

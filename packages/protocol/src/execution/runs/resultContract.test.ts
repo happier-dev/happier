@@ -76,7 +76,8 @@ describe('execution Run result contract codec', () => {
     });
     expect(validateExecutionRunProfileResult({ 'a/b~c': [], extra: true }, contract)).toMatchObject({
       ok: false, reason: 'schema_mismatch',
-      issues: [{ pointer: '/extra', message: expect.any(String) }],
+      // The instance pointer names a key the producer wrote; the schema path and keyword are the contract's own words.
+      issues: [{ pointer: '/extra', schemaPath: '#/additionalProperties', keyword: 'additionalProperties', message: expect.any(String) }],
     });
     expect(validateExecutionRunProfileResult(42, { kind: 'text' })).toEqual({ ok: false, reason: 'not_text' });
     expect(validateExecutionRunProfileResult(NaN, contract)).toEqual({ ok: false, reason: 'not_strict_json' });

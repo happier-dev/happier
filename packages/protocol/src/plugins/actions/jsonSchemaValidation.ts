@@ -96,7 +96,12 @@ export function compilePluginJsonSchema(schema: object): PluginJsonSchemaValidat
   return preparePluginJsonSchema(schema).validate;
 }
 
-export type PluginJsonSchemaValueIssue = Readonly<{ pointer: string; message: string }>;
+/**
+ * One refused value. `pointer` is where in the value, so it can name a key the value's author wrote; `schemaPath` and
+ * `keyword` are where in the schema, the contract's own words. A record that must not keep a producer's text (a run's
+ * refused result) keeps the schema side only.
+ */
+export type PluginJsonSchemaValueIssue = Readonly<{ pointer: string; schemaPath: string; keyword: string; message: string }>;
 
 /** Projects the most recent AJV validation errors without exposing AJV in the public validator type. */
 export function describePluginJsonSchemaValueIssues(
@@ -111,7 +116,8 @@ export function describePluginJsonSchemaValueIssues(
         ? error.params.additionalProperty
         : undefined;
     const suffix = typeof property === 'string' ? `/${property.replace(/~/g, '~0').replace(/\//g, '~1')}` : '';
-    return { pointer: `${error.instancePath}${suffix}`, message: error.message ?? error.keyword };
+    return { pointer: `${error.instancePath}${suffix}`, schemaPath: error.schemaPath, keyword: error.keyword,
+      message: error.message ?? error.keyword };
   });
 }
 
