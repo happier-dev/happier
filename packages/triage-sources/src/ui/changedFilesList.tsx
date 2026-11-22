@@ -102,6 +102,15 @@ export function TriageChangedFilesProgress({
 }
 
 /**
+ * What stands above the files (the progress line, a read's notice) keeps one small step of air above the rows, so
+ * where the files' own scroller clips a row is a visible edge under the line, never a row cut against its words.
+ */
+function FilesHeader({ children }: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  const { spacing } = usePluginTheme();
+  return <Stack style={{ paddingBottom: spacing.small }}>{children}</Stack>;
+}
+
+/**
  * The Files panel while its first page is read: the quiet line that will stand above the files (Viewed progress, the
  * comparison being read), then compact rows of the files' own shape, so the files replace placeholders of their size.
  * It is the settled panel's own List with no rows yet, so the line stands on the same text edge as the settled header
@@ -137,7 +146,7 @@ export function TriageChangedFilesLoading({
       items={NO_FILES}
       keyForItem={readNoFileKey}
       renderItem={renderNoFile}
-      header={<TriageChangedFilesProgress value={progress === true ? null : progress} />}
+      header={<FilesHeader><TriageChangedFilesProgress value={progress === true ? null : progress} /></FilesHeader>}
       empty={rows}
     />
   );
@@ -302,7 +311,7 @@ export function TriageChangedFilesList<TRow extends TriageChangedFileV1>(
       density="flush"
       sections={sections}
       keyForItem={(row) => row.path}
-      header={props.header}
+      header={<FilesHeader>{props.header}</FilesHeader>}
       endContent={props.endContent}
       // Seed the existing page window with a single padded line before the List measures its rows.
       {...(pageScroll ? { pageLayout: { estimatedRowHeight: typography.reading.lineHeight + 2 * spacing.small } } : {})}
