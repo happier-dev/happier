@@ -585,7 +585,7 @@ export function createStablePluginStorageService(params: CreatePluginStorageOwne
     isOccurrenceCurrent: () => boolean;
     accountStorageCurrentness?: () => boolean | Promise<boolean>;
     accountStorage?: StablePluginAccountStorageHost;
-    daemonDatabase?: StablePluginDaemonDatabaseHost;
+    daemonDatabase?: Pick<StablePluginDaemonDatabaseHost, 'bind'>;
 }>): StorageService {
     const storage = createPluginStorageOwner(params);
     const authoritative = Object.freeze({ kind: 'authoritativeSerializable' as const });

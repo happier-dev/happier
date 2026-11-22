@@ -256,7 +256,6 @@ import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/a
 import { invokeAccountMachineSourceAction, resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 import {
     createStablePluginDaemonDatabaseHost,
-    type PluginDaemonDatabaseCapability,
     type PluginDaemonDatabaseLimitsPolicy,
     type PluginDaemonDatabasePreparedContract,
     type PluginDaemonDatabaseQuiescence,
@@ -808,6 +807,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ...(contributes.dropTargets ?? []).map((target) => target.pluginId),
         ]);
     const candidateOccurrenceIdsByPluginId = new Map<string, PluginRuntimeOccurrenceId>();
+    const retainedDatabaseBindings = new Map<string, NonNullable<PluginRuntimeActivationRegistryLease['daemonDatabase']>>();
+    const resolveDaemonDatabaseBinding = (pluginId: string) => retainedDatabaseBindings.get(pluginId) ?? daemonDatabaseHost;
     const admittedPluginSourceCustodiesByPluginId = new Map<string, PluginSourceCustody>();
     for (const pluginId of candidatePluginIds) {
         const target = activationTargets.find((candidate) => candidate.pluginId === pluginId);
@@ -873,7 +874,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return occurrenceId
                 && sourceCustody
                 && (!candidateSourceCustody || pluginSourceCustodyEqual(sourceCustody, candidateSourceCustody))
-                ? [{ occurrenceId, sourceCustody }]
+                ? [{ occurrenceId, sourceCustody, daemonDatabase: lease.daemonDatabase }]
                 : [];
         }).at(0) ?? (() => {
             // An unchanged plugin with no component to retain (declared but not
@@ -888,7 +889,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             ) return undefined;
             const sourceCustody = serving.sourceCustody ?? candidateSourceCustody;
             return sourceCustody
-                ? { occurrenceId: serving.occurrenceId, sourceCustody }
+                ? { occurrenceId: serving.occurrenceId, sourceCustody, daemonDatabase: undefined }
                 : undefined;
         })();
         // Every admitted occurrence must have fresh or retained source custody.
@@ -901,6 +902,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         );
         if (retainedIdentity) {
             admittedPluginSourceCustodiesByPluginId.set(pluginId, retainedIdentity.sourceCustody);
+            if (retainedIdentity.daemonDatabase) retainedDatabaseBindings.set(pluginId, retainedIdentity.daemonDatabase);
             // Retained activation does not load this source again. Its exact
             // admitted manifest authority still belongs to the source resolver,
             // rather than disappearing with the predecessor's private map.
@@ -1099,7 +1101,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             : { scopedPluginIds: scopedActivationPluginIds }),
         retainedLeases: retainedActivationRegistryLeases,
         preparedLeases: params?.preparedActivationRegistryLeases,
-        readDaemonDatabaseCapability: daemonDatabaseHost.readCapability,
+        daemonDatabase: daemonDatabaseHost,
         disposeInvocationServices: async () => await disposeInvocationServiceOwners(),
     });
     const activatedRegistry = activationAssembly.activatedRegistry;
@@ -3870,7 +3872,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 && activatedRegistry.activatedPluginIds.has(action.pluginId);
         },
         storagePaths: pluginStorePaths,
-        daemonDatabase: daemonDatabaseHost,
+        daemonDatabase: { bind: input => resolveDaemonDatabaseBinding(input.pluginId).bind(input) },
         accountStorage: accountStorageHost,
         settingsDeclarations: [
             ...(authoritativeContributes.settings ?? []),
@@ -7024,11 +7026,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return daemonDatabaseHost.readPreparedContracts(pluginId);
         },
         readDaemonDatabaseCapability(pluginId) {
-            // Unchanged serving occurrences keep their existing invocation and database owners.
-            const retained = params?.servingPluginOccurrences?.has(pluginId)
-                ? params.retainedActivationRegistryLeases?.find(lease => lease.pluginIds.has(pluginId))
-                : undefined;
-            return retained?.readDaemonDatabaseCapability?.(pluginId) ?? daemonDatabaseHost.readCapability(pluginId);
+            return resolveDaemonDatabaseBinding(pluginId).readCapability(pluginId);
         },
         runDaemonDatabaseRetention: (days, nowMs, operation) => daemonDatabaseHost.runRetention(days, nowMs, operation),
         connectedAccountContributions,

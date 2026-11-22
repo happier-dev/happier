@@ -214,8 +214,8 @@ export function createProductionPluginInvocationServiceOwners(params?: Readonly<
     resources?: StablePluginResourcesOwner;
     connectedAccounts?: StablePluginConnectedAccountsOwner;
     storagePaths?: PluginStorePaths;
-    /** Generation-owned daemon database host; absence remains fail-closed. */
-    daemonDatabase?: StablePluginDaemonDatabaseHost;
+    /** Binds the daemon database owned by the serving occurrence. */
+    daemonDatabase?: Pick<StablePluginDaemonDatabaseHost, 'bind'>;
     /** Canonical Account Data host; absence remains a typed unavailable leaf. */
     accountStorage?: StablePluginAccountStorageHost;
     settingsDeclarations?: readonly Readonly<{

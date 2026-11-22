@@ -248,7 +248,7 @@ export type PluginInvocationServicesFactoryParams = Readonly<{
     composerContent?: StablePluginComposerContentOwner;
     storagePaths?: PluginStorePaths;
     resolveEphemeralStorageScope?(seed: PluginInvocationServicesSeed): import('@/plugins/runtime/context/storage').PluginStorageOwnerScope;
-    daemonDatabase?: StablePluginDaemonDatabaseHost;
+    daemonDatabase?: Pick<StablePluginDaemonDatabaseHost, 'bind'>;
     accountStorage?: StablePluginAccountStorageHost;
     secrets?: StableDeclaredPluginSecretsHost;
     secretRedactor?: PluginInvocationSecretRedactor;
