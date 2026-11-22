@@ -52,8 +52,9 @@ Auth flows:
 - `GET /v2/sessions?cursor=cursor_v1_<id>&limit=...&changedSince=...`
 - `POST /v1/sessions` (create or load by `tag`)
   In 0.2 development, dated Direct Session link requests use the original source
-  dates at creation and preserve the stored dates on replay. A separate resume
-  request omits source dates and records current activity.
+  dates at creation and preserve the stored dates on replay. A resume without
+  source dates records current activity for an inactive or archived Session. An
+  active, unarchived Session is returned unchanged.
 - `GET /v1/sessions/:sessionId/messages`
 - `DELETE /v1/sessions/:sessionId`
 
