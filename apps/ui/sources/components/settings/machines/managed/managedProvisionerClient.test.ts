@@ -112,13 +112,14 @@ describe('managed configurator uses the exact Home Action front door', () => {
             }, failure: () => outcome === 'acquired' ? null : { errorCode: outcome, error: outcome } });
         harness.answer(serverId, '/v1/machines', { body: [admitted.machine] });
 
-        const actions = await import('@/components/settings/remoteHosts/attachRemoteHostWorkspace').catch(() => null);
-        expect(actions, 'Remote Hosts has no adapter to the existing workspace acquire').not.toBeNull();
-        const result = await actions!.attachRemoteHostWorkspace({
-            scope: { serverId, accountId: 'owner' }, homeId, controller, contribution, descriptor, hostId,
-            signal: new AbortController().signal,
-            onApprovalPending: () => { throw new Error('Unexpected approval request'); },
-        });
+        // Remote Hosts "Use folders here" reads the saved host by id and attaches it through the shared acquire.
+        const { readAttachableRemoteWorkspaces, attachRemoteWorkspace } = await import('./attachableRemoteWorkspaceActions');
+        const signal = new AbortController().signal;
+        const onApprovalPending = () => { throw new Error('Unexpected approval request'); };
+        const account = await readAttachableRemoteWorkspaces({ scope: { serverId, accountId: 'owner' }, homeId, controller,
+            contribution, descriptor, selectors: { remoteHostId: hostId }, signal, onApprovalPending });
+        if (account.kind !== 'ready') throw new Error(`Expected the saved host listing: ${account.code}`);
+        const result = await attachRemoteWorkspace({ account, workspaceId: hostId, signal, onApprovalPending });
         expect(result).toEqual(outcome === 'acquired'
             ? { kind: 'attached', managedId: 'attached-ssh', controller }
             : { kind: 'unsupported_platform' });

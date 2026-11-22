@@ -212,6 +212,62 @@ describe('provisioner picker demand', () => {
     } finally { await screen.unmount(); }
   }));
 
+  it('offers a saved Remote Host through its SSH provisioner with no account choice, then attaches it', async () => {
+    const homeId = 'srv_remote_host_folders';
+    const serverId = await harness.addHome({ name: 'Remote host folders', serverUrl: 'https://remote-host-folders.example.test',
+      serverIdentityId: homeId, accountId: 'owner', currentAccount: true });
+    const { clearPluginAccountAvailabilityProjection, failPluginAccountAvailabilityProjection } =
+      await import('@/sync/domains/plugins/availability/projection');
+    onTestFinished(clearPluginAccountAvailabilityProjection);
+    failPluginAccountAvailabilityProjection({ scope: { serverId, accountId: 'owner' }, code: 'plugin_availability_unavailable' });
+    const controller = { machineId: 'controller', installationId: 'installation' };
+    const ssh = await import('../../../../../../../packages/plugins/machine-ssh/src/manifest');
+    const descriptor = ssh.PLUGIN_MANIFEST.contributes.machineProvisioners?.[0];
+    const contribution = { pluginId: ssh.PLUGIN_MANIFEST.id, localId: descriptor!.id };
+    const list = MachineProvisionersListResultV1Schema.parse({ controller, provisioners: [{
+      contribution, occurrenceId: 'ssh-installation', acquireExecutionTarget: 'daemon', descriptor, credentialPurposes: [],
+    }] });
+    const { machine } = await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.list', tokenEpoch: 0, requesterInvocation: 'optional', execute: () => list,
+    });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.provisioners.options', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+        // The saved host's id selects it; its SavedSecret stays with the controller, never in the Action input.
+        expect(input).toEqual({ homeId, controller, contribution, selectors: { remoteHostId: 'host-a' } });
+        return ssh.options({ remoteHostId: 'host-a' });
+      },
+    });
+    await answerExternalActionAccountForHome(harness, serverId, {
+      ...controller, actionId: 'machines.managed.acquire', tokenEpoch: 0, requesterInvocation: 'optional', execute: input => {
+        expect(input).toMatchObject({ selection: { kind: 'one-off', homeId, controller, attachWorkspace: true,
+          launch: { provider: contribution, choices: { remoteHostId: 'host-a' } } } });
+        expect(JSON.stringify(input)).not.toContain('credentials');
+        return { managedId: 'attached-ssh' };
+      },
+    });
+    harness.answer(serverId, '/v1/machines', { body: [machine] });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' },
+      [createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now() })]);
+    const { useAttachableRemoteWorkspaces } = await import('./useAttachableRemoteWorkspaces');
+    const hook = await renderHook((bindingId: string | undefined) => useAttachableRemoteWorkspaces({
+      serverId, open: true, remoteHostId: 'host-a', bindingId }), { initialProps: undefined });
+    try {
+      await waitForHomeGovernance(() => expect(hook.getCurrent(), JSON.stringify(hook.getCurrent())).toMatchObject({ kind: 'choose_account', accounts: [{}] }));
+      const state = hook.getCurrent();
+      if (state.kind !== 'choose_account') throw new Error('Expected the SSH provisioner as the one choice');
+      await hook.rerender(state.accounts[0]!.bindingId);
+      await waitForHomeGovernance(() => expect(hook.getCurrent()).toMatchObject({ kind: 'ready',
+        accounts: [{ workspaces: [{ id: 'host-a' }] }] }));
+      const ready = hook.getCurrent();
+      if (ready.kind !== 'ready') throw new Error('Expected the saved host listing');
+      const outcome = await ready.attach({ bindingId: state.accounts[0]!.bindingId, workspaceId: 'host-a',
+        signal: new AbortController().signal, onApprovalPending: () => { throw new Error('Unexpected approval request'); } });
+      expect(outcome).toEqual({ kind: 'attached', managedId: 'attached-ssh', controller });
+      expect(harness.requestsFor('/v1/actions/machines.provisioners.options')).toHaveLength(1);
+      expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(1);
+    } finally { await hook.unmount(); }
+  });
+
   it('returns to Home selection when the parent clears its target instead of retaining the previous Home', async () => {
     const homeId = await harness.addHome({ name: 'Picker target', serverUrl: 'https://picker-target.example.test',
       serverIdentityId: 'srv_picker_target', accountId: 'owner', currentAccount: true });

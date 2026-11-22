@@ -6,7 +6,6 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { useAttachableRemoteWorkspaces } from '@/components/settings/machines/managed/useAttachableRemoteWorkspaces';
 import type { AttachableRemoteWorkspace } from '@/components/settings/machines/managed/attachableRemoteWorkspaceActions';
-import type { ManagedWorkspacePreparationOutcome } from '@/components/ui/pathBrowser/ManagedWorkspacePreparation';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -22,8 +21,6 @@ export type ProjectsAddMenuRemote = Readonly<{
 }>;
 
 const ITEM_PREFIX = 'remote:';
-/** Where the chooser starts when the attached record names no guest home. */
-const GUEST_ROOT = '/';
 
 const STATUS_KEY = {
   running: 'projects.identity.serverFolderStatusRunning',
@@ -262,30 +259,16 @@ export function useRemoteWorkspaceAddItem(
           name: workspace.name,
           controllerMachineId: account.controller.machineId,
           onSetUpAsMachine: () => router.push(buildMachineAddHref({})),
-          prepare: async ({
-            signal,
-            onApprovalPending,
-          }): Promise<ManagedWorkspacePreparationOutcome> => {
+          attach: async ({ signal, onApprovalPending }) => {
             // Preparation uses the current listing if its controller or account changed.
             const ready = await readyListing(signal);
             if (!ready) return { kind: 'failed', code: signal.aborted ? 'aborted' : 'target_unavailable', message: null };
-            const outcome = await ready.attach({
+            return ready.attach({
               bindingId: account.bindingId,
               workspaceId: workspace.id,
               signal,
               onApprovalPending,
             });
-            return outcome.kind === 'attached'
-              ? {
-                  kind: 'ready',
-                  workspace: {
-                    serverId: remote.serverId,
-                    managedId: outcome.managedId,
-                    controller: outcome.controller,
-                    rootPath: outcome.home ?? GUEST_ROOT,
-                  },
-                }
-              : outcome;
           },
         })
         .finally(() => setPreparing(false));

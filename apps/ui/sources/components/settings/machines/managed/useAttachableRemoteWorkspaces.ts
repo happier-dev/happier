@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/publicTypes';
 import { isMachineProvisionerCredentialPurposeRequiredV1,
     isMachineProvisionerWorkspaceAttachmentV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { createManagedCredentialSelectionV1, type ManagedControllerV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
@@ -40,6 +41,11 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
     serverId: string;
     open: boolean;
     bindingId?: string;
+    /**
+     * A saved Remote Host (Remote Hosts "Use folders here"): the provisioners that attach it by id are the choices,
+     * with no connected-account step; the controller binds the host's own saved credential.
+     */
+    remoteHostId?: string;
     onApprovalPending?: (registration: ActionApprovalRegistration) => void;
 }>): AttachableRemoteWorkspaces {
     const approval = React.useRef(input.onApprovalPending);
@@ -58,15 +64,26 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
         controllerOnly: true,
     });
     const { binding, current, homeId, provisioners, isCurrentFor } = catalog;
+    const { remoteHostId } = input;
     const candidates = React.useMemo<readonly Candidate[]>(() => {
         if (!input.open || !binding?.isCurrent() || !current || !homeId || !machineId || !installationId || !controllerName) return [];
         const selectedController = { machineId, installationId };
+        const selectors = remoteHostId ? { remoteHostId } : attachSelectors;
         return provisioners.flatMap(provisioner => {
             const { descriptor, contribution } = provisioner;
             if (!isCurrentFor(buildQualifiedPluginContributionKey(contribution))
-                || !isMachineProvisionerWorkspaceAttachmentV1(descriptor, attachSelectors, 'options')) return [];
+                || !isMachineProvisionerWorkspaceAttachmentV1(descriptor, selectors, 'options')) return [];
             const required = provisioner.credentialPurposes?.filter(({ purpose }) =>
-                isMachineProvisionerCredentialPurposeRequiredV1(descriptor, purpose.purpose, attachSelectors));
+                isMachineProvisionerCredentialPurposeRequiredV1(descriptor, purpose.purpose, selectors));
+            if (remoteHostId) {
+                // The saved host carries its own credential, bound on the controller: no account to pick.
+                if (required?.length) return [];
+                return [{
+                    account: { bindingId: JSON.stringify([selectedController, provisioner.occurrenceId]),
+                        title: resolvePluginLocalizedStringV2Text(descriptor.title), controller: { ...selectedController, name: controllerName } },
+                    request: { scope: binding.scope, homeId, controller: selectedController, contribution, descriptor, selectors },
+                }];
+            }
             // The attachment listing is for a person's own connected Account.
             // F8 authorizes the exact selected binding on each Home Action.
             if (required?.length !== 1) return [];
@@ -83,7 +100,7 @@ export function useAttachableRemoteWorkspaces(input: Readonly<{
                 }];
             });
         });
-    }, [binding, current, homeId, input.open, installationId, isCurrentFor, machineId, controllerName, provisioners]);
+    }, [binding, current, homeId, input.open, installationId, isCurrentFor, machineId, controllerName, provisioners, remoteHostId]);
 
     const candidate = input.bindingId ? candidates.find(({ account }) => account.bindingId === input.bindingId) : undefined;
     const request = candidate?.request;

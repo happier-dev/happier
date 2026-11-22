@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { useLocalSearchParams, useNavigation, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet } from 'react-native-unistyles';
 
+import { useAddProjectFromRemoteWorkspace } from '@/components/projects/useAddProjectFromRemoteWorkspace';
+import { useAttachableRemoteWorkspaces } from '@/components/settings/machines/managed/useAttachableRemoteWorkspaces';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
@@ -13,6 +15,8 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { RelayAccessControlSection } from '@/components/settings/server/relayAccess/RelayAccessControlSection';
+import { Modal } from '@/modal';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useUnsavedDraftNavigationGuard } from '@/utils/navigation/useUnsavedDraftNavigationGuard';
 import type { RemoteHost } from '@/sync/domains/remoteHosts/remoteHostModel';
@@ -24,7 +28,7 @@ import { RemoteHostInterruptedSetups, RemoteHostTunnelRows } from './RemoteHosts
 import { REMOTE_HOSTS_ROOT, remoteHostHref } from './remoteHostsRoutes';
 
 /** What a host can be used for from this device; the rest of its operations maintain Happier there. */
-const USE_ACTION_IDS = new Set(['setupAsMachine', 'connectFromThisDevice', 'useAsRelayHost', 'configureAccess']);
+const USE_ACTION_IDS = new Set(['setupAsMachine', 'useFoldersHere', 'connectFromThisDevice', 'useAsRelayHost', 'configureAccess']);
 const DESTRUCTIVE_ACTION_IDS = new Set(['personalHome.erase']);
 
 /**
@@ -121,7 +125,19 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
         ? [{ id: 'discard', title: t('settingsRemoteHostsPage.discard'), onSelect: discardDraft }]
         : [{ id: 'remove', title: t('common.remove'), destructive: true, onSelect: remove }]), [discardDraft, isNew, remove]);
 
-    const actions = React.useMemo(() => (host ? collection.buildHostActions(host) : []), [collection, host]);
+    // Folders here without installing Happier (F6): the host's own Set up as machine is the unsupported-platform way on.
+    const [foldersPending, setFoldersPending] = React.useState(false);
+    const actions = React.useMemo((): ItemAction[] => {
+        if (!host) return [];
+        const built = collection.buildHostActions(host);
+        if (built.length === 0) return built;
+        const folders: ItemAction = { id: 'useFoldersHere', title: t('settingsRemoteHostsPage.useFoldersHere'), icon: 'folder',
+            disabled: foldersPending, onPress: () => setFoldersPending(true) };
+        const setup = built.findIndex((action) => action.id === 'setupAsMachine');
+        return [...built.slice(0, setup + 1), folders, ...built.slice(setup + 1)];
+    }, [collection, foldersPending, host]);
+    const setupAsMachine = actions.find((action) => action.id === 'setupAsMachine');
+    const settleFolders = React.useCallback(() => setFoldersPending(false), []);
     const useActions = actions.filter((action) => USE_ACTION_IDS.has(action.id));
     const maintenanceActions = actions.filter((action) => !USE_ACTION_IDS.has(action.id) && !DESTRUCTIVE_ACTION_IDS.has(action.id));
     const eraseAction = actions.find((action) => action.id === 'personalHome.erase');
@@ -165,6 +181,15 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
                 >
                     <HostActionButtons actions={useActions} />
                 </ItemGroup>
+            ) : null}
+
+            {host && foldersPending && collection.scope ? (
+                <RemoteHostFoldersLauncher
+                    serverId={collection.scope.serverId}
+                    host={host}
+                    onSetUpAsMachine={setupAsMachine?.onPress ? () => setupAsMachine.onPress?.() : undefined}
+                    onSettled={settleFolders}
+                />
             ) : null}
 
             {host && relayAccessSelection?.host.id === host.id ? (
@@ -250,6 +275,54 @@ const RemoteHostEditorPage = React.memo(function RemoteHostEditorPage(props: Rea
         </ItemList>
     );
 });
+
+/**
+ * "Use folders here without installing Happier": mounted only while pressed. It resolves the controller and the
+ * provisioner that attaches this saved host, then hands the attach to the shared folder chooser and Project open.
+ */
+function RemoteHostFoldersLauncher(props: Readonly<{
+    serverId: string;
+    host: RemoteHost;
+    onSetUpAsMachine?: () => void;
+    onSettled(): void;
+}>) {
+    const { host, onSetUpAsMachine, onSettled } = props;
+    const addProject = useAddProjectFromRemoteWorkspace();
+    const [bindingId, setBindingId] = React.useState<string>();
+    const state = useAttachableRemoteWorkspaces({ serverId: props.serverId, open: true, bindingId, remoteHostId: host.id });
+    const onlyChoice = state.kind === 'choose_account' ? state.accounts[0]?.bindingId : undefined;
+    // The host is the workspace; its provisioner is the one choice, never a step for the person.
+    if (onlyChoice && onlyChoice !== bindingId) setBindingId(onlyChoice);
+    const latest = React.useRef(state);
+    latest.current = state;
+    const started = React.useRef(false);
+    React.useEffect(() => {
+        if (started.current) return;
+        const refuse = (code: string, message: string | null) => {
+            started.current = true;
+            Modal.alert(t('common.error'), message || resolveActionExecutionErrorMessage({ code }, t('errors.tryAgain')));
+            onSettled();
+        };
+        if (state.kind === 'failed') return refuse(state.code, state.message);
+        if (state.kind === 'choose_account' && state.accounts.length === 0) return refuse('provider_unavailable', null);
+        if (state.kind !== 'ready') return;
+        started.current = true;
+        const account = state.accounts[0]!;
+        void addProject({
+            name: host.name,
+            controllerMachineId: account.controller.machineId,
+            onSetUpAsMachine,
+            // The chooser's Retry attaches through the listing that is current then.
+            attach: (request) => {
+                const current = latest.current;
+                return current.kind === 'ready'
+                    ? current.attach({ ...request, bindingId: account.bindingId, workspaceId: host.id })
+                    : Promise.resolve({ kind: 'failed', code: 'target_unavailable', message: null });
+            },
+        }).finally(onSettled);
+    }, [addProject, host.id, host.name, onSetUpAsMachine, onSettled, state]);
+    return null;
+}
 
 /** A host's operations as one wrapping row of buttons; each says what it does. */
 const HostActionButtons = React.memo(function HostActionButtons(props: Readonly<{

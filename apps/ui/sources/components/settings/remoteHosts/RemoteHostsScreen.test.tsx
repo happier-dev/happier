@@ -807,6 +807,8 @@ await import('./collection/remoteHostsCollectionController');
             .map((node) => String(node.props.testID).slice('settings.remoteHosts.hostAction.'.length));
         const firstMaintenance = order.findIndex((id) => maintenanceIds.includes(id));
         expect(useIds.every((id) => order.indexOf(id) < firstMaintenance)).toBe(true);
+        // The two ways to use a server read side by side: install Happier there, or use its folders without it.
+        expect(order.indexOf('useFoldersHere')).toBe(order.indexOf('setupAsMachine') + 1);
     });
 
     it('starts the remote SSH bootstrap task when setting a host up as a Happier machine', async () => {
