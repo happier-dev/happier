@@ -2,6 +2,7 @@ import { mkdir, rename, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
 import { runManagedChildCommand } from '../../../scripts/testing/process/managedChildLifecycle.mjs';
+import { createTestTempDirectory } from '../../../scripts/testing/process/temporaryDirectories.mjs';
 import { sweepStaleProcessOwnershipLeases } from './sweepProcessOwnershipLeases.mjs';
 import {
   appendHeartbeatDiagnostic,
@@ -160,10 +161,19 @@ export async function runHeartbeatWrappedCommand(params) {
     clearInterval(heartbeat);
   }
 
+  let spawnOptions = params.spawnOptions;
+  if (params.toolName === 'playwright') {
+    const { root } = createTestTempDirectory('happier-playwright-');
+    spawnOptions = {
+      ...spawnOptions,
+      env: { ...spawnOptions.env, HAPPIER_TEST_TEMP_ROOTS: process.env.HAPPIER_TEST_TEMP_ROOTS, TMPDIR: root, TMP: root, TEMP: root },
+    };
+  }
+
   const result = await runManagedChildCommand({
     command: params.command,
     args: params.args,
-    spawnOptions: params.spawnOptions,
+    spawnOptions,
     cleanupPollMs: 25,
     signalCleanupGraceMs: 0,
     exitCleanupGraceMs: 1_000,

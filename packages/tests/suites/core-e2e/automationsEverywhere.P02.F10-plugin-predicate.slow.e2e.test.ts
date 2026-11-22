@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -17,10 +17,19 @@ import { AUTOMATION_ACTION_ADMIT_HTTP_PATH_V1 } from '../../../protocol/src/auto
 
 describe('Automations everywhere: input-sensitive plugin effects', () => {
   let fixture: TeamSetupFFixture | undefined;
-  afterEach(async () => { await fixture?.stop(); fixture = undefined; }, 0);
+  let testDir: string | undefined;
+  afterEach(async () => {
+    try {
+      await fixture?.stop();
+    } finally {
+      fixture = undefined;
+      if (testDir) await rm(testDir, { recursive: true, force: true });
+      testDir = undefined;
+    }
+  }, 0);
 
   it('AE.P02.F10-plugin-predicate offers effects and starts preview 0 / save 1 / read 0 / effect 1 Runs', async () => {
-    const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-predicate-'));
+    testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-predicate-'));
     let failTerminalCallback = false;
     fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true, advertiseRequestObservationEndpoint: true,
       beforeHttpRequest: request => {
@@ -161,7 +170,7 @@ describe('Automations everywhere: input-sensitive plugin effects', () => {
   }, 0);
 
   it.each(['apply', 'live'] as const)('settles the %s plugin effect once after ordinary person approval', async (localId) => {
-    const testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-private-replay-'));
+    testDir = await mkdtemp(join(tmpdir(), 'ae-p02-plugin-private-replay-'));
     fixture = await startTeamSetupFFixture({ testDir, observeActionRequests: true, advertiseRequestObservationEndpoint: true,
       serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
     const actor = await fixture.createAccount('actor');

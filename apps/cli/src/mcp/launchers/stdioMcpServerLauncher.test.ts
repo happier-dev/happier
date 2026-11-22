@@ -1,9 +1,10 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 import { deserializeMessage, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
@@ -46,6 +47,25 @@ function resolveLauncherInvocation(options: Readonly<{ forceSource?: boolean }> 
 }
 
 describe('stdioMcpServerLauncher', () => {
+  it('cleans up an owned config directory when its writer exits', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-mcp-writer-exit-test-'));
+    try {
+      const invocation = resolveLauncherInvocation({ forceSource: true });
+      const writer = pathToFileURL(join(projectPath(), 'src', 'mcp', 'runtime', 'writeSecureMcpRuntimeConfigFile.ts'));
+      const { stdout } = await promisify(execFile)(invocation.command, [
+        ...invocation.args.slice(0, -1), '--input-type=module', '--eval',
+        `const writer = await import(${JSON.stringify(writer.href)});
+         const writeConfig = writer.writeSecureMcpRuntimeConfigFile ?? writer.default.writeSecureMcpRuntimeConfigFile;
+         process.stdout.write(await writeConfig({ prefix: 'happier-mcp-stdio-launcher', tmpDir: null, payload: {} }));`,
+      ], { env: { ...process.env, ...invocation.env, TMPDIR: root, TMP: root, TEMP: root } });
+      const configPath = stdout.trim();
+      expect(configPath).toContain('happier-mcp-stdio-launcher');
+      expect(existsSync(dirname(configPath))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('returns a typed failure when a real child closes stdin before initialize', async () => {
     const configPath = await writeSecureMcpRuntimeConfigFile({ prefix: 'happier-mcp-closed-stdin', tmpDir: null,
       payload: { command: process.execPath, args: ['-e', "require('node:fs').closeSync(0); process.stderr.write('stdin-closed\\n'); setTimeout(() => process.exit(0), 1000);"] } });

@@ -5,7 +5,7 @@ import { once } from 'node:events';
 import { closeSync, openSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { commitSourceSyntax } from './commitSourceSyntax.mjs';
 import { commitPluginManifests } from './commitPluginManifests.mjs';
@@ -173,7 +173,7 @@ async function finalizeFrozenPacket({ repo, candidate, message, patch, ref, dry 
   const git = gitIn(repo);
   const base = git(['rev-parse', `${candidate}^`]).trim();
   const tree = git(['rev-parse', `${candidate}^{tree}`]).trim();
-  const scratch = await mkdtemp(join(tmpdir(), 'happier-commit-index-'));
+  const scratch = await mkdtemp(join(dirname(resolve(patch)), 'replay-index-'));
   const env = { ...process.env, GIT_INDEX_FILE: join(scratch, 'index') };
   try {
     return await finalizeGatedCommit({

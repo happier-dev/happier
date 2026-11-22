@@ -1,7 +1,7 @@
 // @happier-test-preparation source
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import test from 'node:test';
@@ -27,6 +27,8 @@ test('direct Playwright entry takes validation admission before launching the br
     await symlink(join(repoRoot, source), destination);
   }
   const mark = join(fixture, 'dispatch-args');
+  const scratch = join(fixture, 'run-scratch');
+  await mkdir(scratch);
   await mkdir(dirname(join(fixture, launcher)), { recursive: true });
   await writeFile(join(fixture, launcher), [
     '#!/bin/sh',
@@ -35,7 +37,12 @@ test('direct Playwright entry takes validation admission before launching the br
     'exit 27',
     '',
   ].join('\n'), { mode: 0o700 });
-  await writeFile(join(fixture, 'pnpm'), '#!/bin/sh\nexit 19\n', { mode: 0o700 });
+  await writeFile(join(fixture, 'pnpm'), [
+    '#!/bin/sh',
+    'mktemp -d "$TMPDIR/playwright-artifacts-XXXXXX" > "$PLAYWRIGHT_FIXTURE_RESULT"',
+    'exit 19',
+    '',
+  ].join('\n'), { mode: 0o700 });
 
   const args = ['--config', 'playwright.ui.config.mjs', 'suites/ui-e2e/example.spec.ts', '--grep', 'keeps argv intact'];
   const invoke = async (env = {}) => execFileAsync(process.execPath, [
@@ -56,6 +63,13 @@ test('direct Playwright entry takes validation admission before launching the br
     assert.equal(await readFile(join(fixture, 'caller-only-env'), 'utf8'), 'fixture-local-value');
   }
 
-  await assert.rejects(invoke({ HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: 'fixture-owned-slot' }), { code: 19 });
-  await assert.rejects(invoke({ CI: 'true' }), { code: 19 });
+  const runEnv = {
+    TMPDIR: scratch,
+    HAPPIER_CI_DIAGNOSTIC_PATH: join(fixture, 'diagnostic.ndjson'),
+    PLAYWRIGHT_FIXTURE_RESULT: join(fixture, 'result'),
+  };
+  await assert.rejects(invoke({ ...runEnv, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: 'fixture-owned-slot' }), { code: 19 });
+  await assert.rejects(invoke({ ...runEnv, CI: 'true' }), { code: 19 });
+  assert.match(await readFile(join(fixture, 'result'), 'utf8'), /playwright-artifacts-/);
+  assert.deepEqual(await readdir(scratch), []);
 });

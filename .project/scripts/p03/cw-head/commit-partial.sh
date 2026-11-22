@@ -47,7 +47,7 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 compose() { # head -> $commit, $expected
   local head=$1 idx tree p f a b
-  idx=$(mktemp "${TMPDIR:-/tmp}/p03cw-idx.XXXXXX"); unlink "$idx"
+  idx=$(mktemp "$packetDir/index.XXXXXX"); unlink "$idx"
   GIT_INDEX_FILE="$idx" git read-tree "$head"
   [ ${#files[@]} -eq 0 ] || GIT_INDEX_FILE="$idx" git add -- "${files[@]}"
   for p in "${patches[@]}"; do GIT_INDEX_FILE="$idx" git apply --cached --check --recount ${APPLY_FLAGS:-} "$p" && GIT_INDEX_FILE="$idx" git apply --cached --recount ${APPLY_FLAGS:-} "$p" || { echo "patch fails $p"; unlink "$idx"; exit 1; }; done

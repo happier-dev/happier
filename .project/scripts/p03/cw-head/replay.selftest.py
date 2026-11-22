@@ -2,6 +2,7 @@
 import os
 from pathlib import Path
 import subprocess
+import shutil
 import tempfile
 
 WRAPPER = Path(__file__).resolve().with_name("commit-partial.sh")
@@ -11,6 +12,19 @@ def run_case(kind):
     with tempfile.TemporaryDirectory(prefix="p03-writer-fixture-") as temp:
         repo = Path(temp)
         env = {**os.environ, "P03_GATE_CACHE": str(repo / "cache"), "P03_COMMIT_KICK": "true"}
+
+        fixture_bin = repo / "bin"
+        fixture_bin.mkdir()
+        index_path_log = repo / "indexes"
+        git_shim = fixture_bin / "git"
+        git_shim.write_text(
+            '#!/bin/sh\n'
+            '[ -z "${GIT_INDEX_FILE:-}" ] || printf "%s\\n" "$GIT_INDEX_FILE" >> "$FIXTURE_INDEX_LOG"\n'
+            'exec "$FIXTURE_GIT" "$@"\n'
+        )
+        git_shim.chmod(0o700)
+        env.update(PATH=f"{fixture_bin}:{env['PATH']}", FIXTURE_GIT=shutil.which("git"),
+                   FIXTURE_INDEX_LOG=str(index_path_log))
 
         def git(*args, **kwargs):
             return subprocess.run(["git", *args], cwd=repo, env=env, text=True,
@@ -40,6 +54,9 @@ def run_case(kind):
         details = result.stdout + result.stderr
         assert result.returncode == 0, details
         assert details.count("commit gate: lock held ") == 1, details
+        index_paths = [Path(line) for line in index_path_log.read_text().splitlines()]
+        assert index_paths and all(path.is_relative_to(repo / "cache") for path in index_paths), index_paths
+        assert not list((repo / "cache").glob("packet.*")), details
         if kind == "dry":
             assert "DRY candidate " in details and git("rev-parse", "HEAD").strip() == base, details
         else:
