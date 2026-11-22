@@ -25,6 +25,7 @@ import { resolveCliAgentStartContextV1 } from '@/session/actions/resolveCliAgent
 import { clearSessionExplicitStopIntentAfterResume } from './sessionExplicitStopIntent';
 import { accountSettingsParse } from '@happier-dev/protocol';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
+import { mapExistingSessionAttachFailureToSpawnError } from '@/daemon/spawn/resolveSpawnBackendIdentity';
 
 const machineKey = new Uint8Array(32).fill(1);
 const credentials = {
@@ -791,17 +792,18 @@ describe('requestInactiveSessionResume', () => {
       ['team_credential_provider_selection_not_current', 'team_credential_provider_selection_not_current'],
       ['provider_connection_changed', 'provider_connection_changed'],
       ['broker_unavailable', 'broker_unavailable'],
-      ['private_native_refusal', 'unknown'],
-      ['team_credential_provider_selection_not_current\nprivate credential detail', 'unknown'],
-      ['private credential detail at /private/workspace', 'unknown'],
+      ['private_native_refusal', null],
+      ['team_credential_provider_selection_not_current\nprivate credential detail', null],
+      ['private credential detail at /private/workspace', null],
     ]) {
       diagnostic.mockClear();
       callMachineRpc.mockResolvedValueOnce({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage });
       await expect(requestInactiveSessionResume({ credentials, sessionId: 'session-1', localId: 'local-1',
         rawSession: rawSession(), metadata })).resolves.toMatchObject({ ok: false, code: 'resume_failed' });
-      expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
-        phase: 'spawn_rpc', cause: 'SPAWN_VALIDATION_FAILED', outcomeCode: 'resume_failed', spawnRefusalReason,
-      }));
+      const fields = diagnostic.mock.calls.find(([label]) => label === '[SessionResume] Readiness refused')?.[1];
+      expect(fields).toMatchObject({ phase: 'spawn_rpc', cause: 'SPAWN_VALIDATION_FAILED', outcomeCode: 'resume_failed' });
+      if (spawnRefusalReason) expect(fields).toHaveProperty('spawnRefusalReason', spawnRefusalReason);
+      else expect(fields).not.toHaveProperty('spawnRefusalReason');
       expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/private_native_refusal|private credential detail|account-token/);
     }
   });
@@ -809,6 +811,11 @@ describe('requestInactiveSessionResume', () => {
   it.each([
     ['DAEMON_RPC_UNAVAILABLE', 'session_startup_observation_unavailable'],
     ['SPAWN_FAILED', 'team_credential_provider_selection_not_current'],
+    ['SPAWN_VALIDATION_FAILED', 'requester_machine_admission_unavailable'],
+    ['SPAWN_VALIDATION_FAILED', 'requester_session_custody_unavailable'],
+    ['SPAWN_VALIDATION_FAILED', 'requester_session_bootstrap_mismatch'],
+    ['SPAWN_VALIDATION_FAILED', 'requester_session_bootstrap_not_current'],
+    ['SPAWN_VALIDATION_FAILED', 'held_by_person'],
   ] as const)('reports the typed post-admission %s refusal without logging private prose', async (errorCode, code) => {
     const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const errorDetail = { kind: 'launch_error', code,
@@ -824,6 +831,22 @@ describe('requestInactiveSessionResume', () => {
       spawnRefusalReason: code,
     }));
     expect(JSON.stringify(diagnostic.mock.calls)).not.toContain('private native detail');
+  });
+
+  it.each([
+    ['invalidOwnerMetadata', 'resume_owner_metadata_unavailable'],
+    ['linkedResumeIdentityUnavailable', 'resume_linked_agent_identity_unavailable'],
+  ] as const)('identifies the attach validation check when Resume refuses %s', async (reason, code) => {
+    const diagnostic = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
+    const result = await requestInactiveSessionResume({ credentials, sessionId: 'session-1',
+      rawSession: rawSession(), metadata, localId: 'resume-validation',
+      machineRpcTransport: async () => mapExistingSessionAttachFailureToSpawnError({ ok: false, reason }),
+    });
+    expect(result).toMatchObject({ ok: false, code: 'resume_failed',
+      spawnErrorCode: 'SPAWN_VALIDATION_FAILED', spawnRefusalReason: code });
+    expect(diagnostic).toHaveBeenCalledWith('[SessionResume] Readiness refused', expect.objectContaining({
+      cause: 'SPAWN_VALIDATION_FAILED', spawnRefusalReason: code,
+    }));
   });
 
   it.each([

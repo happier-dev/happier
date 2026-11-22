@@ -1,11 +1,11 @@
 import { z } from 'zod/mini';
 import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
-import { SpawnSessionErrorCodeSchema } from '@happier-dev/protocol/spawnSession';
+import { SpawnSessionErrorCodeSchema, SpawnSessionErrorDetailSchema } from '@happier-dev/protocol/spawnSession';
 import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
 import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory';
 import { resolveCanonicalAbsolutePath } from '@/utils/path/expandHomeDirPath';
 import { createWorkspaceEffectScmRegistry, type AdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import { recordDirectoryPreflightRefusal, type DirectoryPreflightRefusal } from '@/session/creation/directoryPreflightDiagnostic';
 
 /** Host-private pipe: the parent supplies its held runtime's admitted projection,
@@ -20,7 +20,7 @@ export const NativeSessionDirectoryResultSchema = z.discriminatedUnion('ok', [
   z.strictObject({ ok: z.literal(true), directory: z.string(), directoryCreated: z.boolean(), checkoutCreated: z.boolean() }),
   z.strictObject({ ok: z.literal(false), result: z.union([
     z.strictObject({ type: z.literal('requestToApproveDirectoryCreation'), directory: z.string() }),
-    z.strictObject({ type: z.literal('error'), errorCode: SpawnSessionErrorCodeSchema, errorMessage: z.string() }),
+    z.strictObject({ type: z.literal('error'), errorCode: SpawnSessionErrorCodeSchema, errorMessage: z.string(), errorDetail: z.optional(SpawnSessionErrorDetailSchema) }),
   ]) }),
 ]);
 
@@ -49,8 +49,7 @@ export async function executeNativeSessionDirectoryPreparation(
     try {
       const target = await prepareSessionCreationTarget({ request: command.request, scmRegistry: scm.registry, signal,
         onDirectoryPreflightRefused });
-      if (!target.ok) return { ok: false, result: { type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: target.code } };
+      if (!target.ok) return { ok: false, result: projectSpawnValidationFailure(target.code) };
       directory = target.directory;
       checkoutCreated = true;
     } finally { await scm.dispose(); }
@@ -58,8 +57,7 @@ export async function executeNativeSessionDirectoryPreparation(
     const canonical = resolveCanonicalAbsolutePath(command.request.directory.path);
     if (!canonical) {
       refused('canonical_path');
-      return { ok: false, result: { type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: 'invalid_directory' } };
+      return { ok: false, result: projectSpawnValidationFailure('invalid_directory') };
     }
     directory = canonical.path;
   }

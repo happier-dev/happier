@@ -188,6 +188,8 @@ describe('connected-service quota spawn preflight', () => {
             type: 'error',
             errorCode: 'SPAWN_VALIDATION_FAILED',
             errorMessage: 'connected_service_quota_preflight_incomplete',
+            errorDetail: { kind: 'launch_error', code: 'connected_service_quota_preflight_incomplete',
+                message: 'connected_service_quota_preflight_incomplete' },
         });
     });
 });

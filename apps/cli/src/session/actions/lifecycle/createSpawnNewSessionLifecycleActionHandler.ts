@@ -308,8 +308,10 @@ export function createSpawnNewSessionLifecycleActionHandler(params: Readonly<{
                 ? initialTranscriptAfterSeq
                 : undefined;
         const parsedExecutionAuthorization = SpawnSessionExecutionAuthorizationSchema.safeParse(executionAuthorization);
+        // Requester bootstrap can attach attribution without carrying local Action authority.
+        const callerAuthority = context?.callerAuthority ?? context?.localActionContext?.authority;
         const normalizedExecutionAuthorization = parsedExecutionAuthorization.success
-            && (!context?.localActionContext || context.localActionContext.authority === 'present_user')
+            && (!context?.localActionContext || callerAuthority === 'present_user')
             ? parsedExecutionAuthorization.data
             : undefined;
         const normalizedEnvironmentVariables = environmentVariables && typeof environmentVariables === 'object'

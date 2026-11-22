@@ -57,6 +57,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    projectSpawnValidationFailure,
     projectDaemonSpawnUnavailable,
     projectSessionRunnerLaunchAdmissionFailure,
 } from '@/session/shared/spawnSessionContract';
@@ -818,8 +819,7 @@ export async function executeSpawnSessionRequest(
                         signal: preparationSignal ?? params.signal,
                     });
                     if (!target.ok) {
-                        return await refuseSpawn({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage: target.code });
+                        return await refuseSpawn(projectSpawnValidationFailure(target.code));
                     }
                     directory = target.directory;
                     options = { ...options, directory, checkoutCreationDraft: undefined,
@@ -1242,13 +1242,7 @@ export async function executeSpawnSessionRequest(
                     || !authorization
                     || !params.resolveManagedPurposeBindingIntentSelection
                 ) {
-                    return await refuseSpawn({
-                        type: 'error',
-                        errorCode:
-                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage:
-                            'connected_account_session_binding_unavailable',
-                    });
+                    return await refuseSpawn(projectSpawnValidationFailure('connected_account_session_binding_unavailable'));
                 }
                 try {
                     const selection =
@@ -1272,13 +1266,7 @@ export async function executeSpawnSessionRequest(
                         bindings: [selection.binding],
                     };
                 } catch {
-                    return await refuseSpawn({
-                        type: 'error',
-                        errorCode:
-                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage:
-                            'connected_account_session_binding_unavailable',
-                    });
+                    return await refuseSpawn(projectSpawnValidationFailure('connected_account_session_binding_unavailable'));
                 }
             }
             let sessionPurposeBindingSnapshot:
@@ -1302,13 +1290,7 @@ export async function executeSpawnSessionRequest(
                             : []),
                     ]);
             } catch {
-                return await refuseSpawn({
-                    type: 'error',
-                    errorCode:
-                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage:
-                        'connected_account_session_binding_snapshot_invalid',
-                });
+                return await refuseSpawn(projectSpawnValidationFailure('connected_account_session_binding_snapshot_invalid'));
             }
             type SessionPurposeBindingLease = ReturnType<
                 ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings']
@@ -1335,13 +1317,7 @@ export async function executeSpawnSessionRequest(
                 ) {
                     return {
                         ok: false,
-                        failure: {
-                            type: 'error',
-                            errorCode:
-                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage:
-                                'connected_account_session_binding_unavailable',
-                        },
+                        failure: projectSpawnValidationFailure('connected_account_session_binding_unavailable'),
                     };
                 }
                 let activatedLease: SessionPurposeBindingLease;
@@ -1365,13 +1341,7 @@ export async function executeSpawnSessionRequest(
                 } catch {
                     return {
                         ok: false,
-                        failure: {
-                            type: 'error',
-                            errorCode:
-                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage:
-                                'connected_account_session_binding_activation_failed',
-                        },
+                        failure: projectSpawnValidationFailure('connected_account_session_binding_activation_failed'),
                     };
                 }
                 if (requestAuthPurposeBindings.length === 0) {
@@ -1396,13 +1366,7 @@ export async function executeSpawnSessionRequest(
                 ) {
                     return {
                         ok: false,
-                        failure: {
-                            type: 'error',
-                            errorCode:
-                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage:
-                                'connected_account_request_auth_unavailable',
-                        },
+                        failure: projectSpawnValidationFailure('connected_account_request_auth_unavailable'),
                     };
                 }
                 try {
@@ -1435,26 +1399,14 @@ export async function executeSpawnSessionRequest(
                 } catch {
                     return {
                         ok: false,
-                        failure: {
-                            type: 'error',
-                            errorCode:
-                                SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                            errorMessage:
-                                'connected_account_request_auth_activation_failed',
-                        },
+                        failure: projectSpawnValidationFailure('connected_account_request_auth_activation_failed'),
                     };
                 }
                 return { ok: true, lease: activatedLease };
             };
             if (sessionPurposeBindingSnapshot.purposes.length > 0) {
                 if (!params.activateSessionPurposeBindings) {
-                    return await refuseSpawn({
-                        type: 'error',
-                        errorCode:
-                            SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                        errorMessage:
-                            'connected_account_session_binding_unavailable',
-                    });
+                    return await refuseSpawn(projectSpawnValidationFailure('connected_account_session_binding_unavailable'));
                 }
                 if (connectedServiceAuthSessionId) {
                     const activation =
@@ -1467,13 +1419,7 @@ export async function executeSpawnSessionRequest(
                     sessionPurposeBindingLease = activation.lease;
                 }
             } else if (requestAuthPurposeBindings.length > 0) {
-                return await refuseSpawn({
-                    type: 'error',
-                    errorCode:
-                        SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage:
-                        'connected_account_request_auth_unavailable',
-                });
+                return await refuseSpawn(projectSpawnValidationFailure('connected_account_request_auth_unavailable'));
             }
             const childEnvironment = await prepareDaemonSpawnChildEnvironment({
                 memberAgentCliLaunch: createMemberAgentCliLaunchContext({ material: connectedServices.agentLaunchMaterials,

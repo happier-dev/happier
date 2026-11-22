@@ -13,6 +13,7 @@ export function projectChildEnvironmentFailure(
     type: 'error',
     errorCode: failure.errorCode,
     errorMessage: failure.errorMessage,
+    ...(failure.errorDetail ? { errorDetail: failure.errorDetail } : {}),
     ...(failure.agentId !== undefined ? { agentId: failure.agentId } : {}),
   };
 }
@@ -21,7 +22,7 @@ export function projectChildEnvironmentFailure(
 export function projectChildEnvironmentLaunchError(
   failure: Extract<ResolveSpawnChildEnvironmentResult, { ok: false }>,
 ): ProviderErrorV1 | SessionSpawnLaunchErrorV1 {
-  return failure.providerError ?? {
+  return failure.providerError ?? failure.errorDetail ?? {
     kind: 'launch_error',
     code: failure.errorCode,
     message: failure.errorMessage,

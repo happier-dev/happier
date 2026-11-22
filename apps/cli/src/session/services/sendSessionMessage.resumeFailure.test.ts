@@ -2,7 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { AxiosError } from 'axios';
 
 import { sendSessionMessage } from './sendSessionMessage';
-import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { projectSpawnValidationFailure, type SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
+import { createSpawnNewSessionLifecycleActionHandler } from '@/session/actions/lifecycle/createSpawnNewSessionLifecycleActionHandler';
 import { buildTrustedHostSessionInputAdmissionV1, deriveWorkflowSessionInputLocalIdV2, SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { buildSessionStopHoldV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -317,6 +318,35 @@ describe('a message send after Stop', () => {
     })).toMatchObject({ ok: false, code: 'held_by_person', admissionResult: { status: 'accepted', localId: 'automatic-1' } });
     expect(machineResumeTransport).not.toHaveBeenCalled();
     expect(receiverMetadata.sessionExplicitStopV1).toEqual(stop);
+  });
+
+  it('carries the admitted person through the local RPC of a stopped Send', async () => {
+    heldStop();
+    const credentials = { token: 'account-token', encryption: null };
+    const receivingLifecycle = createSpawnNewSessionLifecycleActionHandler({
+      stopSession: async () => true,
+      awaitAgentSessionOpen: async () => ({ status: 'opened', request: { kind: 'create', sessionId, cwd: '/repo' } }),
+      spawnSession: async options => options.executionAuthorization?.provenance === 'user_request'
+        ? { type: 'success', sessionId }
+        : projectSpawnValidationFailure('held_by_person'),
+    });
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: 'daemon-global',
+      mode: 'plain', ctx: null,
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (_method, request, options) => {
+        // The installed receiving wrapper always attaches requester attribution. Its
+        // authority can only come from the private context on this exact invocation.
+        return receivingLifecycle(request, {
+          callerAuthority: options?.localActionContext?.authority,
+          localActionContext: { requesterWorkAttributionV1: {
+            serverId: 'home', accountId: 'requester', machineId: 'machine-1', installationId: 'installation',
+          } },
+        });
+      } },
+    });
+    const result = await createActionExecutor(deps).execute('session.message.send', {
+      sessionId, message: 'Pick this back up', localId: 'person-send', reply: 'none',
+    }, { surface: 'ui', authority: 'present_user' });
+    expect(result).toMatchObject({ ok: true, result: { status: 'accepted', localId: 'person-send' } });
   });
 
   it('a send into a Session without a hold mints no Resume authority', async () => {

@@ -1,6 +1,6 @@
 import { isPidPlaceholderSessionId } from '../sessionRegistry';
 import { logger } from '@/ui/logger';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
 import { readProcessCensus } from '@/processes/census/processCensus';
@@ -243,11 +243,7 @@ export function bindTrackedSessionIdentity(tracked: TrackedSession, sessionId: s
           : undefined
       );
     if (lockedSessionId && lockedSessionId !== sessionId) {
-      tracked.spawnStartupReadinessFailure ??= {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'connected_account_canonical_session_identity_conflict',
-      };
+      tracked.spawnStartupReadinessFailure ??= projectSpawnValidationFailure('connected_account_canonical_session_identity_conflict');
       return false;
     }
     if (lockCanonicalIdentity) tracked.spawnStartupCanonicalSessionId ??= sessionId;

@@ -15,6 +15,7 @@ import { resolveAvailableAccountSettings } from '@/settings/accountSettings/reso
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import {
   SPAWN_SESSION_ERROR_CODES,
+  projectSpawnValidationFailure,
   type SpawnSessionOptions,
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
@@ -171,10 +172,7 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   const missingTeamModelWitness = requestedTeamModel && (!acceptedTeamModel
     || acceptedTeamModel.slot.kind !== 'provider_model' || acceptedTeamModel.resourceId === null);
   if (!attach.ok || missingTeamModelWitness) {
-    return { ok: false, result: !attach.ok ? mapExistingSessionAttachFailureToSpawnError(attach) : {
-      type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-      errorMessage: 'team_credential_provider_binding_unavailable',
-    } };
+    return { ok: false, result: !attach.ok ? mapExistingSessionAttachFailureToSpawnError(attach) : projectSpawnValidationFailure('team_credential_provider_binding_unavailable') };
   }
 
   // The accepted birth witness exists now, but no caller has yet observed the

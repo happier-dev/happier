@@ -72,12 +72,26 @@ function readResumeSpawnFailureFacts(response: unknown, requestId: string): Pick
   }
   const custodyRefusal = errorDetail?.kind === 'launch_error' && errorDetail.code === 'requester_session_custody_unavailable'
     ? readRequesterSessionCustodyRefusalCode(errorDetail.failureCause?.code) : undefined;
-  const preparationRefusal = errorDetail?.kind === 'launch_error'
-    && (code === SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED || code === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED)
+  let validationRefusal: string | undefined;
+  if (code === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED) {
+    if (errorDetail?.kind === 'provider_error') validationRefusal = errorDetail.providerError.code;
+    else if (errorDetail?.kind === 'connected_service_resume_unreachable') validationRefusal = errorDetail.continuityErrorCode;
+    else if (errorDetail?.kind === 'connected_service_ux_diagnostic') validationRefusal = errorDetail.uxDiagnostic.code;
+    else if (errorDetail) validationRefusal = 'code' in errorDetail ? errorDetail.code : errorDetail.kind;
+    else {
+      // Older daemons put these closed codes in the message.
+      const message = Reflect.get(response, 'errorMessage');
+      if (message === 'team_credential_provider_selection_not_current'
+        || ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(message).success
+        || ProviderErrorCodeV1Schema.safeParse(message).success) validationRefusal = message;
+    }
+  }
+  const preparationRefusal = errorDetail?.kind === 'launch_error' && code === SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED
     ? readSessionPreparationFailureCode(errorDetail.code) : null;
-  const spawnRefusalReason = custodyRefusal ?? preparationRefusal ?? (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
-    ? readSessionRuntimeIssueCode(errorDetail?.kind === 'launch_error' ? errorDetail.code : errorDetail?.kind)
-    : null);
+  const spawnRefusalReason = custodyRefusal ?? validationRefusal ?? preparationRefusal
+    ?? (code === SPAWN_SESSION_ERROR_CODES.DAEMON_RPC_UNAVAILABLE
+      ? readSessionRuntimeIssueCode(errorDetail?.kind === 'launch_error' ? errorDetail.code : errorDetail?.kind)
+      : null);
   return {
     ...(errorDetail ? { errorDetail } : {}),
     ...(spawnRefusalReason ? { spawnRefusalReason } : {}),
@@ -272,12 +286,6 @@ export async function requestInactiveSessionResume(params: Readonly<{
     logger.infoFile('[SessionResume] Readiness refused', {
       requestId, sessionId: params.sessionId, machineId, spawnRpcRequestId, phase,
       cause: typeof cause === 'string' && resumeDiagnosticCauseCodes.has(cause) ? cause : 'unclassified',
-      // Team/Provider launch producers carry closed codes in errorMessage; other spawn producers carry private prose.
-      ...(cause === SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED ? {
-        spawnRefusalReason: failure.message === 'team_credential_provider_selection_not_current'
-          || ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(failure.message).success
-          || ProviderErrorCodeV1Schema.safeParse(failure.message).success ? failure.message : 'unknown',
-      } : {}),
       ...(failure.spawnRefusalReason ? { spawnRefusalReason: failure.spawnRefusalReason } : {}),
       ...(failure.runtimeFailureReason ? { runtimeReason: failure.runtimeFailureReason } : {}),
       outcomeCode: failure.code, elapsedMs: Date.now() - startedAtMs,
@@ -412,6 +420,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
     const code = readRpcErrorCode(error) ?? (error && typeof error === 'object' ? Reflect.get(error, 'code') : null);
     const details = error && typeof error === 'object' ? Reflect.get(error, 'details') : undefined;
     const facts = readResumeSpawnFailureFacts({ errorCode: code,
+      errorMessage: error instanceof Error ? error.message : undefined,
       ...(details && typeof details === 'object' ? {
         errorDetail: Reflect.get(details, 'errorDetail'), runtimeFailureReason: Reflect.get(details, 'runtimeFailureReason'),
       } : {}),

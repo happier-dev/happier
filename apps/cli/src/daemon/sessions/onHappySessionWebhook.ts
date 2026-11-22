@@ -3,6 +3,7 @@ import { invalidateProcessLaunchDiscovery } from '@/processes/launchNotification
 import { configuration } from '@/configuration';
 import {
   SPAWN_SESSION_ERROR_CODES,
+  projectSpawnValidationFailure,
 } from '@/session/shared/spawnSessionContract';
 import type { SessionCreationTerminalSpawnErrorDetail } from '@happier-dev/protocol';
 import { SPAWN_SESSION_ERROR_DETAIL_KINDS } from '@happier-dev/protocol/spawnSession';
@@ -746,11 +747,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         priorOutcome
         && !hasSameSessionCreationOutcome(priorOutcome, sessionCreationOutcome)
       ) {
-        trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= {
-          type: 'error',
-          errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-          errorMessage: 'create_or_rejoin_outcome_conflict',
-        };
+        trackedDaemonCanonicalSession.spawnStartupReadinessFailure ??= projectSpawnValidationFailure('create_or_rejoin_outcome_conflict');
       } else {
         trackedDaemonCanonicalSession.sessionCreationOutcome ??= sessionCreationOutcome;
       }

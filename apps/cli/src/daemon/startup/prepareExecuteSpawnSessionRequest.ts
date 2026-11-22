@@ -16,6 +16,7 @@ import type {
 import { readCanonicalSpawnRuntimeSelection } from '@/rpc/handlers/spawnRuntimeSelection';
 import {
     SPAWN_SESSION_ERROR_CODES,
+    projectSpawnValidationFailure,
 } from '@/session/shared/spawnSessionContract';
 import {
     PersistedProviderResumeBindingError,
@@ -324,11 +325,7 @@ export async function prepareExecuteSpawnSessionRequest(
         env: process.env,
     });
     if (darwinBackgroundServiceDirectoryFailure) {
-        return {
-            type: 'error',
-            errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-            errorMessage: darwinBackgroundServiceDirectoryFailure,
-        };
+        return projectSpawnValidationFailure('macos_background_service_directory_unavailable', darwinBackgroundServiceDirectoryFailure);
     }
 
     // Resume RPCs need not carry private launch identity. Read it from the

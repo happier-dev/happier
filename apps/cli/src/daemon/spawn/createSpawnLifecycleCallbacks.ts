@@ -1,5 +1,5 @@
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 
 import type {
   DaemonSpawnStartupReadinessFailure,
@@ -236,13 +236,7 @@ export function createSpawnLifecycleCallbacks<
                 && activationSessionId !== normalizedSessionId
               )
             ) {
-              return {
-                type: 'error',
-                errorCode:
-                  SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage:
-                  'connected_account_canonical_session_identity_conflict',
-              };
+              return projectSpawnValidationFailure('connected_account_canonical_session_identity_conflict');
             }
             activationSessionId = normalizedSessionId;
             activationPromise ??= (async () => {

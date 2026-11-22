@@ -8,6 +8,7 @@ import { ensureSessionDirectory } from '@/daemon/startup/ensureSessionDirectory'
 
 import {
   SPAWN_SESSION_ERROR_CODES,
+  projectSpawnValidationFailure,
   type SpawnSessionOptions,
   type SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
@@ -609,6 +610,33 @@ describe('createSpawnNewSessionLifecycleActionHandler', () => {
       },
     }));
   });
+
+  it.each(['present_user', 'account_automation'] as const)(
+    'retains the admitted %s authority when the receiving Resume adds requester attribution',
+    async callerAuthority => {
+      const sessionId = 'stopped-session';
+      const handler = createSpawnNewSessionLifecycleActionHandler({
+        ...nativeStartup,
+        spawnSession: async options => options.executionAuthorization?.provenance === 'user_request'
+          ? { type: 'success', sessionId }
+          : projectSpawnValidationFailure('held_by_person'),
+      });
+      const result = await handler({
+        type: 'resume-session', sessionId, directory: '/tmp/project',
+        backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
+        executionAuthorization: { provenance: 'user_request', requestId: 'send-to-stopped-session' },
+      }, {
+        callerAuthority,
+        localActionContext: { requesterWorkAttributionV1: {
+          serverId: 'home', accountId: 'requester', machineId: 'fixture-machine', installationId: 'fixture-installation',
+        } },
+      });
+      expect(result).toMatchObject(callerAuthority === 'present_user'
+        ? { type: 'success', sessionId }
+        : { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+          errorDetail: { kind: 'launch_error', code: 'held_by_person' } });
+    },
+  );
 
   it('strictly parses, freezes, and forwards global Voice startup instructions for fresh spawn', async () => {
     const spawnSession = vi.fn(async (_options: SpawnSessionOptions) => ({

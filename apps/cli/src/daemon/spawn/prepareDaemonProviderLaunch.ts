@@ -13,7 +13,7 @@ import type { TeamCredentialProviderModelCatalogEntryV1 } from '@happier-dev/pro
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { DaemonSpawnHooks } from '@/daemon/spawnHooks';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import { configuration } from '@/configuration';
 import { readLeasedAgentProviderRequirements } from '@/plugins/runtime/providerBindings/adapter';
 import { createProviderRuntimeStateStore } from '@/providers/runtimeState';
@@ -87,8 +87,7 @@ export async function prepareDaemonProviderLaunch(input: Readonly<{
     if (sourceModel && (sourceModel.availability !== 'available'
         || sourceModel.selection.agentTargetKey !== input.modelSelection?.ref.agentTargetKey
         || sourceModel.selection.modelId !== input.modelSelection?.ref.modelId)) {
-        return { ok: false, result: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-            errorMessage: 'team_credential_provider_selection_not_current' } };
+        return { ok: false, result: projectSpawnValidationFailure('team_credential_provider_selection_not_current') };
     }
     const nativePreflight = resolveAgentNativeSpawnDefinitiveRejection({
         agentId: input.catalogAgentId,

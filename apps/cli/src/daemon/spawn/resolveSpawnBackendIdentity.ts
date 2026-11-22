@@ -12,7 +12,7 @@ import {
   resolveDaemonCatalogAgentIdFromBackendTarget,
 } from '../backendTargetRouting';
 import { readStoredCredentials, type StoredCredentials } from '@/persistence';
-import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import {
   resolveExistingSessionAttachContext,
   type ExistingSessionAttachContextFailure,
@@ -72,17 +72,9 @@ export function mapExistingSessionAttachFailureToSpawnError(
         errorMessage: 'Failed to open session encryption key for resume.',
       };
     case 'invalidOwnerMetadata':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'Owner session metadata is unavailable for resume.',
-      };
+      return projectSpawnValidationFailure('resume_owner_metadata_unavailable', 'Owner session metadata is unavailable for resume.');
     case 'linkedResumeIdentityUnavailable':
-      return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'Linked session Agent identity is unavailable for resume.',
-      };
+      return projectSpawnValidationFailure('resume_linked_agent_identity_unavailable', 'Linked session Agent identity is unavailable for resume.');
     case 'clientE2eeRequired':
       return {
         type: 'error',

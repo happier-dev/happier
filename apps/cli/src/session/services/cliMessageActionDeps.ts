@@ -709,6 +709,12 @@ export function createCliMessageActionDeps(
             if (!await requester.isCurrent()) return { ok: false, errorCode: 'not_authenticated' };
             return result.ok ? result.data : { ok: false, errorCode: result.code };
           } : undefined;
+      const directTarget = params.machineActionDirectTargetTransport;
+      const machineResumeTransport: Parameters<typeof sendSessionMessage>[0]['machineResumeTransport'] = directTarget
+        ? (method, request, options) => directTarget.invoke(method, request, context?.authority === 'present_user'
+          ? { ...options, localActionContext: context }
+          : options)
+        : undefined;
       if (protectedInputAdmission) {
         const [{ sendSessionMessage }, { resolveSessionMessageAdmissionTimeoutMs }] = await Promise.all([import("@/session/services/sendSessionMessage"), import("@/session/transport/shared/sessionTimeouts")]);
         const protectedResult = await sendSessionMessage({
@@ -741,9 +747,7 @@ export function createCliMessageActionDeps(
             ? { machineAdmissionTransport: params.machineAdmissionTransport }
             : {}),
           ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
-          ...(params.machineActionDirectTargetTransport
-            ? { machineResumeTransport: params.machineActionDirectTargetTransport.invoke }
-            : {}),
+          ...(machineResumeTransport ? { machineResumeTransport } : {}),
           ...sendModelSelection,
           ...(signal ? { signal } : {}),
         });
@@ -836,9 +840,7 @@ export function createCliMessageActionDeps(
         ...(params.machineAdmissionTransport
           ? { machineAdmissionTransport: params.machineAdmissionTransport }
           : {}),
-        ...(params.machineActionDirectTargetTransport
-          ? { machineResumeTransport: params.machineActionDirectTargetTransport.invoke }
-          : {}),
+        ...(machineResumeTransport ? { machineResumeTransport } : {}),
         ...(signal ? { signal } : {}),
       });
       if (!result.ok && result.code === 'machine_admission_transport_unavailable'

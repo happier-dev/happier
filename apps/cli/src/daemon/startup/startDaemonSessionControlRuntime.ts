@@ -567,7 +567,7 @@ import type {
   SpawnSessionOptions,
   SpawnSessionResult,
 } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES, projectDaemonSpawnUnavailable, projectRequesterSessionCustodyLaunchError, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure, projectDaemonSpawnUnavailable, projectRequesterSessionCustodyLaunchError, projectSessionRunnerLaunchAdmissionFailure } from '@/session/shared/spawnSessionContract';
 import { updateSessionMetadataWithRetry } from '@/session/metadata/updateSessionMetadataWithRetry';
 import { resolveSessionMachineWorkspacePath } from '@/session/machineControlLocality';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -4273,9 +4273,7 @@ export async function startDaemonSessionControlRuntime(
           const completeResume = async (result: SpawnSessionResult): Promise<SpawnSessionResult> => {
             if (result.type === 'success' && result.sessionId === existingSessionId
               && behavior.managerResume && behavior.isLaunchAdmissionCurrent()) {
-              if (!await behavior.managerResume.recheck()) return { type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: 'Session manager Resume authority changed; Stop hold retained' };
+              if (!await behavior.managerResume.recheck()) return projectSpawnValidationFailure('manager_resume_authority_changed', 'Session manager Resume authority changed; Stop hold retained');
               await behavior.managerResume.clear();
             }
             if (result.type === 'success' && result.sessionId === existingSessionId
@@ -4705,8 +4703,7 @@ export async function startDaemonSessionControlRuntime(
       const requester = readRequesterAccountActionContext(managerContext.externalActionExecutionAuthorization);
       const binding = requester?.authorization.binding;
       const installation = readInstallationIdentityIfExistsSync();
-      const refuseManager = () => ({ type: 'error' as const, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'Current manager Resume authority unavailable; Stop hold retained' });
+      const refuseManager = () => projectSpawnValidationFailure('manager_resume_authority_unavailable', 'Current manager Resume authority unavailable; Stop hold retained');
       let origin: ReturnType<typeof resolveSessionRoleRpcOrigin>;
       try { origin = resolveSessionRoleRpcOrigin(managerContext); } catch { return refuseManager(); }
       if (!requester || !binding || !installation || binding.actionId !== 'session.open'

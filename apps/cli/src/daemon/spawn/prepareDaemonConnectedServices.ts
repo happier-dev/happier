@@ -14,7 +14,7 @@ import type {
 import { configuration } from '@/configuration';
 import { getActiveAccountSettingsSnapshot, type ActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 
 import {
@@ -104,11 +104,7 @@ function buildMaterializationIdentityMissingSpawnErrorResult(input: Readonly<{
 }
 
 export function buildConnectedServiceQuotaPreflightIncompleteSpawnErrorResult(): Extract<SpawnSessionResult, { type: 'error' }> {
-    return {
-        type: 'error',
-        errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-        errorMessage: 'connected_service_quota_preflight_incomplete',
-    };
+    return projectSpawnValidationFailure('connected_service_quota_preflight_incomplete');
 }
 
 export type PreparedDaemonConnectedServices = Readonly<{
@@ -170,11 +166,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
     if (!admittedBindings.success) {
         return {
             ok: false,
-            result: {
-                type: 'error',
-                errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: 'connected_service_bindings_invalid',
-            },
+            result: projectSpawnValidationFailure('connected_service_bindings_invalid'),
         };
     }
     const admittedOptions = {
@@ -434,11 +426,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
             });
             return {
                 ok: false,
-                result: {
-                    type: 'error',
-                    errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                    errorMessage: `Connected services resolution failed: ${safeResolutionFailure}`,
-                },
+                result: projectSpawnValidationFailure('connected_service_resolution_failed', `Connected services resolution failed: ${safeResolutionFailure}`),
             };
         }
         if (missingIdentityRepair) {
@@ -482,8 +470,7 @@ export async function prepareDaemonConnectedServices(input: Readonly<{
                 cleanupOnExit: isolated.cleanupOnExit ?? null,
                 connectedServicesBindings: { v: 2, bindingsByServiceId: {} }, qualifiedPurposeBindingSnapshot: null };
         } catch {
-            return { ok: false, result: { type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-                errorMessage: 'Requester Agent credential isolation unavailable' } };
+            return { ok: false, result: projectSpawnValidationFailure('requester_agent_credential_isolation_unavailable', 'Requester Agent credential isolation unavailable') };
         }
     }
     const effectiveBindings = auth?.connectedServicesBindings ?? options.connectedServices;

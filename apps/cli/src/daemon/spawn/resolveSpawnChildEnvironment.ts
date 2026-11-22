@@ -1,6 +1,7 @@
+import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSession';
 import { resolveRetainedTeamProviderBindingRevisionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { SPAWN_SESSION_ERROR_CODES } from '@/session/shared/spawnSessionContract';
+import { SPAWN_SESSION_ERROR_CODES, projectSpawnValidationFailure } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionOptions } from '@/session/shared/spawnSessionContract';
 import type { SpawnSessionErrorCode } from '@/session/shared/spawnSessionContract';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -83,6 +84,7 @@ type ResolveSpawnChildEnvironmentFailure = {
   errorCode: SpawnSessionErrorCode;
   errorMessage: string;
   agentId?: string;
+  errorDetail?: SessionSpawnLaunchErrorV1;
   providerError?: ProviderErrorV1;
   cleanupOnFailure: (() => void | Promise<void>) | null;
   cleanupOnExit: (() => void | Promise<void>) | null;
@@ -119,7 +121,7 @@ export async function validateSpawnAgentCliLaunch(input: Readonly<{
   savedSecretOperationContext?: Parameters<typeof resolveAgentCliLaunchSpecForSession>[1]['savedSecretOperationContext'];
 }>): Promise<Readonly<
   | { ok: true; launchSpec?: AgentCliLaunchSpec }
-  | { ok: false; errorMessage: string; errorCode?: SpawnSessionErrorCode }
+  | { ok: false; errorMessage: string; errorCode?: SpawnSessionErrorCode; errorDetail?: SessionSpawnLaunchErrorV1 }
 >> {
   const profileEnv = input.profileEnvironmentVariables
     ? expandSpawnProfileEnvironment(
@@ -143,7 +145,8 @@ export async function validateSpawnAgentCliLaunch(input: Readonly<{
     });
   } catch (error) {
     if (!isPluginError(error) || error.code !== 'agent_cli_not_runnable') throw error;
-    return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED, errorMessage: error.code };
+    const { errorCode, errorMessage, errorDetail } = projectSpawnValidationFailure(error.code);
+    return { ok: false, errorCode, errorMessage, errorDetail };
   }
   if (launchSpec !== null) return { ok: true, launchSpec };
   // Only an admitted, current native Session factory proves that no CLI is required.
@@ -546,10 +549,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     `[DAEMON RUN] Final environment variable set prepared (${Object.keys(extraEnv).length} vars)`,
   );
 
-  async function validateAgentCliLaunch(agentId: string, processEnv: NodeJS.ProcessEnv): Promise<Readonly<
-    | { ok: true; launchSpec?: AgentCliLaunchSpec }
-    | { ok: false; errorMessage: string; errorCode?: SpawnSessionErrorCode }
-  >> {
+  function validateAgentCliLaunch(agentId: string, processEnv: NodeJS.ProcessEnv) {
     return validateSpawnAgentCliLaunch({ agentId, processEnv, options: params.options,
       memberAgentCliLaunch: params.memberAgentCliLaunch,
       pluginRuntimeRegistry: params.pluginRuntimeRegistry,
@@ -578,6 +578,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: agentCliValidation.errorCode ?? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
         errorMessage: agentCliValidation.errorMessage,
+        ...(agentCliValidation.errorDetail ? { errorDetail: agentCliValidation.errorDetail } : {}),
         agentId: resolvedAgentId,
         cleanupOnFailure,
         cleanupOnExit,
@@ -596,6 +597,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: validation.errorMessage,
+        errorDetail: projectSpawnValidationFailure('agent_runtime_prerequisites_refused').errorDetail,
         cleanupOnFailure,
         cleanupOnExit,
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -621,6 +623,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: pluginSpawnDecision.errorMessage ?? 'Plugin spawn prerequisite hook denied daemon spawn.',
+        errorDetail: projectSpawnValidationFailure('plugin_spawn_prerequisite_denied').errorDetail,
         cleanupOnFailure,
         cleanupOnExit,
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -659,6 +662,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: 'Agent daemon spawn environment hook failed.',
+        errorDetail: projectSpawnValidationFailure('agent_spawn_environment_hook_failed').errorDetail,
         cleanupOnFailure,
         cleanupOnExit,
         ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
@@ -769,6 +773,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
     || extraEnvForChild[requesterNativeHome.homeKey] !== requesterNativeHome.root)) return {
     ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
     errorMessage: 'Requester Agent credential isolation unavailable', agentId: requesterNativeHome.agentId,
+    errorDetail: projectSpawnValidationFailure('requester_agent_credential_isolation_unavailable').errorDetail,
     cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}),
   };
   const survivingProfileCredentialEnvironmentVariables =
@@ -815,6 +820,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
       const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'existing_session_state_verification_failed';
       return { ok: false, errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: `${code}: ${error instanceof Error ? error.message : 'Existing native state could not be verified'}`,
+        errorDetail: projectSpawnValidationFailure('existing_session_state_verification_failed').errorDetail,
         cleanupOnFailure, cleanupOnExit, ...(materializationDiagnostics ? { materializationDiagnostics } : {}) };
     }
   }
@@ -827,6 +833,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: validation.errorCode ?? SPAWN_SESSION_ERROR_CODES.AGENT_CLI_MISSING,
         errorMessage: validation.errorMessage,
+        ...(validation.errorDetail ? { errorDetail: validation.errorDetail } : {}),
         agentId: resolvedAgentId,
         cleanupOnFailure,
         cleanupOnExit,
@@ -850,6 +857,7 @@ async function resolveSpawnChildEnvironmentImpl(params: {
         ok: false,
         errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
         errorMessage: 'team_credential_provider_binding_unavailable',
+        errorDetail: projectSpawnValidationFailure('team_credential_provider_binding_unavailable').errorDetail,
         agentId: resolvedAgentId,
         cleanupOnFailure,
         cleanupOnExit,

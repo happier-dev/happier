@@ -308,6 +308,18 @@ export type SpawnSessionResult =
     runtimeFailureReason?: import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingActivationFailureDetailsV1['runtimeReason'];
   };
 
+export function projectSpawnValidationFailure(
+  code: SessionSpawnLaunchErrorV1['code'],
+  message = code,
+): { type: 'error'; errorCode: typeof SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED; errorMessage: string; errorDetail: SessionSpawnLaunchErrorV1 } {
+  return {
+    type: 'error',
+    errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
+    errorMessage: message,
+    errorDetail: { kind: 'launch_error', code, message },
+  };
+}
+
 export function projectDaemonSpawnUnavailable(
   code: SessionSpawnLaunchErrorV1['code'],
   message: string,
