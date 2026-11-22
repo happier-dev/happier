@@ -9149,6 +9149,7 @@ localTailscale: {
     accessWithdrawn: "アクセスが取り消されました",
     accessWithdrawnBody: ({ machine }: { machine: string }) => `${machine} へのアクセスが取り消されました。`,
     accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `${machine} へのあなたのアクセスが取り消されました。所有者が再び許可できます。`,
+    accessWithdrawnContinue: '新しいセッションで続ける',
     inactiveResumable: "非アクティブ（再開可能）",
     inactiveArchived: "アーカイブ済み",
     inactiveMachineOffline: "非アクティブ（マシンがオフライン）",

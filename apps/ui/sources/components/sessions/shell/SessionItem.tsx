@@ -1267,8 +1267,12 @@ const SessionItemContent = React.memo(
         const noteSetAt = nowLine && nowLineIsNote ? sessionStatus.awareness.statusReasonSetAt ?? null : null;
         const rowProgress = workflowOccurrence || rowContext?.progress === false ? null : sessionStatus.awareness.progress ?? null;
         const runningWorkCount = workflowOccurrence ? undefined : sessionStatus.awareness.runningWorkCount;
+        // Why an ended Session ended: it is the row's status (spoken and, on a one-line row, its trailing word).
+        const endReasonKey = session.active ? null : session.lifecycleStateReason ? 'session.machineDeleted'
+            : session.metadata?.lifecycleStateReason === 'machine_access_withdrawn' ? 'session.accessWithdrawn' : null;
         const rowPresentation = resolveSessionRowPresentation({
             status: workStatus,
+            endReason: endReasonKey ? t(endReasonKey) : null,
             requestRef: serverId && workFacts.currentRequestRef
                 ? createCollectionSessionRequestRef({ serverId, sessionId: resolvedSession.id }, workFacts.currentRequestRef)
                 : null,
@@ -1377,8 +1381,13 @@ const SessionItemContent = React.memo(
         // one slot mounted across that swap, so its hover rest, open peek and mark animation survive it.
         const trailingStatusKeyedSlot = <React.Fragment key="trailing-status">{trailingStatusSlot}</React.Fragment>;
         const showTrailingGuardWord = Boolean(guardState) && !trailingAttentionReplacesTime;
-        const showTrailingActivityTime = activityAt !== null && !trailingAttentionReplacesTime && !showTrailingGuardWord;
-        const hasTrailingMeta = showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord;
+        // A one-line row has no line for its end reason, so the reason takes the age's place (fix 7, 138).
+        const showTrailingEndReason = rowLines === 1 && rowPresentation.endReason !== null && !trailingAttentionReplacesTime
+            && !showTrailingGuardWord;
+        const showTrailingActivityTime = activityAt !== null && !trailingAttentionReplacesTime && !showTrailingGuardWord
+            && !showTrailingEndReason;
+        const hasTrailingMeta = showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord
+            || showTrailingEndReason;
         // Auto and every Agent- or Project-led choice lead with the Agent's mark (lab `clctx:marks`) until the
         // row's Project favicon reaches it; an explicit Avatar or None stays as chosen.
         // The list's row context resolves the person's full choice per row (P5); other hosts keep their own.
@@ -1578,10 +1587,9 @@ const SessionItemContent = React.memo(
         const contextCheckout = !isSessionIdentityLoading ? rowContext?.checkout ?? null : null;
         const lineTextScale = typeof uiFontScale === 'number' ? uiFontScale : undefined;
         // Line text: the draft being written, else the now line (or an external Session's own line), else the branch.
-        const endReason = session.active ? null : session.lifecycleStateReason ? 'session.machineDeleted'
-            : session.metadata?.lifecycleStateReason === 'machine_access_withdrawn' ? 'session.accessWithdrawn' : null;
+        const endReason = rowPresentation.endReason;
         const workText = endReason ? (
-            <SessionRowLineText tone="secondary">{t(endReason)}</SessionRowLineText>
+            <SessionRowLineText tone="secondary">{endReason}</SessionRowLineText>
         ) : draft && draftPreview && draft.hasPreview ? (
             <SessionRowDraftPreviewLine source={draftPreview} rowTestID={`session-list-draft-preview:${occurrenceTestId}`}
                 density={collectionRowDensity} textScale={lineTextScale} style={styles.detailLineText} />
@@ -1840,9 +1848,13 @@ const SessionItemContent = React.memo(
                             {rowActionButtons}
                             {showTrailingAttentionIndicator && workStatus.tone !== 'neutral' ? trailingStatusKeyedSlot : null}
                         </View>
-                    ) : showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord ? (
+                    ) : showTrailingAttentionIndicator || showTrailingActivityTime || showTrailingGuardWord || showTrailingEndReason ? (
                         <View style={styles.trailingMetaRow}>
                             {showTrailingAttentionIndicator ? trailingStatusKeyedSlot : null}
+                            {showTrailingEndReason ? (
+                                <Text testID={`session-list-end-reason-${occurrenceTestId}`} variant="meta" numberOfLines={1}
+                                    style={[styles.trailingStatusWord, styles.statusTextQuiet]}>{rowPresentation.endReason}</Text>
+                            ) : null}
                             {showTrailingActivityTime || showTrailingGuardWord ? (
                                 <WordCrossFade wordKey={showTrailingGuardWord && guardState ? guardState.kind : 'time'}>
                                     {showTrailingGuardWord && guardState ? (

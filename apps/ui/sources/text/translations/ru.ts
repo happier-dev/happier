@@ -9299,6 +9299,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
     accessWithdrawn: "Доступ отозван",
     accessWithdrawnBody: ({ machine }: { machine: string }) => `Доступ к ${machine} отозван.`,
     accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `Ваш доступ к ${machine} отозван. Владелец может предоставить его снова.`,
+    accessWithdrawnContinue: 'Продолжить в новой сессии',
     inactiveResumable: "Неактивна (можно возобновить)",
     inactiveArchived: "В архиве",
     inactiveMachineOffline: "Неактивна (машина не в сети)",

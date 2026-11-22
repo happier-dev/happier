@@ -10,6 +10,8 @@ export type SessionRowPresentation = Readonly<{
     titleTone: SessionRowTitleTone;
     statusText: string;
     accessibilityStatusText: string;
+    /** Why an ended Session ended ("Access withdrawn"); it replaces the status word, which describes work that no longer runs. */
+    endReason: string | null;
 }>;
 
 /**
@@ -19,8 +21,10 @@ export type SessionRowPresentation = Readonly<{
 export function resolveSessionRowPresentation(input: Readonly<{
     status: WorkStatusPresentation;
     requestRef?: CollectionSessionRequestRef | null;
+    endReason?: string | null;
 }>): SessionRowPresentation {
     const { status } = input;
+    const endReason = input.endReason ?? null;
     const quiet = status.state === 'waiting' || status.state === 'unknown'
         || status.state === 'stopped' || status.state === 'disconnected' || status.state === 'archived';
     const emphasized = status.tone !== 'neutral' || status.state === 'finished_unseen'
@@ -30,7 +34,8 @@ export function resolveSessionRowPresentation(input: Readonly<{
         status,
         requestRef: input.requestRef ?? null,
         titleTone: emphasized ? 'emphasized' : quiet ? 'quiet' : 'normal',
-        statusText: status.word,
-        accessibilityStatusText: status.word,
+        statusText: endReason ?? status.word,
+        accessibilityStatusText: endReason ?? status.word,
+        endReason,
     };
 }

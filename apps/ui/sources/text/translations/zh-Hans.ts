@@ -8529,6 +8529,7 @@ export const zhHans: TranslationStructure = {
     accessWithdrawn: "访问权限已撤销",
     accessWithdrawnBody: ({ machine }: { machine: string }) => `对 ${machine} 的访问权限已撤销。`,
     accessWithdrawnGuestBody: ({ machine }: { machine: string }) => `你对 ${machine} 的访问权限已撤销。所有者可以重新授予。`,
+    accessWithdrawnContinue: '在新会话中继续',
     inactiveResumable: "未激活（可恢复）",
     inactiveArchived: "已归档",
     inactiveMachineOffline: "未激活（机器离线）",

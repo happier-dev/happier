@@ -31,6 +31,15 @@ describe('resolveSessionRowPresentation', () => {
         }
     });
 
+    it('speaks an ended Session by its end reason, never by its last work word', () => {
+        const status = { state: 'waiting', bucket: 'idle', tone: 'neutral', word: 'Ready', attentionType: null } as const;
+        const row = resolveSessionRowPresentation({ status, endReason: 'Access withdrawn' });
+        expect(row.statusText).toBe('Access withdrawn');
+        expect(row.accessibilityStatusText).toBe('Access withdrawn');
+        expect(row.endReason).toBe('Access withdrawn');
+        expect(resolveSessionRowPresentation({ status }).endReason).toBeNull();
+    });
+
     it('quiets the title of an idle row', () => {
         const status = { state: 'waiting', bucket: 'idle', tone: 'neutral', word: 'Idle', attentionType: null } as const;
         expect(resolveSessionRowPresentation({ status }).titleTone).toBe('quiet');

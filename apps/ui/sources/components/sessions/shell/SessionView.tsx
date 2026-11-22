@@ -2452,8 +2452,9 @@ const SessionViewLoadedFrame = React.memo(function SessionViewLoadedFrame({
                           title={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawn') : t('machineRequester.accessRemoved', { machine: machineName })}
                           body={inactiveUi.inactiveStatusTextKey === 'session.accessWithdrawn' ? t('session.accessWithdrawnGuestBody', { machine: machineName }) : t('machineRequester.resumeElsewhere', { machine: machineName })}
                           actionTestID="session-requester-continue-elsewhere"
-                          actionLabel={t('common.continue')}
-                          actionAccessibilityLabel={t('common.continue')}
+                          // Continue opens a new session from this one's context: the label says where it goes.
+                          actionLabel={t('session.accessWithdrawnContinue')}
+                          actionAccessibilityLabel={t('session.accessWithdrawnContinue')}
                           onActionPress={() => { openNewSessionSourceContextNavigation({
                               sourceSessionId: sessionId,
                               forkPoint: { type: 'latest' },

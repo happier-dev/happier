@@ -269,7 +269,7 @@ import { useSessionPendingActivationPresentation } from "@/components/sessions/p
 import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
 import type { SessionManagedWakePresentation } from "@/components/sessions/pending/useSessionManagedWakePresentation";
 import { ManagedWakePopover, describeManagedWakeLabel } from "@/components/sessions/pending/ManagedWakePopover";
-import { getMachineSentenceName } from "@/utils/sessions/machineDisplayNames";
+import { getMachineSentenceName, keepHyphenatedNameTogether } from "@/utils/sessions/machineDisplayNames";
 import { describeMachinePresenceLine } from "@/utils/sessions/machinePresenceLine";
 import { resolveHomeDisplayLabel } from "@/components/settings/server/homeDisplayName";
 import { machineCollectionHref } from "@/components/settings/machines/collection/machineCollectionModel";
@@ -4608,7 +4608,11 @@ export function useSessionComposerController({
                 : formatAgentLikeIdForDisplay(agentId),
         })
         ?? t('status.unknown');
-    const machineName = getMachineSentenceName(sessionMachineRecord);
+    // Once access is withdrawn the Machine record is gone; the Session keeps the host it ran on, which the header
+    // names too, so the notices never fall back to "this machine" while the header says which one.
+    const retainedSessionHost = typeof ownerMetadata?.host === 'string' ? ownerMetadata.host.trim() : '';
+    const machineName = !sessionMachineRecord && retainedSessionHost
+        ? keepHyphenatedNameTogether(retainedSessionHost) : getMachineSentenceName(sessionMachineRecord);
 
     const targetMachineHomeDir = typeof ownerMetadata?.homeDir === 'string'
         ? ownerMetadata.homeDir
