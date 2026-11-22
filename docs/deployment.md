@@ -3294,8 +3294,10 @@ review through the existing host-reviewed-child policy owner.
 Direct Machine Setup and applying a saved preset both install catalog Apps
 through the Run admitted by Setup Apply. The installed native Setup leaf and
 the signed remote leaf use that same accepted Run to associate the reviewed
-App actions with the saved Machine setup. Each App action retains its own
-deployment admission and settlement.
+App actions with the saved Machine setup. Setup Apply admits the selected
+catalog App's deployment operands along with the Machine. The installed Run
+dispatcher uses this admission to obtain an Action-specific proof from Home
+before the deployment controller reads retention or prepares the App.
 
 The strict template review retains the selected descriptor's optional
 `firstRunSetup: true` hint, including inside the Machine setup parent's app

@@ -35,6 +35,24 @@ export function isDeploymentPreparationActionIdV1(value: string): value is typeo
 }
 
 const source = lazyZodSchema(() => z.strictObject({ id, revision }));
+const templatePreparationAdmission = lazyZodSchema(() => z.strictObject({
+  operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
+  newProject: z.optional(DeploymentNewProjectV1Schema), machineId: id,
+  workspace: z.optional(z.strictObject({ kind: z.literal('workspace-ref'), id })),
+  deploy: z.optional(z.strictObject({ requestKey: id })),
+  environment: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }),
+    z.strictObject({ kind: z.literal('create'), requestKey: id, protection: z.enum(['production', 'nonProduction']),
+      purpose: z.literal('standard'), deployerMode: DeploymentEnvironmentPeopleModeV1Schema,
+      deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
+      controllerMachineId: id, buildMachineId: z.optional(id) }),
+  ]),
+  target: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('existing'), targetLinkId: id, expectedRevision: revision, installationId: id }),
+    z.strictObject({ kind: z.literal('new'), installationId: id }),
+  ]),
+}).check(z.refine(value => hasOneDeploymentProjectV1(value.source, value.newProject),
+  { message: 'Preparation names one Project authority.' })));
 /** Only reviewed references; Home belongs to the signed binding and content stays sealed. */
 export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.discriminatedUnion('operation', [
   z.strictObject({ operation: z.literal('create'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
@@ -50,31 +68,17 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     environment: z.strictObject({ id, revision }), target: z.strictObject({ id, revision }),
     candidate: DeploymentArtifactContentReferenceV1Schema,
   })), catalogSources: z.optional(z.array(z.strictObject({ machineId: id, source: z.strictObject({ id }) })).check(z.minLength(1))),
+    catalogApps: z.optional(z.array(templatePreparationAdmission).check(z.minLength(1))),
     connectorGrants: z.optional(z.array(z.strictObject({ machineId: id, grantRef: id })).check(z.minLength(1))),
     machineTargets: z.optional(z.array(id).check(z.minLength(1))),
     agentInstalls: z.optional(z.array(z.strictObject({ machineId: id, inputDigest: id })).check(z.minLength(1))) }),
   z.strictObject({ operation: z.literal('prepare'), source,
     environment: z.optional(z.strictObject({ id })), workspace: z.strictObject({ kind: z.literal('workspace-ref'), id }) }),
-  z.strictObject({ operation: z.literal('template'), mode: z.enum(['preview', 'apply']), source: z.optional(z.strictObject({ id })),
-    newProject: z.optional(DeploymentNewProjectV1Schema), machineId: id,
-    workspace: z.optional(z.strictObject({ kind: z.literal('workspace-ref'), id })),
-    deploy: z.optional(z.strictObject({ requestKey: id })),
-    environment: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('existing'), environmentId: id, expectedRevision: revision }),
-      z.strictObject({ kind: z.literal('create'), requestKey: id, protection: z.enum(['production', 'nonProduction']),
-        purpose: z.literal('standard'), deployerMode: DeploymentEnvironmentPeopleModeV1Schema,
-        deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
-        controllerMachineId: id, buildMachineId: z.optional(id) }),
-    ]),
-    target: z.discriminatedUnion('kind', [
-      z.strictObject({ kind: z.literal('existing'), targetLinkId: id, expectedRevision: revision, installationId: id }),
-      z.strictObject({ kind: z.literal('new'), installationId: id }),
-    ]),
-  }),
+  templatePreparationAdmission,
 ]).check(z.refine(value => value.operation !== 'setup' || value.deployments.length > 0 || (value.catalogSources?.length ?? 0) > 0
   || (value.connectorGrants?.length ?? 0) > 0 || (value.machineTargets?.length ?? 0) > 0,
   { message: 'Setup preparation names a reviewed operand.' }),
-z.refine(value => value.operation !== 'create' && value.operation !== 'catalog' && value.operation !== 'template'
+z.refine(value => value.operation !== 'create' && value.operation !== 'catalog'
   || hasOneDeploymentProjectV1(value.source, value.newProject), { message: 'Preparation names one Project authority.' })));
 export type DeploymentPreparationAdmissionV1 = z.infer<typeof DeploymentPreparationAdmissionV1Schema>;
 
@@ -151,11 +155,13 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
             contentBodyVersion: child.input.contentBodyVersion } }];
       });
     });
-    const catalogSources = targets.flatMap(target => (target.appChildren ?? []).flatMap(child => {
-      if (child.actionId !== deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || child.input.projectSourceId === undefined) return [];
-      if (child.input.serverId !== root.homeId) throw new TypeError('Setup app preparation Home mismatch');
-      return [{ machineId: target.machineId, source: { id: child.input.projectSourceId } }];
+    const catalogApps = targets.flatMap(target => (target.appChildren ?? []).flatMap(child => {
+      if (child.actionId !== deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) return [];
+      if (child.input.serverId !== root.homeId || child.input.machineId !== target.machineId)
+        throw new TypeError('Setup app preparation target mismatch');
+      return [projectTemplatePreparation(child.input)];
     }));
+    const catalogSources = catalogApps.flatMap(app => app.source ? [{ machineId: app.machineId, source: app.source }] : []);
     const connectorGrants = targets.flatMap(target => ('recipePlans' in target ? target.recipePlans : []).flatMap(({ plan }) =>
       plan.steps.flatMap(step => step.kind === 'file' && step.content?.kind === 'secretGrant'
         ? [{ machineId: target.machineId, grantRef: step.content.grantRef }] : [])));
@@ -169,26 +175,11 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
     return DeploymentPreparationAdmissionV1Schema.parse({ operation, deployments,
       ...(machineTargets ? { machineTargets } : {}),
       ...(catalogSources.length ? { catalogSources } : {}),
+      ...(machineTargets && catalogApps.length ? { catalogApps } : {}),
       ...(connectorGrants.length ? { connectorGrants } : {}),
       ...(agentInstalls.length ? { agentInstalls } : {}) });
   }
-  if (actionId === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
-    const environment = readRecord(value.environment);
-    const destination = readRecord(value.destination);
-    const deploy = readDeploymentTemplateDeployIntentV1(value);
-    return DeploymentPreparationAdmissionV1Schema.parse({ operation: 'template', mode: value.mode,
-      ...(destination.kind === 'repositoryPullRequest' ? { workspace: {
-        kind: readRecord(destination.workspace).kind, id: readRecord(destination.workspace).id,
-      } } : {}),
-      ...(deploy === undefined ? {} : { deploy }),
-      ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId } }), machineId: value.machineId, target: value.target,
-      environment: environment.kind === 'existing' ? environment : {
-        kind: environment.kind, requestKey: environment.requestKey, protection: environment.protection,
-        purpose: environment.purpose, deployerMode: environment.deployerMode,
-        ...(environment.deployerPrincipals === undefined ? {} : { deployerPrincipals: environment.deployerPrincipals }), controllerMachineId: environment.controllerMachineId,
-        ...(environment.buildMachineId === undefined ? {} : { buildMachineId: environment.buildMachineId }),
-      } });
-  }
+  if (actionId === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) return projectTemplatePreparation(value);
   if (actionId === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1) {
     const workspace = readRecord(value.workspace);
     const environmentId = value.environmentId ?? readRecord(value.target).environmentId;
@@ -198,4 +189,22 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       ...(environmentId === undefined ? {} : { environment: { id: environmentId } }) });
   }
   return undefined;
+}
+
+function projectTemplatePreparation(value: Readonly<Record<string, unknown>>) {
+  const environment = readRecord(value.environment);
+  const destination = readRecord(value.destination);
+  const deploy = readDeploymentTemplateDeployIntentV1(value);
+  return templatePreparationAdmission.parse({ operation: 'template', mode: value.mode,
+    ...(destination.kind === 'repositoryPullRequest' ? { workspace: {
+      kind: readRecord(destination.workspace).kind, id: readRecord(destination.workspace).id,
+    } } : {}),
+    ...(deploy === undefined ? {} : { deploy }),
+    ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId } }), machineId: value.machineId, target: value.target,
+    environment: environment.kind === 'existing' ? environment : {
+      kind: environment.kind, requestKey: environment.requestKey, protection: environment.protection,
+      purpose: environment.purpose, deployerMode: environment.deployerMode,
+      ...(environment.deployerPrincipals === undefined ? {} : { deployerPrincipals: environment.deployerPrincipals }), controllerMachineId: environment.controllerMachineId,
+      ...(environment.buildMachineId === undefined ? {} : { buildMachineId: environment.buildMachineId }),
+    } });
 }

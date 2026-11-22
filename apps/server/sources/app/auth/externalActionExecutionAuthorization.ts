@@ -102,7 +102,7 @@ import { isDeploymentDomainDnsActionIdV1, isDeploymentEnvironmentMetadataReadAct
     isDeploymentMembershipActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1, DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1, DEPLOYMENT_REFERENCE_READ_CHILD_ROLE_V1,
     DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_PREPARE_SESSION_CHILD_ROLE_V1, DEPLOYMENT_LOGS_READ_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, DEPLOYMENT_DEPLOY_ACTION_ID_V1,
-    readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, readDeploymentReferenceServiceListEnvironmentIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema, EnvironmentSecretAdmissionRequestV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { DeploymentEnvironmentUpdateStorageInputV1Schema, DeploymentBindingsSetStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentStorageInputsV1';
 import { isMachineConnectorSecretGrantHttpPurpose } from '@/app/deployments/machineConnectorSecretGrantAuthorization';
@@ -728,11 +728,15 @@ export async function verifyWorkflowExternalActionRequesterAuthorization(input: 
         if (!scope.machineTargets?.includes(target.machineId)
             || !scope.agentInstalls?.some(selection => selection.machineId === target.machineId
                 && selection.inputDigest === reviewedChild?.inputDigest)) return null;
+    } else if (input.actionId === DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1) {
+        if (child?.operation !== 'template' || child.machineId !== target.machineId
+            || !scope.catalogApps?.some(admitted => sameManagedInput(admitted, child))) return null;
     } else if (child?.operation !== 'setup'
         || !child.machineTargets?.includes(target.machineId)
         || !child.machineTargets.every(machineId => scope.machineTargets?.includes(machineId))
         || !child.deployments.every(selected => scope.deployments.some(admitted => sameManagedInput(admitted, selected)))
         || !(child.catalogSources ?? []).every(selected => (scope.catalogSources ?? []).some(admitted => sameManagedInput(admitted, selected)))
+        || !(child.catalogApps ?? []).every(selected => (scope.catalogApps ?? []).some(admitted => sameManagedInput(admitted, selected)))
         || !(child.connectorGrants ?? []).every(selected => (scope.connectorGrants ?? []).some(admitted => sameManagedInput(admitted, selected)))) return null;
     let receiverBinding = { ...binding, deploymentPreparationAdmission: child };
     if (target.machineId !== binding.machineId) {

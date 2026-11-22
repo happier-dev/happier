@@ -1,5 +1,15 @@
 # Compatibility and version skew
 
+## Catalog App authority in Machine Setup (unreleased 0.3)
+
+The signed Setup Apply preparation envelope can include the admitted catalog
+App operands. The installed Run dispatcher presents that proof to Home when
+requesting the catalog App's own Template Action proof. Match the Home and
+daemon versions. Earlier strict development readers can refuse the added
+field, and a prior Setup proof that omits it cannot admit a Template child.
+Re-plan and approve Setup to obtain a current proof. This uses the existing
+signed envelope and requires no storage migration.
+
 ## Exact original input publication refusal (unreleased 0.3)
 
 The exact committed message read by local ID can include optional

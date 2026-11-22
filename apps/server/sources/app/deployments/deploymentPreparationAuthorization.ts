@@ -138,9 +138,16 @@ export async function readAdmittedDeploymentScopeInTx(tx: Tx,
     const seeds = { environment: new Set<string>(), source: new Set<string>(), artifact: new Set<string>(),
         deployment: new Set<string>(), targetLink: new Set<string>(), domain: new Set<string>(), machine: new Set<string>() };
     const preparation = selectedReferenceEnvironmentId === undefined ? binding.deploymentPreparationAdmission : undefined;
-    const selectedPreparation = preparation?.operation === 'setup' && setupReceiverMachineId !== undefined
-        ? { ...preparation, catalogSources: preparation.catalogSources?.filter(selected => selected.machineId === setupReceiverMachineId),
-            deployments: preparation.deployments.filter(selected => selected.machineId === setupReceiverMachineId) } : preparation;
+    const selectedPreparation = preparation?.operation === 'setup'
+        ? {
+            ...preparation,
+            // Full catalog operands are for child proof issuance. Setup reads retain their narrower operands.
+            catalogApps: undefined,
+            ...(setupReceiverMachineId === undefined ? {} : {
+                catalogSources: preparation.catalogSources?.filter(selected => selected.machineId === setupReceiverMachineId),
+                deployments: preparation.deployments.filter(selected => selected.machineId === setupReceiverMachineId),
+            }),
+        } : preparation;
     const admissions = selectedReferenceEnvironmentId !== undefined ? [] : [selectedPreparation, binding.deploymentNativeAdmission,
         binding.deploymentReadAdmission, binding.deploymentLinkAdmission, binding.registryAppUpdateAdmission].filter(admission => admission !== undefined);
     if (admissions.length === 0 && binding.environmentId === undefined && acceptedEnvironmentId === undefined
@@ -1729,6 +1736,12 @@ async function isOtherDeploymentPreparationAuthorizedInTx(tx: Tx, binding: Exter
         if ([...receivers.values()].some(receiver => receiver.kind !== 'admitted' || receiver.role !== 'manage')) return false;
         for (const selected of admission.deployments) {
             if (!await readSetupDeploymentEnvironment(tx, binding, selected, authentication)) return false;
+        }
+        for (const app of admission.catalogApps ?? []) {
+            if (!admission.machineTargets?.includes(app.machineId)
+                || !(await readTemplateInstantiationAuthorizationInTx(tx, { ...binding,
+                    actionId: DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1, machineId: app.machineId,
+                }, app, authentication)).ok) return false;
         }
         return true;
     }

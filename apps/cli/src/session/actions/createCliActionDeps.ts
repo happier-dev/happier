@@ -12,6 +12,7 @@ import { apiTokenEncryptionAccessRequired } from '@/auth/apiTokenDeploymentCusto
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { sessionProjectFilesOpenChildrenV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
+import { readControllerDeploymentWorkflowCaller } from './controllerDeploymentDispatch';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { requireExternalActionHeaders, createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
@@ -1030,9 +1031,9 @@ export function createCliActionDeps(params: CliActionDepsParams,
     actionId: Parameters<typeof dispatchOriginalAccountAction>[0]['actionId'], input: unknown, context: ActionExecutorContext,
     readMachine: () => ReturnType<typeof resolveDeploymentTemplateExecutionMachineIdV1>,
   ) => {
-    const workflow = context.actionCaller?.kind === 'workflowRun';
-    if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
-      || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow)
+    const workflow = readControllerDeploymentWorkflowCaller(actionId, context);
+    if (!params.credentials || !workflow && (context.externalActionCredential || context.externalActionExecutionAuthorization
+      || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host'))
       return executionRunActionFailure('deployment_executor_unavailable');
     if (!context.actionRequestId || workflow && context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
       return executionRunActionFailure('admission_unavailable');

@@ -37,6 +37,64 @@ import { GITHUB_PULL_REQUEST_RESPONSE } from '../../../../../packages/plugins/sc
 
 afterEach(() => vi.restoreAllMocks());
 const token = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-account' })).toString('base64url')}.signature`;
+it('presents the accepted Setup Run when requesting Home authority for its catalog App', async () => {
+  const { buildWorkflowActionContext } = await import('@/daemon/workflows/workflowActionContext');
+  const { MACHINE_SETUP_APPLY_ACTION_ID_V1 } = await import('@happier-dev/protocol/machines/managed/actionIdsV1');
+  const { DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+  const serverId = 'srv_deployment_home';
+  const machineId = 'setup-target';
+  const installationId = 'setup-installation';
+  const accountId = 'deployment-account';
+  const target = { kind: 'machine' as const, machineId };
+  const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'accepted-setup', binding: {
+    accountId, custodianAccountId: accountId, authentication: { kind: 'account', tokenEpoch: 7 }, accountEncryptionMode: 'plain',
+    serverIdentityId: serverId, machineId, installationId, requestId: 'setup-apply', requestEnvelopeDigest: 'a'.repeat(43),
+    actionId: MACHINE_SETUP_APPLY_ACTION_ID_V1, target,
+  } });
+  const input = { serverId, machineId, mode: 'apply', bindings: [],
+    templateRef: { sourceId: 'apps', itemId: 'redis', version: '1', ref: { kind: 'content', digest: `sha256:${'a'.repeat(64)}` } },
+    newProject: { name: 'Redis', requestKey: 'redis-project', owner: { kind: 'account', accountId } },
+    environment: { kind: 'create', name: 'Redis', requestKey: 'redis-environment', protection: 'nonProduction',
+      purpose: 'standard', deployerMode: 'managers', controllerMachineId: machineId },
+    target: { kind: 'new', installationId }, destination: { kind: 'stored' }, deploy: { requestKey: 'redis-deploy' },
+  };
+  const installationKey = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(9));
+  vi.spyOn(axios, 'get').mockImplementation(async url => {
+    const path = new URL(url).pathname;
+    if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+    expect(path).toBe(`/v1/machines/${machineId}`);
+    return { status: 200, data: { machine: { id: machineId, kind: 'persistent', active: true, installationId,
+      storageMode: 'plain', revokedAt: null, replacedByMachineId: null,
+      installationPublicKey: Buffer.from(installationKey.publicKey).toString('base64'),
+      access: { custodian: { accountId, displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
+    } } };
+  });
+  const send = vi.spyOn(axios, 'post').mockResolvedValue({ status: 403, data: { error: 'credential_scope_denied' } });
+  const executor = createCliActionExecutorFromCredentials({
+    credentials: { token: `header.${Buffer.from(JSON.stringify({ sub: accountId, tokenEpoch: 7,
+      provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`, encryption: null },
+    serverId, serverIdentityId: serverId, serverApiUrl: 'https://deployment-home.test', machineId,
+    pluginActionExecutionOwner: 'current_process', externalActionMachineRequestPrivateKey: installationKey.secretKey,
+    externalActionMachineInstallationId: installationId,
+    machineActionDirectTargetTransport: { machineId, invoke: async () => { throw new Error('Home must admit the App first'); } },
+  });
+  const runId = 'setup-run';
+  const actionRequestId = 'setup-run:redis-app';
+  const actionId = DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1;
+  const result = await executor.execute(actionId, input, { ...buildWorkflowActionContext({ runId,
+    authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default', externalActionExecutionAuthorization: parent },
+    workspace: { machineId },
+  }), actionRequestId });
+  expect(result.ok).toBe(false);
+  expect(send).toHaveBeenCalledTimes(1);
+  const [url, body] = send.mock.calls[0]!;
+  expect(new URL(url).pathname).toBe(`/v1/actions/${actionId}/execution-authorization`);
+  expect(ExternalActionExecutionAuthorizationRequestV1Schema.parse(body)).toMatchObject({
+    machineId, executionAuthorization: parent, workflowActionOrigin: { runId, requestId: actionRequestId },
+    installationProof: expect.anything(), envelope: { input, target },
+  });
+});
+
 it.each([
   ['deployments.backups.verify', 'verify'],
   ['deployments.backups.restore', 'prepare'],

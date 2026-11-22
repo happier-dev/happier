@@ -24,8 +24,8 @@ import { auth } from './auth';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createSignedDiscussionHttpFixture } from '@/app/api/routes/actions/discussionExecutionAuthorization.testkit';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
-import { MachineSetupApplyInputV1Schema, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { MACHINE_SETUP_APPLY_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1, SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1, MANAGED_LIST_ACTION_ID_V1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { db } from '@/storage/db';
 import { MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { inTx } from '@/storage/inTx';
@@ -373,9 +373,11 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
         } finally { await f.app.close(); }
     });
 
-    it.each(['spawn setup', 'declared Agent'] as const)('retains shared Manage for an installed Workflow %s without lending the grant', async kind => {
-        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        const f = await createSignedDiscussionHttpFixture(undefined, [], false, custodian.id);
+    it.each(['spawn setup', 'declared Agent', 'catalog App'] as const)('retains admitted Manage for an installed Run %s without lending the grant', async kind => {
+        const sharedCustodian = kind === 'catalog App' ? undefined
+            : await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const f = await createSignedDiscussionHttpFixture(undefined, [], false, sharedCustodian?.id);
+        const custodian = sharedCustodian ?? f.account;
         try {
             await db.machine.update({ where: { id: f.machine.id }, data: { active: true, operationProtocolCapabilitiesRevision: 1,
                 operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({
@@ -387,7 +389,21 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             const install = { machineId: f.machine.id, agentId: 'codex', intent: 'install',
                 waitForTerminal: true, consent: { vendorRecipe: true } };
             const setupTarget = { homeId, machineId: f.machine.id, desiredRevision: 0, sources, recipePlans: [] };
-            const parent = kind === 'declared Agent'
+            const appAction = 'deployments.templates.instantiate' as const;
+            const templateRef = { sourceId: 'apps', itemId: 'redis', version: '1',
+                ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } };
+            const app = { serverId: homeId, machineId: f.machine.id, mode: 'apply' as const, templateRef, bindings: [],
+                newProject: { name: 'Redis', requestKey: randomUUID(), owner: { kind: 'account' as const, accountId: f.account.id } },
+                environment: { kind: 'create' as const, name: 'Redis', requestKey: randomUUID(), protection: 'nonProduction' as const,
+                    purpose: 'standard' as const, deployerMode: 'managers' as const, controllerMachineId: f.machine.id },
+                target: { kind: 'new' as const, installationId: f.machine.installationId! },
+                destination: { kind: 'stored' as const }, deploy: { requestKey: randomUUID() } };
+            const parent = kind === 'catalog App'
+                ? await f.mint(MACHINE_SETUP_APPLY_ACTION_ID_V1, { homeId, machineId: f.machine.id, targets: [{ ...setupTarget,
+                    sources: [{ kind: 'direct', setup: { items: [{ kind: 'app', definition: { name: 'Redis',
+                        project: { kind: 'create' }, definition: { from: 'catalogApp', templateRef }, bindings: [] } }] } }],
+                    appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: appAction, input: app }] }] }, true)
+                : kind === 'declared Agent'
                 ? await f.mint(MACHINE_SETUP_APPLY_ACTION_ID_V1, { homeId, machineId: f.machine.id, targets: [{ ...setupTarget,
                     sources: [{ kind: 'direct', setup: { items: [{ kind: 'agent', agentId: 'codex' }] } }],
                     appChildren: [{ sourceIndex: 0, itemIndex: 0, actionId: agentAction, input: install }] }] }, true)
@@ -396,8 +412,8 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                     agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                     machineSetupPlanInput: { homeId, machineId: f.machine.id, sources } }, true);
             expect(parent.binding).toMatchObject({ accountId: f.account.id, custodianAccountId: custodian.id, admittedMachineRole: 'manage' });
-            const actionId = kind === 'declared Agent' ? agentAction : MACHINE_SETUP_APPLY_ACTION_ID_V1;
-            const reviewedChild = kind === 'declared Agent'
+            const actionId = kind === 'catalog App' ? appAction : kind === 'declared Agent' ? agentAction : MACHINE_SETUP_APPLY_ACTION_ID_V1;
+            const reviewedChild = kind === 'catalog App' ? undefined : kind === 'declared Agent'
                 ? { actionId, role: 'machine_setup_app', inputDigest: computeActionInputApprovalDigestV1(actionId, install) }
                 : { actionId, role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
                     inputDigest: computeActionInputApprovalDigestV1(actionId, { homeId, machineId: f.machine.id, sources, recipePlans: [] }) };
@@ -418,12 +434,12 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
             expect((await claimAutomationRun({ accountId: f.account.id, machineId: f.machine.id,
                 leaseDurationMs: 30_000, scope: 'workflow', claimRequest: { machineInstallationId: f.machine.installationId!,
                     nonce: randomUUID(), expiresAt: new Date(Date.now() + 30_000) } })).run?.id).toBe(runId);
-            expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
+            if (sharedCustodian) expect(await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: custodian.id,
                 machineId: f.machine.id, principal: { kind: 'account', accountId: f.account.id } }))).toMatchObject({ kind: 'removed' });
             const requestId = `${runId}/${randomUUID()}/0`;
             const envelope = { v: 1 as const, requestId, target, input: kind === 'declared Agent' ? install
-                : { homeId, machineId: f.machine.id, targets: [setupTarget] } };
-            const workflowActionOrigin = { runId, requestId, reviewedChild };
+                : kind === 'catalog App' ? app : { homeId, machineId: f.machine.id, targets: [setupTarget] } };
+            const workflowActionOrigin = { runId, requestId, ...(reviewedChild ? { reviewedChild } : {}) };
             const buildRequest = (accountId: string, origin = workflowActionOrigin, installationId = f.machine.installationId!,
                 leafEnvelope = envelope) => ({ v: 1, machineId: f.machine.id, envelope: leafEnvelope,
                 executionAuthorization: parent, workflowActionOrigin: origin,
@@ -453,7 +469,7 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                     headers: { authorization: `Bearer ${f.presentUserToken}` }, payload });
                 expect(refused.statusCode, refused.body).toBe(403);
             }
-            if (kind === 'declared Agent') {
+            if (kind === 'declared Agent' && reviewedChild) {
                 const unreviewed = { ...install, agentId: 'pi' };
                 const origin = { ...workflowActionOrigin, reviewedChild: { ...reviewedChild,
                     inputDigest: computeActionInputApprovalDigestV1(agentAction, unreviewed) } };
@@ -462,12 +478,26 @@ describe('spawn-reviewed Machine software setup HTTP authority', () => {
                     payload: buildRequest(f.account.id, origin, f.machine.installationId!, { ...envelope, input: unreviewed }) });
                 expect(response.statusCode).toBe(403);
             }
+            if (kind === 'catalog App') {
+                const changedApp = { ...app, newProject: { ...app.newProject, requestKey: randomUUID() } };
+                const response = await f.app.inject({ method: 'POST', url: path,
+                    headers: { authorization: `Bearer ${f.presentUserToken}` },
+                    payload: buildRequest(f.account.id, workflowActionOrigin, f.machine.installationId!, { ...envelope, input: changedApp }) });
+                expect(response.statusCode).toBe(403);
+            }
             const response = await f.app.inject({ method: 'POST', url: path,
                 headers: { authorization: `Bearer ${f.presentUserToken}` }, payload: buildRequest(f.account.id) });
             expect(response.statusCode, response.body).toBe(200);
             expect(response.json()).toMatchObject({ binding: { accountId: f.account.id, custodianAccountId: custodian.id,
                 machineId: f.machine.id, admittedMachineRole: 'manage', workflowActionOrigin } });
             const leaf = ExternalActionExecutionAuthorizationV1Schema.parse(response.json());
+            if (kind === 'catalog App') {
+                const allocatedTargetRead = { method: 'POST', path: managedMachineActionEndpointPathV1(MANAGED_LIST_ACTION_ID_V1),
+                    body: { homeId, enrolledMachineId: f.machine.id } };
+                expect(await f.verify(parent, allocatedTargetRead, MANAGED_LIST_ACTION_ID_V1)).toBeNull();
+                expect(await f.verify(leaf, allocatedTargetRead, MANAGED_LIST_ACTION_ID_V1))
+                    .toMatchObject({ deploymentTargetRetentionAdmission: { kind: 'preparation-read' } });
+            }
             if (kind === 'declared Agent') {
                 await f.app.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
                     headers: { authorization: `Bearer ${f.presentUserToken}` },
