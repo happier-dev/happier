@@ -669,7 +669,7 @@ describe('createLocalServicesDaemonRuntime', () => {
         } finally { await runtime.stop(); serviceActivity.dispose(); await owner.dispose(); }
     });
 
-    it('pushes a retained Project Service Stop when only its Worktree binding is watched', async () => {
+    it.each(['managed_bindings', 'workspace'] as const)('pushes a retained Project Service Stop during discovery for a %s watch', async projection => {
         const root = await mkdtemp(join(tmpdir(), 'happier-service-stop-push-'));
         const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: root, createdAtMs: 1 };
         const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'web' } } as const;
@@ -697,27 +697,31 @@ describe('createLocalServicesDaemonRuntime', () => {
                 processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },
                 authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
                     env: {}, release: async () => undefined }) });
-            // A binding can be available on a Worker even if its workspace
-            // discovery is still blocked on persistent facts.
-            const scope = { scope: 'workspace' as const, workspaceRoot: root, projection: 'managed_bindings' as const };
+            // The previously hydrated Worktree remains open while Home facts
+            // for new declaration observation are in flight.
+            const scope = { scope: 'workspace' as const, workspaceRoot: root, discovery: 'cached' as const,
+                ...(projection === 'managed_bindings' ? { projection } : {}) };
             const baseline = await runtime.launcherRoutes.getSnapshot(scope);
             expect(baseline.targets).toEqual([expect.objectContaining({ id: 'web', serviceState: 'running' })]);
             watch = runtime.inventoryRoutes.watchLauncherSnapshot({ targets: baseline.targets, signal: cancellation.signal,
-                readSnapshot: () => runtime.launcherRoutes.getSnapshot({ ...scope, discovery: 'cached' }) });
-            await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(1));
+                ...(projection === 'workspace' ? { launcherScopes: [{ workspaceRoot: root }] } : {}),
+                readSnapshot: () => runtime.launcherRoutes.getSnapshot(scope) });
+            await new Promise<void>(resolve => setImmediate(resolve));
             expect(await handle.stop()).toEqual({ status: 'stopped' });
             expect(handle.snapshot().state).toBe('stopped');
             await new Promise<void>(resolve => setImmediate(resolve));
             cancellation.abort();
-            expect(await watch).toMatchObject({ changed: true,
+            const replyWhileDiscovering = await Promise.race([watch, new Promise<void>(resolve => setImmediate(resolve))]);
+            finishWorkspaceDiscovery();
+            expect(replyWhileDiscovering).toMatchObject({ changed: true,
                 snapshot: expect.objectContaining({ targets: [expect.objectContaining({ id: 'web', serviceState: 'stopped', actions: [] })] }),
             });
             expect(scan).not.toHaveBeenCalled();
         } finally {
             cancellation.abort();
+            finishWorkspaceDiscovery();
             await watch?.catch(() => undefined);
             await runtime.stop();
-            finishWorkspaceDiscovery();
             activity.dispose();
             await owner.dispose();
             await rm(root, { recursive: true, force: true });

@@ -3,6 +3,7 @@ import type { LocalServiceLauncherScopeV1, LocalServiceLauncherSnapshotV1 } from
 import { isDeepStrictEqual } from 'node:util';
 
 import { createParkWatch, type ParkWatchResult } from '@/daemon/lifecycle/parkWatch';
+import { logger } from '@/ui/logger';
 import { getHostWorktreePortsOwner, type WorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 
 import type { LocalServiceInventoryLabelSource } from './labels';
@@ -112,8 +113,13 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
             } finally { release?.(); }
         },
         async watchLauncherSnapshot(request) {
-            const release = request.launcherScopes?.length
-                ? await input.observeLauncherScopes?.(request.launcherScopes, request.signal) : undefined;
+            if (request.signal?.aborted) return { changed: false };
+            // Declaration enrollment may wait for Home. The cached native lifecycle
+            // projection can already answer and must be able to park independently.
+            const scopeObservation = request.launcherScopes?.length
+                ? input.observeLauncherScopes?.(request.launcherScopes, request.signal).catch(error => {
+                    logger.debug('[DAEMON RUN] Launcher declaration observation failed', error);
+                }) : undefined;
             let releasePorts: (() => void) | undefined;
             let wakePorts: (() => void) | undefined;
             const unchanged = (snapshot: LocalServiceLauncherSnapshotV1) => isDeepStrictEqual(snapshot.targets, request.targets)
@@ -147,7 +153,10 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                     // change to this requester's projection can settle the remote watch.
                 }
                 return { changed: false };
-            } finally { releasePorts?.(); release?.(); }
+            } finally {
+                releasePorts?.();
+                void scopeObservation?.then(release => release?.());
+            }
         },
         watcherCount() {
             return watches.watcherCount();
