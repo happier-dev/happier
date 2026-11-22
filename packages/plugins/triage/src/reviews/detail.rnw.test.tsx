@@ -13,14 +13,16 @@ const digest = `sha256:${'1'.repeat(64)}`;
 
 const RAW_USER_ID = 'e47cce90-1361-41c5-8176-11345c8ae910';
 
-async function mountReview(needsDecision: number, sink: Readonly<{ opened: unknown[]; reads: unknown[] }>) {
+type ReviewFixture = Readonly<{ requestedVerdict?: boolean; findingsFail?: boolean }>;
+
+async function mountReview(needsDecision: number, sink: Readonly<{ opened: unknown[]; reads: unknown[] }>, options: ReviewFixture = {}) {
   const input = createTriageSourceV1Fixture().detailInput;
   const launchInput = { ...input, observation: { ...input.observation,
     entryRef: { source: REVIEW_TRIAGE_SOURCE_V1, ...reviewTriageLocalRefV1('review/one') } } };
   let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
   await act(async () => {
     fixture = await createPluginUiTestkit({
-      identity: { instanceId: 'review', mountNonce: `review-detail-${needsDecision}` },
+      identity: { instanceId: 'review', mountNonce: `review-detail-${needsDecision}-${options.requestedVerdict === true}-${options.findingsFail === true}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: renderSurface,
       surfaceContext: createSurfaceContextFixture(), launchInput,
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
@@ -32,8 +34,9 @@ async function mountReview(needsDecision: number, sink: Readonly<{ opened: unkno
           sink.reads.push(resource);
           const value = resource.hostRead === 'review.get' ? {
             review: { reviewId: 'review/one', state: 'completed', counts: { total: 1, needsDecision } },
-            human: { needsYou: { needsYou: needsDecision > 0, pendingDecisions: needsDecision > 0 } },
-          } : {
+            human: { needsYou: { needsYou: needsDecision > 0 || options.requestedVerdict === true,
+              requestedVerdict: options.requestedVerdict === true, pendingDecisions: needsDecision > 0 } },
+          } : options.findingsFail === true ? { status: 'failed', cursor: null, pending: {}, comments: [], unavailableFindings: [], rows: [] } : {
             status: 'loaded', cursor: null, pending: {}, comments: [], unavailableFindings: [],
             rows: [{ rowId: 'finding-1',
               finding: { id: 'finding-1', title: 'Settings modal remounts on every tab switch', severity: 'high',
@@ -94,4 +97,32 @@ it('leads with Open review while a finding waits for a decision, and quiets it o
     await decided.findByRole('button', { name: 'Open review' });
     expect(fillOf('Open review')).not.toBe(waiting);
   } finally { await act(async () => { await decided.dispose(); }); }
+});
+
+it('leads with Open review when the Review asks you for a verdict, not only for a pending decision (N8)', async () => {
+  const decided = await mountReview(0, { opened: [], reads: [] });
+  let quiet: string;
+  try {
+    await decided.findByRole('button', { name: 'Open review' });
+    quiet = fillOf('Open review');
+  } finally { await act(async () => { await decided.dispose(); }); }
+  const asked = await mountReview(0, { opened: [], reads: [] }, { requestedVerdict: true });
+  try {
+    await asked.findByRole('button', { name: 'Open review' });
+    expect(fillOf('Open review')).not.toBe(quiet);
+  } finally { await act(async () => { await asked.dispose(); }); }
+});
+
+it('says once that the Review didn\'t open when its findings fail to load, with Retry, and no summary beside it (N8)', async () => {
+  const sink = { opened: [] as unknown[], reads: [] as unknown[] };
+  const fixture = await mountReview(0, sink, { findingsFail: true });
+  try {
+    const retry = await fixture.findByRole('button', { name: 'Retry' });
+    await expect(fixture.getByText('This review didn’t open')).resolves.toBeDefined();
+    await expect(fixture.queryByText('Every finding is decided')).resolves.toBeUndefined();
+    await expect(fixture.queryByRole('button', { name: 'Open review' })).resolves.toBeUndefined();
+    const before = sink.reads.length;
+    await act(async () => { await fixture.press(retry); });
+    expect(sink.reads.length).toBeGreaterThan(before);
+  } finally { await act(async () => { await fixture.dispose(); }); }
 });

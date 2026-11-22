@@ -15,7 +15,7 @@ export function readReviewDetailInput(value: unknown): TriageDetailSurfaceInputV
 /**
  * Triage owns the entry heading and its actions; the body is the shared Review summary (the same one a pull
  * request embeds), whose own Open review is the way to decide. The Review is this page's subject, so that way leads
- * while a finding still waits for a decision. Review content and decisions stay in the Review.
+ * while the Review needs you (a requested verdict or a finding to decide). Review content and decisions stay in the Review.
  */
 export function ReviewDetail({ input }: Readonly<{ context: RenderContext; input: TriageDetailSurfaceInputV1 | null }>): React.ReactElement {
     const text = usePluginTranslation();

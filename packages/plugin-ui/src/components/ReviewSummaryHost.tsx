@@ -33,8 +33,8 @@ export type HappierReviewSummaryHostProps = Readonly<{
   reviewId: string;
   /**
    * The Review is the page's own subject (Triage's Review entry), not a section of another page (a pull request):
-   * while a finding waits for the reader's decision, Open review is the page's one primary (Reviews: implementing
-   * leads only once every finding is decided).
+   * while the Review needs the reader (a requested verdict or a finding to decide), Open review is the page's one
+   * primary (Reviews: implementing leads only once every finding is decided).
    */
   leadsPage?: boolean;
 }>;
@@ -62,9 +62,11 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
   const detail = detailResource.value;
   const window = findingResource.value.value;
   const [opened, setOpened] = React.useState<string | null>(null);
-  React.useImperativeHandle(ref, () => ({ refresh: async () => {
+  // One refresh for both reads: the page's refresh and this card's own Retry.
+  const refresh = React.useCallback(async () => {
     await Promise.all([detailResource.refresh(), findingResource.refresh()]);
-  } }), [detailResource.refresh, findingResource.refresh]);
+  }, [detailResource.refresh, findingResource.refresh]);
+  React.useImperativeHandle(ref, () => ({ refresh }), [refresh]);
   const glance = projectHappierReviewGlance(undefined, detail.value?.review ?? null, {
     running: text('happier.plugin-ui.review.glance.running', 'Reviewing…'),
     failed: text('happier.plugin-ui.review.glance.failed', 'The review couldn’t finish'),
@@ -96,12 +98,17 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
     try { await host.openResource({ kind: 'artifact', artifactId: reviewId }); }
     catch { await host.notify(text('happier.plugin-ui.action.error.failed', 'The action failed.'), { severity: 'error' }); }
   };
+  const retry = () => { void refresh(); };
+  // A Review whose detail or findings didn't load says so once, with Retry, instead of a summary it can't stand behind
+  // ("Every finding is decided · 1 finding" over an empty list). Last-known findings stay, with the line under them.
+  const findingsFailed = Boolean(findingResource.value.error || window?.status === 'failed');
+  const failed = (Boolean(detail.error) && qualityGlance === null) || (findingsFailed && !window?.rows.length);
   const row = window?.rows.find(value => value.rowId === opened);
   const decision = row ? readReviewFindingDecisionV1(row.comment.reviewTriageStatus, row.comment.state, window?.pending[row.rowId]) : null;
   return <HappierPageSheet colors={palette} rowDividers={false}>
     <Stack gap="small" style={{ paddingHorizontal: HAPPIER_PAGE_METRICS.rowPaddingHorizontalPx,
       paddingVertical: HAPPIER_PAGE_METRICS.rowPaddingVerticalPx }}>
-      {qualityGlance === null ? detail.error ? <ErrorState title={unavailable} /> : <LoadingState /> : <>
+      {failed ? <ErrorState title={unavailable} onRetry={retry} /> : qualityGlance === null ? <LoadingState /> : <>
         <HappierReviewSummary heading={text('happier.plugin-ui.review.heading', 'Review')} subject={null}
           glance={qualityGlance} rows={(window?.rows ?? []).map(value => {
             // Where it is, as the Review page's rows say it. The author here is only an id, never shown as a name.
@@ -113,7 +120,8 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
           more={window?.cursor ? <Button title={text('happier.plugin-ui.review.more', 'More findings · Open review')}
             variant="plain" size="small" onPress={openReview} /> : undefined}
           actions={<Button title={text('happier.plugin-ui.review.open', 'Open review')} size="small" onPress={openReview}
-            variant={leadsPage === true && detail.value?.human.needsYou.pendingDecisions === true ? 'primary' : 'secondary'} />} />
+            // The Review owner's needsYou: a requested verdict or a finding still to decide (Triage's header reads the same).
+            variant={leadsPage === true && detail.value?.human.needsYou.needsYou === true ? 'primary' : 'secondary'} />} />
         {row && decision ? <HappierReviewFinding rowId={row.rowId} finding={row.finding}
           accessibilityLabel={row.finding.title}
           severityLabel={severityWord(row.finding.severity)} location={formatHappierReviewFindingLocation(row.finding)}
@@ -137,8 +145,7 @@ function HappierReviewSummaryHost({ reviewId, leadsPage }, ref) {
             </Stack>} />
         </HappierReviewFinding> : null}
         {findingResource.value.pending === 'initial' ? <LoadingState /> : null}
-        {detail.error || findingResource.value.error || window?.status === 'failed' || window?.unavailableFindings.length
-          ? <ErrorState title={unavailable} /> : null}
+        {detail.error || findingsFailed || window?.unavailableFindings.length ? <ErrorState title={unavailable} onRetry={retry} /> : null}
       </>}
     </Stack>
   </HappierPageSheet>;

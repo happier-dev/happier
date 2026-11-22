@@ -210,6 +210,8 @@ afterEach(async () => {
  * body for exactly one panel. The body renders that panel and no tab strip of
  * its own, and its Overview panel is the story rail's source half.
  */
+const EMPTY_FINDINGS_WINDOW = { status: 'loaded', cursor: null, pending: {}, comments: [], rows: [], unavailableFindings: [] };
+
 async function mountPanel(panel: string | (() => string), options: Readonly<{
   direct?: boolean;
   admittedReview?: () => Readonly<{ reviewId: string; roundOrdinal: number }> | undefined;
@@ -279,6 +281,11 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
       handlers: {
         openResource: ({ resource }) => { options.openedResources?.push(resource); },
         readResource: async ({ resource }) => {
+          // A real host serves the Review's findings window with its detail; these PR fixtures have no findings.
+          if (typeof resource !== 'string' && 'hostRead' in resource && resource.hostRead === 'reviews.comments.list') {
+            const bytes = new TextEncoder().encode(JSON.stringify(EMPTY_FINDINGS_WINDOW));
+            return { contentType: 'application/json', bytes, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
+          }
           if (typeof resource === 'string' || !('hostRead' in resource) || resource.hostRead !== 'review.get')
             throw new PluginError({ code: 'unsupported_method' });
           options.reads?.push('review.get');
@@ -291,6 +298,8 @@ async function mountPanel(panel: string | (() => string), options: Readonly<{
           return { contentType: 'application/json', bytes, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
         },
         watchResource: async ({ resource }) => {
+          if (typeof resource !== 'string' && 'hostRead' in resource && resource.hostRead === 'reviews.comments.list')
+            return { digest: `sha256:${createHash('sha256').update(JSON.stringify(EMPTY_FINDINGS_WINDOW)).digest('hex')}` };
           if (typeof resource === 'string' || !('hostRead' in resource) || resource.hostRead !== 'review.get')
             throw new PluginError({ code: 'unsupported_method' });
           // A real host acknowledges the current digest before it can push an invalidation.
