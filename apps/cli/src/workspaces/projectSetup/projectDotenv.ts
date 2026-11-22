@@ -52,7 +52,8 @@ export function parseProjectDotenv(content: string) {
 }
 
 /** One private, lazy snapshot per demanded preparation; no watcher or persistent cache. */
-export function createProjectDotenvPreparation(root: string, upstreamEnvironment: ProcessEnvInput = {}) {
+export function createProjectDotenvPreparation(root: string, upstreamEnvironment: ProcessEnvInput = {},
+    withWorkspaceSource?: <T>(read: () => Promise<T>) => Promise<T>) {
     const source = currentWorkspaceSource();
     const capturedUpstreamEnvironment = Object.freeze({ ...upstreamEnvironment });
     let snapshot: Promise<Readonly<{ values: Record<string, string>; files: Record<string, string>; diagnostics: ProjectDotenvDiagnostic[] }>> | undefined;
@@ -61,7 +62,7 @@ export function createProjectDotenvPreparation(root: string, upstreamEnvironment
         const files: Record<string, string> = Object.create(null);
         const diagnostics: ProjectDotenvDiagnostic[] = [];
         for (const file of runtimeFiles) {
-            const read = await runWithWorkspaceSource(source, () => readProjectDefinitionFile(root, file));
+            const read = await readProjectDefinitionFile(root, file);
             if (read.kind === 'absent') continue;
             if (read.kind === 'refused') { diagnostics.push({ file, code: read.code }); continue; }
             const parsed = parseProjectDotenv(read.content);
@@ -73,7 +74,8 @@ export function createProjectDotenvPreparation(root: string, upstreamEnvironment
     return Object.freeze({ async read(declaredNames: readonly string[], originalEnvironment: ProcessEnvInput = capturedUpstreamEnvironment): Promise<ProjectDotenvResult> {
         const original = Object.freeze({ ...originalEnvironment });
         if (declaredNames.length === 0) return { kind: 'ready', environment: {}, originalEnvironment: original, sources: [] };
-        const selected = await (snapshot ??= readSnapshot());
+        const selected = await (snapshot ??= withWorkspaceSource ? withWorkspaceSource(readSnapshot)
+            : runWithWorkspaceSource(source, readSnapshot));
         if (selected.diagnostics.length) return { kind: 'refused', code: 'project_environment_binding_unavailable', diagnostics: selected.diagnostics };
         const resolveValue = (name: string, visiting: ReadonlySet<string>): string | undefined => {
             if (!Object.hasOwn(selected.values, name) || visiting.has(name)) return undefined;

@@ -12,7 +12,8 @@ import { workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/work
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { ProjectSetupConsentFailureDetailsV1Schema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { validatePath } from '@/rpc/handlers/pathSecurity';
-import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
+import type { ProjectDotenvPreparation } from './projectDotenv';
+import { createProjectRuntimeDotenvPreparation } from './projectSetupReadiness';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
 import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import { startProjectSetupAutostartServices, type ProjectSetupAutostartContext } from './projectSetupAutostart';
@@ -88,7 +89,12 @@ export function createProjectAgentNativeLaunchOwner(input: Readonly<{
                 },
                 readDotenvPreparation(root) {
                     let selected = dotenvPreparations.get(root);
-                    if (!selected) { selected = createProjectDotenvPreparation(root, originalEnvironment); dotenvPreparations.set(root, selected); }
+                    if (!selected) {
+                        selected = createProjectRuntimeDotenvPreparation({ runtime, ingress,
+                            workspace: { serverId: runtime.serverId, machineId: runtime.machineId, rootPath: root },
+                            context: { signal }, originalEnvironment });
+                        dotenvPreparations.set(root, selected);
+                    }
                     return selected;
                 },
                 platform: { os: (runtime.platform ?? process.platform) === 'win32' ? 'windows' : runtime.platform ?? process.platform,

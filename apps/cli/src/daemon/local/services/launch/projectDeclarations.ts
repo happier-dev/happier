@@ -2,7 +2,8 @@ import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { logger } from '@/ui/logger';
 import { composeProjectLaunchEnvironment, prepareProjectLaunchEnvironment, type PreparedProjectLaunchInput } from '@/workspaces/projectSetup/projectLaunchEnvironment';
-import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
+import type { ProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
+import { createProjectRuntimeDotenvPreparation } from '@/workspaces/projectSetup/projectSetupReadiness';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
 import { getHostWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -54,7 +55,6 @@ import { ProjectNativeToolchainUncertainError } from '@/workspaces/toolchain/pre
 import type { ProjectNativeEffectCaptureForHost } from '@/plugins/runtime/invocation/services/exec';
 import { assertNativeComposeAvailable, createNativeComposeLifecycle, NativeComposePrerequisiteError, type NativeComposeObservationIo, type NativeComposeActivatedProject } from './nativeComposeLifecycle';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
-import { logger } from '@/ui/logger';
 import { WorktreePortsUnavailableV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/worktreePortsV1';
 
 type ActionContext = RuntimeActionExecuteArgs['context'];
@@ -397,7 +397,8 @@ export function createProjectServiceDeclarationStarter(input: ProjectServiceDecl
         const dotenvKey = JSON.stringify([association.workspace.machineId, association.workspace.rootPath]);
         let dotenvPreparation = dotenvPreparations?.get(dotenvKey);
         if (!dotenvPreparation) {
-            dotenvPreparation = createProjectDotenvPreparation(association.workspace.rootPath, originalEnvironment);
+            dotenvPreparation = createProjectRuntimeDotenvPreparation({ runtime, ingress, workspace: association.workspace,
+                context, originalEnvironment });
             dotenvPreparations?.set(dotenvKey, dotenvPreparation);
         }
         const selection = request.declaration.selection;

@@ -17,6 +17,8 @@ import { createActionOperationStore } from '@/daemon/actionOperations/actionOper
 import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import { readDaemonTerminalPtyConfig } from '@/terminal/pty/config';
+import { createProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
+import { createProjectRuntimeDotenvPreparation } from '@/workspaces/projectSetup/projectSetupReadiness';
 
 // Only OS permissions and process launch are replaced. The framed worker,
 // read port, source lifetime and canonical Project inspection remain real.
@@ -61,6 +63,58 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
     } };
 });
 afterEach(() => { boundary.reset(); vi.restoreAllMocks(); });
+
+it.skipIf(process.platform !== 'linux')('keeps lazy private dotenv reads inside the member reader lifetime', async () => {
+    await withTempDir('member-project-dotenv-', async directory => {
+        const requesterIdentity = { kind: 'isolated' as const, separationRequired: true,
+            requester: { serverId: 'home', accountId: 'member', machineId: 'machine', installationId: 'installation' } };
+        const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ ...requesterIdentity, homeServerIdentityId: 'home' }),
+            agentUid: 2401, agentGid: 2401 };
+        const workspaceRoot = memberIdentity.workspaceRoot;
+        const root = join(workspaceRoot, 'accepted');
+        const backing = join(directory, 'accepted');
+        await mkdir(backing, { recursive: true });
+        await writeFile(join(backing, '.env'), 'DECLARED=member-private-value\nUNDECLARED=private-unselected\n', { mode: 0o600 });
+        boundary.mounts = [{ path: workspaceRoot, backing: directory, uid: 2401, gid: 2400, mode: 0o40710 }];
+        boundary.privateRoots = [root];
+        boundary.launch = async (input, output) => {
+            await readAgentLaunchFrame(input);
+            await runWorkspaceEffectWorker([], { input, output, signal: new AbortController().signal, currentDirectory: () => workspaceRoot });
+        };
+        // The daemon can neither traverse nor read the private optional file.
+        expect(await createProjectDotenvPreparation(root).read(['DECLARED']))
+            .toMatchObject({ kind: 'refused', code: 'project_environment_binding_unavailable' });
+        boundary.phases.length = 0;
+        mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'accepted', serverId: 'home',
+            machineId: 'machine', rootPath: root, createdAtMs: 1 })]);
+        const snapshot = { enabled: true, memberProvisioning: 'linuxUsersV1' as const,
+            status: { kind: 'effective' as const, platform: 'linux' as const }, workspaceRoots: [] };
+        const runtime = { credentials: { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.signature`, encryption: null },
+            serverId: 'home', serverHttpBaseUrl: 'https://member-home.test', requesterIdentity,
+            agentIsolation: { read: () => snapshot },
+            nativeOperationRuntime: { prepareNativeOperation: (input: Parameters<typeof prepareRequesterNativeOperation>[0]) => prepareRequesterNativeOperation(input, {
+                homeServerIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+                machine: { read: () => snapshot, managedHappierBinaryPath: '/opt/happier/cli/current/happier',
+                    readMember: async () => ({ identity: memberIdentity, daemonObservation: {
+                        daemonIdentity: 'nonRoot', daemonUid: 2400, daemonUsername: 'daemon', daemonPrimaryGroup: 'daemon',
+                    } }) },
+            }) } };
+        const prepared = createProjectRuntimeDotenvPreparation({ runtime, ingress: { signal: new AbortController().signal },
+            workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'accepted', rootPath: root },
+            context: {}, originalEnvironment: {} });
+        expect(await prepared.read([])).toMatchObject({ kind: 'ready', environment: {} });
+        expect(boundary.phases).toEqual([]);
+        const [first, concurrent] = await Promise.all([prepared.read(['DECLARED']), prepared.read(['DECLARED'])]);
+        expect(first).toMatchObject({ kind: 'ready', environment: { DECLARED: 'member-private-value' } });
+        expect(concurrent).toEqual(first);
+        expect(JSON.stringify(first)).not.toContain('private-unselected');
+        await writeFile(join(backing, '.env'), 'DECLARED=changed\n');
+        expect(await prepared.read(['DECLARED'])).toEqual(first);
+        expect(boundary.phases.filter(phase => phase === 'native_spawn')).toHaveLength(1);
+        expect(boundary.phases).not.toContain('daemon_private_readback_denied');
+        expect(boundary.childFailure).toBeUndefined();
+    });
+});
 
 it.skipIf(process.platform !== 'linux').each([PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_WORKTREE_PORTS_REASSIGN_ACTION_ID].flatMap(actionId =>
     (['own', 'foreign', 'symlink'] as const).map(mode => ({ actionId, mode }))))(

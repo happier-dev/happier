@@ -48,7 +48,8 @@ import { inspectProjectDefinitionExecutionFacts } from './projectDefinitionInspe
 import { selectProjectDefinitionRead } from './projectDefinitionRead';
 import { readProjectDefinitionFileBytes } from './nativeDefinitionFiles';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
-import { createProjectDotenvPreparation, type ProjectDotenvPreparation } from './projectDotenv';
+import type { ProjectDotenvPreparation } from './projectDotenv';
+import { createProjectRuntimeDotenvPreparation } from './projectSetupReadiness';
 import { startProjectSetupAutostartServices } from './projectSetupAutostart';
 import { readLiteralCommandExecutedFiles } from './literalCommandFiles';
 import { prepareProjectSetup, resolveProjectSetupConfigEnvironment, type PreparedProjectSetupCommand, type PreparedProjectSetupPlan } from './projectSetupPreparation';
@@ -510,7 +511,11 @@ export function createProjectFiniteAction(runtime: ProjectFiniteActionRuntime, i
         const dotenvPreparation = () => {
             const root = association.workspace.rootPath;
             let selected = dotenvPreparations.get(root);
-            if (!selected) { selected = createProjectDotenvPreparation(root, originalEnvironment); dotenvPreparations.set(root, selected); }
+            if (!selected) {
+                selected = createProjectRuntimeDotenvPreparation({ runtime, ingress, workspace: association.workspace,
+                    context: args.context, originalEnvironment });
+                dotenvPreparations.set(root, selected);
+            }
             return selected;
         };
         const preparation = (): Parameters<typeof prepareProjectSetup>[0] => ({ workspace: association.workspace, projectAssociation: association,

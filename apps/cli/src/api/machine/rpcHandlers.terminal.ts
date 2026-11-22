@@ -29,7 +29,7 @@ import { readAcceptedManagedWorkspaceRef } from '@/workspaces/acceptedManagedWor
 import { ensureAcceptedManagedWorkspaceTarget } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { prepareProjectWorktreeRuntime } from '@/workspaces/execution/projectWorktreeRuntime';
-import { createProjectDotenvPreparation } from '@/workspaces/projectSetup/projectDotenv';
+import { createProjectRuntimeDotenvPreparation } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { HostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -603,7 +603,8 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       };
       const preparation = { workspace: association.workspace, projectAssociation: association, requesterIdentity,
         acceptedSetup: definition.acceptedSetup,
-        dotenvPreparation: createProjectDotenvPreparation(association.workspace.rootPath, hostEnvironment),
+        dotenvPreparation: createProjectRuntimeDotenvPreparation({ runtime, ingress: context,
+          workspace: association.workspace, context: projectActionContext(context), originalEnvironment: hostEnvironment }),
         originalEnvironment: hostEnvironment, runtimeEnvironment: runtimeBindings.runtimeEnvironment,
         invocationEnvironment: launchProcess?.env,
         approvalContext: projectActionContext(context),

@@ -19,10 +19,13 @@ import { projectSetupInspectionFailure } from './projectSetupInspectionFailure';
 import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
 import { resolvePrivateProjectCheckoutRoot } from '@/workspaces/activation/privateProjectCheckout';
 import { readProjectAsMember } from '@/workspaces/activation/memberProjectInspection';
+import { createProjectDotenvPreparation } from './projectDotenv';
+import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
+import { resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 /** The requester Account and native invocation supply the accepted checkout's filesystem facts. */
 export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
-    runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity'> & Readonly<{
+    runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity' | 'agentIsolation'> & Readonly<{
         nativeOperationRuntime?: Pick<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>, 'prepareNativeOperation'>;
     }>;
     ingress: RpcHandlerContext; workspace: ProjectDefinitionWorkspace;
@@ -51,6 +54,15 @@ export async function withProjectMemberWorkspaceSource<T>(input: Readonly<{
     } finally { await native.dispose(); }
 }
 
+
+/** A lazy dotenv snapshot owns its member reader until the complete file family settles. */
+export function createProjectRuntimeDotenvPreparation(input: Readonly<Pick<Parameters<typeof withProjectMemberWorkspaceSource>[0],
+    'runtime' | 'ingress' | 'workspace' | 'context'> & { originalEnvironment: ProcessEnvInput }>) {
+    return createProjectDotenvPreparation(input.workspace.rootPath, input.originalEnvironment,
+        input.runtime.requesterIdentity?.kind === 'isolated' && resolveHostRequesterAgentPlacementForHost({
+            identity: input.runtime.requesterIdentity, snapshot: input.runtime.agentIsolation?.read() }) === 'member'
+            ? read => withProjectMemberWorkspaceSource({ ...input, read }) : undefined);
+}
 
 /** Demand-only definition read under the same admitted requester and accepted checkout as setup. */
 export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<{
