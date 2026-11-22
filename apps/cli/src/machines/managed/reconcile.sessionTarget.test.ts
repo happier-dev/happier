@@ -30,8 +30,10 @@ import { createGitScmBackendRuntimeRegistration } from '../../../../../packages/
 import { deliverSessionTargetLaunch } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { createManagedPresetHydrator } from './presetHydration';
 import { execFile } from 'node:child_process';
+import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
+import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision/processCustody';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, chmod, rm, readFile, realpath, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
@@ -619,23 +621,8 @@ describe('Session placement on a managed target (driver)', () => {
     const syncWorkspace = { v: 2 as const, kind: 'managed' as const, id: 'native-workspace', serverId: homeId,
         managedId: machine.id, controller: machine.controller!, rootPath: '/home/u/workspace', createdAtMs: 0 };
 
-    it('reports a stopped provider through the admitted Project Files and Git reads', async () => {
-        let providerPower: 'running' | 'stopped' = 'running';
-        const h = harness({ guest: true, onNativeRole: async role => {
-            if ((role === 'bootstrap' || role === 'stream') && providerPower === 'stopped') {
-                throw new PluginError({ code: 'managed_power_required' });
-            }
-        } });
-        const lifetime = new AbortController();
-        onTestFinished(() => lifetime.abort());
-        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
-        const posts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { observed: true } });
-        onTestFinished(() => posts.mockRestore());
-        const keys = nacl.sign.keyPair();
-        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
-            externalActionMachineRequestPrivateKey: keys.secretKey,
-            readTargetCurrent: async (_id, request) => ({ machine: row, admitted: request.requesterAccountId === 'owner' }) });
-        const workspace = workspaceAddressFromRefV2(syncWorkspace);
+    function projectPanelReads(ref: typeof syncWorkspace, lifetime: AbortController, driver: ReturnType<typeof createManagedMachineAcquisitionDriver>) {
+        const workspace = workspaceAddressFromRefV2(ref);
         if (workspace.kind !== 'managed') throw new Error('Expected a managed workspace');
         const admission = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => homeId,
             resolveWorkspaceTarget: resolveSessionTargetWorkspace,
@@ -643,7 +630,7 @@ describe('Session placement on a managed target (driver)', () => {
                 requesterAccountId: 'owner', openTarget: request => driver.openProjectWorkspaceTarget({ ...request, holder }),
                 signal: lifetime.signal }) });
         const context: RpcHandlerContext = { signal: lifetime.signal, callerAuthority: 'present_user',
-            machineAdmission: { ...syncWorkspace.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
+            machineAdmission: { ...ref.controller, actorAccountId: 'owner', custodianAccountId: 'owner',
                 role: 'manage', encryptionMode: 'plain' }, verifyMachineAdmissionCurrent: async () => true };
         const files = createDirectoryRpcActionExecutor({ workingDirectory: '/controller', accessPolicy: { kind: 'osUser' },
             getAdditionalAllowedReadDirs: () => [], getAdditionalAllowedWriteDirs: () => [],
@@ -661,21 +648,42 @@ describe('Session placement on a managed target (driver)', () => {
         })]);
         const handlers = new Map<string, RpcHandler>();
         registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, workspace.rootPath, {
-            registry, machineId: syncWorkspace.controller.machineId,
+            registry, machineId: ref.controller.machineId,
             selectWorkspaceSource: admission.selectWorkspaceSource, admitWorkspaceSource: admission.rpc,
         });
         const readStatus = () => handlers.get(RPC_METHODS.SCM_STATUS_SNAPSHOT)!({ v: 1, kind: 'targeted_action_rpc',
             target: workspace, input: { cwd: workspace.rootPath } }, context);
+        const readWatch = () => handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: workspace.rootPath, workspace }, context);
+        return { readFiles, readStatus, readWatch, admit: () => admission.selectWorkspaceSource(context, list) };
+    }
+
+    it('reports a stopped provider through the admitted Project Files and Git reads', async () => {
+        let providerPower: 'running' | 'stopped' = 'running';
+        const h = harness({ guest: true, onNativeRole: async role => {
+            if ((role === 'bootstrap' || role === 'stream') && providerPower === 'stopped') {
+                throw new PluginError({ code: 'managed_power_required' });
+            }
+        } });
+        const lifetime = new AbortController();
+        onTestFinished(() => lifetime.abort());
+        const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true });
+        const posts = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { observed: true } });
+        onTestFinished(() => posts.mockRestore());
+        const keys = nacl.sign.keyPair();
+        const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+            externalActionMachineRequestPrivateKey: keys.secretKey,
+            readTargetCurrent: async (_id, request) => ({ machine: row, admitted: request.requesterAccountId === 'owner' }) });
+        const { readFiles, readStatus, readWatch, admit } = projectPanelReads(syncWorkspace, lifetime, driver);
         providerPower = 'stopped';
         await expect.soft(readFiles()).rejects.toMatchObject({ rpcErrorCode: 'managed_power_required' });
         await expect.soft(readStatus()).rejects.toMatchObject({ rpcErrorCode: 'managed_power_required' });
 
         providerPower = 'running';
-        await admission.selectWorkspaceSource(context, list);
+        await admit();
         providerPower = 'stopped';
         const filesResult = await readFiles();
         const status = await readStatus();
-        const watch = await handlers.get(RPC_METHODS.SCM_WORKSPACE_WATCH)!({ directory: workspace.rootPath, workspace }, context);
+        const watch = await readWatch();
         expect({ filesResult, status, watch }).toMatchObject({
             filesResult: { ok: true, result: { success: false, errorCode: 'managed_power_required' } },
             status: { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'managed_power_required' },
@@ -688,6 +696,87 @@ describe('Session placement on a managed target (driver)', () => {
             expect.anything(),
         );
     });
+
+    const localHolder = resolveSessionHolderExecutablePath();
+    const localCustody = resolveProcessCustodySupportExecutable('linux');
+    it.skipIf(process.platform !== 'linux' || !localHolder || !localCustody)(
+        'recovers Project Files and Git when their first reads overlap on controller reconnect', async () => {
+            const guestHome = await mkdtemp(join(tmpdir(), 'managed-project-reconnect-'));
+            const rootPath = join(guestHome, 'repo');
+            const holderDirectory = join(guestHome, '.happier', 'holder', holder.version);
+            const lifetime = new AbortController();
+            onTestFinished(async () => { lifetime.abort(); await rm(guestHome, { recursive: true, force: true }); });
+            await mkdir(rootPath);
+            await mkdir(holderDirectory, { recursive: true });
+            await symlink(localCustody!, join(holderDirectory, 'happier-process-custody'));
+            const git = (...args: string[]) => promisify(execFile)('git', args, { cwd: rootPath });
+            await git('init', '-q', '--initial-branch=reconnected');
+            await git('-c', 'user.name=Guest', '-c', 'user.email=guest@example.test', 'commit', '--allow-empty', '-qm', 'Initial');
+            await writeFile(join(rootPath, 'guest-only.txt'), 'Guest contents');
+            const firstBootstrap = Promise.withResolvers<void>();
+            const secondBootstrap = Promise.withResolvers<void>();
+            const releaseFirstBootstrap = Promise.withResolvers<void>();
+            let opening = 0;
+            let online = false;
+            const h = harness({
+                nativeOptions: {
+                    nativeCommandArgs: [],
+                    nativeRoleResults: { bootstrap: roleResult('bootstrap'), exec: guestExec },
+                    hostServiceAdapters: { exec: {
+                        resolveExecutable: async () => ({ command: localHolder!, args: [], env: { PATH: process.env.PATH! } }),
+                        resolvePath: async () => { throw new Error('The provider starts the guest holder without a host cwd'); },
+                    } },
+                },
+                onNativeRole: async (role, input, context) => {
+                    if (role === 'bootstrap') {
+                        if (++opening === 1) {
+                            firstBootstrap.resolve();
+                            await releaseFirstBootstrap.promise;
+                        } else {
+                            secondBootstrap.resolve();
+                        }
+                    }
+                    if (role === 'stream') {
+                        const { argv } = input as { argv: string[] };
+                        const channel = await context.services.exec.spawn({ executable: { kind: 'systemTool', id: 'fixture-node' }, args: argv.slice(1) },
+                            { outputDelivery: 'invocation', signal: context.signal });
+                        try { await channel.waitForExit(); }
+                        finally { await channel.dispose(); }
+                    }
+                },
+            });
+            const row = ManagedMachineV1Schema.parse({ ...machine, bootstrapInstalled: true,
+                workspaceAttachment: { os: 'linux', arch: process.arch, home: guestHome } });
+            const driver = createManagedMachineAcquisitionDriver({ ...h.input,
+                readTargetCurrent: async (_id, request) => {
+                    if (!online) throw new ManagedMachineControllerError('target_unavailable');
+                    return { machine: row, admitted: request.requesterAccountId === 'owner' };
+                },
+            });
+            const { readFiles, readStatus } = projectPanelReads({ ...syncWorkspace, rootPath }, lifetime, driver);
+            await expect(readFiles()).rejects.toMatchObject({ rpcErrorCode: 'target_unavailable' });
+            await expect(readStatus()).rejects.toMatchObject({ rpcErrorCode: 'target_unavailable' });
+
+            online = true;
+            const files = readFiles();
+            const firstRead = await Promise.race([firstBootstrap.promise.then(() => 'bootstrap'), files.then(() => 'settled')]);
+            expect(firstRead).toBe('bootstrap');
+            const status = readStatus();
+            const outcomes = Promise.allSettled([files, status]);
+            try { await Promise.race([secondBootstrap.promise, status.catch(() => undefined)]); }
+            finally { releaseFirstBootstrap.resolve(); }
+            const [filesResult, gitResult] = await outcomes;
+            expect.soft(filesResult, JSON.stringify(filesResult)).toMatchObject({ status: 'fulfilled', value: { ok: true, result: { success: true,
+                entries: expect.arrayContaining([expect.objectContaining({ name: 'guest-only.txt' })]) } } });
+            expect(gitResult, gitResult.status === 'rejected' ? String(gitResult.reason) : JSON.stringify(gitResult.value)).toMatchObject({
+                status: 'fulfilled',
+                value: { success: true, snapshot: {
+                    branch: { head: 'reconnected' },
+                    entries: expect.arrayContaining([expect.objectContaining({ path: 'guest-only.txt' })]),
+                } },
+            });
+        },
+    );
 
     it('refuses the other requester at Workflow admission before a guest bootstrap or file effect', async () => {
         const h = harness({ guest: true, holdStream: true });

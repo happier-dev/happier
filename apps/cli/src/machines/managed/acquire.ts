@@ -14,6 +14,7 @@ import { isExternalActionManagedWakeRootV1, readExternalActionManagedRetryGuestC
 import { redactManagedMachineCredentialReferences, ManagedMachineFullV1Schema, ManagedMachineV1Schema,
     isManagedOpaquePresetMachineV1, type ManagedControllerV1, type ManagedMachineFullV1,
     type ManagedMachineV1, type ManagedMachineReadSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ActionExecuteResult, ActionExecutorContext, JsonValue, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationFailureResponseV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
@@ -709,8 +710,9 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
         const lifetime = AbortSignal.any([request.lifetime, revoked.signal]);
         const finiteSignal = AbortSignal.any([preparationSignal, revoked.signal]);
         const hydrator = createManagedPresetHydrator(input);
+        // Concurrent cold Project opens have independent native lifetimes, even for the same guest.
         const options = { requestId: sync ? `workspace-sync-target:${sync.relationshipId}`
-            : session ? `session-target:${session.sessionId}` : `project-workspace-target:${request.managedId}`,
+            : session ? `session-target:${session.sessionId}` : `project-workspace-target:${randomUUID()}`,
             signal: lifetime, context: request.operation };
         const admit = async (current: Awaited<ReturnType<typeof readCurrent>>, signal = lifetime): Promise<ManagedMachineFullV1> => {
             if (!current || current.machine.id !== request.managedId) {
