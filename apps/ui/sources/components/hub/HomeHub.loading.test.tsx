@@ -215,7 +215,10 @@ describe('Home Loading at the RN-web layout boundary', () => {
                 await act(async () => read.resolve());
                 await flushHookEffects({ cycles: 20, turns: 2 });
                 expect(find('home-hub.loading')).toBeNull();
-                expect(outgoingAnimations).not.toHaveLength(0);
+                expect(document.body.textContent).toContain('Approved');
+                expect(outgoingAnimations).toHaveLength(0);
+                await frames(16, () => expect(outgoingAnimations).toHaveLength(0));
+                await frames(16, () => expect(outgoingAnimations).not.toHaveLength(0));
                 await act(async () => {
                     for (const effect of outgoingAnimations) effect.onfinish?.();
                 });

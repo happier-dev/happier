@@ -30,6 +30,7 @@ export type StepWebLeaf = Readonly<{ element: HTMLElement; rect: WindowFlightRec
 export type StepFreeze = Readonly<{
     rect: WindowFlightRect;
     clone?: HTMLElement;
+    webBackdrop?: HTMLElement;
     image?: SkImage;
     ink?: GlyphInkMap;
     control?: HTMLElement | null;

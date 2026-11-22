@@ -495,6 +495,18 @@ it('captures the approved step for one Home landing and holds the tour until the
     setReducedMotionPreferenceOverride(false);
     const previousAnimate = HTMLElement.prototype.animate;
     const rect = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 40, 280, 420));
+    const paints = new Map<number, FrameRequestCallback>();
+    let nextFrame = 0;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+        paints.set(++nextFrame, callback);
+        return nextFrame;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (handle: number) => { paints.delete(handle); });
+    const paintFrame = async () => {
+        const callbacks = [...paints.values()];
+        paints.clear();
+        await act(async () => { for (const callback of callbacks) callback(performance.now()); });
+    };
     const frozenEffects: Array<ReturnType<typeof collectEffect>> = [];
     function collectEffect(frames: Keyframe[], duration: number) {
         return { frames, duration, animation: { onfinish: null as (() => void) | null, cancel() {} } };
@@ -550,17 +562,22 @@ it('captures the approved step for one Home landing and holds the tour until the
         expect(frozenEffects).toHaveLength(0);
         expect(copy?.isConnected).toBe(true);
         await act(async () => presentHome());
+        expect(container.querySelector('h1')?.textContent).toBe('Home');
+        expect(frozenEffects).toHaveLength(0);
+        await paintFrame();
+        expect(frozenEffects).toHaveLength(0);
+        expect(copy?.isConnected).toBe(true);
+        await paintFrame();
         expect(frozenEffects).toHaveLength(1);
         const [dissolve] = frozenEffects;
         expect(dissolve.frames[0]?.opacity).toBe(1);
         expect(dissolve.frames.at(-1)?.opacity).toBe(0);
         expect(dissolve.duration).toBeLessThan(1_050);
-        await act(async () => {
-            if (stageMotion?.kind !== 'transition') throw new Error('Expected the outgoing dissolve with Home in place');
-            stageMotion.onSettled?.();
-        });
+        if (stageMotion?.kind !== 'transition') throw new Error('Expected the outgoing dissolve with Home in place');
+        const arrival = stageMotion;
+        await act(async () => dissolve.animation.onfinish?.());
         expect(copy?.isConnected).toBe(false);
-        expect(stageMotion?.kind).toBe('transition');
+        expect(stageMotion).toBe(arrival);
         expect(isHomeArrivalMotionPending()).toBe(true);
         await act(async () => skipStepMotion());
         expect(isHomeArrivalMotionPending()).toBe(false);

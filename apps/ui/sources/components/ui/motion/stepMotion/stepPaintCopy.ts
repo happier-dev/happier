@@ -39,7 +39,7 @@ export function mountPaintCopy(regions: readonly HTMLElement[], backdrop?: strin
       element.removeAttribute(key);
   }
   document.body.append(capture);
-  return () => capture.remove();
+  return { webBackdrop: backdrop ? capture : undefined, release: () => capture.remove() };
 }
 
 /**
@@ -59,6 +59,6 @@ export function copyStepLayer(layer: StepMotionLayerHandle, backdrop?: string): 
     clone,
     rect,
     webChrome,
-    release: mountPaintCopy([clone, ...webChrome], backdrop),
+    ...mountPaintCopy([clone, ...webChrome], backdrop),
   };
 }

@@ -7,19 +7,13 @@ import { useWorkspacePresentation } from './useWorkspaceShellEnabled';
 import { storage, useActiveServerAccountScope, useIsDataReady } from '@/sync/domains/state/storage';
 import { resolveDesktopWindowContext } from '@/desktop/window/isDesktopAuxiliaryWindowContext';
 import { AppWindowWorkspace } from '@/desktop/window/AppWindowWorkspace';
-import { isHomeArrivalMotionPending } from '@/components/hub/homeArrival';
-import { skipStepMotion } from '@/components/ui/motion/stepMotion/StepMotionStage';
+import { revealHomeRetryAfterPaint } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { HomeReachabilityGate } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { AppLaunchState } from './AppLaunchState';
 import type { AppWindowRecord } from '@/desktop/window/appWindowBoot';
 import { useCurrentRoutePathname } from './currentRouteLocation';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
-
-function revealUnavailableHome(): void {
-    // The held entry must yield to the reachable Retry control if admission ends offline.
-    if (isHomeArrivalMotionPending()) skipStepMotion();
-}
 
 /** Above the palette and rail so every workspace launcher reaches the same owner. */
 export function WorkspaceAppShellProvider(props: Readonly<{ children: React.ReactNode; browserWindow?: AppWindowRecord | null }>) {
@@ -104,7 +98,7 @@ export function WorkspaceAppShellProvider(props: Readonly<{ children: React.Reac
     return <WorkspaceProvider enabled={presentation === 'shell' && !pendingFirstAccount} phone={presentation === 'phone'}
         entry={presentation === 'entry'} deferred={pendingFirstAccount} restoreRetainedHome={restoreRetainedHome} catalog={catalog}>
         {restoring
-            ? <HomeReachabilityGate variant="pane" onUnavailable={revealUnavailableHome}>
+            ? <HomeReachabilityGate variant="pane" onUnavailable={revealHomeRetryAfterPaint}>
                 <AppLaunchState testID="workspace-account-restoring" />
             </HomeReachabilityGate>
             : <WorkspaceShellWillHostRoutesContext.Provider value={Platform.OS === 'web' && requestedPresentation === 'shell'}>
