@@ -241,6 +241,16 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         setMachine: (update: Partial<typeof machine>) => { machine = { ...machine, ...update }; },
     };
 }
+
+function expectRetainedNativeDaemonStart(test: ReturnType<typeof setup>, precedingEffects: readonly string[] = []) {
+    // The retained guest may have enrolled with a detached daemon even without an explicit identity.
+    expect(test.effects).toEqual([...precedingEffects, 'bootstrap', 'exec']);
+    expect(test.nativeInputs.at(-1)).toMatchObject({
+        resource: test.readMachine().resource?.value,
+        argv: ['sh', '-c', expect.stringContaining("'daemon' 'start' '--json'")],
+    });
+}
+
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
 it('settles a reviewed native command wake with an enrolled guest daemon unavailable', async () => {
@@ -2406,7 +2416,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
             expect(executed).toEqual([]);
         } finally { await runtime.stop(); }
     });
-    it('does not recreate accepted Start operations while compute runs and the exact Session input remains pending', async () => {
+    it('refreshes accepted Start against running native compute without another power effect', async () => {
         const test = setup(undefined, undefined, 'start', {
             observedAt: 10, availability: 'present', power: 'running', storage: 'retained',
         });
@@ -2433,9 +2443,10 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 runtime.notifyChanged();
                 await vi.waitFor(() => expect(reads).toBe(expected));
             }
+            await vi.waitFor(async () => expect(await operations.handlers.getV2({ operationId: 'already-running-wake' }))
+                .toMatchObject({ kind: 'found', operation: { state: 'succeeded' } }));
+            expectRetainedNativeDaemonStart(test);
         } finally { await runtime.stop(); }
-        expect(await operations.handlers.getV2({ operationId: 'already-running-wake' })).toMatchObject({ kind: 'not_found' });
-        expect(test.effects).toEqual([]);
     });
     it.each(['idle', 'configured-stop', 'configured-suspend', 'busy', 'unknown', 'activity-unavailable', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
         'within-window', 'refused-reopen', 'lost-probe-reply', 'aborted-probe'] as const)(
@@ -3150,8 +3161,7 @@ describe('managed native intent through the accepted Action', () => {
             if (disposition === 'approve') {
                 expect(result).toMatchObject({ value: { kind: 'accepted', intentRevision: 2 } });
                 expect(stored).toMatchObject({ execution: { ok: true, result: { kind: 'accepted', intentRevision: 2 } } });
-                // Fresh Inspect already sees running compute; only guest startup remains.
-                expect(test.effects).toEqual(['bootstrap']);
+                expectRetainedNativeDaemonStart(test);
             }
             else { expect(result).toHaveProperty('error'); expect(test.effects).toEqual([]); }
         } finally {
@@ -3182,13 +3192,13 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.effects).toEqual([]);
         expect(test.post).not.toHaveBeenCalled();
         expect(await rpc.handleRequest({ ...request, authorization: ACTION_API_SERVER_ORIGIN })).toMatchObject({ ok: true });
-        expect(test.effects).toEqual(['bootstrap']);
+        expectRetainedNativeDaemonStart(test);
         test.setMachine({ controller: undefined });
         const accountRequest = { ...request, params: { target: { ...target, controller: undefined,
             expectedIntentRevision: test.readMachine().intentRevision }, actionOrigin },
             authorization: ACTION_API_SERVER_ORIGIN };
         expect(await rpc.handleRequest(accountRequest)).toMatchObject({ errorCode: 'admission_unavailable' });
-        expect(test.effects).toEqual(['bootstrap']);
+        expectRetainedNativeDaemonStart(test);
     });
     it('refuses a finite wake without the original admitted Action authority before native IO', async () => {
         const test = setup(undefined, undefined, 'start', { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' });
@@ -3232,7 +3242,7 @@ describe('managed native intent through the accepted Action', () => {
         }
         await expect(test.driver.executePolicy(machine, { kind: 'accepted-input-start', target }, { ...test.options, ...{ actionOrigin } }))
             .resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
-        expect(test.effects).toEqual(['power', 'bootstrap']);
+        expectRetainedNativeDaemonStart(test, ['power']);
         const phases = test.post.mock.calls.filter(([url]) => ['/admit-policy', '/current', '/submit-intent', '/report-intent']
             .some(phase => String(url).endsWith(phase)));
         expect(phases.length).toBeGreaterThan(2);
