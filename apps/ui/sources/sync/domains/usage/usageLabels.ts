@@ -111,6 +111,7 @@ export function usageDimensionLabel(dimension: UsageAnalyticsBreakdownDimension,
     // An engine that is an Agent (`codex`) is named as that Agent, never by its raw id.
     if (dimension === 'backendMode' && (AGENT_IDS as readonly string[]).includes(key)) return usageAgentTitle(key, label);
     if (dimension === 'model') {
+        if (key === 'unknown') return t('usage.board.plans.cellUnknown');
         const modelId = canonicalUsageModelPriceId(key);
         if (modelId === null) return t('usage.board.page.unattributed');
         for (const agentId of AGENT_IDS) {

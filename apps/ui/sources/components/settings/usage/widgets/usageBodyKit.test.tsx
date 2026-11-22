@@ -115,7 +115,8 @@ describe('shared Usage identity and dependent coverage', () => {
         const unbounded = resolveUsagePageAggregation({ queries: [normalizeUsageQuery({ period: {} })] }, bundledUsageModelPriceCatalog).results[0]!;
         expect(isUsageReadOutstanding(unbounded, ['comparison'])).toBe(false);
     });
-    it('preserves unknown model ids exactly instead of inventing names or casing', () => {
+    it('labels unattributed models as not reported and preserves unfamiliar model ids', () => {
+        expect(usageDimensionLabel('model', 'unknown', 'unknown')).toBe(t('usage.board.plans.cellUnknown'));
         expect(usageDimensionLabel('model', '<synthetic>')).toBe(t('usage.board.page.unattributed'));
         for (const id of ['claude-haiku-6-1', 'gpt-6.1-sol', 'third-party/MODEL-snapshot']) {
             expect(usageDimensionLabel('model', id)).toBe(id);
