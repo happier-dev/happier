@@ -23,6 +23,14 @@ describe('ManagedMachineControllerError.fromActionFailure', () => {
             errorCode: 'spawn_failed', error: refusal.launchError.message, details: refusal,
         });
     });
+    it('preserves a code-only native cancellation through the shared Action executor', () => {
+        const error = ManagedMachineControllerError.fromActionFailure({
+            ok: false, errorCode: 'cancelled', error: 'cancelled', details: { privateOutput: 'PRIVATE_OUTPUT' },
+        }, 'machines.managed.exec');
+        const failure = normalizeActionExecutorThrownError(error, 'machines.managed.exec');
+        expect(failure).toMatchObject({ errorCode: 'cancelled', error: 'cancelled' });
+        expect(JSON.stringify(failure)).not.toContain('PRIVATE_OUTPUT');
+    });
     it.each([false, true])('retains a code-only child refusal request and effect evidence (%s)', effectAttempted => {
         const error = ManagedMachineControllerError.fromActionFailure({ ok: false, errorCode: 'provider_unavailable',
             error: 'provider_unavailable', requestId: 'native-acquire-request', effectAttempted,

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
+import { access, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { symbols, type DestinationStream } from 'pino';
 import { io } from 'socket.io-client';
@@ -9,7 +9,7 @@ import { MANAGED_EXEC_ACTION_ID_V1 } from '@happier-dev/protocol/machines/manage
 import { ManagedAcquireInputV1Schema, ManagedExecOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { replaceManagedMachinePresetLaunchNameV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
 import type { ManagedTargetRequesterV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
 import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { ActionOperationGetV1ResponseSchema, ActionOperationListV1ResponseSchema, ActionOperationRevisionEphemeralV1Schema,
     ActionOperationSnapshotV1Schema, type ActionOperationRevisionEphemeralV1 } from '@happier-dev/protocol/actions/operations/v1';
@@ -22,6 +22,7 @@ import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actio
 import { buildAccountStoredContentCompatibilitySocketAuthV1, computeContentPublicKeyFingerprint,
     CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, encodeBase64, sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol';
 import { isRecord } from '@happier-dev/protocol/common/records';
+import { createLimaSdkExecutor } from '../../../../../packages/plugins/machine-lima/src/machine/nativeExecutor';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createSignedAccountContentBinding } from '../../../../server/sources/testkit/accountEncryption';
 import { setEligibleMachineAccessGrantInTx } from '../../../../server/sources/testkit/machineAccessGrant.testkit';
@@ -63,7 +64,7 @@ function unmounted<T>(name: string): T {
     return new Proxy(unexpected, { get: unexpected }) as T;
 }
 
-async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running', installedReceiver = false, fromPreset = false) {
+async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'running', installedReceiver = false, fromPreset = false, useLimaCarrier = false) {
     const directory = await createTempDir('composed-managed-exec-');
     onTestFinished(async () => { vi.restoreAllMocks(); vi.unstubAllEnvs(); reloadConfiguration(); await removeTempDir(directory); });
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
@@ -159,7 +160,7 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
         nativeCommandArgs: [], supportedIntents: ['start', 'stop', 'delete'], nativeRoleResults: results,
         invocationLogSink: { write: entry => { providerLogs.push(entry); } },
         hostServiceAdapters: { exec: {
-            resolveExecutable: async () => ({ command: process.execPath, args: [] }),
+            resolveExecutable: async () => ({ command: process.execPath, args: useLimaCarrier ? ['-e', limaCarrier, '--'] : [] }),
             resolvePath: async () => { throw new Error('Unexpected provider cwd'); },
             environment: { RC5_CONTROLLER_ENV: canaries.controller },
         } },
@@ -174,12 +175,19 @@ async function createManagedExecFixture(initialPower: 'running' | 'stopped' = 'r
             nativeCalls.push(input);
             const material = await context.services.connectedAccounts.materialize('upstream', { kind: 'environment', keys: ['TOKEN'] });
             expect(material.kind === 'environment' && material.env.TOKEN === canaries.provider).toBe(true);
-            const child = await context.services.exec.run({ executable: { kind: 'systemTool', id: 'fixture-node' },
-                args: ['-e', guestTransport, '--', ...input.argv],
-                ...(typeof input.inputBase64 === 'string' ? { stdin: Buffer.from(input.inputBase64, 'base64') } : {}),
-                env: { PATH: [guestBin, '/usr/bin', '/bin'].join(delimiter), USER: 'external' },
-                // This provider default would expire a real process. The admitted role's null overrides it.
-                timeoutMs: 1 }, { outputDelivery: 'invocation' });
+            const executable = { kind: 'systemTool' as const, id: 'fixture-node' };
+            const stdin = typeof input.inputBase64 === 'string' ? Buffer.from(input.inputBase64, 'base64') : undefined;
+            const env = { PATH: [guestBin, '/usr/bin', '/bin'].join(delimiter), USER: 'external' };
+            const child = useLimaCarrier
+                ? (await createLimaSdkExecutor({ exec: context.services.exec, executable,
+                    signal: context.signal, tieGuestToCarrier: true }).capture('limactl', ['shell', '--', ...input.argv],
+                    { input: stdin, env })).process
+                : await context.services.exec.run({ executable,
+                    args: ['-e', guestTransport, '--', ...input.argv],
+                    ...(stdin === undefined ? {} : { stdin }),
+                    env,
+                    // This provider default would expire a real process. The admitted role's null overrides it.
+                    timeoutMs: 1 }, { outputDelivery: 'invocation' });
             results.exec = MachineProvisionerNativeExecResultV1Schema.parse({ termination: child.termination,
                 stdoutBase64: encodeBase64(child.stdout), stderrBase64: encodeBase64(child.stderr),
                 stdoutTruncated: child.stdoutTruncated, stderrTruncated: child.stderrTruncated });
@@ -425,6 +433,63 @@ it.runIf(process.platform === 'linux')('executes from an enrolled preset with th
     expect(nativeCalls).toMatchObject([{ resource: { guest: guest.id } }]);
 }, 120_000);
 
+it.runIf(process.platform === 'linux').each([true, false])(
+    'settles a stopped Lima command as cancelled (preset-created: %s)', async fromPreset => {
+        const { owner, input, context, guestBin, nativeCalls, scope, home, daemon } =
+            await createManagedExecFixture('running', false, fromPreset, true);
+        const confirmation = (actionId: typeof MANAGED_EXEC_ACTION_ID_V1 | typeof ACTION_OPERATION_CANCEL_ACTION_ID_V1,
+            input: Parameters<typeof owner.execute>[1], actionContext = context()) =>
+            bindPresentUserActionConfirmationV1(actionId, input, {
+                ...actionContext, actionCaller: { kind: 'host' }, runtimeAccountId: home.accountId, serverIdentityId: home.serverId,
+            });
+        const started = join(guestBin, 'started');
+        const completed = join(guestBin, 'completed');
+        const runContext = context();
+        const command = { homeId: input.homeId, managedId: input.managedId,
+            argv: ['/bin/sh', '-c', 'sleep 30 & child=$!; printf "%s %s\n" "$$" "$child" > "$1"; wait "$child"; touch "$2"',
+                'fixture', started, completed] };
+        const run = owner.execute(MANAGED_EXEC_ACTION_ID_V1, command, confirmation(MANAGED_EXEC_ACTION_ID_V1, command, runContext));
+        const readOperation = () => daemon.actionOperations.store.list({ accountId: home.accountId, machineId: scope.machineId })
+            .items.find(item => item.requestId === runContext.actionRequestId);
+        try {
+            const pids = await Promise.race([
+                vi.waitFor(async () => {
+                    const pids = (await readFile(started, 'utf8')).trim().split(' ').map(Number);
+                    expect(pids).toHaveLength(2);
+                    expect(pids.every(pid => Number.isInteger(pid) && pid > 0)).toBe(true);
+                    return pids;
+                }, { timeout: 10_000 }),
+                run.then(result => { throw new Error(`Command settled before starting: ${JSON.stringify(result)}`); }),
+            ]);
+            expect(nativeCalls).toHaveLength(1);
+            const operation = readOperation();
+            expect(operation).toMatchObject({ state: 'running' });
+            if (!operation) throw new Error('Expected the running command operation');
+            const address = { ...scope, operationId: operation.operationId };
+            const cancellation = await owner.execute(ACTION_OPERATION_CANCEL_ACTION_ID_V1, address,
+                confirmation(ACTION_OPERATION_CANCEL_ACTION_ID_V1, address));
+            expect(cancellation, JSON.stringify(cancellation)).toMatchObject({ ok: true, result: { kind: 'requested' } });
+            await vi.waitFor(async () => {
+                const running = await Promise.all(pids.map(async pid => {
+                    const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(() => '');
+                    return stat !== '' && !stat.slice(stat.lastIndexOf(')') + 2).startsWith('Z ');
+                }));
+                expect(running).toEqual([false, false]);
+            }, { timeout: 2_000 });
+            await expect(access(completed)).rejects.toMatchObject({ code: 'ENOENT' });
+            const read = await owner.execute(ACTION_OPERATION_GET_ACTION_ID_V1, { ...address, waitForTerminal: true }, context());
+            expect.soft(read, JSON.stringify(read)).toMatchObject({ ok: true, result: { kind: 'found', operation: {
+                operationId: operation.operationId, state: 'cancelled', settledAt: expect.any(Number),
+            } } });
+            const result = await run;
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'cancelled' });
+        } finally {
+            const operation = readOperation();
+            if (operation && operation.settledAt === null) await daemon.actionOperations.handlers.cancel({ operationId: operation.operationId });
+            await run;
+        }
+    }, 120_000);
+
 it.runIf(process.platform === 'linux')('wakes the stopped guest after requester CLI Ask and lets that requester find and re-read its operation', async () => {
     const { input, requester, cliFor, context, managed, guest, nativeCalls, powerCalls, scope, owner } =
         await createManagedExecFixture('stopped');
@@ -598,6 +663,15 @@ it.runIf(process.platform === 'linux')('keeps managed command input and output p
     expect(custodianRead, JSON.stringify(custodianRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
     expect(otherRead, JSON.stringify(otherRead)).toMatchObject({ ok: true, result: { kind: 'not_found' } });
 }, 120_000);
+
+// Replace only the native executable. The real Lima executor supplies the
+// watchdog, while the invocation process service owns abort and capture.
+const limaCarrier = `
+const args = process.argv.slice(1);
+const [command, ...argv] = args.slice(args.indexOf('--') + 1);
+const guest = require('node:child_process').spawn(command, argv, { stdio: 'inherit' });
+guest.on('exit', code => { process.exitCode = code ?? 1; });
+`;
 
 // Replace the provider's guest process boundary. The transport still feeds
 // the controller-generated guest script and captures the real guest child.

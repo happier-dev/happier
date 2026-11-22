@@ -70,10 +70,9 @@ export class ManagedMachineControllerError extends Error {
             : failure.error.trim() && failure.error !== failure.errorCode || publicDetails !== details
                 ? { error: failure.error.trim() || failure.errorCode, ...(publicDetails ? { details: publicDetails } : {}) }
                 : undefined;
-        const retained = presentation ?? (failure.requestId !== undefined || failure.effectAttempted !== undefined
-            ? normalizeActionExecutorThrownError(new this(failure.errorCode, undefined, details, failureCause), phase)
-            : undefined);
-        const cause: ActionExecuteFailure | undefined = retained && { ...retained, ok: false, errorCode: failure.errorCode, failureCause,
+        // A code-only child failure still carries an authored result through the controller boundary.
+        const retained = presentation ?? normalizeActionExecutorThrownError(new this(failure.errorCode, undefined, details, failureCause), phase);
+        const cause: ActionExecuteFailure = { ...retained, ok: false, errorCode: failure.errorCode, failureCause,
             ...(failure.requestId === undefined ? {} : { requestId: failure.requestId }),
             ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }) };
         return new this(failure.errorCode, undefined, details, failureCause, cause);
