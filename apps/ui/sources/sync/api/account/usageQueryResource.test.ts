@@ -3213,7 +3213,11 @@ describe('usage query captured Resource adapter', () => {
     const { installConnectedAccountDescriptorProjection, retireConnectedAccountDescriptorProjection } =
       await import('@/sync/domains/connectedServices/connectedServiceRegistry');
     installConnectedAccountDescriptorProjection({ scopeKey: 'usage-ownership', status: 'ready', conflicts: [], errorReason: null,
-      descriptors: [] }, captured.accountLifetime);
+      descriptors: [{ id: ref.service.localId, serviceId: ref.service.localId, pluginId: ref.service.pluginId,
+        title: 'Vercel', provenance: 'external', sourceKind: 'installed',
+        authentication: { defaultModeId: 'token', modes: [{ id: 'token', kind: 'manual', outcomeReconciliation: 'none', fields: [] }] },
+        capabilities: ['usage'], availability: { state: 'available', reason: 'resolved' }, diagnostics: [] }],
+    }, captured.accountLifetime);
     try {
       const warm = await readUiUsageQueryBatch(captured, input);
       expect(warm.results[0]?.quota?.[0]?.current?.meters[0]?.usedPct).toBe(20);
