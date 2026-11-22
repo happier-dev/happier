@@ -156,7 +156,7 @@ describe('OpenCode native interactions', () => {
       await runtime.sendTurnPrompt('hello');
       vi.mocked(client.sessionMessages).mockResolvedValue(history);
       await runtime.handleProviderEvent(normalizeOpenCodeV2Event('session.execution.succeeded', { sessionID: sessionId }));
-      expect(events.filter(event => event.kind === 'usage-observed')).toMatchObject([{ turnId: 'router-turn' }]);
+      expect(events.filter(event => event.kind === 'usage-observed')).toMatchObject([{ turnId: 'router-turn', emittedAtMs: 1794542191683 }]);
       expect(events).toContainEqual(expect.objectContaining({ kind: 'turn-complete', turnId: 'router-turn' }));
     } finally { watcher.dispose(); await native.dispose(); }
   });

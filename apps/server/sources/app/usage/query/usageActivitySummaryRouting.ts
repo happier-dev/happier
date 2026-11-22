@@ -3,11 +3,10 @@ import type { UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usa
 import { resolveUsageBucketBounds } from '@happier-dev/protocol/usage/usageCalendar';
 import type { Tx } from '@/storage/inTx';
 import type { UsageAnalyticsSnapshot } from '../usageQueryService';
-import { loadRetainedLegacyUsageReports, loadUsageEventsForQuery, type UsageQueryEvent } from './loadUsageEventsForQuery';
+import { loadLinkedModernUsageHistory, loadRetainedLegacyUsageReports, loadUsageEventsForQuery, type UsageQueryEvent } from './loadUsageEventsForQuery';
 import { toScopedUsageEvidenceRow } from './scopedUsageEventRow';
-import { isScopedUsageReplayFactEligible, orderRuntimeObservations, toScopedUsageReplayFact,
-    updateScopedUsageReplaySessionEligibility, type ScopedUsageEventRow, type ScopedUsageReplayFact,
-    type ScopedUsageReplaySessionEligibility } from './resolveScopedUsageContributions';
+import { orderRuntimeObservations, toScopedUsageReplayFact, usageAccountingSubjectKey,
+    type ScopedUsageEventRow, type ScopedUsageReplayFact } from './resolveScopedUsageContributions';
 import { resolveUsageLegacyReportRows, toUsageLegacyBridgeFacts, type UsageLegacyBridgeFact } from './projectUsageAnalyticsPopulation';
 import { projectUsageCoverageEvidence, type UsageCoverageEvidence } from './projectUsageCoverageEvidence';
 import { readUsageActivitySummaryChunks, type UsageActivitySourceChange } from './usageActivitySummaryStore';
@@ -22,13 +21,13 @@ const sessionKey = (key: string | null): string => `session:${JSON.stringify(key
 interface SourceRoute {
     fact: ScopedUsageReplayFact;
     fingerprint: string;
-    eligible: boolean;
     bridge?: UsageLegacyBridgeFact;
     coverage?: UsageCoverageEvidence;
 }
 
 interface SessionRoute {
-    eligibility: ScopedUsageReplaySessionEligibility;
+    legacyFacts: ScopedUsageReplayFact[];
+    modernSubjects: Array<[string, number]>;
     bridges: Array<{ id: string; value: UsageLegacyBridgeFact }>;
 }
 
@@ -69,6 +68,7 @@ export interface UsageActivityRoutingCapture {
     ranks: Map<string, number>;
     rows: UsageAnalyticsSnapshot['rows'];
     reportRows: Map<string, ScopedUsageEventRow>;
+    linkedModern: Map<string, UsageQueryEvent[]>;
     chunks: Map<string, string | null>;
     subjectCount: number;
     discoveryEventsRead: number;
@@ -86,7 +86,7 @@ function makeRoutes(rows: readonly UsageQueryEvent[]) {
     return { admitted, routes: admitted.map((row, index): SourceRoute => {
         const bridge = toUsageLegacyBridgeFacts([row])[0];
         return { fact: toScopedUsageReplayFact(row), fingerprint: usageActivityFingerprint(JSON.stringify(rows[index])),
-            eligible: true, ...(bridge ? { bridge } : {}) };
+            ...(bridge ? { bridge } : {}) };
     }), coverage: projectUsageCoverageEvidence(admitted) };
 }
 
@@ -96,7 +96,7 @@ function orderedInputs(routes: readonly SourceRoute[], query: UsageAnalyticsQuer
     const projectionOrder = new Map<number, string[]>();
     const start = query.dateRange?.startMs ?? -Infinity;
     const end = query.dateRange?.endMs ?? Infinity;
-    for (const fact of orderRuntimeObservations(routes.filter(route => route.eligible).map(route => route.fact))) {
+    for (const fact of orderRuntimeObservations(routes.map(route => route.fact))) {
         const group = groups.get(fact.subjectKey) ?? [];
         group.push([fact.id, byId.get(fact.id)!.fingerprint]);
         groups.set(fact.subjectKey, group);
@@ -160,8 +160,7 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
         for (const route of old) if (nextById.get(route.fact.id)?.fingerprint !== route.fingerprint) removed.push(route);
         for (const route of next) {
             const before = oldById.get(route.fact.id);
-            if (before?.fingerprint === route.fingerprint) route.eligible = before.eligible;
-            else added.push(route);
+            if (before?.fingerprint !== route.fingerprint) added.push(route);
         }
         routes.set(day, next);
         if (next.length > 0) { sourceDays.add(day); sourceCoverage.set(day, coverage); }
@@ -173,10 +172,11 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
     if (!head || changes.some(change => change.kind === 'report')) {
         for (const report of [...(head?.legacyReports ?? []), ...legacyReports]) affectedSessions.add(report.sessionId);
     }
-    const sessionNames = [...affectedSessions];
+    const reportSessions = new Set(legacyReports.map(report => report.sessionId));
+    const newBridgeSessions = new Set(added.filter(route => route.bridge).map(route => route.fact.sessionId));
+    const sessionNames = [...affectedSessions].filter(key => sessionKeys.has(key) || reportSessions.has(key) || newBridgeSessions.has(key));
     const sessionChunks = head ? await readUsageActivitySummaryChunks(tx, accountId,
         sessionNames.filter(key => sessionKeys.has(key)).map(sessionKey)) : new Map<string, string>();
-    const legacyDays = new Set<number>();
     const groupBySession = (values: readonly SourceRoute[]) => {
         const result = new Map<string | null, SourceRoute[]>();
         for (const route of values) {
@@ -192,44 +192,35 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
         const raw = sessionChunks.get(sessionKey(key));
         if (head && sessionKeys.has(key) && raw === undefined) throw new MissingUsageActivityRoutingChunk();
         const old: SessionRoute | undefined = raw === undefined ? undefined : JSON.parse(raw);
-        const oldRows = removedBySession.get(key) ?? [];
-        const newRows = addedBySession.get(key) ?? [];
-        const eligibility = updateScopedUsageReplaySessionEligibility(old?.eligibility,
-            oldRows.map(route => route.fact), newRows.map(route => route.fact));
+        const legacy = new Map(old?.legacyFacts.map(fact => [fact.id, fact]));
         const bridges = new Map(old?.bridges.map(bridge => [bridge.id, bridge.value]));
-        for (const route of oldRows) bridges.delete(route.fact.id);
-        for (const route of newRows) if (route.bridge) bridges.set(route.fact.id, route.bridge);
-        const next = { eligibility, bridges: [...bridges].map(([id, value]) => ({ id, value })) };
-        sessions.set(key, next);
-        if (eligibility.nonLegacyCount > 0 || eligibility.legacyFacts.length > 0 || bridges.size > 0) {
-            sessionKeys.add(key);
-            chunks.set(sessionKey(key), JSON.stringify(next));
-        } else {
-            sessionKeys.delete(key);
-            chunks.set(sessionKey(key), null);
+        for (const route of removedBySession.get(key) ?? []) {
+            legacy.delete(route.fact.id);
+            bridges.delete(route.fact.id);
         }
-        if ((old?.eligibility.nonLegacyCount ?? 0) === 0 !== (eligibility.nonLegacyCount === 0)) {
-            for (const fact of [...(old?.eligibility.legacyFacts ?? []), ...eligibility.legacyFacts]) legacyDays.add(usageActivityUtcDay(fact.observedAtMs));
+        for (const route of addedBySession.get(key) ?? []) {
+            if (route.bridge) {
+                legacy.set(route.fact.id, route.fact);
+                bridges.set(route.fact.id, route.bridge);
+            }
         }
+        sessions.set(key, { legacyFacts: [...legacy.values()], modernSubjects: old?.modernSubjects ?? [],
+            bridges: [...bridges].map(([id, value]) => ({ id, value })) });
     }
-    await loadRoutes([...legacyDays]);
-    for (const day of new Set([...changedDays, ...legacyDays])) {
-        const next = (routes.get(day) ?? []).map(route => affectedSessions.has(route.fact.sessionId)
-            ? { ...route, eligible: isScopedUsageReplayFactEligible(route.fact, sessions.get(route.fact.sessionId)?.eligibility) } : route);
-        routes.set(day, next);
-        changedDays.add(day);
+    for (const day of changedDays) {
+        const next = routes.get(day) ?? [];
         chunks.set(usageActivityRoutingKey(day), next.length > 0 ? JSON.stringify(next) : null);
     }
     const oldReportSources = head?.reportSources ?? [];
     const reportRows = new Map<string, ScopedUsageEventRow>();
     const newReportSources: SourceRoute[] = [];
-    for (const key of affectedSessions) {
+    for (const key of sessionNames) {
         const session = sessions.get(key)!;
         for (const row of resolveUsageLegacyReportRows(legacyReports.filter(report => report.sessionId === key), session.bridges.map(bridge => bridge.value))) {
             const fact = toScopedUsageReplayFact(row);
             reportRows.set(row.id, row);
             newReportSources.push({ fact, fingerprint: usageActivityFingerprint(JSON.stringify(row)),
-                eligible: isScopedUsageReplayFactEligible(fact, session.eligibility), coverage: projectUsageCoverageEvidence([row]) });
+                coverage: projectUsageCoverageEvidence([row]) });
         }
     }
     const replacedReportSources = oldReportSources.filter(route => affectedSessions.has(route.fact.sessionId));
@@ -242,6 +233,54 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
     const reportOrder = new Map(legacyReports.map((report, index) => [`legacy-report:${report.id}`, index]));
     reportSources.sort((left, right) => reportOrder.get(left.fact.id)! - reportOrder.get(right.fact.id)!);
     const dirty = new Set<string>();
+    const linkedModern = new Map<string, UsageQueryEvent[]>();
+    const byReportSession = groupBySession(newReportSources);
+    const removedReportSessions = new Set(removedReports.map(route => route.fact.sessionId));
+    const addedReportSessions = new Set(addedReports.map(route => route.fact.sessionId));
+    const sourceRowsBySession = new Map<string, UsageQueryEvent[]>();
+    if (!head) {
+        for (const row of loaded) {
+            if (!row.sessionId || !sessions.has(row.sessionId) || row.source === 'legacy_usage_report') continue;
+            const group = sourceRowsBySession.get(row.sessionId) ?? [];
+            group.push(row);
+            sourceRowsBySession.set(row.sessionId, group);
+        }
+    }
+    for (const [key, session] of sessions) {
+        const reports = (byReportSession.get(key) ?? []).map(route => route.fact);
+        const legacy = [...session.legacyFacts, ...reports];
+        if (!legacy.length) {
+            sessionKeys.delete(key);
+            if (head?.sessionKeys.includes(key)) chunks.set(sessionKey(key), null);
+            continue;
+        }
+        sessionKeys.add(key);
+        if (key) {
+            let throughMs = -Infinity;
+            for (const fact of legacy) throughMs = Math.max(throughMs, fact.observedAtMs);
+            const removedFromSession = removedBySession.get(key) ?? [];
+            const addedToSession = addedBySession.get(key) ?? [];
+            const changedBoundary = removedReportSessions.has(key) || addedReportSessions.has(key)
+                || removedFromSession.some(route => route.bridge) || addedToSession.some(route => route.bridge);
+            const inPrefix = (route: SourceRoute) => route.fact.source !== 'legacy_usage_report' && route.fact.observedAtMs <= throughMs;
+            const previousSubjects = new Map(session.modernSubjects);
+            const changedPrefix = addedToSession.some(inPrefix)
+                || removedFromSession.some(route => inPrefix(route) && previousSubjects.has(route.fact.subjectKey));
+            if (!head || changedPrefix || changedBoundary) {
+                const history = head ? await loadLinkedModernUsageHistory(tx, accountId, key, throughMs)
+                    : (sourceRowsBySession.get(key) ?? []).filter(row => row.observedAt.getTime() <= throughMs);
+                linkedModern.set(key, history);
+                const counts = new Map<string, number>();
+                for (const row of history) {
+                    const key = usageAccountingSubjectKey(toScopedUsageEvidenceRow(row));
+                    counts.set(key, (counts.get(key) ?? 0) + 1);
+                }
+                session.modernSubjects = [...counts];
+                for (const fact of legacy) dirty.add(fact.subjectKey);
+            }
+        }
+        chunks.set(sessionKey(key), JSON.stringify(session));
+    }
     const orderChangedProjectionDays = new Set<number>();
     const compareInputs = (before: readonly SourceRoute[], after: readonly SourceRoute[]) => {
         const left = orderedInputs(before, query);
@@ -268,7 +307,6 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
     ], [
         ...(routes.get(day) ?? []), ...reportSources.filter(route => usageActivityUtcDay(route.fact.observedAtMs) === day),
     ]);
-    // Suppressed sources still own history membership so their later revival is exact.
     for (const route of [...removed, ...added, ...removedReports, ...addedReports]) dirty.add(route.fact.subjectKey);
     const dirtyKeys = [...dirty];
     const subjectChunks = head ? await readUsageActivitySummaryChunks(tx, accountId,
@@ -309,7 +347,7 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
             const route = byId.get(source.id);
             if (!route) throw new MissingUsageActivityRoutingChunk();
             return route;
-        }).filter(route => route.eligible);
+        });
         subject.current.selected = eligible.some(route => route.fact.observedAtMs >= start && route.fact.observedAtMs < end);
         subjectCount += Number(subject.current.selected) - Number(subject.previous?.selected ?? false);
         if (subject.current.selected) {
@@ -323,7 +361,7 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
     // Complete equal-instant peer slots for every touched local day, including its UTC neighbour.
     await loadRoutes([...projectionDays].flatMap(day => [usageActivityUtcDay(day), usageActivityUtcDay(day + 86_400_000 - 1)]));
     allRoutes = [...routes.values()].flat().concat(reportSources);
-    const ordered = orderRuntimeObservations(allRoutes.filter(route => route.eligible).map(route => route.fact));
+    const ordered = orderRuntimeObservations(allRoutes.map(route => route.fact));
     const ranks = new Map(ordered.map((fact, index) => [fact.id, index]));
     for (const subject of dirtySubjects) subject.eventIds.sort((left, right) => ranks.get(left)! - ranks.get(right)! || left.localeCompare(right));
     const oldProjectionDays = new Set(head?.projectionDays);
@@ -345,7 +383,7 @@ export async function captureUsageActivityRoutingInTx(tx: Tx, accountId: string,
         for (const row of resolveUsageLegacyReportRows(legacyReports.filter(report => missingReports.has(`legacy-report:${report.id}`)), [])) reportRows.set(row.id, row);
     }
     return { head, sourceDays, subjectKeys, sessionKeys, sourceCoverage, reportSources, legacyReports, dirtySubjects,
-        ranks, rows: neededIds.map(id => {
+        ranks, linkedModern, rows: neededIds.map(id => {
             const row = loadedById.get(id);
             if (!row) throw new Error('Usage activity source changed within its admitted snapshot');
             return row;

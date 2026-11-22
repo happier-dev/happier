@@ -4,10 +4,12 @@ import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import type { createUsageObservationPublisher } from '../createUsageObservationPublisher';
 import type { NativeUsageCaptureAuthority, NativeUsageCaptureSource, NativeUsageCaptureStore } from './nativeUsageCaptureState';
+import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import { AsyncLock } from '@/utils/lock';
 import { isProvenPreDispatchConnectionFailure } from '@/api/client/classifyServerEndpointError';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import { deriveNativeUsageAccountingIdentity } from './nativeUsageAccountingIdentity';
+import { deriveNativeUsageAccountingIdentity, deriveNativeUsageOverlapIdentity } from './nativeUsageAccountingIdentity';
+import { resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agents';
 import type { NativeUsageSourceDescriptor } from './nativeUsageSourceDiscovery';
 import { isDeepStrictEqual } from 'node:util';
 
@@ -44,6 +46,11 @@ export type NativeUsageCollectorDependencies = Readonly<{
     }>;
     publisher: Pick<ReturnType<typeof createUsageObservationPublisher>, 'publish'>;
     deleteHistory(source: NativeUsageCaptureSource, dateRange?: UsageSourceDateRangeV1): Promise<{ success: true; deletedEventCount: number }>;
+    nativeSessionLinks?: Readonly<{
+        waitForBackfill(): Promise<boolean>;
+        resolve(source: NativeUsageCaptureSource, nativeSessionId: string, signal: AbortSignal): Promise<
+            { sessionId: string; externalIdentityTag: string } | null | undefined>;
+    }>;
     budgetRegistry: ExecutionBudgetRegistry;
     /** Content-free reader wake after capture/publication or a root change settles. */
     onSourceSettled?(): void;
@@ -93,14 +100,68 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             if (isActive(life)) next.find(source => source.sourceId === life.sourceId)!.error = code;
         });
     }
+    async function markPublishUnavailable(life: Lifetime) {
+        if (!isActive(life)) return;
+        const current = requireSource(life.sourceId);
+        if (!current.error || current.error.startsWith('native_ingest_')) await error(life, 'native_ingest_unavailable');
+    }
     async function publish(life: Lifetime) {
+        const source = requireSource(life.sourceId);
+        const links = input.nativeSessionLinks;
+        if (!links || resolveBundledAgentIdFromContributionIdentity(source.agent) !== 'codex') {
+            await publishRows(life);
+            return;
+        }
+        const threadLinks = { ...source.threadLinks };
+        const unresolved = new Map<string, string>();
+        for (const row of source.pending) {
+            const key = identity(source, row).nativeSessionKey;
+            if (key && !Object.hasOwn(threadLinks, key)) unresolved.set(key, row.nativeSessionId);
+        }
+        if (!unresolved.size) {
+            await publishRows(life);
+            return;
+        }
+        // The Machine backfill gates only admission of a previously unseen
+        // Codex link. Publish ready rows first, including proven absences.
+        const wasWaiting = (row: NativeUsageCaptureSource['pending'][number]) =>
+            unresolved.has(identity(source, row).nativeSessionKey ?? '');
+        await publishRows(life, row => !wasWaiting(row));
+        if (!isActive(life)) return;
+        if (!(await raceWithAbort(links.waitForBackfill(), life.controller.signal))) {
+            await markPublishUnavailable(life);
+            return;
+        }
+        if (!isActive(life)) return;
+        let resolvedCount = 0;
+        for (const [key, nativeSessionId] of unresolved) {
+            const link = await links.resolve(source, nativeSessionId, life.controller.signal).catch(() => undefined);
+            if (!isActive(life)) return;
+            if (link === undefined) break;
+            threadLinks[key] = link;
+            resolvedCount++;
+        }
+        if (resolvedCount) {
+            await commit(next => {
+                if (isActive(life)) next.find(candidate => candidate.sourceId === life.sourceId)!.threadLinks = threadLinks;
+            });
+            if (!isActive(life)) return;
+            await publishRows(life, row => {
+                const key = identity(source, row).nativeSessionKey;
+                return !!key && unresolved.has(key) && Object.hasOwn(threadLinks, key);
+            });
+        }
+        if (resolvedCount !== unresolved.size) await markPublishUnavailable(life);
+    }
+    async function publishRows(life: Lifetime, admit?: (row: NativeUsageCaptureSource['pending'][number]) => boolean) {
         let source = requireSource(life.sourceId);
+        const pending = () => admit ? source.pending.filter(admit) : source.pending;
         const acknowledged = new Set<string>();
         let failure: string | undefined;
         // One Account admission per distinct local witness in this finite job,
         // never one request per inference or an independent Project cache.
         const projects = new Map<string, Promise<{ projectKey: string; workspaceId?: string } | null>>();
-        for (const row of source.pending) {
+        for (const row of pending()) {
             const witness = row.project;
             if (!witness) continue;
             const key = JSON.stringify(witness);
@@ -116,7 +177,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 if (!isActive(life)) return;
                 const current = next.find(candidate => candidate.sourceId === life.sourceId)!;
                 for (const row of current.pending) {
-                    if (!row.project) continue;
+                    if (!row.project || (admit && !admit(row))) continue;
                     const project = accepted.get(JSON.stringify(row.project));
                     if (!project) continue;
                     Object.assign(row, project);
@@ -125,7 +186,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             });
             source = requireSource(life.sourceId);
         }
-        for (const observation of source.pending) {
+        for (const observation of pending()) {
             if (!isActive(life)) break;
             if (observation.project) {
                 failure = 'native_project_identity_unavailable';
@@ -133,12 +194,15 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             }
             const keys = identity(source, observation);
             if (!keys.nativeSessionKey || !keys.externalKey) { failure = 'native_inference_identity_unavailable'; break; }
+            const overlap = deriveNativeUsageOverlapIdentity({ authority: input.authority, storage: input.storage,
+                agent: source.agent, nativeSessionId: observation.nativeSessionId, inferenceId: observation.inferenceId });
             const result = await input.publisher.publish({
                 subject: { kind: 'native', machineId: input.authority.machineId, agent: source.agent,
                     sourceRootKey: source.sourceId, nativeSessionKey: keys.nativeSessionKey },
+                nativeSessionLink: source.threadLinks?.[keys.nativeSessionKey] ?? undefined,
                 observation: observation.observation, observedAt: observation.observedAt, externalKey: keys.externalKey,
                 projectKey: observation.projectKey, workspaceId: observation.workspaceId,
-                accounting: { ...observation.accounting, status: source.coverage?.complete ? 'available' : 'partial',
+                accounting: { ...observation.accounting, ...overlap, status: source.coverage?.complete ? 'available' : 'partial',
                     ...(source.coverage ? { historyComplete: source.coverage.complete } : {}),
                     ...(source.asOf !== undefined ? { asOfMs: source.asOf } : {}),
                     ...(observation.inferenceId ? { inferenceKey: keys.externalKey } : {}) },

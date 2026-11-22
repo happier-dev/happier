@@ -4744,6 +4744,37 @@ that omit the declaration use their existing keys. Matching Protocol,
 Claude runtime, daemon and Home sources load together for this development
 cut. The transient declaration requires no stored field or migration.
 
+In unreleased 0.3, Codex runtime and collector Accounting may also declare a
+device-keyed native Session identity and an optional device-keyed response
+identity. Both are independent of the configured capture root. Claude runtime
+replay derives its native Session identity through the same device-keyed owner
+before and after source resolution. Home scopes these identities to Account,
+Machine and qualified Agent in the existing ingest owner.
+Codex runtime and native evidence for one opaque thread share a cumulative
+level. Each reading advances the largest bound supported by distinct exact
+responses or by a checkpoint plus responses proven to have completed after
+it. A later presentation of the same response retains its completion witness
+and advances only the difference. The increase belongs to the observation's
+bucket. Session reads fold admitted Session members. Older rows without the
+opaque thread identity keep their separate amounts with partial coverage.
+Source capture remains root-scoped for consent and deletion. Stored rows
+remain readable as recorded. The next shared server, daemon and Protocol cut
+carries the new producer and consumer together.
+
+A released 0.2 Codex Session can have a scalar report keyed to its thread.
+Before publishing a Codex thread with unresolved link admission, the 0.3
+daemon awaits the existing Machine Session identity backfill and uses the
+indexed claim once per thread. Already resolved threads and other Agents
+publish independently.
+New native ingest can carry the candidate Session and its transient claim tag.
+Home checks the tag against the Account's owned Session in its existing read
+when there is no runtime link witness. A missing or stale proof leaves the
+row unlinked. On linked Sessions, modern usage through the last released
+report covers the corresponding part of that report. The remaining report
+amount carries partial coverage and later modern usage counts in full.
+The tag is transient. Released daemons omit this
+field and keep their previous ingest behavior.
+
 The 0.3 foreground daemon claim returns optional, credential-free
 `sessionConnectedAccounts` through the same schema as native Session open. The
 foreground startup reader consumes the canonical claim-response schema rather

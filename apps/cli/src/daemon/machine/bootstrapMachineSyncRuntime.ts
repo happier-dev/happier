@@ -609,6 +609,7 @@ export type BootstrapMachineSyncRuntimeParams = Readonly<{
   orphanedDeadDaemonSessions?: ReadonlyArray<OrphanedDeadDaemonSession>;
   isPublicationQuiescing?: () => boolean;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+  waitForExternalSessionIdentityBackfill?(): Promise<boolean>;
   preferredHost: string;
   happyHomeDir: string;
   happyLibDir: string;
@@ -1385,6 +1386,7 @@ export async function bootstrapMachineSyncRuntime(
         ...(params.deviceLocalSecretStorage
           ? { deviceLocalSecretStorage: params.deviceLocalSecretStorage }
           : {}),
+        waitForExternalSessionIdentityBackfill: params.waitForExternalSessionIdentityBackfill,
         executeExternalSessionHistoricalImportCommand: async (command) =>
           await connectedApiMachine.executeExternalSessionHistoricalImportCommand(command),
         persistedTakeoverAdmissionWaiter:

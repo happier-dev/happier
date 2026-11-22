@@ -2,7 +2,7 @@ import type { UsageAccountingCoverageReason, UsageAccountingMetadata, UsageAnaly
 import type { UsageAnalyticsSourceContext } from "@happier-dev/protocol/usage/usageAnalyticsContracts";
 import { readScopedUsageAccountingEvidence, type ScopedUsageAccountingEvidence, type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 
-import { foldScopedUsageContributions } from "./scopedUsageContributionFold";
+import { foldReleasedUsageContributions, foldScopedUsageContributions } from "./scopedUsageContributionFold";
 import { canMatchUsageFilters } from './usageQueryFilters';
 
 export interface ScopedUsageEventRow {
@@ -47,6 +47,7 @@ export interface ResolvedScopedUsageContributions {
     totalContributions: ScopedUsageContribution[];
     bucketAttributions: ScopedUsageContribution[];
     coverageReasons: UsageAccountingCoverageReason[];
+    reconciledEvidenceIds?: ReadonlySet<string>;
 }
 
 /** Eligibility and global order decided from complete, inexpensive replay evidence. */
@@ -91,7 +92,8 @@ export function resolveUsageContributionSourceContext(row: Pick<ScopedUsageEvent
     return { path, execution };
 }
 
-export type ScopedUsageSubjectIdentity = readonly ['native', string, string, string, string, string]
+export type ScopedUsageSubjectIdentity = readonly ['native-stream', string]
+    | readonly ['native', string, string, string, string, string]
     | readonly ['session', string, string | null]
     | readonly ['native', string | null, string | null, string]
     | readonly ['unidentified', string];
@@ -101,6 +103,7 @@ export function usageAccountingSubjectIdentity(row: Pick<ScopedUsageEventRow,
     // A witnessed native subject owns accounting across live and collector
     // rows; the real Session remains attribution on the selected contribution.
     const { accounting, subject } = readScopedUsageAccountingEvidence(row);
+    if (accounting?.nativeSessionKey) return ['native-stream', accounting.nativeSessionKey];
     if (subject) {
         const native = subject;
         return ["native", native.machineId, native.agent.pluginId, native.agent.localId,
@@ -161,50 +164,9 @@ export function orderRuntimeObservations<Row extends ScopedUsageReplayOrderRow>(
     return ordered;
 }
 
-/** Legacy reports are fallback only while their Session has no non-legacy Usage observation. */
-export function selectScopedUsageEligibleRows<Row extends Pick<ScopedUsageEventRow, 'sessionId' | 'source'>>(rows: readonly Row[]): Row[] {
-    const sessionsWithNativeUsage = new Set(rows.flatMap((row) => (
-        row.sessionId && row.source !== 'legacy_usage_report' ? [row.sessionId] : []
-    )));
-    return rows.filter(row => isScopedUsageReplayRowEligible(row,
-        row.sessionId && sessionsWithNativeUsage.has(row.sessionId) ? 1 : 0));
-}
-
-export interface ScopedUsageReplaySessionEligibility {
-    nonLegacyCount: number;
-    legacyFacts: ScopedUsageReplayFact[];
-}
-
-function isScopedUsageReplayRowEligible(row: Pick<ScopedUsageEventRow, 'sessionId' | 'source'>,
-    nonLegacyCount: number): boolean {
-    return row.source !== 'legacy_usage_report' || !row.sessionId || nonLegacyCount === 0;
-}
-
-/** Session-local fallback dependencies survive suppression without retaining source bodies. */
-export function updateScopedUsageReplaySessionEligibility(previous: ScopedUsageReplaySessionEligibility | undefined,
-    removed: readonly ScopedUsageReplayFact[], added: readonly ScopedUsageReplayFact[]): ScopedUsageReplaySessionEligibility {
-    let nonLegacyCount = previous?.nonLegacyCount ?? 0;
-    const legacy = new Map(previous?.legacyFacts.map(fact => [fact.id, fact]));
-    for (const fact of removed) {
-        if (fact.source === 'legacy_usage_report') legacy.delete(fact.id);
-        else if (fact.sessionId) nonLegacyCount--;
-    }
-    for (const fact of added) {
-        if (fact.source === 'legacy_usage_report') legacy.set(fact.id, fact);
-        else if (fact.sessionId) nonLegacyCount++;
-    }
-    return { nonLegacyCount, legacyFacts: [...legacy.values()] };
-}
-
-/** Consume the canonical Session admission when only a changed day is hydrated. */
-export function isScopedUsageReplayFactEligible(fact: ScopedUsageReplayFact,
-    session: ScopedUsageReplaySessionEligibility | undefined): boolean {
-    return isScopedUsageReplayRowEligible(fact, session?.nonLegacyCount ?? 0);
-}
-
 /** Admission and chronological ranks depend on the captured historical scope. */
 export function prepareScopedUsageReplayBasis(rows: readonly (ScopedUsageEvidenceRow | ScopedUsageReplayFact)[]) {
-    const eligible = selectScopedUsageEligibleRows(rows);
+    const eligible = rows;
     return {
         eligible,
         subjects: new Map(eligible.map(row => [row.id, 'subjectKey' in row ? row.subjectKey : usageAccountingSubjectKey(row)])),
@@ -219,6 +181,15 @@ export function selectScopedUsageReplayContext(basis: ReturnType<typeof prepareS
         .filter(row => (startMs === undefined || observedAtMs(row) >= startMs)
             && ('subjectKey' in row || canMatchUsageFilters(row, filters)))
         .map(row => subjects.get(row.id)!));
+    // A report in the view depends on linked modern history up to its
+    // observation. Select those bodies even when they precede the window.
+    const legacySessions = new Set(eligible.flatMap(row => row.sessionId && row.source === 'legacy_usage_report'
+        && selectedSubjects.has(subjects.get(row.id)!) ? [row.sessionId] : []));
+    if (legacySessions.size) {
+        for (const row of eligible) {
+            if (row.sessionId && legacySessions.has(row.sessionId)) selectedSubjects.add(subjects.get(row.id)!);
+        }
+    }
     return {
         selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
         ranks,
@@ -236,6 +207,24 @@ export function prepareScopedUsageReplayContext(rows: readonly (ScopedUsageEvide
     const endMs = range?.endMs;
     const beforeEnd = endMs === undefined ? rows : rows.filter(row => observedAtMs(row) < endMs);
     return selectScopedUsageReplayContext(prepareScopedUsageReplayBasis(beforeEnd), range?.startMs, filters);
+}
+
+export function resolveReleasedUsageContributions(legacy: readonly ScopedUsageEventRow[],
+    linkedModern: readonly ScopedUsageEventRow[], ranks: Map<string, number>): ResolvedScopedUsageContributions {
+    let cutoff = -Infinity;
+    for (const row of legacy) cutoff = Math.max(cutoff, row.observedAt.getTime());
+    const subjects = new Map<string, ScopedUsageEventRow[]>();
+    const prefix = linkedModern.filter(row => row.observedAt.getTime() <= cutoff);
+    const modernRanks = new Map(orderRuntimeObservations(prefix).map((row, index) => [row.id, index]));
+    for (const row of prefix) {
+        const key = usageAccountingSubjectKey(row);
+        const group = subjects.get(key) ?? [];
+        group.push(row);
+        subjects.set(key, group);
+    }
+    const modern = [...subjects.values()].flatMap(rows =>
+        foldScopedUsageContributions(rows, modernRanks).totalContributions);
+    return foldReleasedUsageContributions(legacy, modern, ranks);
 }
 
 export function resolveScopedUsageContributions(
@@ -264,7 +253,7 @@ export function* resolveScopedUsageContributionsSteps(
             const row = rowsById!.get(id);
             return row ? [row] : [];
         })
-        : selectScopedUsageEligibleRows(rows);
+        : rows;
     // Reorder only the existing slots of one witnessed runtime at an equal
     // source instant. Pairwise same-runtime/else-created comparisons can cycle
     // across mixed streams; these fixed ranks govern reconciliation and output.
@@ -281,10 +270,27 @@ export function* resolveScopedUsageContributionsSteps(
         groups.set(key, group);
     }
 
+    const releasedSessions = new Map<string, ScopedUsageEventRow[]>();
+    for (const row of eligibleRows) {
+        if (row.sessionId && row.source === 'legacy_usage_report') releasedSessions.set(row.sessionId, []);
+    }
+    if (releasedSessions.size) {
+        for (const row of eligibleRows) {
+            if (row.sessionId && row.source !== 'legacy_usage_report') releasedSessions.get(row.sessionId)?.push(row);
+        }
+    }
+
     const totalContributions: ScopedUsageContribution[] = [];
     const coverageReasons = new Set<UsageAccountingCoverageReason>();
+    let reconciledEvidenceIds: Set<string> | undefined;
     for (const group of groups.values()) {
-        const resolved = foldScopedUsageContributions(group, ranks);
+        const first = group[0]!;
+        const released = first.source === 'legacy_usage_report' && first.sessionId ? releasedSessions.get(first.sessionId) : undefined;
+        const resolved = released ? resolveReleasedUsageContributions(group, released, ranks) : foldScopedUsageContributions(group, ranks);
+        if (resolved.reconciledEvidenceIds) {
+            reconciledEvidenceIds ??= new Set();
+            for (const id of resolved.reconciledEvidenceIds) reconciledEvidenceIds.add(id);
+        }
         const selected = resolved.totalContributions.filter((row) => (
             (range?.startMs === undefined || row.observedAt.getTime() >= range.startMs)
             && (range?.endMs === undefined || row.observedAt.getTime() < range.endMs)
@@ -301,5 +307,6 @@ export function* resolveScopedUsageContributionsSteps(
         totalContributions,
         bucketAttributions: totalContributions,
         coverageReasons: [...coverageReasons],
+        ...(reconciledEvidenceIds ? { reconciledEvidenceIds } : {}),
     };
 }

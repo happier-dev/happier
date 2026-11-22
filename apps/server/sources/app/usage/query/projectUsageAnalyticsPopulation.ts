@@ -5,7 +5,7 @@ import { LegacyUsageReportDataSchema, legacyUsageReportAgentId, readLegacyUsageR
 import { normalizeLegacyUsageCost, normalizeLegacyUsageTokens } from '../usageMetrics';
 import { prepareScopedUsageReplayBasis, resolveScopedUsageContributionsSteps, selectScopedUsageReplayContext, usageAccountingSubjectKey,
     type ScopedUsageContribution, type ScopedUsageEventRow } from './resolveScopedUsageContributions';
-import { isPublicEligibleUsageRow, readScopedUsageAccountingEvidence, toScopedUsageEvidenceRow, toScopedUsageEventRow, toScopedUsageEventRowWithEvidence,
+import { isPublicEligibleUsageRow, readKeyedUsageThread, readScopedUsageAccountingEvidence, toScopedUsageEvidenceRow, toScopedUsageEventRow, toScopedUsageEventRowWithEvidence,
     type ScopedUsageEvidenceRow } from './scopedUsageEventRow';
 import { resolveUsageCostMode } from './resolveUsageCostMode';
 import type { UsageCoverageEvidence } from './projectUsageCoverageEvidence';
@@ -94,18 +94,23 @@ interface PreparedUsageAnalyticsHistory {
 function* prepareUsageAnalyticsHistorySteps(snapshot: UsageAnalyticsSnapshot, request: UsageAnalyticsQueryRequest,
     shouldYield: () => boolean): Generator<void, PreparedUsageAnalyticsHistory, void> {
     const end = request.dateRange?.endMs;
-    const sessions = request.filters?.sessionIds;
+    const sessionIds = request.filters?.sessionIds;
+    const sessions = sessionIds?.length ? new Set(sessionIds) : undefined;
     const historicalRows = historicalUsageRows(snapshot);
+    const isMember = (sessionId: string | null) => !sessions || (sessionId !== null && sessions.has(sessionId));
     const rows = end === undefined ? historicalRows : historicalRows.filter(row => row.observedAt.getTime() < end);
     const legacyReports = snapshot.legacyReports.filter(report => (end === undefined || report.updatedAt.getTime() < end)
-        && (!sessions?.length || (report.sessionId !== null && sessions.includes(report.sessionId))));
+        && isMember(report.sessionId));
     const normalized: ScopedUsageEvidenceRow[] = [];
     const normalizedEvidenceById = new Map<string, ScopedUsageEvidenceRow>();
     for (const row of rows) {
         const evidence = snapshot.normalizedEvidenceById?.get(row.id)
             ?? (row.accountingEvidence ? { ...row, accountingEvidence: row.accountingEvidence } : toScopedUsageEvidenceRow(row));
-        normalized.push(evidence);
-        normalizedEvidenceById.set(evidence.id, evidence);
+        // An opaque key correlates accounting rows without conferring Session membership.
+        if (isMember(evidence.sessionId) || !readKeyedUsageThread(evidence)) {
+            normalized.push(evidence);
+            normalizedEvidenceById.set(evidence.id, evidence);
+        }
         if (shouldYield()) yield;
     }
     const evidenceRows = normalizeUsageAnalyticsEvidenceRows(normalized, legacyReports);
@@ -125,9 +130,9 @@ export function createUsageAnalyticsReplayPreparation(): UsageAnalyticsReplayPre
     return function* (snapshot, request, shouldYield) {
         const rows = historicalUsageRows(snapshot);
         // Start and ordinary filters select subjects after ordering. Session
-        // filters also choose which retained legacy reports enter replay.
+        // membership is part of the historical scope that enters the fold.
         const scope = JSON.stringify([request.dateRange?.endMs,
-            snapshot.legacyReports.length && request.filters?.sessionIds?.length ? request.filters.sessionIds : undefined]);
+            request.filters?.sessionIds?.length ? request.filters.sessionIds : undefined]);
         const scopes = histories.get(rows) ?? new Map<string, CapturedHistory[]>();
         const entries = scopes.get(scope) ?? [];
         const existing = entries.find(entry => entry.legacyReports === snapshot.legacyReports
@@ -185,7 +190,13 @@ export function* projectUsageAnalyticsPopulationSteps(snapshot: UsageAnalyticsSn
     let evidenceRows: readonly (ScopedUsageEvidenceRow | ScopedUsageEventRow)[] = prepared.evidenceRows ?? scopedRows;
     if (publicPopulation || request.filters?.execution !== undefined) {
         const selectedEventIds = new Set(totalContributions.flatMap(row => row.contributingEventIds));
-        evidenceRows = evidenceRows.filter(row => selectedEventIds.has(row.id) && (!publicPopulation || isPublicEligibleUsageRow(row)));
+        const start = request.dateRange?.startMs;
+        evidenceRows = evidenceRows.filter(row => (!publicPopulation || isPublicEligibleUsageRow(row))
+            && (selectedEventIds.has(row.id)
+                // A reconciled keyed source witnesses its own window even with zero usage.
+                || (resolved.reconciledEvidenceIds?.has(row.id)
+                    && (start === undefined || row.observedAt.getTime() >= start)
+                    && matchesUsageFilters(row, request.filters))));
     } else {
         // Replay admission already established every captured event's identity.
         // Only newly derived report contributions lack an admitted event key.

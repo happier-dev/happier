@@ -12,7 +12,7 @@ import { isForegroundTurnRuntimeTranscriptEvent } from '@/agent/runtime/session/
 import { readRegistryCatalogHook } from '@/agent/catalog/runtimeEntry';
 import { projectNativeVendorPluginCatalog } from '@/session/catalogControls/nativeVendorPluginCatalog';
 import { projectNativeSkillCatalog } from '@/session/catalogControls/nativeSkillCatalog';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { nativeIdleCompactionOpenPreference, resolveSessionIdleCompactionSeed } from '@/settings/agents/idleCompactionSeed';
 import { resolveBackendTargetFromSessionMetadata } from '@/session/backendTargets/resolveBackendTargetFromSessionMetadata';
 import { AsyncLock } from '@/utils/lock';
@@ -54,6 +54,7 @@ import { SessionRuntimeFailureCauseV1Schema, SessionRuntimeIssueSourceV1Schema }
 import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
 import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import {
+    areSameAgentRoutingIdentity,
     getAgentLocalControlCapability,
     readEffectiveAgentSessionCompactionCapability,
     parsePermissionIntentAlias,
@@ -216,7 +217,7 @@ import { bindAcpReplaySessionToolSource } from '@/agent/acp/sessionClient';
 import type { UsageObservation } from '@/usage/usageObservation';
 import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
 import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
-import { deriveNativeUsageAccountingIdentity, type NativeUsageAccountingIdentityInput } from '@/usage/collector/nativeUsageAccountingIdentity';
+import { deriveNativeUsageAccountingIdentity, deriveNativeUsageOverlapIdentity, type NativeUsageAccountingIdentityInput } from '@/usage/collector/nativeUsageAccountingIdentity';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
@@ -1433,12 +1434,13 @@ function toHostConfigurationOutcome(
     };
 }
 
-type NativeAgentSessionUsagePublisher = Readonly<{
+export type NativeAgentSessionUsagePublisher = Readonly<{
     provider: string;
-    accountingWitness?: Omit<NativeUsageAccountingIdentityInput, 'inferenceId'> & Readonly<{ nativeSessionId: string }>;
+    accountingWitness?: Omit<NativeUsageAccountingIdentityInput, 'inferenceId' | 'sourceKey'> & Readonly<{ nativeSessionId: string; sourceKey?: string }>;
     boundNativeSessionId?: string;
     resolveAccountingWitness?: (nativeSessionId: string) => Promise<NativeAgentSessionUsagePublisher['accountingWitness']>;
     captureRequestAttribution?: (turnId: string) => UsageRequestAttribution | undefined;
+    onObservation?: (input: { turnId: string | null; observation: UsageObservation }) => void;
     publish(input: Readonly<{
         observedAt: number;
         observation: UsageObservation;
@@ -1448,6 +1450,133 @@ type NativeAgentSessionUsagePublisher = Readonly<{
         metadata?: Record<string, unknown>;
     }>): void | Promise<void | UsageObservationPublishResult>;
 }>;
+
+/** Publish every host-mediated native usage event through the same accounting boundary. */
+export function createNativeAgentSessionUsageObserver(
+    usagePublisher: NativeAgentSessionUsagePublisher,
+    isCurrent: () => boolean,
+    runtimeIncarnationId = randomUUID(),
+) {
+    let fallbackUsagePublicationKey: string | undefined;
+    return (event: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' }>, attribution?: UsageRequestAttribution): void => {
+        if (!isCurrent()) return;
+        const observation = toNativeAgentUsageObservation(event, usagePublisher.provider);
+        usagePublisher.onObservation?.({ turnId: event.turnId ?? null, observation });
+        const publishUsage = (witness: NativeAgentSessionUsagePublisher['accountingWitness']): void => {
+            if (!isCurrent()) return;
+            try {
+                const { nativeSessionId, inferenceId, ...counterSemantics } = buildNativeAgentUsageAccountingMetadata(event).usageAccounting;
+                const witnessed = witness && nativeSessionId === witness.nativeSessionId ? witness : undefined;
+                const replayObservationId = event.accounting?.replayObservationId;
+                const replayable = replayObservationId === event.observationId;
+                // Claude's existing Home lookup uses the transcript record ID. Other
+                // producers declare replayability here and still publish with opaque keys.
+                const claudeReplay = replayable && areSameAgentRoutingIdentity(usagePublisher.provider, 'claude');
+                if ((nativeSessionId || inferenceId || replayObservationId) && !witnessed) {
+                    logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
+                    // A later cumulative reading or the producer's next presentation can recover the measurement.
+                    if (event.scope !== 'turn_delta' || replayable) return;
+                }
+                const codex = areSameAgentRoutingIdentity(usagePublisher.provider, 'codex');
+                const accountingIdentity = witnessed?.sourceKey
+                    ? deriveNativeUsageAccountingIdentity({ ...witnessed, sourceKey: witnessed.sourceKey, inferenceId })
+                    : null;
+                const deviceIdentity = witnessed && nativeSessionId
+                    ? deriveNativeUsageOverlapIdentity({ ...witnessed, nativeSessionId,
+                        inferenceId, observationId: event.observationId,
+                        ...(!codex ? { publication: 'observation' as const } : {}),
+                    })
+                    : undefined;
+                const overlap = deviceIdentity ? { nativeSessionKey: deviceIdentity.nativeSessionKey,
+                    ...(event.scope === 'turn_delta' && deviceIdentity.responseKey ? { responseKey: deviceIdentity.responseKey } : {}),
+                } : undefined;
+                const opaqueRuntimeAccounting = !codex && deviceIdentity ? {
+                    nativeSessionId: deviceIdentity.nativeSessionKey,
+                    ...(deviceIdentity.responseKey ? { inferenceId: deviceIdentity.responseKey } : {}),
+                } : undefined;
+                const replayAccounting = claudeReplay && deviceIdentity;
+                const runtimeAccounting = {
+                    ...counterSemantics,
+                    runtimeEventOrder: { runtimeIncarnationId, sequence: event.sequence },
+                };
+                const externalKey = claudeReplay ? event.observationId
+                    : deviceIdentity?.publicationKey
+                        ?? (nativeSessionId || inferenceId
+                            // Preserve repeated delivery when device custody is unavailable without exposing an observation's native IDs.
+                            ? createHmac('sha256', fallbackUsagePublicationKey ??= randomUUID()).update(event.observationId).digest('hex')
+                            : event.observationId);
+                void Promise.resolve(usagePublisher.publish({
+                    observedAt: event.emittedAtMs,
+                    observation,
+                    turnId: event.turnId ?? null,
+                    externalKey,
+                    ...(attribution ? { attribution } : {}),
+                    ...(accountingIdentity?.nativeSessionKey && witness ? {
+                        metadata: {
+                            ...(replayAccounting ? { replayObservationId } : {}),
+                            accountingSubject: {
+                                kind: 'native', machineId: witness.authority.machineId, agent: witness.agent,
+                                sourceRootKey: accountingIdentity.sourceRootKey,
+                                nativeSessionKey: accountingIdentity.nativeSessionKey,
+                            },
+                            usageAccounting: {
+                                ...runtimeAccounting,
+                                status: event.accounting?.historyComplete === false || !accountingIdentity.externalKey ? 'partial' : 'available',
+                                ...opaqueRuntimeAccounting,
+                                // The existing Claude lookup can still recognize a formerly bound write.
+                                ...(claudeReplay && accountingIdentity.externalKey ? { inferenceId: accountingIdentity.externalKey } : {}),
+                                ...overlap,
+                            },
+                        },
+                    } : {
+                        metadata: {
+                            ...(replayAccounting ? { replayObservationId } : {}),
+                            usageAccounting: {
+                                ...runtimeAccounting,
+                                ...opaqueRuntimeAccounting,
+                                ...overlap,
+                            },
+                        },
+                    }),
+                })).catch(() => {
+                    logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
+                });
+            } catch {
+                logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
+            }
+        };
+        if (event.accounting?.nativeSessionId && usagePublisher.resolveAccountingWitness) {
+            // The existing configured-source owner supplies root authority;
+            // a newly minted native id alone never establishes a source.
+            void usagePublisher.resolveAccountingWitness(event.accounting.nativeSessionId)
+                .then(publishUsage, () => publishUsage(undefined));
+        } else {
+            publishUsage(usagePublisher.accountingWitness);
+        }
+    };
+}
+
+export function createNativeAgentUsageAccountingWitnessResolver(input: {
+    token?: string;
+    agent?: NativeUsageAccountingIdentityInput['agent'];
+    machineId: string;
+    readServerId: () => string | undefined;
+    signal: AbortSignal;
+    isCurrent: () => boolean;
+    resolveSourceKey?: (nativeSessionId: string) => Promise<string | undefined> | undefined;
+}): NonNullable<NativeAgentSessionUsagePublisher['resolveAccountingWitness']> {
+    const accountId = input.token ? readAccountIdFromToken(input.token) : undefined;
+    return async nativeSessionId => {
+        const serverId = input.readServerId();
+        if (!accountId || !serverId || !input.agent || input.signal.aborted || !input.isCurrent()) return undefined;
+        const sourceKey = await input.resolveSourceKey?.(nativeSessionId)?.catch(() => undefined);
+        if (input.signal.aborted || !input.isCurrent()) return undefined;
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: happierConfiguration.deviceLocalSecretKeyFile });
+        if (input.signal.aborted || !input.isCurrent()) return undefined;
+        return { authority: { serverId, accountId, machineId: input.machineId },
+            storage, agent: input.agent, nativeSessionId, ...(sourceKey ? { sourceKey } : {}) };
+    };
+}
 
 type NativeAgentSessionDirectFacets = Readonly<{
     scmCommandRunner?: ScmCommandRunner;
@@ -2190,6 +2319,7 @@ export function createNativeAgentSessionOperations(
     let disposeStarted = false;
     let disposePromise: Promise<void> | null = null;
     let disposeRuntimeScopePromise: Promise<void> | null = null;
+    const observeUsage = usagePublisher && createNativeAgentSessionUsageObserver(usagePublisher, () => !disposeStarted, runtimeIncarnationId);
     const invariant = createAgentSessionTurnInvariant<NativeAgentNewTurnAdmissionWitness>({
         sessionId: expectedSessionId,
         // A respawned runner's adopted Agent finishes the previous runner's turn.
@@ -2844,64 +2974,7 @@ export function createNativeAgentSessionOperations(
                 attribution = { v: 1, turnId: requestProof.turnId, source: { kind: 'native', accountScope: 'workspace',
                     connectedAccount: attribution?.source.kind === 'native' ? attribution.source.connectedAccount : null } };
             }
-            const publishUsage = (witness: NativeAgentSessionUsagePublisher['accountingWitness']): void => {
-              if (disposeStarted) return;
-              try {
-                const accountingIdentity = witness && event.accounting?.nativeSessionId === witness.nativeSessionId
-                    ? deriveNativeUsageAccountingIdentity({ ...witness, inferenceId: event.accounting.inferenceId })
-                    : null;
-                const fallbackAccounting = {
-                    ...buildNativeAgentUsageAccountingMetadata(event).usageAccounting,
-                    runtimeEventOrder: { runtimeIncarnationId, sequence: event.sequence },
-                };
-                const { nativeSessionId: _nativeSessionId, inferenceId: _inferenceId, ...counterSemantics } = fallbackAccounting;
-                const replayObservationId = event.accounting?.replayObservationId;
-                const replayAccounting = replayObservationId === event.observationId && fallbackAccounting.nativeSessionId
-                    ? { nativeSessionId: createHash('sha256').update(fallbackAccounting.nativeSessionId).digest('hex') }
-                    : null;
-                void Promise.resolve(usagePublisher.publish({
-                    observedAt: event.emittedAtMs,
-                    observation: toNativeAgentUsageObservation(event, usagePublisher.provider),
-                    turnId: event.turnId ?? null,
-                    externalKey: replayAccounting ? event.observationId : accountingIdentity?.externalKey ?? event.observationId,
-                    ...(attribution ? { attribution } : {}),
-                    ...(accountingIdentity?.nativeSessionKey && witness ? {
-                        metadata: {
-                            ...(replayAccounting ? { replayObservationId } : {}),
-                            accountingSubject: {
-                                kind: 'native', machineId: witness.authority.machineId, agent: witness.agent,
-                                sourceRootKey: accountingIdentity.sourceRootKey,
-                                nativeSessionKey: accountingIdentity.nativeSessionKey,
-                            },
-                            usageAccounting: {
-                                ...counterSemantics,
-                                status: event.accounting?.historyComplete === false || !accountingIdentity.externalKey ? 'partial' : 'available',
-                                nativeSessionId: accountingIdentity.nativeSessionKey,
-                                ...(accountingIdentity.externalKey ? { inferenceId: accountingIdentity.externalKey } : {}),
-                                ...replayAccounting,
-                            },
-                        },
-                    } : {
-                        metadata: {
-                            ...(replayAccounting ? { replayObservationId } : {}),
-                            usageAccounting: { ...fallbackAccounting, ...replayAccounting },
-                        },
-                    }),
-                })).catch(() => {
-                    logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
-                });
-              } catch {
-                logger.debug('[NativeAgentSession] failed to publish usage observation (non-fatal)');
-              }
-            };
-            if (event.accounting?.nativeSessionId && usagePublisher.resolveAccountingWitness) {
-                // The existing configured-source owner supplies root authority;
-                // a newly minted native id alone never establishes a source.
-                void usagePublisher.resolveAccountingWitness(event.accounting.nativeSessionId)
-                    .then(publishUsage, () => publishUsage(undefined));
-            } else {
-                publishUsage(usagePublisher.accountingWitness);
-            }
+            observeUsage?.(event, attribution);
         }
         if (
             event.kind === 'input-accepted'
@@ -4905,8 +4978,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 params.agent,
                 hostRuntimeParams.metadata,
             );
-            const accountingAccountId = readAccountIdFromToken(params.sessionInput.credentials.token);
-            let resolveAccountingWitness: NonNullable<NativeAgentSessionUsagePublisher['resolveAccountingWitness']> = async () => undefined;
+            let resolveAccountingSourceKey: ((nativeSessionId: string) => Promise<string | undefined>) | undefined;
+            const resolveAccountingWitness = createNativeAgentUsageAccountingWitnessResolver({
+                token: params.sessionInput.credentials.token, agent: params.agent.identity,
+                readServerId: () => hostRuntimeParams.session.getServerBinding().serverId, machineId: hostRuntimeParams.machineId,
+                signal, isCurrent: identity.isCurrent, resolveSourceKey: nativeSessionId => resolveAccountingSourceKey?.(nativeSessionId),
+            });
             let observeProviderSessionId: ((providerSessionId: string) => void) | undefined;
             const hasDeclaredInstances = params.agent.richDefinition?.definition.surfaces?.externalSession.sources.some(
                 (source) => (source.instances?.length ?? 0) > 0,
@@ -5040,26 +5117,19 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         if (identityRecordedFor === nativeSessionId) identityRecordedFor = null;
                     });
                 };
-                resolveAccountingWitness = async (nativeSessionId) => {
-                    if (!accountingAccountId || !params.agent.identity || signal.aborted
-                        || !identity.isCurrent() || (boundExternalSessionSource && boundExternalSessionSource.remoteSessionId !== nativeSessionId)) return undefined;
-                    const configuredExternalSessions = await readExternalSessions();
-                    if (!configuredExternalSessions) return undefined;
-                    const target = await configuredExternalSessions.resolveSourceIdentity({
+                resolveAccountingSourceKey = async (nativeSessionId) => {
+                    const resolveRoot = boundExternalSessionSource
+                        ? boundExternalSessionSource.remoteSessionId === nativeSessionId
+                        : !areSameAgentRoutingIdentity(params.agent.id, 'codex');
+                    if (!resolveRoot) return undefined;
+                    const target = await (await readExternalSessions())?.resolveSourceIdentity({
                         agentId: params.agent.id,
                         remoteSessionId: nativeSessionId,
                         ...(boundExternalSessionSource ? { boundSource: boundExternalSessionSource.source } : {}),
                         signal,
                     });
-                    if (target.status !== 'resolved' || signal.aborted || !identity.isCurrent()) return undefined;
-                    const storage = await readOrCreateDeviceLocalSecretStorage({ path: happierConfiguration.deviceLocalSecretKeyFile });
-                    if (signal.aborted || !identity.isCurrent()) return undefined;
-                    return {
-                        authority: { serverId: hostRuntimeParams.session.getServerBinding().serverId,
-                            accountId: accountingAccountId, machineId: hostRuntimeParams.machineId },
-                        storage, agent: params.agent.identity,
-                        sourceKey: target.ref.sourceId, nativeSessionId: target.ref.remoteSessionId,
-                    };
+                    return target?.status === 'resolved' && target.ref.remoteSessionId === nativeSessionId
+                        ? target.ref.sourceId : undefined;
                 };
                 followProviderSession ??= async (
                     request,

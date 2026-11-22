@@ -184,6 +184,45 @@ describe('Usage analytics PostgreSQL event transport', () => {
         }
     });
 
+    it('hydrates earlier contributions for an opaque stream in a later-day Accounting read', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const startMs = Date.UTC(2026, 6, 1);
+        const later = Date.UTC(2026, 6, 2);
+        const nativeSessionKey = 'a'.repeat(64);
+        await db.usageEvent.createMany({ data: [
+            { accountId: account.id, observedAt: new Date(startMs + 10), agentId: 'codex', source: 'native',
+                scope: 'session_cumulative', isCumulative: true, totalTokens: 100,
+                metadata: { usageAccounting: { path: 'native', nativeSessionKey, historyComplete: true } } },
+            { accountId: account.id, observedAt: new Date(later + 10), agentId: 'codex', source: 'runtime',
+                scope: 'turn_delta', totalTokens: 50,
+                metadata: { usageAccounting: { path: 'runtime', nativeSessionKey } } },
+            { accountId: account.id, observedAt: new Date(later + 20), agentId: 'codex', source: 'native',
+                scope: 'session_cumulative', isCumulative: true, totalTokens: 150,
+                metadata: { usageAccounting: { path: 'native', nativeSessionKey, historyComplete: true } } },
+        ] });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: later, endMs: later + 100 } });
+        const result = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request), { readOnly: true });
+        expect(projectUsageAnalytics(result, request).totals.tokens.total).toBe(50);
+    });
+
+    it('hydrates the linked modern prefix for a released report in a later-day read', async () => {
+        const account = await db.account.create({ data: { publicKey: randomUUID() } });
+        const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}' } });
+        const start = Date.UTC(2026, 6, 1);
+        const later = Date.UTC(2026, 6, 2);
+        const cutoff = new Date(later + 10);
+        await db.usageReport.create({ data: { accountId: account.id, sessionId: session.id, key: 'released',
+            createdAt: cutoff, updatedAt: cutoff, data: { tokens: { input: 100, total: 100 }, cost: { total: 3 } } } });
+        await db.usageEvent.createMany({ data: [[start + 10, 20], [later + 20, 30]].map(([observedAt, total]) => ({
+            accountId: account.id, sessionId: session.id, agentId: 'codex', source: 'runtime', scope: 'turn_delta',
+            observedAt: new Date(observedAt), inputTokens: total, totalTokens: total,
+        })) });
+        const request = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: later, endMs: later + 100 } });
+        const captured = await inTx(tx => captureUsageAnalyticsInTx(tx, account.id, request), { readOnly: true });
+        expect(projectUsageAnalytics(captured, request).totals.tokens.total).toBe(110);
+    });
+
     it('keeps same-population detail in one accounting capture and isolates distinct compact-summary snapshots', async () => {
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(100),
@@ -580,8 +619,9 @@ describe('Usage analytics PostgreSQL event transport', () => {
 
         const detail = request(start, end);
         const first = await compare(detail);
-        expect(first.totals.tokens.total).toBeGreaterThan(25);
-        expect(first.totals.tokens.total).toBeLessThan(100);
+        // Linked modern observations before the report's cutoff consume its residual.
+        expect(first.totals.tokens.total).toBe(80_039);
+        expect((await compare(request(start, end, competing.id))).totals.tokens.total).toBe(80_000);
         expect(first.coverage?.sources?.length).toBeGreaterThan(0);
         expect((await compare(request(start, end, legacy.id))).totals.tokens.total).toBe(7);
         expect((await compare(request(end - day, end))).totals.tokens.total).toBe(0);
@@ -591,7 +631,7 @@ describe('Usage analytics PostgreSQL event transport', () => {
         await db.usageEvent.update({ where: { id: 'window-reference-overlap-runtime' },
             data: { inputTokens: 8, totalTokens: 8, reportedCostUsd: 0.08 } });
         const corrected = await compare(detail);
-        expect(corrected.totals.tokens.total).toBe((first.totals.tokens.total ?? 0) + 3);
+        expect(corrected.totals.tokens.total).toBe(first.totals.tokens.total);
         await db.usageEvent.create({ data: cumulative('late-anchor', start - day, 105, 'before-restart', 8, 'before-reset') });
         const withLateAnchor = await compare(detail);
         expect(withLateAnchor.totals.tokens.total).toBe((corrected.totals.tokens.total ?? 0) - 5);

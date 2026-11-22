@@ -63,6 +63,7 @@ function hasUsageData(request: Readonly<{
 export function buildUsageEventIngestRequest(params: Readonly<{
     sessionId?: string;
     subject?: UsageNativeAccountingSubject;
+    nativeSessionLink?: UsageEventIngestRequest['nativeSessionLink'];
     accounting?: UsageNativeAccountingEvidence;
     attribution?: UsageRequestAttribution;
     observedAt: number;
@@ -98,9 +99,9 @@ export function buildUsageEventIngestRequest(params: Readonly<{
               }
             : undefined;
 
-    if (!hasUsageData({ tokens, cost, context }) && !params.subject
-        && !readUsageAccountingMetadata(params.metadata)?.nativeSessionId) {
-        return null;
+    if (!hasUsageData({ tokens, cost, context }) && !params.subject) {
+        const accounting = readUsageAccountingMetadata(params.metadata);
+        if (!accounting?.nativeSessionId && !accounting?.nativeSessionKey) return null;
     }
 
     const metadata = params.subject ? {} : {
@@ -110,6 +111,7 @@ export function buildUsageEventIngestRequest(params: Readonly<{
 
     return {
         ...(params.subject ? { subject: params.subject } : { sessionId: sessionId! }),
+        ...(params.subject && params.nativeSessionLink ? { nativeSessionLink: params.nativeSessionLink } : {}),
         ...(params.subject && params.accounting ? { accounting: params.accounting } : {}),
         ...(!params.subject && params.attribution && observation.scope === 'turn_delta' && params.turnId === params.attribution.turnId ? { attribution: params.attribution } : {}),
         observedAt: Math.max(0, Math.trunc(params.observedAt)),

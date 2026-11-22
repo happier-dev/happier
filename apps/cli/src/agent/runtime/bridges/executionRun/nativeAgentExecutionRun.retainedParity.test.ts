@@ -1,4 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import type { AgentRuntime, AgentSessionRuntime, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readRuntimeTurnFailureAlreadySurfacedEvent } from '@/agent/runtime/turns/runtimeTurnOperations';
 import {
@@ -268,8 +272,12 @@ describe('native Session Run parity', () => {
 
     it.each(['finite', 'retained'] as const)('publishes %s Run usage to the Session and exact Workflow owners', async adapter => {
         let publishRuntimeEvent: ((event: AgentSessionRuntimeEvent) => void) | undefined;
-        const publishUsage = vi.fn(async () => undefined);
+        const publishUsage = vi.fn(async (_input: unknown) => undefined);
         const observeWorkflowUsage = vi.fn();
+        const directory = await mkdtemp(join(tmpdir(), 'happier-session-run-usage-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const agent = { pluginId: 'acme.finite', localId: 'default' };
         // The native Agent is the external boundary. Its accepted lifecycle reaches the real host owner.
         const runtime: AgentRuntime = { sessions: { async open() { return {
             async send(request) {
@@ -297,7 +305,10 @@ describe('native Session Run parity', () => {
             sessionCapabilities: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: false },
             createSessionContext: ({ services, signal }) => ({
                 ...createVoiceSessionContextLease({ services, signal, async dispose() {} }),
-                usagePublisher: { provider: 'acme.finite/default', publish: publishUsage },
+                usagePublisher: { provider: 'acme.finite/default', publish: publishUsage,
+                    async resolveAccountingWitness(nativeSessionId: string) {
+                        return { authority, storage, agent, nativeSessionId };
+                    } },
             }),
         });
         try {
@@ -324,16 +335,24 @@ describe('native Session Run parity', () => {
                     availability: { inputTokens: true, outputTokens: true, reportedCostUsd: false },
                 }),
             });
-            publishRuntimeEvent!({ sequence: 4, sessionId: 'session-parent', emittedAtMs: 21,
-                turnId: 'run-usage-turn-1', kind: 'usage-observed', observationId: 'child-usage-identity',
-                source: 'native-statistics', scope: 'session_cumulative',
-                accounting: { nativeSessionId: 'child-native', historyComplete: false } });
-            await vi.waitFor(() => expect(publishUsage).toHaveBeenCalledTimes(2));
-            expect(publishUsage).toHaveBeenLastCalledWith(expect.objectContaining({
-                observation: expect.objectContaining({ tokens: null, cost: null }),
-                metadata: { usageAccounting: expect.objectContaining({ nativeSessionId: 'child-native', historyComplete: false }) },
-            }));
-        } finally { await host.dispose(); }
+            for (const [index, total] of [10, 25].entries()) {
+                publishRuntimeEvent!({ sequence: 4 + index, sessionId: 'session-parent', emittedAtMs: 21 + index,
+                    turnId: 'run-usage-turn-1', kind: 'usage-observed', observationId: `child-native:raw-inference:${index}`,
+                    source: 'native-statistics', scope: 'session_cumulative',
+                    accounting: { nativeSessionId: 'child-native', inferenceId: 'raw-inference', historyComplete: false },
+                    tokens: { input: total, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total } });
+            }
+            await vi.waitFor(() => expect(publishUsage).toHaveBeenCalledTimes(3));
+            const calls: unknown[] = publishUsage.mock.calls.slice(1).flat();
+            expect(JSON.stringify(calls).includes('child-native')).toBe(false);
+            expect(JSON.stringify(calls).includes('raw-inference')).toBe(false);
+            const nativeSubjects = calls.map(call => (call as { metadata: { usageAccounting: {
+                nativeSessionId?: string; inferenceId?: string;
+            } } }).metadata.usageAccounting);
+            expect(nativeSubjects[0]).toMatchObject({ nativeSessionId: expect.any(String), inferenceId: expect.any(String) });
+            expect(nativeSubjects[1]?.nativeSessionId).toBe(nativeSubjects[0]?.nativeSessionId);
+            expect(nativeSubjects[1]?.inferenceId).toBe(nativeSubjects[0]?.inferenceId);
+        } finally { await host.dispose(); await rm(directory, { recursive: true, force: true }); }
     });
 
     it('sanitizes retained failure completion while preserving native recovery evidence', async () => {

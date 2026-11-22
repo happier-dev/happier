@@ -2158,21 +2158,33 @@ export async function startDaemon(
       void pluginRuntimeInitialization.then(() => pluginRuntimeOwner.refreshMachineRoleAdmission())
         .catch(error => logger.warn('[DAEMON RUN] Machine role plugin admission refresh failed', error));
     });
-    // Background, once per Machine: link.ensure keeps its scan fallback until
-    // this Machine's released external-session identities are indexed.
-    void pluginRuntimeInitialization.then((pluginRuntime) => {
-      if (pluginRuntime.status !== 'ready' || !machineId || homeTransportCancellation.signal.aborted) return;
-      return settleDaemonOptionalCapability(
-        'external_session_identity_backfill',
-        startDaemonExternalSessionIdentityBackfill({
-          credentials,
-          machineId,
-          reloadController: pluginReloadController,
-          signal: homeTransportCancellation.signal,
-        }),
-        reportOptionalCapabilityUnavailable,
-      );
-    });
+    // Startup and capture share the same Machine identity backfill. A failed
+    // pass leaves capture pending for its next ordinary publication boundary.
+    let externalSessionIdentityBackfill: { machineId: string; readiness: Promise<boolean> } | undefined;
+    const waitForExternalSessionIdentityBackfill = (): Promise<boolean> => {
+      const binding = machineId;
+      if (externalSessionIdentityBackfill?.machineId === binding) return externalSessionIdentityBackfill.readiness;
+      const readiness = pluginRuntimeInitialization.then(async pluginRuntime => {
+        if (pluginRuntime.status !== 'ready' || !binding || homeTransportCancellation.signal.aborted) return false;
+        const settled = await settleDaemonOptionalCapability(
+          'external_session_identity_backfill',
+          startDaemonExternalSessionIdentityBackfill({
+            credentials,
+            machineId: binding,
+            reloadController: pluginReloadController,
+            signal: homeTransportCancellation.signal,
+          }),
+          reportOptionalCapabilityUnavailable,
+        );
+        return settled.status === 'ready' && binding === machineId;
+      }).then(ready => {
+        if (!ready && externalSessionIdentityBackfill?.readiness === readiness) externalSessionIdentityBackfill = undefined;
+        return ready;
+      });
+      externalSessionIdentityBackfill = { machineId: binding, readiness };
+      return readiness;
+    };
+    void waitForExternalSessionIdentityBackfill();
     await accountCatalogReadiness;
     const registryUpdateCheck = createCliRegistryUpdateCheck({ credentials, secretSources: daemonSecretSources, signal: homeTransportCancellation.signal });
     const checkRegistryUpdates = () => startBackgroundRegistryUpdateCheck(registryUpdateCheck);
@@ -3847,6 +3859,7 @@ export async function startDaemon(
         stopRequesterSessionForHandoff,
         daemonSessionMutationCustody,
         deviceLocalSecretStorage,
+        waitForExternalSessionIdentityBackfill,
         ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
         ...(openTeamCredentialProviderBinding
           ? {

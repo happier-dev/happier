@@ -125,7 +125,7 @@ describe('captured usage query projection', () => {
         const measuredZero = { ...row('measured-zero', 0,
             { usageAccounting: { path: 'runtime', status: 'available', historyComplete: true } }), modelId: 'known-model' };
         const known = projectUsageAnalytics({ ...snapshot, rows: [measuredZero] }, query);
-        expect(known.totals).toMatchObject({ eventCount: 1, tokens: { total: 0 }, cost: { reportedUsd: 0 } });
+        expect(known.totals).toMatchObject({ eventCount: 1, tokens: { total: 0 }, cost: { reportedUsd: 0, estimatedUsd: 0 } });
         expect(known.coverage).toMatchObject({ status: 'complete', reasons: [], range: { complete: true } });
         expect(projectUsagePageCost(known, 'auto').amountUsd).toBe(0);
         const mixed = projectUsageAnalytics({ ...snapshot, rows: [unmeasured, measuredZero] }, query);
@@ -555,6 +555,8 @@ describe('captured usage query projection', () => {
             // selected dimension evidence remains available independently.
             expect(supplied.coverage).toMatchObject({ status: 'complete', reasons: [], missingDimensions: ['project'] });
             expect(projected?.coverage).toMatchObject({ status: 'complete', reasons: [], missingDimensions: [] });
+            expect(supplied.totals.cost.estimatedUsd).toBe(0);
+            expect(projected?.totals.cost.estimatedUsd).toBe(0);
             expect(supplied.costFacts?.some(fact => fact.kind !== 'unpriced' && fact.complete)).toBe(true);
             expect(projected?.costFacts).toBe(supplied.costFacts);
             expect(projected?.breakdowns?.agent).toBe(supplied.breakdowns?.agent);
@@ -1071,5 +1073,32 @@ describe('captured usage query projection', () => {
         const native = projectUsageAnalytics(snapshot, UsageAnalyticsQueryRequestSchema.parse({ ...query, filters: { sources: ['native'] } }));
         expect(native.totals.tokens.total).toBe(50);
         expect(native.contributions?.map(row => row.sourceContext?.execution).sort()).toEqual(['happier', 'outside']);
+    });
+
+    it('keeps a fully reconciled runtime witness in its own window without adding a counted event', () => {
+        const start = Date.UTC(2026, 0, 1);
+        const nextDay = start + 86_400_000;
+        const nativeSessionKey = 'a'.repeat(64);
+        const evidence = { nativeSessionKey, inferenceId: 'same', status: 'available', historyComplete: true };
+        const snapshot: UsageAnalyticsSnapshot = {
+            rows: [
+                { ...row('first', 12, { accountingSubject: subject, usageAccounting: { ...evidence, path: 'native' } },
+                    { source: 'native' }), observedAt: new Date(start + 1) },
+                { ...row('later', 12, { accountingSubject: subject, usageAccounting: { ...evidence, path: 'runtime' } }),
+                    observedAt: new Date(nextDay + 1) },
+            ],
+            legacyReports: [], priceCatalog: { fetchEnabled: false, stored: null }, messageCountsBySession: undefined,
+        };
+        const read = (startMs: number, endMs: number) => projectUsageAnalytics(snapshot, UsageAnalyticsQueryRequestSchema.parse({
+            dateRange: { startMs, endMs }, granularity: 'day', filters: { execution: 'happier' },
+        }));
+        const first = read(start, nextDay);
+        expect(first.totals).toMatchObject({ eventCount: 1, tokens: { total: 12 } });
+        expect(first.coverage?.sources.map(source => source.path)).toEqual(['native']);
+
+        const replay = read(nextDay, nextDay + 86_400_000);
+        expect(replay.totals.eventCount).toBe(0);
+        expect(replay.totals.tokens.total).toBe(0);
+        expect(replay.coverage?.sources).toEqual([expect.objectContaining({ path: 'runtime', eventCount: 1 })]);
     });
 });

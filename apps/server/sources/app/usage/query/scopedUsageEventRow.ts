@@ -38,6 +38,14 @@ export function readScopedUsageAccountingEvidence(
     return readScopedUsageAccountingEvidenceWithSubjectReader(row, readNativeSubject);
 }
 
+/** Only admitted native and runtime observations can supply an opaque thread key. */
+export function readKeyedUsageThread(
+    row: Pick<ScopedUsageEventRow, 'metadata' | 'accountingEvidence'>,
+): string | undefined {
+    const { accounting } = readScopedUsageAccountingEvidence(row);
+    return accounting?.path === 'native' || accounting?.path === 'runtime' ? accounting.nativeSessionKey : undefined;
+}
+
 function readScopedUsageAccountingEvidenceWithSubjectReader(
     row: Pick<ScopedUsageEventRow, "metadata" | "accountingEvidence">,
     readSubject: typeof readNativeSubject,

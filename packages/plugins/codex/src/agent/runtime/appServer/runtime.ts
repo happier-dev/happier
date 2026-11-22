@@ -2295,10 +2295,13 @@ export function createCodexAppServerRuntime(
       });
       if (!input?.runtimeObservation?.tokens) return;
       const { context: _context, ...observation } = input.runtimeObservation;
+      const observationId = `codex-response:${createHash('sha256').update(JSON.stringify([runtimeTargetId, threadId, responseId])).digest('hex')}`;
       publishUsageObservation({ ...observation, source: 'codex-app-server-response-usage',
-        observationId: `codex-response:${createHash('sha256').update(JSON.stringify([runtimeTargetId, threadId, responseId])).digest('hex')}`,
+        observationId,
         turnId: nativeTurnId,
-        accounting: { ...observation.accounting, nativeSessionId: nativeThreadId, inferenceId: responseId, historyComplete: false },
+        // The cumulative TokenCount re-presents this measurement after custody recovers.
+        accounting: { ...observation.accounting, nativeSessionId: nativeThreadId, inferenceId: responseId,
+          replayObservationId: observationId, historyComplete: false },
       }, notificationParams, true);
     });
     if (params.happierSessionId !== undefined) nextClient.registerNotificationHandler('thread/tokenUsage/updated', (notificationParams) => {

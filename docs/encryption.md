@@ -1416,6 +1416,13 @@ organization row. Authorized clients open the path to tell same-named
 checkouts apart. Organization Action receipts omit the path, and the row
 cipher drops it when sealing a plain row.
 
+Runtime usage keys are scoped to the device and native Session independently
+of the capture root. When device custody is unavailable, cumulative snapshots
+and observations the producer can present again wait for the next presentation.
+Codex's cumulative snapshots include its earlier exact response usage.
+A live delta without producer-declared replay uses the Happier Session without
+native identifiers. A subsequent native capture can count that live delta again.
+
 Owner Session usage publication uses that same Project resolver when launch
 metadata has no Project identity. Its witness is the Session's exact execution
 root on its own Machine, including an explicit agent-to-machine path mapping;

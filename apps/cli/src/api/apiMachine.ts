@@ -2414,6 +2414,7 @@ export class ApiMachineClient {
                         get serverHttpBaseUrl() { return readMachineRuntimeServerHttpBaseUrl(); },
                         token: this.token,
                         storage: deps.deviceLocalSecretStorage,
+                        waitForExternalSessionIdentityBackfill: deps.waitForExternalSessionIdentityBackfill,
                         readCredentials: async () => this.projectionSchedulingClosed
                             ? null : await readStoredCredentialsForServerId(executionRunServerId),
                         invalidateSources: () => this.emitUsageSourcesInvalidated(),

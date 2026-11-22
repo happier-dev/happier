@@ -153,3 +153,14 @@ export async function loadUsageEventsForQuery(tx: Tx, accountId: string,
     }
     return reads < 2 ? rows : rows.sort((left, right) => left.observedAt.getTime() - right.observedAt.getTime());
 }
+
+/** One Account-owned Session history read for a changed released report dependency. */
+export async function loadLinkedModernUsageHistory(tx: Tx, accountId: string, sessionId: string,
+    throughMs: number): Promise<UsageQueryEvent[]> {
+    return tx.usageEvent.findMany({
+        where: { accountId, sessionId, observedAt: { lte: new Date(throughMs) },
+            source: { notIn: [...TEAM_CREDENTIAL_ONLY_USAGE_SOURCES, 'legacy_usage_report'] } },
+        select: usageEventSelect,
+        orderBy: { observedAt: 'asc' },
+    });
+}

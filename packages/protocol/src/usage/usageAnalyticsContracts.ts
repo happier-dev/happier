@@ -13,6 +13,7 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
 import { UsageAgentCalendarSchema } from './usageAgentCalendar.js';
 import { PublicProfileAccountingProjectionSchema } from '../account/publicProfileAccountingContracts.js';
+import { SessionExternalIdentityTagV1Schema } from '../sessions/control/externalIdentityTagV1.js';
 import { UsageAccountingSessionMembershipSchema } from './usageAccountingMembership.js';
 
 const NonNegativeNumberSchema = lazyZodSchema(() => z.number().check(z.minimum(0)));
@@ -99,6 +100,7 @@ export type UsageNativeAccountingSubject = z.infer<typeof UsageNativeAccountingS
 /** Explicit native evidence; lineage and correlation authority remain server-owned. */
 export const UsageNativeAccountingEvidenceSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(z.extend(z.pick(UsageAccountingMetadataSchema, {
   historyComplete: true, asOfMs: true, counterEpoch: true, inputIncludesCache: true, outputIncludesReasoning: true,
+  nativeSessionKey: true, responseKey: true,
 }), {
   status: z.enum(['available', 'partial']),
   inferenceKey: zMini.optional(NonBlankOpaqueIdentifierSchema),
@@ -145,9 +147,16 @@ export const UsagePromptCacheSchema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsagePromptCache = z.infer<typeof UsagePromptCacheSchema>;
 
+/** An indexed Session candidate. Admission consumes the tag without storing it. */
+export const UsageNativeSessionLinkSchema = lazyZodSchema(() => z.strictObject({
+  sessionId: z.string().check(z.trim(), z.minLength(1)),
+  externalIdentityTag: z.optional(SessionExternalIdentityTagV1Schema),
+}));
+
 export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject({
   sessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   subject: z.optional(UsageNativeAccountingSubjectSchema),
+  nativeSessionLink: z.optional(UsageNativeSessionLinkSchema),
   accounting: z.optional(UsageNativeAccountingEvidenceSchema),
   attribution: z.optional(UsageRequestAttributionSchema),
   observedAt: z.number().check(z.int(), z.minimum(0)),
@@ -180,6 +189,7 @@ export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject(
     if (request.machineId && request.machineId !== request.subject.machineId) ctx.addIssue({ code: 'custom', path: ['machineId'], message: 'Machine identity must agree with the subject.' });
     if (request.agentId !== request.subject.agent.localId && request.agentId !== `${request.subject.agent.pluginId}/${request.subject.agent.localId}`) ctx.addIssue({ code: 'custom', path: ['agentId'], message: 'Agent identity must agree with the subject.' });
   }
+  if (request.nativeSessionLink && !request.subject) ctx.addIssue({ code: 'custom', path: ['nativeSessionLink'], message: 'Native Session link requires a native subject.' });
   if (request.accounting && !request.subject) ctx.addIssue({ code: 'custom', path: ['accounting'], message: 'Native evidence requires a native subject.' });
 })));
 export type UsageEventIngestRequest = z.infer<typeof UsageEventIngestRequestSchema>;
@@ -382,6 +392,8 @@ const UsageAnalyticsCostPresentationSchema = lazyZodSchema(() => z.strictObject(
   source: z.string().check(z.trim(), z.minLength(1)),
 }));
 
+const OpaqueUsageOverlapKeySchema = lazyZodSchema(() => z.string().check(z.regex(/^[0-9a-f]{64}$/)));
+
 export const UsageAccountingMetadataSchema = lazyZodSchema(() => z.strictObject({
   path: z.optional(z.enum(['runtime', 'native', 'legacy', 'unknown'])),
   status: z.optional(z.enum(['available', 'partial', 'unknown', 'unsupported', 'pending', 'error'])),
@@ -389,6 +401,9 @@ export const UsageAccountingMetadataSchema = lazyZodSchema(() => z.strictObject(
   asOfMs: z.optional(z.number().check(z.int(), z.minimum(0))),
   nativeSessionId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   inferenceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  /** Device-opaque correlation, independent of the configured capture root. */
+  nativeSessionKey: z.optional(OpaqueUsageOverlapKeySchema),
+  responseKey: z.optional(OpaqueUsageOverlapKeySchema),
   counterEpoch: z.optional(z.string().check(z.trim(), z.minLength(1))),
   /** Existing host runtime ordering, only comparable within that incarnation. */
   runtimeEventOrder: z.optional(z.strictObject({

@@ -134,6 +134,7 @@ export type NativeAgentSessionInteractionHostBinding = Readonly<{
         | 'updateAgentState'
         | 'enqueueAgentMessageCommitted'
     > & Partial<Pick<ApiSessionClient,
+        | 'getServerBinding'
         | 'publishUsageObservation'
         | 'fetchCommittedTranscriptLocalIdBaseline'
         | 'enqueueUserTextMessageCommitted'

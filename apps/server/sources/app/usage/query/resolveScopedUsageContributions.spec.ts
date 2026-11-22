@@ -1,8 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, toScopedUsageReplayFact,
-    updateScopedUsageReplaySessionEligibility, isScopedUsageReplayFactEligible, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
+import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 import { buildUsageResultProjection } from './buildUsageResultProjection';
@@ -27,6 +26,133 @@ function requireMeasurement(value: number | null): number {
 }
 
 describe("resolveScopedUsageContributions", () => {
+    describe('Codex thread accounting', () => {
+        const measures = (count: number) => ({ tokens: { input: 100 * count, output: 20 * count,
+            cacheRead: 6 * count, cacheWrite: 4 * count, reasoning: 5 * count, total: 120 * count },
+            cost: { ...createEmptyUsageCost(), estimatedUsd: 3 * count, costSource: 'pricing_estimate' as const,
+                breakdown: { input: 2 * count, output: count } } });
+        const fact = (path: 'runtime' | 'native', sequence: number | undefined, at: number, count: number,
+            exact = false, stream = 'a'.repeat(64)): ScopedUsageEventRow => ({
+            ...row(`fact-${at}`, at, exact ? 'turn_delta' : 'session_cumulative', 120 * count),
+            sessionId: path === 'runtime' ? 'happier-session' : null, machineId: 'shared-machine', agentId: 'codex',
+            source: path, ...measures(count), modelId: 'gpt-5',
+            metadata: { usageAccounting: { path, nativeSessionKey: stream, status: 'available', historyComplete: true,
+                inputIncludesCache: true, outputIncludesReasoning: true,
+                ...(exact ? { inferenceId: `response-${at}` } : {}),
+                ...(sequence === undefined ? {} : { runtimeEventOrder: { runtimeIncarnationId: stream, sequence } }) } },
+        });
+        const native = (at: number, count: number, stream?: string) => fact('native', undefined, at, count, false, stream);
+        const exact = (at: number, count: number, stream?: string) =>
+            fact('runtime', at, at, count, true, stream);
+        const checkpoint = (at: number, count: number) => fact('runtime', at, at, count);
+        const resolve = (facts: readonly ScopedUsageEventRow[], path?: 'native' | 'runtime') => {
+            const result = resolveScopedUsageContributions(facts);
+            const contributions = path ? result.totalContributions.filter(item => item.source === path) : result.totalContributions;
+            const tokens = contributions.reduce((sum, item) => addUsageTokens(sum, item.tokens), createEmptyUsageTokens());
+            const costs = contributions.reduce((sum, item) => addUsageCost(sum, item.cost), createEmptyUsageCost());
+            return { tokens, cost: { estimatedUsd: costs.estimatedUsd, breakdown: costs.breakdown }, reasons: result.coverageReasons };
+        };
+        const measure = (actual: ReturnType<typeof resolve>, count: number) => {
+            const expected = measures(count);
+            expect(actual.tokens).toEqual(expected.tokens);
+            expect(actual.cost).toEqual(count
+                ? { estimatedUsd: expected.cost.estimatedUsd, breakdown: expected.cost.breakdown }
+                : { estimatedUsd: null, breakdown: undefined });
+        };
+
+        it('keeps native usage before and after an exact runtime receipt', () => {
+            const facts = [native(5, 1), native(10, 2), exact(20, 1), native(25, 3), native(30, 4)];
+            measure(resolve(facts), 4);
+            measure(resolve(facts, 'runtime'), 0);
+            measure(resolve(facts, 'native'), 4);
+        });
+
+        it.each([
+            ['native before runtime delivery', [native(10, 1), exact(20, 1)]],
+            ['native after the final runtime observation', [exact(10, 1), native(20, 1)]],
+            ['native and runtime interleaved over three responses', [
+                native(10, 1), exact(20, 1), exact(30, 1), native(40, 2), native(50, 3), exact(60, 1),
+            ]],
+        ] as const)('counts the thread once with %s', (_description, facts) => {
+            const result = resolve(facts);
+            measure(result, facts.length / 2);
+            expect(result.reasons).not.toContain('ambiguous_overlap');
+        });
+
+        it('retains a native counter reset across runtime incarnations', () => {
+            const resumed = exact(45, 1);
+            resumed.metadata = { usageAccounting: {
+                path: 'runtime', nativeSessionKey: 'a'.repeat(64),
+                inferenceId: 'resumed-response', runtimeEventOrder: { runtimeIncarnationId: 'second', sequence: 1 },
+                historyComplete: true,
+            } };
+            const facts = [native(10, 3), exact(20, 3), native(40, 1), resumed];
+            measure(resolve(facts), 4);
+            measure(resolve(facts, 'native'), 4);
+            measure(resolve(facts, 'runtime'), 0);
+        });
+
+        it('keeps a native response when publication is missing, and an exact runtime response absent from native', () => {
+            const shared = [native(10, 1), exact(20, 1)];
+            measure(resolve([...shared, native(30, 3)]), 3);
+            measure(resolve([...shared, native(30, 3)], 'native'), 3);
+            measure(resolve([...shared, exact(30, 2)]), 3);
+            measure(resolve([...shared, exact(30, 2)], 'runtime'), 2);
+        });
+
+        it('prices the known native token share when both sources omit totals', () => {
+            const captured = native(20, 1);
+            captured.tokens = { ...captured.tokens, cacheRead: 0, reasoning: null, total: null };
+            const observed = exact(10, 1);
+            observed.tokens = { ...observed.tokens, output: null, cacheRead: null, reasoning: null, total: null };
+            observed.cost = createEmptyUsageCost();
+            const result = resolve([observed, captured]);
+            expect(result.tokens).toEqual({ ...captured.tokens });
+            expect(result.cost.estimatedUsd).toBe(0.5);
+            expect(result.cost.breakdown?.input).toBeCloseTo(2 / 6);
+            expect(result.cost.breakdown?.output).toBeCloseTo(1 / 6);
+        });
+
+        it('retains independent token facets and monetary measurements when different sides win', () => {
+            const captured = native(20, 1);
+            captured.tokens = { ...captured.tokens, output: 70 };
+            captured.cost = { ...captured.cost, reportedUsd: 5, invoiceUsd: 1 };
+            const observed = exact(10, 2);
+            observed.cost = { ...observed.cost, reportedUsd: 2, invoiceUsd: 3 };
+            const facts = [observed, captured];
+            expect(resolve(facts).tokens).toEqual({ ...observed.tokens, output: 70 });
+            expect(resolveScopedUsageContributions(facts).totalContributions
+                .reduce((sum, item) => addUsageCost(sum, item.cost), createEmptyUsageCost()))
+                .toMatchObject({ reportedUsd: 5, estimatedUsd: 6, invoiceUsd: 3 });
+            expect(resolve(facts, 'native').tokens.output).toBe(30);
+        });
+
+        it('does not reconcile identical amounts from different opaque streams on one Machine', () => {
+            const other = 'b'.repeat(64);
+            const facts = [native(10, 1, other), exact(20, 1)];
+            measure(resolve(facts), 2);
+        });
+
+        it.each([
+            ['checkpoint only', [checkpoint(10, 1), native(20, 1)], 2],
+            ['runtime and checkpoint order present', [native(10, 1), exact(20, 1), checkpoint(30, 1)], 3],
+        ] as const)('keeps all observations with incomplete coverage when runtime has no accounting subject: %s', (_description, facts, total) => {
+            const uncorrelated = facts.map(fact => fact.source === 'runtime' ? {
+                ...fact, sessionId: null, metadata: { usageAccounting: { path: 'runtime', historyComplete: true } },
+            } : fact);
+            const result = resolve(uncorrelated);
+            measure(result, total);
+            expect(result.reasons).toEqual([]);
+            const folded = resolveScopedUsageContributions(uncorrelated);
+            const projected = buildUsageResultProjection({ contributions: folded.totalContributions,
+                evidenceRows: uncorrelated, coverageReasons: folded.coverageReasons,
+                request: { granularity: 'day', timeZoneOffsetMinutes: 0, includeSeries: false, topLimit: 20 } });
+            expect(projected.coverage.status).toBe('partial');
+            expect(projected.coverage.range.complete).toBe(false);
+            expect(projected.coverage.reasons).toEqual(expect.arrayContaining(['unknown_source', 'incomplete_history']));
+        });
+    });
+
     it('retains the witnessed Pi cumulative model through accounting coverage and catalog pricing', () => {
         // Captured r177 paid counters and attribution; identity, time and occupancy are synthetic.
         const snapshot: ScopedUsageEventRow = { ...row('pi-snapshot', 100, 'session_cumulative', 3309),
@@ -180,21 +306,146 @@ describe("resolveScopedUsageContributions", () => {
         expect(result.totalContributions.reduce((sum, event) => sum + (event.cost.estimatedUsd ?? 0), 0)).toBeCloseTo(1.3);
         expect(result.coverageReasons.includes('counter_discontinuity')).toBe(resetKind === 'decrease');
     });
-    it('updates Session fallback eligibility from changed sources while retaining suppressed subject references', () => {
-        const legacy = toScopedUsageReplayFact({ ...row('legacy', 1, 'turn_delta', 10), source: 'legacy_usage_report', agentId: 'legacy' });
-        const native = toScopedUsageReplayFact(row('native', 2, 'turn_delta', 3));
-        const first = updateScopedUsageReplaySessionEligibility(undefined, [], [legacy, native]);
-        const stored: typeof first = JSON.parse(JSON.stringify(first));
-        expect(stored.legacyFacts).toEqual([legacy]);
-        expect(isScopedUsageReplayFactEligible(legacy, stored)).toBe(false);
-        expect(isScopedUsageReplayFactEligible(native, stored)).toBe(true);
-        const removed = updateScopedUsageReplaySessionEligibility(stored, [native], []);
-        expect(isScopedUsageReplayFactEligible(legacy, removed)).toBe(true);
-        expect(removed.legacyFacts[0]?.subjectKey).toBe(legacy.subjectKey);
-        const account = { ...legacy, id: 'account', sessionId: null };
-        expect(isScopedUsageReplayFactEligible(account, stored)).toBe(true);
-        const replaced = updateScopedUsageReplaySessionEligibility(stored, [native], [{ ...native, id: 'replacement' }]);
-        expect(isScopedUsageReplayFactEligible(legacy, replaced)).toBe(false);
+    it('keeps the released residue at the report cutoff and later usage in full', () => {
+        const legacy = { ...row('legacy', 2, 'turn_delta', 10), source: 'legacy_usage_report', agentId: 'legacy' };
+        const before = row('before', 1, 'turn_delta', 3);
+        const after = row('after', 3, 'turn_delta', 5);
+        const otherSession = { ...row('other', 1, 'turn_delta', 10), sessionId: 'other' };
+        const rows = [legacy, before, after, otherSession];
+        const replay = prepareScopedUsageReplayContext(rows, { startMs: 2, endMs: 4 });
+        const result = resolveScopedUsageContributions(rows, { startMs: 2, endMs: 4 }, replay);
+        expect(result.totalContributions.map(row => [row.id, row.tokens.total])).toEqual([['legacy', 7], ['after', 5]]);
+        expect(result.coverageReasons).toContain('missing_baseline');
+    });
+    it('keeps released zero cache reads and zero reported USD when modern measurements are absent', () => {
+        const legacy = { ...row('legacy', 2, 'turn_delta', 100), source: 'legacy_usage_report', agentId: 'legacy',
+            tokens: { ...createEmptyUsageTokens(), input: 100, cacheRead: 0, total: 100 },
+            cost: { ...createEmptyUsageCost(), reportedUsd: 0, costSource: 'provider_reported' as const } };
+        const modern = { ...row('modern', 1, 'turn_delta', 100), cost: createEmptyUsageCost() };
+        const result = resolveScopedUsageContributions([modern, legacy]);
+        const tokens = result.totalContributions.reduce((sum, item) => addUsageTokens(sum, item.tokens), createEmptyUsageTokens());
+        const cost = result.totalContributions.reduce((sum, item) => addUsageCost(sum, item.cost), createEmptyUsageCost());
+        expect(tokens).toEqual({ ...createEmptyUsageTokens(), input: 100, cacheRead: 0, total: 100 });
+        expect(cost).toMatchObject({ reportedUsd: 0, estimatedUsd: null, invoiceUsd: null });
+        expect(result.coverageReasons).toContain('missing_baseline');
+    });
+    it('keeps all-zero Codex occupancy out of the thread counter', () => {
+        const checkpoint = (id: string, at: number, total: number) => ({
+            ...row(id, at, 'session_cumulative', total),
+            agentId: 'codex', source: 'runtime', machineId: 'shared-machine',
+            metadata: { usageAccounting: { path: 'runtime', nativeSessionKey: 'a'.repeat(64),
+                historyComplete: true, counterEpoch: 'unchanged' } },
+        });
+        const result = resolveScopedUsageContributions([
+            checkpoint('before', 100, 100),
+            { ...checkpoint('occupancy', 200, 0), contextUsedTokens: 25, contextWindowTokens: 1000,
+                tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 0 } },
+            checkpoint('after', 300, 110),
+        ]);
+        expect(result.bucketAttributions.map(event => [event.id, event.tokens.total])).toEqual([
+            ['before', 100], ['occupancy', 0], ['after', 10],
+        ]);
+        expect(result.bucketAttributions[1]).toMatchObject({ contextUsedTokens: 25, contextWindowTokens: 1000 });
+        expect(result.coverageReasons).toEqual([]);
+    });
+    it.each([
+        ['session_cumulative', 100, 0, []],
+        ['session_cumulative', 113, 13, []],
+        ['turn_delta', 100, 0, []],
+        ['turn_delta', 113, 13, ['missing_baseline']],
+    ] as const)('uses earlier Codex %s evidence for resume at %i', (scope, total, increase, reasons) => {
+        const nativeSessionKey = 'a'.repeat(64);
+        const native = {
+            ...row('native', 100, scope, 100), agentId: 'codex', machineId: 'shared-machine',
+            metadata: { usageAccounting: { path: 'native', nativeSessionKey, historyComplete: true } },
+        };
+        const runtime = {
+            ...row('runtime', 200, 'session_cumulative', total),
+            agentId: 'codex', source: 'runtime', machineId: 'shared-machine',
+            metadata: { usageAccounting: { path: 'runtime', nativeSessionKey } },
+        };
+        const result = resolveScopedUsageContributions([native, runtime]);
+        const resume = result.bucketAttributions.find(event => event.id === runtime.id);
+        expect(resume?.tokens.total ?? 0).toBe(increase);
+        expect(resume?.coverageReasons ?? []).toEqual(reasons);
+        expect(result.coverageReasons).toEqual(reasons);
+    });
+    const tokenFields = Object.keys(createEmptyUsageTokens()) as (keyof ScopedUsageEventRow['tokens'])[];
+    const costFields = ['reportedUsd', 'invoiceUsd'] as const;
+    it.each([...tokenFields, ...costFields, 'breakdown'] as const)(
+        'marks only the unexplained first-checkpoint excess for %s', field => {
+            const nativeSessionKey = 'a'.repeat(64);
+            const amount = (value: number) => ({
+                tokens: tokenFields.includes(field as typeof tokenFields[number])
+                    ? { ...createEmptyUsageTokens(), [field]: value } : createEmptyUsageTokens(),
+                cost: { ...createEmptyUsageCost(), ...(field === 'breakdown'
+                    ? { costSource: 'provider_reported' as const, breakdown: { input: value } }
+                    : costFields.includes(field as typeof costFields[number]) ? { [field]: value } : {}) },
+            });
+            const native = {
+                ...row('exact', 100, 'turn_delta', 0), agentId: 'codex', machineId: 'shared-machine',
+                ...amount(100),
+                metadata: { usageAccounting: { path: 'native', nativeSessionKey, inferenceId: 'exact-response' } },
+            };
+            const checkpoint = {
+                ...row('checkpoint', 200, 'session_cumulative', 0), agentId: 'codex', machineId: 'shared-machine',
+                source: 'runtime', metadata: { usageAccounting: { path: 'runtime', nativeSessionKey } },
+            };
+            for (const [measured, excess] of [[90, 0], [100, 0], [113, 13]] as const) {
+                const result = resolveScopedUsageContributions([native, { ...checkpoint, ...amount(measured) }]);
+                const reasons = excess ? ['missing_baseline'] : [];
+                expect(result.coverageReasons).toEqual(reasons);
+                const resumed = result.bucketAttributions.find(event => event.id === checkpoint.id);
+                if (excess) {
+                    expect(resumed).toMatchObject({ ...amount(excess), coverageReasons: reasons });
+                } else {
+                    expect(resumed).toBeUndefined();
+                }
+            }
+        });
+    it.each([
+        ['gpt-5.4-mini', 0.0001065, 'gpt-5.4', 0.000355],
+        ['gpt-5.4', 0.000355, 'gpt-5.4-mini', 0.0001065],
+    ] as const)('keeps a covered first checkpoint diagnostic-free when repriced from %s', (priorModel, prior, nextModel, next) => {
+        const nativeSessionKey = 'a'.repeat(64);
+        const estimate = (estimatedUsd: number) => ({
+            ...createEmptyUsageCost(), estimatedUsd, costSource: 'pricing_estimate' as const,
+            breakdown: { input: estimatedUsd },
+        });
+        const tokens = { input: 90, output: 20, cacheRead: 6, cacheWrite: 0, reasoning: 4, total: 110 };
+        const native = {
+            ...row('exact', 100, 'turn_delta', 110), agentId: 'codex', machineId: 'shared-machine',
+            modelId: priorModel, tokens, cost: estimate(prior),
+            metadata: { usageAccounting: { path: 'native', nativeSessionKey, inferenceId: 'exact-response' } },
+        };
+        const runtime = {
+            ...row('checkpoint', 200, 'session_cumulative', 110), agentId: 'codex', machineId: 'shared-machine',
+            modelId: nextModel, tokens, source: 'runtime', cost: estimate(next),
+            metadata: { usageAccounting: { path: 'runtime', nativeSessionKey } },
+        };
+        const result = resolveScopedUsageContributions([native, runtime]);
+        const aggregate = result.totalContributions.reduce((sum, item) => addUsageCost(sum, item.cost), createEmptyUsageCost());
+        expect(aggregate.estimatedUsd).toBe(prior);
+        expect(result.totalContributions.reduce((sum, item) => sum + (item.tokens.total ?? 0), 0)).toBe(110);
+        expect(result.coverageReasons).toEqual([]);
+    });
+    it.each(['claude', 'codex'])('retains the %s single-source checkpoint estimate and reconciles mixed evidence', agentId => {
+        const checkpoint = (time: number, tokens: number, estimatedUsd: number,
+            path: 'native' | 'runtime' = 'native'): ScopedUsageEventRow => ({
+            ...row(String(time), time, 'session_cumulative', tokens), agentId, machineId: 'shared-machine',
+            metadata: { usageAccounting: { path, nativeSessionKey: 'a'.repeat(64), historyComplete: true } },
+            cost: { ...createEmptyUsageCost(), estimatedUsd, costSource: 'pricing_estimate', breakdown: { input: estimatedUsd } },
+        });
+        const checkpoints = [checkpoint(100, 100, 1), checkpoint(200, 150, 3), checkpoint(300, 150, 6)];
+        const single = resolveScopedUsageContributions(checkpoints);
+        expect(single.totalContributions.map(event => [event.tokens.total, event.cost.estimatedUsd]))
+            .toEqual([[100, 1], [50, 2], [0, 3]]);
+        expect(single.coverageReasons).toEqual([]);
+
+        const result = resolveScopedUsageContributions([...checkpoints, checkpoint(150, 100, 1, 'runtime')]);
+        expect(result.totalContributions.map(event => [event.tokens.total, event.cost.estimatedUsd])).toEqual([[100, 1], [50, 2]]);
+        expect(result.totalContributions[1]?.cost.breakdown?.input).toBeCloseTo(2);
+        expect(result.coverageReasons).toEqual([]);
     });
     it('orders each accounting population once rather than once per identical output shape', () => {
         const rows = Array.from({ length: 74_212 }, (_, index) => ({ ...row(`event-${index}`, index, 'turn_delta', 1),
@@ -289,7 +540,7 @@ describe("resolveScopedUsageContributions", () => {
             contextUsedTokens: 25, contextWindowTokens: 1000 };
         const result = resolveScopedUsageContributions([
             { ...inference, metadata: { usageAccounting: { path: "runtime", inferenceId: "empty" } } },
-            { ...inference, id: "native", source: "native",
+            { ...inference, id: "native", source: "native", createdAt: new Date(101),
                 metadata: { usageAccounting: { path: "native", inferenceId: "empty" } } },
         ]);
         expect(result.totalContributions.map(event => event.id)).toEqual(["runtime"]);
@@ -390,7 +641,7 @@ describe("resolveScopedUsageContributions", () => {
         const subject = { kind: "native", machineId: "machine", agent: { pluginId: "happier.agent.claude", localId: "claude" }, sourceRootKey: "root", nativeSessionKey: "native" };
         const result = resolveScopedUsageContributions([
             { ...row("runtime", 100, "turn_delta", 30), source: "runtime", turnId: "turn", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "runtime" } } },
-            { ...row("native", 100, "turn_delta", 30), sessionId: null, source: "native", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "native" } } },
+            { ...row("native", 100, "turn_delta", 30), sessionId: null, source: "native", createdAt: new Date(101), metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "native" } } },
             { ...row("second", 200, "turn_delta", 20), source: "runtime", turnId: "turn", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "two", path: "runtime" } } },
         ]);
         expect(result.totalContributions.reduce((sum, event) => sum + requireMeasurement(event.tokens.total), 0)).toBe(50);
@@ -400,7 +651,7 @@ describe("resolveScopedUsageContributions", () => {
     it("keeps different admitted roots, machines and unwitnessed inferences separate from Session replay", () => {
         const subject = { kind: "native", machineId: "machine", agent: { pluginId: "happier.agent.claude", localId: "claude" }, sourceRootKey: "root", nativeSessionKey: "native" };
         const runtime = { ...row("runtime", 100, "turn_delta", 30), source: "runtime", metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "runtime" } } };
-        const native = { ...runtime, id: "native", sessionId: null, source: "native" };
+        const native = { ...runtime, id: "native", sessionId: null, source: "native", createdAt: new Date(101) };
         const result = resolveScopedUsageContributions([
             runtime,
             { ...native, metadata: { accountingSubject: subject, usageAccounting: { inferenceId: "one", path: "native" } } },

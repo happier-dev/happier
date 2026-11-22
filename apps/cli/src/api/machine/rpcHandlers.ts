@@ -395,6 +395,7 @@ export type MachineRpcHandlerDeps = Readonly<{
   emitExternalSessionTranscriptUpdate?: (payload: ExternalSessionTranscriptInvalidationV1) => void | Promise<void>;
   emitExternalSessionSourceUnavailableOccurrence?: (payload: import('@happier-dev/protocol').ExternalSessionSourceUnavailableOccurrenceV1) => void | Promise<void>;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
+  waitForExternalSessionIdentityBackfill?(): Promise<boolean>;
   executeExternalSessionHistoricalImportCommand?: (
     command: ExternalSessionOperationSocketCommandV1,
   ) => Promise<ExternalSessionOperationSocketResponseV1>;

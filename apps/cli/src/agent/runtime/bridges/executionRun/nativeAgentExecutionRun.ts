@@ -71,16 +71,16 @@ import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalContex
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import {
     createNativeAgentSessionInteractionOperations,
+    createNativeAgentSessionUsageObserver,
+    type NativeAgentSessionUsagePublisher,
     applyNativeAgentConfigurationUpdate,
     projectNativeAgentProviderBindingConfiguration,
     assertNativeAgentSessionModeAvailable,
     resolveNativeAgentSessionNativeHomeService,
     resolveAgentSessionMcpLaunchConfigs,
 } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession';
-import { toNativeAgentUsageObservation, buildNativeAgentUsageAccountingMetadata } from '@/usage/nativeAgentUsageObservation';
+import { toNativeAgentUsageObservation } from '@/usage/nativeAgentUsageObservation';
 import type { NativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
-import type { UsageObservation } from '@/usage/usageObservation';
-import type { UsageObservationPublishResult } from '@/usage/createUsageObservationPublisher';
 import {
     normalizeHostProviderInputOutcome,
     type SessionProviderInputOutcome,
@@ -121,17 +121,6 @@ import {
 } from '@/agent/permissions/interactionPersistenceError';
 import { assertMcpStdioExecutionSupported, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 
-type NativeAgentRunUsagePublisher = Readonly<{
-    provider: string;
-    publish(input: Readonly<{
-        observedAt: number;
-        observation: UsageObservation;
-        turnId: string | null;
-        externalKey: string;
-        metadata?: Parameters<ReturnType<typeof import('@/usage/createUsageObservationPublisher').createUsageObservationPublisher>['publish']>[0]['metadata'];
-    }>): void | Promise<void | UsageObservationPublishResult>;
-}>;
-
 type NativeAgentSessionContextLease = Readonly<{
     context: AgentSessionRuntimeContext;
     /** Current Session transport output, held only by the host lease. */
@@ -146,7 +135,7 @@ type NativeAgentSessionContextLease = Readonly<{
     observeSkillUse?: (event: Extract<AgentSessionRuntimeEvent, { kind: 'skill-usage' }>) => Promise<void>;
     skillIndex?: string;
     capabilityNoticeSession?: Parameters<typeof publishSkillLaunchNotice>[0];
-    usagePublisher?: NativeAgentRunUsagePublisher;
+    usagePublisher?: NativeAgentSessionUsagePublisher;
     dispose(): Promise<void>;
 }>;
 
@@ -1911,6 +1900,14 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                     }
                     throw contextBoundaryError;
                 }
+                const observeUsage = sessionContext.usagePublisher || params.options.start?.observeWorkflowUsage
+                    ? createNativeAgentSessionUsageObserver({
+                        provider: sessionContext.usagePublisher?.provider ?? params.lease.agentId,
+                        ...sessionContext.usagePublisher,
+                        publish: input => sessionContext.usagePublisher?.publish(input),
+                        onObservation: params.options.start?.observeWorkflowUsage,
+                    }, () => !readBoundaryError())
+                    : undefined;
                 let execution: AgentExecutionRunRuntime;
                 const initialAdmission: { result?: Awaited<ReturnType<AgentSessionRuntime['send']>> } = {};
                 let unsubscribeMcpToolPolicy: (() => void) | undefined;
@@ -1988,7 +1985,7 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                         readCheckpointId: (event) => event.kind === 'provider-session-id'
                             ? event.providerSessionId
                             : null,
-                        ...(sessionContext.usagePublisher || params.options.start?.observeWorkflowUsage || sessionContext.observeSkillUse ? {
+                        ...(observeUsage || sessionContext.observeSkillUse ? {
                             observeSessionUsage: (event: Extract<AgentSessionRuntimeEvent, { kind: 'usage-observed' | 'skill-usage' }>) => {
                                 if (event.kind === 'skill-usage') {
                                     if (!readBoundaryError() && sourceSession?.skillsDelivered !== false) {
@@ -1996,24 +1993,7 @@ export function createNativeAgentSessionExecutionRunHostRuntime(params: Readonly
                                     }
                                     return;
                                 }
-                                const publisher = sessionContext.usagePublisher;
-                                const observation = toNativeAgentUsageObservation(
-                                    event,
-                                    publisher?.provider ?? params.lease.agentId,
-                                );
-                                params.options.start?.observeWorkflowUsage?.({
-                                    turnId: event.turnId ?? null,
-                                    observation,
-                                });
-                                if (publisher) {
-                                    void Promise.resolve(publisher.publish({
-                                        observedAt: event.emittedAtMs,
-                                        observation,
-                                        turnId: event.turnId ?? null,
-                                        externalKey: event.observationId,
-                                        metadata: buildNativeAgentUsageAccountingMetadata(event),
-                                    })).catch(() => undefined);
-                                }
+                                observeUsage?.(event);
                             },
                         } : {}),
                     });
@@ -2290,13 +2270,9 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
                     ...(sessionContext.usagePublisher || params.options.start?.observeWorkflowUsage ? {
                         usagePublisher: {
                             provider: sessionContext.usagePublisher?.provider ?? params.lease.agentId,
-                            publish(input) {
-                                params.options.start?.observeWorkflowUsage?.({
-                                    turnId: input.turnId,
-                                    observation: input.observation,
-                                });
-                                return sessionContext.usagePublisher?.publish(input);
-                            },
+                            ...sessionContext.usagePublisher,
+                            onObservation: params.options.start?.observeWorkflowUsage,
+                            publish: input => sessionContext.usagePublisher?.publish(input),
                         },
                     } : {}),
                     ...(resumeSessionId ? { expectedProviderSessionId: resumeSessionId } : {}),

@@ -4,6 +4,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import { ExternalSessionsSourceSchema } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 import { AgentExternalSessionAccountingObservationSchema, AgentExternalSessionAccountingCoverageSchema } from '@happier-dev/protocol/sessions/external/accounting';
+import { UsageNativeSessionLinkSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { asHostProtocolZod } from '@/plugins/runtime/protocolComposableZodAdapter';
 import { readProtectedLocalStateFile, writeProtectedLocalStateFileAtomic } from '@/utils/fs/protectedLocalState';
@@ -30,6 +31,7 @@ export const NativeUsageCaptureSourceSchema = z.strictObject({
     consented: z.boolean(),
     cursor: z.optional(z.string()),
     pending: z.array(NativeUsagePendingObservationSchema),
+    threadLinks: z.optional(z.record(z.string(), z.nullable(asHostProtocolZod(UsageNativeSessionLinkSchema)))),
     coverage: z.optional(AgentExternalSessionAccountingCoverageSchema),
     asOf: z.optional(z.number().check(z.int(), z.nonnegative())),
     error: z.optional(z.string()),

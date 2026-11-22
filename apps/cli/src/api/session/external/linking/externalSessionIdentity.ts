@@ -9,6 +9,7 @@ import type { StoredCredentials } from '@/persistence';
 import { ExternalSessionProviderFailureError } from '@/session/external/providerOps';
 import {
   claimSessionExternalIdentity,
+  lookupSessionsByTags,
   type SessionExternalIdentityClaimHttpResult,
 } from '@/session/transport/http/sessionsHttp';
 import { logger } from '@/utils/logger';
@@ -124,6 +125,22 @@ export async function resolveHostedExternalSessionIdentityTag(params: Readonly<{
     agentId: params.agentId,
     remoteSessionId: target.ref.remoteSessionId,
   }, owner.sourceKey);
+}
+
+/** Read only the indexed claim, including a proven absence. The creation tag is not a witness. */
+export async function lookupClaimedExternalSessionIdentity(params: Readonly<{
+  token: string;
+  machineId: string;
+  agentId: ExternalSessionsAgentId;
+  remoteSessionId: string;
+  sourceKey: string;
+  signal: AbortSignal;
+}>): Promise<{ sessionId: string; externalIdentityTag: string } | null | undefined> {
+  const tag = resolveExternalSessionIdentityTag(params, params.sourceKey);
+  const lookup = await lookupSessionsByTags({ token: params.token, tags: [tag], matchExternalIdentity: true, signal: params.signal });
+  if (lookup.state !== 'available' || !lookup.externalIdentities) return undefined;
+  const identity = lookup.externalIdentities.find(row => row.externalIdentityTag === tag);
+  return identity ? { sessionId: identity.sessionId, externalIdentityTag: tag } : null;
 }
 
 export type ExternalSessionIdentityClaimResult =

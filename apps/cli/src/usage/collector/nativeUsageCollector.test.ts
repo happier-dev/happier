@@ -12,6 +12,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
 import { createUsageObservationPublisher } from '../createUsageObservationPublisher';
+import { deriveNativeUsageAccountingIdentity } from './nativeUsageAccountingIdentity';
 import { createNativeUsageCaptureStore, type NativeUsageCaptureSource } from './nativeUsageCaptureState';
 import { createNativeUsageCollector } from './nativeUsageCollector';
 import { createExternalSessionsInvocationFixture } from '@/testkit/backends/externalSessionFixtures';
@@ -105,6 +106,68 @@ describe('consented native accounting collector', () => {
             ]);
             expect(notify).toBeUndefined();
         } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
+    });
+
+    it('publishes ready Codex threads and other Agents while an unresolved Codex link waits', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-link-admission-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        const codex = { pluginId: 'happier.agent.codex', localId: 'codex' };
+        const pi = { pluginId: 'happier.agent.pi', localId: 'pi' };
+        const pending = (nativeSessionId: string, total: number): NativeUsageCaptureSource['pending'][number] => ({
+            nativeSessionId, inferenceId: 'paid', observedAt: 10, observation: {
+                provider: 'fixture', source: 'native', scope: 'turn_delta', key: 'paid', modelId: 'model',
+                tokens: { input: total, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total },
+                cost: null, contextUsedTokens: null, contextWindowTokens: null,
+            },
+        });
+        const keyFor = (nativeSessionId: string) => deriveNativeUsageAccountingIdentity({
+            authority, storage, agent: codex, sourceKey: 'codex-root', nativeSessionId,
+        }).nativeSessionKey!;
+        const linked = { sessionId: 'happier-session', externalIdentityTag: `direct:v1:${'a'.repeat(64)}` };
+        await store.save({ v: 1, authority, sources: [
+            { sourceId: 'codex', sourceKey: 'codex-root', agent: codex,
+                source: { kind: 'codexHome', home: 'user', homePath: directory }, root: directory,
+                supported: true, consented: true, pending: [pending('unresolved', 5), pending('linked', 11), pending('absent', 13)],
+                threadLinks: { [keyFor('linked')]: linked, [keyFor('absent')]: null } },
+            { sourceId: 'pi', sourceKey: 'pi-root', agent: pi, source: { kind: 'piAgentDir', agentDir: directory },
+                root: directory, supported: true, consented: true, pending: [pending('other-agent', 7)] },
+        ] });
+        let settle!: (ready: boolean) => void;
+        let readiness = new Promise<boolean>(resolve => { settle = resolve; });
+        const published: number[] = [];
+        let lookups = 0;
+        const collector = createNativeUsageCollector({ authority, storage, store, budgetRegistry: new ExecutionBudgetRegistry(),
+            discoverSources: async () => [], resolveRoot: async () => { throw new Error('No root edit'); },
+            readAccounting: async () => ({ ok: true, value: { outcome: 'unchanged' } }),
+            subscribeSource: async () => ({ dispose() {} }),
+            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+            nativeSessionLinks: { waitForBackfill: () => readiness, async resolve() { lookups++; return null; } },
+            publisher: { async publish(input) {
+                published.push(input.observation.tokens?.total ?? 0);
+                return { status: 'sent', transport: 'http' };
+            } },
+        });
+        try {
+            await collector.initialize();
+            await expect.poll(() => [...published].sort((a, b) => a - b)).toEqual([7, 11, 13]);
+            settle(false);
+            await collector.flushPending();
+            expect((await collector.get('codex'))[0]).toMatchObject({ errorCode: 'native_ingest_unavailable', pendingCount: 1 });
+            expect((await collector.get('pi'))[0]).toMatchObject({ status: 'ready', pendingCount: 0 });
+            expect(lookups).toBe(0);
+            readiness = Promise.resolve(true);
+            await collector.flushPending();
+            expect(published).toHaveLength(4);
+            expect(published.at(-1)).toBe(5);
+            expect(lookups).toBe(1);
+            expect((await collector.get('codex'))[0]).toMatchObject({ status: 'ready', pendingCount: 0 });
+        } finally {
+            settle(false);
+            await collector.dispose();
+            await rm(directory, { recursive: true, force: true });
+        }
     });
 
     it('wakes mounted readers once after a disabled source root changes durably', async () => {

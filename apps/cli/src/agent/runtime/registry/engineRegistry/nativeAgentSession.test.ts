@@ -244,7 +244,7 @@ import { PLUGIN_MANIFEST as CLAUDE_ACCOUNTING_MANIFEST } from '../../../../../..
 import { createBoundedAgentExternalSessionsContribution } from '@/session/external/agentExternalSessionsInvocation';
 import { createAgentExternalSessionsExecutionSurface } from '@/agent/runtime/registry/agentExternalSessionsExecutionSurface';
 import { resolveExternalSessionSourceFromAgentProjection } from '@/plugins/projection/registry/externalSessionSources';
-import { deriveNativeUsageAccountingIdentity } from '@/usage/collector/nativeUsageAccountingIdentity';
+import { deriveNativeUsageAccountingIdentity, deriveNativeUsageOverlapIdentity } from '@/usage/collector/nativeUsageAccountingIdentity';
 import { loadCommittedTranscriptLocalIdBaseline } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
@@ -16456,15 +16456,18 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
                     tokens: { input: 10, output: 5, reasoning: 0, cacheRead: 3, cacheWrite: 2, total: 20 } });
                 await vi.waitFor(() => expect(published).toHaveLength(1));
                 const storage = await readOrCreateDeviceLocalSecretStorage({ path: keyPath });
-                const expected = deriveNativeUsageAccountingIdentity({
+                const identity = {
                     authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
-                    agent: agent.identity!, sourceKey: sourceProjection.sourceKey,
-                    nativeSessionId: row.nativeSessionId, inferenceId: row.inferenceId,
-                });
-                expect(published[0]).toMatchObject({ externalKey: expected.externalKey, metadata: {
+                    agent: agent.identity!, nativeSessionId: row.nativeSessionId, inferenceId: row.inferenceId,
+                };
+                const capture = deriveNativeUsageAccountingIdentity({ ...identity, sourceKey: sourceProjection.sourceKey });
+                const runtime = deriveNativeUsageOverlapIdentity({ ...identity, nativeSessionId: row.nativeSessionId!,
+                    observationId: 'live-record', publication: 'observation' });
+                expect(published[0]).toMatchObject({ externalKey: runtime.publicationKey, metadata: {
                     accountingSubject: { kind: 'native', machineId: 'machine', agent: agent.identity,
-                        sourceRootKey: expected.sourceRootKey, nativeSessionKey: expected.nativeSessionKey },
-                    usageAccounting: { path: 'runtime', status: 'available', inferenceId: expected.externalKey },
+                        sourceRootKey: capture.sourceRootKey, nativeSessionKey: capture.nativeSessionKey },
+                    usageAccounting: { path: 'runtime', status: 'available', nativeSessionKey: runtime.nativeSessionKey,
+                        responseKey: runtime.responseKey },
                 } });
             } finally {
                 await disposeRuntime?.();
@@ -16475,7 +16478,11 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         });
     });
 
-    function createUsagePublishHarness(accountingWitness?: NonNullable<Parameters<typeof createNativeAgentSessionOperationsBase>[4]>['accountingWitness']) {
+    type UsagePublisher = NonNullable<Parameters<typeof createNativeAgentSessionOperationsBase>[4]>;
+    function createUsagePublishHarness(
+        accountingWitness?: UsagePublisher['accountingWitness'],
+        resolveAccountingWitness?: UsagePublisher['resolveAccountingWitness'],
+    ) {
         const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
         const session: AgentSessionRuntime = {
             send: vi.fn(async () => ({ status: 'admitted' as const })),
@@ -16489,6 +16496,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         const runtime = createNativeAgentSessionOperations(session, 'session-usage', undefined, undefined, {
             provider: 'agent-runtime-native',
             ...(accountingWitness ? { accountingWitness } : {}),
+            ...(resolveAccountingWitness ? { resolveAccountingWitness } : {}),
             publish: (input) => { published.push(input as PublishInput); },
         });
         // A subscriber is required to activate the underlying session subscription.
@@ -16553,7 +16561,7 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         await runtime.resetOrDisposeRuntime('runtime_recovery');
     });
 
-    it('publishes a rich usage-observed event as a full canonical observation reaching ingest with every field', () => {
+    it('publishes a rich usage observation without a native identity through canonical ingest', () => {
         const { emit, published } = createUsagePublishHarness();
         emit({
             sequence: 1,
@@ -16570,7 +16578,6 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             kind: 'usage-observed',
             observationId: 'obs-cumulative-1',
             promptCache: { lastUseAtMs: 900, ttlMs: 300_000 },
-            accounting: { nativeSessionId: 'native-session-1', inferenceId: 'native-inference-1' },
             turnId: 'turn-42',
             source: 'agent-runtime-native',
             scope: 'session_cumulative',
@@ -16597,13 +16604,12 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             },
         });
 
-        // Observation identity + turn + model + cost + context all survive the bridge.
+        // The measurement survives without carrying unwitnessed provider identifiers.
         expect(published).toHaveLength(1);
         const call = published[0];
-        expect(call.externalKey).toBe('obs-cumulative-1');
+        expect(call.externalKey).toEqual(expect.any(String));
         expect(call.metadata).toEqual({ usageAccounting: {
             path: 'runtime', status: 'unknown', asOfMs: 1_000,
-            nativeSessionId: 'native-session-1', inferenceId: 'native-inference-1',
             runtimeEventOrder: { runtimeIncarnationId: expect.any(String), sequence: 5 },
         } });
         expect(call.turnId).toBe('turn-42');
@@ -16629,13 +16635,15 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             externalKey: call.externalKey,
             metadata: call.metadata,
         });
+        expect(ingest?.metadata?.usageAccounting).not.toHaveProperty('nativeSessionId');
+        expect(ingest?.metadata?.usageAccounting).not.toHaveProperty('inferenceId');
         expect(ingest).toMatchObject({
             sessionId: 'session-usage',
             agentId: 'agent-runtime-native',
             source: 'agent-runtime-native',
             scope: 'session_cumulative',
             isCumulative: true,
-            externalKey: 'obs-cumulative-1',
+            externalKey: call.externalKey,
             promptCache: { lastUseAtMs: 900, ttlMs: 300_000 },
             turnId: 'turn-42',
             modelId: 'claude-opus-4',
@@ -16669,9 +16677,10 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
             });
             expect(published[1].metadata).toEqual({ usageAccounting: {
                 path: 'runtime', status: 'unknown', asOfMs: 11,
-                nativeSessionId: 'other-session', inferenceId: 'native-inference',
                 runtimeEventOrder: { runtimeIncarnationId: expect.any(String), sequence: 3 },
             } });
+            expect(JSON.stringify(published[1])).not.toContain('other-session');
+            expect(JSON.stringify(published[1])).not.toContain('native-inference');
             expect(published[2].metadata).toMatchObject({
                 accountingSubject: published[0].metadata?.accountingSubject,
                 usageAccounting: { path: 'runtime', status: 'partial', historyComplete: false, inferenceId: expect.any(String) },
@@ -16691,18 +16700,21 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
     it('keeps a child native identity through the runtime bridge without borrowing the parent accounting witness', async () => {
         await withTempDir('usage-child-identity-', async directory => {
             const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
-            const { emit, published, runtime } = createUsagePublishHarness({
-                authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
-                agent: { pluginId: 'acme.native', localId: 'assistant' }, sourceKey: 'parent-root', nativeSessionId: 'parent-native',
-            });
+            const device = { authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
+                agent: { pluginId: 'acme.native', localId: 'assistant' } };
+            const { emit, published, runtime } = createUsagePublishHarness(
+                { ...device, sourceKey: 'parent-root', nativeSessionId: 'parent-native' },
+                async nativeSessionId => ({ ...device, nativeSessionId }),
+            );
             emit(AgentSessionRuntimeEventSchema.parse({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10,
                 kind: 'usage-observed', observationId: 'child-identity', source: 'native-statistics', scope: 'session_cumulative',
                 accounting: { nativeSessionId: 'child-native', historyComplete: false } }));
-            expect(published).toHaveLength(1);
+            await vi.waitFor(() => expect(published).toHaveLength(1));
             const request = buildUsageEventIngestRequest({ sessionId: 'session-usage', ...published[0] });
             expect(request).toMatchObject({ tokens: { total: null, input: null, cacheRead: null },
                 cost: { reportedUsd: null, estimatedUsd: null },
-                metadata: { usageAccounting: { nativeSessionId: 'child-native', historyComplete: false } } });
+                metadata: { usageAccounting: { nativeSessionId: expect.any(String), historyComplete: false } } });
+            expect(JSON.stringify(request).includes('child-native')).toBe(false);
             expect(request?.metadata).not.toHaveProperty('accountingSubject');
             expect(request?.metadata?.usageAccounting).not.toHaveProperty('inputIncludesCache');
             expect(request?.metadata?.usageAccounting).not.toHaveProperty('outputIncludesReasoning');
@@ -16710,18 +16722,28 @@ describe('native Agent session usage bridge — full canonical UsageObservation 
         });
     });
 
-    it('retains paid cumulative observations with explicit partial history but no guessed native source', () => {
-        const { emit, published } = createUsagePublishHarness();
-        emit({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10, kind: 'usage-observed',
-            observationId: 'partial-statistics', source: 'native-statistics', scope: 'session_cumulative',
-            accounting: { nativeSessionId: 'unlinked-native', historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false },
-            tokens: { input: 5, output: 3, reasoning: 0, cacheRead: 2, cacheWrite: 0, total: 10 },
-            cost: { currency: 'USD', reportedUsd: 0.5, estimatedUsd: 0, costSource: 'provider_reported' } });
-        expect(published).toHaveLength(1);
-        expect(published[0].observation).toMatchObject({ scope: 'session_cumulative', cost: { reportedUsd: 0.5 }, tokens: { input: 5, total: 10 } });
-        expect(published[0].metadata).toEqual({ usageAccounting: { path: 'runtime', status: 'partial', asOfMs: 10,
-            runtimeEventOrder: { runtimeIncarnationId: expect.any(String), sequence: 1 },
-            nativeSessionId: 'unlinked-native', historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false } });
+    it('retains paid cumulative observations with explicit partial history but no guessed native source', async () => {
+        await withTempDir('usage-rootless-accounting-', async directory => {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            const { emit, published, runtime } = createUsagePublishHarness({
+                authority: { serverId: 'home', accountId: 'account', machineId: 'machine' }, storage,
+                agent: { pluginId: 'acme.native', localId: 'assistant' }, nativeSessionId: 'unlinked-native',
+            });
+            emit({ sequence: 1, sessionId: 'session-usage', emittedAtMs: 10, kind: 'usage-observed',
+                observationId: 'partial-statistics', source: 'native-statistics', scope: 'session_cumulative',
+                accounting: { nativeSessionId: 'unlinked-native', historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false },
+                tokens: { input: 5, output: 3, reasoning: 0, cacheRead: 2, cacheWrite: 0, total: 10 },
+                cost: { currency: 'USD', reportedUsd: 0.5, estimatedUsd: 0, costSource: 'provider_reported' } });
+            expect(published).toHaveLength(1);
+            expect(published[0].observation).toMatchObject({ scope: 'session_cumulative', cost: { reportedUsd: 0.5 }, tokens: { input: 5, total: 10 } });
+            expect(published[0].metadata).toEqual({ usageAccounting: { path: 'runtime', status: 'partial', asOfMs: 10,
+                runtimeEventOrder: { runtimeIncarnationId: expect.any(String), sequence: 1 },
+                nativeSessionId: expect.any(String), nativeSessionKey: expect.any(String),
+                historyComplete: false, inputIncludesCache: false, outputIncludesReasoning: false } });
+            expect(published[0].metadata).not.toHaveProperty('accountingSubject');
+            expect(JSON.stringify(published[0]).includes('unlinked-native')).toBe(false);
+            await runtime.resetOrDisposeRuntime('runtime_recovery');
+        });
     });
 
     it('preserves scope precedence, cumulative flag, and per-model separation across delta/cumulative/final observations', () => {

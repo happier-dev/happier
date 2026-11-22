@@ -1,7 +1,7 @@
 import { createMcpCatalogPermissionChoiceV1 } from '@happier-dev/plugin-sdk/interactions';
 import { readOpenCodeNativeChildOutcome, type OpenCodeNativeChildStatus } from './nativeChildOutcome.js';
 import { isSessionModeSelectionUnavailable, resolvePromptCacheLastUseAtMs, resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
-import { PluginError } from '@happier-dev/plugin-sdk';
+import { parseTimestampMs, PluginError } from '@happier-dev/plugin-sdk';
 import { randomUUID } from 'node:crypto';
 import { normalizeOpenCodePaidUsage } from '../../usage/paidUsage.js';
 import { isOpenCodeModelSelectable } from '../../models/eligibility.js';
@@ -442,7 +442,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
     const fingerprint = JSON.stringify([modelId, usage, promptCache, turnId]);
     if (paidUsageFingerprints.get(key)?.fingerprint === fingerprint) return;
     paidUsageFingerprints.set(key, { fingerprint, ...(turnId ? { turnId } : {}) });
-    const observedAtMs = Date.now();
+    const observedAtMs = parseTimestampMs(time?.completed) ?? Date.now();
     publishRuntimeEvent({ kind: 'usage-observed', ...projectOpenCodeRuntimeScope(params.scope), emittedAtMs: observedAtMs,
       observationId: key, source: 'opencode-native-accounting', scope: 'turn_delta', ...(modelId ? { modelId } : {}),
       ...(turnId ? { turnId } : {}),
@@ -461,8 +461,8 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         observedAtMs,
         source: 'provider_live',
       } } : {}),
-      accounting: { nativeSessionId, inferenceId, inputIncludesCache: usage.inputIncludesCache, outputIncludesReasoning: usage.outputIncludesReasoning,
-        historyComplete: false },
+      accounting: { nativeSessionId, inferenceId, replayObservationId: key,
+        inputIncludesCache: usage.inputIncludesCache, outputIncludesReasoning: usage.outputIncludesReasoning, historyComplete: false },
       tokens: usage.tokens, ...(usage.cost ? { cost: usage.cost } : {}) });
   };
   const refreshSettledNativeAccounting = async (nativeSessionId: string): Promise<void> => {

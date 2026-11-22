@@ -27,6 +27,7 @@ import {
     composeNativeAgentSessionRuntimeContext,
     createNativeAgentRuntimeSessionPlan,
     createNativeAgentSessionHostServices,
+    createNativeAgentUsageAccountingWitnessResolver,
     resolveNativeAgentSessionNativeHomeService,
     resolveAgentSessionMcpLaunchConfigs,
     readConfiguredExternalSessionProviderOps,
@@ -994,6 +995,11 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             ...(host.session.publishUsageObservation ? {
                                                 usagePublisher: Object.freeze({
                                                     provider: nativeIdentity.agentId,
+                                                    resolveAccountingWitness: createNativeAgentUsageAccountingWitnessResolver({
+                                                        token: credentials?.token, agent: params.agent.identity, machineId: host.machineId,
+                                                        readServerId: () => host.session.getServerBinding?.().serverId,
+                                                        signal, isCurrent: nativeIdentity.isCurrent,
+                                                    }),
                                                     publish: (input: Parameters<NonNullable<
                                                         typeof host.session.publishUsageObservation
                                                     >>[0]) => host.session.publishUsageObservation!(input),

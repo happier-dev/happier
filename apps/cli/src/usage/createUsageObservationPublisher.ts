@@ -137,6 +137,7 @@ export function createUsageObservationPublisher(params: Readonly<{
             sessionId?: string;
             signal?: AbortSignal;
             subject?: UsageNativeAccountingSubject;
+            nativeSessionLink?: UsageEventIngestRequest['nativeSessionLink'];
             accounting?: UsageNativeAccountingEvidence;
             attribution?: UsageRequestAttribution;
             observation: UsageObservation;
@@ -153,6 +154,7 @@ export function createUsageObservationPublisher(params: Readonly<{
             const request = buildUsageEventIngestRequest({
                 sessionId: input.sessionId,
                 subject: input.subject,
+                nativeSessionLink: input.nativeSessionLink,
                 accounting: input.accounting,
                 attribution: input.attribution,
                 observedAt: input.observedAt ?? Date.now(),

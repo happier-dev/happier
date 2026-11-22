@@ -22,6 +22,7 @@ import { createNativeUsageCaptureStore, type NativeUsageCaptureAuthority, type N
 import { createNativeUsageCollector } from './nativeUsageCollector';
 import { discoverNativeUsageSourceMetadata, resolveNativeUsageSourceMetadata, type NativeUsageSourceBoundary } from './nativeUsageSourceDiscovery';
 import { logger } from '@/ui/logger';
+import { lookupClaimedExternalSessionIdentity } from '@/api/session/external/linking/externalSessionIdentity';
 import { createNativeUsageProjectResolver } from './nativeUsageProjectResolver';
 
 export type NativeUsageDaemonRuntimeInput = Readonly<{
@@ -34,6 +35,7 @@ export type NativeUsageDaemonRuntimeInput = Readonly<{
     budgetRegistry: ExecutionBudgetRegistry;
     /** Capture Account Project key material once for this Machine lifetime. */
     readCredentials(): Promise<StoredCredentials | null>;
+    waitForExternalSessionIdentityBackfill?(): Promise<boolean>;
     observation: Pick<ReturnType<typeof createExternalSessionObservationDaemonProjection>, 'registerAccountingSource'>;
     invalidateSources?(): void;
 }>;
@@ -95,6 +97,15 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
         value: JSON.stringify(['capture', input.authority.serverId, input.authority.accountId, input.authority.machineId]) });
     const collector = createNativeUsageCollector({
         authority: input.authority, storage: input.storage, budgetRegistry: input.budgetRegistry,
+        ...(input.waitForExternalSessionIdentityBackfill ? {
+            nativeSessionLinks: {
+                waitForBackfill: input.waitForExternalSessionIdentityBackfill,
+                resolve: (source, nativeSessionId, signal) => lookupClaimedExternalSessionIdentity({
+                    token: input.token, machineId: input.authority.machineId, agentId: 'codex',
+                    remoteSessionId: nativeSessionId, sourceKey: source.sourceKey, signal,
+                }),
+            },
+        } : {}),
         onSourceSettled: () => {
             if (!lifetime.signal.aborted) input.invalidateSources?.();
         },

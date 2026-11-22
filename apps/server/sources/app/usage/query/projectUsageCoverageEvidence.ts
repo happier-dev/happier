@@ -40,7 +40,8 @@ export function projectUsageCoverageEvidence(rows: readonly Pick<ScopedUsageEven
         const { accounting } = readScopedUsageAccountingEvidence(row);
         const source = row.source ?? 'unknown';
         const path = accounting?.path ?? 'unknown';
-        const status = accounting?.status ?? 'unknown';
+        // Released totals are measured but do not establish a complete history.
+        const status = path === 'legacy' ? 'partial' : accounting?.status ?? 'unknown';
         const key = JSON.stringify([source, path, status, row.machineId]);
         const previous = sources.get(key);
         const asOfMs = accounting?.asOfMs;

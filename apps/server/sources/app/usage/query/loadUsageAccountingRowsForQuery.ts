@@ -47,10 +47,11 @@ export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
         THEN CAST("metadata" #>> '{}' AS jsonb) END`;
     // Materialize only join keys. Retaining complete metadata here makes each
     // historical join sort and spill that content again before the final read.
-    const identities = prismaRuntime.sql`"id", "sessionId", "agentId", "machineId",
+    const identities = prismaRuntime.sql`"id", "sessionId", "agentId", "machineId", "source", "observedAt",
         (${hints}) #>> '{accountingSubject,sourceRootKey}' AS root,
         (${hints}) #>> '{accountingSubject,nativeSessionKey}' AS native,
-        regexp_replace((${hints}) #>> '{usageAccounting,nativeSessionId}', '[^a-zA-Z0-9]', '', 'g') AS producer`;
+        COALESCE('key:' || ((${hints}) #>> '{usageAccounting,nativeSessionKey}'),
+            'id:' || regexp_replace((${hints}) #>> '{usageAccounting,nativeSessionId}', '[^a-zA-Z0-9]', '', 'g')) AS producer`;
     const allHistory = queries.some(query => query.dateRange?.startMs === undefined);
     // Window and history scans share account, end and source predicates. With
     // non-null observedAt, the time complement excludes the same unique rows
@@ -68,6 +69,13 @@ export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
         SELECT DISTINCT "sessionId", "agentId" FROM window_rows WHERE "sessionId" IS NOT NULL
         UNION SELECT "sessionId", ${legacyUsageReportAgentId}::text AS "agentId" FROM retained_reports
             WHERE "sessionId" IS NOT NULL AND (${reportWindows})
+    ), legacy_sessions AS (
+        SELECT "sessionId", MAX(cutoff) AS cutoff FROM (
+            SELECT "sessionId", "observedAt" AS cutoff FROM window_rows
+            WHERE "sessionId" IS NOT NULL AND "source" = 'legacy_usage_report'
+            UNION ALL SELECT "sessionId", "updatedAt" AS cutoff FROM retained_reports
+            WHERE "sessionId" IS NOT NULL AND (${reportWindows})
+        ) legacy_boundaries GROUP BY "sessionId"
     ), native_subjects AS (
         SELECT DISTINCT root, native FROM window_rows
     ), producers AS (
@@ -76,6 +84,8 @@ export async function readPackedUsageAccountingRows(tx: Tx, accountId: string,
         SELECT "id" FROM window_rows
         UNION SELECT h."id" FROM history h JOIN sessions s ON h."sessionId" = s."sessionId"
             AND h."agentId" IS NOT DISTINCT FROM s."agentId"
+        UNION SELECT h."id" FROM history h JOIN legacy_sessions l
+            ON h."sessionId" = l."sessionId" AND h."observedAt" <= l.cutoff
         UNION SELECT h."id" FROM history h JOIN native_subjects n
             ON h.root = n.root AND h.native = n.native
         UNION SELECT h."id" FROM history h JOIN producers p

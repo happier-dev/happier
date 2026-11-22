@@ -79,6 +79,7 @@ function expectSameWire(actual: string, expected: string) {
 
 async function readWithChunkReads(accountId: string, query: UsageAnalyticsQueryRequest) {
     const chunkReads = { rows: 0, bytes: 0 };
+    let linkedHistoryReads = 0;
     const captured = await inReadSnapshot(tx => {
         const projection = tx.usageAccountingProjection;
         // Observe the real persistent boundary; every query executes unchanged against the disposable database.
@@ -91,13 +92,22 @@ async function readWithChunkReads(accountId: string, query: UsageAnalyticsQueryR
                 return rows;
             };
         } });
+        const observedEvents = new Proxy(tx.usageEvent, { get(target, key) {
+            if (key !== 'findMany') return Reflect.get(target, key);
+            return async (args: Prisma.UsageEventFindManyArgs) => {
+                if (typeof args.where?.sessionId === 'string') linkedHistoryReads++;
+                return target.findMany(args);
+            };
+        } });
         const observedTx = new Proxy(tx, { get(target, key) {
-            return key === 'usageAccountingProjection' ? observedProjection : Reflect.get(target, key);
+            if (key === 'usageAccountingProjection') return observedProjection;
+            if (key === 'usageEvent') return observedEvents;
+            return Reflect.get(target, key);
         } });
         return captureUsageAnalyticsBatchInTx(observedTx, accountId, [query], undefined,
             { contributionQueries: [], sessionQueries: [query] });
     });
-    return { ...await deliver(captured, query), chunkReads };
+    return { ...await deliver(captured, query), chunkReads, linkedHistoryReads };
 }
 
 async function expectControl(accountId: string, query: UsageAnalyticsQueryRequest) {
@@ -230,6 +240,51 @@ describe('compact Usage activity summary read cache', () => {
         const warm = await read(account.id, query);
         expectSameWire(warm.serialized, control.serialized);
         expect(warm.capture.activitySummary?.stats.eventsRead).toBe(0);
+    });
+
+    it('rebuilds a version 9 legacy Session chunk and only reloads the changed released history', async () => {
+        const { account, sessions } = await seed();
+        const [legacy, regular] = sessions;
+        const query = compactQuery();
+        const cutoff = new Date(startMs + 4 * day);
+        await db.usageReport.create({ data: { accountId: account.id, sessionId: legacy!.id, key: 'released',
+            data: { tokens: { total: 120, input: 120 }, cost: { total: 3 } }, createdAt: cutoff, updatedAt: cutoff } });
+        const oldSession = JSON.stringify({ eligibility: { nonLegacyCount: 2, legacyFacts: [] }, bridges: [] });
+        const version9Key = (kind: string, item: string | number) =>
+            createHash('sha256').update(JSON.stringify(['usage-activity-summary-v9', account.id, kind, item])).digest('hex');
+        await db.usageAccountingProjection.createMany({ data: [
+            { accountId: account.id, recordKey: version9Key('actSummary9', 0), kind: 'actSummary9',
+                observedAtMs: 0n, validFromMs: 0n, payload: JSON.stringify({ version: 9, format: 'selective-day-facts',
+                    sessionKeys: [legacy!.id], response: { totals: { tokens: { total: 15 } } } }) },
+            { accountId: account.id, recordKey: version9Key('actChunk9', `session:${JSON.stringify(legacy!.id)}`),
+                kind: 'actChunk9', observedAtMs: 0n, validFromMs: 0n, payload: oldSession },
+        ] });
+        const rebuilt = await readWithChunkReads(account.id, query);
+        expect(total(rebuilt)).toBe(127);
+        expect(rebuilt.capture.activitySummary?.stats).toMatchObject({ published: true });
+        expect(rebuilt.linkedHistoryReads).toBe(0);
+        const sessionChunks = [...await readSummaryChunks(account.id)].filter(([key]) => key.startsWith('session:'));
+        expect(sessionChunks).toHaveLength(1);
+        expect(sessionChunks[0]?.[1]).toContain('"modernSubjects"');
+
+        const warm = await readWithChunkReads(account.id, query);
+        expect(warm.linkedHistoryReads).toBe(0);
+        expect(warm.capture.activitySummary?.stats.replayedSubjects).toBe(0);
+        await writeRuntime(account.id, regular!.id, startMs + 2 * day, 13);
+        const regularChange = await readWithChunkReads(account.id, query);
+        expect(total(regularChange)).toBe(140);
+        expect(regularChange.linkedHistoryReads).toBe(0);
+        expect(regularChange.capture.activitySummary?.stats.replayedSubjects).toBe(1);
+
+        await writeRuntime(account.id, legacy!.id, startMs + 2 * day, 23);
+        const legacyChange = await readWithChunkReads(account.id, query);
+        expect(total(legacyChange)).toBe(140);
+        expect(legacyChange.linkedHistoryReads).toBe(1);
+        expect(legacyChange.capture.activitySummary?.stats.replayedSubjects).toBe(2);
+        expectSameWire(legacyChange.serialized, (await read(account.id, query, false)).serialized);
+        const warmAgain = await readWithChunkReads(account.id, query);
+        expect(warmAgain.linkedHistoryReads).toBe(0);
+        expect(warmAgain.capture.activitySummary?.stats.replayedSubjects).toBe(0);
     });
 
     it('preserves unknown-only and mixed measurement totals across cold and warm compact reads', async () => {
@@ -696,7 +751,7 @@ describe('compact Usage activity summary read cache', () => {
             tokens: { total: 120, input: 120 }, cost: { total: 1.2 } })).toMatchObject({ ok: true, changed: true });
         expect(total(await expectControl(account.id, query))).toBe(155);
         await writeRuntime(account.id, legacy.id, startMs + 3 * day, 23);
-        expect(total(await expectControl(account.id, query))).toBe(58);
+        expect(total(await expectControl(account.id, query))).toBe(155);
         const warm = await expectControl(account.id, query);
         expect(warm.capture.activitySummary?.stats).toMatchObject({ eventsRead: 0, replayedSubjects: 0 });
     });

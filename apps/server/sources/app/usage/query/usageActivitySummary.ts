@@ -10,6 +10,7 @@ import type { UsageAnalyticsSnapshot } from '../usageQueryService';
 import { captureUsageModelPriceCatalogInTx } from '../usageModelPriceCatalog';
 import { toScopedUsageEventRow } from './scopedUsageEventRow';
 import { foldScopedUsageContributions } from './scopedUsageContributionFold';
+import { resolveReleasedUsageContributions } from './resolveScopedUsageContributions';
 import { mergeUsageCoverageEvidence } from './projectUsageCoverageEvidence';
 import { mergeUsageResultCoverageFacts, projectScopedUsageContribution, projectUsageResultCoverage, projectUsageResultCoverageFacts,
     type UsageResultCoverageFacts } from './buildUsageResultProjection';
@@ -160,7 +161,11 @@ export function* projectUsageActivitySummarySteps(state: CapturedUsageActivitySu
                 if (!row) throw new Error('Usage activity source changed within its admitted snapshot');
                 return row;
             });
-            const fold = () => foldScopedUsageContributions(sources, routing.ranks);
+            const first = sources[0]!;
+            const legacy = first.source === 'legacy_usage_report' && first.sessionId;
+            const fold = () => legacy
+                ? resolveReleasedUsageContributions(sources, (routing.linkedModern.get(legacy) ?? []).map(toScopedUsageEventRow), routing.ranks)
+                : foldScopedUsageContributions(sources, routing.ranks);
             const resolved = timing ? timing.measure('fold', fold) : fold();
             state.stats.replayedSubjects++;
             state.stats.replayedEvents += sources.length;

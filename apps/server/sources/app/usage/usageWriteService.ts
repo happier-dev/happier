@@ -1,5 +1,8 @@
 import { recordTeamCredentialAdmissionCountersInTx, refreshTeamCredentialUsageCountersInTx } from '@/app/teams/credentials/teamCredentialUsageCounters';
 import { createHash, randomUUID } from "node:crypto";
+import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happier-dev/agents/agent-ids';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agents';
 import { isDeepStrictEqual } from "node:util";
 import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeHistoryDeleteRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageEventIngestRequestSchema, UsageNativeAccountingSubjectSchema, readUsageAccountingMetadata } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
@@ -422,6 +425,7 @@ function toUsageEventCreateInput(
     request: UsageEventIngestRequest,
     attribution: SessionUsageAttribution = emptySessionUsageAttribution(),
     idempotencyKey = buildUsageEventIdempotencyKey(accountId, request),
+    overlap?: NormalizedUsageOverlap,
 ) {
     return {
         accountId,
@@ -460,7 +464,7 @@ function toUsageEventCreateInput(
         costBreakdown: request.cost.breakdown ? JSON.stringify(request.cost.breakdown) : null,
         contextUsedTokens: request.context?.usedTokens ?? null,
         contextWindowTokens: request.context?.windowTokens ?? null,
-        metadata: accountingMetadataForWrite(request),
+        metadata: accountingMetadataForWrite(request, overlap),
     } satisfies Prisma.UsageEventUncheckedCreateInput;
 }
 
@@ -504,14 +508,37 @@ function readStoredNativeSubject(metadata: unknown): UsageNativeAccountingSubjec
     return parsed.success ? parsed.data : null;
 }
 
-function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<string, unknown> | null {
+type NormalizedUsageOverlap = Readonly<{ nativeSessionKey: string; inferenceId?: string }>;
+
+function normalizeUsageOverlap(accountId: string, request: UsageEventIngestRequest,
+    subject: UsageNativeAccountingSubject | null): NormalizedUsageOverlap | undefined {
+    const runtime = request.subject ? null : readUsageAccountingMetadata(request.metadata);
+    const evidence = request.accounting ?? runtime;
+    const machineId = subject?.machineId ?? request.machineId;
+    if (!evidence?.nativeSessionKey || !machineId || (!request.subject && runtime?.path !== 'runtime')) return undefined;
+    const agent = subject?.agent ?? (isBundledAgentId(request.agentId)
+        ? BUNDLED_AGENT_CONTRIBUTION_IDENTITIES[request.agentId]
+        : parseQualifiedPluginContributionKey(request.agentId));
+    if (!agent) return undefined;
+    return {
+        nativeSessionKey: createHash('sha256').update(JSON.stringify([
+            accountId, machineId, agent.pluginId, agent.localId, evidence.nativeSessionKey,
+        ])).digest('hex'),
+        ...(evidence.responseKey ? { inferenceId: evidence.responseKey } : {}),
+    };
+}
+
+function accountingMetadataForWrite(request: UsageEventIngestRequest, overlap?: NormalizedUsageOverlap): Record<string, unknown> | null {
     const metadata = { ...request.metadata };
     delete metadata.usageAttribution;
     delete metadata.replayObservationId;
     if (request.attribution) metadata.usageAttribution = request.attribution;
     const subject = request.subject ?? readStoredNativeSubject(request.metadata);
+    const runtime = readUsageAccountingMetadata(request.metadata);
+    const { nativeSessionKey: _declaredSession, responseKey: _declaredResponse, ...runtimeEvidence } = runtime ?? {};
+    if (runtime?.nativeSessionKey || runtime?.responseKey) metadata.usageAccounting = { ...runtimeEvidence, ...overlap };
     if (!subject) return Object.keys(metadata).length ? metadata : null;
-    const inferenceId = request.subject ? request.accounting?.inferenceKey : readUsageAccountingMetadata(request.metadata)?.inferenceId;
+    const inferenceId = request.subject ? request.accounting?.inferenceKey : runtime?.inferenceId;
     const evidence = request.subject ? (request.accounting ? {
         status: request.accounting.status,
         ...(request.accounting.historyComplete !== undefined ? { historyComplete: request.accounting.historyComplete } : {}),
@@ -519,7 +546,7 @@ function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<st
         ...(request.accounting.counterEpoch !== undefined ? { counterEpoch: request.accounting.counterEpoch } : {}),
         ...(request.accounting.inputIncludesCache !== undefined ? { inputIncludesCache: request.accounting.inputIncludesCache } : {}),
         ...(request.accounting.outputIncludesReasoning !== undefined ? { outputIncludesReasoning: request.accounting.outputIncludesReasoning } : {}),
-    } : undefined) : readUsageAccountingMetadata(request.metadata);
+    } : undefined) : runtime ? runtimeEvidence : undefined;
     return {
         ...(request.subject ? {} : metadata),
         accountingSubject: subject,
@@ -530,13 +557,16 @@ function accountingMetadataForWrite(request: UsageEventIngestRequest): Record<st
             status: evidence?.status ?? 'available',
             nativeSessionId: nativeSubjectKey(subject),
             ...(inferenceId !== undefined ? { inferenceId } : {}),
+            ...overlap,
         },
     };
 }
 
-async function reconcileRuntimeUsageReplayInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest, attribution: SessionUsageAttribution, replaySubject?: UsageNativeAccountingSubject): Promise<boolean> {
+async function reconcileRuntimeUsageReplayInTx(tx: Tx, existing: UsageEvent, request: UsageEventIngestRequest,
+    attribution: SessionUsageAttribution, replaySubject?: UsageNativeAccountingSubject, overlap?: NormalizedUsageOverlap): Promise<boolean> {
     const previousAccounting = readUsageAccountingMetadata(existing.metadata);
-    const accounting = readUsageAccountingMetadata(request.metadata);
+    const declaredAccounting = readUsageAccountingMetadata(request.metadata);
+    const accounting = declaredAccounting && { ...declaredAccounting, ...overlap };
     const metadata = existing.metadata;
     if (replaySubject && previousAccounting?.path === 'runtime' && metadata && typeof metadata === 'object'
         && !Array.isArray(metadata) && !readStoredNativeSubject(metadata)) {
@@ -552,19 +582,21 @@ async function reconcileRuntimeUsageReplayInTx(tx: Tx, existing: UsageEvent, req
                     status: accounting?.status ?? previousAccounting.status,
                     nativeSessionId: nativeSubjectKey(replaySubject),
                     ...(accounting?.inferenceId ? { inferenceId: accounting.inferenceId } : {}),
+                    ...overlap,
                 },
             } },
         });
         if (changed.count === 0) throw new TransactionReplayRequiredError('usage-runtime-order-changed');
-        emitUsageEventAfterTransaction(tx, existing.accountId, request);
+        emitUsageEventAfterTransaction(tx, existing.accountId, request, overlap);
         return true;
     }
     const previous = previousAccounting?.path === 'runtime' ? previousAccounting.runtimeEventOrder : undefined;
     const order = accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
     if (!previous || !order || previous.runtimeIncarnationId !== order.runtimeIncarnationId
         || order.sequence >= previous.sequence || request.observedAt > existing.observedAt.getTime()) return false;
-    if ((['nativeSessionId', 'inferenceId', 'counterEpoch', 'inputIncludesCache', 'outputIncludesReasoning'] as const)
-        .some(key => !isDeepStrictEqual(previousAccounting?.[key], accounting?.[key]))) return false;
+    if ((['nativeSessionKey', 'inferenceId', 'counterEpoch', 'inputIncludesCache', 'outputIncludesReasoning'] as const)
+        .some(key => !isDeepStrictEqual(previousAccounting?.[key], accounting?.[key]))
+        || (!overlap && previousAccounting?.nativeSessionId !== accounting?.nativeSessionId)) return false;
     const next = toUsageEventCreateInput(existing.accountId, request, attribution, existing.idempotencyKey);
     if (Object.entries(next).some(([key, value]) => key !== 'observedAt' && key !== 'metadata'
         && !isDeepStrictEqual(Reflect.get(existing, key), value))) return false;
@@ -582,7 +614,7 @@ async function reconcileRuntimeUsageReplayInTx(tx: Tx, existing: UsageEvent, req
     // ReadCommitted writers can race on the same duplicate. Reuse the owning
     // transaction's replay policy rather than replace a newer minimum order.
     if (changed.count === 0) throw new TransactionReplayRequiredError('usage-runtime-order-changed');
-    emitUsageEventAfterTransaction(tx, existing.accountId, request);
+    emitUsageEventAfterTransaction(tx, existing.accountId, request, overlap);
     return true;
 }
 
@@ -597,9 +629,11 @@ async function ensureNativeSubjectOwnedInTx(tx: Tx, accountId: string, subject: 
         accountId, machineId: subject.machineId, sessionId } }, select: { sessionId: true } }));
 }
 
-async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject): Promise<boolean> {
+async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subject: UsageNativeAccountingSubject,
+    externalIdentityTag?: string): Promise<boolean> {
     if (!subject.linkedSessionId) return true;
-    if (!(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: subject.linkedSessionId }))) return false;
+    const session = await readOwnedUsageSessionInTx(tx, { accountId, sessionId: subject.linkedSessionId }, externalIdentityTag !== undefined);
+    if (!session) return false;
     const candidate = await tx.usageEvent.findFirst({
         where: {
             accountId,
@@ -617,7 +651,7 @@ async function hasNativeSessionLinkWitnessInTx(tx: Tx, accountId: string, subjec
         },
         select: { id: true },
     });
-    return candidate !== null;
+    return candidate !== null || (externalIdentityTag !== undefined && session.externalIdentityTag === externalIdentityTag);
 }
 
 export async function deleteNativeUsageHistory(accountId: string, request: UsageNativeHistoryDeleteRequest): Promise<Readonly<{ ok: true; deletedEventCount: number } | { ok: false; error: 'machine-not-found' }>> {
@@ -652,18 +686,22 @@ export async function deleteNativeUsageHistory(accountId: string, request: Usage
     });
 }
 
-async function ensureSessionOwnedByAccount(
+function readOwnedUsageSessionInTx(
     tx: Tx,
     params: Readonly<{ accountId: string; sessionId: string }>,
-): Promise<boolean> {
-    const session = await tx.session.findFirst({
+    includeExternalIdentityTag = false,
+) {
+    return tx.session.findFirst({
         where: {
             id: params.sessionId,
             accountId: params.accountId,
         },
-        select: { id: true },
+        select: { id: true, externalIdentityTag: includeExternalIdentityTag },
     });
-    return Boolean(session);
+}
+
+async function ensureSessionOwnedByAccount(tx: Tx, params: Readonly<{ accountId: string; sessionId: string }>): Promise<boolean> {
+    return Boolean(await readOwnedUsageSessionInTx(tx, params));
 }
 
 function buildLegacyDeltaRequest(
@@ -730,6 +768,7 @@ function emitUsageEventAfterTransaction(
     tx: Tx,
     accountId: string,
     request: UsageEventIngestRequest,
+    overlap?: NormalizedUsageOverlap,
 ): void {
     afterTx(tx, () => {
         eventRouter.emitEphemeral({
@@ -743,9 +782,9 @@ function emitUsageEventAfterTransaction(
                     providerConnectionId: request.attribution.source.providerConnectionId,
                     ...(request.machineId ? { machineId: request.machineId } : {}),
                 } : undefined,
-                // Native subjects reconcile across linked/unlinked Session rows.
-                // Admission above has already validated any metadata-carried subject.
-                request.sessionId && !request.subject && request.metadata?.accountingSubject === undefined
+                // Native subjects and admitted opaque streams can change
+                // the fold for an unlinked capture as well as this Session.
+                request.sessionId && !overlap && !request.subject && request.metadata?.accountingSubject === undefined
                     ? { sessionId: request.sessionId, observedFromMs: request.observedAt }
                     : { sessionId: null },
             ),
@@ -768,20 +807,30 @@ async function publishAttributedUsageChangedInTx(
 
 export async function recordUsageEvent(
     accountId: string,
-    request: UsageEventIngestRequest,
+    incoming: UsageEventIngestRequest,
 ): Promise<RecordUsageEventResult> {
-    if (!UsageEventIngestRequestSchema.safeParse(request).success) return { ok: false, error: 'invalid-params' };
+    if (!UsageEventIngestRequestSchema.safeParse(incoming).success) return { ok: false, error: 'invalid-params' };
+    const { nativeSessionLink, ...event } = incoming;
     return await inTx(async (tx) => {
+        let request = event;
         if (request.sessionId && !(await ensureSessionOwnedByAccount(tx, { accountId, sessionId: request.sessionId }))) {
             return { ok: false, error: 'session-not-found' };
         }
-        const subject = request.subject ?? readStoredNativeSubject(request.metadata);
+        let subject = request.subject ?? readStoredNativeSubject(request.metadata);
         if (request.metadata?.accountingSubject !== undefined && !subject) return { ok: false, error: 'invalid-params' };
         if (subject) {
             if (request.agentId !== subject.agent.localId && request.agentId !== `${subject.agent.pluginId}/${subject.agent.localId}`) return { ok: false, error: 'invalid-params' };
             if (request.machineId && request.machineId !== subject.machineId) return { ok: false, error: 'invalid-params' };
             if (!(await ensureNativeSubjectOwnedInTx(tx, accountId, subject, request.sessionId ?? subject.linkedSessionId))) return { ok: false, error: 'machine-not-found' };
-            if (request.subject && !(await hasNativeSessionLinkWitnessInTx(tx, accountId, subject))) return { ok: false, error: 'native-link-not-found' };
+            if (request.subject?.linkedSessionId && !(await hasNativeSessionLinkWitnessInTx(tx, accountId, subject))) return { ok: false, error: 'native-link-not-found' };
+            if (request.subject && !subject.linkedSessionId && nativeSessionLink?.externalIdentityTag
+                && resolveBundledAgentIdFromContributionIdentity(subject.agent) === 'codex') {
+                const candidate = { ...subject, linkedSessionId: nativeSessionLink.sessionId };
+                if (await hasNativeSessionLinkWitnessInTx(tx, accountId, candidate, nativeSessionLink.externalIdentityTag)) {
+                    subject = candidate;
+                    request = { ...request, subject };
+                }
+            }
             if (request.sessionId && subject.linkedSessionId && subject.linkedSessionId !== request.sessionId) return { ok: false, error: 'invalid-params' };
         }
         const attribution = request.sessionId ? await resolveSessionUsageAttributionInTx(tx, {
@@ -799,18 +848,24 @@ export async function recordUsageEvent(
                     .filter((id): id is string => Boolean(id)),
             });
         };
+        const overlap = normalizeUsageOverlap(accountId, request, subject);
         if (request.externalKey) {
             const machineId = subject?.machineId ?? request.machineId;
             const runtimeAccounting = !request.subject && request.metadata?.replayObservationId === request.externalKey
                 ? readUsageAccountingMetadata(request.metadata) : null;
             const replay = request.sessionId && machineId && runtimeAccounting?.path === 'runtime'
                 && runtimeAccounting.nativeSessionId ? runtimeAccounting : null;
-            const idempotencyKey = replay
-                ? hashUsageEventIdempotencyKey(JSON.stringify([accountId, 'runtime', machineId, request.agentId,
-                    request.sessionId, replay.nativeSessionId, request.source, request.externalKey]))
-                : buildUsageEventIdempotencyKey(accountId, request);
+            const runtimeOverlap = request.sessionId && !replay ? overlap : undefined;
+            const idempotencyKey = runtimeOverlap
+                ? hashUsageEventIdempotencyKey(JSON.stringify([accountId, 'runtime-overlap', machineId,
+                    request.sessionId, runtimeOverlap.nativeSessionKey, request.source,
+                    runtimeOverlap.inferenceId ?? request.externalKey]))
+                : replay
+                    ? hashUsageEventIdempotencyKey(JSON.stringify([accountId, 'runtime', machineId, request.agentId,
+                        request.sessionId, replay.nativeSessionId, request.source, request.externalKey]))
+                    : buildUsageEventIdempotencyKey(accountId, request);
             // Remove the raw-key candidate after all pre-hash UsageEvent rows have aged out.
-            const legacyIdempotencyKey = replay ? null : buildLegacyUsageEventIdempotencyKey(accountId, request);
+            const legacyIdempotencyKey = replay || runtimeOverlap ? null : buildLegacyUsageEventIdempotencyKey(accountId, request);
             const where = { idempotencyKey: { in: [idempotencyKey, legacyIdempotencyKey]
                 .filter((key): key is string => key !== null) } };
             // The former runtime producer used the bound inference as its write key.
@@ -831,20 +886,20 @@ export async function recordUsageEvent(
                 // A native reader can observe late settlement of the same inference.
                 // Its stable subject/key identifies one fact, not an append-only delta.
                 if (request.subject) {
-                    const next = toUsageEventCreateInput(accountId, request, attribution);
+                    const next = toUsageEventCreateInput(accountId, request, attribution, idempotencyKey, overlap);
                     if (Object.entries(next).some(([key, value]) => !isDeepStrictEqual(Reflect.get(existing, key), value))) {
                         await tx.usageEvent.update({ where: { id: existing.id }, data: next });
                         await refreshCounters(existing);
-                        emitUsageEventAfterTransaction(tx, accountId, request);
+                        emitUsageEventAfterTransaction(tx, accountId, request, overlap);
                     }
                 } else if (await reconcileRuntimeUsageReplayInTx(tx, existing, request, attribution,
-                    replay ? subject ?? undefined : undefined)) {
+                    replay || runtimeOverlap ? subject ?? undefined : undefined, request.sessionId ? overlap : undefined)) {
                     await refreshCounters(existing);
                 }
                 return { ok: true, event: { id: existing.id, createdAt: existing.createdAt } };
             }
 
-            const next = toUsageEventCreateInput(accountId, request, attribution, idempotencyKey);
+            const next = toUsageEventCreateInput(accountId, request, attribution, idempotencyKey, overlap);
             const created = await tx.usageEvent.upsert({
                 where: {
                     idempotencyKey: idempotencyKey ?? "",
@@ -853,7 +908,7 @@ export async function recordUsageEvent(
                 create: next,
             });
             if (!request.subject) await reconcileRuntimeUsageReplayInTx(tx, created, request, attribution,
-                replay ? subject ?? undefined : undefined);
+                replay || runtimeOverlap ? subject ?? undefined : undefined, runtimeOverlap);
             await accessUsageEventExecutionRunIdInTx(tx, {
                 kind: "writeOnce",
                 eventId: created.id,
@@ -868,14 +923,14 @@ export async function recordUsageEvent(
                     usageEventId: created.id,
                 });
             }
-            emitUsageEventAfterTransaction(tx, accountId, request);
+            emitUsageEventAfterTransaction(tx, accountId, request, overlap);
             await refreshCounters();
             await publishAttributedUsageChangedInTx(tx, attribution);
             return { ok: true, event: { id: created.id, createdAt: created.createdAt } };
         }
 
         const created = await tx.usageEvent.create({
-            data: toUsageEventCreateInput(accountId, request, attribution),
+            data: toUsageEventCreateInput(accountId, request, attribution, undefined, overlap),
             select: { id: true, createdAt: true },
         });
         await accessUsageEventExecutionRunIdInTx(tx, {
@@ -892,7 +947,7 @@ export async function recordUsageEvent(
                 usageEventId: created.id,
             });
         }
-        emitUsageEventAfterTransaction(tx, accountId, request);
+        emitUsageEventAfterTransaction(tx, accountId, request, overlap);
         await refreshCounters();
         await publishAttributedUsageChangedInTx(tx, attribution);
 

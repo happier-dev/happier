@@ -28,7 +28,9 @@ export function projectUsageAnalyticsCoverage(input: Omit<UsageAnalyticsCoverage
     request: UsageAnalyticsQueryRequest): UsageAnalyticsCoverage {
     const dimensions = new Set<UsageAnalyticsBreakdownDimension>(['model', 'machine', ...request.breakdowns ?? []]);
     const missingDimensions = [...dimensions].filter(dimension => input.missingDimensions.includes(dimension));
-    const status = input.sources.length === 0 || input.sources.every(source => source.status === 'unknown') ? 'unknown'
+    const hasAmbiguousOverlap = input.reasons.includes('ambiguous_overlap');
+    const status = input.sources.length === 0
+        || (!hasAmbiguousOverlap && input.sources.every(source => source.status === 'unknown')) ? 'unknown'
         : input.reasons.length > 0 || missingDimensions.length > 0 ? 'partial' : 'complete';
     return { ...input, missingDimensions, status };
 }

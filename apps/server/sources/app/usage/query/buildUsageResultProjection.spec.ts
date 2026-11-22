@@ -148,7 +148,7 @@ describe("canonical usage result projection", () => {
             expect.objectContaining({ source: "runtime", machineId: "machine", captureKind: "measured", eventCount: 1 }),
             expect.objectContaining({ source: "runtime", machineId: "other-machine", captureKind: "measured", eventCount: 1 }),
             expect.objectContaining({ source: "runtime", machineId: "second-machine", captureKind: "from_logs", eventCount: 1 }),
-            { source: "legacy_usage_report", machineId: "legacy-machine", path: "legacy", status: "unknown", eventCount: 1 },
+            { source: "legacy_usage_report", machineId: "legacy-machine", path: "legacy", status: "partial", eventCount: 1 },
             { source: "runtime", path: "unknown", status: "unknown", eventCount: 1 },
             { source: "unsupported-source", path: "unknown", status: "unsupported", captureKind: "not_added", eventCount: 1 },
         ]);
