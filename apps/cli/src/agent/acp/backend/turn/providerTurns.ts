@@ -20,6 +20,11 @@ export type AcpProviderTurnSourceHost = Readonly<{
 
 export type AcpProviderTurnSource = Readonly<{
   catchUp(input?: Readonly<{ permissionToolCallId?: string; foregroundActive?: boolean; signal?: AbortSignal }>): Promise<void>;
+  /**
+   * Offer a live, non-replayed ACP update for the active session before generic turn filtering.
+   * Returning true transfers it to the source, which may publish it only through an admitted continuation sink.
+   */
+  claimLiveUpdate?(update: SessionUpdate, context: Readonly<{ foregroundActive: boolean }>): boolean;
   dispose(): void | Promise<void>;
 }>;
 

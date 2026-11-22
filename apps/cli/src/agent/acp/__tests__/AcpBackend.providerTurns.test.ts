@@ -15,6 +15,8 @@ import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/ProviderE
 import type { AgentMessage } from '@/agent/core';
 import type { PermissionMode } from '@/api/types';
 
+type LiveUpdateClaim = NonNullable<AcpProviderTurnSource['claimLiveUpdate']>;
+
 function agent(directory: string): string {
     return writeAcpTestAgentScript({
         dir: directory, fileName: 'provider-turns.mjs',
@@ -25,6 +27,7 @@ function agent(directory: string): string {
             let loads = 0;
             let holdClose = false;
             let holdLoad = false;
+            let replayOnLoad = false;
             let loadingRequest = null;
             let closingRequest = null;
             const awaiting = new Map();
@@ -46,7 +49,12 @@ function agent(directory: string): string {
                         agentCapabilities: { loadSession: true, sessionCapabilities: { close: {}, fork: {} } },
                     });
                     else if (message.method === 'session/new' || message.method === 'session/fork') ok(message.id, { sessionId: 'owned' });
-                    else if (message.method === 'session/load') { loads++; if (holdLoad) loadingRequest = message.id; else ok(message.id, {}); }
+                    else if (message.method === 'session/load') {
+                        loads++;
+                        if (replayOnLoad) notify({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'REPLAYED' } });
+                        if (holdLoad) loadingRequest = message.id; else ok(message.id, {});
+                    }
+                    else if (message.method === 'test/replay-on-load') { replayOnLoad = true; ok(message.id, {}); }
                     else if (message.method === 'session/close') {
                         closes++;
                         if (holdClose) closingRequest = message.id;
@@ -105,6 +113,7 @@ async function fixture(run: (input: {
     permissionHandler: ProviderEnforcedPermissionHandler;
     setPermissionMode(mode: PermissionMode): void;
     setCatchUp(handler: AcpProviderTurnSource['catchUp']): void;
+    setClaimLiveUpdate(handler: LiveUpdateClaim): void;
     setDispose(handler: AcpProviderTurnSource['dispose']): void;
     directory: string;
 }) => Promise<void>, initTimeoutMs?: number): Promise<void> {
@@ -115,6 +124,7 @@ async function fixture(run: (input: {
         let mode: PermissionMode = 'default';
         let currentHost: AcpProviderTurnSourceHost | undefined;
         let catchUp: AcpProviderTurnSource['catchUp'] = async () => {};
+        let claimLiveUpdate: LiveUpdateClaim = () => false;
         let dispose: AcpProviderTurnSource['dispose'] = () => {};
         const events: AgentMessage[] = [];
         const backend = createAcpBackend({
@@ -123,7 +133,11 @@ async function fixture(run: (input: {
             ...(initTimeoutMs === undefined ? {} : { transportHandler: createAcpTestTransportHandler({ initTimeoutMs }) }),
             providerTurnSource: async host => {
                 currentHost = host;
-                return { catchUp: input => catchUp(input), dispose: () => dispose() };
+                return {
+                    catchUp: input => catchUp(input),
+                    claimLiveUpdate: (update, context) => claimLiveUpdate(update, context),
+                    dispose: () => dispose(),
+                };
             },
         });
         backend.onMessage(event => { events.push(event); });
@@ -136,6 +150,7 @@ async function fixture(run: (input: {
                 host() { if (!currentHost) throw new Error('Provider turn source was not opened'); return currentHost; },
                 setPermissionMode(value) { mode = value; permissionHandler.setPermissionMode(value); },
                 setCatchUp(value) { catchUp = value; },
+                setClaimLiveUpdate(value) { claimLiveUpdate = value; },
                 setDispose(value) { dispose = value; },
             });
         } finally {
@@ -268,6 +283,37 @@ describe('ACP provider continuation ownership', () => {
             await backend.dispose();
             expect(original.beginContinuation({ id: 'task', turnId: 'native-3' })).toBeNull();
             await sink!.update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'stale' } });
+        });
+    });
+
+    it('offers live native updates to the source before turn filtering, but not replayed history', async () => {
+        await fixture(async ({ backend, events, setClaimLiveUpdate }) => {
+            const offered: Array<Readonly<{ update: unknown; foregroundActive: boolean }>> = [];
+            setClaimLiveUpdate((update, { foregroundActive }) => {
+                const text = update.sessionUpdate === 'agent_message_chunk'
+                    ? (update.content as { text?: unknown } | undefined)?.text
+                    : undefined;
+                offered.push({ update: text ?? update.sessionUpdate, foregroundActive });
+                return text === 'FOREGROUND' || text === 'LATE_FOREGROUND';
+            });
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            await backend.requestExtension('test/late', {});
+
+            await expect.poll(() => offered).toContainEqual({ update: 'LATE_FOREGROUND', foregroundActive: false });
+            expect(offered.slice(0, 3)).toEqual([
+                { update: 'tool_call', foregroundActive: true },
+                { update: 'tool_call_update', foregroundActive: true },
+                { update: 'FOREGROUND', foregroundActive: true },
+            ]);
+            expect(events).toContainEqual(expect.objectContaining({ type: 'tool-call', callId: '0:background' }));
+            expect(events.some(event => event.type === 'model-output')).toBe(false);
+
+            offered.length = 0;
+            await backend.requestExtension('test/replay-on-load', {});
+            await backend.cancel('owned');
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 1, loads: 1 });
+            expect(offered).toEqual([]);
         });
     });
 

@@ -2,6 +2,7 @@ import type { AccountSettings } from '@happier-dev/protocol';
 
 import type { AgentBackend } from '@/agent/core';
 import { createCatalogDefinedAcpBackend, type CatalogDefinedAcpBackendOptions } from '@/agent/acp/catalog/createCatalogDefinedAcpBackend';
+import { createAgyBackgroundContinuationSource } from './agyBackgroundContinuationSource';
 import { ensureAgyAcpServerForLaunch } from './ensureAgyAcpServerForLaunch';
 import { isPinnedAgyAcpServerConversation, usesPinnedAgyAcpServer } from './pinnedAgyAcpServer';
 
@@ -30,6 +31,8 @@ export async function createAgyAcpBackend(options: AgyAcpBackendOptions): Promis
   if (!usesPinnedAgyAcpServer(options.env)) {
     return createCatalogDefinedAcpBackend('agy', {
       ...backendOptions,
+      // Only `agy acp` has been observed resuming a conversation on its own after a background command.
+      providerTurnSource: createAgyBackgroundContinuationSource(),
       // `agy acp` opens an empty session for ids it does not know, so conversations the pinned
       // server created for native login in earlier releases must resume on that server.
       prepareProcessLaunch: async ({ loadSessionId }) => {

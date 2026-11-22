@@ -1079,13 +1079,29 @@ export class AcpBackend implements AgentBackend {
     if (!source) return;
     await source.catchUp({
       ...(permissionToolCallId ? { permissionToolCallId } : {}),
-      foregroundActive: this.dispatchedPromptTurnGeneration === this.turnGeneration
-        && this.waitingForResponse && !this.isCurrentTurnGenerationClosed(),
+      foregroundActive: this.isForegroundPromptTurnActive(),
       signal: lifetime?.signal,
     });
     if (source !== this.providerSource || lifetime !== this.providerSourceLifetime || lifetime?.signal.aborted) {
       throw makeAbortError('Provider source changed during journal catch-up');
     }
+  }
+
+  private isForegroundPromptTurnActive(): boolean {
+    return this.dispatchedPromptTurnGeneration === this.turnGeneration
+      && this.waitingForResponse && !this.isCurrentTurnGenerationClosed();
+  }
+
+  /** Hand live updates the provider source claims to that source; replayed history and foreign sessions stay generic. */
+  private withholdProviderClaimedUpdates(sessionId: unknown, updateCandidates: unknown[]): unknown[] {
+    const source = this.providerSource;
+    if (!source?.claimLiveUpdate || this.replayCapture || this.disposed || sessionId !== this.acpSessionId) {
+      return updateCandidates;
+    }
+    const foregroundActive = this.isForegroundPromptTurnActive();
+    return updateCandidates.filter((candidate) =>
+      typeof asRecord(candidate)?.sessionUpdate !== 'string'
+      || !source.claimLiveUpdate?.(candidate as SessionUpdate, { foregroundActive }));
   }
 
   /** Reject filesystem requests outside the active admitted turn, including the cancellation/reload interval. */
@@ -2592,14 +2608,19 @@ export class AcpBackend implements AgentBackend {
       return;
     }
 
+    const unclaimedUpdateCandidates = providerGeneration === undefined
+      ? this.withholdProviderClaimedUpdates(raw.sessionId, updateCandidates)
+      : updateCandidates;
+    if (unclaimedUpdateCandidates.length === 0) return;
+
     if (
-      updateCandidates.some((candidate) => typeof asRecord(candidate)?.sessionUpdate === 'string')
+      unclaimedUpdateCandidates.some((candidate) => typeof asRecord(candidate)?.sessionUpdate === 'string')
     ) {
       this.observeProviderTurnEvent(raw.sessionId);
     }
 
     if (this.replayCapture) {
-      for (const update of updateCandidates) {
+      for (const update of unclaimedUpdateCandidates) {
         try {
           this.replayCapture.handleUpdate(update as SessionUpdate);
         } catch (error) {
@@ -2611,7 +2632,9 @@ export class AcpBackend implements AgentBackend {
     const ownsProviderTurn = providerGeneration !== undefined
       && this.providerTurn?.generation === providerGeneration && providerGeneration === this.turnGeneration
       && !this.isCurrentTurnGenerationClosed() && raw.sessionId === this.acpSessionId;
-    const processableUpdateCandidates = ownsProviderTurn ? updateCandidates : this.filterPromptTurnUpdatesByDispatch(updateCandidates);
+    const processableUpdateCandidates = ownsProviderTurn
+      ? unclaimedUpdateCandidates
+      : this.filterPromptTurnUpdatesByDispatch(unclaimedUpdateCandidates);
 
     if (processableUpdateCandidates.length === 0) {
       logger.debug('[AcpBackend] Dropping prompt-turn session/update outside an active dispatched generation');
