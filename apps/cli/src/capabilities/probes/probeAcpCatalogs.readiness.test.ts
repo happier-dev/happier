@@ -43,7 +43,8 @@ describe('ACP catalog prerequisite readiness', () => {
 });
 
 describe('Antigravity ACP capability launch', () => {
-  it('probes the interactive agy CLI ACP server without installing the pinned server', async () => {
+  // The scripted stand-in is launched through its shebang, which Windows cannot execute.
+  it.skipIf(process.platform === 'win32')('probes the interactive agy CLI ACP server without installing the pinned server', async () => {
     await withIsolatedHappierHome(async (home, downloadRequest) => {
       const argvPath = join(home, 'probe-argv.json');
       const methodsPath = join(home, 'probe-methods.jsonl');
