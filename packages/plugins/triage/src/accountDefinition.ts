@@ -109,10 +109,15 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         dangerLevel: 'writesLocal',
         confirmationWhen: { presentUserUi: { op: 'eq', path: 'handoff.sessionChoice.kind', value: 'existing' } },
         sessionTarget: { field: 'handoff.sessionChoice.session', cardinality: 'one' },
+        // Confirmed only when it goes to an existing Session (`confirmationWhen`): it sends, it starts nothing (N13).
         confirmation: {
-          title: 'Run this configured action?',
-          body: 'This starts the configured work for the selected entries at the chosen session destination.',
-          confirmLabel: 'Run action',
+          title: 'Send to this Session?',
+          body: 'Sends this entry and the action’s instructions to the Session below. Its agent picks them up there; no new Session starts.',
+          confirmLabel: 'Send',
+          inputFields: [
+            { path: 'handoff.task', title: 'Action' },
+            { path: 'handoff.sessionChoice.session', title: 'Session' },
+          ],
         },
         inputSchema: TriageRunConfiguredActionInputV1Schema,
         resultSchema: TriageRunConfiguredActionResultV1Schema,
