@@ -70,7 +70,7 @@ import { setSessionModel } from '@/session/services/setSessionModel';
 import { setSessionConfigOption } from '@/session/services/setSessionConfigOption';
 import { setSessionMode } from '@/session/services/setSessionMode';
 import { setSessionPermissionMode } from '@/session/services/setSessionPermissionMode';
-import { setSessionTitle } from '@/session/services/setSessionTitle';
+import { setSessionTitle, SessionAgentTitleUpdateDenied } from '@/session/services/setSessionTitle';
 import { waitForSessionIdle } from '@/session/services/waitForSessionIdle';
 
 import type {
@@ -601,6 +601,7 @@ export function createCliActionDeps(params: Readonly<{
   }> | null;
   getCallerPermissionMode?: (() => string | null | undefined) | null;
   currentSessionPermissionAuthority?: 'trusted_runtime' | 'ambient_context';
+  invocation?: 'cli' | 'session_agent_bridge';
   getCurrentSessionBackendTarget?: (() => BackendTargetRefV1 | null | undefined) | null;
   resumeInactiveSessionWhenUsageLimitReady?: ResumeInactiveSessionWhenUsageLimitReady;
   checkRuntimeAuthUsageLimitRecovery?: (input: Readonly<{ sessionId: string; attemptId: string; resumePromptMode?: 'standard' | 'off' | 'custom' }>) => Promise<unknown>;
@@ -1731,11 +1732,23 @@ export function createCliActionDeps(params: Readonly<{
       if (!normalizedTitle) {
         return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
       }
-      const res = await setSessionTitle({ credentials: params.credentials, idOrPrefix: sessionId, title: normalizedTitle });
-      if (!res.ok) {
-        return { ok: false, errorCode: res.code, error: res.code, ...(res.candidates ? { candidates: res.candidates } : {}) };
+      try {
+        const res = await setSessionTitle({
+          credentials: params.credentials,
+          idOrPrefix: sessionId,
+          title: normalizedTitle,
+          ...(params.invocation === 'session_agent_bridge' ? { sessionAgentSettings: await readActionAccountSettings() } : {}),
+        });
+        if (!res.ok) {
+          return { ok: false, errorCode: res.code, error: res.code, ...(res.candidates ? { candidates: res.candidates } : {}) };
+        }
+        return { ok: true, sessionId: res.sessionId, title: normalizedTitle };
+      } catch (error) {
+        if (error instanceof SessionAgentTitleUpdateDenied) {
+          return { ok: false, errorCode: error.code, error: error.code };
+        }
+        throw error;
       }
-      return { ok: true, sessionId: res.sessionId, title: normalizedTitle };
     },
 
     sessionPermissionModeSet: async ({ sessionId, permissionMode }) => {

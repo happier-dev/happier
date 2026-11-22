@@ -428,12 +428,19 @@ describe('startHappyServer (MCP integration)', () => {
       flavor,
     };
     let metadataVersion = 0;
+    let competingTitle: string | null = null;
     // Only the server ACK is a boundary fake; keep the real metadata updater and retry behavior.
     const updateMetadata = vi.fn((handler: (current: Metadata) => Metadata) => updateSessionMetadataWithAck({
       socket: {
-        emitWithAck: async (_event: string, payload: { metadata: string; expectedVersion: number }) => ({
-          result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1,
-        }),
+        emitWithAck: async (_event: string, payload: { metadata: string; expectedVersion: number }) => {
+          if (competingTitle !== null) {
+            const title = competingTitle;
+            competingTitle = null;
+            return { result: 'version-mismatch', version: payload.expectedVersion + 1,
+              metadata: JSON.stringify({ ...metadata, summary: { text: title, updatedAt: 1 } }) };
+          }
+          return { result: 'success', metadata: payload.metadata, version: payload.expectedVersion + 1 };
+        },
       },
       sessionId: 'sess_mcp_change_title_1',
       sessionEncryptionMode: 'plain',
@@ -475,8 +482,12 @@ describe('startHappyServer (MCP integration)', () => {
       expect(sendClaudeSessionMessage).not.toHaveBeenCalled();
       expect((metadata.summary as { text?: string }).text).toBe('QA MCP Title');
 
-      // User-driven metadata changes remain possible; replayed agent instructions cannot overwrite them.
-      await fakeClient.updateMetadata((current) => ({ ...current, summary: { text: 'User title', updatedAt: 1 } }));
+      await fakeClient.updateMetadata((current) => ({ ...current, summary: { text: ' ', updatedAt: 1 } }));
+      competingTitle = 'User title';
+      const raced = await client.callTool({ name: 'change_title', arguments: { title: 'Racing agent title' } });
+      expect(raced.isError).toBe(true);
+      expect(parseMcpJsonText(raced)).toMatchObject({ error: 'session_title_updates_disabled' });
+      expect(metadata.summary?.text).toBe('User title');
       const userTitleVersion = metadataVersion;
       for (const call of [
         { name: 'change_title', arguments: { title: 'Replayed title' } },

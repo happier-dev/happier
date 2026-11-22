@@ -1,10 +1,7 @@
 import {
   resolveCodingPromptSessionTitleInstructionModeV1,
-  parseHappierToolsShellBridgeCommand,
 } from '@happier-dev/protocol';
 import { isChangeTitleToolLikeName } from '@happier-dev/protocol/tools/v2';
-
-import { extractShellCommand } from './permissionToolIdentifier';
 
 function readActionId(input: unknown): string {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return '';
@@ -17,25 +14,9 @@ function isTitleActionExecute(toolName: string, input: unknown): boolean {
   return lower.includes('action_execute') && readActionId(input) === 'session.title.set';
 }
 
-function isShellBridgeTitleCall(toolName: string, input: unknown): boolean {
-  const lowerToolName = toolName.toLowerCase();
-  if (lowerToolName !== 'bash' && lowerToolName !== 'execute' && lowerToolName !== 'shell') return false;
-
-  const command = extractShellCommand(input);
-  if (!command) return false;
-
-  const parsed = parseHappierToolsShellBridgeCommand(command);
-  if (!parsed || parsed.kind !== 'call') return false;
-  if (parsed.source !== 'happier') return false;
-  return parsed.tool === 'change_title'
-    || parsed.tool === 'session_title_set'
-    || isTitleActionExecute(parsed.tool, parsed.args);
-}
-
 export function isAgentSessionTitleToolCall(toolName: string, input: unknown): boolean {
   return isChangeTitleToolLikeName(toolName)
-    || isTitleActionExecute(toolName, input)
-    || isShellBridgeTitleCall(toolName, input);
+    || isTitleActionExecute(toolName, input);
 }
 
 /**

@@ -88,7 +88,7 @@ function resolveRunStartModelAndConfig(input: Readonly<Record<string, unknown>>)
 
 export type ActionExecuteResult =
   | Readonly<{ ok: true; result: unknown }>
-  | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown }>;
+  | Readonly<{ ok: false; errorCode: string; error: string; details?: unknown; candidates?: readonly string[] }>;
 
 export type ActionPreparedInvocation = Readonly<{
   run: (options?: Readonly<{ signal?: AbortSignal }>) => Promise<ActionExecuteResult>;
@@ -1294,7 +1294,7 @@ function normalizeActionExecutorThrownError(error: unknown): Readonly<{ errorCod
   };
 }
 
-function readActionExecuteFailure(result: unknown): Readonly<{ errorCode: string; error: string }> | null {
+function readActionExecuteFailure(result: unknown): Omit<Extract<ActionExecuteResult, { ok: false }>, 'ok'> | null {
   if (!result || typeof result !== 'object') return null;
   const record = result as Readonly<Record<string, unknown>>;
   if (record.ok !== false) return null;
@@ -1304,7 +1304,10 @@ function readActionExecuteFailure(result: unknown): Readonly<{ errorCode: string
   const error = typeof record.error === 'string' && record.error.trim().length > 0
     ? record.error
     : errorCode;
-  return { errorCode, error };
+  const candidates = errorCode === 'session_id_ambiguous' && Array.isArray(record.candidates)
+    ? record.candidates.filter((candidate): candidate is string => typeof candidate === 'string')
+    : [];
+  return { errorCode, error, ...(candidates.length > 0 ? { candidates } : {}) };
 }
 
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
