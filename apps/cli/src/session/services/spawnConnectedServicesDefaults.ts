@@ -87,6 +87,7 @@ export function createSpawnConnectedServicesTeamResourceCatalogResolver(params: 
   homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
   serverId: string;
   accountId: string;
+  executionMachineId?: string;
 }>): ResolveSpawnConnectedServicesTeamResourceCatalog {
   return async (request) => {
     const resources = await readSpawnConnectedServicesTeamResources({ ...params, ...request });

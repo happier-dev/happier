@@ -830,6 +830,7 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
         }
       }
       const machineIsolation = readMachineIsolationV1(openedMachineMetadata);
+      const signedActionBinding = context?.externalActionExecutionAuthorization?.binding;
       const defaults = await resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget, projectContext,
         approvalProfileId, primaryTeamId, initialAccess, teamCredentialBindings,
         permissionMode: requestedPermissionMode, modelSelection: requestedModelSelection,
@@ -850,6 +851,8 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
           homeDomainAction: request => homeActions.homeDomainAction!({ ...request, context: context ?? request.context }),
           serverId: executionTarget.serverId,
           accountId: readAccountIdFromToken(defaultsCredentials.token) ?? '',
+          ...(signedActionBinding?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            ? { executionMachineId: signedActionBinding.machineId } : {}),
         }),
         ...(signal ? { signal } : {}),
       });

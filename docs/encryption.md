@@ -7496,9 +7496,11 @@ can read. A plaintext Account never receives fabricated Account E2EE material. S
 credential revision, configuration revision, authentication mode, and encryption binding are
 rechecked when material is written and read so a stale preparation cannot replace current material.
 
-In 0.3 development, a signed `session.spawn_new` can read the requester's entitled
-credential catalog for the primary Team bound at mint. The requester can name
-that Team or derive it from the Source owner or a single initial Team share.
+In 0.3 development, a signed `session.spawn_new` can page the requester's entitled
+credential catalog for the primary Team bound at mint and the admitted execution
+Machine. This preparation read uses the Team catalog without a resource filter.
+The requester can name that Team or derive it from the Source owner or a single
+initial Team share.
 Home signs the Team ID as routing metadata even when the request has no Project
 or Source. For an E2EE spawn, the executor requires an exact match with the
 sealed input. A request without the signed Team operand skips optional Team

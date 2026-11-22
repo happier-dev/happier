@@ -130,7 +130,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       expect(reads).toBe(1);
     },
   );
-  it('reads every recipient-catalog continuation before resolving a Team default', async () => {
+  it('keeps the execution Machine on every recipient-catalog page for a Team default', async () => {
     const resource = {
       id: 'resource-page-two', teamId: 'team-a', displayName: resourceDisplayName('resource-page-two', 'Page two'), resourceRevision: 1, sourceOwnerDisplayName: null,
       readiness: { kind: 'available' as const }, recoveryAction: null,
@@ -147,13 +147,18 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       .mockResolvedValueOnce({ resources: [resource], nextCursor: null });
 
     await expect(createSpawnConnectedServicesTeamResourceCatalogResolver({
-      homeDomainAction, serverId: 'home-a', accountId: 'account-a',
+      homeDomainAction, serverId: 'home-a', accountId: 'account-a', executionMachineId: 'machine-a',
     })({ teamIds: ['team-a'] })).resolves.toEqual({
       serverId: 'home-a', accountId: 'account-a', resources: [resource],
     });
+    expect(homeDomainAction).toHaveBeenNthCalledWith(1, {
+      actionId: 'teams.credentials.entitled.list',
+      input: { teamId: 'team-a', executionMachineId: 'machine-a' },
+      context: { surface: 'cli', serverId: 'home-a' },
+    });
     expect(homeDomainAction).toHaveBeenNthCalledWith(2, {
       actionId: 'teams.credentials.entitled.list',
-      input: { teamId: 'team-a', cursor: 'recipient-page-2' },
+      input: { teamId: 'team-a', executionMachineId: 'machine-a', cursor: 'recipient-page-2' },
       context: { surface: 'cli', serverId: 'home-a' },
     });
   });

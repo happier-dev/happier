@@ -1655,7 +1655,9 @@ function isSpawnTeamCredentialCatalogRead(
         || proof.method.toUpperCase() !== 'POST'
         || proof.path !== TEAM_CREDENTIAL_ACTION_PATHS_V1[TEAM_CREDENTIAL_ENTITLED_LIST_ACTION_ID_V1]) return false;
     const request = TeamCredentialResourceReadInputV1Schema.safeParse(proof.body);
-    return request.success && request.data.teamId === teamId;
+    return request.success && request.data.teamId === teamId
+        && request.data.executionMachineId === binding.machineId
+        && request.data.resourceId === undefined;
 }
 
 /** One signed binding decides sibling eligibility and the credential ceiling together. */

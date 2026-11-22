@@ -11806,6 +11806,9 @@ describe("external Action execution authorization", () => {
         const resource = await db.teamCredentialResource.create({ data: { teamId: fixture.team.id, custodianAccountId: custodian.id,
             displayName: 'Spawn default', sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
             sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'brokered' } });
+        const secondResource = await db.teamCredentialResource.create({ data: { teamId: fixture.team.id, custodianAccountId: custodian.id,
+            displayName: 'Another spawn default', sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
+            sessionUsePolicy: 'personal_allowed', allMembersDeliveryMode: 'brokered' } });
         await db.teamCredentialResource.create({ data: { teamId: fixture.team.id, custodianAccountId: custodian.id,
             displayName: 'Unentitled credential', sourceBindingJson: '{}', disclosureCeiling: 'brokered_only',
             sessionUsePolicy: 'personal_allowed' } });
@@ -11821,21 +11824,26 @@ describe("external Action execution authorization", () => {
                 agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
                 primaryTeamId: fixture.team.id,
             });
-            const read = (teamId: string, makeHeaders: (request: ReturnType<typeof bindHomeDomainActionHttpRequestV1>) => Record<string, string>) => {
-                const request = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', { teamId });
+            type CatalogRead = { teamId: string; executionMachineId?: string; resourceId?: string; cursor?: string; limit?: number };
+            const read = (input: CatalogRead, makeHeaders: (request: ReturnType<typeof bindHomeDomainActionHttpRequestV1>) => Record<string, string>) => {
+                const request = bindHomeDomainActionHttpRequestV1('teams.credentials.entitled.list', input);
                 return app.inject({ method: 'POST', url: request.path, payload: request.body, headers: makeHeaders(request) });
             };
+            const resourceIds = (result: Awaited<ReturnType<typeof read>>) => result.json().resources.map((row: { id: string }) => row.id);
+            const expectedIds = [resource.id, secondResource.id].sort();
             const accountHeaders = () => ({ authorization: `Bearer ${token}` });
-            const control = await read(fixture.team.id, accountHeaders);
+            const control = await read({ teamId: fixture.team.id }, accountHeaders);
             expect(control.statusCode, control.body).toBe(200);
-            expect(control.json().resources.map((row: { id: string }) => row.id)).toEqual([resource.id]);
-            const otherControl = await read(otherTeam.id, accountHeaders);
+            expect(resourceIds(control).sort()).toEqual(expectedIds);
+            const otherControl = await read({ teamId: otherTeam.id }, accountHeaders);
             expect(otherControl.statusCode, otherControl.body).toBe(200);
 
             const unrelated = await mint(app, fixture, 'agents.models.list', {
                 ...fixture.envelope, input: { purpose: 'scm_diff_summary', machineId: fixture.machine.id },
             }, token);
-            const signedRead = (authorization: typeof unrelated, teamId = fixture.team.id) => read(teamId, request => machineHeaders({
+            const signedRead = (authorization: typeof unrelated, overrides: Partial<CatalogRead> = {}) => read({
+                teamId: fixture.team.id, executionMachineId: fixture.machine.id, ...overrides,
+            }, request => machineHeaders({
                 authorizationToken: authorization.token, effectActionId: 'teams.credentials.entitled.list',
                 method: request.method, path: request.path, body: request.body, privateKey: fixture.keyPair.secretKey,
             }));
@@ -11849,8 +11857,19 @@ describe("external Action execution authorization", () => {
             const spawn = await mint(app, fixture, actionId, { ...fixture.envelope, input }, token);
             const response = await signedRead(spawn);
             expect(response.statusCode, response.body).toBe(200);
-            expect(response.json().resources.map((row: { id: string }) => row.id)).toEqual([resource.id]);
-            await expectEffectFamilyRefusal(signedRead(spawn, otherTeam.id));
+            expect(resourceIds(response).sort()).toEqual(expectedIds);
+            await expectEffectFamilyRefusal(signedRead(spawn, { executionMachineId: `${fixture.machine.id}-other` }));
+            await expectEffectFamilyRefusal(signedRead(spawn, { executionMachineId: undefined }));
+            await expectEffectFamilyRefusal(signedRead(spawn, { resourceId: resource.id }));
+            await expectEffectFamilyRefusal(signedRead(spawn, { teamId: otherTeam.id }));
+
+            const firstPage = await signedRead(spawn, { limit: 1 });
+            expect(firstPage.statusCode, firstPage.body).toBe(200);
+            const cursor = firstPage.json().nextCursor;
+            expect(cursor).toEqual(expect.any(String));
+            const secondPage = await signedRead(spawn, { limit: 1, cursor });
+            expect(secondPage.statusCode, secondPage.body).toBe(200);
+            expect([...resourceIds(firstPage), ...resourceIds(secondPage)].sort()).toEqual(expectedIds);
 
             const unscoped = await mint(app, fixture, actionId, { ...fixture.envelope,
                 input: { ...input, primaryTeamId: undefined } }, token);
