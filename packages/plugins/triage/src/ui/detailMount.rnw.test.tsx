@@ -3230,7 +3230,7 @@ describe('opening a row into the source detail', () => {
         // beneath the newly selected entry's aggregate header.
         await expect(shell.getByRole('heading', { name: LONG_REF_ROW_TITLE })).resolves.toBeDefined();
         expect(queryDetailBodyNode()).toBeNull();
-        await expect(shell.getByRole('progressbar', { name: 'Reading this pull request' })).resolves.toBeDefined();
+        expect(document.body.textContent).toContain('Reading this pull request from Example forge');
 
         releaseDetailRead();
         await act(async () => { await Promise.resolve(); });

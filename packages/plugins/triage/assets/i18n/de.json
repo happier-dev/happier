@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Erneut versuchen: Pull Request zur Korrektur",
   "plugins.triage.surface.detail.lastRead": "Zuletzt gelesen: {age}.",
   "plugins.triage.surface.detail.readingKind": "Dieser Eintrag wird gelesen ({kind})",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} · Quelle: {source}",
   "plugins.triage.surface.failure.readTimeout": "Die Liste konnte nicht rechtzeitig gelesen werden. Versuche erneut, sie zu lesen.",
   "plugins.triage.surface.pins.unavailable": "Happier kann dein Konto gerade nicht erreichen. Daher können angeheftete Einträge nicht geändert werden.",
   "plugins.triage.surface.row.openToRead": "Öffnen, um Details zu lesen",

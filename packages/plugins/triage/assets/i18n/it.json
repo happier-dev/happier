@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Riprova: pull request di correzione",
   "plugins.triage.surface.detail.lastRead": "Ultima lettura {age}.",
   "plugins.triage.surface.detail.readingKind": "Lettura di questo elemento ({kind})",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} da {source}",
   "plugins.triage.surface.failure.readTimeout": "La lettura dell’elenco non ha risposto in tempo. Riprova a leggerlo.",
   "plugins.triage.surface.pins.unavailable": "Happier non riesce a raggiungere il tuo account al momento, quindi gli elementi fissati non possono essere modificati.",
   "plugins.triage.surface.row.openToRead": "Apri per leggere i dettagli",

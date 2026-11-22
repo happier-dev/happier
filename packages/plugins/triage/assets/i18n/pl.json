@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Ponów: pull request z poprawką",
   "plugins.triage.surface.detail.lastRead": "Ostatni odczyt: {age}.",
   "plugins.triage.surface.detail.readingKind": "Odczytywanie elementu: {kind}",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} ze źródła {source}",
   "plugins.triage.surface.failure.readTimeout": "Odczyt listy nie odpowiedział na czas. Spróbuj odczytać ją ponownie.",
   "plugins.triage.surface.pins.unavailable": "Happier nie może teraz połączyć się z Twoim kontem, więc nie można zmieniać przypięć.",
   "plugins.triage.surface.row.openToRead": "Otwórz, aby przeczytać szczegóły",

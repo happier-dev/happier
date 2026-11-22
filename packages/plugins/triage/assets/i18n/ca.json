@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Torna-ho a provar: sol·licitud d’extracció de correcció",
   "plugins.triage.surface.detail.lastRead": "Darrera lectura {age}.",
   "plugins.triage.surface.detail.readingKind": "S’està llegint aquest element ({kind})",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} des de {source}",
   "plugins.triage.surface.failure.readTimeout": "La lectura de la llista no ha respost a temps. Torna a provar de llegir-la.",
   "plugins.triage.surface.pins.unavailable": "El Happier no pot accedir al teu compte ara mateix, de manera que no es poden canviar els elements fixats.",
   "plugins.triage.surface.row.openToRead": "Obre per llegir els detalls",

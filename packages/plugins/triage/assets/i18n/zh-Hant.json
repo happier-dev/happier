@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "重試：修復用提取請求",
   "plugins.triage.surface.detail.lastRead": "上次讀取：{age}。",
   "plugins.triage.surface.detail.readingKind": "正在讀取此項目（{kind}）",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} · 來源：{source}",
   "plugins.triage.surface.failure.readTimeout": "讀取清單未能及時回應。請重新嘗試讀取。",
   "plugins.triage.surface.pins.unavailable": "Happier 目前無法連線至你的帳戶，因此無法變更釘選項目。",
   "plugins.triage.surface.row.openToRead": "開啟以閱讀詳細資料",

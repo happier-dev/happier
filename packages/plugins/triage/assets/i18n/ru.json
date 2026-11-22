@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Повторить: пул-реквест с исправлением",
   "plugins.triage.surface.detail.lastRead": "Последнее чтение: {age}.",
   "plugins.triage.surface.detail.readingKind": "Чтение элемента: {kind}",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} · Источник: {source}",
   "plugins.triage.surface.failure.readTimeout": "Чтение списка не завершилось вовремя. Попробуйте прочитать его ещё раз.",
   "plugins.triage.surface.pins.unavailable": "Сейчас Happier не может подключиться к вашему аккаунту, поэтому закрепления нельзя изменить.",
   "plugins.triage.surface.row.openToRead": "Открыть для чтения подробностей",

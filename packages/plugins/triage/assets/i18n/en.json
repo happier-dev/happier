@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Retry: Fix pull request",
   "plugins.triage.surface.detail.lastRead": "Last read {age}.",
   "plugins.triage.surface.detail.readingKind": "Reading this {kind}",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} from {source}",
   "plugins.triage.surface.failure.readTimeout": "The list read did not answer in time. Try again to read it.",
   "plugins.triage.surface.pins.unavailable": "Happier cannot reach your account right now, so pins cannot be changed.",
   "plugins.triage.surface.row.openToRead": "Open to read details",

@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "重试：修复用拉取请求",
   "plugins.triage.surface.detail.lastRead": "上次读取：{age}。",
   "plugins.triage.surface.detail.readingKind": "正在读取此条目（{kind}）",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} · 来源：{source}",
   "plugins.triage.surface.failure.readTimeout": "读取列表未能及时响应。请重新尝试读取。",
   "plugins.triage.surface.pins.unavailable": "Happier 目前无法连接到你的账户，因此无法更改置顶项。",
   "plugins.triage.surface.row.openToRead": "打开以阅读详情",

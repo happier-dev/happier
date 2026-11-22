@@ -825,10 +825,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
     props.lastKnown === true || props.exactRead === null || selection === null || observation === null ? null
       : { selection, observation, ...(props.exactRead?.detailData === undefined ? {} : { detailData: props.exactRead.detailData }) },
   );
-  const detail = props.lastKnown === true ? null
-    : props.exactReadFailure !== undefined
-      ? { kind: 'unreachable' as const, ...props.exactReadFailure, retry: props.completePostMutation }
-      : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
+  const detail = props.exactReadFailure !== undefined
+    ? { kind: 'unreachable' as const, ...props.exactReadFailure, retry: props.completePostMutation }
+    : props.lastKnown === true ? null
+    : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
   const readRefusal = presentInternalTaskReadFailure(
     readFailure?.code ?? (detail?.kind === 'unreachable' ? detail.failure?.code : undefined), text,
   );
@@ -1104,6 +1104,9 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       }),
       why,
     ].filter((part): part is string => part !== null).join(' ');
+    const reading = header.kindLabel === null
+      ? text('plugins.triage.surface.detail.reading', 'Reading this entry')
+      : text('plugins.triage.surface.detail.readingKind', 'Reading this {kind}', { kind: header.kindLabel.toLowerCase() });
     return <Stack style={DETAIL_FILL_STYLE_V1}>
       {readFailure !== undefined ? (
         <Stack gap="small">
@@ -1116,7 +1119,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
           <ActionFailureDetails code={readFailure.code} requestId={readFailure.requestId}
             detail={readFailure.detail} showReason={false} />
         </Stack>
-      ) : observation === null ? (
+      ) : observation === null && detail?.kind !== 'unreachable' ? (
         header.presence === 'absent' ? null : <Stack gap="small">
           <EmptyState
             titleKey="plugins.triage.surface.detail.noConnection.title"
@@ -1129,11 +1132,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             requestId={props.availabilityFailure.requestId} showReason={false} />}
         </Stack>
       ) : detail === null || detail.kind === 'reading' ? (
-        // Lines of reading text where the story will start (the same lines the source holds while its own
-        // first read settles), announced in the source's own noun; the row above it stays put.
-        <TriageStoryLoadingLines label={header.kindLabel === null
-          ? text('plugins.triage.surface.detail.reading', 'Reading this entry')
-          : text('plugins.triage.surface.detail.readingKind', 'Reading this {kind}', { kind: header.kindLabel.toLowerCase() })} />
+        <Stack gap="small">
+          <Text variant="micro" tone="neutral">{sourceDescriptor === null ? reading
+            : text('plugins.triage.surface.detail.readingFromSource', '{reading} from {source}', {
+                reading, source: sourceDescriptor.displayName,
+              })}</Text>
+          <TriageStoryLoadingLines label={reading} />
+        </Stack>
       ) : detail.kind === 'unavailable' ? (
         <EmptyState
           titleKey="plugins.triage.surface.detail.removedConnection.title"

@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "再試行: 修正用プルリクエスト",
   "plugins.triage.surface.detail.lastRead": "最終読み取り: {age}。",
   "plugins.triage.surface.detail.readingKind": "この項目を読み取り中（{kind}）",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} · ソース: {source}",
   "plugins.triage.surface.failure.readTimeout": "リストの読み取りが時間内に応答しませんでした。もう一度読み取ってください。",
   "plugins.triage.surface.pins.unavailable": "現在Happierはアカウントに接続できないため、ピン留めを変更できません。",
   "plugins.triage.surface.row.openToRead": "開いて詳細を読む",

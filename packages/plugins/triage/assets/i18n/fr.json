@@ -995,6 +995,7 @@
   "plugins.triage.surface.detail.fixPr.retry": "Réessayer : pull request de correction",
   "plugins.triage.surface.detail.lastRead": "Dernière lecture {age}.",
   "plugins.triage.surface.detail.readingKind": "Lecture de cet élément ({kind})",
+  "plugins.triage.surface.detail.readingFromSource": "{reading} depuis {source}",
   "plugins.triage.surface.failure.readTimeout": "La lecture de la liste n’a pas répondu à temps. Réessayez de la lire.",
   "plugins.triage.surface.pins.unavailable": "Happier ne peut pas accéder à votre compte pour le moment. Les épingles ne peuvent donc pas être modifiées.",
   "plugins.triage.surface.row.openToRead": "Ouvrir pour lire les détails",
