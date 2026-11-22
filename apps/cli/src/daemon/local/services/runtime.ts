@@ -645,8 +645,6 @@ export function createLocalServicesDaemonRuntime(params: Readonly<{
     let publishedLauncherTargets: Awaited<ReturnType<typeof scannedLauncherFeed.getSnapshot>>['targets'] = [];
     let declarationObservationFailure: LocalServiceInventoryDiagnostic | undefined;
     const publishInventorySnapshot = async (snapshot?: NormalizedLocalServiceInventorySnapshot, previewRegistrationChanged = false): Promise<NormalizedLocalServiceInventorySnapshot> => {
-        // The daemon's existing group attaches late/replaced registry owners on read.
-        await params.projectManagedServices?.activity?.read();
         // Scan ticks project admitted declarations and endpoint-free managed occurrences. Reuse
         // the real launcher projection so suppressing observation metadata cannot hide those
         // changes, or give a second implementation authority over its material fields.

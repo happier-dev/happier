@@ -114,20 +114,21 @@ export function readWorkspaceSessionIdle(
 export function createLiveWorkProducerGroup(resolve: () => readonly LiveWorkProducerV1[] | null) {
     const listeners = new Set<LiveWorkListenerV1>();
     const subscriptions = new Map<LiveWorkProducerV1, () => void>();
-    let observing = false;
     let disposed = false;
     const notifyChanged: LiveWorkListenerV1 = change => { if (!disposed) for (const listener of listeners) listener(change); };
+    const observeOwners = (owners: readonly LiveWorkProducerV1[] | null) => {
+        if (disposed || listeners.size === 0) return;
+        const current = new Set(owners ?? []);
+        for (const [owner, cleanup] of subscriptions) if (!current.has(owner)) {
+            cleanup(); subscriptions.delete(owner);
+        }
+        for (const owner of current) if (!subscriptions.has(owner)) {
+            subscriptions.set(owner, owner.subscribe(notifyChanged));
+        }
+    };
     const read = (scope?: LiveWorkReadScopeV1) => {
         const owners = resolve();
-        if (observing) {
-            const current = new Set(owners ?? []);
-            for (const [owner, cleanup] of subscriptions) if (!current.has(owner)) {
-                cleanup(); subscriptions.delete(owner);
-            }
-            for (const owner of current) if (!subscriptions.has(owner)) {
-                subscriptions.set(owner, owner.subscribe(notifyChanged));
-            }
-        }
+        observeOwners(owners);
         if (!owners?.length || disposed) return Promise.resolve<LiveWorkInventoryV1>({ items: [], coverage: 'unknown' });
         const snapshots = owners.map(owner => {
             try { return owner.read(scope); } catch (error) { return Promise.reject(error); }
@@ -146,17 +147,22 @@ export function createLiveWorkProducerGroup(resolve: () => readonly LiveWorkProd
     return {
         read,
         subscribe(listener: LiveWorkListenerV1) {
-            observing = true; listeners.add(listener);
+            if (disposed) return () => {};
+            listeners.add(listener);
+            if (listeners.size === 1) observeOwners(resolve());
             return () => {
                 listeners.delete(listener);
                 if (!listeners.size) {
-                    observing = false;
                     for (const cleanup of subscriptions.values()) cleanup();
                     subscriptions.clear();
                 }
             };
         },
-        notifyChanged,
+        notifyChanged(change?: 'observation') {
+            // An owner can appear or be replaced while observers are already parked.
+            if (!disposed && listeners.size > 0) observeOwners(resolve());
+            notifyChanged(change);
+        },
         dispose() {
             disposed = true;
             for (const cleanup of subscriptions.values()) cleanup();

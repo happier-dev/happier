@@ -669,6 +669,61 @@ describe('createLocalServicesDaemonRuntime', () => {
         } finally { await runtime.stop(); serviceActivity.dispose(); await owner.dispose(); }
     });
 
+    it('pushes a retained Project Service Stop when only its Worktree binding is watched', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-service-stop-push-'));
+        const workspace = { id: 'checkout', serverId: 'home', machineId: 'machine-a', rootPath: root, createdAtMs: 1 };
+        const declaration = { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: 'web' } } as const;
+        const owner = createManagedServicesOwner({
+            processSupervisorHost: createManagedServiceProcessSupervisorHost({ custodyOwner: 'daemon' }),
+            dependencies() { throw new Error('Literal Project commands do not install plugin dependencies'); },
+            resolveScope: scope => scope, projectServiceStateDirectory: join(root, 'retained'),
+        });
+        const activity = createLiveWorkProducerGroup(() => [owner.activity]);
+        const scan = vi.fn(async () => ({ listeners: [], processes: new Map(), workspaces: [], diagnostics: [] }));
+        let finishWorkspaceDiscovery!: () => void;
+        const discovering = new Promise<void>(resolve => { finishWorkspaceDiscovery = resolve; });
+        const runtime = createLocalServicesDaemonRuntime({ machineId: workspace.machineId, startLoop: false,
+            inventoryEnabled: () => true, projectManagedServices: { ...owner, activity }, scan,
+            async workspaceFacts() {
+                await discovering;
+                return { facts: [{ id: workspace.id, path: root }], acceptedWorkspaceRefs: [workspace], diagnostics: [] };
+            } });
+        const cancellation = new AbortController();
+        let watch: Promise<unknown> | undefined;
+        try {
+            const handle = await owner.superviseProject({ kind: 'workspace', workspace, declaration, cwd: root,
+                serviceId: 'web', specIdentity: 'web', isCurrent: () => true,
+                requester: { serverId: workspace.serverId, accountId: 'owner', machineId: workspace.machineId, installationId: 'installation' },
+                processSpec: { mode: { kind: 'managedSpawn', endpointNone: true } },
+                authorizeLaunch: async () => ({ command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'],
+                    env: {}, release: async () => undefined }) });
+            // A binding can be available on a Worker even if its workspace
+            // discovery is still blocked on persistent facts.
+            const scope = { scope: 'workspace' as const, workspaceRoot: root, projection: 'managed_bindings' as const };
+            const baseline = await runtime.launcherRoutes.getSnapshot(scope);
+            expect(baseline.targets).toEqual([expect.objectContaining({ id: 'web', serviceState: 'running' })]);
+            watch = runtime.inventoryRoutes.watchLauncherSnapshot({ targets: baseline.targets, signal: cancellation.signal,
+                readSnapshot: () => runtime.launcherRoutes.getSnapshot({ ...scope, discovery: 'cached' }) });
+            await vi.waitFor(() => expect(runtime.inventoryRoutes.watcherCount()).toBe(1));
+            expect(await handle.stop()).toEqual({ status: 'stopped' });
+            expect(handle.snapshot().state).toBe('stopped');
+            await new Promise<void>(resolve => setImmediate(resolve));
+            cancellation.abort();
+            expect(await watch).toMatchObject({ changed: true,
+                snapshot: expect.objectContaining({ targets: [expect.objectContaining({ id: 'web', serviceState: 'stopped', actions: [] })] }),
+            });
+            expect(scan).not.toHaveBeenCalled();
+        } finally {
+            cancellation.abort();
+            await watch?.catch(() => undefined);
+            await runtime.stop();
+            finishWorkspaceDiscovery();
+            activity.dispose();
+            await owner.dispose();
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('pushes ended managed previews without Reload, native probes or scans while preserving unknown and scanned registrations', async () => {
         let phase: 'running' | 'unknown' | 'stopped' = 'running';
         let inspections = 0;

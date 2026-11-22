@@ -459,6 +459,32 @@ describe('managed activity inventory', () => {
         expect((await confirmation).kind).toBe('unknown');
         inventory.dispose();
     });
+    it('forwards passive changes from the current owner across replacement without reading work', () => {
+        const previous = producer();
+        const next = producer();
+        const readPrevious = vi.spyOn(previous.source, 'read');
+        const readNext = vi.spyOn(next.source, 'read');
+        let current = previous.source;
+        const group = createLiveWorkProducerGroup(() => [current]);
+        const changed = vi.fn();
+        const detach = group.subscribe(changed);
+        try {
+            previous.change([]);
+            expect(changed).toHaveBeenCalledTimes(1);
+            current = next.source;
+            group.notifyChanged();
+            previous.change([]);
+            expect(changed).toHaveBeenCalledTimes(2);
+            next.change([]);
+            expect(changed).toHaveBeenCalledTimes(3);
+            detach();
+            next.change([]);
+            expect(changed).toHaveBeenCalledTimes(3);
+            expect(readPrevious).not.toHaveBeenCalled();
+            expect(readNext).not.toHaveBeenCalled();
+        } finally { detach(); group.dispose(); }
+    });
+
     it('observes late incumbent owners and releases retired owner subscriptions without inventing coverage', async () => {
         let current: LiveWorkProducerV1[] | null = null;
         const group = createLiveWorkProducerGroup(() => current);
