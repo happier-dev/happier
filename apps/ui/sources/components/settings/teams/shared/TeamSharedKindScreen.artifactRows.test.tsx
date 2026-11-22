@@ -78,7 +78,7 @@ function answerArtifacts(
           {
             id,
             title: null,
-            header,
+            header: { ...header, title: null },
             rawHeader: header,
             isDecrypted: true,
             headerVersion: 1,

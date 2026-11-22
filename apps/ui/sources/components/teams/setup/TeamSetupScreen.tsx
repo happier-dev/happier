@@ -594,7 +594,7 @@ export function TeamSetupPageView(
     </ItemGroup>
   ) : (
     <>
-      <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} />
+      <ItemGroup testID="team-setup-before" title={t('teams.join.setupPage.beforeYouStart')} children={null} />
       <MachineAdministrationTargetSelector
         selection={props.selection}
         presentation="context"

@@ -34,7 +34,7 @@ export const registeredWorkspaceRoutes: Readonly<Record<string, WorkspaceRouteRe
     },
     'teams/[teamId]/setup': {
         moduleKey: './(app)/teams/[teamId]/setup.tsx', destinationId: 'team-setup',
-        catalogEntry: { titleKey: 'teams.title', icon: 'users-three', visibility: 'hidden' },
+        catalogEntry: { titleKey: 'teams.title', icon: 'users', visibility: 'hidden' },
     },
 };
 

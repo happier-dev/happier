@@ -129,6 +129,7 @@ describe('ordinary managed machine picker demand', () => {
         const screen = await renderScreen(<ModalProvider><NewSessionMachineSelectionContent groups={[]} selectedMachine={null}
             selectedServerId={serverId} recentMachines={[]} favoriteMachines={[]}
             managedPlacementPreset={{ kind: 'preset', homeId: 'srv_compute', presetId: 'launch' }}
+            managedPlacementSourceLabel="Inherited from Compute"
             onSelectMachine={vi.fn()} onSelectScopedMachine={vi.fn()} onSelectManagedMachine={onSelectManagedMachine}
             temporaryComputers={[{ serverId, artifactTarget: 'darwin-arm64', selected: false, workspace: null, onSelect: vi.fn() }]}
             testIdPrefix="mixed-picker" showSearch={false} /></ModalProvider>);
@@ -140,6 +141,7 @@ describe('ordinary managed machine picker demand', () => {
         await waitForHomeGovernance(() => expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:launch:2'),
             JSON.stringify({ requests: harness.requests.map(request => request.path), content: screen.getTextContent() })).not.toBeNull());
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:launch:2')?.props.accessibilityState).toMatchObject({ selected: true });
+        expect(screen.getTextContent()).toContain('Inherited from Compute');
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:one-off')).not.toBeNull();
         expect(screen.findByTestId('mixed-picker-managed-machine:srv_compute:preset:archived:2')).toBeNull();
         expect(screen.findByTestId(`mixed-picker-temporary-computer:${serverId}:darwin-arm64`)).not.toBeNull();

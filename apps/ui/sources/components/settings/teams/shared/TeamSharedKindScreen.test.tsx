@@ -5,7 +5,7 @@ import type { MachinePoolPrivateViewV1 } from '@happier-dev/protocol/machines/po
 import { machinePoolActionEndpointPathV1 } from '@happier-dev/protocol/machines/pools/actionsV1';
 import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainActionFamily';
 import { TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
-import { TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1, teamSharedResourceSummaryRowKeyV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
+import { TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1, teamSharedResourceSummaryRowKeyV1, type TeamSharedResourceSummaryRowV1 } from '@happier-dev/protocol/teams/teamShareableResourceKindV1';
 import { randomBytes } from 'node:crypto';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as collectionActionIds } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
 import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
@@ -141,7 +141,7 @@ describe('Team shared kind list', () => {
     const serverId = await addHome([]);
     const kind = TEAM_SHAREABLE_COLLECTION_RESOURCE_KIND_V1;
     const collection = { pluginId: 'example.checklists', collectionId: 'notes' };
-    const selected = { kind, status: 'available' as const, count: 1, collection };
+    const selected: TeamSharedResourceSummaryRowV1 = { kind, status: 'available', count: 1, collection };
     const other = { ...selected, collection: { ...collection, pluginId: 'example.other' } };
     const summary = bindHomeDomainActionHttpRequestV1(TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, { v: 1, teamId: 'team-1' });
     harness.answer(serverId, summary.path, { body: { teamId: 'team-1', kinds: [selected, other] } });
@@ -223,12 +223,12 @@ describe('Team shared Collection rows', () => {
   const reader = 'checklist-reader';
   const version = '1.0.0';
   const archiveDigestSha256 = `sha256:${'a'.repeat(64)}`;
-  const declaration = {
+  const declaration: Parameters<typeof normalizePluginAccountCollectionContractV1>[0]['contribution'] = {
     id: 'checklists', schemaVersion: 1, rowIdField: 'id', identityFields: [],
     schema: { type: 'object', properties: { id: { type: 'string' }, note: { type: 'string' } },
       required: ['id', 'note'], additionalProperties: false },
     serverReadable: ['id'], indexes: [], uiQueries: [], relations: [], migrations: [],
-  } as const;
+  };
   const contract = normalizePluginAccountCollectionContractV1({ pluginId, contribution: declaration });
   const ref = { pluginId, collectionId: contract.collectionId, schemaVersion: contract.schemaVersion, contractDigest: contract.contractDigest };
   const sharedRow = (id: string) => {

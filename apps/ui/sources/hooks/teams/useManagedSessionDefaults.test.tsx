@@ -40,9 +40,9 @@ describe('managed Session Team context', () => {
         const serverId = await homes.addHome({ name: 'Context Home', serverUrl: 'https://team-context.example', accountId: 'nora' });
         const access: SessionInitialAccessDraftV1 = { grants: [
             { subject: { kind: 'account', accountId: 'colleague' }, accessLevel: 'view', canApprovePermissions: false },
-            ...sharedTeamIds.map((teamId, index) => ({ subject: index === 0
-                ? { kind: 'team' as const, teamId } : { kind: 'group' as const, teamId, groupId: `group-${index}` },
-                accessLevel: 'view' as const, canApprovePermissions: false })),
+            ...sharedTeamIds.map((teamId, index): SessionInitialAccessDraftV1['grants'][number] => index === 0
+                ? { subject: { kind: 'team', teamId }, accessLevel: 'view', canApprovePermissions: false }
+                : { subject: { kind: 'group', teamId, groupId: `group-${index}` }, accessLevel: 'view', canApprovePermissions: false }),
         ] };
         homes.answer(serverId, path, { body: { homeDefaults: { permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' } } } });
         homes.answer(serverId, '/v1/teams/get', { select: input => {

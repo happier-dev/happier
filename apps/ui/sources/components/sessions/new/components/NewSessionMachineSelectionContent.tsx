@@ -48,6 +48,7 @@ export type NewSessionMachineSelectionContentProps<TMachine extends MachineDispl
     managedMachines?: readonly ManagedMachineSelectionOffer[];
     selectedManagedMachine?: ManagedMachineSelectionDraft | null;
     managedPlacementPreset?: Extract<ManagedSessionPlacementV1, { kind: 'preset' }> | null;
+    managedPlacementSourceLabel?: string | null;
     onSelectManagedMachine?: ManagedMachineUse;
     /** The composer holds a drafted prompt, read as the configurator opens: its receipt then creates and starts the session. */
     managedMachineStartsSession?: () => boolean;
@@ -138,6 +139,7 @@ export function NewSessionMachineSelectionContent<TMachine extends MachineDispla
         managedMachines,
         selectedManagedMachine: props.selectedManagedMachine,
         managedPlacementPreset: props.managedPlacementPreset,
+        managedPlacementSourceLabel: props.managedPlacementSourceLabel,
         onSelectManagedMachine: props.onSelectManagedMachine,
         onOpenManagedPresets: props.onOpenManagedPresets,
         onConnectMachine: props.onConnectMachine,

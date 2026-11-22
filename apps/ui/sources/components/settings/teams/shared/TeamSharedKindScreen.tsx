@@ -55,7 +55,7 @@ const PAGE_SIZE = 50;
 
 type KindRow = Readonly<{
   key: string;
-  title: string;
+  title: string | undefined;
   subtitle?: React.ReactNode;
   detail?: string;
   href: string | null;
@@ -68,7 +68,7 @@ type KindListState = Readonly<{
   failure: string | null;
   hasMore: boolean;
   loadMore?: () => unknown;
-  reload?: () => unknown;
+  reload?: () => void | Promise<unknown>;
 }>;
 
 /** Shared through a Group is the one scope worth saying; a direct share is what this page already says. */

@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { AccountSettingsSchema } from '@happier-dev/protocol/account/settings/accountSettings';
+import { settingsParse } from '@/sync/domains/settings/settings';
 import { PLUGIN_COLLECTION_SHARING_ACTION_IDS_BY_OPERATION_V1 as ids } from '@happier-dev/protocol/plugins/data/collectionSharingActionIdsV1';
 import { encodePluginCollectionLogicalValueV1 } from '@happier-dev/protocol/plugins/data/collectionLogicalCodecV1';
 import { normalizePluginAccountCollectionContractV1, PLUGIN_COLLECTION_CONTRACT_HTTP_PATH_V1 } from '@happier-dev/protocol/plugins/data/collectionsV1';
@@ -28,7 +28,7 @@ const { useTeamSharedCollections } = await import('./useTeamSharedCollections');
 const { storage } = await import('@/sync/domains/state/storage');
 const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
 const { resetTeamActionClientForTests } = await import('@/sync/ops/teams/teamActionClient');
-const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
+const settings = settingsParse({ actionsSettingsV1: { v: 1,
     approvalWaivedSurfaces: { [ids.list]: ['ui'] },
 } });
 const contract = normalizePluginAccountCollectionContractV1({ pluginId: 'example.documents', contribution: {
@@ -84,7 +84,7 @@ describe('useTeamSharedCollections', () => {
         expect(reads).toBe(1);
         await act(async () => {
             credentialReplacement = await TokenStorage.setCredentialsForServerUrlWithRollback('https://collection-team.test', { serverId }, {
-                token: createAccountTokenForTests('replacement-member', { currentAccount: true }), encryption: null,
+                token: createAccountTokenForTests('replacement-member', { currentAccount: true }),
             });
             expect(credentialReplacement).not.toBeNull();
         });
