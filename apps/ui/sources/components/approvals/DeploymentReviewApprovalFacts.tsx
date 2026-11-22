@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
@@ -124,11 +125,9 @@ function readRollbackData(review: DeploymentReviewApproval['review']): 'keep' | 
   return 'platformName' in review ? ('data' in review ? review.data : undefined) : review.rollbackData;
 }
 
-function revisionText(revision: DeploymentReviewRevisionV1): string {
-  if (revision.kind === 'repository') return revision.sha.slice(0, 7);
-  if (revision.kind === 'folder') return t('projects.deployments.review.localFolder');
-  return t('projects.deployments.review.versionStored', { revision: revision.contentRevision });
-}
+// One name for a deployed version on every surface (PAGE-ACCEPT-176 R12-D4): its short id, as the Receipt, History and
+// Roll back say it, through the one revision formatter.
+const revisionText = deploymentRevisionLabel;
 
 function sameRevision(a: DeploymentReviewRevisionV1, b: DeploymentReviewRevisionV1): boolean {
   if (a.kind === 'repository') return b.kind === 'repository' && a.sha === b.sha;

@@ -87,7 +87,7 @@ describe('DeploymentReviewApprovalFacts', () => {
     const revision = { kind: 'repository', sha: 'a'.repeat(40) };
     const deploymentReview = target === 'own-server'
       ? { deployment: { ...machineReview, environment,
-          revision: { kind: 'stored', contentRevision: 4, composeDigest: `sha256:${'c'.repeat(64)}` }, replaces: null },
+          revision: { kind: 'stored', contentRevision: 4, composeDigest: `sha256:${'d'.repeat(64)}` }, replaces: null },
         promotion: { artifact: 'image', previousDocument: 'previous', candidateDocument: 'candidate',
           sourceRevision: { kind: 'stored', contentRevision: 1, composeDigest: `sha256:${'c'.repeat(64)}` } } }
       : { platformPromotion: { environment, revision, platformName: 'Vercel',
@@ -100,10 +100,12 @@ describe('DeploymentReviewApprovalFacts', () => {
     );
     const text = screen.getTextContent().replace(/\s+/g, ' ').trim();
     expect(text.startsWith('projects.deployments.review.whatTitle projects.deployments.promotion.destination Production website ')).toBe(true);
-    expect(text).toContain(target === 'own-server' ? 'Compose revision 1' : 'aaaaaaa');
-    expect(text).not.toContain('Compose revision 4');
+    // One name for a deployed version on every surface (PAGE-ACCEPT-176 R12-D4): its short id, as the Receipt and Roll back say.
+    expect(text).toContain(target === 'own-server' ? 'ccccccc' : 'aaaaaaa');
+    expect(text).not.toContain('ddddddd');
+    expect(text).not.toContain('Compose revision');
     expect(describeDeploymentReviewDecision(approval, 'deployments.promote', null)?.title)
-      .toBe(target === 'own-server' ? 'Promote Compose revision 1 to Production website' : 'Promote aaaaaaa to Production website');
+      .toBe(target === 'own-server' ? 'Promote ccccccc to Production website' : 'Promote aaaaaaa to Production website');
     if (target === 'platform') expect(text).not.toContain('projects.deployments.review.promotionImages');
   });
 
