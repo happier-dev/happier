@@ -716,7 +716,10 @@ leaves its opening state. Unverified viewer ids never receive this response.
 The server owns relay credit and clamps viewer acknowledgements to its admitted network window.
 In 0.3 development, cumulative acknowledgements may trail the latest sent frame; only
 regression behind the last accepted acknowledgement is stale. Metadata delivery must not
-prevent a slower viewer from replenishing image credit.
+prevent a slower viewer from replenishing image credit. The relay subtracts still-unacknowledged
+media counts and payload bytes from that window: an ACK for an older prefix, including a
+repeated ACK, cannot grant capacity already occupied by later frames. Metadata keeps its
+byte charge until acknowledged, without consuming image-count credit.
 After admitting an acknowledgement, `machineLiveStreamRelayHandler` forwards it to the source's
 verified installation. The daemon passes it to the existing capture session so demand-driven
 Computer capture can produce its next frame. Rejected acknowledgements never wake capture;

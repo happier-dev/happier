@@ -57,6 +57,7 @@ type MachineLiveStreamRelayState = {
     availableWindowFrames: number;
     availableWindowBytes: number;
     lastAckNextSequence: number;
+    inFlightFrames: Array<Readonly<{ sequence: number; bytes: number; media: boolean }>>;
     awaitingKeyframe: boolean;
     retireAfterSessionAccessChange?: () => void | Promise<void>;
 };
@@ -383,6 +384,7 @@ function createState(input: Readonly<{
         availableWindowFrames: 1,
         availableWindowBytes: input.maxWindowBytes,
         lastAckNextSequence: 1,
+        inFlightFrames: [],
         awaitingKeyframe: false,
         ...(input.retireAfterSessionAccessChange ? { retireAfterSessionAccessChange: input.retireAfterSessionAccessChange } : {}),
     };
@@ -653,6 +655,11 @@ function drainRelayQueue(input: Readonly<{
             }
             return;
         }
+        // Retain accounting only, never payloads. Byte credit bounds metadata
+        // entries; image credit bounds media entries, including empty images.
+        if (frameBytes > 0 || mediaFrame) input.state.inFlightFrames.push({
+            sequence: nextFrame.sequence, bytes: frameBytes, media: mediaFrame,
+        });
         if (mediaFrame) input.state.availableWindowFrames -= 1;
         input.state.availableWindowBytes -= frameBytes;
         input.state.bytesRelayed = recorded.metering.bytesSent;
@@ -677,12 +684,18 @@ function applyAckControl(input: Readonly<{
         return false;
     }
     input.state.lastAckNextSequence = input.control.nextSequence;
+    input.state.inFlightFrames = input.state.inFlightFrames.filter(frame => frame.sequence >= input.control.nextSequence);
+    const outstanding = input.state.inFlightFrames.reduce((sum, frame) => ({
+        frames: sum.frames + (frame.media ? 1 : 0), bytes: sum.bytes + frame.bytes,
+    }), { frames: 0, bytes: 0 });
+    // A cumulative ACK advertises the receive window at its acknowledged
+    // frontier. Newer frames still occupy it; a log ACK cannot re-grant it.
     input.state.availableWindowFrames = Math.min(input.state.maxWindowFrames, Math.max(0, Math.floor(
         input.control.windowFrames ?? input.state.maxWindowFrames,
-    )));
+    ))) - outstanding.frames;
     input.state.availableWindowBytes = Math.min(input.state.maxWindowBytes, Math.max(0, Math.floor(
         input.control.windowBytes ?? input.state.maxWindowBytes,
-    )));
+    ))) - outstanding.bytes;
     drainRelayQueue({
         io: input.io,
         userId: input.userId,

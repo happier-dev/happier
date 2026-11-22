@@ -207,12 +207,12 @@ describe('machineLiveStreamRelayHandler observability', () => {
     viewer.data = { clientType: 'machine-scoped', verifiedMachineInstallationId: TEST_MACHINE_INSTALLATION_ID,
       machineId: 'machine-target' };
     const emitted: MachineLiveStreamFrameV1[] = [];
-    const caps = liveStreamCaps({ maxFramesPerSecond: 12, maxTotalBytes: 128_000 });
+    const caps = liveStreamCaps({ maxFramesPerSecond: 12, maxTotalBytes: 128_000_000, maxBitrateBps: 64_000_000 });
     const context = { io: { to: () => ({ emit: (_event: string, raw: unknown) => {
       const envelope = raw as { message: { kind: string; frame?: MachineLiveStreamFrameV1 } };
       if (envelope.message.kind === 'frame' && envelope.message.frame) emitted.push(envelope.message.frame);
     } }) }, resolveAccountEncryptionMode: async (): Promise<'plain'> => 'plain',
-      serverRoutedLiveStreamEnabled: true, relayWindowFrames: 1, relayCaps: { ...relayCaps, ...caps }, relayAuthorizationTrustRoots, nowMs: () => 1_000 };
+      serverRoutedLiveStreamEnabled: true, relayWindowFrames: 1, relayWindowBytes: caps.maxFrameBytes, relayCaps: { ...relayCaps, ...caps }, relayAuthorizationTrustRoots, nowMs: () => 1_000 };
     machineLiveStreamRelayHandler('user-1', source as unknown as LiveStreamRelaySocket, context);
     machineLiveStreamRelayHandler('user-1', viewer as unknown as LiveStreamRelaySocket, context);
     const send = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
@@ -232,7 +232,24 @@ describe('machineLiveStreamRelayHandler observability', () => {
       await send(envelope({ kind: 'frame', frame: frame({ sequence: 4, payloadKind: 'metadata' }) }));
       await send(envelope({ kind: 'frame', frame: frame({ sequence: 5 }) }));
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 3 } }));
+      // ACK3 consumes metadata2, but image3 is still in flight. It cannot
+      // grant a second image window just because another log was consumed.
+      expect(emitted.map(value => value.sequence)).toEqual([1, 2, 3, 4]);
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 4 } }));
       expect(emitted.map(value => value.sequence)).toEqual([1, 2, 3, 4, 5]);
+      // One observed second of log traffic, without consumption, must not
+      // create an unbounded native decrypt backlog. Use the admitted byte window.
+      for (let sequence = 6; sequence < 306; sequence += 1) {
+        await send(envelope({ kind: 'frame', frame: frame({ sequence, payloadKind: 'metadata', payloadSizeBytes: 1030 }) }));
+      }
+      const sentBytes = () => emitted.filter(value => value.sequence >= 4).reduce((sum, value) => sum + value.payloadSizeBytes, 0);
+      expect(sentBytes()).toBeLessThanOrEqual(caps.maxFrameBytes);
+      const sentBeforeDuplicateAck = emitted.length;
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 4 } }));
+      expect(emitted).toHaveLength(sentBeforeDuplicateAck);
+      // A consuming viewer releases bytes and receives the retained newest log.
+      await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: emitted.at(-1)!.sequence + 1 } }));
+      expect(emitted.at(-1)?.sequence).toBe(305);
       // Regressing behind an already accepted ACK remains stale.
       await receive(envelope({ kind: 'control', control: { v: 1, streamId: 'stream_1', kind: 'ack', nextSequence: 2 } }));
       expect(viewer.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR,
