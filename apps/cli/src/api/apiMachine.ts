@@ -242,9 +242,11 @@ import { prepareNativeFilesystemEffect } from '@/rpc/handlers/fileSystem/prepare
 import { createFilesystemEffectRpcOwner, createFilesystemEffectTransferAdapter } from '@/rpc/handlers/fileSystem/filesystemEffectChannel';
 import type { FilesystemEffectRequester } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import type { NativeTransferSessionOwner } from '@happier-dev/transfers/node';
-import { isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { canExecuteRequesterWorkspaceOnDaemonForHost, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentPlacementForHost } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { resolveServerRoutedTransferMaxBytes } from '@/transfers/policy/serverRoutedTransferPolicy';
 import { createProjectDefinitionAction, registerProjectDefinitionHandlers } from '@/rpc/handlers/projectDefinitions';
+import { PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
 import { executeFilesystemMutationAction } from '@/rpc/handlers/fileSystem/pathMutationHandlers';
 import { projectVerifiedExternalActionRequesterContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
@@ -376,7 +378,7 @@ import { authorizeMachineRpcRequest,
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
 import { resolvePrivateWorkspaceSyncTargetExecution } from './machine/rpcHandlers.workspaceSync';
 import { resolveAdmittedRequesterAccountReadRuntime } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
-import { inspectProjectSetupFromRuntime, readProjectEffectiveDefinitionFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
+import { inspectProjectAsMember, inspectProjectSetupFromRuntime, readProjectEffectiveDefinitionFromRuntime } from '@/workspaces/projectSetup/projectSetupReadiness';
 import type { ManagedActivityRpcOwner } from './machine/rpcHandlers.managedActivity';
 import type { MachineWorkSummaryRpcOwner } from './machine/rpcHandlers.machineWorkSummary';
 import { createAccountServerActionDeps } from './accountServerActionDeps';
@@ -2714,20 +2716,20 @@ export class ApiMachineClient {
 
     /** Effect dependency consumed only after the daemon's full Action admission. */
     createProjectDefinitionAction(serverId: string, ingress?: RpcHandlerContext): ReturnType<typeof createProjectDefinitionAction> {
-        return createProjectDefinitionAction({
-            serverId, machineId: this.machine.id, workingDirectory: this.machineRpcWorkingDirectory,
-            accessPolicy: this.filesystemAccessPolicy,
+        const create = (captured?: Readonly<{ root: string; runtime: ProjectFiniteActionRuntime }>) => createProjectDefinitionAction({
+            serverId, machineId: this.machine.id, workingDirectory: captured?.root ?? this.machineRpcWorkingDirectory,
+            accessPolicy: captured ? { kind: 'restrictedRoots', roots: [captured.root] } : this.filesystemAccessPolicy,
             acquirePluginRuntime: acquireAuthoritativePluginRuntimeRegistryLease,
             getTerminalSessions: () => this.getFiniteTerminalSessions(),
             readActiveProjectCommands: () => this.projectionSchedulingClosed ? null
                 : this.rpcLifecycleRegistrations.at(-1)?.readActiveProjectCommands?.() ?? null,
             ...(ingress ? { readEffectiveDefinition: async ({ workspace, context, repositorySnapshot, reviewSharedSetup }) => {
-                const runtime = await this.resolveProjectFiniteRuntime(ingress);
+                const runtime = captured?.runtime ?? await this.resolveProjectFiniteRuntime(ingress);
                 if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
                 return await readProjectEffectiveDefinitionFromRuntime({ runtime, ingress, workspace, context, repositorySnapshot, reviewSharedSetup });
             }, inspectSetup: async ({ workspace, context, reviewSetupConsent }) => {
                 const startedAt = performance.now();
-                const runtime = await this.resolveProjectFiniteRuntime(ingress);
+                const runtime = captured?.runtime ?? await this.resolveProjectFiniteRuntime(ingress);
                 logger.debug('[ProjectSetup] inspection phase', { phase: 'runtime',
                     requestId: context.actionRequestId ?? ingress.transportRequestId,
                     durationMs: Math.round(performance.now() - startedAt), status: runtime ? 'completed' : 'refused' });
@@ -2735,6 +2737,20 @@ export class ApiMachineClient {
                     : { setupReadiness: { kind: 'unknown' as const, code: 'project_setup_runtime_unavailable' } };
             } } : {}),
         });
+        const ordinary = create();
+        return async request => {
+            if (!ingress || request.actionId !== 'projects.inspect') return ordinary(request);
+            const parsed = PROJECT_DEFINITION_ACTION_INPUT_SCHEMAS['projects.inspect'].safeParse(request.input);
+            if (!parsed.success) return ordinary(request);
+            const runtime = await this.resolveProjectFiniteRuntime(ingress);
+            if (!runtime) throw Object.assign(new Error('project_setup_runtime_unavailable'), { code: 'project_setup_runtime_unavailable' });
+            const identity = runtime.requesterIdentity;
+            if (!identity || identity.kind === 'unknown') throw Object.assign(new Error('agent_isolation_unavailable'), { code: 'agent_isolation_unavailable' });
+            if (canExecuteRequesterWorkspaceOnDaemonForHost(identity,
+                () => this.lifecycleDependencies.agentIsolation?.read() ?? { enabled: false })) return ordinary(request);
+            return inspectProjectAsMember({ runtime, ingress, workspace: parsed.data.workspace, context: request.context,
+                read: root => create({ root, runtime })(request) });
+        };
     }
 
     /** Device-local profile ids can differ on an approved replay of this same Home. */

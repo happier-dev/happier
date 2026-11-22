@@ -2,7 +2,7 @@ import type { ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/p
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
-import { projectRuntimeAccountRowsInput } from '@/workspaces/projectAccountRows';
+import { projectRuntimeAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import { readProjectRuntimeAdmissionRefusal, type ProjectFiniteActionRuntime } from './projectFiniteAction';
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { inspectProjectSetup, type ProjectSetupInspection } from './projectSetupPreparation';
@@ -16,6 +16,41 @@ import type { ProjectManifestInspectionSnapshot } from '@happier-dev/protocol/ac
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import { logger } from '@/ui/logger';
 import { projectSetupInspectionFailure } from './projectSetupInspectionFailure';
+import { canonicalAbsolutePathsEqual } from '@/utils/path/expandHomeDirPath';
+import { resolvePrivateProjectCheckoutRoot } from '@/workspaces/activation/privateProjectCheckout';
+import { readProjectAsMember } from '@/workspaces/activation/memberProjectInspection';
+
+/** The requester Account and native invocation enclose every passive Project-file read. */
+export async function inspectProjectAsMember<T>(input: Readonly<{
+    runtime: ProjectRuntimeAccountAccess & Pick<ProjectFiniteActionRuntime, 'serverId' | 'serverHttpBaseUrl' | 'requesterIdentity'> & Readonly<{
+        nativeOperationRuntime?: Pick<NonNullable<ProjectFiniteActionRuntime['nativeOperationRuntime']>, 'prepareNativeOperation'>;
+    }>;
+    ingress: RpcHandlerContext; workspace: ProjectDefinitionWorkspace;
+    context: ActionExecutorContext; read(root: string): Promise<T>;
+}>): Promise<T> {
+    const unavailable = (code = 'project_workspace_unavailable'): never => { throw Object.assign(new Error(code), { code }); };
+    const identity = input.runtime.requesterIdentity;
+    const nativeRuntime = input.runtime.nativeOperationRuntime;
+    if (identity?.kind !== 'isolated' || !nativeRuntime) return unavailable('agent_isolation_unavailable');
+    const signal = input.context.signal ? AbortSignal.any([input.ingress.signal, input.context.signal]) : input.ingress.signal;
+    const accepted = await resolveProjectSetupAcceptedWorkspace({ address: input.workspace,
+        ...projectRuntimeAccountRowsInput(input.runtime), serverId: input.runtime.serverId,
+        serverHttpBaseUrl: input.runtime.serverHttpBaseUrl, signal, allowUnassociated: true, allowProjectless: true });
+    if (!accepted) return unavailable();
+    const material = Object.freeze({ materializationKey: input.context.actionRequestId ?? input.ingress.transportRequestId ?? accepted.workspace.id,
+        environment: Object.freeze({}), selectedMaterials: Object.freeze([]) });
+    const native = await nativeRuntime.prepareNativeOperation({ requesterIdentity: identity, ingress: input.ingress,
+        signal, readMaterial: () => material, allowMemberPreparation: false });
+    try {
+        if (!native.memberIdentity || accepted.workspace.machineId !== identity.requester.machineId
+            || !canonicalAbsolutePathsEqual(accepted.workspace.rootPath,
+                resolvePrivateProjectCheckoutRoot(native.memberIdentity.workspaceRoot, accepted.workspace.id))) return unavailable();
+        return await readProjectAsMember({ agentIsolation: native.agentIsolation, requesterIdentity: identity,
+            workspaceRoot: native.memberIdentity.workspaceRoot, root: accepted.workspace.rootPath, signal,
+            read: () => input.read(accepted.workspace.rootPath) });
+    } finally { await native.dispose(); }
+}
+
 
 /** Demand-only definition read under the same admitted requester and accepted checkout as setup. */
 export async function readProjectEffectiveDefinitionFromRuntime(input: Readonly<{

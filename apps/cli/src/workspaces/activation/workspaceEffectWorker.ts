@@ -16,6 +16,7 @@ import { executeMemberSessionImport, type MemberSessionImportEffect, type Member
 import { executeMemberSessionDirectoryRemoval, type MemberSessionDirectoryRemovalEffect, type MemberSessionDirectoryRemovalService } from '@/session/creation/memberSessionDirectoryRemoval';
 
 import { executeMemberScmComparison, type MemberScmComparisonEffect, type MemberScmComparisonServices } from '@/scm/rpc/memberScmComparison';
+import { executeMemberProjectRead, type MemberProjectReadEffect, type MemberProjectReadService } from './memberProjectInspection';
 
 export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Readonly<{
   connectedAccounts?: WorkspaceCheckoutEffectContext['connectedAccounts'];
@@ -34,6 +35,7 @@ export type WorkspaceEffectServices = Partial<MemberScmComparisonServices> & Rea
   completeSessionImport?(record: MemberSessionImportRecord): Promise<void>;
   removeSessionDirectory?: MemberSessionDirectoryRemovalService;
   completeSessionDirectoryRemoval?(): Promise<void>;
+  readProject?: MemberProjectReadService;
 }>;
 
 /** Early same-binary entry, before CLI/Account bootstrap. Private inherited
@@ -61,7 +63,7 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         if (message.kind !== 'run' || running) throw new Error('workspace_effect_protocol_invalid');
         // Admission/source descriptors are inherited solely from the parent
         // owner, exactly as in the existing background-process bootstrap.
-        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | WorkspaceNativeCopyBaselineEffect | ManagedWorkspaceReturnEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect;
+        const dispatched = message.context as WorkspaceCheckoutEffect | WorkspaceNativeSyncEffect | WorkspaceNativeCopyBaselineEffect | ManagedWorkspaceReturnEffect | MemberScmReadEffect | MemberScmComparisonEffect | MemberSessionImportEffect | MemberSessionDirectoryRemovalEffect | MemberProjectReadEffect;
         const effect = 'kind' in dispatched && dispatched.kind === 'native_sync' ? dispatched.checkout : dispatched;
         if (effect.workspaceRoot !== (io.currentDirectory ?? process.cwd)()) {
           throw privateProjectCheckoutRefusal();
@@ -75,6 +77,12 @@ export async function runWorkspaceEffectWorker(args: readonly string[], io: Read
         running = (async () => {
           let effectsIssued = false;
           try {
+            if ('kind' in dispatched && dispatched.kind === 'project_read') {
+              if (!services.readProject) throw privateProjectCheckoutRefusal();
+              await executeMemberProjectRead(dispatched, signal, { readProject: services.readProject });
+              send({ kind: 'settled', id: runId });
+              return;
+            }
             if ('kind' in dispatched && dispatched.kind === 'scm_comparison') {
               if (!services.completeScmRead || !services.comparisonShelf) throw privateProjectCheckoutRefusal();
               await services.completeScmRead(await executeMemberScmComparison(dispatched, signal,

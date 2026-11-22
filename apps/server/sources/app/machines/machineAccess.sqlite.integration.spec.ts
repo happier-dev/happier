@@ -34,6 +34,7 @@ import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/a
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { SESSION_MESSAGE_SEND_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { PROJECT_DEFINITION_INSPECT_ACTION_ID, PROJECT_DEFINITION_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectDefinitionActionIdsV1';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -149,6 +150,23 @@ describe('Machine current access (real SQLite)', () => {
         expect(await access.resolveMachineAdmission({ actorAccountId: requester.id, machineId: f.machine.id,
             actionId: 'unsupported.inventory.read' }))
             .toMatchObject({ kind: 'denied', code: 'unsupported_operation' });
+    });
+
+    it('admits requester Project inspection while retaining private raw RPC custody', async () => {
+        const f = await fixture();
+        const requester = await account();
+        const outsider = await account();
+        await grant(f.owner.id, f.machine.id, requester.id, 'view');
+        const input = { machineId: f.machine.id, actionId: PROJECT_DEFINITION_INSPECT_ACTION_ID };
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: f.owner.id }))
+            .toMatchObject({ kind: 'admitted', role: 'manage' });
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id }))
+            .toMatchObject({ kind: 'admitted', actorAccountId: requester.id, custodianAccountId: f.owner.id, role: 'use' });
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: outsider.id }))
+            .toMatchObject({ kind: 'denied', code: 'access_denied' });
+        expect(await access.resolveMachineAdmission({ ...input, actorAccountId: requester.id,
+            rpcMethod: PROJECT_DEFINITION_ACTION_RPC_METHODS_V1[PROJECT_DEFINITION_INSPECT_ACTION_ID] }))
+            .toMatchObject({ kind: 'denied', code: 'custodian_only' });
     });
 
     it('carries signed template instantiation with the effective grant role and keeps foreign refusals', async () => {
