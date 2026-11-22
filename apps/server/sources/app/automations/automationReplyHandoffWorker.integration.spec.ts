@@ -292,6 +292,12 @@ describe("Automation reply handoff worker", () => {
             data: { replyHandoffDueAt: retryAt, replyHandoffAttempt: 3 },
         });
         const clock = observeDeadlineClock();
+        let deadlineReads = 0;
+        const release = observePrismaRequests(db, { before: request => {
+            if (request.model === "AutomationRun" && request.action === "findMany" && request.transactionId === undefined) {
+                deadlineReads += 1;
+            }
+        } });
         const worker = startAutomationReplyHandoffWorker({
             dispatch: async () => ({
                 kind: "settled",
@@ -301,6 +307,7 @@ describe("Automation reply handoff worker", () => {
         });
         try {
             await clock.waitForArm(1);
+            const startupDeadlineReads = deadlineReads;
             const runId = `${RUN_ID}-new`;
             const handoffId = `${HANDOFF_ID}-new`;
             const occurrenceKey = `${"B".repeat(42)}A`;
@@ -334,12 +341,15 @@ describe("Automation reply handoff worker", () => {
                     select: { replyHandoffState: true, replyHandoffAttempt: true },
                 })).resolves.toEqual({ replyHandoffState: "accepted", replyHandoffAttempt: 1 });
             }, { timeout: 2_000, interval: 20 });
+            await clock.waitForArm(2);
+            expect(deadlineReads - startupDeadlineReads).toBe(2);
             await expect(db.automationRun.findUniqueOrThrow({
                 where: { id: RUN_ID },
                 select: { replyHandoffState: true, replyHandoffDueAt: true, replyHandoffAttempt: true },
             })).resolves.toEqual({ replyHandoffState: "ready", replyHandoffDueAt: retryAt, replyHandoffAttempt: 3 });
         } finally {
             await worker.stop();
+            release();
             clock.close();
         }
     });

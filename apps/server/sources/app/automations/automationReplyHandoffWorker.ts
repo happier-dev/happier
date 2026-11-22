@@ -21,7 +21,6 @@ export type AutomationReplyHandoffDispatcher = (
 export type AutomationReplyHandoffWorkerPassResult = Readonly<{
     claimed: boolean;
     settled: boolean;
-    nextDueAt: Date | null;
 }>;
 
 function warnWorkerFailure(operation: "due-scan" | "pass", error: unknown): void {
@@ -125,7 +124,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
     const claim = await claimNextAutomationReplyHandoff({ now: claimNow,
         dueThrough: params.dueThrough });
     if (!claim) {
-        return { claimed: false, settled: false, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
+        return { claimed: false, settled: false };
     }
 
     const request = buildDispatchRequest(claim, failure => warn({
@@ -146,7 +145,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             now: params.now(),
             outcome: { kind: "blocked" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
+        return { claimed: true, settled: settlement.applied };
     }
 
     let rawResult: unknown;
@@ -168,7 +167,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             now: params.now(),
             outcome: { kind: "retry" },
         });
-        return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
+        return { claimed: true, settled: settlement.applied };
     }
 
     if (result.data.kind === "unavailable") warnDispatchFailure(result.data.code, dispatchFailureCause);
@@ -190,7 +189,7 @@ export async function runAutomationReplyHandoffWorkerPass(params: Readonly<{
             outcome: result.data.settlement,
             accountCurrentness: result.data.accountCurrentness,
         });
-    return { claimed: true, settled: settlement.applied, nextDueAt: await findNextAutomationReplyHandoffDueAt() };
+    return { claimed: true, settled: settlement.applied };
 }
 
 /**
