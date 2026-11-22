@@ -213,7 +213,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const [imageName, setImageName] = React.useState('');
     const [imagePort, setImagePort] = React.useState('');
     // A folder source: the chosen Machine's folder (absolute, as its browser returns it) and whether its .env files go too.
-    const [folderPath, setFolderPath] = React.useState<string | null>(null);
+    const [folderSelection, setFolderSelection] = React.useState<Readonly<{ machineId: string; path: string }> | null>(null);
     const [folderEnvFiles, setFolderEnvFiles] = React.useState(false);
     const [ref, setRef] = React.useState<string | null>(null);
     // A copy is a new Environment beside its source, never a second production one by default (PAGE-ACCEPT-176 R10-D12).
@@ -256,6 +256,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     const chosen =
       machineId !== null ? machines.find((machine) => machine.id === machineId) ?? null :
       machines.find((machine) => machine.id === preferredId && deploysHere(machine)) ?? machines.find(deploysHere) ?? null;
+    const folderPath = folderSelection && folderSelection.machineId === chosen?.id ? folderSelection.path : null;
     const defaultBranch = source?.defaultRef ?? source?.repository?.repository.defaultBranch ?? null;
     const branch = ref ?? defaultBranch;
     React.useEffect(() => setPlatformProvider(null), [platformTarget?.key, chosen?.id, source?.revision]);
@@ -338,7 +339,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     // A retention choice belongs to the Machine it was made for.
     React.useEffect(() => {
       setRetention('alwaysOn');
-      setFolderPath(null);
+      setFolderSelection(null);
     }, [chosen?.id]);
     // A prepared run carries the exact operands it was prepared from; any edit makes it stale.
     React.useEffect(() => {
@@ -353,7 +354,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       const path = await openMachinePathBrowserModal({ machineId: machine, serverId: props.lifetime.scope.serverId,
         title: t('newApp.deploy.folderChoose'), initialPath: folderPath ?? chosen.metadata?.homeDir ?? null,
         selectionMode: 'directory' });
-      if (path && chosen?.id === machine) setFolderPath(path);
+      if (path) setFolderSelection({ machineId: machine, path });
     };
     const machineName = (machineId: string) => {
       const machine = (allMachines ?? []).find((entry) => entry.id === machineId);
@@ -406,6 +407,7 @@ export const DeploymentEnvironmentDraft = React.memo(
             deployerMode,
             deployerPrincipals: [...deployerPrincipals],
             // A platform Environment still deploys from a Machine: the chosen one is its controller.
+            ...(folderWorkspaceId !== null ? { controllerMachineId: chosen.id, buildMachineId: chosen.id } : {}),
             ...(onPlatform ? { controllerMachineId: chosen.id } : {
               firstTargetLink: { machines: [{ machineId: chosen.id, installationId: chosen.installationId }] },
               ...deploymentManagedRetention(retention),
@@ -704,7 +706,7 @@ export const DeploymentEnvironmentDraft = React.memo(
       environment: { name: name.trim(), production, deployers: deployerMode },
       runs: props.copyFrom ? null : props.catalogApp ? { kind: 'app', name: props.catalogApp.title }
         : definitionKind === 'image' ? { kind: 'image', image: imageName.trim() }
-        : definitionKind === 'folder' && folderPath !== null ? { kind: 'folder', folder: folderLabel(folderPath), includeEnvFiles: folderEnvFiles }
+        : definitionKind === 'folder' && folderPath !== null ? { kind: 'folder', folder: folderLabel(folderPath) }
         : storedDefinition ? { kind: 'compose' } : branch ? { kind: 'repository', ref: branch } : null,
       runsOn: onPlatform && platformTarget ? { kind: 'platform', platform: platformTarget.title, pluginId: platformTarget.pluginId,
         machine: machineName(chosen.id), machineId: chosen.id, resource: platformProvider?.kind === 'existing' ? 'existing' : 'create',

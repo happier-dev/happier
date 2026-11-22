@@ -542,7 +542,7 @@ describe('Environment draft Machine Home', () => {
       const copyReview = screen.getTextContent();
       expect(copyReview).toContain('Runs your Compose file');
       expect(copyReview).toContain('Kept for rollback');
-      expect(copyReview).toContain('A machine');
+      expect(copyReview).toContain('Rollout and restore settings');
       expect(copyReview).not.toMatch(/definition:stored|retainPreviousDeployments:copy|ownServer/);
       const reviewTitle = header().props.primaryAction.title;
       await act(async () => header().props.primaryAction.onPress());
@@ -964,7 +964,15 @@ describe('Environment draft Machine Home', () => {
       await answerExternalActionAccountForHome(homes, serverId, { machineId: 'runtime', installationId: 'runtime-installation',
         actionId: 'deployments.environments.create', tokenEpoch: 0, execute: input => {
           authored = DeploymentEnvironmentCreateIntentInputV1Schema.parse(input);
-          return { ok: false, error: 'deployment_unavailable' };
+          const { mode: _mode, name: _name, definition: _definition, firstTargetLink, ...selectors } = authored;
+          return { kind: 'preview', input: { ...selectors, controllerMachineId: 'runtime', buildMachineId: 'runtime',
+            contentArtifactId: 'folder-definition', contentHeaderVersion: 1, contentBodyVersion: 1,
+            firstTargetLink: { ...firstTargetLink, contentArtifactId: 'folder-target', contentHeaderVersion: 1, contentBodyVersion: 1 },
+          }, review: { creationDefaults: { values: { controllerMachineId: 'runtime', buildMachineId: 'runtime', retainPreviousDeployments: 1 },
+            sources: { controllerMachineId: 'explicit', buildMachineId: 'explicit', retainPreviousDeployments: 'builtin' } },
+            folder: { kind: 'folder', manifestFingerprint: `sha256:${'a'.repeat(64)}`, fileCount: 3, totalBytes: 2_000_000,
+              excludedPaths: ['build.pipe', 'ignored.txt'], unsupportedFilePaths: ['build.pipe'],
+              exclusionReasons: [{ path: 'ignored.txt', reason: 'gitIgnore' }] } } };
         } });
       await publishMachineInventoryForTest(account.accountLifetime.scope, [createMachineFixture({ id: 'runtime',
         installationId: 'runtime-installation', activeAt: Date.now() })]);
@@ -986,8 +994,15 @@ describe('Environment draft Machine Home', () => {
       await waitForTestEvent(homes.subscribe, () => authored, value => value !== undefined);
       expect(opened).toMatchObject({ machineId: 'runtime', source: { kind: 'folder', path: '/Users/tester/src/web' },
         materialization: { kind: 'attach' } });
-      expect(authored).toMatchObject({ name: 'Web', definition: { from: 'folder', workspaceId: 'workspace-web', includeEnvFiles: true,
+      expect(authored).toMatchObject({ name: 'Web', controllerMachineId: 'runtime', buildMachineId: 'runtime',
+        definition: { from: 'folder', workspaceId: 'workspace-web', includeEnvFiles: true,
         compose: { path: 'compose.yaml' } } });
+      const { t } = await import('@/text');
+      await waitForHomeGovernance(async () => {
+        expect(screen.getTextContent()).toContain('3 files · 2 MB');
+        expect(screen.getTextContent()).toContain(`ignored.txt (${t('workspaceSync.review.reasonGitIgnore')})`);
+        expect(screen.getTextContent()).toContain(`build.pipe (${t('projects.deployments.review.folderUnsupportedFile')})`);
+      });
       await screen.unmount();
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });

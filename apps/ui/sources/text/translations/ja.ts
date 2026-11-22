@@ -19993,6 +19993,8 @@ settingsSession: {
 
           folderNoneExcluded: "なし",
           folderUnsupportedFile: "サポートされていないファイル形式",
+          folderEnvExcluded: ".env ファイルは含めない設定です",
+          folderSymlinkExcluded: "リンク先がフォルダーの外にあるか、サポートされていません",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} ファイル · ${size}`,
 

@@ -23509,6 +23509,8 @@ const enProjects = {
 
         folderNoneExcluded: "None",
         folderUnsupportedFile: "Unsupported file type",
+        folderEnvExcluded: ".env files are off",
+        folderSymlinkExcluded: "Link target is outside the folder or unsupported",
 
         folderContents: ({ count, size }: { count: number; size: string }) => `${count} files · ${size}`,
 

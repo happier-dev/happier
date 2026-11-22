@@ -20185,6 +20185,8 @@ settingsSession: {
 
           folderNoneExcluded: "Nenhum",
           folderUnsupportedFile: "Tipo de ficheiro não suportado",
+          folderEnvExcluded: "Os ficheiros .env estão desativados",
+          folderSymlinkExcluded: "O destino da ligação está fora da pasta ou não é suportado",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} arquivos · ${size}`,
 

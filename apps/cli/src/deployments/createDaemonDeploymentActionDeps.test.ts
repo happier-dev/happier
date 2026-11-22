@@ -204,6 +204,72 @@ const resolveOwnerRequesterIdentity = async (context: import('@happier-dev/proto
 };
 
 describe('installed deployment storage and target composition', () => {
+    it.each(['plain', 'git'] as const)('reviews files from the selected Machine folder before creating an Environment (%s)', async kind => {
+        const rootPath = await mkdtemp(join(tmpdir(), 'folder-create-review-'));
+        const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.scm.backend.git'] } });
+        try {
+            const serverHttpBaseUrl = 'https://folder-create-review.test';
+            const credentials: StoredCredentials = {
+                token: `h.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.s`, encryption: null,
+            };
+            const row = createPlainProjectAccountRefRow({ id: 'checkout', serverId: 'home', machineId: 'machine-a',
+                rootPath, createdAtMs: 0 });
+            await writeFile(join(rootPath, 'compose.yaml'), 'services: {}');
+            await writeFile(join(rootPath, '.env.local'), 'unused secret');
+            await writeFile(join(rootPath, '.gitignore'), 'ignored.txt\n');
+            await writeFile(join(rootPath, 'ignored.txt'), 'ignored');
+            if (kind === 'git') {
+                execFileSync('git', ['init', '--quiet'], { cwd: rootPath });
+                execFileSync('git', ['add', '-f', 'ignored.txt'], { cwd: rootPath });
+            }
+            vi.spyOn(axios, 'request').mockImplementation(async request => {
+                const path = new URL(String(request.url)).pathname;
+                if (request.method === 'GET' && path === '/v1/projects/sources/source') return { status: 200,
+                    data: { ok: true, canManage: true, source: { id: 'source', revision: 1, name: 'Project',
+                        owner: { kind: 'account', accountId: 'owner' }, audience: [], createdByAccountId: 'owner' } } };
+                if (request.method === 'GET' && path === '/v1/projects/source/deployment-defaults') return { status: 200,
+                    data: { ok: true, projectSourceId: 'source', sourceRevision: 1, revision: 0, content: null } };
+                if (path === '/v1/account/project-rows/read') return projectAccountRowsReadHttpResponse([row], path, request.data);
+                throw new Error(`Unexpected folder preview request: ${path}`);
+            });
+            vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+                if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
+                if (path === '/v1/account/encryption/currentness') return { status: 200,
+                    data: createAccountEncryptionCurrentnessFixture({ mode: 'plain' }) };
+                if (path === '/v2/account/settings') return { status: 200, data: { content: { t: 'plain', v: {} }, version: 1 } };
+                throw new Error(`Unexpected folder preview read: ${path}`);
+            });
+            vi.spyOn(axios, 'post').mockImplementation(async (url, value) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/project-rows/read') return projectAccountRowsReadHttpResponse([row], path, value);
+                expect(path).toBe('/v1/artifacts');
+                const { id } = readCarrierMutation(value);
+                return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+            });
+            const deps = createDaemonDeploymentActionDeps({ credentials, serverId: 'home', serverHttpBaseUrl,
+                machineId: 'machine-a', resolveRequesterIdentity: resolveOwnerRequesterIdentity,
+                runtime: { async acquire() { throw new Error('Review cannot start a deployment'); } } });
+            const input = DeploymentEnvironmentCreateIntentInputV1Schema.parse({
+                serverId: 'home', projectSourceId: 'source', requestKey: 'folder-preview', name: 'App', mode: 'preview',
+                protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: 'machine-a',
+                definition: { from: 'folder', workspaceId: 'checkout', compose: { path: 'compose.yaml', profiles: [], services: [] } },
+            });
+            const result = await deps.deploymentAction!('deployments.environments.create', input, ownerContext);
+            expect(result).toMatchObject({ kind: 'preview', review: { folder: kind === 'git' ? {
+                kind: 'folder', fileCount: 3, totalBytes: 31, excludedPaths: ['.env.local'],
+                exclusionReasons: [{ path: '.env.local', reason: 'env' }],
+            } : { kind: 'folder', fileCount: 2, totalBytes: 24, excludedPaths: ['.env.local', 'ignored.txt'],
+                exclusionReasons: [{ path: '.env.local', reason: 'env' }, { path: 'ignored.txt', reason: 'gitIgnore' }],
+            } } });
+        } finally {
+            await mounted.dispose();
+            await rm(rootPath, { recursive: true, force: true });
+        }
+    });
+
     it('signs adoption create preparation as the admitted adoption root through the real requester projection', async () => {
         const serverHttpBaseUrl = 'https://adopt-preparation.test';
         const credentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };

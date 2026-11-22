@@ -19904,6 +19904,8 @@ settingsSession: {
 
           folderNoneExcluded: "Brak",
           folderUnsupportedFile: "Nieobsługiwany typ pliku",
+          folderEnvExcluded: "Pliki .env są wyłączone",
+          folderSymlinkExcluded: "Cel dowiązania znajduje się poza folderem lub nie jest obsługiwany",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} plików · ${size}`,
 

@@ -6068,13 +6068,17 @@ separate from this data contract.
 
 ## Native deployment from a Machine folder
 
-The Deploy Action resolves the owned WorkspaceRef on the build Machine. Source
+The Create preview and Deploy Action resolve the owned WorkspaceRef on its Machine
+and share the same capture. Source
 admission selects Git's tracked working files and nonignored untracked files in a
 worktree. A plain folder follows its `.gitignore` files. Both exclude `.git` and
 `.env*` by default. The review shows the file count, bytes and excluded paths,
 and identifies unsupported filesystem entries such as pipes, sockets and devices.
-The optional reason paths use the existing folder intent and review payloads.
-Earlier strict 0.3 readers need matching builds when the optional field is present.
-The existing workspace exporter carries the selected manifest fingerprint through
-approval and Receipt. Docker applies its context rules when it builds. The source
+The folder intent and review report which rule excluded each file when known.
+Earlier strict 0.3 readers need matching builds for the new review fields.
+The Create preview carries the summary to the wizard Review before Confirm and
+discards its temporary export. Deploy reviews a fresh capture and refuses if the
+folder changes between Deploy review and execution. The workspace exporter carries
+the selected manifest fingerprint through Deploy approval and Receipt.
+Docker applies its context rules when it builds. The source
 stage can be larger than Docker's eventual context, and review shows that size.

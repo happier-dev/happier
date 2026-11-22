@@ -2,7 +2,7 @@ import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
@@ -177,6 +177,31 @@ function NamedMachine(props: Readonly<{
   return <NamedMachines serverId={props.serverId} ids={props.rest} names={names}>{props.children}</NamedMachines>;
 }
 
+export function describeDeploymentFolderReviewFiles(folder: DeploymentFolderReviewRevisionV1) {
+  const unsupported = new Set(folder.unsupportedFilePaths);
+  const reasons = new Map(folder.exclusionReasons?.map(({ path, reason }) => [path, reason]));
+  const labels = {
+    gitIgnore: t('workspaceSync.review.reasonGitIgnore'),
+    repositoryMetadata: t('workspaceSync.review.reasonRepositoryMetadata'),
+    env: t('projects.deployments.review.folderEnvExcluded'),
+    symlink: t('projects.deployments.review.folderSymlinkExcluded'),
+  };
+  const excluded = folder.excludedPaths.map(path => {
+    const reason = reasons.get(path);
+    const label = unsupported.has(path) ? t('projects.deployments.review.folderUnsupportedFile')
+      : reason === undefined ? null : labels[reason];
+    return label ? `${path} (${label})` : path;
+  });
+  return [
+    { key: 'folderFiles', label: t('projects.deployments.review.folderFiles'),
+      value: t('projects.deployments.review.folderContents', { count: folder.fileCount,
+        size: formatHappierDataBytes(folder.totalBytes, { kind: 'storage' }) }) },
+    { key: 'folderExcluded', label: t('projects.deployments.review.folderExcluded'),
+      value: excluded.length ? excluded.join('\n')
+        : t('projects.deployments.review.folderNoneExcluded') },
+  ];
+}
+
 const field = (path: string, title: string, value: string | null | undefined, extras: ApprovalFieldExtras = {}) =>
   value ? [{ kind: 'value' as const, path, title, value, ...(extras.names?.length ? { names: extras.names } : {}),
     ...(extras.note ? { note: extras.note } : {}) }] : [];
@@ -222,7 +247,6 @@ function describeReviewFields(
   const nameOf = (id: string | null) => (id ? names[id] ?? null : null);
   const valueNameOf = (id: string | null) => (id ? names[id] ?? t('approvals.machineNotKnown') : null);
   const multiple = machines.length > 1;
-  const unsupportedFolderFiles = new Set(revision?.kind === 'folder' ? revision.unsupportedFilePaths : undefined);
   const soleMachine = soleMachineName(machines, names);
   const buildPlatforms = [...new Set(machines.flatMap(machine => machine.review.buildSupport?.requestedPlatforms ?? []))];
   const rows = [
@@ -237,15 +261,8 @@ function describeReviewFields(
             : t('projects.deployments.review.replacesNothing'),
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
       : replaces ? revisionText(replaces.revision) : t('projects.deployments.review.replacesNothing'))),
-    ...(revision?.kind === 'folder' ? [
-      ...field('folderFiles', t('projects.deployments.review.folderFiles'),
-        t('projects.deployments.review.folderContents', { count: revision.fileCount,
-          size: formatHappierDataBytes(revision.totalBytes, { kind: 'storage' }) })),
-      ...field('folderExcluded', t('projects.deployments.review.folderExcluded'),
-        revision.excludedPaths.length ? revision.excludedPaths.map(path => unsupportedFolderFiles.has(path)
-          ? `${path} (${t('projects.deployments.review.folderUnsupportedFile')})` : path).join('\n')
-          : t('projects.deployments.review.folderNoneExcluded')),
-    ] : []),
+    ...(revision?.kind === 'folder' ? describeDeploymentFolderReviewFiles(revision)
+      .flatMap(({ key, label, value }) => field(key, label, value)) : []),
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
       names: secretBindingNames,
       note: soleMachine ? t('projects.deployments.review.secretsNoteOn', { machine: soleMachine }) : t('projects.deployments.review.secretsNote'),

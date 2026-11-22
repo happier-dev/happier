@@ -61,6 +61,7 @@ export const DeploymentPreparationAdmissionV1Schema = lazyZodSchema(() => z.disc
     requestKey: id, protection: z.enum(['production', 'nonProduction']), purpose: z.enum(['standard', 'preview']),
     deployerMode: DeploymentEnvironmentPeopleModeV1Schema, deployerPrincipals: z.optional(DeploymentEnvironmentPrincipalsV1Schema),
     copyFrom: z.optional(DeploymentEnvironmentCopySourceV1Schema),
+    workspace: z.optional(z.strictObject({ kind: z.literal('workspace-ref'), id })),
     preview: z.optional(DeploymentPreviewReferenceV1Schema), previewCompanionOfEnvironmentId: z.optional(id),
     candidate: z.optional(DeploymentArtifactContentReferenceV1Schema) }),
   z.strictObject({ operation: z.literal('catalog'), source: z.optional(source), newProject: z.optional(DeploymentNewProjectV1Schema), machineId: id, installationId: id }),
@@ -105,6 +106,8 @@ export function projectDeploymentPreparationAdmissionV1(actionId: string, input:
       ...(value.newProject ? { newProject: value.newProject } : { source: { id: value.projectSourceId } }),
       requestKey: value.requestKey, protection: value.protection, purpose: value.purpose, deployerMode: value.deployerMode,
       ...(readRecord(value.definition).from === 'catalogApp' ? { catalogApp: readRecord(value.definition).templateRef } : {}),
+      ...(value.mode === 'preview' && readRecord(value.definition).from === 'folder'
+        ? { workspace: { kind: 'workspace-ref', id: readRecord(value.definition).workspaceId } } : {}),
       ...(value.copyFrom === undefined ? {} : { copyFrom: { environmentId: readRecord(value.copyFrom).environmentId,
         expectedRevision: readRecord(value.copyFrom).expectedRevision } }),
       ...(value.preview === undefined ? {} : { preview: z.object(DeploymentPreviewReferenceV1Schema.shape).parse(value.preview) }),

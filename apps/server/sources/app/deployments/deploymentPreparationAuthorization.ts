@@ -1141,7 +1141,7 @@ export function isDeploymentWorkspaceListHttpPurpose(serverId: string,
         && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, selection.data));
 }
 
-/** Prepare and repository template authoring reopen only their signed checkout reference. */
+/** Preparation reopens only the checkout reference carried in its signed input. */
 function isDeploymentWorkspaceReadHttpPurpose(serverId: string,
     workspace: Extract<DeploymentPreparationAdmissionV1, { operation: 'prepare' }>['workspace'],
     proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
@@ -1328,6 +1328,11 @@ export async function readDeploymentCreateHttpPurposeInTx(tx: Tx, binding: Exter
 ): Promise<DeploymentCreateHttpPurpose | null> {
     const admission = binding.deploymentPreparationAdmission;
     if (!admission || admission.operation !== 'create' || !isDeploymentCreateHttpEffect(binding, effectActionId)) return null;
+    if (binding.actionId === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1
+        && effectActionId === binding.actionId && admission.mode === 'preview' && admission.workspace
+        && isDeploymentWorkspaceReadHttpPurpose(binding.serverIdentityId, admission.workspace, proof)) {
+        return { rootActionId: binding.actionId, effectActionId };
+    }
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) return isNativeHttpPurpose?.(proof) === true
         && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, proof.routeInput,
             undefined, undefined, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) === true

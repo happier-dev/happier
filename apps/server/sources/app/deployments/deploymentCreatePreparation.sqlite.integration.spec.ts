@@ -107,6 +107,24 @@ describe('reviewed create preparation authority', () => {
         return { owner, actor, source, destination, original, input, admission, binding, machine, key, artifact };
     }
 
+    it('admits only the selected WorkspaceRef read for a folder Create preview', async () => {
+        const f = await fixture();
+        const { copyFrom: _copy, ...base } = f.input;
+        const input = { ...base, mode: 'preview', definition: { from: 'folder', workspaceId: 'folder' } };
+        const admission = projectDeploymentPreparationAdmissionV1(f.binding.actionId, input);
+        const binding = { ...f.binding, deploymentPreparationAdmission: admission };
+        const path = '/v1/account/project-rows/read';
+        const key = { kind: 'workspace-ref', serverId, id: 'folder' };
+        const read = (candidate: typeof binding, body: unknown, route = path) => inTx(tx =>
+            readDeploymentCreateHttpPurposeInTx(tx, candidate, f.binding.actionId, { method: 'POST', path: route, body }));
+        expect(await read(binding, { key })).toEqual({ rootActionId: f.binding.actionId, effectActionId: f.binding.actionId });
+        expect(await read(binding, { key: { ...key, id: 'other' } })).toBeNull();
+        expect(await read(binding, { key: { ...key, serverId: `srv_${'c'.repeat(32)}` } })).toBeNull();
+        expect(await read(binding, { kinds: ['workspace-ref'], serverId }, '/v1/account/project-rows/list')).toBeNull();
+        const apply = projectDeploymentPreparationAdmissionV1(f.binding.actionId, { ...input, mode: 'apply' });
+        expect(await read({ ...binding, deploymentPreparationAdmission: apply }, { key })).toBeNull();
+    });
+
     it.each(['authorization', 'fresh', 'retained'] as const)('reports missing Team Source management through the real %s Create root before any effect', async entry => {
         const f = await fixture();
         const team = await db.team.create({ data: { name: 'Create Source authority' } });

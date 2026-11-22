@@ -19699,6 +19699,8 @@ settingsSession: {
 
           folderNoneExcluded: "无",
           folderUnsupportedFile: "不支持的文件类型",
+          folderEnvExcluded: "已关闭包含 .env 文件",
+          folderSymlinkExcluded: "链接目标位于文件夹之外或不受支持",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} 个文件 · ${size}`,
 

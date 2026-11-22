@@ -13,6 +13,7 @@ import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@h
 import type { DeploymentSourceAdmissionFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectDeploymentSourceCheckoutRequiredV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -70,6 +71,51 @@ type DeploymentSourceReadInput = Readonly<{
     }>;
 }>;
 
+async function requireWorkspaceRequester(context: ActionExecutorContext, resolveRequesterIdentity: DeploymentSourceRequesterIdentityResolver) {
+    const requester = await resolveRequesterIdentity(context);
+    if (requester.canExecuteWorkspaceOnDaemon ?? canExecuteRequesterWorkspaceOnDaemonForHost(requester)) return;
+    const details: DeploymentSourceAdmissionFailureV1 = requester.kind === 'unknown'
+        ? { phase: 'deployment_source_admission', reason: requester.reason,
+            requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }
+        : { phase: 'deployment_source_admission', reason: 'requester_workspace_requires_owner',
+            requiredFact: 'unrestricted_workspace_requester', remedy: 'run_from_authorized_host' };
+    throw new PluginError({ code: 'agent_isolation_unavailable', retryable: false, details,
+        ...(requester.kind === 'unknown' ? { remediation: { kind: 'retry' } } : {}),
+        failureCause: projectActionFailureCauseV1(new Error('agent_isolation_unavailable'),
+            `deployment.source.admission.${details.reason}`) });
+}
+
+type FolderSelection = Parameters<typeof captureDeploymentFolderSourceForHost>[0]['selection'];
+
+function captureOwnedFolder(workspace: WorkspaceRefV1 | undefined, folder: FolderSelection, signal?: AbortSignal) {
+    if (!workspace || isManagedWorkspaceRefV2(workspace)) return refuse('deployment_source_unavailable');
+    const { kind, workspaceId, includeEnvFiles, compose } = folder;
+    return runWithWorkspaceSource(localWorkspaceSource, () => captureDeploymentFolderSourceForHost({ workspace,
+        selection: { kind, workspaceId, ...(includeEnvFiles === undefined ? {} : { includeEnvFiles }),
+            ...(compose === undefined ? {} : { compose }) },
+        signal })).catch(rethrowDeploymentSourceAcquisitionFailure);
+}
+
+/** Create previews may open only the authored WorkspaceRef on this Machine. */
+export async function previewDeploymentFolderOnHost(folder: FolderSelection, context: ActionExecutorContext,
+    host: DeploymentSourceReadInput['host']) {
+    await requireWorkspaceRequester(context, host.resolveRequesterIdentity);
+    const authorization = context.externalActionExecutionAuthorization;
+    const rows = await runWithServerHttpBaseUrl(host.serverHttpBaseUrl, () => readProjectAccountRowsObservation({
+        ...(authorization ? { authorization, effectActionId: authorization.binding.actionId } : { credentials: host.credentials }),
+        serverId: host.serverId, signal: context.signal, assertCurrentAuthority: host.assertAuthority,
+        selection: { key: { kind: 'workspace-ref', serverId: host.serverId, id: folder.workspaceId } },
+    }));
+    const workspace = rows.snapshot.workspaceRefs.find(ref => ref.id === folder.workspaceId
+        && ref.serverId === host.serverId && ref.machineId === host.machineId);
+    const captured = await captureOwnedFolder(workspace, folder, context.signal);
+    try {
+        return projectDeploymentReviewRevisionV1(captured.sourceIntent);
+    } finally {
+        await captured.captured.dispose();
+    }
+}
+
 export function readDeploymentSourceIntentForHost(input: DeploymentSourceReadInput & {
     request: { retainFolderExport?: never };
 }): Promise<DeploymentSourceIntentForHost & {
@@ -93,20 +139,7 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
     const publishedGitProviders = request.publishedGitProviders;
     if (publishedGitProviders && !repository) return refuse('repository_required');
     const needsWorkspace = folder !== undefined || repository && (publishedGitProviders !== undefined || request.requireWorkspace !== false);
-    if (needsWorkspace) {
-        const requester = await host.resolveRequesterIdentity(request.context);
-        if (!(requester.canExecuteWorkspaceOnDaemon ?? canExecuteRequesterWorkspaceOnDaemonForHost(requester))) {
-            const details: DeploymentSourceAdmissionFailureV1 = requester.kind === 'unknown'
-                ? { phase: 'deployment_source_admission', reason: requester.reason,
-                    requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }
-                : { phase: 'deployment_source_admission', reason: 'requester_workspace_requires_owner',
-                    requiredFact: 'unrestricted_workspace_requester', remedy: 'run_from_authorized_host' };
-            throw new PluginError({ code: 'agent_isolation_unavailable', retryable: false, details,
-                ...(requester.kind === 'unknown' ? { remediation: { kind: 'retry' } } : {}),
-                failureCause: projectActionFailureCauseV1(new Error('agent_isolation_unavailable'),
-                    `deployment.source.admission.${details.reason}`) });
-        }
-    }
+    if (needsWorkspace) await requireWorkspaceRequester(request.context, host.resolveRequesterIdentity);
     const sourceId = intent?.kind === 'repository' ? intent.projectSourceId : environment.environment.projectSourceId;
     let sourceRevision = intent?.kind === 'repository' ? intent.sourceRevision : undefined;
     let sourceRepository: ProjectSourceRepositorySelectorV1 | undefined;
@@ -173,13 +206,8 @@ export async function readDeploymentSourceIntentForHost(input: DeploymentSourceR
             : ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision)) : undefined;
     let folderExport: DeploymentSourceIntentForHost['folderExport'];
     if (folder) {
-        if (!workspace || isManagedWorkspaceRefV2(workspace)) return refuse('deployment_source_unavailable');
         // This owned ref addresses this Machine, even when the caller has a Session workspace.
-        const { kind, workspaceId, includeEnvFiles, compose } = folder;
-        const captured = await runWithWorkspaceSource(localWorkspaceSource, () => captureDeploymentFolderSourceForHost({ workspace,
-            selection: { kind, workspaceId, ...(includeEnvFiles === undefined ? {} : { includeEnvFiles }),
-                ...(compose === undefined ? {} : { compose }) },
-            signal })).catch(rethrowDeploymentSourceAcquisitionFailure);
+        const captured = await captureOwnedFolder(workspace, folder, signal);
         if (intent?.kind === 'folder' && intent.manifestFingerprint !== captured.sourceIntent.manifestFingerprint) {
             await captured.captured.dispose();
             return refuse('deployment_conflict');

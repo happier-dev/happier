@@ -302,7 +302,7 @@ export function prepareDeploymentTemplateInstantiationV1(input: DeploymentTempla
         services[name] = app;
     }
     const current = input.current?.content.definition;
-    const selectors = current?.kind === 'repository' ? current.compose : current;
+    const selectors = current?.kind === 'repository' || current?.kind === 'folder' ? current.compose : current;
     const profiles = [...new Set([...(selectors?.profiles ?? []), ...template.compose.profiles])];
     const services = selectors && selectors.services.length === 0 ? []
         : [...new Set([...(selectors?.services ?? []), ...selectedServices])];

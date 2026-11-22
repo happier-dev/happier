@@ -39,7 +39,7 @@ import { PetImportConfirmationCard } from './PetImportConfirmationCard';
 import { readPetImportConfirmationV1 } from '@happier-dev/protocol/pets/importActionV1';
 import { ComputerActionApprovalCard, describeComputerActionApproval, type ComputerActionApproval } from './ComputerActionApprovalCard';
 import { ComputerApprovalCapture } from './ComputerApprovalCapture';
-import { DeploymentReviewApprovalFacts, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
+import { DeploymentReviewApprovalFacts, describeDeploymentFolderReviewFiles, readDeploymentReviewApproval } from './DeploymentReviewApprovalFacts';
 import { ProjectCommandApprovalFacts, readProjectCommandApproval } from './ProjectCommandApprovalFacts';
 import { describeApprovalRequestFields, resolveApprovalVisualPreview } from './approvalFieldValues';
 import { readApprovalPreviewSummary } from './actionApprovalPresentation';
@@ -183,7 +183,7 @@ export type DeploymentCreationReviewPlan = Readonly<{
   newProjectName: string | null;
   environment: Readonly<{ name: string; production: boolean; deployers: Parameters<typeof deployersLabel>[0] }>;
   runs: Readonly<{ kind: 'repository'; ref: string } | { kind: 'compose' } | { kind: 'image'; image: string } | { kind: 'app'; name: string }
-    | { kind: 'folder'; folder: string; includeEnvFiles: boolean }> | null;
+    | { kind: 'folder'; folder: string }> | null;
   /** `machineId` is the Machine the runs row names, so the defaults rows don't name it again. */
   runsOn: Readonly<{ kind: 'machine'; machine: string; machineId: string }
     | { kind: 'platform'; platform: string; pluginId: string; machine: string; machineId: string; resource: 'create' | 'existing'; resourceName: string | null }>;
@@ -230,6 +230,8 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
   const defaultsRows = renderDeploymentCreationDefaultsRows({ defaults: review.creationDefaults, machineName, testID: `${testID}.defaults`,
     namedMachineId: plan?.runs ? plan.runsOn.machineId : null });
   const runsOn = plan?.runsOn;
+  const folderRows = review.folder ? describeDeploymentFolderReviewFiles(review.folder).map(({ key, label, value }) =>
+    <Item key={key} testID={`${testID}.${key}`} mode="info" title={label} subtitle={value} />) : null;
   return <>
     {plan ? <ItemGroup testID={`${testID}.creates`} title={t('newApp.deploy.plan.createsTitle')}>
       {plan.newProjectName ? <Item testID={`${testID}.creates.project`} mode="info" icon={<Icon name="folder" />}
@@ -264,13 +266,11 @@ export function DeploymentCreationReviewFacts(props: Readonly<{
             : t('newApp.deploy.plan.runsCompose')}
           subtitle={runsOn.kind === 'platform' ? t('newApp.deploy.plan.onPlatform', { platform: runsOn.platform, machine: runsOn.machine })
             : t('newApp.deploy.plan.onMachine', { machine: runsOn.machine })} /> : null}
-        {/* What a folder sends is counted at each deploy, whose review lists the files, their size and what stays behind. */}
-        {plan.runs?.kind === 'folder' ? <Item testID={`${testID}.runs.folder`} mode="info"
-          title={t(plan.runs.includeEnvFiles ? 'newApp.deploy.plan.folderLeavesOutWithEnv' : 'newApp.deploy.plan.folderLeavesOut')}
-          subtitle={t('newApp.deploy.plan.folderReviewedAtDeploy')} /> : null}
+        {folderRows}
         {defaultsRows}
       </ItemGroup> : <ItemGroup testID={`${testID}.defaults`} title={t('projects.deployments.creationReview.title')}
         description={t('projects.deployments.creationReview.description')}>
+        {folderRows}
         {defaultsRows}
       </ItemGroup>}
       {review.copy?.included.length ? <ItemGroup title={t('projects.deployments.copy.include')}>

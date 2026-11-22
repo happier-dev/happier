@@ -237,7 +237,7 @@ export function createUiDeploymentActionDeps(account: LazyActionAccountContext):
             const result = await machine('deployments.environments.create', { ...input, mode: 'preview' }, context, selected.machineId);
             if (!result.ok) return result;
             const preview = DeploymentEnvironmentCreatePreviewV1Schema.safeParse(result.result);
-            if (!preview.success) return failure('invalid_action_output');
+            if (!preview.success || input.definition?.from === 'folder' && !preview.data.review.folder) return failure('invalid_action_output');
             account.assertCurrent();
             return { input: preview.data.input, preview: preview.data.review };
         },

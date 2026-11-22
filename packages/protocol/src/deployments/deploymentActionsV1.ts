@@ -24,6 +24,7 @@ import { DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownDispositionV1Sch
 export { DEPLOYMENT_TEARDOWN_STEPS_V1, DeploymentTeardownStepV1Schema, DeploymentTargetUnlinkInputV1Schema, DeploymentTeardownReasonV1Schema, DeploymentTeardownDispositionV1Schema, DeploymentTeardownInputV1Schema, DeploymentDataCreationReferenceV1Schema, DeploymentTeardownIntentInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownActionInputV1Schema, DeploymentTeardownAdmissionInputV1Schema, DeploymentTeardownActionAdmissionInputV1Schema, type DeploymentTargetUnlinkInputV1, type DeploymentDataCreationReferenceV1, type DeploymentTeardownIntentInputV1, type DeploymentTeardownNothingDeployedInputV1, type DeploymentTeardownPreparedInputV1, type DeploymentTeardownActionInputV1, type DeploymentTeardownInputV1, type DeploymentTeardownAdmissionInputV1 } from './deploymentTeardownRequestV1.js';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from './deploymentTemplateInstantiationV1.js';
 export { DeploymentEnvironmentCreateIntentInputV1Schema, type DeploymentEnvironmentCreateIntentInputV1 } from './deploymentTemplateInstantiationV1.js';
+import { DeploymentFolderReviewRevisionV1Schema } from './deploymentFolderReviewRevisionV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { DeploymentTargetVariablesReadResultV1Schema, DeploymentTargetVariablesSyncResultV1Schema } from '../plugins/contributions/deploymentTargetVariablesV1.js';
 import { DeploymentCreationDefaultsV1Schema, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentConfigurationDefaultsForV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
@@ -815,6 +816,7 @@ export const DeploymentEnvironmentCreationReviewV1Schema = lazyZodSchema(() => z
   definitionCommitment: DeploymentEnvironmentCreateInputV1Schema.shape.copyIntentCommitment,
   template: z.optional(deploymentTemplates.DeploymentTemplateInstantiationReviewV1Schema),
   copy: z.optional(DeploymentEnvironmentCopyReviewV1Schema),
+  folder: z.optional(DeploymentFolderReviewRevisionV1Schema),
 }));
 export type DeploymentEnvironmentCreationReviewV1 = z.infer<typeof DeploymentEnvironmentCreationReviewV1Schema>;
 export const DeploymentEnvironmentCreatePreviewV1Schema = lazyZodSchema(() => z.strictObject({

@@ -18883,6 +18883,8 @@ La meva pregunta: `,
 
               folderNoneExcluded: "Cap",
               folderUnsupportedFile: "Tipus de fitxer no compatible",
+              folderEnvExcluded: "Els fitxers .env estan desactivats",
+              folderSymlinkExcluded: "La destinació de l’enllaç és fora de la carpeta o no és compatible",
 
               folderContents: ({ count, size }: { count: number; size: string }) => `${count} fitxers · ${size}`,
 

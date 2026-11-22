@@ -20033,6 +20033,8 @@ settingsSession: {
 
           folderNoneExcluded: "Нет",
           folderUnsupportedFile: "Неподдерживаемый тип файла",
+          folderEnvExcluded: "Файлы .env отключены",
+          folderSymlinkExcluded: "Цель ссылки находится за пределами папки или не поддерживается",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `Файлы: ${count} · ${size}`,
 

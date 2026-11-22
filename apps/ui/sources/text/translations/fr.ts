@@ -19953,6 +19953,8 @@ settingsSession: {
 
           folderNoneExcluded: "Aucun",
           folderUnsupportedFile: "Type de fichier non pris en charge",
+          folderEnvExcluded: "Les fichiers .env sont désactivés",
+          folderSymlinkExcluded: "La cible du lien se trouve hors du dossier ou n’est pas prise en charge",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} fichiers · ${size}`,
 

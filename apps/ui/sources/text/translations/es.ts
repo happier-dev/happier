@@ -20079,6 +20079,8 @@ settingsSession: {
 
           folderNoneExcluded: "Ninguno",
           folderUnsupportedFile: "Tipo de archivo no compatible",
+          folderEnvExcluded: "Los archivos .env están desactivados",
+          folderSymlinkExcluded: "El destino del enlace está fuera de la carpeta o no es compatible",
 
           folderContents: ({ count, size }: { count: number; size: string }) => `${count} archivos · ${size}`,
 

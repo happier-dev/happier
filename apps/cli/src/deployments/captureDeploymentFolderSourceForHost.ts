@@ -18,6 +18,7 @@ import {
 
 type FolderSource = Extract<DeploymentSourceIntentV1, { kind: 'folder' }>;
 type FolderSelection = Pick<FolderSource, 'kind' | 'workspaceId' | 'includeEnvFiles' | 'compose'>;
+type ExclusionReason = NonNullable<FolderSource['exclusionReasons']>[number]['reason'];
 
 const refuseSource = (): never => {
     throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'deployment_source_unavailable' });
@@ -41,7 +42,7 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
         workspaceTransfer: { contentOnly: true, includeIgnoredMode: 'exclude', ignoredIncludeGlobs: [] },
     });
     const unsupported = new Set(unsupportedFilePaths);
-    const excluded = new Set([...(excludedPaths ?? []), ...unsupported]);
+    const reasons = new Map<string, ExclusionReason>((excludedPaths ?? []).map(path => [path, 'gitIgnore']));
     const captureDirectory = createHappierTempDir({ purpose: 'deployment-folder-source' });
     const dispose = () => removeHappierTempDirAsync(captureDirectory);
     let nextEntry = 0;
@@ -91,13 +92,13 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
             if (unsupported.has(entry.relativePath)) continue;
             const segments = entry.relativePath.split('/');
             if (segments.some(name => name.toLowerCase() === '.git')) {
-                excluded.add(entry.relativePath);
+                reasons.set(entry.relativePath, 'repositoryMetadata');
                 continue;
             }
             const envFile = input.selection.includeEnvFiles !== true && segments.some(name => name.toLowerCase().startsWith('.env'));
             const ignored = envFile || (selectionSource === 'filesystem' && await gitIgnored(segments, false));
             if (ignored) {
-                excluded.add(entry.relativePath);
+                reasons.set(entry.relativePath, envFile ? 'env' : 'gitIgnore');
                 continue;
             }
             const physicalParent = dirname(join(root, ...segments));
@@ -112,7 +113,7 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
                 if (target.trim() !== target || isAbsolute(target) || win32.parse(target).root
                     || target.includes('\\') || (firstChild >= 0 && parts.slice(firstChild).includes('..'))
                     || !isWithin(root, resolve(physicalParent, target))) {
-                    excluded.add(entry.relativePath);
+                    reasons.set(entry.relativePath, 'symlink');
                     return false;
                 }
                 return true;
@@ -131,8 +132,14 @@ export async function captureDeploymentFolderSourceForHost(input: Readonly<{
             fileCount++;
             totalBytes += entry.kind === 'file' ? entry.sizeBytes : Buffer.byteLength(entry.target);
         }
+        const excluded = [...new Set([...reasons.keys(), ...unsupported])].sort();
+        const exclusionReasons = excluded.flatMap(path => {
+            const reason = reasons.get(path);
+            return unsupported.has(path) || reason === undefined ? [] : [{ path, reason }];
+        });
         return { captured: { ...captured, dispose }, sourceIntent: { ...input.selection, manifestFingerprint, fileCount, totalBytes,
-            excludedPaths: [...excluded].sort(),
+            excludedPaths: excluded,
+            ...(exclusionReasons.length ? { exclusionReasons } : {}),
             ...(unsupported.size ? { unsupportedFilePaths: [...unsupported].sort() } : {}) } satisfies FolderSource };
     } catch (error) {
         await dispose();

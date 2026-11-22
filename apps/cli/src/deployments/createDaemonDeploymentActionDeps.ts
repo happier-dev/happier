@@ -111,6 +111,7 @@ import { createPrepareEnvironmentContentForHost } from './prepareEnvironmentCont
 import { readStoredPromotionCandidateForHost, createStoredPromotionReceiptContentForHost } from './storedPromotionCandidate';
 import { preparePromotionForHost } from './preparePromotionForHost';
 import { projectDeploymentReviewRevisionV1, type DeploymentPromotionReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { previewDeploymentFolderOnHost } from './readDeploymentSourceIntentForHost';
 import { isDeploymentPromoteActionIdV1, isDeploymentMembershipActionIdV1,
     DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1,
     DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1,
@@ -980,6 +981,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             const plan = await planCreate({ input: resolved, telemetry, projectOwner: defaults.projectOwner,
                 context, copy, nativeOrigin, admittedPreview: preview }, deferred || reviewedCommitment !== undefined);
             if ('errorCode' in plan) return plan;
+            const definition = input.mode === 'preview' && authored.definition?.from === 'folder' ? authored.definition : undefined;
+            if (definition && (resolved.controllerMachineId !== host.machineId
+                || resolved.buildMachineId !== undefined && resolved.buildMachineId !== host.machineId)) return failure('target_mismatch');
+            const folder = definition ? await previewDeploymentFolderOnHost({
+                kind: 'folder', workspaceId: definition.workspaceId, includeEnvFiles: definition.includeEnvFiles, compose: definition.compose,
+            }, context, { ...host, assertAuthority: () => assertCurrent(context) }) : undefined;
             if (reviewedCommitment !== undefined && (reviewedCommitment !== plan.definitionCommitment
                 || !sameStrictJsonValue(creationReview?.creationDefaultsBasis ?? null, defaults.reviewBasis ?? null)))
                 return failure('approval_stale');
@@ -989,7 +996,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                     ...(buildMachineId === undefined ? {} : { buildMachineId }) }, sources: defaults.sources },
                     ...(defaults.reviewBasis ? { creationDefaultsBasis: defaults.reviewBasis } : {}),
                     ...(definitionCommitment ? { definitionCommitment } : {}),
-                    ...(copy.review ? { copy: copy.review } : {}) });
+                    ...(copy.review ? { copy: copy.review } : {}),
+                    ...(folder ? { folder } : {}) });
             if (deferred) {
                 if (!plan.definitionCommitment) return failure('invalid_action_output');
                 const preview = review(defaults.values.controllerMachineId, resolved.buildMachineId, plan.definitionCommitment);

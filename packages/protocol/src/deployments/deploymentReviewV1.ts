@@ -7,7 +7,8 @@ import { DeploymentIngressV1Schema, DeploymentOnFailureV1Schema, EnvironmentVari
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploymentCreationDefaultsV1.js';
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { DeploymentReferenceAddressV1Schema } from './deploymentReadsV1.js';
-import { DeploymentFolderReviewRevisionV1Schema } from './deploymentFolderReviewRevisionV1.js';
+import { DeploymentFolderReviewRevisionV1Schema, projectDeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
+export type { DeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
 export { DeploymentReviewServiceV1Schema, type DeploymentReviewServiceV1 } from '../local/services/nativeRuntimeFactsV1.js';
 export { deploymentRevisionShortLabelV1 } from './storedAppInputV1.js';
 
@@ -38,12 +39,10 @@ export const DeploymentReviewRevisionV1Schema = z.discriminatedUnion('kind', [
 ]);
 export type DeploymentReviewRevisionV1 = z.infer<typeof DeploymentReviewRevisionV1Schema>;
 
+export function projectDeploymentReviewRevisionV1(source: Extract<DeploymentSourceIntentV1, { kind: 'folder' }>): Extract<DeploymentReviewRevisionV1, { kind: 'folder' }>;
+export function projectDeploymentReviewRevisionV1(source: DeploymentSourceIntentV1, subject?: string): DeploymentReviewRevisionV1;
 export function projectDeploymentReviewRevisionV1(source: DeploymentSourceIntentV1, subject?: string): DeploymentReviewRevisionV1 {
-  if (source.kind === 'folder') {
-    const { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths, unsupportedFilePaths } = source;
-    return { kind, manifestFingerprint, fileCount, totalBytes, excludedPaths,
-      ...(unsupportedFilePaths === undefined ? {} : { unsupportedFilePaths }) };
-  }
+  if (source.kind === 'folder') return projectDeploymentFolderReviewRevisionV1(source);
   return source.kind === 'repository' ? { kind: source.kind, sha: source.sha, ...(subject === undefined ? {} : { subject }) }
     : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest };
 }
