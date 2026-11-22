@@ -219,3 +219,29 @@ describe('buildConnectedServiceDiagnosticSpawnValidationErrorResult', () => {
     });
   });
 });
+
+describe('a spawn refused because the bound profile no longer exists', () => {
+  it('is a distinct diagnostic that sends the owner to choose another account, not to reconnect', () => {
+    const result = buildConnectedServiceCredentialSpawnErrorResult({
+      agentId: 'claude',
+      error: {
+        name: 'ConnectedServiceProfileMissingError',
+        kind: 'profile_missing',
+        serviceId: 'claude-subscription',
+        profileId: 'Claude-2',
+      },
+    });
+    if (!result) throw new Error('expected a spawn error result');
+
+    expect(result.errorMessage).toBe('connected_service_profile_missing');
+    if (!isConnectedServiceUxDiagnosticSpawnErrorDetail(result.errorDetail)) throw new Error('expected diagnostic detail');
+    expect(result.errorDetail.uxDiagnostic).toMatchObject({
+      code: 'connected_service_profile_missing',
+      serviceId: 'claude-subscription',
+      profileId: 'Claude-2',
+      retryable: false,
+    });
+    expect(result.errorDetail.uxDiagnostic.suggestedActions).toEqual(['open_connected_accounts']);
+    expect(result.errorDetail.uxDiagnostic.suggestedActions).not.toContain('reconnect_profile');
+  });
+});

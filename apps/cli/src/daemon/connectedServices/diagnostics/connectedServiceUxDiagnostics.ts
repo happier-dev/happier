@@ -42,6 +42,7 @@ export function resolveConnectedServiceUxDiagnosticActions(
         CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.retry,
         CONNECTED_SERVICE_UX_DIAGNOSTIC_ACTIONS.openConnectedAccounts,
       ];
+    case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceProfileMissing:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.quotaFetchDisabled:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.authSurfaceWeaklyVerified:
     case CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceRestartRequested:

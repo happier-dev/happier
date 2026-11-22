@@ -59,6 +59,15 @@ function readCredentialMissingSpawnError(error: unknown): ConnectedServiceCreden
   return record;
 }
 
+function readProfileMissingSpawnError(error: unknown): ConnectedServiceCredentialMissingSpawnError | null {
+  const record = readRecord(error);
+  if (!record) return null;
+  if (readString(record.name) !== 'ConnectedServiceProfileMissingError') return null;
+  if (readString(record.kind) !== 'profile_missing') return null;
+  if (!readString(record.serviceId) || !readString(record.profileId)) return null;
+  return record;
+}
+
 export function buildConnectedServiceDiagnosticSpawnValidationErrorResult(input: Readonly<{
   errorMessage: string;
   uxDiagnostic: ConnectedServiceUxDiagnosticV1;
@@ -78,6 +87,24 @@ export function buildConnectedServiceCredentialSpawnErrorResult(input: Readonly<
   agentId: CatalogAgentId;
   error: unknown;
 }>): Extract<SpawnSessionResult, { type: 'error' }> | null {
+  const missingProfile = readProfileMissingSpawnError(input.error);
+  if (missingProfile) {
+    const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceProfileMissing;
+    return buildConnectedServiceDiagnosticSpawnValidationErrorResult({
+      errorMessage: code,
+      uxDiagnostic: buildConnectedServiceUxDiagnostic({
+        code,
+        failurePhase: 'materialization',
+        source: 'spawn_resume',
+        agentId: input.agentId,
+        serviceId: readString(missingProfile.serviceId),
+        profileId: readString(missingProfile.profileId),
+        retryable: false,
+        diagnostics: { reason: 'profile_missing' },
+      }),
+    });
+  }
+
   const missingCredential = readCredentialMissingSpawnError(input.error);
   if (missingCredential) {
     const code = CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired;

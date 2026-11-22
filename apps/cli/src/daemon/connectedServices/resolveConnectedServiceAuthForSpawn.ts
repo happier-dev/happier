@@ -20,6 +20,7 @@ import {
   type ConnectedServicesBindingsV1,
 } from './parseConnectedServicesBindings';
 import { resolveConnectedServiceCredentialsWithRevisions } from '@/cloud/connectedServices/resolveConnectedServiceCredentials';
+import { resolveCredentialsClassifyingMissingProfile } from './classifyMissingConnectedServiceProfile';
 import {
   materializeConnectedServicesForSpawn,
   type ConnectedServiceResolvedSelection,
@@ -1229,11 +1230,15 @@ export async function resolveConnectedServiceAuthForSpawn(params: Readonly<{
   });
   params.signal?.throwIfAborted();
 
-  const resolvedCredentials = await resolveConnectedServiceCredentialsWithRevisions({
+  // A binding to a profile that no longer exists is reported as such, not as a credential to reconnect.
+  const resolvedCredentials = await resolveCredentialsClassifyingMissingProfile({
+    api: params.api as unknown as Parameters<typeof resolveCredentialsClassifyingMissingProfile>[0]['api'],
+    resolve: () => resolveConnectedServiceCredentialsWithRevisions({
       credentials: params.credentials,
       api: params.api,
       bindings: resolvedBindings.credentialBindings,
-    });
+    }),
+  });
   params.signal?.throwIfAborted();
   const recordsByServiceId = new Map(Array.from(
     resolvedCredentials,

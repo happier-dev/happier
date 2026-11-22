@@ -3,6 +3,8 @@ import type { BackendTargetRefV1, ConnectedServiceBindingsV1 } from '@happier-de
 
 import type { Credentials } from '@/persistence';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { dropConnectedBindingsToMissingProfiles } from '@/daemon/connectedServices/classifyMissingConnectedServiceProfile';
+import { logger } from '@/ui/logger';
 import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import {
   agentSupportsSpawnConnectedServicesDefaults,
@@ -19,9 +21,17 @@ export type SpawnConnectedServicesDefaultsForAccount = Readonly<{
  * runtime. Callers retain authority over stronger inputs such as an explicit selection or a
  * session's already-recorded runtime binding.
  */
+type DefaultsApi = Parameters<typeof dropConnectedBindingsToMissingProfiles>[0]['api'];
+
+async function createDefaultsApi(credentials: Credentials): Promise<DefaultsApi> {
+  const { ApiClient } = await import('@/api/api');
+  return await ApiClient.create(credentials) as unknown as DefaultsApi;
+}
+
 export async function resolveSpawnConnectedServicesDefaultsForAccount(params: Readonly<{
   credentials: Credentials;
   backendTarget: BackendTargetRefV1;
+  deps?: Readonly<{ createApi?: (credentials: Credentials) => Promise<DefaultsApi> }>;
 }>): Promise<SpawnConnectedServicesDefaultsForAccount | null> {
   if (params.backendTarget.kind !== 'builtInAgent') return null;
   const agentId = params.backendTarget.agentId as AgentId;
@@ -42,8 +52,26 @@ export async function resolveSpawnConnectedServicesDefaultsForAccount(params: Re
       throw new Error(disposition.reason);
     }
     if (disposition.kind === 'native') return null;
+    // A default that names a profile which no longer exists would commit the new runtime to an
+    // account that can never start. Treat it as native, as the app already presents it; a profile
+    // list that cannot be read changes nothing.
+    let bindings = disposition.bindings;
+    try {
+      const api = await (params.deps?.createApi ?? createDefaultsApi)(params.credentials);
+      const checked = await dropConnectedBindingsToMissingProfiles({ api, bindings });
+      if (checked.dropped.length > 0) {
+        logger.warn('[CONNECTED SERVICES] Account default names a profile that no longer exists; using native auth', {
+          agentId,
+          dropped: checked.dropped,
+        });
+        bindings = checked.bindings;
+      }
+    } catch {
+      // keep the default as resolved
+    }
+    if (!Object.values(bindings.bindingsByServiceId).some((binding) => binding.source === 'connected')) return null;
     return {
-      connectedServices: disposition.bindings,
+      connectedServices: bindings,
       connectedServicesUpdatedAt: Date.now(),
     };
   } catch (error) {

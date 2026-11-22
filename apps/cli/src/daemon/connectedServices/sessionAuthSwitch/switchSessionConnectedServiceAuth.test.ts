@@ -563,6 +563,53 @@ describe('switchSessionConnectedServiceAuth', () => {
     }));
   });
 
+  it('moves an inactive session off a profile that no longer exists on the account', async () => {
+    // The old profile is gone (removed or renamed). Re-assigning the session must not depend on it:
+    // only the profile being switched TO has to exist.
+    const persistSessionBindings = vi.fn();
+    const resolveContinuity = vi.fn(async () => ({ mode: 'restart_rematerialize' as const }));
+
+    const result = await switchSessionConnectedServiceAuth({
+      core: createCore(),
+      postSwitchVerificationMode: {
+        kind: 'disabled_for_test_only',
+        reason: 'existing switch fixture does not exercise provider adoption verification',
+      },
+      getChildren: () => [],
+      resolveInactiveSession: async () => ({
+        agentId: 'claude',
+        connectedServices: bindings('Claude-2'),
+        connectedServiceMaterializationIdentityV1: materializationIdentity,
+      }),
+      api: {
+        listConnectedServiceProfiles: async () => ({
+          serviceId: 'anthropic',
+          profiles: [{ profileId: 'Claude2', status: 'connected' }],
+        }),
+        getConnectedServiceAuthGroup: async () => null,
+      },
+      resolveContinuity,
+      restartSession: vi.fn(),
+      hotApply: async () => {
+        throw new Error('Inactive sessions should not hot-apply');
+      },
+      registerHotApplyTargets: () => {},
+      emitSessionEvent: vi.fn(),
+      persistSessionBindings,
+      request: {
+        sessionId: 'sess_inactive',
+        agentId: 'claude',
+        bindings: bindings('Claude2'),
+      },
+    } as any);
+
+    expect(result).toMatchObject({ ok: true, action: 'metadata_updated', normalizedBindings: bindings('Claude2') });
+    expect(persistSessionBindings).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess_inactive',
+      normalizedBindings: bindings('Claude2'),
+    }));
+  });
+
   it('threads the inactive session cwd and persisted session-file hint into the continuity check', async () => {
     // Regression: the inactive-switch continuity check ran with tracked=null, so the daemon adapter
     // (which derives cwd/target root from tracked.spawnOptions) starved the shared-state reachability
