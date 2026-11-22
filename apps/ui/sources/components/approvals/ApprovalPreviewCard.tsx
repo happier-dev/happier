@@ -12,6 +12,8 @@ import { usePreferredLanguage } from '@/text/usePreferredLanguage';
 import { useApprovalReferenceReading } from './approvalReferenceReading';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
 import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
@@ -38,12 +40,25 @@ export const ApprovalPreviewSummary = React.memo(function ApprovalPreviewSummary
 });
 
 /** These family consequences remain visible even when the host already renders the review's sentence. */
-export const ApprovalPreviewFacts = React.memo(function ApprovalPreviewFacts(props: Readonly<{ request?: ApprovalSummaryInput; serverId?: string | null }>) {
+export const ApprovalPreviewFacts = React.memo(function ApprovalPreviewFacts(props: Readonly<{
+    request?: ApprovalSummaryInput;
+    preview: unknown;
+    serverId?: string | null;
+}>) {
     return <>
+        {props.request?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
+            && readRecord(props.preview).teamCredentialDefaults === 'unavailable_without_requester_team'
+            ? <SpawnTeamCredentialDefaultsNotice /> : null}
         <MachineAdminAccessPreview request={props.request} serverId={props.serverId ?? null} />
         <MachineSetupRecipePreview request={props.request} serverId={props.serverId ?? null} />
     </>;
 });
+
+function SpawnTeamCredentialDefaultsNotice() {
+    usePreferredLanguage();
+    return <AttentionBanner testID="approvals.preview.team-credential-defaults" tone="neutral"
+        title={t('actionConfirmations.spawnWithoutTeamCredentialDefaults')} />;
+}
 
 /** Only the reviewed effect Plans are executable here; source copies stay review context. */
 function readMachineSetupRecipeTargets(request?: ApprovalSummaryInput) {

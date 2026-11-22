@@ -102,7 +102,7 @@ export function ApprovalReviewFacts(props: ApprovalReviewFactsInput & Readonly<{
   const fields = React.useMemo(() => generic && props.fields === undefined ? describeApprovalRequestFields(request) : null, [generic, props.fields, request]);
   const reboot = readRecord(readRecord(preview).machineRebootReview);
   return <>
-    <ApprovalPreviewFacts request={request} serverId={serverId} />
+    <ApprovalPreviewFacts request={request} preview={preview} serverId={serverId} />
     {props.summaryPlacement !== 'host' && !deployment && !template && !computer && readApprovalPreviewSummary(preview, request) ? (
       <ItemGroup><SectionContentRow testID={`${testID}.preview`}>
         <ApprovalPreviewSummary preview={preview} request={request} serverId={serverId} />

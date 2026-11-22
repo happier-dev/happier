@@ -87,6 +87,31 @@ const restart = {
 } as const;
 
 describe('native confirmation of a carried executor review', () => {
+  it.each([
+    ['en', 'Starts without your Team’s credential defaults.'],
+    ['ja', 'チームのデフォルト認証情報を使わずに開始します。'],
+  ] as const)('shows the signed spawn’s Team credential notice in the %s card body', async (language, notice) => {
+    const { preloadTranslations, setPreferredLanguageFromSettings, getPreferredLanguage } = await import('@/text');
+    const previousLanguage = getPreferredLanguage();
+    await preloadTranslations(language);
+    setPreferredLanguageFromSettings(language);
+    const actionArgs = getActionSpec('session.spawn_new').inputSchema.parse({
+      executionTarget: { serverId: 'home', machineId: 'devbox' }, directory: { kind: 'managed' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
+    });
+    const { ActionConfirmationReviewFacts } = await import('./ActionConfirmationReview');
+    const preview = { summary: 'Create session.', teamCredentialDefaults: 'unavailable_without_requester_team' };
+    const screen = await renderScreen(<ActionConfirmationReviewFacts actionId="session.spawn_new"
+      actionArgs={actionArgs} preview={preview} summaryPlacement="host"
+      serverId={null} testID="actions.confirmation-review" />);
+    try {
+      expect(screen.getTextContent()).toContain(notice);
+    } finally {
+      await screen.unmount();
+      setPreferredLanguageFromSettings(previousLanguage);
+    }
+  });
+
   it('shows each reviewed Domain setup Machine and one administrator access remedy', async () => {
     const { preloadTranslations, setPreferredLanguageFromSettings, t } = await import('@/text');
     await preloadTranslations('en');

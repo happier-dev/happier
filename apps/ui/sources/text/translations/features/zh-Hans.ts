@@ -2600,6 +2600,7 @@ const actionConfirmationTranslations = { 'zh-Hans': {
         homeTarget: ({ serverId }) => `Home：${serverId}`,
         sessionTarget: ({ sessionId }) => `目标会话：${sessionId}`,
         oneShotConsequence: '批准仅适用于此请求，不会授予未来的 Action 权限或原生权限。',
+        spawnWithoutTeamCredentialDefaults: '会话启动时不使用团队的默认凭据。',
         homeUnavailable: '此批准属于本设备上不可用的 Home。请重新连接该 Home 后再作决定。',
         turnedOffTitle: ({ action }) => `“${action}”已关闭`,
         turnedOffMessage: '在“设置 → 操作”中重新开启，即可在这里使用。',

@@ -597,7 +597,7 @@ export async function prepareApprovalRequest(params: Readonly<{
     // review schema validates its safe projection, including live-only inputs
     // whose raw operands stay with the originating waiter.
     actionArgs: projectApprovalReviewInput(spec, params.input),
-    summary: teamCredentialDefaults ? `${summary}\n\nThis Session starts without Team credential defaults if policy allows it.` : summary,
+    summary,
     ...(teamCredentialDefaults ? { teamCredentialDefaults } : {}),
     ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     // The host's scoped read owns these labels; custom previews cannot replace them.

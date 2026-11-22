@@ -29,7 +29,7 @@ const input = SessionSpawnNewInputV2Schema.parse({
 const context = { surface: 'mcp', authority: 'account_automation', serverId: 'home' } as const;
 
 describe('Team credential source at existing Action admission', () => {
-  it.each([false, true])('describes the signed spawn’s Team defaults scope on the approval card (bound=%s)', async bound => {
+  it.each([false, true])('carries the signed spawn’s typed Team defaults scope in the preview (bound=%s)', async bound => {
     const { teamCredentialBindings: _bindings, ...ordinary } = input;
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-proof', binding: {
       accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
@@ -42,7 +42,7 @@ describe('Team credential source at existing Action admission', () => {
       context: { ...context, surface: 'voice', externalActionExecutionAuthorization: authorization } });
     if (bound) expect(prepared).not.toHaveProperty('preview.teamCredentialDefaults');
     else expect(prepared).toMatchObject({ preview: { teamCredentialDefaults: 'unavailable_without_requester_team',
-      summary: expect.stringContaining('starts without Team credential defaults') } });
+      summary: 'Create session.' } });
   });
 
   it('keeps each selected Team identity when aggregated references name the same resource', async () => {

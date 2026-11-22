@@ -2715,6 +2715,7 @@ const actionConfirmationTranslations = { fr: {
         homeTarget: ({ serverId }) => `Home : ${serverId}`,
         sessionTarget: ({ sessionId }) => `Session cible : ${sessionId}`,
         oneShotConsequence: 'L’approbation ne vaut que pour cette demande. Elle n’accorde aucune autorisation future, Action ou native.',
+        spawnWithoutTeamCredentialDefaults: 'La session démarre sans les identifiants par défaut de votre équipe.',
         homeUnavailable: 'Cette approbation appartient à un Home indisponible sur cet appareil. Reconnecte ce Home pour prendre une décision.',
         turnedOffTitle: ({ action }) => `L’action « ${action} » est désactivée`,
         turnedOffMessage: 'Réactive-la dans Réglages → Actions pour l’utiliser ici.',

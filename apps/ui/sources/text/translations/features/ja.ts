@@ -2655,6 +2655,7 @@ const actionConfirmationTranslations = { ja: {
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `対象セッション: ${sessionId}`,
         oneShotConsequence: '承認はこのリクエストにのみ適用されます。今後の Action 権限やネイティブ権限は付与されません。',
+        spawnWithoutTeamCredentialDefaults: 'チームのデフォルト認証情報を使わずに開始します。',
         homeUnavailable: 'この承認は、このデバイスでは利用できない Home に属しています。判断するには、その Home を再接続してください。',
         turnedOffTitle: ({ action }) => `「${action}」はオフです`,
         turnedOffMessage: '設定 → アクションでオンに戻すと、ここで使えます。',

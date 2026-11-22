@@ -5,6 +5,7 @@ export type ActionConfirmationTranslations = Readonly<{
     homeTarget: (params: Readonly<{ serverId: string }>) => string;
     sessionTarget: (params: Readonly<{ sessionId: string }>) => string;
     oneShotConsequence: string;
+    spawnWithoutTeamCredentialDefaults: string;
     homeUnavailable: string;
     /** The notice's title names the Action that is off (its catalog title). */
     turnedOffTitle: (params: Readonly<{ action: string }>) => string;
@@ -21,6 +22,7 @@ export const actionConfirmationTranslationsEnglish = { en: {
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Target session: ${sessionId}`,
         oneShotConsequence: 'Approval applies only to this request. It does not grant future Action or native permissions.',
+        spawnWithoutTeamCredentialDefaults: 'Starts without your Team’s credential defaults.',
         homeUnavailable: 'This approval belongs to a Home that is unavailable on this device. Reconnect that Home to decide it.',
         turnedOffTitle: ({ action }) => `${action} is turned off`,
         turnedOffMessage: 'Turn it back on in Settings → Actions to use it here.',

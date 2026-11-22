@@ -2701,6 +2701,7 @@ const actionConfirmationTranslations = { ru: {
         homeTarget: ({ serverId }) => `Home: ${serverId}`,
         sessionTarget: ({ sessionId }) => `Целевой сеанс: ${sessionId}`,
         oneShotConsequence: 'Одобрение действует только для этого запроса и не даёт будущих разрешений Action или системных разрешений.',
+        spawnWithoutTeamCredentialDefaults: 'Сеанс запустится без учётных данных команды по умолчанию.',
         homeUnavailable: 'Это одобрение относится к Home, недоступному на этом устройстве. Подключите Home повторно, чтобы принять решение.',
         turnedOffTitle: ({ action }) => `Действие «${action}» выключено`,
         turnedOffMessage: 'Включите его снова в Настройки → Действия, чтобы использовать здесь.',
