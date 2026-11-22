@@ -615,6 +615,8 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                 publishCurrentUiContext: () => undefined,
                 readSession: async ({ sessionId }) => ({
                     sessionId, serverId: 'server-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
+                    // The Session a send names in its notice (N13); other Sessions keep no title.
+                    ...(sessionId === 'session-picked' ? { title: 'Checkout fix' } : {}),
                     workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
                     pendingPermissions: [],
                     acceptedWorkspace: {
@@ -1550,17 +1552,17 @@ describe('the entry action controls on the mounted detail header', () => {
                     kind: 'session', session: { serverId: 'server-a', sessionId: 'session-picked' }, messageId: 'reply-1',
                 } },
             },
-            notice: 'Sent this action’s input to the selected Session.',
+            notice: 'Sent to Checkout fix.',
         },
         {
             name: 'accepted input',
             result: { status: 'accepted', localId: 'native-receipt' },
-            notice: 'Sent this action’s input to the selected Session.',
+            notice: 'Sent to Checkout fix.',
         },
         {
             name: 'held input',
             result: { status: 'held', localId: 'native-receipt', code: 'autonomous_check_in' },
-            notice: 'This action’s input is held in the selected Session.',
+            notice: 'Waiting in Checkout fix until it can take your message.',
         },
         {
             name: 'refused resume',
@@ -1569,13 +1571,13 @@ describe('the entry action controls on the mounted detail header', () => {
                 admissionResult: { status: 'accepted', localId: 'native-receipt' },
                 errorDetail: { kind: 'spawn_failure', reason: 'process_limit', errno: 'EAGAIN' },
             },
-            notice: 'Your message was not delivered because the Session could not resume. Send it again when the Session is available.',
+            notice: 'Couldn’t deliver to Checkout fix: it could not resume. Send it again once it’s running.',
             details: /resume_failed[\s\S]*process_limit[\s\S]*EAGAIN/u,
         },
         {
             name: 'failed turn',
             result: { status: 'failed', code: 'session_input_turn_failed', localId: 'native-receipt' },
-            notice: 'The turn failed in the selected Session. Check the Session before sending again.',
+            notice: 'The turn failed in Checkout fix. Check it before sending again.',
             details: /session_input_turn_failed/u,
         },
     ] satisfies ReadonlyArray<{

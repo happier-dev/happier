@@ -81,7 +81,7 @@ import {
   type TriageEntryActionControlsPropsV1,
   type TriageReviewPreparationV1,
 } from '../header/entryActionControls.js';
-import { describeTriageEntrySessionPhaseV1, type TriageEntrySessionNoticeV1 } from '../header/sessionStartOutcome.js';
+import { describeTriageEntrySessionPhaseV1, readTriageEntrySessionNoticeSessionV1, type TriageEntrySessionNoticeV1 } from '../header/sessionStartOutcome.js';
 import {
   useTriageEntrySessionStart,
   type TriageEntrySessionStartRequestV1,
@@ -283,11 +283,18 @@ export type TriageDetailPinActionV1 = Readonly<{
   handlers: TriageRowPinHandlersV1;
 }>;
 
-function renderEntrySessionNotice(notice: TriageEntrySessionNoticeV1 | null, text: ReturnType<typeof usePluginTranslation>) {
+function renderEntrySessionNotice(
+  notice: TriageEntrySessionNoticeV1 | null,
+  text: ReturnType<typeof usePluginTranslation>,
+  failure?: Readonly<{ codes: readonly string[]; requestId?: string }>,
+) {
   if (notice === null) return null;
-  return notice.failureCode === undefined
-    ? <Status tone={notice.tone} labelKey={notice.labelKey} label={notice.label} />
-    : <ActionFailureDetails code={notice.failureCode} message={text(notice.labelKey, notice.label)} />;
+  const label = text(notice.labelKey, notice.label, notice.labelParams);
+  if (notice.failureCode !== undefined) return <ActionFailureDetails code={notice.failureCode} message={label} />;
+  // A failure's codes sit behind the line's own quiet Details, so the sentence leads and nothing below outweighs it (N13).
+  return failure === undefined || failure.codes.length === 0 ? <Status tone={notice.tone} label={label} />
+    : <ErrorState layout="line" title={label} details={[...new Set(failure.codes),
+      ...(failure.requestId === undefined ? [] : [`${text('plugins.triage.sourceFailure.requestId', 'Request ID')}: ${failure.requestId}`])].join('\n')} />;
 }
 
 /**
@@ -518,7 +525,14 @@ function TriageEntryScopedActionRegion(props: Readonly<{
   const retireReviewChooser = React.useCallback(() => {
     controller.reset();
   }, [controller]);
-  const notice = describeTriageEntrySessionPhaseV1(controller.phase);
+  // A send names the Session it went to (N13), read through the host's one Session state owner.
+  const noticeSessionId = readTriageEntrySessionNoticeSessionV1(controller.phase)?.sessionId;
+  const noticeSessionIds = React.useMemo(() => noticeSessionId === undefined ? [] : [noticeSessionId], [noticeSessionId]);
+  const noticeSessionState = useSessionStates(noticeSessionIds).sessions.get(noticeSessionId ?? '')?.state ?? null;
+  const sessionName = noticeSessionState === null
+    ? text('plugins.triage.surface.session.selectedSessionName', 'the selected Session')
+    : noticeSessionState.title?.trim() || text('session.untitled', 'Untitled session');
+  const notice = describeTriageEntrySessionPhaseV1(controller.phase, { sessionName });
   const sessionFailure = notice?.failure ?? (controller.phase.kind === 'unavailable'
     ? controller.phase.failure : controller.configuredResult?.failure);
   const retainedNotice = controller.phase.kind === 'unavailable' && controller.phase.reason === 'handoffOutcomeUnknown'
@@ -615,9 +629,9 @@ function TriageEntryScopedActionRegion(props: Readonly<{
           onFinished={retireReviewChooser}
         />
       )}
-      {renderEntrySessionNotice(notice, text)}
+      {renderEntrySessionNotice(notice, text, sessionFailure)}
       {renderEntrySessionNotice(retainedNotice, text)}
-      {sessionFailure === undefined ? null : (
+      {sessionFailure === undefined || (notice !== null && notice.failureCode === undefined) ? null : (
         <PullRequestFailureDetails codes={sessionFailure.codes} requestId={sessionFailure.requestId} />
       )}
       {comparisonFailed ? <Status tone="warning"

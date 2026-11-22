@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier ne peut pas accéder à votre compte pour le moment. Les épingles ne peuvent donc pas être modifiées.",
   "plugins.triage.surface.row.openToRead": "Ouvrir pour lire les détails",
   "plugins.triage.surface.session.handoffComposed": "Cette entrée a été ajoutée au brouillon de la session.",
-  "plugins.triage.surface.session.handoffHeld": "Les données de cette action sont en attente dans la session sélectionnée.",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier n’a pas pu confirmer le résultat de cette action. Vérifiez dans vos sessions si du travail a déjà commencé.",
   "plugins.triage.surface.session.handoffReceipt": "Consultez la session sélectionnée pour connaître le résultat de la transmission de cette action.",
   "plugins.triage.surface.session.handoffRefused": "La session sélectionnée n’a pas pu accepter les données de cette action.",
   "plugins.triage.surface.session.handoffSelection": "Cette action nécessite de choisir une autre session ou un autre espace de travail.",
-  "plugins.triage.surface.session.handoffResumeFailed": "Votre message n’a pas été transmis, car la session n’a pas pu reprendre. Renvoyez-le lorsque la session sera disponible.",
-  "plugins.triage.surface.session.handoffSent": "Les données de cette action ont été envoyées à la session sélectionnée.",
-  "plugins.triage.surface.session.handoffTurnFailed": "Le tour a échoué dans la session sélectionnée. Vérifiez la session avant de renvoyer le message.",
   "plugins.triage.surface.session.handoffUnavailable": "Cette action n’a pas pu être effectuée.",
   "plugins.triage.surface.session.handoffUncertain": "Happier n’a pas pu confirmer cette action. Appuyez à nouveau pour reprendre la même demande.",
   "plugins.triage.surface.session.workspaceMismatch": "Ce projet ne peut pas préparer la copie de travail de la source. Choisissez un projet sur la machine de la source avec un dépôt correspondant.",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "Impossible de lire ces emplacements",
   "plugins.triage.tasks.where.more": "Afficher plus d’emplacements",
   "plugins.triage.tasks.where.recent": "Récents",
-  "plugins.triage.tasks.where.lastUsed": "Dernier utilisé"
+  "plugins.triage.tasks.where.lastUsed": "Dernier utilisé",
+  "plugins.triage.surface.session.sendingTo": "Envoi à {session}…",
+  "plugins.triage.surface.session.sentTo": "Envoyé à {session}.",
+  "plugins.triage.surface.session.heldIn": "En attente dans {session} jusqu’à ce qu’elle puisse recevoir votre message.",
+  "plugins.triage.surface.session.resumeFailedIn": "Impossible de livrer à {session} : elle n’a pas pu reprendre. Renvoyez-le une fois qu’elle tourne.",
+  "plugins.triage.surface.session.turnFailedIn": "Le tour a échoué dans {session}. Vérifiez-la avant de renvoyer.",
+  "plugins.triage.surface.session.selectedSessionName": "la session sélectionnée",
+  "plugins.triage.surface.failure.pacedUntil": "{names} nous a demandé de ralentir jusqu’à {time}."
 }

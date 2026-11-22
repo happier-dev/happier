@@ -42,9 +42,38 @@ export type TriageEntrySessionNoticeV1 = Readonly<{
   tone: 'muted' | 'warning' | 'danger';
   labelKey: string;
   label: string;
+  /** Values the translated `labelKey` takes (the Session a send names); `label` already carries them in English. */
+  labelParams?: Readonly<Record<string, string>>;
   failureCode?: string;
   failure?: TriageNewSessionFailureV1;
 }>;
+
+/** Who a send went to, so its notice can name the Session (N13); the caller resolves the name from it. */
+export type TriageEntrySessionNoticeContextV1 = Readonly<{ sessionName?: string }>;
+
+const SELECTED_SESSION_NAME_V1 = 'the selected Session';
+
+/** A notice about one existing Session, named by the caller's resolved title or "the selected Session". */
+function sessionNotice(
+  tone: TriageEntrySessionNoticeV1['tone'],
+  labelKey: string,
+  label: string,
+  context: TriageEntrySessionNoticeContextV1 | undefined,
+  failure?: TriageNewSessionFailureV1,
+): TriageEntrySessionNoticeV1 {
+  const session = context?.sessionName ?? SELECTED_SESSION_NAME_V1;
+  return Object.freeze({ ...notice(tone, labelKey, label.replace('{session}', session), failure), labelParams: { session } });
+}
+
+/** The existing Session a phase sends to, when it names one: the caller reads its title for the notice. */
+export function readTriageEntrySessionNoticeSessionV1(
+  phase: TriageEntrySessionStartPhaseV1,
+): Readonly<{ serverId: string; sessionId: string }> | undefined {
+  if (phase.kind === 'starting') return phase.session;
+  if (phase.kind !== 'handoffSettled') return undefined;
+  const handoff = phase.result.handoff;
+  return handoff.kind === 'sendResult' ? handoff.session : undefined;
+}
 
 function notice(
   tone: TriageEntrySessionNoticeV1['tone'],
@@ -166,7 +195,7 @@ type FailedHandoffSend = Extract<
   { status: 'failed' }
 >;
 
-function describeFailedHandoffSend(result: FailedHandoffSend): TriageEntrySessionNoticeV1 {
+function describeFailedHandoffSend(result: FailedHandoffSend, context: TriageEntrySessionNoticeContextV1 | undefined): TriageEntrySessionNoticeV1 {
   switch (result.code) {
     case 'resume_failed': {
       const detail = result.errorDetail;
@@ -183,19 +212,21 @@ function describeFailedHandoffSend(result: FailedHandoffSend): TriageEntrySessio
         ...(detail.kind === 'provider_error' ? [detail.providerError.code, detail.providerError.reason,
           detail.providerError.savedSecretReason] : []),
       ];
-      return notice(
+      return sessionNotice(
         'warning',
-        'plugins.triage.surface.session.handoffResumeFailed',
-        'Your message was not delivered because the Session could not resume. Send it again when the Session is available.',
+        'plugins.triage.surface.session.resumeFailedIn',
+        'Couldn’t deliver to {session}: it could not resume. Send it again once it’s running.',
+        context,
         { codes: [result.code, ...diagnostics].filter((code): code is string => typeof code === 'string') },
       );
     }
     case 'session_input_turn_failed': {
       const issue = result.runtimeIssueV1;
-      return notice(
+      return sessionNotice(
         'warning',
-        'plugins.triage.surface.session.handoffTurnFailed',
-        'The turn failed in the selected Session. Check the Session before sending again.',
+        'plugins.triage.surface.session.turnFailedIn',
+        'The turn failed in {session}. Check it before sending again.',
+        context,
         { codes: [result.code, issue?.code, issue?.failureCause?.code, issue?.failureCause?.reason, issue?.failureCause?.failureReason]
           .filter((code): code is string => typeof code === 'string') },
       );
@@ -205,6 +236,7 @@ function describeFailedHandoffSend(result: FailedHandoffSend): TriageEntrySessio
 
 export function describeTriageEntrySessionPhaseV1(
   phase: TriageEntrySessionStartPhaseV1,
+  context?: TriageEntrySessionNoticeContextV1,
 ): TriageEntrySessionNoticeV1 | null {
   switch (phase.kind) {
     case 'idle':
@@ -217,11 +249,14 @@ export function describeTriageEntrySessionPhaseV1(
         'Resolving this action\u2019s profile, prompt and working directory\u2026',
       );
     case 'starting':
-      return notice(
-        'muted',
-        'plugins.triage.surface.session.starting',
-        'Starting a session for this entry…',
-      );
+      // Sending to a Session that already exists starts nothing (N13).
+      return phase.session !== undefined
+        ? sessionNotice('muted', 'plugins.triage.surface.session.sendingTo', 'Sending to {session}…', context)
+        : notice(
+          'muted',
+          'plugins.triage.surface.session.starting',
+          'Starting a session for this entry…',
+        );
     case 'handoffSettled': {
       const result = phase.result.handoff;
       switch (result.kind) {
@@ -240,13 +275,14 @@ export function describeTriageEntrySessionPhaseV1(
                 ...(typeof send.code === 'string' ? { failureCode: send.code } : {}),
               });
             case 'failed':
-              return describeFailedHandoffSend(send);
+              return describeFailedHandoffSend(send, context);
             case 'cancelled':
               return notice('warning', 'plugins.triage.surface.session.handoffRefused', 'The selected Session could not accept this action’s input.');
             case 'held':
-              return notice('muted', 'plugins.triage.surface.session.handoffHeld', 'This action’s input is held in the selected Session.');
+              return sessionNotice('muted', 'plugins.triage.surface.session.heldIn',
+                'Waiting in {session} until it can take your message.', context);
             default:
-              return notice('muted', 'plugins.triage.surface.session.handoffSent', 'Sent this action’s input to the selected Session.');
+              return sessionNotice('muted', 'plugins.triage.surface.session.sentTo', 'Sent to {session}.', context);
           }
         }
         case 'uncertain':

@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier nie może teraz połączyć się z Twoim kontem, więc nie można zmieniać przypięć.",
   "plugins.triage.surface.row.openToRead": "Otwórz, aby przeczytać szczegóły",
   "plugins.triage.surface.session.handoffComposed": "Ten wpis dodano do szkicu sesji.",
-  "plugins.triage.surface.session.handoffHeld": "Dane wejściowe tej akcji oczekują w wybranej sesji.",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier nie mógł potwierdzić wyniku tej akcji. Sprawdź swoje sesje, aby zobaczyć, czy praca już się rozpoczęła.",
   "plugins.triage.surface.session.handoffReceipt": "Sprawdź wynik dostarczenia tej akcji w wybranej sesji.",
   "plugins.triage.surface.session.handoffRefused": "Wybrana sesja nie mogła przyjąć danych wejściowych tej akcji.",
   "plugins.triage.surface.session.handoffSelection": "Ta akcja wymaga wybrania innej sesji lub innego obszaru roboczego.",
-  "plugins.triage.surface.session.handoffResumeFailed": "Wiadomość nie została dostarczona, ponieważ nie udało się wznowić sesji. Wyślij ją ponownie, gdy sesja będzie dostępna.",
-  "plugins.triage.surface.session.handoffSent": "Dane wejściowe tej akcji wysłano do wybranej sesji.",
-  "plugins.triage.surface.session.handoffTurnFailed": "Tura w wybranej sesji zakończyła się niepowodzeniem. Sprawdź sesję przed ponownym wysłaniem wiadomości.",
   "plugins.triage.surface.session.handoffUnavailable": "Nie udało się ukończyć tej akcji.",
   "plugins.triage.surface.session.handoffUncertain": "Happier nie mógł potwierdzić tej akcji. Naciśnij ponownie, aby wznowić to samo żądanie.",
   "plugins.triage.surface.session.workspaceMismatch": "Ten projekt nie może przygotować kopii roboczej źródła. Wybierz projekt na maszynie źródła z pasującym repozytorium.",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "Nie udało się odczytać tych miejsc",
   "plugins.triage.tasks.where.more": "Pokaż więcej miejsc",
   "plugins.triage.tasks.where.recent": "Ostatnie",
-  "plugins.triage.tasks.where.lastUsed": "Ostatnio używane"
+  "plugins.triage.tasks.where.lastUsed": "Ostatnio używane",
+  "plugins.triage.surface.session.sendingTo": "Wysyłanie do: {session}…",
+  "plugins.triage.surface.session.sentTo": "Wysłano do: {session}.",
+  "plugins.triage.surface.session.heldIn": "Czeka w: {session}, aż sesja będzie mogła przyjąć wiadomość.",
+  "plugins.triage.surface.session.resumeFailedIn": "Nie udało się dostarczyć do: {session} — sesji nie udało się wznowić. Wyślij ponownie, gdy będzie działać.",
+  "plugins.triage.surface.session.turnFailedIn": "Tura w: {session} zakończyła się niepowodzeniem. Sprawdź sesję przed ponownym wysłaniem.",
+  "plugins.triage.surface.session.selectedSessionName": "wybrana sesja",
+  "plugins.triage.surface.failure.pacedUntil": "{names} poprosił o zwolnienie do {time}."
 }

@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier 目前无法连接到你的账户，因此无法更改置顶项。",
   "plugins.triage.surface.row.openToRead": "打开以阅读详情",
   "plugins.triage.surface.session.handoffComposed": "已将此条目添加到会话草稿。",
-  "plugins.triage.surface.session.handoffHeld": "此操作的输入内容已暂存在所选会话中。",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier 无法确认此操作的结果。请检查你的会话，查看是否已有工作开始。",
   "plugins.triage.surface.session.handoffReceipt": "请在所选会话中查看此操作的发送结果。",
   "plugins.triage.surface.session.handoffRefused": "所选会话无法接受此操作的输入内容。",
   "plugins.triage.surface.session.handoffSelection": "此操作需要选择另一个会话或工作区。",
-  "plugins.triage.surface.session.handoffResumeFailed": "会话无法恢复，消息未送达。请在会话可用后重新发送。",
-  "plugins.triage.surface.session.handoffSent": "已将此操作的输入内容发送到所选会话。",
-  "plugins.triage.surface.session.handoffTurnFailed": "所选会话中的对话轮次失败。请先检查会话，再重新发送。",
   "plugins.triage.surface.session.handoffUnavailable": "无法完成此操作。",
   "plugins.triage.surface.session.handoffUncertain": "Happier 无法确认此操作。请再按一次以继续同一个请求。",
   "plugins.triage.surface.session.workspaceMismatch": "此项目无法准备来源的工作副本。请在来源机器上选择具有匹配仓库的项目。",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "无法读取这些位置",
   "plugins.triage.tasks.where.more": "显示更多位置",
   "plugins.triage.tasks.where.recent": "最近",
-  "plugins.triage.tasks.where.lastUsed": "上次使用"
+  "plugins.triage.tasks.where.lastUsed": "上次使用",
+  "plugins.triage.surface.session.sendingTo": "正在发送到 {session}…",
+  "plugins.triage.surface.session.sentTo": "已发送到 {session}。",
+  "plugins.triage.surface.session.heldIn": "正在 {session} 中等待，直到它可以接收你的消息。",
+  "plugins.triage.surface.session.resumeFailedIn": "无法送达 {session}：它未能恢复。待它运行后再发送一次。",
+  "plugins.triage.surface.session.turnFailedIn": "{session} 中的对话轮次失败。请先检查它，再重新发送。",
+  "plugins.triage.surface.session.selectedSessionName": "所选会话",
+  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我们放慢速度，直到 {time}。"
 }

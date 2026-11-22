@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier cannot reach your account right now, so pins cannot be changed.",
   "plugins.triage.surface.row.openToRead": "Open to read details",
   "plugins.triage.surface.session.handoffComposed": "Added this entry to the Session draft.",
-  "plugins.triage.surface.session.handoffHeld": "This action’s input is held in the selected Session.",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier could not confirm this action’s outcome. Check your Sessions for any work already started.",
   "plugins.triage.surface.session.handoffReceipt": "Check the selected Session for this action’s delivery result.",
   "plugins.triage.surface.session.handoffRefused": "The selected Session could not accept this action’s input.",
   "plugins.triage.surface.session.handoffSelection": "This action needs another Session or workspace choice.",
-  "plugins.triage.surface.session.handoffResumeFailed": "Your message was not delivered because the Session could not resume. Send it again when the Session is available.",
-  "plugins.triage.surface.session.handoffSent": "Sent this action’s input to the selected Session.",
-  "plugins.triage.surface.session.handoffTurnFailed": "The turn failed in the selected Session. Check the Session before sending again.",
   "plugins.triage.surface.session.handoffUnavailable": "This action could not be completed.",
   "plugins.triage.surface.session.handoffUncertain": "Happier could not confirm this action. Press again to resume the same request.",
   "plugins.triage.surface.session.workspaceMismatch": "This project cannot prepare the source’s checkout. Choose a project on the source’s Machine with a matching repository.",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "These places couldn’t be read",
   "plugins.triage.tasks.where.more": "Show more places",
   "plugins.triage.tasks.where.recent": "Recent",
-  "plugins.triage.tasks.where.lastUsed": "Last used"
+  "plugins.triage.tasks.where.lastUsed": "Last used",
+  "plugins.triage.surface.session.sendingTo": "Sending to {session}…",
+  "plugins.triage.surface.session.sentTo": "Sent to {session}.",
+  "plugins.triage.surface.session.heldIn": "Waiting in {session} until it can take your message.",
+  "plugins.triage.surface.session.resumeFailedIn": "Couldn’t deliver to {session}: it could not resume. Send it again once it’s running.",
+  "plugins.triage.surface.session.turnFailedIn": "The turn failed in {session}. Check it before sending again.",
+  "plugins.triage.surface.session.selectedSessionName": "the selected Session",
+  "plugins.triage.surface.failure.pacedUntil": "{names} asked us to slow down until {time}."
 }

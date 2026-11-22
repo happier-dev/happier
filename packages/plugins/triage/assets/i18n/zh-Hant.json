@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier 目前無法連線至你的帳戶，因此無法變更釘選項目。",
   "plugins.triage.surface.row.openToRead": "開啟以閱讀詳細資料",
   "plugins.triage.surface.session.handoffComposed": "已將此項目加入工作階段草稿。",
-  "plugins.triage.surface.session.handoffHeld": "此動作的輸入內容已暫存在所選工作階段中。",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier 無法確認此動作的結果。請檢查你的工作階段，查看是否已有工作開始。",
   "plugins.triage.surface.session.handoffReceipt": "請在所選工作階段中查看此動作的傳送結果。",
   "plugins.triage.surface.session.handoffRefused": "所選工作階段無法接受此動作的輸入內容。",
   "plugins.triage.surface.session.handoffSelection": "此動作需要選擇另一個工作階段或工作區。",
-  "plugins.triage.surface.session.handoffResumeFailed": "工作階段無法恢復，訊息未送達。請在工作階段可用後重新傳送。",
-  "plugins.triage.surface.session.handoffSent": "已將此動作的輸入內容傳送至所選工作階段。",
-  "plugins.triage.surface.session.handoffTurnFailed": "所選工作階段中的對話輪次失敗。請先檢查工作階段，再重新傳送。",
   "plugins.triage.surface.session.handoffUnavailable": "無法完成此動作。",
   "plugins.triage.surface.session.handoffUncertain": "Happier 無法確認此動作。請再按一次以繼續同一個請求。",
   "plugins.triage.surface.session.workspaceMismatch": "此專案無法準備來源的工作副本。請在來源機器上選擇具有相符儲存庫的專案。",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "無法讀取這些位置",
   "plugins.triage.tasks.where.more": "顯示更多位置",
   "plugins.triage.tasks.where.recent": "最近",
-  "plugins.triage.tasks.where.lastUsed": "上次使用"
+  "plugins.triage.tasks.where.lastUsed": "上次使用",
+  "plugins.triage.surface.session.sendingTo": "正在傳送至 {session}…",
+  "plugins.triage.surface.session.sentTo": "已傳送至 {session}。",
+  "plugins.triage.surface.session.heldIn": "正在 {session} 中等待，直到它可以接收你的訊息。",
+  "plugins.triage.surface.session.resumeFailedIn": "無法送達 {session}：它未能恢復。待它執行後再傳送一次。",
+  "plugins.triage.surface.session.turnFailedIn": "{session} 中的對話輪次失敗。請先檢查它，再重新傳送。",
+  "plugins.triage.surface.session.selectedSessionName": "所選工作階段",
+  "plugins.triage.surface.failure.pacedUntil": "{names} 要求我們放慢速度，直到 {time}。"
 }

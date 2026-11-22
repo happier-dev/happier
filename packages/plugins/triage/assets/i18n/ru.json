@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Сейчас Happier не может подключиться к вашему аккаунту, поэтому закрепления нельзя изменить.",
   "plugins.triage.surface.row.openToRead": "Открыть для чтения подробностей",
   "plugins.triage.surface.session.handoffComposed": "Эта запись добавлена в черновик сессии.",
-  "plugins.triage.surface.session.handoffHeld": "Входные данные этого действия ожидают обработки в выбранной сессии.",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier не удалось подтвердить результат этого действия. Проверьте свои сессии: возможно, работа уже началась.",
   "plugins.triage.surface.session.handoffReceipt": "Проверьте результат доставки этого действия в выбранной сессии.",
   "plugins.triage.surface.session.handoffRefused": "Выбранная сессия не смогла принять входные данные этого действия.",
   "plugins.triage.surface.session.handoffSelection": "Для этого действия нужно выбрать другую сессию или рабочее пространство.",
-  "plugins.triage.surface.session.handoffResumeFailed": "Сообщение не доставлено, потому что не удалось возобновить сеанс. Отправьте его ещё раз, когда сеанс будет доступен.",
-  "plugins.triage.surface.session.handoffSent": "Входные данные этого действия отправлены в выбранную сессию.",
-  "plugins.triage.surface.session.handoffTurnFailed": "Ход в выбранном сеансе завершился с ошибкой. Проверьте сеанс перед повторной отправкой сообщения.",
   "plugins.triage.surface.session.handoffUnavailable": "Не удалось выполнить это действие.",
   "plugins.triage.surface.session.handoffUncertain": "Happier не удалось подтвердить это действие. Нажмите ещё раз, чтобы продолжить тот же запрос.",
   "plugins.triage.surface.session.workspaceMismatch": "Этот проект не может подготовить рабочую копию источника. Выберите проект на машине источника с соответствующим репозиторием.",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "Не удалось прочитать эти места",
   "plugins.triage.tasks.where.more": "Показать больше мест",
   "plugins.triage.tasks.where.recent": "Недавние",
-  "plugins.triage.tasks.where.lastUsed": "Последнее"
+  "plugins.triage.tasks.where.lastUsed": "Последнее",
+  "plugins.triage.surface.session.sendingTo": "Отправка в «{session}»…",
+  "plugins.triage.surface.session.sentTo": "Отправлено в «{session}».",
+  "plugins.triage.surface.session.heldIn": "Ожидает в «{session}», пока сеанс не сможет принять сообщение.",
+  "plugins.triage.surface.session.resumeFailedIn": "Не удалось доставить в «{session}»: сеанс не возобновился. Отправьте снова, когда он будет запущен.",
+  "plugins.triage.surface.session.turnFailedIn": "Ход в «{session}» завершился с ошибкой. Проверьте сеанс перед повторной отправкой.",
+  "plugins.triage.surface.session.selectedSessionName": "выбранный сеанс",
+  "plugins.triage.surface.failure.pacedUntil": "{names} попросил снизить частоту запросов до {time}."
 }

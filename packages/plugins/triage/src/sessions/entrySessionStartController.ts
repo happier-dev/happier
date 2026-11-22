@@ -277,7 +277,8 @@ export type TriageEntrySessionStartPhaseV1 =
     | Readonly<{ kind: 'resolving' }>
     /** The host's New Session surface is open and the reader is choosing. */
     | Readonly<{ kind: 'choosing' }>
-    | Readonly<{ kind: 'starting' }>
+    /** `session`: the input goes to this existing Session, so the reader is told it is sending there (N13). */
+    | Readonly<{ kind: 'starting'; session?: ActionSessionAddressV1 }>
     /** The configured Action retains its native receipt, refusal and recovery unchanged. */
     | Readonly<{ kind: 'handoffSettled'; result: TriageRunConfiguredActionResultV1 }>
     /** The orchestrator answered. Every arm — including its refusals — is here. */
@@ -1200,7 +1201,7 @@ export function createTriageEntrySessionStartController(
                 ...(singleIntent === undefined ? {} : { singleIntent }), ...(resumeStart === undefined ? {} : { resumeStart }) });
             preparedComparison = request.comparisonSource;
             prepared = true;
-            setPhase(STARTING);
+            setPhase(session === undefined ? STARTING : Object.freeze({ kind: 'starting', session }));
             return { input: projectNativeJsonValueForTransport(preparedAction) };
         } catch (error) {
             inFlight.current = false;

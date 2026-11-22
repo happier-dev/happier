@@ -1000,14 +1000,10 @@
   "plugins.triage.surface.pins.unavailable": "Happier no puede acceder a tu cuenta en este momento, por lo que no se pueden cambiar los elementos fijados.",
   "plugins.triage.surface.row.openToRead": "Abrir para leer los detalles",
   "plugins.triage.surface.session.handoffComposed": "Esta entrada se ha añadido al borrador de la sesión.",
-  "plugins.triage.surface.session.handoffHeld": "Los datos de esta acción están en espera en la sesión seleccionada.",
   "plugins.triage.surface.session.handoffOutcomeUnknown": "Happier no pudo confirmar el resultado de esta acción. Revisa tus sesiones por si ya se ha iniciado algún trabajo.",
   "plugins.triage.surface.session.handoffReceipt": "Consulta la sesión seleccionada para ver el resultado del envío de esta acción.",
   "plugins.triage.surface.session.handoffRefused": "La sesión seleccionada no pudo aceptar los datos de esta acción.",
   "plugins.triage.surface.session.handoffSelection": "Esta acción requiere elegir otra sesión u otro espacio de trabajo.",
-  "plugins.triage.surface.session.handoffResumeFailed": "Tu mensaje no se entregó porque no se pudo reanudar la sesión. Vuelve a enviarlo cuando la sesión esté disponible.",
-  "plugins.triage.surface.session.handoffSent": "Los datos de esta acción se han enviado a la sesión seleccionada.",
-  "plugins.triage.surface.session.handoffTurnFailed": "El turno falló en la sesión seleccionada. Revisa la sesión antes de volver a enviar el mensaje.",
   "plugins.triage.surface.session.handoffUnavailable": "No se pudo completar esta acción.",
   "plugins.triage.surface.session.handoffUncertain": "Happier no pudo confirmar esta acción. Pulsa de nuevo para reanudar la misma solicitud.",
   "plugins.triage.surface.session.workspaceMismatch": "Este proyecto no puede preparar la copia de trabajo de la fuente. Elige un proyecto en la máquina de la fuente con un repositorio que coincida.",
@@ -1040,5 +1036,12 @@
   "plugins.triage.tasks.where.failed": "No se pudieron leer estas ubicaciones",
   "plugins.triage.tasks.where.more": "Mostrar más ubicaciones",
   "plugins.triage.tasks.where.recent": "Recientes",
-  "plugins.triage.tasks.where.lastUsed": "Último usado"
+  "plugins.triage.tasks.where.lastUsed": "Último usado",
+  "plugins.triage.surface.session.sendingTo": "Enviando a {session}…",
+  "plugins.triage.surface.session.sentTo": "Enviado a {session}.",
+  "plugins.triage.surface.session.heldIn": "Esperando en {session} hasta que pueda recibir tu mensaje.",
+  "plugins.triage.surface.session.resumeFailedIn": "No se pudo entregar a {session}: no pudo reanudarse. Vuelve a enviarlo cuando esté en marcha.",
+  "plugins.triage.surface.session.turnFailedIn": "El turno falló en {session}. Revísala antes de volver a enviar.",
+  "plugins.triage.surface.session.selectedSessionName": "la sesión seleccionada",
+  "plugins.triage.surface.failure.pacedUntil": "{names} nos pidió ir más despacio hasta las {time}."
 }
