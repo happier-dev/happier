@@ -4,7 +4,7 @@ import { SCM_OPERATION_ERROR_CODES } from '../scm/operationError.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmBranchWorkEvidence } from '../scm/index.js';
 import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
-import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
+import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
 
 type UnreadSessions = NonNullable<UsageWorkSourceSnapshot['unreadSessions']>;
@@ -13,7 +13,7 @@ type UnreadReason = keyof UnreadSessions | 'machine_offline';
 export type SessionWorkSourceResult = Readonly<(
     | { status: 'unsupported' | 'error' | 'unknown' }
     | { status: 'partial' | 'unsupported' | 'error'; evidence: readonly UsageWorkEvidence[]; branchEvidence?: readonly ScmBranchWorkEvidence[] }
-) & { unreadReason?: UnreadReason }>;
+) & { unreadReason?: UnreadReason; pullRequestsRead?: true }>;
 
 function classifyUnreadReason(code: string | undefined): UnreadReason {
     switch (code) {
@@ -53,6 +53,40 @@ export function readUsageWorkSessionTurns(accounting: UsageAccountingSourceSnaps
     readonly Readonly<{ sessionId: string; turnId: string }>[] | undefined {
     return readUsageAccountingSessionMembership(accounting)?.turns ?? accounting?.contributions
         ?.flatMap(row => row.sessionId && row.turnId ? [{ sessionId: row.sessionId, turnId: row.turnId }] : []);
+}
+
+/** Compute coverage only from the PR acquisition result for this admitted population. */
+export function hasUsagePullRequestRead(
+    turns: ReturnType<typeof readUsageWorkSessionTurns>, readSessions: readonly string[] | undefined,
+): boolean {
+    if (turns === undefined || readSessions === undefined) return false;
+    const answered = new Set(readSessions);
+    return turns.every(turn => answered.has(turn.sessionId));
+}
+
+export function projectUsagePublicWorkLenses(
+    accounting: NonNullable<UsageAccountingSourceSnapshot['value']>,
+    evidence: readonly UsageWorkEvidence[],
+    readSessions: readonly string[] | undefined,
+): { execution: 'happier' | 'outside'; facts: { mergedPrs?: number } }[] {
+    const prepared = accounting.summary?.publicProfileAccounting;
+    const rows = accounting.contributions;
+    const turns = readUsageAccountingSessionMembership(accounting)?.turns
+        ?? (rows ? projectUsageAccountingSessionMembership(rows).turns : undefined);
+    if (!turns) return [];
+    return (['happier', 'outside'] as const).map(execution => {
+        const selected = turns.filter(turn => turn.executions.includes(execution));
+        const complete = selected.length > 0 ? hasUsagePullRequestRead(selected, readSessions)
+            : readSessions !== undefined && (prepared
+                ? prepared.lenses.some(lens => lens.execution === execution && lens.population.contributionCount === 0
+                    && lens.population.coverage.status === 'complete_for_supplied_facts')
+                : accounting.coverage?.status === 'complete' && accounting.coverage.range.complete
+                    && rows?.every(row => row.sourceContext?.execution !== undefined
+                        && row.sourceContext.execution !== 'unknown' && row.sourceContext.execution !== execution) === true);
+        const outcomes = resolveUsageWorkOutcomeAdmissions({ turns: selected, evidence }).outcomes;
+        const summary = projectUsageWorkSummary(outcomes, complete);
+        return { execution, facts: summary?.mergedPrCount === undefined ? {} : { mergedPrs: summary.mergedPrCount } };
+    });
 }
 
 export async function collectUsageWorkSources(input: Readonly<{
@@ -131,6 +165,7 @@ export async function collectUsageWorkSources(input: Readonly<{
                         continue;
                     }
                     results.set(session.sessionId, { status: row.status,
+                        ...(row.pullRequestsRead === true ? { pullRequestsRead: true } : {}),
                         ...(row.errorCode === undefined ? {} : { unreadReason: classifyUnreadReason(row.errorCode) }),
                         evidence: (row.evidence ?? []).filter(witness => turns.has(witness.turnId)),
                         ...(row.branchEvidence === undefined ? {} : { branchEvidence: row.branchEvidence.filter(witness => turns.has(witness.turnId)) }),
@@ -152,11 +187,13 @@ export async function collectUsageWorkSources(input: Readonly<{
     }
     const sessions = new Map(await Promise.all([...sessionIds].map(async sessionId => [sessionId, await sessionReads.get(readKeys.get(sessionId)!)!] as const)));
     return queries.map((query): UsageWorkSourceSnapshot => {
-        const admittedTurns = turnsByQuery.get(getUsageQueryKey(query));
+        const key = getUsageQueryKey(query);
+        const admittedTurns = turnsByQuery.get(key);
         if (!admittedTurns) return { query, status: 'unknown' };
         const turns = new Set(admittedTurns.map(turn => JSON.stringify([turn.sessionId, turn.turnId])));
-        const selected = [...new Set(admittedTurns.map(turn => turn.sessionId))]
-            .map(sessionId => sessions.get(sessionId)!);
+        const selectedIds = [...new Set(admittedTurns.map(turn => turn.sessionId))];
+        const selected = selectedIds.map(sessionId => sessions.get(sessionId)!);
+        const pullRequestReadSessions = selectedIds.filter(sessionId => sessions.get(sessionId)?.pullRequestsRead === true);
         const evidence = selected.flatMap(source => 'evidence' in source ? source.evidence : [])
             .filter(witness => turns.has(JSON.stringify([witness.sessionId, witness.turnId])));
         const branchEvidence = selected.flatMap(source => 'branchEvidence' in source ? source.branchEvidence ?? [] : [])
@@ -171,14 +208,15 @@ export async function collectUsageWorkSources(input: Readonly<{
         }
         const failedReplacement = selected.length > 0 && selected.every(source => source.status === 'error' && !('evidence' in source));
         const readFailed = selected.some(source => source.status === 'error');
-        const status = selected.some(source => source.status === 'partial') ? 'partial' as const
+        const value = byQuery.get(key);
+        const measuredEmpty = selected.length === 0 && value?.totals.eventCount === 0
+            && value.coverage?.status === 'complete' && value.coverage.range.complete;
+        const status = measuredEmpty ? 'available' as const : selected.some(source => source.status === 'partial') ? 'partial' as const
             : readFailed ? 'error' as const : selected.some(source => source.status === 'unsupported') ? 'unsupported' as const : 'unknown' as const;
-        const summary = status === 'partial' && (query.workProjection === 'summary' || query.population === 'public_eligible_personal')
-            ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence }).outcomes) : undefined;
         const errorCode = readFailed ? 'work_evidence_failed'
             : hasOfflineMachine && (status === 'unknown' || status === 'partial') ? 'machine_offline' : undefined;
         return { query, ...(failedReplacement ? {} : { evidence, branchEvidence }), status,
-            ...(summary ? { summary } : {}),
+            pullRequestReadSessions,
             ...(Object.keys(unreadSessions).length ? { unreadSessions } : {}),
             ...(errorCode === undefined ? {} : { errorCode }) };
     });

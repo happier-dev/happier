@@ -135,9 +135,13 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
     (reason) =>
       summary.unallocatedByReason[reason] === null || (summary.unallocatedByReason[reason] ?? 0) > 0,
   );
-  const noneLinked = summary.allocated === 0 && summary.total !== null && summary.total > 0;
   // The PR qualifier is said once for the band: rows carry PR facts only when some project has one.
   const anyLinked = summary.projects.some((row) => row.outcomes.length > 0);
+  const allocationRead = props.slice.workSummary?.pullRequestsRead === true;
+  const noneLinked = !anyLinked && summary.allocated === 0 && summary.total !== null && summary.total > 0;
+  const showAllocationParts = allocationRead && !noneLinked;
+  const allocationStatus = !allocationRead ? t('usage.board.work.workUnavailableTitle')
+    : noneLinked ? t('usage.board.work.noneLinked') : null;
   const lead = leadingUsageRows(summary.projects, showAllProjects);
   const projects = lead.rows;
   const combineDatums = (label: string, values: readonly ReturnType<typeof datum>[]) => {
@@ -151,7 +155,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
   ]);
   const conservationDatum = combineDatums(t('usage.board.work.allProjects'), [
     datum(t('usage.board.work.allProjects'), summary.total),
-    ...(noneLinked ? [] : [datum(t('usage.board.work.linkedToPrs'), summary.allocated, summary.allocatedBasis),
+    ...(!showAllocationParts ? [] : [datum(t('usage.board.work.linkedToPrs'), summary.allocated, summary.allocatedBasis),
       datum(t('usage.board.work.notLinked'), summary.unallocated, summary.unallocatedBasis),
       ...reasons.map(reason => datum(t(`usage.board.work.reason_${reason}`), summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason]))]),
   ]);
@@ -322,20 +326,20 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         rows={projects.map((row) => [
           projectLabel(row.projectKey),
           compact ? compactCell(row.amount, row.moneyBasis) : cell(row.amount, row.moneyBasis),
-          [anyLinked
+          [(allocationRead && anyLinked) || row.outcomes.length > 0
             ? t('usage.board.work.ledgerRowLine', { sessions: row.sessionIds.length, prs: row.outcomes.length })
             : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
             // Token totals added up from their parts are said once, by the total below, never on a row (USAGE-ACCEPT 1121 #13).
             projectPlace(row.projectKey)].filter(Boolean).join(' · '),
           ...(anyLinked
-            ? [row.unallocated === null || row.unallocated > 0
+            ? [!allocationRead ? format(null) : row.unallocated === null || row.unallocated > 0
               ? t('usage.board.work.notLinkedPart', { amount: format(row.unallocated, row.unallocatedBasis) })
               : '']
             : []),
         ])}
         rowDatums={projects.map(row => combineDatums(projectWhere(row.projectKey), [
           datum(metricLabel, row.amount, row.moneyBasis),
-          anyLinked ? datum(t('usage.board.work.notLinked'), row.unallocated, row.unallocatedBasis) : null,
+          allocationRead && anyLinked ? datum(t('usage.board.work.notLinked'), row.unallocated, row.unallocatedBasis) : null,
         ]))}
         renderIdentity={(_cells, visual, index) => {
           const row = projects[index]!;
@@ -449,19 +453,19 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         accessible
         accessibilityLabel={[
           `${t('usage.board.work.allProjects')}: ${format(summary.total)}`,
-          t('usage.board.work.conservation', {
-            allocated: format(summary.allocated, summary.allocatedBasis),
-            unallocated: format(summary.unallocated, summary.unallocatedBasis),
-          }),
-          ...reasons.map(
-            (reason) =>
-              `${format(summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason])} ${t(`usage.board.work.reason_${reason}`)}`,
-          ),
+          ...(allocationStatus ? [allocationStatus] : [
+            t('usage.board.work.conservation', {
+              allocated: format(summary.allocated, summary.allocatedBasis),
+              unallocated: format(summary.unallocated, summary.unallocatedBasis),
+            }),
+            ...reasons.map(reason =>
+              `${format(summary.unallocatedByReason[reason], summary.unallocatedReasonBases[reason])} ${t(`usage.board.work.reason_${reason}`)}`),
+          ]),
         ].join(', ')}
       >
         {/* Nothing linked: every part would repeat the total, so the total is said once with one
             sentence (and its single reason, when there is one). A single project row already shows it. */}
-        {noneLinked ? (
+        {allocationStatus ? (
           <>
             {summary.projects.length > 1 ? (
               <View style={styles.line}>
@@ -470,7 +474,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
               </View>
             ) : null}
             <Text style={[styles.reasonLabel, caption]}>
-              {[t('usage.board.work.noneLinked'), ...(reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
+              {[allocationStatus, ...(allocationRead && reasons.length === 1 ? [t(`usage.board.work.reason_${reasons[0]}`)] : []),
                 ...(summary.tokensFromParts ? [t('usage.board.page.tokensFromParts')] : [])].join(' · ')}
             </Text>
           </>

@@ -1678,7 +1678,7 @@ describe('resolveUsagePageAggregation', () => {
       });
       return resolveUsagePageAggregation({ queries: [query], previous, nowMs,
         accounting: [{ query, period, value, status: 'available', asOfMs: nowMs }],
-        work: [{ query, status, ...(status === 'available' ? { evidence: [], branchEvidence: [] }
+        work: [{ query, status, ...(status === 'available' ? { evidence: [], branchEvidence: [], pullRequestReadSessions: ['session'] }
           : status === 'error' ? { errorCode: 'work_evidence_failed' } : {}) }],
       }, bundledUsageModelPriceCatalog);
     };
@@ -1700,7 +1700,7 @@ describe('resolveUsagePageAggregation', () => {
       source: 'work', status: 'partial', errorCode: 'work_evidence_failed',
     }));
     expect(partial.results[0]?.work?.outcomes).toEqual([]);
-    expect(partial.results[0]?.workSummary).toBeUndefined();
+    expect(partial.results[0]?.workSummary?.mergedPrCount).toBeUndefined();
     expect(partial.results[0]?.mergedOutcomes).toBeUndefined();
     expect(UsageQueryBatchResultSchema.safeParse(partial).success).toBe(true);
 

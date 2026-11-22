@@ -824,6 +824,11 @@ selector. The host admits that Session and filesystem scope before reading and
 again before returning private evidence. Older readers can omit this optional
 projection; absence is unavailable evidence, never a complete empty ledger.
 
+The batched Work read reports `pullRequestsRead` for a Session when its PR
+listings and checkpoint joins answer. Branch evidence can succeed independently.
+A response without the PR marker can still supply witnessed links, while an
+empty PR evidence list alone leaves PR coverage unknown.
+
 In 0.3 development, the existing `scm.branch.list` read accepts the same
 selector and returns exact checkpoint/commit witnesses for local branch heads.
 The branch identity combines the device-local opaque repository identity,

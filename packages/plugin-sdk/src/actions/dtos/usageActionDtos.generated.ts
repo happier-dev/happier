@@ -14780,7 +14780,9 @@ export type UsageActionResultById = {
                 }[];
             };
             workSummary?: undefined | {
-                mergedPrCount: number;
+                mergedPrCount?: number | undefined;
+                pullRequestsRead?: true | undefined;
+                mergedSessionCount?: number | undefined;
                 sessionCount?: number | undefined;
                 contributionCount?: number | undefined;
                 allocatedContributionCount?: number | undefined;
@@ -14793,7 +14795,6 @@ export type UsageActionResultById = {
                 timeZoneOffsetMinutes: number;
                 attributionBasis: 'contribution_count';
                 linkedMergedCount: number;
-                mergedInPeriodCount: number;
                 outsidePeriodMergedCount: number;
                 undatedMergedCount: number;
                 mergeWeeks: {
@@ -14811,6 +14812,7 @@ export type UsageActionResultById = {
                     }[];
                     leadingAgentIds: (null | string)[];
                 }[];
+                mergedInPeriodCount?: number | undefined;
             };
             publicProfileEvidence?: undefined | {
                 facts: {

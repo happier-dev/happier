@@ -11,7 +11,7 @@ import { projectUsagePageCost, resolveUsageCostForSelection} from '@happier-dev/
 import { repriceUsageAnalyticsResponse} from '@happier-dev/protocol/usage/usageCost';
 import { type UsageAnalyticsContribution } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { addUsageMeasuredTokens, createEmptyUsageTokens } from '@happier-dev/protocol/usage/usageAggregation';
-import { allocateUsageOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
+import { allocateUsageOutcomes } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
 import { UsageAnalyticsQueryRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { resolveUsageTokenCategories } from '@happier-dev/protocol/usage/usageTokenCategories';
 import { projectUsageAnalyticsSummary } from '@happier-dev/protocol/usage/usageCost';
@@ -723,9 +723,9 @@ describe('one selected money basis across Usage bodies', () => {
   it('renders observed merged counts from compact Work facts without allocation rows', async () => {
     const props = mountedCosts();
     const query = normalizeUsageQuery({ ...props.query, includeWorkEvidence: true, workProjection: 'summary', includeSessionEvidence: false });
-    const value = projectUsageAnalyticsSummary(props.slice.accounting!, UsageAnalyticsQueryRequestSchema.parse({
-      dateRange: { startMs: 0, endMs: day }, costMode: 'auto',
-    }));
+    const value = projectUsageAnalyticsSummary({ ...props.slice.accounting!, sessionMembership: {
+      turns: ['a', 'b'].map(turnId => ({ sessionId: 's', turnId, executions: ['happier'] })),
+    } }, UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 0, endMs: day }, costMode: 'auto' }));
     const evidence = ['a', 'b'].map(turnId => ScmPullRequestWorkEvidenceSchema.parse({ sessionId: 's', turnId, repositoryKey: 'repo',
       checkpointRef: `checkpoint/s/${turnId}`, checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
       attributionScope: 'no_happier_checkpoint_overlap_observed',
@@ -733,20 +733,18 @@ describe('one selected money basis across Usage bodies', () => {
         nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
         number: 1, title: 'Outcome', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' },
     }));
-    const summary = projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({
-      turns: evidence.map(({ sessionId, turnId }) => ({ sessionId, turnId })), evidence,
-    }).outcomes);
-    const slice = (merged: typeof summary) => resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, status: 'available', value }], work: [{ query, status: 'available', summary: merged }],
+    const slice = (evidenceRows: typeof evidence) => resolveUsagePageAggregation({ queries: [query],
+      accounting: [{ query, status: 'available', value }],
+      work: [{ query, status: 'available', evidence: evidenceRows, pullRequestReadSessions: ['s'] }],
     }, bundledUsageModelPriceCatalog).results[0]!;
-    const current = slice(summary);
+    const current = slice(evidence);
     expect(current.accounting).not.toHaveProperty('contributions');
     expect(current.work).toBeUndefined();
     const screen = await renderScreen(<UsagePeriodSummaryWidget {...props} query={query} slice={current} id="usage_period_summary" testID="summary" />);
     const merged = () => screen.findAllByType(HappierDataMetric).find(metric => metric.props.label === t('usage.board.page.mergedPrs'));
     expect(merged()?.props.value).toBe(1);
     expect(merged()?.props.caption).toBe(t('usage.board.page.linkedByEvidence'));
-    await screen.update(<UsagePeriodSummaryWidget {...props} query={query} slice={slice(projectUsageWorkSummary([]))} id="usage_period_summary" testID="summary" />);
+    await screen.update(<UsagePeriodSummaryWidget {...props} query={query} slice={slice([])} id="usage_period_summary" testID="summary" />);
     expect(merged()?.props.value).toBe(0);
     expect(merged()?.props.caption).toBe(t('usage.board.page.noneLinkedByEvidence'));
   });

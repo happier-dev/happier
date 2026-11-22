@@ -449,7 +449,6 @@ describe('Work display grouping of the canonical allocation', () => {
       sessions: 3,
       witnessed: 2,
       allocated: 1,
-      merged: 1,
     });
     expect(
       summary.sessions.find((row) => row.sessionId === 's2'),

@@ -3,7 +3,6 @@ import { resolveUsageCalendarInstant, resolveUsageBucketBounds } from '../usage/
 import { resolveUsageDayStreaks, projectUsageOrdinalLevels as levels } from '../usage/usageActivitySummary.js';
 import { summarizeUsageExecutionSources } from '../usage/usageSourceSummary.js';
 import { projectUsageAgentCalendar, resolveUsageAccountingCalendarPeriod, type UsageAgentCalendar } from '../usage/usageAgentCalendar.js';
-import { allocateUsageOutcomes, summarizeUsageMergedOutcomes } from '../usage/usageOutcomeAllocation.js';
 import { canRetainUsageReadFailure, resolveUsageAccountingAsOfMs, type UsageQueryResultSlice } from '../usage/resolveUsagePageAggregation.js';
 import { PublicProfileSnapshotV1Schema, type PublicProfilePolicyV1,
   type PublicProfileSnapshotV1 } from './publicProfile.js';
@@ -90,7 +89,7 @@ export function buildPublicProfileSnapshot(input: Readonly<{ queryResult: UsageQ
   const { facts, coverage, calendarKnown } = rowFacts({ population: prepared.total, period, calendar, nowMs: input.nowMs });
   Object.assign(facts, projectPublicProfileIntervalFacts(intervals, calendar));
   if (detail?.detailStatus !== 'unknown' && detail?.runLengths) facts.sessionDurations = projectPublicProfileSessionDurations(detail.runLengths);
-  if (slice.mergedOutcomes) facts.mergedPrs = slice.mergedOutcomes.linkedMergedCount;
+  if (slice.workSummary?.mergedPrCount !== undefined) facts.mergedPrs = slice.workSummary.mergedPrCount;
   Object.assign(facts, slice.publicProfileEvidence?.facts);
   Object.assign(facts, slice.publicProfileEvidence?.accountingFacts);
   const sourceSummary = accounting.summary?.execution ?? summarizeUsageExecutionSources(accounting.contributions);
@@ -117,7 +116,7 @@ export function buildPublicProfileSnapshot(input: Readonly<{ queryResult: UsageQ
     punch: accounting.activity?.weekdayHourBuckets ? coverage : { status: 'unavailable', method: 'unknown' },
     agentActiveDays: coverage, weeklyAgentMix: coverage,
     ...projectPublicProfilePrivateFieldCoverage({ intervals, detailStatus: detail?.detailStatus ?? 'unknown',
-      runLengths: detail?.runLengths, calendar, accountingCoverage: coverage, hasMergedOutcomes: slice.mergedOutcomes !== undefined }),
+      runLengths: detail?.runLengths, calendar, accountingCoverage: coverage, hasMergedOutcomes: facts.mergedPrs !== undefined }),
     machineKinds: { status: 'unavailable', method: 'unknown' }, footprint: { status: 'unavailable', method: 'unknown' }, highlights: coverage,
     ...slice.publicProfileEvidence?.fieldCoverage,
   };
@@ -136,15 +135,6 @@ export function buildPublicProfileSnapshot(input: Readonly<{ queryResult: UsageQ
       nightHours: detail?.nightShift ?? undefined });
     const projected = rowFacts({ population: lens.population, period, calendar: selectedCalendar, nowMs: input.nowMs });
     Object.assign(projected.facts, projectPublicProfileIntervalFacts(selectedIntervals, selectedCalendar));
-    if (slice.work) {
-      const admitted = new Set(prepared.membership.turns.filter(turn => turn.executions.includes(execution))
-        .map(turn => JSON.stringify([turn.sessionId, turn.turnId])));
-      const selected = (accounting.contributions ?? slice.work.allocations.map(row => row.contribution))
-        .filter(row => row.sessionId !== null && row.turnId !== null && admitted.has(JSON.stringify([row.sessionId, row.turnId])));
-      const work = allocateUsageOutcomes({ contributions: selected, evidence: slice.work.allocations.flatMap(row => row.evidence),
-        branchEvidence: slice.work.branchAllocations.flatMap(row => row.evidence) });
-      projected.facts.mergedPrs = summarizeUsageMergedOutcomes({ work, period, timeZoneOffsetMinutes: period.timeZoneOffsetMinutes }).linkedMergedCount;
-    }
     Object.assign(projected.facts, slice.publicProfileEvidence?.lenses.find(lens => lens.execution === execution)?.facts);
     Object.assign(projected.facts, slice.publicProfileEvidence?.lenses.find(lens => lens.execution === execution)?.accountingFacts);
     return { execution, facts: projected.facts };

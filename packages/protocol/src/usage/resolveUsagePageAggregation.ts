@@ -6,7 +6,8 @@ import { sameStrictJsonValue } from '../json/strictJsonValue.js';
 import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, UsageQuerySchema, type UsageQuery } from '../inputs/usageQuery.js';
 import { UsageQueryAccountingSchema, type UsageAnalyticsQueryResponse } from './usageAnalyticsContracts.js';
 import { UsageCostFactTotalSchema, projectUsageCostFactTotals } from './usageCostFactTotals.js';
-import { allocateUsageOutcomes, summarizeUsageMergedOutcomes, projectUsageWorkSummary, UsageWorkSummarySchema, UsageMergedOutcomeSummarySchema, UsageWorkProjectionSchema, type UsageWorkEvidence, type UsageWorkSummary } from './usageOutcomeAllocation.js';
+import { allocateUsageOutcomes, summarizeUsageMergedOutcomes, projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, UsageWorkSummarySchema, UsageMergedOutcomeSummarySchema, UsageWorkProjectionSchema, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
+import { hasUsagePullRequestRead, projectUsagePublicWorkLenses, readUsageWorkSessionTurns } from './usageWorkSources.js';
 import type { ScmBranchWorkEvidence } from '../scm/branches.js';
 import { resolveUsageHowYouWork, UsageHowYouWorkSchema, type UsageHowYouWorkDetailInput, type UsageSessionEvidenceCoverage } from './resolveUsageHowYouWork.js';
 import type { UsageWorkIntervalsInput } from './usageWorkIntervals.js';
@@ -191,7 +192,8 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
   if (slice.mergedOutcomes && (!slice.work || witnessedPeriod?.startMs === undefined || witnessedPeriod.endMs === undefined
     || !slice.sources.some(source => source.source === 'work' && ['available', 'partial', 'stale', 'pending'].includes(source.status))
     || !sameStrictJsonValue(slice.mergedOutcomes, summarizeUsageMergedOutcomes({ work: slice.work,
-      period: { startMs: witnessedPeriod.startMs, endMs: witnessedPeriod.endMs }, timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes })))) {
+      period: { startMs: witnessedPeriod.startMs, endMs: witnessedPeriod.endMs }, timeZoneOffsetMinutes: slice.shownQuery.timeZoneOffsetMinutes,
+      pullRequestsRead: slice.mergedOutcomes.mergedInPeriodCount !== undefined })))) {
     context.addIssue({ code: 'custom', path: ['mergedOutcomes'], message: 'Merged outcomes must preserve the admitted Work, period and calendar' });
   }
   if (week?.status === 'available' && (!slice.accounting?.activity
@@ -234,12 +236,17 @@ export const UsageQueryResultSliceSchema = lazyZodSchema(() => z.strictObject({
 export type UsageQueryResultSlice = z.infer<typeof UsageQueryResultSliceSchema>;
 
 type AdmittedUsageProjection<T> = Readonly<{ inputs: Readonly<Record<string, unknown>>; value: T }>;
+type UsageWorkReadProjection = Readonly<{
+  work: UsageQueryResultSlice['work'];
+  summary: UsageQueryResultSlice['workSummary'];
+  profileLenses: ReturnType<typeof projectUsagePublicWorkLenses>;
+}>;
 type UsagePageProjections = {
   accountingReadAtMs?: number;
   calendar: AdmittedUsageProjection<UsageAgentAccountingCalendar | undefined>;
   howYouWork: AdmittedUsageProjection<UsageQueryResultSlice['howYouWork']> & Readonly<{ period?: UsageWorkIntervalsInput['period'] }>;
   coach: AdmittedUsageProjection<UsageQueryResultSlice['coach']>;
-  work: AdmittedUsageProjection<UsageQueryResultSlice['work']>;
+  work: AdmittedUsageProjection<UsageWorkReadProjection>;
   mergedOutcomes: AdmittedUsageProjection<UsageQueryResultSlice['mergedOutcomes']>;
   planInsights: AdmittedUsageProjection<UsageQueryResultSlice['planInsights']>;
   costFactTotals: AdmittedUsageProjection<UsageQueryResultSlice['costFactTotals']>;
@@ -293,7 +300,8 @@ function carryUsageProjectionInputs(value: UsageQueryResultSlice, source: UsageQ
     coach: Object.prototype.hasOwnProperty.call(value, 'coach')
       ? withValue(admitted.coach, value.coach) : admitted.coach,
     work: Object.prototype.hasOwnProperty.call(value, 'work')
-      ? withValue(admitted.work, value.work) : admitted.work,
+      && value.work !== admitted.work.value.work
+      ? withValue(admitted.work, { ...admitted.work.value, work: value.work }) : admitted.work,
     mergedOutcomes: Object.prototype.hasOwnProperty.call(value, 'mergedOutcomes')
       ? withValue(admitted.mergedOutcomes, value.mergedOutcomes) : admitted.mergedOutcomes,
     planInsights: withValue(admitted.planInsights, value.planInsights), costFactTotals: withValue(admitted.costFactTotals, value.costFactTotals),
@@ -429,7 +437,7 @@ export function retainUsageQueryResultReferences(current: UsageQueryBatchResult,
     const retainedProjections = (retained as ProjectedUsageSlice)[usagePageProjections];
     const projectedKeys: (keyof UsageQueryResultSlice)[] = (slice as ProjectedUsageSlice)[usagePageProjections] && retainedProjections
       ? (['work', 'mergedOutcomes', 'howYouWork', 'coach', 'planInsights', 'costFactTotals'] as const)
-        .filter(key => retainedProjections[key].value === retained[key]) : [];
+        .filter(key => (key === 'work' ? retainedProjections.work.value.work : retainedProjections[key].value) === retained[key]) : [];
     const result = retainUsageMembers(reconciled, retained, ['accounting', 'sources', ...projectedKeys, ...(slice.comparison?.accounting && retained.comparison?.accounting
       && getUsageQueryKey(slice.comparison.query) === getUsageQueryKey(retained.comparison.query) ? ['comparison' as const] : [])]);
     const baseline = original.get(slice.key);
@@ -570,7 +578,7 @@ export type UsageWorkSourceSnapshot = Readonly<{
   query: UsageQuery;
   evidence?: readonly UsageWorkEvidence[];
   branchEvidence?: readonly ScmBranchWorkEvidence[];
-  summary?: UsageWorkSummary;
+  pullRequestReadSessions?: readonly string[];
   status: UsageQuerySourceState['status'];
   asOfMs?: number;
   errorCode?: string;
@@ -1006,30 +1014,57 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
     // Inputs are admitted owner snapshots; this projection is not a wire boundary.
     // Parsing here clones the same full history for every widget on every source
     // revision. Keep its identity and validate the batch at the Action/Resource boundary.
+    const accountingValue = snapshot?.value;
+    const workEvidence = readableWork ? workSnapshot.evidence : undefined;
+    const branchEvidence = readableWork ? workSnapshot.branchEvidence : undefined;
+    const readSessions = workSnapshot?.pullRequestReadSessions;
     const workFacts = projectAdmittedUsageInputs(admitted?.work, {
-      contributions: snapshot?.value?.contributions, evidence: readableWork ? workSnapshot?.evidence : undefined,
-      branchEvidence: readableWork ? workSnapshot?.branchEvidence : undefined, retaining: retainWork,
-      retained: retainedWork === admitted?.work.value && admitted?.work.inputs.retaining ? admitted.work.inputs.retained : retainedWork,
-    }, () => !query.includeWorkEvidence || snapshot?.value?.contributions === undefined ? undefined : allocateUsageOutcomes({
-      contributions: snapshot.value.contributions,
-      evidence: retainWork ? retainedWork?.allocations.flatMap(row => row.evidence) ?? [] : readableWork ? workSnapshot?.evidence ?? [] : [],
-      branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : readableWork ? workSnapshot?.branchEvidence ?? [] : [],
-    }));
-    const workProjection = workFacts.value;
-    // A partial read can supply real links while another Session's Work is unread.
-    // Only a read without a refusal can establish that the result is empty.
-    const canReportZeroMerged = retainWork ? prior?.workSummary?.mergedPrCount === 0
-      : readableWork && workSnapshot.errorCode === undefined
-        && workSnapshot.unreadSessions === undefined && workSnapshot.updateRequired === undefined;
-    const observedWork = readableWork || retainWork && prior?.workSummary !== undefined;
-    const candidateSummary = workProjection && observedWork ? prior?.work === workProjection && prior.workSummary
-      || projectUsageWorkSummary(workProjection.outcomes, workProjection)
-      : readableWork && workSnapshot.summary || retainWork && prior?.workSummary || undefined;
-    const workSummary = candidateSummary && (candidateSummary.mergedPrCount > 0 || canReportZeroMerged) ? candidateSummary : undefined;
+      accounting: accountingValue, evidence: workEvidence, branchEvidence, readSessions,
+      readable: readableWork, retaining: retainWork,
+      priorAccounting: retainWork ? prior?.accounting : undefined,
+      priorSummary: retainWork ? prior?.workSummary : undefined,
+      retained: retainedWork === admitted?.work.value.work && admitted?.work.inputs.retaining ? admitted.work.inputs.retained : retainedWork,
+    }, (): UsageWorkReadProjection => {
+      const work = !query.includeWorkEvidence || accountingValue?.contributions === undefined ? undefined : allocateUsageOutcomes({
+        contributions: accountingValue.contributions,
+        evidence: retainWork ? retainedWork?.allocations.flatMap(row => row.evidence) ?? [] : workEvidence ?? [],
+        branchEvidence: retainWork ? retainedWork?.branchAllocations.flatMap(row => row.evidence) ?? [] : branchEvidence ?? [],
+      });
+      const admittedTurns = readableWork && query.includeWorkEvidence ? readUsageWorkSessionTurns(accountingValue) : undefined;
+      const sameRetainedWork = retainWork && prior !== undefined
+        && (accountingValue === prior.accounting || hasSameUsageQueryWorkEvidenceMembership({
+          query, contributions: accountingValue?.contributions, previousContributions: prior.accounting?.contributions,
+          sessionMembership: readUsageAccountingSessionMembership(accountingValue),
+          previousSessionMembership: readUsageAccountingSessionMembership(prior.accounting),
+        }));
+      const pullRequestsRead = readableWork ? hasUsagePullRequestRead(admittedTurns, readSessions)
+        : sameRetainedWork && prior?.workSummary?.pullRequestsRead === true;
+      const summary = work && (readableWork || retainWork) ? projectUsageWorkSummary(work.outcomes, pullRequestsRead, work)
+        : admittedTurns ? projectUsageWorkSummary(resolveUsageWorkOutcomeAdmissions({ turns: admittedTurns, evidence: workEvidence ?? [] }).outcomes,
+          pullRequestsRead)
+        : sameRetainedWork && (pullRequestsRead || (prior?.workSummary?.mergedPrCount ?? 0) > 0) ? prior?.workSummary : undefined;
+      const profileLenses = query.population === 'public_eligible_personal' && query.includeWorkEvidence && accountingValue && !retainWork
+        && (workEvidence !== undefined || readSessions !== undefined)
+        ? projectUsagePublicWorkLenses(accountingValue, workEvidence ?? [], readSessions) : [];
+      return { work, summary, profileLenses };
+    });
+    const { work: workProjection, summary: workSummary, profileLenses } = workFacts.value;
+    const pullRequestsRead = workSummary?.pullRequestsRead === true;
     const mergedFacts = projectAdmittedUsageInputs(admitted?.mergedOutcomes, {
-      work: workProjection, startMs, endMs, observed: workSummary !== undefined,
-    }, () => workProjection && workSummary && endMs !== undefined && endMs >= startMs
-      ? summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs }, timeZoneOffsetMinutes: query.timeZoneOffsetMinutes }) : undefined);
+      work: workProjection, startMs, endMs, pullRequestsRead, observed: workSummary?.mergedPrCount !== undefined,
+    }, () => workProjection && workSummary?.mergedPrCount !== undefined && endMs !== undefined && endMs >= startMs
+      ? summarizeUsageMergedOutcomes({ work: workProjection, period: { startMs, endMs },
+        timeZoneOffsetMinutes: query.timeZoneOffsetMinutes, pullRequestsRead }) : undefined);
+    const retainedProfile = prior?.publicProfileEvidence && (retainedDetail || retainWork && canRetainDetail)
+      ? retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainWork && canRetainDetail) : undefined;
+    const publicProfileEvidence = profileLenses.length ? {
+      ...retainedProfile, facts: { ...retainedProfile?.facts, ...(workSummary?.mergedPrCount === undefined ? {} : { mergedPrs: workSummary.mergedPrCount }) },
+      fieldCoverage: retainedProfile?.fieldCoverage ?? {},
+      lenses: profileLenses.map(lens => {
+        const previous = retainedProfile?.lenses.find(row => row.execution === lens.execution);
+        return { ...previous, ...lens, facts: { ...previous?.facts, ...lens.facts } };
+      }),
+    } : retainedProfile;
     const planInsights = projectAdmittedUsageInputs(admitted?.planInsights, {
       accounting: snapshot?.value, asOfMs: snapshot?.asOfMs, startMs: period.startMs, endMs: period.endMs,
       howYouWork: detailProjection, nowMs: input.nowMs,
@@ -1056,9 +1091,7 @@ export function resolveUsagePageAggregation(input: UsagePageAggregationInput, fa
         ...(comparisonSnapshot?.value === undefined ? {} : { accounting: projectSourceLocations(comparisonSnapshot.value), costFactTotals: comparisonCostFactTotals.value }) } } : {}),
       ...(workProjection === undefined ? {} : { work: workProjection }),
       ...(workSummary === undefined ? {} : { workSummary }),
-      ...(prior?.publicProfileEvidence && (retainedDetail || retainWork && canRetainDetail) ? {
-        publicProfileEvidence: retainPublicProfileEvidence(prior.publicProfileEvidence, Boolean(retainedDetail), retainWork && canRetainDetail),
-      } : {}),
+      ...(publicProfileEvidence === undefined ? {} : { publicProfileEvidence }),
       ...(mergedFacts.value === undefined ? {} : { mergedOutcomes: mergedFacts.value }),
       sources,
       pending: [...sources, ...(comparisonQuery ? [comparisonSource] : [])].some(source => isUsageQuerySourceOutstanding(query, source)),

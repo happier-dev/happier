@@ -337,9 +337,7 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
                 ...sources] };
     }) };
     const preferredDetails = applyCoachPreferences(staged, howYouWork ?? [], context.accountLifetime.scope, mcpCatalog, input.coachSuppressions, previous);
-    const workByQuery = new Map(work.map(snapshot => [getUsageQueryKey(snapshot.query), snapshot]));
-    const preferred = { ...preferredDetails, results: preferredDetails.results.map(slice =>
-        projectUsageQueryProfileEvidence(slice, workByQuery.get(slice.key))) };
+    const preferred = { ...preferredDetails, results: preferredDetails.results.map(projectUsageQueryProfileEvidence) };
     return { ...preferred, results: preferred.results.map(rawSlice => {
         const slice = projectAccountingDelivery(rawSlice, accounting, priorSlices.get(rawSlice.key), accountingNowMs);
         const priorSources = priorSlices.get(slice.key)?.sources;

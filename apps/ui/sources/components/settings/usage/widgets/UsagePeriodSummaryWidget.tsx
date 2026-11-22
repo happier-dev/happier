@@ -54,9 +54,7 @@ export function UsagePeriodSummaryWidget(props: UsageBodyProps) {
   const comparison = usageComparison(current, previous);
   const apiEquivalent = props.slice.costFactTotals?.find(fact => fact.kind === 'api_equivalent' && fact.currency === currency);
   const invoice = props.slice.costFactTotals?.find(fact => fact.kind === 'invoice' && fact.currency === currency);
-  // A work read this Home's server cannot answer counts nothing, not zero merged work.
-  const merged = readUsageSourceNeedsNewerServer(props.slice, 'work') ? null
-    : props.slice.workSummary?.mergedPrCount ?? null;
+  const merged = props.slice.workSummary?.mergedPrCount ?? null;
   const measuredIntervals = props.slice.howYouWork?.intervals;
   const intervals = measuredIntervals?.coverage === 'complete_for_supplied_facts' ? measuredIntervals : null;
   const subline = [

@@ -263,6 +263,45 @@ describe('public-profile snapshot computation from canonical Usage', () => {
     expect(JSON.stringify(built.snapshot)).not.toMatch(/private-|999999|repositoryKey|checkpointRef|commitSha|pullRequest/);
   });
 
+  it('projects the failed, measured and genuinely empty Work lenses in rich and compact artifacts', async () => {
+    const { collectUsageWorkSources } = await import('../usage/usageWorkSources.js');
+    const original = result(undefined, true).accounting!;
+    const [first, second] = original.contributions!;
+    const outside = { ...second!, sessionId: 'outside-session' };
+    const merged: UsageWorkEvidence = { sessionId: outside.sessionId, turnId: outside.turnId!, repositoryKey: 'repo',
+      checkpointRef: 'checkpoint', checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40),
+      attributionScope: 'no_happier_checkpoint_overlap_observed', pullRequest: { provider: { id: 'forge', kind: 'github',
+        displayName: 'Forge', baseUrl: 'https://github.com', nameWithOwner: 'example/repo', urlSafety: { allowedSchemes: ['https:'] } },
+        number: 1, title: 'Change', url: 'https://github.com/example/repo/pull/1',
+        baseBranch: 'main', headBranch: 'change', state: 'merged', mergedAtMs: startMs - 1 } };
+    for (const empty of [false, true]) {
+      const contributions = empty ? [outside] : [first!, outside];
+      const accounting = { ...original, contributions };
+      const compact = projectUsageAnalyticsSummary(accounting, usageQueryToAnalyticsRequest(query, endMs));
+      for (const value of [accounting, compact]) {
+        const snapshots = [{ query, value, status: 'available' as const, asOfMs: endMs }];
+        const work = await collectUsageWorkSources({ queries: [query], accounting: snapshots, assertCurrent: () => {},
+          resolveSession: async sessionId => ({ machineId: sessionId, cwd: '/repo' }),
+          readMachine: async machine => ({ sessions: [machine === outside.sessionId
+            ? { sessionId: machine, status: 'partial', pullRequestsRead: true, evidence: [merged] }
+            : { sessionId: machine, status: 'error', errorCode: 'COMMAND_FAILED' }] }),
+        });
+        const slice = resolveUsagePageAggregation({ queries: [query], accounting: snapshots, work }, bundledUsageModelPriceCatalog).results[0]!;
+        const built = buildPublicProfileSnapshot({ queryResult: slice, policy, nowMs: endMs });
+        if (built.kind !== 'ready') throw new Error('Expected measured accounting with independently read Work');
+        expect(built.snapshot.facts.mergedPrs).toBe(1);
+        const happier = built.snapshot.lenses?.find(lens => lens.execution === 'happier')?.facts;
+        expect(happier?.mergedPrs).toBe(empty ? 0 : undefined);
+        if (!empty) expect(happier?.tokens).toBe(10);
+        expect(built.snapshot.lenses?.find(lens => lens.execution === 'outside')?.facts.mergedPrs).toBe(1);
+        if (!empty && value.contributions) {
+          expect(slice.mergedOutcomes?.outsidePeriodMergedCount).toBe(1);
+          expect(slice.mergedOutcomes?.mergedInPeriodCount).toBeUndefined();
+        }
+      }
+    }
+  });
+
   it('does not label an unclassified execution day as empty in either classified source lens', () => {
     const built = buildPublicProfileSnapshot({ queryResult: result(undefined, true), policy, nowMs: endMs });
     if (built.kind !== 'ready') throw new Error('Expected complete accounting with unknown execution attribution');

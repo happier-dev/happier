@@ -72,6 +72,32 @@ describe('Usage Work repository admission', () => {
     expect(delivered?.workSummary).toEqual(result.workSummary);
   });
 
+  it('only publishes a measured zero when the PR read answered, independently of branch success', async () => {
+    const usage = [{ query, status: 'available' as const, value: { ...value, contributions: [{
+      id: 'request', observedAtMs: 2, sessionId: 'session', turnId: 'turn', agentId: 'codex', modelId: null,
+      machineId: null, projectKey: null, workspaceId: null, source: 'runtime', tokens: value.totals.tokens, cost: value.totals.cost,
+    }] } }];
+    const branch: ScmBranchWorkEvidence = { sessionId: 'session', turnId: 'turn', repositoryKey: 'repo', checkpointRef: 'checkpoint',
+      checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+      branch: { ref: 'refs/heads/feature', headSha: 'b'.repeat(40) } };
+    const read = async (readPrs: boolean) => {
+      const work = await collectUsageWorkSources({ queries: [query], accounting: usage, assertCurrent: () => {},
+        resolveSession: async () => ({ machineId: 'machine', cwd: '/repo' }),
+        readMachine: async () => ({ sessions: [{ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [branch],
+          ...(readPrs ? { pullRequestsRead: true } : {}) }] }),
+      });
+      const result = resolveUsagePageAggregation({ queries: [query], accounting: usage, work }, bundledUsageModelPriceCatalog);
+      return UsageQueryBatchResultSchema.parse(result).results[0]!;
+    };
+    const branchOnly = await read(false);
+    expect(branchOnly.work?.branches).toHaveLength(1);
+    expect(branchOnly.workSummary?.mergedPrCount).toBeUndefined();
+    expect(branchOnly.mergedOutcomes).toBeUndefined();
+    const answered = await read(true);
+    expect(answered.workSummary?.mergedPrCount).toBe(0);
+    expect(answered.mergedOutcomes?.mergedInPeriodCount).toBe(0);
+  });
+
   it('reads 624 Sessions on 20 Machines in 20 calls and reuses an admitted read', async () => {
     // Measured 7D census: 624 Sessions across these 20 Machine populations.
     const populations = [46, 18, 1, 33, 27, 1, 70, 23, 100, 38, 8, 74, 1, 1, 1, 1, 101, 66, 13, 1];

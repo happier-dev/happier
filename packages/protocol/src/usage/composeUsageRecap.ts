@@ -56,8 +56,9 @@ export function composeUsageRecap(args: Readonly<{
   };
   const nightShift = snapshot.howYouWork?.nightShift;
   if (selected.has('night') && nightShift && (!intervals || sameIntervalPeriod)) facts.night = nightShift;
-  // Aggregation retains witnessed summaries, including measured zero, through rereads.
-  const work = snapshot.workSummary === undefined ? undefined : snapshot.work;
+  const workSummary = snapshot.workSummary;
+  const work = workSummary?.pullRequestsRead === true || (workSummary?.allocatedContributionCount ?? 0) > 0
+    ? snapshot.work : undefined;
   if (selected.has('work') && work) facts.work = { linkedOutcomes: work.outcomes.length,
     allocatedContributions: work.allocations.filter(row => row.outcome !== null).length,
     unallocatedContributions: work.allocations.filter(row => row.outcome === null).length };

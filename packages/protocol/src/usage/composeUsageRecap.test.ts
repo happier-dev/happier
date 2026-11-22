@@ -252,7 +252,7 @@ describe('private recap composition', () => {
       expect(composed.coverage.sourceStatuses).toContainEqual({ status });
     }
     const available = resolveUsagePageAggregation({ queries: [query],
-      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'available', evidence: [] }] }, bundledUsageModelPriceCatalog);
+      accounting: [{ query, value, status: 'available' }], work: [{ query, status: 'available', evidence: [], pullRequestReadSessions: ['private-session'] }] }, bundledUsageModelPriceCatalog);
     const empty = composeUsageRecap({ input, snapshot: available.results[0]! });
     expect(empty).toMatchObject({ kind: 'composed', unavailableFields: [], facts: { work: {
       linkedOutcomes: 0, allocatedContributions: 0, unallocatedContributions: 1 }, highlights: [] } });

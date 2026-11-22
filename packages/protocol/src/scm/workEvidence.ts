@@ -39,6 +39,8 @@ export const ScmWorkEvidenceSessionResultSchema = lazyZodSchema(() => z.strictOb
   sessionId: sessionIdSchema,
   status: z.enum(['partial', 'unsupported', 'error', 'unknown']),
   evidence: z.optional(z.array(ScmPullRequestWorkEvidenceSchema)),
+  /** The requested PR listings and their checkpoint joins answered, independently of branch evidence. */
+  pullRequestsRead: z.optional(z.literal(true)),
   branchEvidence: z.optional(z.array(ScmBranchWorkEvidenceSchema)),
   errorCode: z.optional(z.string().check(z.minLength(1))),
 }));

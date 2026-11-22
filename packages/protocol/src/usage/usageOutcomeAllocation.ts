@@ -63,8 +63,8 @@ export const UsageMergedOutcomeSummarySchema = lazyZodSchema(() => z.strictObjec
   attributionBasis: z.literal('contribution_count'),
   /** Merged outcomes linked to admitted work, regardless of when the merge occurred. */
   linkedMergedCount: z.number().check(z.int(), z.nonnegative()),
-  /** Subset of linked outcomes with a witnessed merge inside the half-open period. */
-  mergedInPeriodCount: z.number().check(z.int(), z.nonnegative()),
+  /** Witnessed in-period merges. An absent count means the chart population was unread and no chartable merge was witnessed. */
+  mergedInPeriodCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   outsidePeriodMergedCount: z.number().check(z.int(), z.nonnegative()),
   undatedMergedCount: z.number().check(z.int(), z.nonnegative()),
   mergeWeeks: z.array(z.strictObject({
@@ -82,7 +82,11 @@ export const UsageMergedOutcomeSummarySchema = lazyZodSchema(() => z.strictObjec
 }));
 export type UsageMergedOutcomeSummary = z.infer<typeof UsageMergedOutcomeSummarySchema>;
 export const UsageWorkSummarySchema = lazyZodSchema(() => z.strictObject({
-  mergedPrCount: z.number().check(z.int(), z.nonnegative()),
+  mergedPrCount: z.optional(z.number().check(z.int(), z.nonnegative())),
+  /** All Sessions admitted for this Work population answered the PR read. */
+  pullRequestsRead: z.optional(z.literal(true)),
+  /** The funnel counts Sessions with a merged outcome, not distinct pull requests. */
+  mergedSessionCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   /** Distinct non-null Session identities in the admitted Work contributions. */
   sessionCount: z.optional(z.number().check(z.int(), z.nonnegative())),
   contributionCount: z.optional(z.number().check(z.int(), z.nonnegative())),
@@ -90,23 +94,34 @@ export const UsageWorkSummarySchema = lazyZodSchema(() => z.strictObject({
 }));
 export type UsageWorkSummary = z.infer<typeof UsageWorkSummarySchema>;
 
-/** The same admitted-outcome count serves rich Work and bounded summary consumers. */
+/** Project a known lower bound, or an exact zero when the admitted PR reads answered. */
 export function projectUsageWorkSummary(outcomes: readonly Pick<UsageWorkOutcome, 'pullRequest'>[],
-  work?: Pick<UsageWorkProjection, 'allocations'>): UsageWorkSummary {
+  pullRequestsRead: boolean, work?: Pick<UsageWorkProjection, 'allocations'>): UsageWorkSummary | undefined {
   const mergedPrCount = outcomes.filter(outcome => outcome.pullRequest.state === 'merged').length;
-  if (!work) return { mergedPrCount };
+  const countKnown = pullRequestsRead || mergedPrCount > 0;
+  const summary: UsageWorkSummary = {
+    ...(countKnown ? { mergedPrCount } : {}),
+    ...(pullRequestsRead ? { pullRequestsRead: true } : {}),
+  };
+  if (!work) return countKnown ? summary : undefined;
   const sessions = new Set<string>();
+  const mergedSessions = new Set<string>();
   let allocatedContributionCount = 0;
   for (const row of work.allocations) {
-    if (row.contribution.sessionId !== null) sessions.add(row.contribution.sessionId);
-    if (row.outcome !== null) allocatedContributionCount++;
+    const { sessionId } = row.contribution;
+    if (sessionId !== null) sessions.add(sessionId);
+    if (row.outcome === null) continue;
+    allocatedContributionCount++;
+    if (sessionId !== null && row.outcome.pullRequest.state === 'merged') mergedSessions.add(sessionId);
   }
-  return { mergedPrCount, sessionCount: sessions.size, contributionCount: work.allocations.length, allocatedContributionCount };
+  return { ...summary, ...(countKnown ? { mergedSessionCount: mergedSessions.size } : {}),
+    sessionCount: sessions.size, contributionCount: work.allocations.length, allocatedContributionCount };
 }
 
 /** Consumes the canonical allocation; usage timestamps never stand in for merge dates. */
 export function summarizeUsageMergedOutcomes(input: Readonly<{
   work: UsageWorkProjection; period: Readonly<{ startMs: number; endMs: number }>; timeZoneOffsetMinutes: number;
+  pullRequestsRead?: boolean;
 }>): UsageMergedOutcomeSummary {
   const countsByOutcome = new Map<string, Map<string | null, number>>();
   for (const allocation of input.work.allocations) {
@@ -117,17 +132,19 @@ export function summarizeUsageMergedOutcomes(input: Readonly<{
   }
   const summary: UsageMergedOutcomeSummary = {
     period: { ...input.period }, timeZoneOffsetMinutes: input.timeZoneOffsetMinutes, attributionBasis: 'contribution_count',
-    linkedMergedCount: projectUsageWorkSummary(input.work.outcomes).mergedPrCount,
-    mergedInPeriodCount: 0, outsidePeriodMergedCount: 0, undatedMergedCount: 0,
+    linkedMergedCount: 0,
+    outsidePeriodMergedCount: 0, undatedMergedCount: 0,
     mergeWeeks: [], outcomes: [],
   };
+  let mergedInPeriodCount = 0;
   const weeks = new Map<number, UsageMergedOutcomeSummary['mergeWeeks'][number]>();
   for (const outcome of input.work.outcomes) {
     if (outcome.pullRequest.state !== 'merged') continue;
+    summary.linkedMergedCount += 1;
     const mergedAtMs = outcome.pullRequest.mergedAtMs ?? null;
     if (mergedAtMs === null) summary.undatedMergedCount += 1;
     else if (mergedAtMs >= input.period.startMs && mergedAtMs < input.period.endMs) {
-      summary.mergedInPeriodCount += 1;
+      mergedInPeriodCount += 1;
       const bounds = resolveUsageBucketBounds('week', mergedAtMs, input.timeZoneOffsetMinutes);
       const bucketStartMs = Math.max(bounds.bucketStartMs, input.period.startMs);
       const week = weeks.get(bucketStartMs) ?? { bucketStartMs,
@@ -143,6 +160,9 @@ export function summarizeUsageMergedOutcomes(input: Readonly<{
     summary.outcomes.push({ key: outcome.key, mergedAtMs,
       attribution: agentContributions.length > 1 ? 'mixed' : agentContributions[0]?.agentId == null ? 'unknown' : 'single',
       agentContributions, leadingAgentIds: agentContributions.filter(row => row.contributionCount === leadingCount).map(row => row.agentId) });
+  }
+  if (input.pullRequestsRead !== false || mergedInPeriodCount > 0 || summary.undatedMergedCount > 0) {
+    summary.mergedInPeriodCount = mergedInPeriodCount;
   }
   summary.mergeWeeks = [...weeks.values()].sort((left, right) => left.bucketStartMs - right.bucketStartMs);
   return summary;

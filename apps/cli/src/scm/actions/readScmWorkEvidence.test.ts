@@ -41,24 +41,36 @@ describe('SCM batched work evidence', () => {
     it('keeps all PR-state witnesses when branches are unsupported and preserves the exact turn selection', () => {
         const states = ['open', 'closed', 'merged'] as const;
         const evidence = states.map(state => ({ ...pullRequest, pullRequest: { ...pullRequest.pullRequest, state } }));
-        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], sources: [
-            { status: 'error', errorCode: 'FEATURE_UNSUPPORTED' }, ...evidence.map(row => ({ status: 'partial' as const, evidence: [row] })),
-        ] })).toEqual({ sessionId: 'session', status: 'partial', evidence, branchEvidence: [] });
-        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['other-turn'], sources: [
-            { status: 'partial', evidence, branchEvidence: [branch] },
-        ] })).toEqual({ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [] });
+        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
+            branchSource: { status: 'error', errorCode: 'FEATURE_UNSUPPORTED' },
+            prSources: evidence.map(row => ({ status: 'partial', evidence: [row] })), })).toEqual({ sessionId: 'session', status: 'partial', evidence, branchEvidence: [], pullRequestsRead: true });
+        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['other-turn'],
+            branchSource: { status: 'partial', branchEvidence: [branch] }, prSources: [{ status: 'partial', evidence }], })).toEqual({ sessionId: 'session', status: 'partial', evidence: [], branchEvidence: [], pullRequestsRead: true });
+    });
+
+    it('distinguishes a successful empty PR read from independent branch evidence', () => {
+        const combine = (prSource: { status: 'partial'; evidence: [] } | { status: 'unsupported' }) =>
+            combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
+                branchSource: { status: 'partial', branchEvidence: [branch] },
+                prSources: [prSource, prSource, prSource] });
+        expect(combine({ status: 'partial', evidence: [] })).toMatchObject({
+            status: 'partial', branchEvidence: [branch], pullRequestsRead: true,
+        });
+        expect(combine({ status: 'unsupported' })).toMatchObject({ status: 'partial', branchEvidence: [branch] });
+        expect(combine({ status: 'unsupported' })).not.toHaveProperty('pullRequestsRead');
     });
 
     it('retains an independent graph on a native failure and quarantines it on a generic refusal', () => {
-        const observed = { status: 'partial' as const, evidence: [pullRequest], branchEvidence: [branch] };
-        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], sources: [
+        const branchSource = { status: 'partial' as const, branchEvidence: [branch] };
+        const observed = { status: 'partial' as const, evidence: [pullRequest] };
+        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], branchSource, prSources: [
             observed, { status: 'error', errorCode: 'REMOTE_NETWORK_FAILED' },
         ] })).toEqual({ sessionId: 'session', status: 'partial', evidence: [pullRequest], branchEvidence: [branch], errorCode: 'REMOTE_NETWORK_FAILED' });
-        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], sources: [
+        expect(combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'], branchSource, prSources: [
             observed, { status: 'error', errorCode: 'COMMAND_FAILED' }, { status: 'error', errorCode: 'BACKEND_UNAVAILABLE' },
         ] })).toEqual({ sessionId: 'session', status: 'error', evidence: [], branchEvidence: [], errorCode: 'BACKEND_UNAVAILABLE' });
         const failedReplacement = combineScmWorkEvidenceSession({ sessionId: 'session', turnIds: ['turn'],
-            sources: [{ status: 'error', errorCode: 'COMMAND_FAILED' }] });
+            branchSource: { status: 'error', errorCode: 'COMMAND_FAILED' }, prSources: [] });
         expect(failedReplacement).toEqual({ sessionId: 'session', status: 'error', errorCode: 'COMMAND_FAILED' });
     });
 

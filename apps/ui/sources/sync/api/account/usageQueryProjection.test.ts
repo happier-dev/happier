@@ -245,7 +245,8 @@ it('keeps every Usage view and Coach consistent through the UI read model and Ac
                 staleAfterMs: 1000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data', meters: [] },
             pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' } });
     }) };
-    const work = [{ query, evidence: [], status: 'available' as const, asOfMs: 2000 }];
+    const work = [{ query, evidence: [], status: 'available' as const, asOfMs: 2000,
+        pullRequestReadSessions: [...new Set(value.contributions!.flatMap(row => row.sessionId ? [row.sessionId] : []))] }];
     f.update({ queries, accounting: new Map(accounting.map(row => [getUsageQueryKey(row.query), row])), work, howYouWork,
         quota, evidenceQueries: howYouWork.map(row => row.query), settledHowYouWorkQueries: new Set(howYouWork.map(row => getUsageQueryKey(row.query))),
         calendarQueryKeys: new Set(queries.map(getUsageQueryKey)) });

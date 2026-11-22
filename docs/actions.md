@@ -4025,6 +4025,13 @@ outcome and branch tables; each allocation carries only the corresponding
 identity and evidence. Its bounded `workSummary` also retains distinct Session,
 contribution and allocated-contribution counts.
 
+The Work owner publishes a measured merged-PR zero only when the requested
+Work population has PR coverage. A partial read can still publish witnessed
+merges. The Work funnel consumes the separate count of Sessions with merged
+outcomes, and Shipped can leave its in-period count absent while Work retains
+links merged outside the period. Public-profile execution lenses use their own
+admitted Work population and can answer independently.
+
 Work reads keep any readable Session evidence and report missing coverage as
 `sources[].unreadSessions` on the `work` source. The counts distinguish an
 unavailable Machine, a refused read, a timeout, and other failures. A mixed read

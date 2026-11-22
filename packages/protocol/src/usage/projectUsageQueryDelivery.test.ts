@@ -84,7 +84,7 @@ describe('agent Usage coverage delivery', () => {
       accounting: [{ query, value: accounting, status: 'available' },
         { query: comparison, value: { ...accounting, coverage: { ...accounting.coverage!,
           range: { startMs: 0, endMs: 100, complete: false } } }, status: 'available' }],
-      work: [{ query, evidence: [], status: 'available' }],
+      work: [{ query, evidence: [], status: 'available', pullRequestReadSessions: [...new Set(contributions.map(row => row.sessionId))] }],
     }, bundledUsageModelPriceCatalog);
     // Substitute only the authenticated query transport. Action validation,
     // surface selection, aggregation and delivery all run their real owners.
@@ -128,7 +128,7 @@ describe('agent Usage coverage delivery', () => {
       accounting: [{ query: selected, value: { ...accounting,
         coverage: { ...accounting.coverage!, sources: sources.slice(0, 1) },
         contributions: contributions.filter(row => row.sessionId === 'session-0') }, status: 'available' }],
-      work: [{ query: selected, evidence: [], status: 'available' }],
+      work: [{ query: selected, evidence: [], status: 'available', pullRequestReadSessions: ['session-0'] }],
     }, bundledUsageModelPriceCatalog);
     for (const surface of ['agent', 'mcp'] as const) {
       const recovered = (await invoke(detail, surface)).results[0]!;

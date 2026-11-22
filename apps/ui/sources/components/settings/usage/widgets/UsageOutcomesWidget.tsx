@@ -152,7 +152,7 @@ function UsageOutcomesFacts(props: UsageBodyProps) {
           {
             id: 'merged',
             label: t('usage.board.work.funnelMerged'),
-            value: funnel.merged,
+            value: props.slice.workSummary?.mergedSessionCount ?? null,
             color: accent,
           },
         ],

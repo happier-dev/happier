@@ -40,10 +40,10 @@ function isNativeFailure(errorCode: string | undefined): boolean {
 
 /** Combine independent native sources without letting a refusal retain private siblings. */
 export function combineScmWorkEvidenceSession(input: Readonly<{
-    sessionId: string; turnIds: readonly string[]; sources: readonly SourceResult[];
+    sessionId: string; turnIds: readonly string[]; branchSource: SourceResult; prSources: readonly SourceResult[];
 }>): ScmWorkEvidenceSessionResult {
     const { sessionId } = input;
-    const sources: readonly SourceResult[] = input.sources.map(source => source.status === 'error'
+    const sources: readonly SourceResult[] = [input.branchSource, ...input.prSources].map(source => source.status === 'error'
         && (source.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED || source.errorCode === SCM_OPERATION_ERROR_CODES.NOT_REPOSITORY)
         ? { status: 'unsupported' as const } : source);
     const quarantine = sources.find(source => source.status === 'error' && !isNativeFailure(source.errorCode));
@@ -59,6 +59,8 @@ export function combineScmWorkEvidenceSession(input: Readonly<{
             : sources.some(source => source.status === 'error') ? 'error' : 'unsupported',
         evidence: sources.flatMap(source => source.evidence ?? []).filter(witness => witness.sessionId === sessionId && turns.has(witness.turnId)),
         branchEvidence: sources.flatMap(source => source.branchEvidence ?? []).filter(witness => witness.sessionId === sessionId && turns.has(witness.turnId)),
+        ...(input.prSources.length > 0 && input.prSources.every(source => source.status === 'partial')
+            ? { pullRequestsRead: true } : {}),
         ...(errorCode ? { errorCode } : {}),
     };
 }
@@ -130,7 +132,7 @@ export async function readScmWorkEvidence(input: Readonly<{
                     .catch(() => ({ status: 'unsupported' as const }));
             }));
             input.signal?.throwIfAborted();
-            return combineScmWorkEvidenceSession({ ...session, sources: [branchSource, ...prSources] });
+            return combineScmWorkEvidenceSession({ ...session, branchSource, prSources });
         } catch {
             return { sessionId, status: 'error', evidence: [], branchEvidence: [], errorCode: 'work_evidence_failed' };
         }
