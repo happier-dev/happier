@@ -11320,6 +11320,8 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
         failure: {
             startTitle: 'No s’ha pogut iniciar l’enregistrament',
             startBody: 'Ara mateix no es pot enregistrar aquesta vista. Torna-ho a provar d’aquí a un moment.',
+            encoderUnavailable: 'A aquesta màquina li falta el codificador de vídeo amb què Happier enregistra. Reinstal·la Happier en aquesta màquina i torna a enregistrar.',
+            encoderFailed: 'El codificador de vídeo d’aquesta màquina no s’ha iniciat. Torna a enregistrar o, si continua passant, reinicia Happier en aquesta màquina.',
             stopTitle: 'No s’ha pogut aturar l’enregistrament',
             stopBody: 'Potser encara està enregistrant. Torna-ho a provar d’aquí a un moment.',
             discardTitle: 'No s’ha pogut descartar l’enregistrament',

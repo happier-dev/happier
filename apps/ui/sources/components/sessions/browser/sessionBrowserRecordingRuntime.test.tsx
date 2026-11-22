@@ -412,6 +412,31 @@ describe('session browser recording runtime', () => {
         },
     );
 
+    // Computer and Browser share the encoder and its typed refusal (daemon encoderFailure.ts); one sentence each.
+    it.each([
+        ['encoder_unavailable', 'browserRecording.failure.encoderUnavailable'],
+        ['encoder_failed', 'browserRecording.failure.encoderFailed'],
+    ] as const)('says what the Machine answered when its encoder cannot record (%s)', async (code, bodyKey) => {
+        await registerNativeCaptureHandler();
+        machineRpcMock.start.mockResolvedValueOnce({ ok: true, result: {
+            status: 'unavailable', reason: { code, message: code },
+        } });
+        const { useSessionBrowserRecordingRuntime } = await import('./sessionBrowserRecordingRuntime');
+        function Probe(): React.ReactElement {
+            const runtime = useSessionBrowserRecordingRuntime({
+                enabled: true, sessionId: 'session_1', machineId: 'machine_1',
+                serverId: 'srv_recording', recordingCapabilities,
+            });
+            return <Pressable testID="start-recording" disabled={!runtime}
+                onPress={() => runtime?.browserShellRecording.onStartRecording?.(nativeRecordingRequest)} />;
+        }
+        const screen = await renderRecordingScreen(<Probe />);
+        await screen.pressByTestIdAsync('start-recording');
+        expect(modalSpies.alert).toHaveBeenCalledExactlyOnceWith(
+            t('browserRecording.failure.startTitle'), t(bodyKey),
+        );
+    });
+
     it.each([
         ['browser_recording_policy_denied', 'browserRecording.status.notAllowed'],
         ['browser_recording_disabled', 'browserRecording.status.turnedOff'],

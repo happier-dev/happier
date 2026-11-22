@@ -11968,6 +11968,8 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
     failure: {
       startTitle: 'Nie udało się rozpocząć nagrywania',
       startBody: 'Nagrywanie tego widoku jest teraz niedostępne. Spróbuj ponownie za chwilę.',
+      encoderUnavailable: 'Na tej maszynie brakuje kodera wideo, którym Happier nagrywa. Zainstaluj ponownie Happier na tej maszynie, a potem nagraj jeszcze raz.',
+      encoderFailed: 'Koder wideo na tej maszynie się nie uruchomił. Nagraj jeszcze raz, a jeśli to się powtarza, uruchom ponownie Happier na tej maszynie.',
       stopTitle: 'Nie udało się zatrzymać nagrywania',
       stopBody: 'Nagrywanie może nadal trwać. Spróbuj ponownie za chwilę.',
       discardTitle: 'Nie udało się odrzucić nagrania',

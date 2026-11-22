@@ -21,7 +21,7 @@ import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewI
 
 import type { BrowserShellRecordingState } from '@/components/browser/BrowserShell';
 import type { BrowserRecordingStartControlRequest } from '@/components/browser/recording';
-import { presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal } from '@/components/browser/recording/recordingActions';
 import { randomUUID } from '@/platform/randomUUID';
 import {
     applyBrowserRecordingSessionSnapshot,
@@ -34,8 +34,6 @@ import {
     useDesktopBrowserRecordingReverseCaptureHandler,
 } from '@/sync/domains/browser/recording/reverseCaptureAvailability';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { Modal } from '@/modal';
-import { t } from '@/text';
 
 const DEFAULT_RECORDING_CAPABILITIES = DEFAULT_BROWSER_CAPABILITIES.recording;
 
@@ -122,6 +120,8 @@ function mapDaemonUnavailableReasonToUi(
             case 'browser_recording_capture_unavailable':
             case 'browser_recording_mime_unavailable':
             case 'browser_recording_capability_unavailable':
+            case 'encoder_unavailable':
+            case 'encoder_failed':
                 return reason.code;
             default:
                 return 'browser_recording_capture_unavailable';
@@ -143,12 +143,7 @@ function mapDaemonUnavailableReasonToUi(
 function presentBrowserRecordingUnavailable(
     reason: Parameters<NonNullable<BrowserShellRecordingState['onUnavailable']>>[0],
 ): void {
-    const body = reason.reasonCode === 'browser_recording_disabled'
-        ? t('browserRecording.status.turnedOff')
-        : reason.reasonCode === 'browser_recording_policy_denied'
-            ? t('browserRecording.status.notAllowed')
-            : t('browserRecording.failure.startBody');
-    Modal.alert(t('browserRecording.failure.startTitle'), body);
+    presentRecordingStartRefusal(reason.reasonCode);
 }
 
 export function useSessionBrowserRecordingRuntime(

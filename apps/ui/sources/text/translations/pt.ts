@@ -12256,6 +12256,8 @@ encryptedUnavailable: "Detalhes encriptados indisponíveis",
     failure: {
       startTitle: 'Não foi possível iniciar a gravação',
       startBody: 'A gravação não está disponível para esta vista neste momento. Tente novamente dentro de instantes.',
+      encoderUnavailable: 'Falta nesta máquina o codificador de vídeo com que o Happier grava. Reinstale o Happier nela e grave novamente.',
+      encoderFailed: 'O codificador de vídeo desta máquina não iniciou. Grave novamente ou, se continuar a acontecer, reinicie o Happier nela.',
       stopTitle: 'Não foi possível parar a gravação',
       stopBody: 'Talvez ainda esteja gravando. Tente novamente em instantes.',
       discardTitle: 'Não foi possível descartar a gravação',

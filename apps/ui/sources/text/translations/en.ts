@@ -13898,6 +13898,8 @@ const enBrowserRecording = {
   failure: {
     startTitle: 'Couldn’t start the recording',
     startBody: 'Recording isn’t available for this view right now. Try again in a moment.',
+    encoderUnavailable: 'This machine is missing the video encoder Happier records with. Reinstall Happier on it, then record again.',
+    encoderFailed: 'The video encoder on this machine didn’t start. Record again, or restart Happier there if it keeps happening.',
     stopTitle: 'Couldn’t stop the recording',
     stopBody: 'It may still be recording. Try again in a moment.',
     discardTitle: 'Couldn’t discard the recording',

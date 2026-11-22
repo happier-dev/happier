@@ -12,7 +12,10 @@ export type BrowserRecordingUnavailableReasonCode =
     | 'browser_recording_attachments_disabled'
     | 'browser_recording_attachment_uploads_disabled'
     | 'browser_recording_session_media_policy_denied'
-    | 'browser_recording_context_policy_denied';
+    | 'browser_recording_context_policy_denied'
+    // The Machine's video encoder, shared with Computer recording (daemon encoderFailure.ts).
+    | 'encoder_unavailable'
+    | 'encoder_failed';
 
 export type BrowserRecordingUnavailableReason = Readonly<{
     reasonCode: BrowserRecordingUnavailableReasonCode;

@@ -11774,6 +11774,8 @@ export const zhHans: TranslationStructure = {
     failure: {
       startTitle: '无法开始录制',
       startBody: '目前无法录制此视图。请稍后重试。',
+      encoderUnavailable: '这台机器缺少 Happier 录制所用的视频编码器。请在这台机器上重新安装 Happier，然后再次录制。',
+      encoderFailed: '这台机器上的视频编码器没有启动。请重新录制；如果问题仍然出现，请在这台机器上重启 Happier。',
       stopTitle: '无法停止录制',
       stopBody: '可能仍在录制。请稍后重试。',
       discardTitle: '无法丢弃录制',

@@ -11977,6 +11977,8 @@ encryptedUnavailable: "Détails chiffrés indisponibles",
     failure: {
       startTitle: 'Impossible de démarrer l’enregistrement',
       startBody: 'L’enregistrement n’est pas disponible pour cette vue pour le moment. Réessayez dans un instant.',
+      encoderUnavailable: 'Il manque sur cette machine l’encodeur vidéo qu’utilise Happier pour enregistrer. Réinstallez Happier sur cette machine, puis relancez l’enregistrement.',
+      encoderFailed: 'L’encodeur vidéo de cette machine n’a pas démarré. Relancez l’enregistrement, ou redémarrez Happier sur cette machine si cela se reproduit.',
       stopTitle: 'Impossible d’arrêter l’enregistrement',
       stopBody: 'L’enregistrement est peut-être toujours en cours. Réessaie dans un instant.',
       discardTitle: 'Impossible de supprimer l’enregistrement',

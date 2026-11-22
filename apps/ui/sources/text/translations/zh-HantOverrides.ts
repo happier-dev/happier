@@ -9911,6 +9911,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         failure: {
             startTitle: '無法開始錄製',
             startBody: '目前無法錄製此檢視畫面。請稍後再試。',
+            encoderUnavailable: '這台機器缺少 Happier 錄製所用的影片編碼器。請在這台機器上重新安裝 Happier，然後再次錄製。',
+            encoderFailed: '這台機器上的影片編碼器沒有啟動。請重新錄製；如果問題仍然出現，請在這台機器上重新啟動 Happier。',
             stopTitle: '無法停止錄製',
             stopBody: '可能仍在錄製。請稍後再試。',
             discardTitle: '無法捨棄錄製',

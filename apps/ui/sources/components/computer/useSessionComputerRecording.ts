@@ -2,10 +2,11 @@ import * as React from 'react';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 as ids } from '@happier-dev/protocol/actions/actionIds';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ComputerRecordingSessionV1Schema, type ComputerRecordingSessionV1 } from '@happier-dev/protocol/computer/recording';
+import { DaemonBrowserRecordingUnavailableReasonV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 
 import { useInPlaceApprovalReview } from '@/components/approvals/ApprovalReviewInPlace';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { presentBrowserRecordingActionFailure } from '@/components/browser/recording/recordingActions';
+import { presentBrowserRecordingActionFailure, presentRecordingStartRefusal } from '@/components/browser/recording/recordingActions';
 import { randomUUID } from '@/platform/randomUUID';
 import type { ComputerActionExecute } from '@/sync/domains/computer/computerControlClient';
 
@@ -27,6 +28,14 @@ function readRecording(result: ActionExecuteResult): ComputerRecordingSessionV1 
     if (!result.ok || !result.result || typeof result.result !== 'object') return null;
     const parsed = ComputerRecordingSessionV1Schema.safeParse((result.result as { recording?: unknown }).recording);
     return parsed.success ? parsed.data : null;
+}
+
+/** A start the Machine refused answers `{ status: 'unavailable', reason }`, the recorder's shared refusal shape. */
+function readStartRefusalCode(result: ActionExecuteResult): string | null {
+    if (!result.ok || !result.result || typeof result.result !== 'object') return null;
+    const answer = result.result as { status?: unknown; reason?: unknown };
+    if (answer.status !== 'unavailable') return null;
+    return DaemonBrowserRecordingUnavailableReasonV1Schema.safeParse(answer.reason).data?.code ?? null;
 }
 
 /**
@@ -95,7 +104,9 @@ export function useSessionComputerRecording(input: Readonly<{
             }, { signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId } });
             if (signal.aborted) return;
             const recording = readRecording(result);
+            const refusal = recording ? null : readStartRefusalCode(result);
             if (recording) setOwned({ sourceId, recording });
+            else if (refusal) presentRecordingStartRefusal(refusal);
             else presentBrowserRecordingActionFailure('start');
         } catch {
             if (!signal.aborted) presentBrowserRecordingActionFailure('start');

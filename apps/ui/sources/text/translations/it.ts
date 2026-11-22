@@ -12360,6 +12360,8 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
     failure: {
       startTitle: 'Impossibile avviare la registrazione',
       startBody: 'La registrazione non è disponibile per questa vista al momento. Riprova tra poco.',
+      encoderUnavailable: 'Su questa macchina manca l’encoder video con cui Happier registra. Reinstalla Happier su questa macchina, poi registra di nuovo.',
+      encoderFailed: 'L’encoder video di questa macchina non si è avviato. Registra di nuovo, oppure riavvia Happier su questa macchina se continua a succedere.',
       stopTitle: 'Impossibile interrompere la registrazione',
       stopBody: 'Potrebbe essere ancora in registrazione. Riprova tra un momento.',
       discardTitle: 'Impossibile scartare la registrazione',

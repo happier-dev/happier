@@ -112,6 +112,20 @@ describe('useSessionComputerRecording', () => {
         expect(hook.getCurrent()?.recording).toBeNull();
     });
 
+    // The daemon's typed refusal (encoderFailure.ts): a missing encoder is not a moment's wait; one that failed to start may be.
+    it.each([
+        ['encoder_unavailable', 'browserRecording.failure.encoderUnavailable'],
+        ['encoder_failed', 'browserRecording.failure.encoderFailed'],
+    ] as const)('says what the Machine answered when it cannot start (%s)', async (code, key) => {
+        alert.mockClear();
+        const { t } = await import('@/text');
+        const hook = await mount(createMachine({ [ids.list]: [], [ids.start]: { status: 'unavailable', reason: { code, message: code } } }));
+        await act(async () => { hook.getCurrent()?.onStart(); await flushHookEffects(); });
+        expect(alert).toHaveBeenCalledTimes(1);
+        expect(alert.mock.calls[0]?.slice(0, 2)).toEqual([t('browserRecording.failure.startTitle'), t(key)]);
+        expect(hook.getCurrent()?.recording).toBeNull();
+    });
+
     it('forgets a recording when the shared source changes', async () => {
         const machine = createMachine({ [ids.list]: [recording] });
         const hook = await mount(machine);

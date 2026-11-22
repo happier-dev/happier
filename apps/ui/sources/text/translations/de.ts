@@ -12010,6 +12010,8 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         failure: {
             startTitle: 'Aufnahme konnte nicht gestartet werden',
             startBody: 'Für diese Ansicht ist die Aufnahme gerade nicht verfügbar. Versuche es gleich noch einmal.',
+            encoderUnavailable: 'Auf dieser Maschine fehlt der Video-Encoder, mit dem Happier aufnimmt. Installiere Happier dort neu und nimm dann erneut auf.',
+            encoderFailed: 'Der Video-Encoder auf dieser Maschine ist nicht gestartet. Nimm erneut auf oder starte Happier dort neu, wenn es wieder passiert.',
             stopTitle: 'Aufnahme konnte nicht beendet werden',
             stopBody: 'Möglicherweise wird noch aufgenommen. Versuche es gleich noch einmal.',
             discardTitle: 'Aufnahme konnte nicht verworfen werden',
