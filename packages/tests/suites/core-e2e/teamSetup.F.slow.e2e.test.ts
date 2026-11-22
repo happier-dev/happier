@@ -11,7 +11,9 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { ExecutionRunGetResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowInvocationListResultV1Schema,
-  WorkflowRunStartResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+  WorkflowRunStartResultV1Schema, WorkflowRunGetResultV1Schema, WorkflowRunListResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { waitFor } from '../../src/testkit/timing';
 import { readRetainedExecutionRunRecord } from '../../../../apps/cli/src/daemon/executionRunRegistry';
 import { reloadConfiguration } from '../../../../apps/cli/src/configuration';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
@@ -369,5 +371,49 @@ describe('Team setup F: every launcher captures Session defaults', () => {
       approvalProfileId: profiles[0], approvalProfileTeamOrGroupDerived: true });
     expect((await start()).metadata).toMatchObject({ machineId: machine.target.machineId,
       approvalProfileId: profiles[1], approvalProfileTeamOrGroupDerived: true });
+    // The scheduled entry must carry the saved Project frame through admission
+    // and the real Workflow executor into native Session creation.
+    const triggerResult = await member.executeAsPerson('workflow.trigger.add', {
+      workflow: saved.definitionId,
+      project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+      trigger: { kind: 'schedule', enabled: true,
+        schedule: { kind: 'cron', scheduleExpr: '0 0 1 1 *', everyMs: null, timezone: 'UTC' } },
+    });
+    if (!triggerResult.ok) throw new Error(`Workflow trigger refused (${triggerResult.errorCode})`);
+    const trigger = WorkflowTriggerWriteResultV1Schema.parse(triggerResult.result);
+    try {
+      expect(await member.executeAsPerson('workflow.trigger.run_now', { automationId: trigger.set.automationId }))
+        .toMatchObject({ ok: true });
+      let scheduledRunId: string | undefined;
+      await waitFor(async () => {
+        const history = await member.execute('workflow.run.list', { automationId: trigger.set.automationId });
+        if (!history.ok) throw new Error(`Scheduled Workflow history unavailable (${history.errorCode})`);
+        scheduledRunId = WorkflowRunListResultV1Schema.parse(history.result).runs[0]?.id;
+        return scheduledRunId !== undefined;
+      }, { context: 'F Project-default Automation Run appears' });
+      if (!scheduledRunId) throw new Error('Scheduled Workflow Run missing');
+      expect(await member.execute('workflow.run.wait', { runId: scheduledRunId, conditions: ['terminal'] }))
+        .toMatchObject({ ok: true, result: { observation: 'terminal', run: { state: 'succeeded' } } });
+      const opened = await member.execute('workflow.run.get', { runId: scheduledRunId });
+      if (!opened.ok) throw new Error(`Scheduled Workflow Run unavailable (${opened.errorCode})`);
+      const accepted = WorkflowRunGetResultV1Schema.parse(opened.result);
+      expect(accepted.authoredDefinition.defaults).toMatchObject({ projectContext });
+      expect(accepted.definition.defaults).toMatchObject({ projectContext });
+      expect(accepted.acceptedContext.machineId).toBe(machine.target.machineId);
+      const invocations = await member.execute('workflow.run.invocations.list', { runId: scheduledRunId, includeContent: true });
+      if (!invocations.ok) throw new Error(`Scheduled Workflow invocations unavailable (${invocations.errorCode})`);
+      const execution = WorkflowInvocationListResultV1Schema.parse(invocations.result).invocationDetails
+        ?.find(row => row.progress.blockKind === 'step')?.progress.execution;
+      if (execution?.kind !== 'session' && execution?.kind !== 'session_ready') {
+        throw new Error('Scheduled Workflow Session correspondence is missing');
+      }
+      expect(await member.readSessionMetadata(execution.sessionId)).toMatchObject({
+        machineId: machine.target.machineId, approvalProfileId: profiles[1], approvalProfileTeamOrGroupDerived: true,
+      });
+    } finally {
+      expect(await member.executeAsPerson('workflow.trigger.remove', {
+        automationId: trigger.set.automationId, triggerId: trigger.triggerId,
+      })).toMatchObject({ ok: true });
+    }
   }, 0);
 });
