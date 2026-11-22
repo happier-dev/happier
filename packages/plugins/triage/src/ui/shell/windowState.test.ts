@@ -278,11 +278,11 @@ describe('resolveTriageListShellState', () => {
     expect(readTriageListFailureLine(transient)).toEqual({
       label: 'GitHub could not be reached. Their entries may be missing or out of date.', recovery: 'retry',
     });
-    // Several causes: all named, reasons left to Manage sources, and the sentence that told the reader nothing is gone.
+    // Several sources share one count and leave the connection names to Manage sources.
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'a', displayName: 'GitHub', reason: 'Needs you to sign in again.', needsConnectionChange: true },
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
-    ] }, undefined, 'en')).toEqual({ label: 'GitHub and Linear could not be read. Their entries may be missing or out of date.', recovery: 'manageSources' });
+    ] }, undefined, 'en')).toEqual({ label: '2 sources need attention.', recovery: 'manageSources' });
     expect(readTriageListFailureLine({ kind: 'sources', sources: [
       { sourceInstanceId: 'b', displayName: 'Linear', reason: 'Could not be reached just now.', retryable: false, needsConnectionChange: true },
     ] }).label).toBe('Linear could not be read. Their entries may be missing or out of date.');

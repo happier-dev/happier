@@ -445,7 +445,8 @@ export function readTriageListFailureLine(
 ): TriageListFailureLineV1 {
   const first = failure.sources[0];
   const machineUnreachable = first !== undefined && failure.sources.every((source) => source.machineUnreachable === true);
-  if (failure.retainedRows === true || machineUnreachable) {
+  const needsConnectionChange = failure.sources.every((source) => source.needsConnectionChange === true);
+  if (failure.sources.length > 1 || failure.retainedRows === true || machineUnreachable) {
     const count = failure.sources.length;
     const attention = count === 1
       ? text('plugins.triage.surface.sources.attention.one', '1 source needs attention.')
@@ -458,7 +459,10 @@ export function readTriageListFailureLine(
     const retained = failure.retainedRows === true
       ? `${text('plugins.triage.surface.lastKnown', 'Showing the last known list')}.`
       : null;
-    return Object.freeze({ label: [machineReason, retained, attention].filter(Boolean).join(' '), recovery: 'manageSources' });
+    return Object.freeze({
+      label: [machineReason, retained, attention].filter(Boolean).join(' '),
+      recovery: retained !== null || machineUnreachable || needsConnectionChange ? 'manageSources' : 'retry',
+    });
   }
   const names = createTriageNameListFormatter(locale)(failure.sources.map((source) => source.displayName));
   const lineReason = (source: TriageListSourceFailureV1) => source.lineReason ?? source.reason;
@@ -471,7 +475,7 @@ export function readTriageListFailureLine(
     : text('plugins.triage.surface.failure.suffix', 'could not be read')}`;
   return Object.freeze({
     label: `${title}. ${text('plugins.triage.surface.failure.retained', 'Their entries may be missing or out of date.')}${oneReason && !unreachable ? ` ${withRetryAt(resolveSourceFailureReason(text, lineReason(first!)), latestRetryDeadline(failure.sources), text, locale)}` : ''}`,
-    recovery: failure.sources.every((source) => source.needsConnectionChange === true) ? 'manageSources' : 'retry',
+    recovery: needsConnectionChange ? 'manageSources' : 'retry',
   });
 }
 
@@ -635,15 +639,15 @@ export function resolveTriageListShellState(
         options.inventory ?? (options.tasks === true
           ? { includesSource: () => true, includesKind: () => true } : TRIAGE_PR_VIEW_INVENTORY_V1)),
       wholeScanFailure?.sources ?? []);
-    const failedIds = new Set(viewHealth.selectedFailures.map(source => source.sourceInstanceId));
+    const readingSources = viewHealth.body.coverage === 'partial'
+      && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
+    const failedIds = new Set(readingSources ? [] : viewHealth.selectedFailures.map(source => source.sourceInstanceId));
     const retainedRows = failedIds.size > 0 && window.rows.some(row => row.observations.some(observation =>
       failedIds.has(observation.sourceInstanceId)));
     const failure = failedIds.size === 0 ? null
       : Object.freeze({ kind: 'sources' as const, sources: viewHealth.selectedFailures,
         ...(retainedRows ? { retainedRows: true as const } : {}) });
-    const readingSources = viewHealth.body.coverage === 'partial'
-      && (snapshot.pending !== 'idle' || snapshot.sourceAdmissionPending === true);
-    if (window.rows.length === 0 && failure === null && readingSources) return Object.freeze({ kind: 'initial' });
+    if (window.rows.length === 0 && readingSources) return Object.freeze({ kind: 'initial' });
     return Object.freeze({
       kind: 'window',
       window,
@@ -654,7 +658,7 @@ export function resolveTriageListShellState(
       failure,
       body: viewHealth.body,
       wholeScanFailure,
-      outsideSourcesAttention: viewHealth.outsideSourcesAttention,
+      outsideSourcesAttention: readingSources ? null : viewHealth.outsideSourcesAttention,
     });
   }
   // Before the first completed cycle there are no configured sources to report

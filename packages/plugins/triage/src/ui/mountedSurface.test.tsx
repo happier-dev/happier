@@ -1686,8 +1686,9 @@ describe('the mounted PRs & Issues surface', () => {
         // that the live Account had this many entries.
         await visibleTexts(shell, ['Acme issue 0']);
         expect(snapshot().pending).toBe('idle');
-        expect(document.body.textContent).toContain('GitHub workspace');
-        expect(document.body.textContent).toContain('Bitbucket workspace');
+        expect(document.body.textContent).toContain('2 sources need attention.');
+        expect(document.body.textContent).not.toContain('GitHub workspace');
+        expect(document.body.textContent).not.toContain('Bitbucket workspace');
         await expect(shell.queryByText('Refreshing')).resolves.toBeUndefined();
 
         harness.state.sourceBFails = false;
@@ -1915,7 +1916,7 @@ describe('the mounted PRs & Issues surface', () => {
         // one cause.
         const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
         expect(statusLines, JSON.stringify(statusLines))
-            .toContain(`Example forge · ${LABEL_A} and Example forge · ${LABEL_B} could not be reached. Their entries may be missing or out of date.`);
+            .toContain('2 sources need attention.');
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
     });
 
@@ -1992,7 +1993,7 @@ describe('the mounted PRs & Issues surface', () => {
         const failureLines = () => [...document.querySelectorAll<HTMLElement>('[role="status"]')]
             .map(element => element.textContent ?? '');
         if (!initiallyUnavailable) {
-            expect(failureLines()).toEqual(expect.arrayContaining([expect.stringContaining(LABEL_A), expect.stringContaining(LABEL_B)]));
+            expect(failureLines()).toEqual(['2 sources need attention.']);
             await expect(shell.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
         }
 

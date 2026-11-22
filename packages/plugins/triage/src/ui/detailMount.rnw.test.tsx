@@ -524,6 +524,7 @@ function createHarness(options: Readonly<{
     firstInstanceObservesEntry?: boolean;
     secondInitialScan?: Promise<void>;
     /** The second connection's reads fail (a transient provider error), so it is the one Manage sources flags. */
+    firstInstanceFails?: boolean;
     secondInstanceFails?: boolean;
     otherSourceEntry?: boolean;
     deferLinkedEntry?: boolean;
@@ -594,7 +595,8 @@ function createHarness(options: Readonly<{
             && options.secondInitialScan !== undefined) {
             await options.secondInitialScan;
         }
-        if (options.secondInstanceFails === true && input.instance.instance.sourceInstanceId === SECOND_INSTANCE) {
+        if ((options.firstInstanceFails === true && input.instance.instance.sourceInstanceId === INSTANCE)
+            || (options.secondInstanceFails === true && input.instance.instance.sourceInstanceId === SECOND_INSTANCE)) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } } satisfies TriageScanResultV1;
         }
         if (input.page.kind !== 'initial') continuedScanPages.push(input.page.kind);
@@ -937,6 +939,7 @@ async function mountShell(
         secondInstanceObservesEntry?: boolean;
         firstInstanceObservesEntry?: boolean;
         secondInitialScan?: Promise<void>;
+        firstInstanceFails?: boolean;
         secondInstanceFails?: boolean;
         /** Read configured sources from the harness's Account Collections, as a live Account-backed mount does. */
         accountData?: boolean;
@@ -986,6 +989,7 @@ async function mountShell(
         ...(options.securityAlert ? { securityAlert: true, nativeRoutingToken: 'example/repository' } : {}),
         ...(options.sourceOverviewProbe ? { nativeRoutingToken: 'example/repository' } : {}),
         ...(options.secondInstance === undefined ? {} : { secondInstance: options.secondInstance }),
+        ...(options.firstInstanceFails === undefined ? {} : { firstInstanceFails: options.firstInstanceFails }),
         ...(options.secondInstanceFails === undefined ? {} : { secondInstanceFails: options.secondInstanceFails }),
         ...(options.secondInstanceObservesEntry === undefined
             ? {}
@@ -2408,6 +2412,22 @@ describe('opening a row into the source detail', () => {
         });
         await expect(shell.queryByText('The list could not be read')).resolves.toBeUndefined();
     });
+    it('summarizes multiple source failures after reading settles', async () => {
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const shell = await mountShell({ activeSurface: true, automaticDemandOnly: true, otherSourceEntry: true,
+            firstInstanceFails: true, secondInstance: true, secondInstanceFails: true, secondInitialScan });
+        try {
+            await vi.waitFor(() => expect(document.body.textContent).toContain('Reading your sources'));
+            await expect(shell.getByRole('button', { name: 'Another source matching entry' })).resolves.toBeDefined();
+            expect(document.body.textContent).not.toMatch(/could not be (read|reached)|sources? needs? attention/);
+        } finally {
+            await act(async () => { release(); });
+        }
+        await vi.waitFor(() => expect(document.body.textContent).toContain('2 sources need attention.'));
+        expect(document.body.textContent).not.toMatch(/could not be (read|reached)|Reading your sources/);
+    });
+
     it('says each connection’s own health on its Manage sources row, with its fix at the row’s end', async () => {
         // UI4 D16: a failing connection must not look healthy beside a detached failure line, and no bare Details
         // control leads the panel; the healthy connection stays quiet.
