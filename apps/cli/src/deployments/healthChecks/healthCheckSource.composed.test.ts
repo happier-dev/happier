@@ -347,6 +347,50 @@ describe('saved health source registration and finite cycles', () => {
         f.tick('up'); await f.cycle();
         expect(f.errors).toHaveLength(1);
     });
+    it('publishes a new exact saved failure while the native occurrence still awaits admission', async () => {
+        const configured = { ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
+        const f = fixture(configured);
+        f.safe(false);
+        await f.cycle();
+        const original = f.admissions[0]!;
+        expect(original.payload).toMatchObject({ transition: 'failed', observedAt: f.now() });
+
+        const listener = { ...definition, sourceInstanceId: 'health-saved:diagnose',
+            eventRef: { ...definition.eventRef, localId: 'health-check-failed' },
+            sourceConfig: { v: 1, serverId: 'home', observingSince: f.now() + 1, nativeSourceInstanceId: definition.sourceInstanceId } };
+        const adapter = createHealthCheckSourceAdapter(f.now, f.context.services.events.host);
+        const selected = adapter.decode(listener);
+        if (!selected) throw Error('Expected exact saved selector');
+        const input = { context: f.context, definition: listener, definitions: [listener], source: selected, isCurrent: async () => true };
+        const subscription = adapter.subscribeWake?.(async () => {});
+        try {
+            expect((await adapter.observe(input)).observations).toEqual([]);
+            f.tick('up'); await f.cycle();
+            f.tick('down'); await f.cycle();
+            expect(f.admissions.map(item => item.occurrenceId)).toEqual([
+                original.occurrenceId, original.occurrenceId, original.occurrenceId,
+            ]);
+            await f.accountChange({ entityIds: [], dataKvChanges: [{ pluginDomain: 'dataKv', pluginId: materialization.pluginId, full: true }] });
+            const failure = await adapter.observe(input);
+            expect(failure.observations).toMatchObject([{
+                eventRef: listener.eventRef,
+                occurredAt: f.now(), payload: { transition: 'failed', checkId: 'http' },
+                subjectContexts: [expect.objectContaining({ role: 'operand', subject: { kind: 'healthCheck',
+                    serverId: 'home', sourceInstanceId: definition.sourceInstanceId, checkId: 'http' } }), expect.anything()],
+            }]);
+            expect(failure.observations[0]!.occurrenceId).not.toBe(original.occurrenceId);
+            if (!failure.checkpoint) throw Error('Expected saved failure acknowledgement');
+            await adapter.save({ ...input, checkpoint: failure.checkpoint });
+
+            f.safe(true);
+            await f.cycle();
+            await f.cycle();
+            expect(f.admissions.at(-1)).toMatchObject({ occurrenceId: failure.observations[0]!.occurrenceId,
+                payload: { transition: 'failed', observedAt: f.now() } });
+            await f.accountChange({ entityIds: [], dataKvChanges: [{ pluginDomain: 'dataKv', pluginId: materialization.pluginId, full: true }] });
+            expect((await adapter.observe(input)).observations).toEqual([]);
+        } finally { subscription?.dispose(); }
+    });
     it('acknowledges an admitted transition after a newer current result without losing that result', async () => {
         const configured = { ...source, checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
         const f = fixture(configured);

@@ -26,7 +26,7 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
     pluginEvents?: BackgroundServiceContext['services']['events']['plugin']): PluginCheckpointedEventSourceAdapterV1<HealthCheckSourceConfigV1, Candidate> {
     const live = new Map<string, { basis: string; source: HealthCheckSourceConfigV1;
         due: Map<string, number | null>; failures: Map<string, number>; pendingChecks: Set<string>; monitorResults: Map<string, string>;
-        stored?: { version: number | 'absent'; current?: Cursor['current'] } }>();
+        stored?: { version: number | 'absent'; value: Cursor } }>();
     return {
         observeWhileAdmissionPending: true,
         decode(definition) {
@@ -53,10 +53,12 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
             const sourceChanged = !parsed?.source || createCanonicalJsonSigningInput(parsed.source) !== createCanonicalJsonSigningInput(savedSource);
             let version: number | 'absent' = retained?.version ?? 'absent';
             const time = now();
-            const next = new Map(previous.checks.map(value => [value.checkId, value]));
+            const offeredChecks = new Map(previous.checks.map(value => [value.checkId, value]));
+            const transitions = new Map((previous.transitions ?? []).map(value => [value.checkId, value]));
             const pending = [...(previous.pending ?? [])];
             const replaying = pending.length > 0;
-            let changed = false;
+            let baselineChanged = false;
+            let transitionsChanged = false;
             const selected = source.checks.filter(check => {
                 const deadline = due.get(check.checkId);
                 return pendingChecks.has(check.checkId) || deadline === undefined || deadline !== null && deadline <= time;
@@ -97,42 +99,50 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
                 if (!result) throw new PluginError({ code: 'health_check_result_unavailable', message: 'The saved check did not return a result' });
                 if (isMonitorCheck(check)) {
                     due.set(identity, null);
-                    // The shared runner parks immediate drains during pending
-                    // admission and releases them when that admission settles.
-                    if (replaying) { pendingChecks.add(identity); continue; }
+                    // The shared runner parks this drain until pending admission settles.
+                    if (replaying) pendingChecks.add(identity);
                     const identityOfResult = createCanonicalJsonSigningInput(result);
                     if (state.monitorResults.get(identity) === identityOfResult) continue;
                     state.monitorResults.set(identity, identityOfResult);
                 }
-                // Current health keeps advancing on its existing due schedule.
-                // Event admission retains its first result/clock until settled,
-                // including after reload; fresh probes cannot replace that Event.
-                if (replaying) continue;
                 if (result.status === 'unknown') { failures.delete(identity); continue; }
                 if (result.status !== 'up') {
                     const count = (failures.get(identity) ?? 0) + 1;
                     failures.set(identity, count);
                     if (count < check.consecutiveFailuresBeforeAlerting) continue;
-                    if (check.kind.localId === 'heartbeat') due.set(identity, null);
+                    if (!replaying && check.kind.localId === 'heartbeat') due.set(identity, null);
                 } else failures.delete(identity);
-                const prior = next.get(check.checkId);
+                const offered = offeredChecks.get(identity);
+                const latest = transitions.get(identity);
+                const priorStatus = latest?.result.status ?? offered?.status;
                 // Down and degraded are the same failed condition. A change
                 // between them does not recover or open another failure.
-                if (prior && (prior.status === 'up') === (result.status === 'up')) continue;
-                const nextOrdinal = (prior?.ordinal ?? 0) + 1;
-                next.set(check.checkId, { checkId: check.checkId, status: result.status, ordinal: nextOrdinal });
-                changed = true;
-                if (result.status === 'up' && !prior) continue;
-                pending.push({ checkId: check.checkId, ordinal: nextOrdinal, result, receivedAt: time });
+                if (priorStatus && (priorStatus === 'up') === (result.status === 'up')) continue;
+                const ordinal = (latest?.ordinal ?? offered?.ordinal ?? 0) + 1;
+                if (!priorStatus && result.status === 'up') {
+                    offeredChecks.set(identity, { checkId: identity, status: result.status, ordinal });
+                    baselineChanged = true;
+                    continue;
+                }
+                transitions.set(identity, { checkId: identity, ordinal, result, receivedAt: time });
+                transitionsChanged = true;
             }
-            if (!replaying && pending.length) {
-                const transitions = new Map((previous.transitions ?? []).map(value => [value.checkId, value]));
-                for (const value of pending) transitions.set(value.checkId, value);
-                const checkpoint = fitHealthResultCheckpoint({ ...previous, checks: [...next.values()], pending, transitions: [...transitions.values()],
-                    ...(retainedCurrent ? { current: retainedCurrent } : {}) });
-                const written = await storage.set(key, checkpoint,
-                    { expectedVersion: version, signal: context.signal });
-                retainedCurrent = checkpoint.current;
+            // Saved listeners read the latest transition even while the native
+            // admission still owns an older occurrence. Once it acknowledges,
+            // offer any newer retained transition to the native listener.
+            if (!replaying) {
+                for (const value of transitions.values()) {
+                    const status = value.result.status;
+                    if (status === 'unknown' || (offeredChecks.get(value.checkId)?.ordinal ?? 0) >= value.ordinal) continue;
+                    offeredChecks.set(value.checkId, { checkId: value.checkId, status, ordinal: value.ordinal });
+                    pending.push(value);
+                }
+            }
+            let cursor: Cursor = { ...previous, checks: [...offeredChecks.values()], transitions: [...transitions.values()],
+                ...(pending.length ? { pending } : {}), ...(retainedCurrent ? { current: retainedCurrent } : {}) };
+            if (transitionsChanged || (!replaying && pending.length) || (replaying && baselineChanged)) {
+                cursor = fitHealthResultCheckpoint(cursor);
+                const written = await storage.set(key, cursor, { expectedVersion: version, signal: context.signal });
                 version = written.version;
             }
             const observations = pending.flatMap(value => {
@@ -153,24 +163,22 @@ function createNativeHealthCheckSourceAdapter(now: () => number = Date.now,
             });
             const deadlines = source.checks.map(check => due.has(check.checkId) ? due.get(check.checkId) : time + check.periodMs)
                 .filter((value): value is number => typeof value === 'number');
-            state.stored = { version, current: retainedCurrent };
+            state.stored = { version, value: cursor };
             return { observations, complete: true,
                 nextEligibleAt: pendingChecks.size ? time : deadlines.length ? Math.min(...deadlines) : null,
-                ...(changed || pending.length ? { checkpoint: { key, expectedVersion: version,
-                    value: { ...previous, checks: [...next.values()], transitions: [...new Map([...(previous.transitions ?? []), ...pending].map(value => [value.checkId, value])).values()],
-                        ...(retainedCurrent ? { current: retainedCurrent } : {}) } } } : {}),
+                ...(baselineChanged || pending.length ? { checkpoint: { key, expectedVersion: version, value: cursor } } : {}),
             };
         },
         async save({ context, definition, checkpoint }) {
             const state = live.get(definition.sourceInstanceId);
-            // The runner serializes this acknowledgement with observations, but
-            // current health may have advanced while its Event awaited approval.
+            // Acknowledgement clears native custody while preserving the latest
+            // current results and transitions committed during admission.
             const stored = state?.basis === checkpoint.value.basis ? state.stored : undefined;
-            const { pending: _pending, ...acknowledged } = checkpoint.value;
-            const value = fitHealthResultCheckpoint({ ...acknowledged, ...(stored?.current ? { current: stored.current } : {}) });
+            const { pending: _pending, ...acknowledged } = stored?.value ?? checkpoint.value;
+            const value = fitHealthResultCheckpoint(acknowledged);
             const written = await requireAccountStorage(context, { code: 'health_check_storage_unavailable', message: 'Health status storage is unavailable' }).kv.set(checkpoint.key, value,
                 { expectedVersion: stored?.version ?? checkpoint.expectedVersion, signal: context.signal });
-            if (state && stored) state.stored = { version: written.version, current: value.current };
+            if (state && stored) state.stored = { version: written.version, value };
         },
         async retire({ context, definitions }) {
             const own = context.materialization;
