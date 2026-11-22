@@ -133,6 +133,7 @@ type RequestDiagnostic = {
     goalControlFailure?: SessionGoalControlFailureV1;
     modelProbe?: ModelProbeDiagnostic;
     capabilityFailure?: ReturnType<typeof readCapabilityRefusalDetails>;
+    workspaceSyncProof?: WorkspaceSyncProofDiagnostic;
     failureCause?: Readonly<{ phase: string }>;
     effectAttempted?: boolean | null;
     failure?: Readonly<{
@@ -195,6 +196,20 @@ function readCapabilityFailureDiagnostic(method: string, value: unknown) {
         return readCapabilityRefusalDetails(value.error);
     }
     return readCapabilityRefusalDetails(value);
+}
+
+type WorkspaceSyncProofDiagnostic = Readonly<{ targetBootstrap?: boolean; targetReplacementApproval: boolean }>;
+
+/**
+ * Presence only, so a replay can name the hop that lost a reviewed destination proof:
+ * never the proof, a digest, an id or a path. The receiving owner still validates it.
+ */
+function readWorkspaceSyncProofDiagnostic(method: string, params: unknown): WorkspaceSyncProofDiagnostic | undefined {
+    const create = method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE;
+    if (!create && method !== RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE) return;
+    const carried = (field: string) => !!params && typeof params === 'object' && Reflect.get(params, field) !== undefined;
+    return create ? { targetReplacementApproval: carried('targetReplacementApproval') }
+        : { targetBootstrap: carried('targetBootstrap'), targetReplacementApproval: carried('targetReplacementApproval') };
 }
 
 function readModelProbeDiagnostic(method: string, value: unknown): ModelProbeDiagnostic | undefined {
@@ -458,6 +473,7 @@ export class RpcHandlerManager {
                 ...(diagnostic.goalControlFailure ? { goalControlFailure: diagnostic.goalControlFailure } : {}),
                 ...(diagnostic.modelProbe ? { modelProbe: diagnostic.modelProbe } : {}),
                 ...(diagnostic.capabilityFailure ? { capabilityFailure: diagnostic.capabilityFailure } : {}),
+                ...(diagnostic.workspaceSyncProof ? { workspaceSyncProof: diagnostic.workspaceSyncProof } : {}),
                 ...(diagnostic.failure ?? {}),
             });
         }
@@ -983,6 +999,7 @@ export class RpcHandlerManager {
                     contentMethod,
                 );
                 decryptedParams = decoded.params;
+                diagnostic.workspaceSyncProof = readWorkspaceSyncProofDiagnostic(diagnostic.method, decryptedParams);
                 callId = decoded.callId;
                 if (!hasDiagnosticTrace && request.requestId === undefined && callId !== null) diagnostic.requestId = callId;
             } catch (error) {
@@ -1479,6 +1496,7 @@ export class RpcHandlerManager {
             : options?.rpcContext?.callerAuthority ?? options?.verifiedPeerAuthority ?? options?.localActionContext?.authority;
         return this.observeRequest(prefixedMethod, undefined, async diagnostic => {
             diagnostic.admissionPredicate = 'handler_admission';
+            diagnostic.workspaceSyncProof = readWorkspaceSyncProofDiagnostic(diagnostic.method, params);
             if (!handler) {
                 return this.unregisteredMethodResult(method);
             }

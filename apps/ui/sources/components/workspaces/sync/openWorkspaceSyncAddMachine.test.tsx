@@ -52,6 +52,8 @@ let pendingPreflight = deferred<unknown>();
 let requireApproval = false;
 let holdPreflight = false;
 let targetFolder: 'nonempty' | 'empty' | 'missing' = 'nonempty';
+/** What the source Machine's receiving executor hands its create dependency after admission. */
+let receivedCreates: Array<Readonly<{ operationId: string; targetReplacementApproval?: unknown }>> = [];
 
 const source = () => ({ id: 'source-ref', serverId: workspace.serverId, machineId: 'machine-a', rootPath: '/source' });
 const callsFor = (method: string) => daemonRpc.mock.calls.map(([request]) => request).filter(request => request.method === method);
@@ -127,11 +129,13 @@ async function installSourceMachineActionReceiver() {
             ...(replaceRelationshipId ? { replaceRelationshipId } : {}),
             ...(signal ? { signal } : {}),
         }),
-        workspaceSyncRelationshipCreate: ({ input, operationId, serverId, targetReplacementApproval, targetReplacementApprovalReceiptId, signal }) =>
-            createWorkspaceSyncRelationshipOnController({ input, operationId, serverId: serverId ?? null,
+        workspaceSyncRelationshipCreate: ({ input, operationId, serverId, targetReplacementApproval, targetReplacementApprovalReceiptId, signal }) => {
+            receivedCreates.push({ operationId, ...(targetReplacementApproval ? { targetReplacementApproval } : {}) });
+            return createWorkspaceSyncRelationshipOnController({ input, operationId, serverId: serverId ?? null,
                 ...(targetReplacementApproval && targetReplacementApprovalReceiptId
                     ? { targetReplacementApproval, targetReplacementApprovalReceiptId } : {}),
-                ...(signal ? { signal } : {}) }),
+                ...(signal ? { signal } : {}) });
+        },
     }));
     const settle = (execution: Awaited<ReturnType<typeof receiver.execute>>) => execution.ok ? execution.result : execution;
     const base = { serverUrl: account.endpointUrl, serverIdentityId, accountId: account.accountId, tokenEpoch: 0 };
@@ -189,6 +193,7 @@ beforeEach(async () => {
     requireApproval = false;
     holdPreflight = false;
     targetFolder = 'nonempty';
+    receivedCreates = [];
     const machines = [['machine-a', 'Source', '/home/source'], ['machine-b', 'Target', '/home/target']].map(([id, displayName, homeDir]) => {
         // Both Machines are the person's own (Manage) unless a case says otherwise.
         const machine = createMachineFixture({ id, activeAt: Date.now(), isShared: false });
@@ -465,6 +470,25 @@ describe('Project Add machine modal', () => {
         // The exact-mirror deletion consequence travels in the reviewed preview the consequences card presents.
         expect(reviewedLink().preview.handoffTargetReplacementApproval?.consequences)
             .toEqual(['replace_nonempty_workspace_target', 'delete_target_only_files_during_exact_mirror']);
+    });
+
+    it('hands the reviewed exact-replica destination proof for a new folder to the source Machine\'s create after confirm', async () => {
+        requireApproval = true;
+        targetFolder = 'missing';
+        confirmModal.mockResolvedValueOnce(true);
+        await startAddMachineLink({ configure: async screen => {
+            for (const [title, value] of [['sessionHandoff.targetApproval.modeLabel', 'mirror_exactly'],
+                ['workspaceSync.addMachine.folderSetup', 'materialize_from_source_workspace']] as const) {
+                const menu = screen.findAllByType(DropdownMenu).find(node => node.props.itemTrigger?.title === title);
+                expect(menu).toBeTruthy();
+                await act(async () => invokeTestInstanceHandler(menu!, 'onSelect', value));
+            }
+        } });
+        const reviewed = (reviewedLink().preview as { handoffTargetReplacementApproval?: { operationId: string } }).handoffTargetReplacementApproval;
+        expect(reviewed).toBeTruthy();
+        // The app routes the write to the source Machine (no local create) and confirms on the reviewed
+        // request: the receiving executor hands exactly the proof the person saw to its create dependency.
+        expect(receivedCreates).toEqual([{ operationId: reviewed!.operationId, targetReplacementApproval: reviewed }]);
     });
 
     describe('Use existing folder for a Git source', () => {

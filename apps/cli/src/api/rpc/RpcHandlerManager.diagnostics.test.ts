@@ -115,6 +115,47 @@ describe('RPC completion diagnostics', () => {
         expect(JSON.stringify(logger.mock.calls)).not.toMatch(/never-log|EMFILE|\/private/);
     });
 
+    it.each(['plain', 'encrypted', 'local'] as const)('records only whether a Sync write carried its destination proof through %s dispatch', async transport => {
+        const logger = vi.fn();
+        const key = new Uint8Array(32).fill(9);
+        const content: SocketRpcContent = { mode: 'e2ee', cipher: {
+            encryptRaw: async value => encodeBase64(encrypt(key, 'dataKey', value)),
+            decryptRaw: async value => decrypt(key, 'dataKey', decodeBase64(value)),
+        } };
+        const rpc = new RpcHandlerManager({ scopePrefix: 'machine', logger,
+            ...(transport === 'encrypted' ? { encryptionKey: key, encryptionVariant: 'dataKey' as const } : { encryptionMode: 'plain' as const }) });
+        const proof = { canonicalRoot: '/never-log-root', rootFingerprint: 'never-log-fingerprint', operationId: 'never-log-operation' };
+        const cases = [
+            { method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+                params: { bootstrapOperationId: 'never-log-op', targetBootstrap: 'materialize_from_source_workspace', targetReplacementApproval: proof },
+                expected: { targetBootstrap: true, targetReplacementApproval: true } },
+            { method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+                params: { bootstrapOperationId: 'never-log-op', targetBootstrap: 'materialize_from_source_workspace' },
+                expected: { targetBootstrap: true, targetReplacementApproval: false } },
+            { method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+                params: { operationId: 'never-log-op', targetReplacementApproval: proof },
+                expected: { targetReplacementApproval: true } },
+            { method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE,
+                params: { operationId: 'never-log-op' },
+                expected: { targetReplacementApproval: false } },
+        ] as const;
+        for (const [index, { method: rpcMethod, params, expected }] of cases.entries()) {
+            rpc.registerHandler(rpcMethod, () => ({ ok: true }));
+            const method = `machine:${rpcMethod}`;
+            const callId = index.toString(16).padStart(32, '0');
+            if (transport === 'local') await rpc.invokeLocal(rpcMethod, params);
+            else await rpc.handleRequest({ method, params: transport === 'encrypted'
+                ? await socketRpcCodec.encodeParams(content, params, { method, callId }) : params });
+            const completion = logger.mock.calls.filter(([message]) => message === '[RPC] Request completed').at(-1);
+            expect(completion?.[1]).toMatchObject({ method: rpcMethod, workspaceSyncProof: expected });
+        }
+        expect(JSON.stringify(logger.mock.calls)).not.toContain('never-log');
+        logger.mockClear();
+        rpc.registerHandler('demo', () => ({ ok: true }));
+        await rpc.invokeLocal('demo', { targetReplacementApproval: proof });
+        expect(logger.mock.calls[0]?.[1]).not.toHaveProperty('workspaceSyncProof');
+    });
+
     it('projects model counts without visiting model rows and rejects open diagnostic strings', async () => {
         const logger = vi.fn();
         const rpc = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger });

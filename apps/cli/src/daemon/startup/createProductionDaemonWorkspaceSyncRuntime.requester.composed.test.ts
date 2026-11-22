@@ -577,6 +577,28 @@ it.skipIf(process.platform !== 'linux').each([
   expect(setup.custodianRows).toEqual(setup.custodianBefore);
 });
 
+it.skipIf(process.platform !== 'linux').each([
+  ['worker copy', 'plain', 'own'], ['exact replica', 'plain', 'own'], ['exact replica', 'e2ee', 'own'],
+  ['exact replica', 'e2ee', 'shared Manage'],
+] as const)(
+  'adds a machine to a separate folder on a second Machine through native review and confirm (%s, %s, %s)', async (kind, accountMode, machines) => {
+  executionBoundary.member = false;
+  const custodian = machines === 'own' ? 'member-a' : 'requester';
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    sourceCustodianAccountId: custodian, targetCustodianAccountId: custodian,
+    workerCleanCopy: true, originalActionHomeHttp: true, accountMode, targetResourceMode: accountMode });
+  // A separate destination folder the person names; it does not exist yet.
+  await rm(setup.targetPath, { recursive: true });
+  const { purpose: _purpose, ...replica } = setup.request.actionInput;
+  const invocation = kind === 'worker copy' ? undefined
+    : await setup.prepareInvocation({ ...setup.request, actionInput: replica });
+  const result = await setup.executeNativeRelationshipAction(invocation);
+  expect(result, JSON.stringify({ result, diagnostics: setup.rpcDiagnostics, target: setup.targetRpcDiagnostics }))
+    .toMatchObject({ ok: true, result: { created: true } });
+  expect(setup.approvalArtifacts.size).toBe(0);
+  expect(await readFile(join(setup.targetPath, 'payload.txt'), 'utf8')).toBe('before quiesce');
+});
+
 it.skipIf(process.platform !== 'linux')('executes local exact-copy native review under Allow without creating an approval Artifact', async () => {
   executionBoundary.member = false;
   const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo,

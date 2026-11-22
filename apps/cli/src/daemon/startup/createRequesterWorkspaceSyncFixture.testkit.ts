@@ -227,8 +227,10 @@ export async function createRequesterWorkspaceSyncFixture(options: Readonly<{
     randomBytes: tweetnacl.randomBytes }) : null;
   const targetMetadata = { host: 'target', platform: 'linux', homeDir: installed.directory,
     happyCliVersion: 'test', happyHomeDir: installed.directory };
+  // A daemon publishes its installation key in its own Machine content; an E2EE
+  // sealer pins the Home-delivered key to it (docs/encryption.md).
   const sourceMetadata = { host: 'source', platform: 'linux', homeDir: installed.directory,
-    happyCliVersion: 'test', happyHomeDir: installed.directory };
+    happyCliVersion: 'test', happyHomeDir: installed.directory, installationPublicKey: installed.installation.publicKey };
   const sourceResource = sourceResourceKey ? { encryptionKey: sourceResourceKey.encryptionKey,
     ownerDataEncryptionKey: encodeBase64(sourceResourceKey.dataEncryptionKey), ownerPublicKey: sourcePublicKey,
     requesterPublicKey: tweetnacl.box.keyPair.fromSecretKey(material.machineKey).publicKey,
