@@ -1926,8 +1926,9 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
   const listAction = anatomy.action === undefined || geometry !== 'list' || (!catalog && stage.composition === 'split') ? null : anatomy.action(item);
   // A resting list (a phone, a narrow page) holds no empty cell: its rows run to the page's margin, and the
   // row's actions overlay its end (`HappierListItem`).
-  const accessory = (rowAccessory === undefined && anatomy.peek === undefined && anatomy.action === undefined)
-    || (stage.wrapTitles && rowAccessory === undefined && chevron === null && listAction === null) ? null : (
+  const holdsNoCell = (own: ReactNode) => (own === undefined && anatomy.peek === undefined && anatomy.action === undefined)
+    || (stage.wrapTitles && own === undefined && chevron === null && listAction === null);
+  const accessory = holdsNoCell(rowAccessory) ? null : (
     <View style={lineStyle}>
       {listAction === null ? null : <View style={stage.directoryRow !== null
         // A directory's action: the accessory cell's end and the button's own hit padding make up the row's inset.
@@ -1986,7 +1987,8 @@ function CollectionRow<Item>(props: Readonly<{ item: Item; itemKey: string; befo
         wrapTitle={stage.wrapTitles}
         ruledInsetPx={stage.ruledInsetPx}
         pageSection={stage.pageSections}
-        ownsTrailingInset={(stage.pageSections || stage.wrapTitles) && accessory === null}
+        // The reserved ⋯ place stands where the ⋯ does, so its row keeps the ⋯ row's content inset (TH replay 191 row 6).
+        ownsTrailingInset={(stage.pageSections || stage.wrapTitles) && holdsNoCell(actions.accessory)}
         travelling={travel !== null}
         beneath={beneath}
         rowActionsCell={stage.useRowActions !== undefined && actions.accessory === undefined && listAction === null && chevron === null}

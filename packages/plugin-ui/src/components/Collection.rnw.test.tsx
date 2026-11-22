@@ -2126,6 +2126,10 @@ describe('Collection table', () => {
         return '0px';
       };
       expect(trailingInset(reserved, view.query('row:b')!)).toBe(trailingInset(trigger, view.query('row:a')!));
+      // TH-REPLAY-191 row 6: the cells' own content keeps the same end padding before that cell, or the reserved row's
+      // figures stand 7 px right of the ⋯ rows' (a page row's 15 against the table's 8).
+      const contentEnd = (id: string) => getComputedStyle(view.query(`row:${id}:column:age`)!.parentElement!).paddingRight;
+      expect(contentEnd('b')).toBe(contentEnd('a'));
     } finally {
       view.unmount();
     }
