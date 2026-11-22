@@ -467,8 +467,11 @@ export function ReviewDetailHost(props: Readonly<{
   if (props.bodyState === 'loading' && !record) return <ReviewDetailState kind="loading" />;
   if (props.bodyState === 'failed' && !record) return <ReviewDetailState kind="failed" onRetry={props.onRetry} />;
   if (!record) return <ReviewDetailState kind="missing" reason={t('reviewWalkthrough.detail.unreadable')} />;
+  // Until the Review owner's first read lands, the page keeps its loading shape: what waits on the reader, the glance and
+  // the people aren't known yet, so it offers nothing (never New round) and nothing moves when they arrive.
+  if (scope && !detail.data && (detail.status === 'idle' || detail.status === 'loading')) return <ReviewDetailState kind="loading" />;
 
-  const canSubmit = Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
+  const canSubmit =Boolean(human?.needsYou.canSubmitVerdict && human.roundOrdinal === selectedRound && submitVerdict);
   const canEditPeople = canEdit && human?.roundOrdinal === selectedRound && setReviewers !== undefined;
   // One primary (lab `detail-findings`): Submit review when the Review asks it of you; otherwise "Implement N fixes"
   // once a finding is accepted and not yet fixed. While findings still wait for a decision and none is accepted there
@@ -478,7 +481,11 @@ export function ReviewDetailHost(props: Readonly<{
     disabled: findings.implement.destinationDisabled, loading: findings.implement.busy, onPress: implementFindings } : null;
   const awaitingDecision = findings.rows.some(row => row.decision === 'undecided' && !row.fixed);
   const newRoundAction = newRound.available ? { title: t('reviewWalkthrough.detail.newRound'), onPress: newRound.open } : null;
+  // Which primary follows from the findings, so while they load the slot is held pending (no action, same place) rather
+  // than offering New round and then swapping it. The Runs tab doesn't read findings, so it decides from what it has.
+  const findingsKnown = !scope || activeTab === 'runs' || comments.status === 'loaded' || comments.status === 'failed';
   const primaryAction = canSubmit ? { title: t('reviewWalkthrough.detail.submitReview'), onPress: () => setSubmitOpen(true) }
+    : !findingsKnown ? { title: t('common.loading'), loading: true, disabled: true, onPress: () => {} }
     : implementAction ?? (awaitingDecision ? null : newRoundAction);
   // A finding's standing words: its round status and captured scope, then (a Hunt's) its standing across runs.
   const findingFacts = (row: (typeof findings.rows)[number]) => {

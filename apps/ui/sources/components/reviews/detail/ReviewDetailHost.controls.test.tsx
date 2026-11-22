@@ -145,6 +145,58 @@ it('shows a fixed finding as Fixed, counts it on its chip and never offers to im
   } finally { await screen.unmount(); }
 });
 
+it('offers no primary from a Review still loading: never New round, and the slot stays taken until the real one lands (G)', async () => {
+  const reviewId = 'loading-primary-review';
+  const accepted = buildReviewCommentFixture({ id: 'loading-accepted', threadId: 'loading-accepted', reviewId,
+    accountId: 'alice', state: 'open', reviewTriageStatus: 'accept', roundOrdinal: 1, findingIdentity: 'a'.repeat(64),
+    finding: { id: 'loading-accepted-finding', title: 'Accepted finding', summary: 'To implement', severity: 'high', category: 'correctness' } });
+  const human: ReviewHumanStateV1 = { reviewId, roundOrdinal: 1, requests: [], verdicts: [],
+    needsYou: { reviewId, roundOrdinal: 1, reason: 'review_needs_you', needsYou: false, requestedVerdict: false,
+      pendingDecisions: false, canSubmitVerdict: false } };
+  const gate = () => { let open!: () => void; const opened = new Promise<void>(resolve => { open = resolve; }); return { open, opened }; };
+  const detailRead = gate();
+  const commentsRead = gate();
+  fixture = await createSessionFilesViewFixture({ serverUrl: 'https://loading-primary-review.test', request: async url => {
+    const path = new URL(String(url)).pathname;
+    if (path === '/v1/reviews/get') {
+      await detailRead.opened;
+      return Response.json({ review: { reviewId, projectSourceId: null, workflowId: null, subjectKind: 'repository', sourceKind: 'direct',
+        state: 'completed', currentRoundOrdinal: 1, startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 } }, human });
+    }
+    if (path === '/v1/reviews/comments') {
+      await commentsRead.opened;
+      return Response.json({ items: [accepted].map(storePlainReviewCommentFixture), cursor: null });
+    }
+    return Response.json({}, { status: 404 });
+  } });
+  const artifact: DecryptedArtifact = { id: reviewId, sourceServerId: fixture.scope.serverId, title: 'Loading primary', isDecrypted: true,
+    header: { kind: 'review.v1', v: 1, reviewId, title: 'Loading primary' },
+    body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: [], runs: [] }] }),
+    ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 };
+  fixture.artifacts.replaceStoredRow(createPlainArtifactHttpFixture(artifact, 'alice'));
+  const { ReviewDetailHost } = await import('./ReviewDetailHost');
+  const { ReviewDetailView } = await import('./ReviewDetailView');
+  const { t } = await import('@/text');
+  const newRound = t('reviewWalkthrough.detail.newRound');
+  const primary = () => screen.findAllByType(ReviewDetailView)[0]?.props.primaryAction ?? null;
+  const screen = await fixture.render(<ReviewDetailHost artifact={artifact} bodyState="ready" onRetry={() => {}} />);
+  try {
+    // Neither the person's state nor the findings are known: nothing is offered, least of all New round.
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+    expect(primary()?.title ?? null).not.toBe(newRound);
+    expect(primary()?.onPress ? primary()?.disabled === true || primary()?.loading === true : true).toBe(true);
+    // The person is known, the findings are not: the slot is held pending, still not New round.
+    await act(async () => { detailRead.open(); });
+    await vi.waitFor(() => expect(screen.findAllByType(ReviewDetailView)).toHaveLength(1));
+    expect(primary()).toMatchObject({ loading: true, disabled: true });
+    expect(primary()?.title).not.toBe(newRound);
+    // Both known: the real primary takes the same slot.
+    await act(async () => { commentsRead.open(); });
+    await vi.waitFor(() => expect(primary()?.title).toBe(t('runPage.review.implementFixes', { count: 1 })));
+    expect(primary()?.loading ?? false).toBe(false);
+  } finally { await screen.unmount(); }
+});
+
 it('says the Review is shared, with whom through the Artifact audience owner, and offers Share and Delete in its "…"', async () => {
   const reviewId = 'shared-review-page';
   fixture = await createSessionFilesViewFixture({ serverUrl: 'https://shared-review-page.test', request: async url => {
