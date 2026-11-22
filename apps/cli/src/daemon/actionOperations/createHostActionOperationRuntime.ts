@@ -30,7 +30,8 @@ import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, Deploy
   type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
-import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentDomainFailureStorageDetailsV1, projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';
 import { isDeploymentTargetLinkActionIdV1, DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineServiceAdoptInputV1Schema } from '@happier-dev/protocol/local/services/adoptionV1';
@@ -452,8 +453,9 @@ export function createHostActionOperationRuntime(deps: Readonly<{
             // A DNS preview verify names no Domain yet; its failure keeps the Environment-only recovery facts.
             const domainId = 'domainId' in input.data ? input.data.domainId : undefined;
             const native = { environmentId: input.data.environmentId, domainId, step: 'native_execution' as const };
+            const storedDetails = projectDeploymentDomainFailureStorageDetailsV1(result.errorCode, result.details);
             const details = DeploymentDomainFailureDetailsV1Schema.safeParse({ ...native,
-              ...(result.details && typeof result.details === 'object' && !Array.isArray(result.details) ? result.details : {}) });
+              ...(isRecord(storedDetails) ? storedDetails : {}) });
             const diagnostic = details.success && details.data.environmentId === input.data.environmentId
               && details.data.domainId === domainId ? details.data : native;
             // The runner stores this same bound result before live/public consumers read it.
