@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { getServerUrl, setServerUrl } from '../../domains/server/serverConfig';
+import { getPersistenceStorage } from '../../domains/state/persistenceStorage';
 import { applyReachableTargetsToSessionListRenderables } from '../../domains/session/listing/applyReachableTargetsToSessionListRenderables';
 
 import {
@@ -690,6 +691,31 @@ describe('buildSessionListIndexWithServerScope', () => {
         });
 
         expect(second).toBe(first);
+    });
+
+    it('keeps an empty active-server index without hydrating a Home label that has no rows', async () => {
+        const previousServerUrl = getServerUrl();
+        await setServerUrl('http://localhost:32119');
+        const storageRead = vi.spyOn(getPersistenceStorage(), 'getString');
+        const snapshotKey = 'server-features-snapshot-v1:localhost-32119';
+
+        try {
+            const first = buildActiveServerSessionListIndex({ sessions: {}, machines: {} });
+            expect(first).toEqual([]);
+            expect(buildActiveServerSessionListIndex({
+                sessions: {},
+                machines: {},
+                previousIndex: first,
+            })).toBe(first);
+            expect(storageRead).not.toHaveBeenCalledWith(snapshotKey);
+
+            const populated = buildActiveServerSessionListIndex(baseParams);
+            expect(populated.some((item) => item.serverId === 'localhost-32119')).toBe(true);
+            expect(storageRead).toHaveBeenCalledWith(snapshotKey);
+        } finally {
+            storageRead.mockRestore();
+            await setServerUrl(previousServerUrl || null);
+        }
     });
 
     it('builds the active-server index from the current active server snapshot', async () => {

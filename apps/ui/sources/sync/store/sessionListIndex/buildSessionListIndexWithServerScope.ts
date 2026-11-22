@@ -119,13 +119,18 @@ export function buildSessionListIndexWithServerScope(
 export function buildActiveServerSessionListIndex(
     params: Omit<BuildSessionListIndexWithServerScopeParams, 'serverScope'>,
 ): SessionListIndexItem[] {
+    if (Object.keys(params.sessions).length === 0) {
+        // Machine warm hydration may run before the first Session rows arrive.
+        return buildSessionListIndexFromViewData([], params.previousIndex) ?? [];
+    }
+
     const snapshot = getActiveServerSnapshot();
     const profile = getServerProfileById(snapshot.serverId);
     return buildSessionListIndexWithServerScope({
         ...params,
         serverScope: {
             serverId: snapshot.serverId,
-            serverName: resolveHomeDisplayLabel(profile, snapshot.serverId),
+            serverName: resolveHomeDisplayLabel(profile, snapshot.serverId, snapshot.serverId),
         },
     });
 }
