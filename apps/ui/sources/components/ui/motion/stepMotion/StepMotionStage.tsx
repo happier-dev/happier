@@ -19,6 +19,10 @@ import type { StepAnchor, StepBuild, StepBuildResult, StepFreeze, StepGrid, Step
 
 type AnimatedGrammar = Exclude<StepGrammar, 'fade'>;
 type StepMotionPresentation = typeof import('./stepMotionPresentation');
+type StepMotionRenderer = Readonly<{
+    GlyphSurface: React.ComponentType<GlyphSurfaceProps>;
+    StepFreezeImage: StepMotionPresentation['StepFreezeImage'];
+}>;
 type StepEndpoints = { source?: StepAnchor['rect']; target?: StepAnchor['rect']; focalInk?: StepFocalInk };
 type PendingMove = {
     destination: string;
@@ -91,6 +95,7 @@ function createStepMotionStage(
     publishHomeArrival: React.Dispatch<React.SetStateAction<HomeGlyphArrival | null>>,
     requestRenderer: (needed: boolean) => void,
     prepareOpeningRenderer: (preparing: boolean) => void,
+    publishRenderer: (renderer: StepMotionRenderer) => void,
     colors: () => Readonly<{ tertiary: string; page: string }>,
 ) {
     const layers = new Set<StepMotionLayerHandle>();
@@ -108,6 +113,7 @@ function createStepMotionStage(
     let buildPrepared = false;
     let reportBuildReady: ((ready: boolean) => void) | undefined;
     let presentation: StepMotionPresentation | null = null;
+    let loadingRenderer = false;
     let stopObserving: (() => void) | undefined;
 
     function syncPresentation() {
@@ -128,6 +134,26 @@ function createStepMotionStage(
 
     function warm() {
         requestRenderer(true);
+        if (presentation || loadingRenderer) return;
+        loadingRenderer = true;
+        // Admission starts the imports. Welcome can reach its first layout before a React effect runs.
+        void Promise.all([import('@/components/atmosphere/glyph/GlyphSurface'), import('./stepMotionPresentation')]).then(
+            ([glyph, loaded]) => {
+                loadingRenderer = false;
+                presentation = loaded;
+                reportBuildReady?.(true);
+                publishRenderer({ GlyphSurface: glyph.GlyphSurface, StepFreezeImage: loaded.StepFreezeImage });
+            },
+            () => {
+                loadingRenderer = false;
+                glyphReadiness('still');
+            },
+        );
+    }
+
+    function glyphReadiness(readiness: GlyphSurfaceReadiness) {
+        glyphReady = readiness === 'ready';
+        if (readiness === 'still' && active?.animation) settle();
     }
 
     function cancelPending() {
@@ -631,14 +657,7 @@ function createStepMotionStage(
             if (active || pending) settle();
             pressed = null;
         },
-        glyphReadiness(readiness: GlyphSurfaceReadiness) {
-            glyphReady = readiness === 'ready';
-            if (readiness === 'still' && active?.animation) settle();
-        },
-        loadPresentation(loaded: StepMotionPresentation) {
-            presentation = loaded;
-            reportBuildReady?.(true);
-        },
+        glyphReadiness,
         prepareBuild(onReady?: (ready: boolean) => void) {
             buildPrepared = true;
             glyphReady = false;
@@ -790,28 +809,14 @@ export function StepMotionStage({ children }: React.PropsWithChildren) {
     const [homeArrival, publishHomeArrival] = React.useState<HomeGlyphArrival | null>(null);
     const [warming, setWarming] = React.useState(false);
     const [openingPrepared, setOpeningPrepared] = React.useState(false);
-    const [renderer, setRenderer] = React.useState<Readonly<{
-        GlyphSurface: React.ComponentType<GlyphSurfaceProps>;
-        StepFreezeImage: StepMotionPresentation['StepFreezeImage'];
-    }> | null>(null);
+    const [renderer, setRenderer] = React.useState<StepMotionRenderer | null>(null);
     const { theme } = useUnistyles();
     const colors = React.useRef({ ...theme.colors.text, page: theme.colors.background.canvas });
     colors.current = { ...theme.colors.text, page: theme.colors.background.canvas };
-    const [stage] = React.useState(() => createStepMotionStage(publish, publishHomeArrival, setWarming, setOpeningPrepared, () => colors.current));
+    const [stage] = React.useState(() => createStepMotionStage(
+        publish, publishHomeArrival, setWarming, setOpeningPrepared, setRenderer, () => colors.current,
+    ));
     const { width, height } = useWindowDimensions();
-    React.useEffect(() => {
-        if (!warming || renderer) return;
-        let live = true;
-        void Promise.all([import('@/components/atmosphere/glyph/GlyphSurface'), import('./stepMotionPresentation')]).then(
-            ([glyph, loaded]) => {
-                if (!live) return;
-                stage.loadPresentation(loaded);
-                setRenderer({ GlyphSurface: glyph.GlyphSurface, StepFreezeImage: loaded.StepFreezeImage });
-            },
-            () => { if (live) stage.glyphReadiness('still'); },
-        );
-        return () => { live = false; };
-    }, [warming, renderer, stage]);
     React.useLayoutEffect(() => {
         rootStage = stage;
         return () => {

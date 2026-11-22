@@ -60,9 +60,7 @@ it.each([
     let readBuildReady = () => false;
     function Destination() {
         const layout = useFirstOpenContentLayout('workflow');
-        const stage = useStepMotionStage();
         commitLayout = () => { layout?.({ nativeEvent: { layout: frame } } as Parameters<NonNullable<typeof layout>>[0]); };
-        readBuildReady = () => stage?.isBuildReady() ?? false;
         return <UnauthenticatedSplitShell stepId="welcome" isWelcomeStep>
             <WelcomeDecisionPanel
                 authEntryOptions={{ serverAvailability: 'ready', authEntryUnavailable: false, serverUrlForCopy: '', homePairingAvailable: true,
@@ -90,6 +88,8 @@ it.each([
         const [mount, setMount] = React.useState(false);
         const [ready, setReady] = React.useState(false);
         const { opening, Host, admitOpening } = useFirstOpenBoot();
+        const stage = useStepMotionStage();
+        readBuildReady = () => stage?.isBuildReady() ?? false;
         onAuthResolved = accountRestored => { releaseOpening = admitOpening(resolveFirstOpen({ accountRestored, segments })); };
         mountOpening = () => setMount(true);
         readyApp = () => setReady(true);
@@ -119,6 +119,12 @@ it.each([
                     if (!fastBoot) readyApp();
                 },
             });
+            if (fastBoot) {
+                await boot;
+                // Resolve the work requested by admission while React still holds the next commit.
+                await vi.dynamicImportSettled();
+                expect(readBuildReady()).toBe(true);
+            }
         });
         // The boot dependencies can still be pending and the React host has yet to mount.
         await vi.waitFor(async () => {

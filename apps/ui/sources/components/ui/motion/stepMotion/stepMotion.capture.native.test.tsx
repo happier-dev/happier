@@ -9,9 +9,7 @@ import { UNAUTH_BACK_TEST_ID } from '@/components/onboarding/unauthShell/stepBac
 import { StepRowBackButton } from '@/components/onboarding/unauthShell/stepBack';
 
 import { readNativeStepAnchor } from './capturePressedElement.native';
-import { freezeStepLayer } from './freezeLayer.native';
 import { StepFreezeImage } from './StepFreezeImage.native';
-import * as presentation from './stepMotionPresentation';
 import { runStepMove, StepMotionStage, useStepMotionStage } from './StepMotionStage';
 import type { StepMotionLayerHandle } from './stepMotionTypes';
 
@@ -24,6 +22,8 @@ vi.mock('react-native', async () => {
     const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeNativeMock({ platformOS: 'ios' });
 });
+// Resolve the real native capture implementation as Metro does on iOS.
+vi.mock('./freezeLayer', () => vi.importActual<typeof import('./freezeLayer.native')>('./freezeLayer.native'));
 
 it('uses the touch position and keeps the control ID when Fabric cannot measure it', () => {
     const layer = {};
@@ -96,8 +96,10 @@ it.each([false, true])('selects the native presentation in layout order (capture
     const incoming = layer();
     let detach: (() => void) | undefined;
     try {
-        await act(async () => { detach = stage.attach(outgoing); });
-        stage.loadPresentation({ ...presentation, freezeStepLayer });
+        await act(async () => {
+            detach = stage.attach(outgoing);
+            await vi.dynamicImportSettled();
+        });
         stage.glyphReadiness('ready');
         const committed = vi.fn(() => {
             detach?.();
