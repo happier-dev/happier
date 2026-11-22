@@ -315,3 +315,13 @@ This does not establish recovery from lost backup records or damaged storage.
 - [Onboarding](/getting-started/onboarding) — connect a Machine to your Home.
 - [Connected services](/accounts/connected-services) — manage service connections.
 - [Self-hosting](/self-hosting) — operate the Happier server itself.
+
+## Deploy a Machine folder with an Action
+
+Open the folder on the build Machine with the Project Open Action. For Own server,
+use the resulting WorkspaceRef in the Environment Create Action's folder
+definition. Run Deploy and check review for the file count, total size and
+excluded paths. A Git worktree includes tracked and nonignored working files.
+A plain folder follows its `.gitignore` files. To include files beginning with
+`.env`, explicitly enable that option in the folder definition. Docker applies
+its own context exclusions at build time. Deploy again reviews the current files.

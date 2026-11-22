@@ -20028,6 +20028,16 @@ settingsSession: {
           environment: "Ambiente",
           version: "Versione",
           versionStored: ({ revision }: { revision: number }) => `File Compose, revisione ${revision}`,
+          localFolder: "Cartella locale",
+
+          folderFiles: "Contenuti da inviare",
+
+          folderExcluded: "File esclusi",
+
+          folderNoneExcluded: "Nessuno",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} file · ${size}`,
+
           replaces: "Sostituisce",
           replacesNothing: "Ancora niente in servizio",
           replacesSame: `La stessa versione in esecuzione`,

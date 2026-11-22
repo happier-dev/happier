@@ -50,7 +50,7 @@ export async function prepareOwnServerDeploymentCandidate(input: Readonly<{
                     phase, bindings: environment.content.bindings, assertCurrent: runtime.assertCurrent }),
             });
             const intent = runtime.sourceIntent;
-            const compose = intent.kind === 'repository' ? intent.compose : { ...intent, path: 'compose.yaml' };
+            const compose = intent.kind === 'stored' ? { ...intent, path: 'compose.yaml' } : intent.compose;
             const project = createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build', exec: runtime.exec, envPort, source,
                 ...(runtime.buildExecutionDirectory ? { executionDirectory: runtime.buildExecutionDirectory } : {}),
                 files: [compose.path], profiles: compose.profiles, services: input.services ?? compose.services, sourceKind: intent.kind,

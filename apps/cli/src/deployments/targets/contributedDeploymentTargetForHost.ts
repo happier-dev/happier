@@ -197,7 +197,7 @@ export function createContributedDeploymentTargetForHost(host: Host) {
         } finally { await lease.release(); }
     }
 
-    function readSource(request: Parameters<typeof readDeploymentSourceIntentForHost>[0]['request'], scope: SourceScope,
+    function readSource(request: Omit<Parameters<typeof readDeploymentSourceIntentForHost>[0]['request'], 'retainFolderExport'>, scope: SourceScope,
         sourceMethod: 'gitIntegration' | 'upload') {
         const gitSource = sourceMethod === 'gitIntegration' ? scope.gitSource : undefined;
         return readDeploymentSourceIntentForHost({ request: { ...request, requireWorkspace: sourceMethod === 'upload',

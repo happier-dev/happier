@@ -19980,6 +19980,16 @@ settingsSession: {
           environment: "Среда",
           version: "Версия",
           versionStored: ({ revision }: { revision: number }) => `Файл Compose, ревизия ${revision}`,
+          localFolder: "Локальная папка",
+
+          folderFiles: "Содержимое для отправки",
+
+          folderExcluded: "Исключённые файлы",
+
+          folderNoneExcluded: "Нет",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `Файлы: ${count} · ${size}`,
+
           replaces: "Заменяет",
           replacesNothing: "Пока ничего не работает",
           replacesSame: `Та же версия, что сейчас запущена`,

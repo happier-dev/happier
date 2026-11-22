@@ -758,7 +758,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             } });
     });
     afterAll(async () => { if (home) await home.close(); });
-    it.each(['stored', 'repository'] as const)('prepares a native deployment through MCP from %s without caller Machine custody or managed enrollment', async sourceKind => {
+    it.each(['stored', 'repository', 'folder-git', 'folder-plain'] as const)('prepares a native deployment through MCP from %s without caller Machine custody or managed enrollment', async sourceKind => {
         const cleanup: Array<() => Promise<void>> = [];
         try {
             vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
@@ -786,15 +786,45 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             vi.stubEnv('PATH', `${directory}${delimiter}${process.env.PATH ?? ''}`);
             const image = await docker.registerImage('web', 'A');
             const document = JSON.stringify({ services: { web: { image: image.registryReference } } });
-            const repositoryPath = join(home.baseDir, 'mcp-repository');
+            const isGitFolder = sourceKind === 'folder-git';
+            const isFolder = isGitFolder || sourceKind === 'folder-plain';
+            const trackedContent = 'tracked working file';
+            const gitIgnoreRules = 'tracked.txt\nignored.txt\n';
+            const repositoryPath = join(directory, 'source');
+            const workspaceId = randomUUID();
+            const editedDocument = `${document}
+# working folder
+`;
             const git = (...args: string[]) => execFileSync('git', args, { cwd: repositoryPath, encoding: 'utf8' }).trim();
             let sha: string | undefined;
-            if (sourceKind === 'repository') {
+            if (sourceKind !== 'stored') {
                 await mkdir(repositoryPath);
-                git('init', '--quiet'); git('config', 'user.name', 'Deployment Fixture'); git('config', 'user.email', 'deployment@example.test');
                 await writeFile(join(repositoryPath, 'compose.yaml'), document);
+            }
+            if (sourceKind === 'repository' || sourceKind === 'folder-git') {
+                git('init', '--quiet', '--initial-branch=main');
+                git('config', 'user.name', 'Deployment Fixture'); git('config', 'user.email', 'deployment@example.test');
+                if (isGitFolder) {
+                    await writeFile(join(repositoryPath, 'tracked.txt'), 'committed version');
+                    await writeFile(join(repositoryPath, 'deleted.txt'), 'removed from the working tree');
+                }
                 git('add', '.'); git('commit', '--quiet', '-m', 'A');
-                sha = git('rev-parse', 'HEAD');
+                if (isGitFolder) {
+                    await writeFile(join(repositoryPath, '.gitignore'), gitIgnoreRules);
+                    await writeFile(join(repositoryPath, 'tracked.txt'), trackedContent);
+                    await rm(join(repositoryPath, 'deleted.txt'));
+                    await writeFile(join(repositoryPath, 'ignored.txt'), 'untracked ignored file');
+                }
+                if (sourceKind === 'repository') sha = git('rev-parse', 'HEAD');
+            }
+            if (isFolder) {
+                await writeFile(join(repositoryPath, 'compose.yaml'), editedDocument);
+                await writeFile(join(repositoryPath, '.env.local'), 'DO_NOT_SEND=sample');
+                await writeFile(join(repositoryPath, '.dockerignore'), 'compose.yaml\n');
+                if (!isGitFolder) {
+                    await writeFile(join(repositoryPath, '.gitignore'), gitIgnoreRules);
+                    await writeFile(join(repositoryPath, 'ignored.txt'), 'plain-folder ignored file');
+                }
             }
             const runtime = createOwnServerDeploymentRuntimeForHost({ credentials: { token: home.token, encryption: null },
                 resolveRequesterIdentity: sourceRequesterForHome(home), serverId: home.serverId,
@@ -833,12 +863,14 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             });
             const source = ProjectSourcesCreateOutputV1Schema.parse(await sourceResponse.json());
             if (!source.ok) throw new Error(source.error);
-            if (sourceKind === 'repository') {
+            if (sourceKind === 'repository' || isFolder) {
                 const checkout = await runWithServerHttpBaseUrl(home.baseUrl, () => createProjectAccountSnapshotMutation({
                     credentials, serverId: home.serverId,
                 })(snapshot => ({ ...snapshot, workspaceRefs: [...snapshot.workspaceRefs, {
-                    id: randomUUID(), serverId: home.serverId, machineId: home.machineId, rootPath: repositoryPath,
-                    createdAtMs: Date.now(), source: { sourceId: source.source.id, revision: source.source.revision },
+                    id: workspaceId, serverId: home.serverId, machineId: home.machineId, rootPath: repositoryPath,
+                    createdAtMs: Date.now(),
+                    // An ordinary folder opened by path is owned by this Account even if it has no Source association.
+                    ...(sourceKind === 'folder-plain' ? {} : { source: { sourceId: source.source.id, revision: source.source.revision } }),
                 }] })));
                 expect(checkout.status).toBe('applied');
             }
@@ -851,13 +883,22 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 serverId: home.serverId, projectSourceId: source.source.id, requestKey: randomUUID(),
                 protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
                 controllerMachineId: home.machineId, buildMachineId: home.machineId,
-                ...await prepare(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, { name: 'MCP native', retainPreviousDeployments: 1,
-                    definition: sourceKind === 'repository' ? { kind: 'repository', ref: 'main',
-                        compose: { path: 'compose.yaml', profiles: [], services: ['web'] } } : { kind: 'stored', contentRevision: 1, document,
-                        composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
-                        profiles: [], services: ['web'] }, bindings: [] }),
-                firstTargetLink: { machines: [{ machineId: home.machineId, installationId: home.installationId }],
-                    ...await prepare(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {}) },
+                ...(isFolder ? {
+                    name: 'MCP native',
+                    retainPreviousDeployments: 1,
+                    definition: { from: 'folder', workspaceId,
+                        compose: { path: 'compose.yaml', profiles: [], services: ['web'] } },
+                    firstTargetLink: { machines: [{ machineId: home.machineId, installationId: home.installationId }] },
+                } : {
+                    ...await prepare(DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, { name: 'MCP native', retainPreviousDeployments: 1,
+                        definition: sourceKind === 'repository' ? { kind: 'repository', ref: 'main',
+                            compose: { path: 'compose.yaml', profiles: [], services: ['web'] } }
+                            : { kind: 'stored', contentRevision: 1, document,
+                                composeDigest: `sha256:${createHash('sha256').update(document).digest('hex')}`,
+                                profiles: [], services: ['web'] }, bindings: [] }),
+                    firstTargetLink: { machines: [{ machineId: home.machineId, installationId: home.installationId }],
+                        ...await prepare(DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, {}) },
+                }),
             }));
             if (!environment.ok) throw new Error(environment.error);
             const detail = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', {
@@ -879,7 +920,17 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             expect(result.isError, JSON.stringify(result)).not.toBe(true);
             const content = result.content.find(item => item.type === 'text');
             if (!content || content.type !== 'text') throw new Error('Deployment review is missing');
-            expect(ActionApprovalRequestCreatedResultSchema.parse(JSON.parse(content.text)).actionId).toBe('deployments.deploy');
+            const approval = ActionApprovalRequestCreatedResultSchema.parse(JSON.parse(content.text));
+            expect(approval.actionId).toBe('deployments.deploy');
+            if (isFolder) {
+                const opened = await invoke('approval.request.get', { artifactId: approval.artifactId });
+                expect(opened).toMatchObject({ request: { preview: { deploymentReview: { revision: {
+                    kind: 'folder',
+                    fileCount: isGitFolder ? 4 : 3,
+                    totalBytes: Buffer.byteLength(editedDocument + 'compose.yaml\n' + gitIgnoreRules + (isGitFolder ? trackedContent : '')),
+                    excludedPaths: ['.env.local', 'ignored.txt'],
+                } } } } });
+            }
         } finally {
             try { for (const dispose of cleanup.reverse()) await dispose(); }
             finally { vi.restoreAllMocks(); vi.unstubAllEnvs(); }

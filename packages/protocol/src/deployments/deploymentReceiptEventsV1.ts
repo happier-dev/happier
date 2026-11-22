@@ -20,7 +20,8 @@ import { AutomationIdV1Schema } from '../automations/automationIdV1.js';
 import { DeploymentFailureRecoveryV1Schema } from './deploymentFailureRecoveryV1.js';
 import { DeploymentReceiptOperationV1Schema, DeploymentStateV1Schema } from './deploymentStateV1.js';
 import * as receiptResult from './deploymentReceiptResultV1.js';
-import { DeploymentSourceIntentV1Schema, type DeploymentSourceIntentV1 } from './storedAppInputV1.js';
+import { DeploymentFolderSourceIntentV1Schema, DeploymentRepositorySourceIntentV1Schema,
+  DeploymentStoredDefinitionV1Schema, type DeploymentSourceIntentV1 } from './storedAppInputV1.js';
 
 // Fast Refresh enumerates these exports while the cyclic result module is still
 // loading. Forward on use so enumeration never reads its uninitialized exports.
@@ -70,9 +71,10 @@ export const DeploymentReceiptFailureSummaryV1Schema = lazyZodSchema(() => z.str
 /** Exact native receipt evidence without the private Compose document, selectors or logs. */
 export const DeploymentReceiptInvestigationV1Schema = lazyZodSchema(() => z.strictObject({
   source: z.optional(z.discriminatedUnion('kind', [
-    z.extend(z.pick(DeploymentSourceIntentV1Schema.def.options[0], { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
+    z.extend(z.pick(DeploymentRepositorySourceIntentV1Schema, { kind: true, projectSourceId: true, sourceRevision: true, sha: true }),
       z.pick(DeploymentTargetRoleResultV1Schema, { builtSha: true }).shape),
-    z.pick(DeploymentSourceIntentV1Schema.def.options[1], { kind: true, contentRevision: true, composeDigest: true }),
+    z.pick(DeploymentStoredDefinitionV1Schema, { kind: true, contentRevision: true, composeDigest: true }),
+    z.pick(DeploymentFolderSourceIntentV1Schema, { kind: true, manifestFingerprint: true }),
   ])),
   failure: z.optional(DeploymentReceiptFailureV1Schema),
 }));
@@ -88,7 +90,8 @@ export function projectDeploymentReceiptInvestigationV1(content: Readonly<{
     ...(source ? { source: source.kind === 'repository'
       ? { kind: source.kind, projectSourceId: source.projectSourceId, sourceRevision: source.sourceRevision, sha: source.sha,
           ...(content.platform?.observation.builtSha ? { builtSha: content.platform.observation.builtSha } : {}) }
-      : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
+      : source.kind === 'folder' ? { kind: source.kind, manifestFingerprint: source.manifestFingerprint }
+        : { kind: source.kind, contentRevision: source.contentRevision, composeDigest: source.composeDigest } } : {}),
     ...(content.failure ? { failure: content.failure } : {}),
   };
 }

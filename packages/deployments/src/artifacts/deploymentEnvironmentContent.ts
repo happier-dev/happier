@@ -1,6 +1,6 @@
 import { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { DeploymentEnvironmentCapabilitiesV1Schema, DeploymentEnvironmentHeaderV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentEnvironmentOwnerV1Schema, DeploymentIngressV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentConfigurationV1Schema, type OwnServerEnvironmentConfigurationV1, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+import { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, environmentSecretBindingIdentityV1, DeploymentRepositoryDefinitionV1Schema, DeploymentFolderDefinitionV1Schema, DeploymentPendingDeployV1Schema, OwnServerEnvironmentConfigurationV1Schema, type OwnServerEnvironmentConfigurationV1, parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { DeploymentRetainPreviousDeploymentsV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
 import { hasCompleteDeploymentPreviewRelationV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 
@@ -30,6 +30,7 @@ export { DeploymentRepositoryComposeV1Schema } from '@happier-dev/protocol/deplo
 export const DeploymentEnvironmentDefinitionV1Schema = z.discriminatedUnion('kind', [
     DeploymentRepositoryDefinitionV1Schema,
     DeploymentStoredDefinitionV1Schema,
+    DeploymentFolderDefinitionV1Schema,
 ]);
 export type DeploymentEnvironmentDefinitionV1 = z.infer<typeof DeploymentEnvironmentDefinitionV1Schema>;
 

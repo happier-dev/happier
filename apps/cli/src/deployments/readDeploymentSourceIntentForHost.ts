@@ -5,7 +5,7 @@ import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthoriza
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1, type DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { suggestProjectOpenCloneDestinationV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import type { ProjectSourceRepositorySelectorV1, ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
+import { isManagedWorkspaceRefV2, type WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import type { DeploymentTargetRepositoryAccessV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
@@ -24,6 +24,9 @@ import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRo
 import { fetchWorkspaceCommitRef, resolveWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
 import { runScmCommand } from '@/scm/runtime';
 import { admitDeploymentSourceIntent } from './deploymentSourceAdmission';
+import { captureDeploymentFolderSourceForHost } from './captureDeploymentFolderSourceForHost';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { canExecuteRequesterWorkspaceOnDaemonForHost, type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export type DeploymentSourceRequesterIdentityResolver = (context: ActionExecutorContext) => Promise<
@@ -40,6 +43,8 @@ type DeploymentSourceRequest = Readonly<{
     retainedSourceIntent?: DeploymentSourceIntentV1;
     /** Native materialization needs a checkout; provider Git integration does not. */
     requireWorkspace?: boolean;
+    /** The materialization owner takes custody of the admitted snapshot. */
+    retainFolderExport?: true;
     /** The selected target's retained repository observation. */
     gitRepository?: Readonly<{ access?: DeploymentTargetRepositoryAccessV1 }>;
     /** The selected Git target requires a clean checkout and a published commit on a declared forge. */
@@ -49,12 +54,13 @@ export type DeploymentSourceIntentForHost = Readonly<{
     sourceIntent: DeploymentSourceIntentV1;
     workspace?: WorkspaceRefV1;
     sourceRepository?: ProjectSourceRepositorySelectorV1;
+    folderExport?: Awaited<ReturnType<typeof captureDeploymentFolderSourceForHost>>['captured'];
     assertSourceCurrent(): Promise<void>;
 }>;
 const refuse = (code: string): never => { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); };
 
 /** Exact source selection shared by native materialization and provider Git deployment. */
-export async function readDeploymentSourceIntentForHost(input: Readonly<{
+type DeploymentSourceReadInput = Readonly<{
     request: DeploymentSourceRequest;
     host: Readonly<{
         credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
@@ -62,7 +68,15 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         resolveRepositoryRef?(repository: ProjectSourceRepositorySelectorV1, ref: string, context: ActionExecutorContext): Promise<string>;
         signal?: AbortSignal; assertAuthority(): Promise<void>;
     }>;
-}>): Promise<DeploymentSourceIntentForHost> {
+}>;
+
+export function readDeploymentSourceIntentForHost(input: DeploymentSourceReadInput & {
+    request: { retainFolderExport?: never };
+}): Promise<DeploymentSourceIntentForHost & {
+    sourceIntent: Exclude<DeploymentSourceIntentV1, { kind: 'folder' }>;
+}>;
+export function readDeploymentSourceIntentForHost(input: DeploymentSourceReadInput): Promise<DeploymentSourceIntentForHost>;
+export async function readDeploymentSourceIntentForHost(input: DeploymentSourceReadInput): Promise<DeploymentSourceIntentForHost> {
     const { request, host } = input;
     const { environment } = request;
     const signal = request.context.signal && host.signal ? AbortSignal.any([request.context.signal, host.signal])
@@ -72,10 +86,13 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     const selected = request.retainedSourceIntent ?? request.sourceIntent;
     let intent = selected ? structuredClone(selected) : undefined;
     if (intent && request.actionId !== DEPLOYMENT_ROLLBACK_ACTION_ID_V1 && !request.retainedSourceIntent) admitDeploymentSourceIntent(environment, intent);
-    const repository = (intent ?? environment.content.definition).kind === 'repository';
+    const selectedSource = intent ?? environment.content.definition;
+    const repository = selectedSource.kind === 'repository';
+    const folder = selectedSource.kind === 'folder' ? selectedSource : undefined;
+    if (folder && !request.retainFolderExport) return refuse('repository_required');
     const publishedGitProviders = request.publishedGitProviders;
     if (publishedGitProviders && !repository) return refuse('repository_required');
-    const needsWorkspace = repository && (publishedGitProviders !== undefined || request.requireWorkspace !== false);
+    const needsWorkspace = folder !== undefined || repository && (publishedGitProviders !== undefined || request.requireWorkspace !== false);
     if (needsWorkspace) {
         const requester = await host.resolveRequesterIdentity(request.context);
         if (!(requester.canExecuteWorkspaceOnDaemon ?? canExecuteRequesterWorkspaceOnDaemonForHost(requester))) {
@@ -151,8 +168,25 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         serverId: host.serverId, signal, assertCurrentAuthority: assertAuthority,
         selection: { kinds: ['workspace-ref'], serverId: host.serverId },
     })) : undefined;
-    const workspace = repository ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
-        && ref.machineId === host.machineId && ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision) : undefined;
+    const workspace = needsWorkspace ? rows?.snapshot.workspaceRefs.find(ref => ref.serverId === host.serverId
+        && ref.machineId === host.machineId && (folder ? ref.id === folder.workspaceId
+            : ref.source?.sourceId === sourceId && ref.source.revision === sourceRevision)) : undefined;
+    let folderExport: DeploymentSourceIntentForHost['folderExport'];
+    if (folder) {
+        if (!workspace || isManagedWorkspaceRefV2(workspace)) return refuse('deployment_source_unavailable');
+        // This owned ref addresses this Machine, even when the caller has a Session workspace.
+        const { kind, workspaceId, includeEnvFiles, compose } = folder;
+        const captured = await runWithWorkspaceSource(localWorkspaceSource, () => captureDeploymentFolderSourceForHost({ workspace,
+            selection: { kind, workspaceId, ...(includeEnvFiles === undefined ? {} : { includeEnvFiles }),
+                ...(compose === undefined ? {} : { compose }) },
+            signal })).catch(rethrowDeploymentSourceAcquisitionFailure);
+        if (intent?.kind === 'folder' && intent.manifestFingerprint !== captured.sourceIntent.manifestFingerprint) {
+            await captured.captured.dispose();
+            return refuse('deployment_conflict');
+        }
+        intent = captured.sourceIntent;
+        folderExport = captured.captured;
+    }
     const refuseMissingCheckout = (): never => {
         if (sourceRevision === undefined || !sourceRepository) return refuse('deployment_source_unavailable');
         // The person or agent opens this Source's checkout through projects.open (its own review), then deploys again.
@@ -178,7 +212,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     if (!intent) {
         const definition = environment.content.definition;
         if (definition.kind === 'stored') intent = structuredClone(definition);
-        else {
+        else if (definition.kind === 'repository') {
             if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
             let sha = request.sha;
             if (!sha) {
@@ -211,6 +245,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
                 ...(definition.compose === undefined ? {} : { compose: definition.compose }), sha };
         }
     }
+    if (!intent) return refuse('deployment_source_unavailable');
     if (publishedGitProviders) {
         const definition = environment.content.definition;
         if (intent.kind !== 'repository' || definition.kind !== 'repository' || !workspace
@@ -250,5 +285,6 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         if (rows && !await rows.isCurrent()) return refuse('deployment_conflict');
         await assertAuthority();
     };
-    return { sourceIntent: intent, ...(workspace ? { workspace } : {}), ...(sourceRepository ? { sourceRepository } : {}), assertSourceCurrent };
+    return { sourceIntent: intent, ...(workspace ? { workspace } : {}), ...(sourceRepository ? { sourceRepository } : {}),
+        ...(folderExport ? { folderExport } : {}), assertSourceCurrent };
 }

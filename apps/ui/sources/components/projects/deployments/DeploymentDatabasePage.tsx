@@ -747,6 +747,7 @@ function DeploymentAddSheet(props: AddSheetProps) {
         showManagedDataSheet({ detail: props.detail, lifetime: props.lifetime, actions, onApproval: props.review.request });
       }} />
   </ItemGroup>;
+  if (props.detail.content.definition.kind === 'folder') return managedEntry ?? null;
   return props.detail.content.definition.kind === 'repository'
     ? <DeploymentRepositoryAddSheet {...props} managedEntry={managedEntry} /> : <DeploymentAddSheetContent {...props} managedEntry={managedEntry} />;
 }

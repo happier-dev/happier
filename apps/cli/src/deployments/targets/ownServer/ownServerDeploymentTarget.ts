@@ -147,6 +147,7 @@ export type OwnServerDeploymentRuntime = Readonly<{
         content: DeploymentOwnServerContentV1;
         /** Selected by the retained-serving source owner for a joining deployment. */
         retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
+        retainedFolderSource?: NonNullable<DeploymentOwnServerContentV1['ownServer']>['sources'];
         readReferenceEnvironment?: OwnServerDeploymentTargetHostInput['readEnvironment'];
         readTelemetryCollectorDomain?: OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
         readPreviewDomain?: OwnServerDeploymentTargetHostInput['readPreviewDomain'];

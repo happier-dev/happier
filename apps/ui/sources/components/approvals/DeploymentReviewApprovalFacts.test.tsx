@@ -20,7 +20,8 @@ vi.mock('@/text', async () => {
     ? `${key} ${String(params?.revision)}`
     : key === 'projects.deployments.review.versionStored' ? `Compose revision ${String(params?.revision)}`
     : key === 'projects.deployments.review.decisionPromote' ? `Promote ${String(params?.version)} to ${String(params?.environment)}`
-    : key });
+    : key === 'projects.deployments.review.folderContents'
+        ? `${params?.count} files · ${params?.size}` : key });
 });
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -44,6 +45,20 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it('shows the reviewed folder count, size and excluded paths before confirmation', async () => {
+    const deploymentReview = { ...machineReview, revision: { kind: 'folder',
+      manifestFingerprint: `sha256:${'a'.repeat(64)}`, fileCount: 4, totalBytes: 2_000_000,
+      excludedPaths: ['.env.local', 'cache/item.txt'] } };
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview } });
+    if (!approval) throw new Error('Expected a typed folder review');
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="folder-facts" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('4 files · 2 MB');
+    expect(text).toContain('.env.local');
+    expect(text).toContain('cache/item.txt');
+  });
   it.each(['own-server', 'platform'] as const)('renders the version, replaced version, target and data effect for %s rollback', async target => {
     const facts = {
       environment: { id: 'env', name: 'Production' },

@@ -28,7 +28,7 @@ import { produceEnvironmentProjectServices } from '@/daemon/local/services/launc
 import { restoreOwnServerDeploymentServices } from './restoreOwnServerDeploymentServices';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError, type MachineNativeEffectContext } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
-import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
+import { createDeploymentSourceMaterializationPort, matchesDeploymentSourceIntentForHost, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
 import { assertIrohServicePublications } from './privateServicePublication';
@@ -266,6 +266,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             actionId: request.actionId, environmentId: environment.environment.id, link, sourceIntent,
             servingReceipt: snapshot.servingReceipt });
         let rollbackReceipt: OwnServerDeploymentReceipt | undefined;
+        let retainedFolderSource: NonNullable<OwnServerDeploymentReceipt['content']['ownServer']>['sources'];
         let imageTargetLinkId = link.id;
         if (request.materialization.kind === 'restoration') {
             const retained = snapshot.servingReceipt?.deployment.id === request.materialization.sourceDeploymentId
@@ -273,6 +274,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     deploymentId: request.materialization.sourceDeploymentId, context: request.context });
             if (!isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)
                 || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
+            if (sourceIntent.kind === 'folder') retainedFolderSource = retained.content.ownServer?.sources ?? [];
             imageTargetLinkId = retained.deployment.targetLinkId;
         } else if (request.actionId === 'deployments.rollback') {
             if (!('deploymentId' in request.input)) refuse('invalid_parameters');
@@ -283,6 +285,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 || retained.deployment.environmentId !== environment.environment.id
                 || !isDeepStrictEqual(retained.content.sourceIntent, sourceIntent)
                 || !isDeepStrictEqual(retained.content.images, content.images)) refuse('target_mismatch');
+            if (sourceIntent.kind === 'folder') retainedFolderSource = retained.content.ownServer?.sources ?? [];
             rollbackReceipt = retained;
         } else if (sourceIntent.kind === 'stored') {
             if (request.actionId === 'deployments.deploy' || request.actionId === 'deployments.promote') {
@@ -297,13 +300,14 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 }
             }
         }
-        const compose = sourceIntent.kind === 'repository' ? sourceIntent.compose : { path: 'compose.yaml', ...sourceIntent };
+        const compose = sourceIntent.kind === 'stored' ? { path: 'compose.yaml', ...sourceIntent } : sourceIntent.compose;
         const materializationId = request.materialization.kind === 'review' ? request.materialization.contentArtifactId
             : request.materialization.kind === 'restoration' ? request.materialization.sourceDeploymentId : request.materialization.deploymentId;
         const runtime = await host.runtime.acquire(request, { environment, content, readReferenceEnvironment: host.readEnvironment,
             readTelemetryCollectorDomain: host.readTelemetryCollectorDomain,
             readPreviewDomain: host.readPreviewDomain,
             ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
+            ...(retainedFolderSource ? { retainedFolderSource } : {}),
             ...(snapshot.deployment ? { deployment: snapshot.deployment } : {}) });
         let stageOutput: StageOutput | undefined;
         try {
@@ -318,8 +322,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             if (runtime.source.environmentId !== environment.environment.id || runtime.source.environmentInstanceId
                 !== expectedIdentity.environmentInstanceId
                 || runtime.source.deploymentId !== materializationId || runtime.source.machineId !== host.machineId
-                || (sourceIntent.kind === 'repository' ? runtime.source.definition !== undefined || runtime.source.commitSha !== sourceIntent.sha
-                    : !isDeepStrictEqual(runtime.source.definition, sourceIntent))
+                || !matchesDeploymentSourceIntentForHost(runtime.source, sourceIntent)
                 || !link.members.some(member => member.machineId === host.machineId && member.installationId === runtime.source.installationId)) refuse('target_mismatch');
             stageOutput = await captureOutput?.(runtime);
             const sourceOutput = stageOutput;
@@ -836,7 +839,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
             sourceIntent: snapshot.content.sourceIntent, ...native.basis, services: native.services,
             servicePlatforms: native.servicePlatforms,
             ...(native.health ? { health: native.health } : {}),
-            profiles: snapshot.content.sourceIntent.kind === 'repository' ? snapshot.content.sourceIntent.compose.profiles : snapshot.content.sourceIntent.profiles,
+            profiles: snapshot.content.sourceIntent.kind === 'stored' ? snapshot.content.sourceIntent.profiles : snapshot.content.sourceIntent.compose.profiles,
             members: snapshot.link.members.map(({ machineId, installationId }) => ({ machineId, installationId })),
             bindings: snapshot.environment.content.bindings, images: snapshot.content.images,
             ...(native.buildServices.length ? { buildServices: native.buildServices } : {}),

@@ -7,7 +7,7 @@ import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugi
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { runElevatedMachineSetupIntent } from '@/machines/adminAccess/runElevatedEffect';
 import { resolveMachineEffectCli } from '@/machines/adminAccess/machineEffectCli';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
@@ -21,6 +21,10 @@ import { logger } from '@/ui/logger';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import type { StoredCredentials } from '@/persistence';
 import { readDeploymentSourceIntentForHost } from '@/deployments/readDeploymentSourceIntentForHost';
+import { captureRetainedDeploymentFolderForHost } from '@/deployments/captureDeploymentFolderSourceForHost';
+import { computeWorkspaceSyncRootFingerprint } from '@/workspaces/sync/workspaceSyncRootIdentity';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { createDeploymentLogicalBackupSourceChoicesV1, createDeploymentVolumeBackupSourceIdV1 } from '@happier-dev/deployments';
 import { readPluginExecProcessCustodyForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
@@ -29,7 +33,8 @@ import { preparePreviewDomainFactForHost } from '@/deployments/previewDomainForH
 import type { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { readEnvironmentSecretLaunchAdmissionForHost } from '@/deployments/secrets/readEnvironmentSecretLaunchAdmissionForHost';
 import type { OwnServerDeploymentMaterialization, OwnServerDeploymentRuntime, OwnServerDeploymentRuntimeAcquisition, OwnServerDeploymentRuntimeRequest } from './ownServerDeploymentTarget';
-import { resolveDeploymentSourcePathForHost, createDeploymentSourceMaterializationPort } from './exactCommitRelease';
+import { resolveDeploymentSourcePathForHost, createDeploymentSourceMaterializationPort,
+    selectDeploymentSourceMaterializationForHost } from './exactCommitRelease';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { resolveOwnServerDeploymentIdentityForHost, resolveOwnServerDeploymentRootForHost } from './paths';
 import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
@@ -109,6 +114,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
         stageContent(sourceIntent: DeploymentSourceIntentV1): Promise<string>;
     }>), snapshot: Readonly<{ environment: DeploymentEnvironmentDetailV1; content?: DeploymentOwnServerContentV1;
         retainedSourceIntent?: DeploymentOwnServerContentV1['sourceIntent'] | null;
+        retainedFolderSource?: NonNullable<DeploymentOwnServerContentV1['ownServer']>['sources'];
         deployment?: DeploymentReceiptHeaderV1;
         readReferenceEnvironment?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readEnvironment'];
         readTelemetryCollectorDomain?: import('./ownServerDeploymentTarget').OwnServerDeploymentTargetHostInput['readTelemetryCollectorDomain'];
@@ -144,33 +150,6 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             await host.assertInstalledCurrent?.();
             const retainedSourceIntent = snapshot.retainedSourceIntent
                 ?? (requestedMaterialization?.kind === 'restoration' ? content?.sourceIntent : undefined);
-            const capturedSource = await readDeploymentSourceIntentForHost({ host: { ...host, signal, assertAuthority },
-                request: { environment, context: request.context, actionId: request.actionId,
-                    ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
-                    ...(content ? { sourceIntent: content.sourceIntent } : 'sourceIntent' in request && request.sourceIntent
-                        ? { sourceIntent: request.sourceIntent } : {}),
-                    ...('sha' in request && request.sha ? { sha: request.sha } : {}) } });
-            const { workspace, sourceRepository } = capturedSource;
-            const nativeSource = DeploymentOwnServerContentV1Schema.shape.sourceIntent.safeParse(capturedSource.sourceIntent);
-            if (!nativeSource.success) return refuse('deployment_invalid');
-            const intent = nativeSource.data;
-            // Persist the actual resolved source intent before P42 re-admits
-            // this exact candidate Artifact. Discovery later updates that head.
-            const materialization = 'stageContent' in request
-                ? { kind: 'review' as const, contentArtifactId: await request.stageContent(intent) }
-                : request.materialization;
-            const materializationId = materialization.kind === 'review' ? materialization.contentArtifactId
-                : materialization.kind === 'restoration' ? materialization.sourceDeploymentId : materialization.deploymentId;
-            const restorationForDeploymentId = materialization.kind === 'restoration' ? materialization.deploymentId : undefined;
-            const maintenanceOperationId = isDeploymentBackupActionIdV1(request.actionId)
-                ? request.context.operationAcceptance?.operationId ?? request.context.actionRequestId ?? undefined : undefined;
-            const admission = await readSecretAdmission({ credentials: host.credentials,
-                serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
-                installationId: identity.installationId, environmentId: environment.environment.id,
-                materialization: materialization.kind === 'restoration' ? { kind: 'deployment',
-                    deploymentId: materialization.deploymentId } : materialization,
-                ...(materialization.kind === 'restoration' ? { actionOperationId: snapshot.deployment?.actionOperationId } : {}),
-                targetLinkId: request.input.targetLinkId, context: request.context, signal });
             let lease: PluginRuntimeRegistryLease | undefined;
             let buildExecutionDirectory: string | undefined;
             let registryConfigDirectory: string | undefined;
@@ -180,7 +159,60 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 registryConfigDirectory = undefined;
             };
             const privateSeed = decodeBase64(identity.privateKey, 'base64url').slice(0, 32);
+            let captured: Awaited<ReturnType<typeof readDeploymentSourceIntentForHost>> | undefined;
+            let secretAdmission: OwnServerSecretLaunchAdmission | undefined;
             try {
+                const retainedFolder = content?.sourceIntent.kind === 'folder' && snapshot.retainedFolderSource
+                    ? content.sourceIntent : undefined;
+                const rootIdentity = await resolveOwnServerDeploymentIdentityForHost({
+                    happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: environment.environment.id });
+                const openRetainedFolder = async (sourceIntent: NonNullable<typeof retainedFolder>) => {
+                    const retained = snapshot.retainedFolderSource?.find(source => source.role === 'runtime'
+                        && source.machineId === host.machineId && source.installationId === identity.installationId
+                        && source.manifestFingerprint === sourceIntent.manifestFingerprint);
+                    if (!retained) return refuse('deployment_source_unavailable');
+                    const deploymentRoot = await realpath(rootIdentity.deploymentRoot);
+                    const rootPath = resolveDeploymentSourcePathForHost({ ...rootIdentity, deploymentRoot,
+                        deploymentId: retained.deploymentId, restorationForDeploymentId: retained.restorationForDeploymentId });
+                    const assertRetainedRoot = async () => {
+                        await assertAuthority();
+                        if (await realpath(rootPath) !== rootPath || await computeWorkspaceSyncRootFingerprint(rootPath) !== retained.rootFingerprint)
+                            return refuse('deployment_source_unavailable');
+                    };
+                    await assertRetainedRoot();
+                    const folderExport = await runWithWorkspaceSource(localWorkspaceSource, () => captureRetainedDeploymentFolderForHost({
+                        rootPath, assertCurrentAuthority: assertAuthority, manifest: retained.manifestEntries,
+                        manifestFingerprint: retained.manifestFingerprint }));
+                    try { await assertRetainedRoot(); }
+                    catch (error) { await folderExport.dispose(); throw error; }
+                    return { sourceIntent, folderExport, assertSourceCurrent: assertAuthority };
+                };
+                const capturedSource = captured = retainedFolder ? await openRetainedFolder(retainedFolder) : await readDeploymentSourceIntentForHost({ host: { ...host, signal, assertAuthority },
+                    request: { environment, retainFolderExport: true, context: request.context, actionId: request.actionId,
+                        ...(retainedSourceIntent ? { retainedSourceIntent } : {}),
+                        ...(content ? { sourceIntent: content.sourceIntent } : 'sourceIntent' in request && request.sourceIntent
+                            ? { sourceIntent: request.sourceIntent } : {}),
+                        ...('sha' in request && request.sha ? { sha: request.sha } : {}) } });
+                const nativeSource = DeploymentOwnServerContentV1Schema.shape.sourceIntent.safeParse(capturedSource.sourceIntent);
+                if (!nativeSource.success) return refuse('deployment_invalid');
+                const intent = nativeSource.data;
+                // Persist the actual resolved source intent before P42 re-admits
+                // this exact candidate Artifact. Discovery later updates that head.
+                const materialization = 'stageContent' in request
+                    ? { kind: 'review' as const, contentArtifactId: await request.stageContent(intent) }
+                    : request.materialization;
+                const materializationId = materialization.kind === 'review' ? materialization.contentArtifactId
+                    : materialization.kind === 'restoration' ? materialization.sourceDeploymentId : materialization.deploymentId;
+                const restorationForDeploymentId = materialization.kind === 'restoration' ? materialization.deploymentId : undefined;
+                const maintenanceOperationId = isDeploymentBackupActionIdV1(request.actionId)
+                    ? request.context.operationAcceptance?.operationId ?? request.context.actionRequestId ?? undefined : undefined;
+                const admission = secretAdmission = await readSecretAdmission({ credentials: host.credentials,
+                    serverId: host.serverId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId: host.machineId,
+                    installationId: identity.installationId, environmentId: environment.environment.id,
+                    materialization: materialization.kind === 'restoration' ? { kind: 'deployment',
+                        deploymentId: materialization.deploymentId } : materialization,
+                    ...(materialization.kind === 'restoration' ? { actionOperationId: snapshot.deployment?.actionOperationId } : {}),
+                    targetLinkId: request.input.targetLinkId, context: request.context, signal });
                 lease = await host.acquirePluginRuntimeRegistryLease();
                 let released = false;
                 const assertSourceCurrent = async () => {
@@ -192,8 +224,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 };
                 const assertCurrent = assertSourceCurrent;
                 await assertCurrent();
-                const { deploymentRoot, environmentInstanceId, homeServerIdentityId } = await resolveOwnServerDeploymentIdentityForHost({
-                    happierHomeDir: configuration.happyHomeDir, serverId: host.serverId, environmentId: environment.environment.id });
+                const { deploymentRoot, environmentInstanceId, homeServerIdentityId } = rootIdentity;
                 const releasePath = resolveDeploymentSourcePathForHost({ deploymentRoot,
                     environmentInstanceId, deploymentId: materializationId,
                     ...(build ? { materializationRole: 'build' } : {}),
@@ -379,8 +410,7 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                         ...(build ? { materializationRole: 'build' as const } : {}),
                         ...(maintenanceOperationId === undefined ? {} : { maintenanceOperationId }),
                         ...(restorationForDeploymentId === undefined ? {} : { restorationForDeploymentId }),
-                        ...(intent.kind === 'stored' ? { definition: intent } : { sourcePath: workspace!.rootPath, commitSha: intent.sha,
-                            ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: sourceRepository } : {}) }), deploymentRoot,
+                        ...selectDeploymentSourceMaterializationForHost(capturedSource), deploymentRoot,
                         artifactDirectory: join(configuration.happyHomeDir, 'tmp', 'deployment-source') },
                     secrets,
                     async acquireCopySourceSecrets(source) {
@@ -462,7 +492,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                                 try { if (buildExecutionDirectory) await rm(buildExecutionDirectory, { recursive: true, force: true }); }
                                 finally {
                                     try { await referenceForwards.release(); }
-                                    finally { try { await admission.release?.(); } finally { await retainedLease.release(); } }
+                                    finally {
+                                        try { await capturedSource.folderExport?.dispose(); }
+                                        finally { try { await admission.release?.(); } finally { await retainedLease.release(); } }
+                                    }
                                 }
                             }
                         }
@@ -473,7 +506,10 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 try { await removeRegistryConfigDirectory(); }
                 finally {
                     try { if (buildExecutionDirectory) await rm(buildExecutionDirectory, { recursive: true, force: true }); }
-                    finally { try { await admission.release?.(); } finally { await lease?.release(); } }
+                    finally {
+                        try { await captured?.folderExport?.dispose(); }
+                        finally { try { await secretAdmission?.release?.(); } finally { await lease?.release(); } }
+                    }
                 }
                 throw error;
             }
@@ -527,10 +563,6 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
             await host.assertInstalledCurrent?.();
             const identity = readInstallationIdentityIfExistsSync();
             if (!identity) return refuse('target_unavailable');
-            const captured = await readDeploymentSourceIntentForHost({ host: { ...host, signal,
-                async assertAuthority() { signal.throwIfAborted(); } },
-                request: { environment, context, actionId: 'deployments.environments.update' } });
-            const intent = captured.sourceIntent;
             const placement = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
                 serverId: host.serverId, environmentId: environment.environment.id });
             const temporaryRoot = join(configuration.happyHomeDir, 'tmp', 'deployment-definition');
@@ -541,18 +573,21 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 'reviewDefinition' | 'dispose'> | undefined;
             let native: ReturnType<typeof createOwnServerNativeRuntime> | undefined;
             let released = false;
+            let capturedSource: Awaited<ReturnType<typeof readDeploymentSourceIntentForHost>> | undefined;
             try {
+                const captured = capturedSource = await readDeploymentSourceIntentForHost({ host: { ...host, signal,
+                    async assertAuthority() { signal.throwIfAborted(); } },
+                    request: { environment, context, retainFolderExport: true, actionId: 'deployments.environments.update' } });
+                const intent = captured.sourceIntent;
                 const port = createDeploymentSourceMaterializationPort({ async admit() {
                     return { environmentId: environment.environment.id, environmentInstanceId: placement.environmentInstanceId,
                         deploymentId: 'definition', machineId: host.machineId, installationId: identity.installationId,
                         deploymentRoot: root, artifactDirectory: join(root, 'artifacts'), assertCurrent: captured.assertSourceCurrent,
-                        ...(intent.kind === 'stored' ? { definition: intent } : { sourcePath: captured.workspace!.rootPath,
-                            commitSha: intent.sha,
-                            ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: captured.sourceRepository } : {}) }) };
+                        ...selectDeploymentSourceMaterializationForHost(captured) };
                 } });
                 source = await port.materialize({ environmentId: environment.environment.id, deploymentId: 'definition' }, { signal });
                 native = createOwnServerNativeRuntime({ cwd: source.rootPath, signal, isCurrent: () => !released });
-                const compose = intent.kind === 'repository' ? intent.compose : { path: 'compose.yaml', ...intent };
+                const compose = intent.kind === 'stored' ? { path: 'compose.yaml', ...intent } : intent.compose;
                 // Keeps the pre-existing uncoded failure for a Compose-less source; a coded refusal needs its own decision.
                 if (!compose) throw new TypeError('Definition review requires a Compose source');
                 project = createNativeComposeLifecycle({ kind: 'environmentDefinition', phase: 'build',
@@ -577,7 +612,13 @@ export function createOwnServerDeploymentRuntimeForHost(host: OwnServerDeploymen
                 finally {
                     released = true;
                     try { await project?.dispose(); }
-                    finally { try { await source?.abort(); } finally { await rm(root, { recursive: true, force: true }); } }
+                    finally {
+                        try { await source?.abort(); }
+                        finally {
+                            try { await capturedSource?.folderExport?.dispose(); }
+                            finally { await rm(root, { recursive: true, force: true }); }
+                        }
+                    }
                 }
             }
         },

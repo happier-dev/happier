@@ -50,14 +50,13 @@ it.each(['requestKey', 'actionOperationId', 'sourceIntent', 'sourceMethod', 'ser
         const operationId = 'pending-operation';
         const retained = changed === 'retained link advance';
         const sourceIntent = candidate.content.sourceIntent;
+        if (sourceIntent.kind !== 'repository') throw new Error('Expected a repository receipt fixture');
         const privateIntent = { sourceIntent, sourceMethod: candidate.content.sourceMethod, requestKey: 'request', actionOperationId: operationId,
             targetLinkId: target.id };
         // This retained ciphertext was sealed by the previous pending writer.
         // Opening may drop its retired echo; TAKE must still send the exact c.
         const mismatched = retained ? { ...privateIntent, expectedLinkRevision: target.revision } : changed === 'sourceIntent'
-            ? { ...privateIntent, sourceIntent: sourceIntent.kind === 'repository'
-                ? { ...sourceIntent, sha: 'e'.repeat(40) }
-                : { ...sourceIntent, document: `${sourceIntent.document}\n# substituted` } }
+            ? { ...privateIntent, sourceIntent: { ...sourceIntent, sha: 'e'.repeat(40) } }
             : changed === 'sourceMethod' ? { ...privateIntent, sourceMethod: 'upload' as const }
                 : changed === 'services' ? { ...privateIntent, services: ['db'] }
                 : changed === 'triggerOccurrence' ? { ...privateIntent, triggerOccurrence: { automationId: 'asserted-automation',

@@ -18830,6 +18830,16 @@ La meva pregunta: `,
               environment: "Entorn",
               version: "Versió",
               versionStored: ({ revision }: { revision: number }) => `Fitxer Compose, revisió ${revision}`,
+              localFolder: "Carpeta local",
+
+              folderFiles: "Contingut per enviar",
+
+              folderExcluded: "Fitxers exclosos",
+
+              folderNoneExcluded: "Cap",
+
+              folderContents: ({ count, size }: { count: number; size: string }) => `${count} fitxers · ${size}`,
+
               replaces: "Substitueix",
               replacesNothing: "Encara no hi ha res en servei",
               replacesSame: `La mateixa versió que s'està executant`,

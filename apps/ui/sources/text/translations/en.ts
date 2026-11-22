@@ -23444,6 +23444,16 @@ const enProjects = {
         environment: "Environment",
         version: "Version",
         versionStored: ({ revision }: { revision: number }) => `Compose file, revision ${revision}`,
+        localFolder: "Local folder",
+
+        folderFiles: "Contents to send",
+
+        folderExcluded: "Excluded files",
+
+        folderNoneExcluded: "None",
+
+        folderContents: ({ count, size }: { count: number; size: string }) => `${count} files · ${size}`,
+
         replaces: "Replaces",
         replacesNothing: "Nothing is serving yet",
         replacesSame: `Same version that's running now`,

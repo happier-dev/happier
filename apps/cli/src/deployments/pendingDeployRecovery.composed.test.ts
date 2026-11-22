@@ -41,7 +41,9 @@ it.each([
         owner: { kind: 'account' as const, accountId } };
     const link = detail.targetLinks[0].targetLink;
     const resourceKey = new Uint8Array(32).fill(31);
-    const intent = { sourceIntent: candidate.content.sourceIntent, requestKey: 'captured-request',
+    const sourceIntent = candidate.content.sourceIntent;
+    if (sourceIntent.kind !== 'repository') throw new Error('Expected a repository receipt fixture');
+    const intent = { sourceIntent, requestKey: 'captured-request',
         actionOperationId: operationId, targetLinkId: link.id };
     const protectedIntent = changed === 'inner operation' ? { ...intent, actionOperationId: 'unrelated-operation' }
         : changed === 'source method' ? { ...intent, sourceMethod: 'gitIntegration' as const }
@@ -50,9 +52,7 @@ it.each([
         : { t: 'encrypted', c: encodeBase64(encryptWithDataKey(changed === 'malformed intent'
             ? { ...intent, sourceMethod: { untrusted: 'not-a-method' } } : protectedIntent, resourceKey)) };
     const candidateContent = changed === 'candidate source' ? { ...candidate.content,
-        sourceIntent: candidate.content.sourceIntent.kind === 'repository'
-            ? { ...candidate.content.sourceIntent, sha: 'e'.repeat(40) }
-            : { ...candidate.content.sourceIntent, document: `${candidate.content.sourceIntent.document}\n# changed` } } : candidate.content;
+        sourceIntent: { ...sourceIntent, sha: 'e'.repeat(40) } } : candidate.content;
     const input = { serverId, environmentId: environment.id, expectedRevision: environment.revision,
         targetLinkId: link.id, expectedTargetLinkRevision: link.revision + Number(changed === 'retained link advance'), requestKey: intent.requestKey,
         contentArtifactId: 'fresh-reviewed-candidate', contentHeaderVersion: 1, contentBodyVersion: 1,

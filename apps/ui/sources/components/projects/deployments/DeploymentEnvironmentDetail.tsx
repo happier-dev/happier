@@ -508,8 +508,8 @@ export const DeploymentEnvironmentDetail = React.memo(
       && historyPage.items.every(receipt => receipt.operation === 'teardown' || receipt.id === activeId);
     // Declared edges only (#23): the page's one Domains read and the stored template, never a per-resource read.
     const connections = projectDeploymentConnections(detail, domains.result).items;
-    const primaryService = detail.content.definition.kind === 'repository'
-      ? detail.content.definition.compose?.primaryService : detail.content.definition.primaryService;
+    const primaryService = detail.content.definition.kind === 'stored'
+      ? detail.content.definition.primaryService : detail.content.definition.compose?.primaryService;
     const adminDomain = primaryService ? domains.result.items.find(item =>
       isDeploymentDomainAttachedV1(item.domain, detail.environment)
       && (item.domain.state === 'active' || item.domain.state === 'warning')

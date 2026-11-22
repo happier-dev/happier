@@ -19940,6 +19940,16 @@ settingsSession: {
           environment: "環境",
           version: "バージョン",
           versionStored: ({ revision }: { revision: number }) => `Compose ファイル、リビジョン ${revision}`,
+          localFolder: "ローカルフォルダー",
+
+          folderFiles: "送信する内容",
+
+          folderExcluded: "除外ファイル",
+
+          folderNoneExcluded: "なし",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} ファイル · ${size}`,
+
           replaces: "置き換え対象",
           replacesNothing: "まだ稼働中のものはありません",
           replacesSame: `現在稼働中と同じバージョン`,

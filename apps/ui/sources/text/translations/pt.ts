@@ -20132,6 +20132,16 @@ settingsSession: {
           environment: "Ambiente",
           version: "Versão",
           versionStored: ({ revision }: { revision: number }) => `Arquivo Compose, revisão ${revision}`,
+          localFolder: "Pasta local",
+
+          folderFiles: "Conteúdo a enviar",
+
+          folderExcluded: "Arquivos excluídos",
+
+          folderNoneExcluded: "Nenhum",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} arquivos · ${size}`,
+
           replaces: "Substitui",
           replacesNothing: "Nada em serviço ainda",
           replacesSame: `A mesma versão em execução`,

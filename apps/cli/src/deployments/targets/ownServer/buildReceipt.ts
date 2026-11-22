@@ -9,7 +9,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { createDeploymentExecEnvPortForHost } from '@/deployments/secrets/deploymentExecEnvPort';
 import { prepareEnvironmentSecretBindingsForLaunch } from '@/deployments/secrets/prepareEnvironmentSecretBindingsForLaunch';
 import { isProjectNativeProcessUncertain } from '@/plugins/runtime/lifecycle/contributions/targetProjectNativeAdapters';
-import { createDeploymentSourceMaterializationPort, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
+import { createDeploymentSourceMaterializationPort, matchesDeploymentSourceIntentForHost, readDeploymentSourceCommitSubjectForHost } from './exactCommitRelease';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { createOwnServerNativeImageAcquisition } from './nativeImageAcquisition';
 import { admitOwnServerDeploymentSource, admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
@@ -117,7 +117,7 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
             revision: initial.environment.environment.revision, deploymentId: initial.receipt.deployment.id,
             deploymentRevision: initial.receipt.deployment.revision, state: 'running' };
         if (!isDeepStrictEqual(initial.content.images, initial.basis.images)) refuse('outcome_unknown');
-        if (initial.basis.buildServices?.length && initial.content.sourceIntent.kind !== 'repository') refuse('needs_repository');
+        if (initial.basis.buildServices?.length && initial.content.sourceIntent.kind === 'stored') refuse('needs_repository');
         const runtime = await host.runtime.acquire({ ...request, executionRole: 'build',
             materialization: { kind: 'deployment', deploymentId: initial.receipt.deployment.id } }, { ...initial,
                 readReferenceEnvironment: host.readEnvironment, readPreviewDomain: host.readPreviewDomain });
@@ -135,9 +135,7 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                 || runtime.source.environmentInstanceId !== expectedIdentity.environmentInstanceId
                 || runtime.source.deploymentId !== initial.receipt.deployment.id || runtime.source.machineId !== host.machineId
                 || runtime.source.installationId !== initial.deployment.acceptedExecution?.builder?.installationId
-                || (initial.content.sourceIntent.kind === 'repository'
-                    ? runtime.source.definition !== undefined || runtime.source.commitSha !== initial.content.sourceIntent.sha
-                    : !isDeepStrictEqual(runtime.source.definition, initial.content.sourceIntent))) refuse('target_mismatch');
+                || !matchesDeploymentSourceIntentForHost(runtime.source, initial.content.sourceIntent)) refuse('target_mismatch');
             const previousLog = initial.content.ownServer?.stageLogs?.find(log => log.machineId === host.machineId
                 && log.installationId === runtime.source.installationId);
             stageOutput = await openOwnServerDeploymentStageLog({ deploymentRoot: runtime.source.deploymentRoot,
@@ -185,8 +183,8 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
                     prepare: ({ phase }: Readonly<{ phase: 'build' | 'runtime' }>) => prepareEnvironmentSecretBindingsForLaunch({ ...runtime.secrets,
                         environmentId: source.environmentId, machineId: source.machineId, installationId: source.installationId,
                         phase, bindings: initial.environment.content.bindings, registryUses, assertCurrent }) });
-                const compose = initial.content.sourceIntent.kind === 'repository' ? initial.content.sourceIntent.compose
-                    : { ...initial.content.sourceIntent, path: 'compose.yaml' };
+                const compose = initial.content.sourceIntent.kind === 'stored' ? { ...initial.content.sourceIntent, path: 'compose.yaml' }
+                    : initial.content.sourceIntent.compose;
                 await stageOutput.beginStep({ stepId: 'build' });
                 const referenceAddresses: NonNullable<OwnServerDeploymentDetailsV1['referenceAddresses']> = [];
                 const project = createNativeComposeLifecycle({ kind: 'environmentProject', phase: 'build',

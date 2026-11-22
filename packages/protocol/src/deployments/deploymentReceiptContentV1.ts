@@ -22,7 +22,8 @@ import { DeploymentTeardownContentV1Schema } from './deploymentTeardownContentV1
 import { DeploymentDataCreationReferenceV1Schema } from './deploymentTeardownRequestV1.js';
 import { DeploymentPreviewCleanupV1Schema } from './deploymentTeardownVolumesV1.js';
 import { DeploymentDigestV1Schema, DeploymentTextV1Schema as text, DeploymentIngressV1Schema,
-    DeploymentOnFailureV1Schema, DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema,
+    DeploymentOnFailureV1Schema, DeploymentPlatformSourceIntentV1Schema, DeploymentSourceMethodV1Schema,
+    DeploymentFolderSourceIntentV1Schema, DeploymentRepositorySourceIntentV1Schema, DeploymentStoredDefinitionV1Schema,
     DeploymentServiceSubsetV1Schema, EnvironmentSecretBindingStoredReadV1Schema,
     OwnServerEnvironmentConfigurationV1Schema } from './storedAppInputV1.js';
 
@@ -89,8 +90,9 @@ export const OwnServerDeploymentRuntimeProjectionV1Schema = z.strictObject({
 export type OwnServerDeploymentRuntimeProjectionV1 = z.infer<typeof OwnServerDeploymentRuntimeProjectionV1Schema>;
 /** Native receipts keep their required Compose selectors; platform source uses the same repository identity without them. */
 const ownServerSourceIntentV1Schema = z.discriminatedUnion('kind', [
-    z.required(DeploymentSourceIntentV1Schema._zod.def.options[0], { compose: true }),
-    DeploymentSourceIntentV1Schema._zod.def.options[1],
+    z.required(DeploymentRepositorySourceIntentV1Schema, { compose: true }),
+    DeploymentStoredDefinitionV1Schema,
+    z.required(DeploymentFolderSourceIntentV1Schema, { compose: true }),
 ]);
 /** Comparison inputs only. Never hash or retain a secret-interpolated native model. */
 export const OwnServerDeploymentInputBasisV1Schema = z.strictObject({
@@ -189,7 +191,7 @@ export const DeploymentPlatformProvenanceV1Schema = z.extend(DeploymentTargetLin
 export type DeploymentPlatformProvenanceV1 = z.infer<typeof DeploymentPlatformProvenanceV1Schema>;
 export const DeploymentPlatformContentV1Schema = z.strictObject({
     actor: z.optional(ActionActorV1Schema),
-    sourceIntent: DeploymentSourceIntentV1Schema, sourceMethod: DeploymentSourceMethodV1Schema,
+    sourceIntent: DeploymentPlatformSourceIntentV1Schema, sourceMethod: DeploymentSourceMethodV1Schema,
     commitSubject: z.optional(z.string()), failure: z.optional(DeploymentReceiptFailureV1Schema),
     correlations: z.optional(z.array(DeploymentCorrelationV1Schema)),
     machines: z.array(id).check(z.maxLength(0)), images: z.array(DeploymentImageV1Schema).check(z.maxLength(0)),

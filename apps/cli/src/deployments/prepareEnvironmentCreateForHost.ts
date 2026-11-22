@@ -196,9 +196,12 @@ export function createEnvironmentCreatePlannerForHost(host: EnvironmentCreateHos
             const targetLinkContent = DeploymentOwnServerTargetLinkContentV1Schema.parse(preview.provenance || nativeOrigin === undefined ? {} : { nativeOrigin });
             // Catalog materialization stays with the template composition at the creating Action owner.
             if (input.definition.from === 'catalogApp') return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-            const definition = input.definition.from === 'repository'
-                ? { kind: 'repository' as const, ref: input.definition.ref, compose: input.definition.compose }
-                : await normalizeStoredComposeDefinitionInput(input.definition);
+            const definition = input.definition.from === 'folder'
+                ? { kind: input.definition.from, workspaceId: input.definition.workspaceId,
+                    ...(input.definition.compose === undefined ? {} : { compose: input.definition.compose }),
+                    ...(input.definition.includeEnvFiles === undefined ? {} : { includeEnvFiles: input.definition.includeEnvFiles }) }
+                : input.definition.from === 'repository' ? { kind: input.definition.from, ref: input.definition.ref, compose: input.definition.compose }
+                    : await normalizeStoredComposeDefinitionInput(input.definition);
             const content = DeploymentEnvironmentContentV1Schema.parse({ name: input.name,
                 retainPreviousDeployments: input.retainPreviousDeployments, definition, bindings: [],
                 ...(telemetry ? { telemetry } : {}),

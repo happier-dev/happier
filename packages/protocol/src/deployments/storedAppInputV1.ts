@@ -15,6 +15,7 @@ import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../a
 import { AutomationOccurrenceKeyV1Schema } from '../automations/automationOccurrenceKeyV1.js';
 import { ProjectSourcesCreateInputV1Schema, ProjectSourceOwnerV1Schema } from '../projects/sources/projectSourceV1.js';
 import { WorkspaceManifestRelativePathSchema } from '../workspaces/manifestSchema.js';
+import { DeploymentFolderReviewRevisionV1Schema } from './deploymentFolderReviewRevisionV1.js';
 import { CloudflareTunnelConnectorsPerMachineV1Schema } from './cloudflareTunnelConnectorsV1.js';
 
 /** Source syntax only; native Compose remains the effective model and merge owner. */
@@ -121,6 +122,18 @@ export const DeploymentRepositoryDefinitionV1Schema = lazyZodSchema(() => z.stri
     kind: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema),
 }));
 export type DeploymentRepositoryDefinitionV1 = z.infer<typeof DeploymentRepositoryDefinitionV1Schema>;
+
+const deploymentFolderSelectionV1 = {
+    workspaceId: id,
+    includeEnvFiles: z.optional(z.literal(true)),
+    compose: z.optional(DeploymentRepositoryComposeV1Schema),
+};
+export const DeploymentFolderDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
+    from: z.literal('folder'), ...deploymentFolderSelectionV1,
+}));
+export const DeploymentFolderDefinitionV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('folder'), ...deploymentFolderSelectionV1,
+}));
 /** Authored input is normalized once to the existing stored definition before storage. */
 export const DeploymentComposeDefinitionInputV1Schema = lazyZodSchema(() => z.strictObject({
     from: z.literal('compose'), ...z.pick(DeploymentStoredDefinitionV1Schema, { document: true, publicFiles: true }).shape,
@@ -134,22 +147,37 @@ export const DeploymentStoredDefinitionInputV1Schema = lazyZodSchema(() => z.dis
     DeploymentComposeDefinitionInputV1Schema, DeploymentImageDefinitionInputV1Schema,
 ]));
 export type DeploymentStoredDefinitionInputV1 = z.infer<typeof DeploymentStoredDefinitionInputV1Schema>;
+export const DeploymentRepositorySourceIntentV1Schema = lazyZodSchema(() => z.strictObject({
+    kind: z.literal('repository'), projectSourceId: id, sourceRevision: revision, sha: ScmCommitOidSchema,
+    compose: z.optional(DeploymentRepositoryComposeV1Schema), pullRequestHead: z.optional(z.strictObject({ number: revision })),
+}));
+export const DeploymentFolderSourceIntentV1Schema = lazyZodSchema(() => z.extend(DeploymentFolderDefinitionV1Schema,
+    DeploymentFolderReviewRevisionV1Schema.shape));
+
+export const DeploymentPlatformSourceIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+    DeploymentRepositorySourceIntentV1Schema,
+    DeploymentStoredDefinitionV1Schema,
+]));
+
 /** One exact source contract for the receipt, approval and protected pending transport. */
 export const DeploymentSourceIntentV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
-    z.strictObject({ kind: z.literal('repository'), projectSourceId: id, sourceRevision: revision, sha: ScmCommitOidSchema,
-        compose: z.optional(DeploymentRepositoryComposeV1Schema), pullRequestHead: z.optional(z.strictObject({ number: revision })) }),
+    DeploymentRepositorySourceIntentV1Schema,
     DeploymentStoredDefinitionV1Schema,
+    DeploymentFolderSourceIntentV1Schema,
 ]));
 export type DeploymentSourceIntentV1 = z.infer<typeof DeploymentSourceIntentV1Schema>;
 export const DeploymentSourceIntentV1ProtocolSchema = projectZodProtocolSchema(DeploymentSourceIntentV1Schema);
 /**
  * A deployed revision's short name, the one every surface says (the receipt page, History, an investigation's
- * evidence): a commit's short id, or a stored definition's Compose digest.
+ * evidence): a commit's short id, a stored definition's Compose digest, or a folder's manifest fingerprint.
  */
 export function deploymentRevisionShortLabelV1(
-    revision: Readonly<{ kind: 'repository'; sha: string }> | Readonly<{ kind: 'stored'; composeDigest: string }>,
+    revision: Readonly<{ kind: 'repository'; sha: string }> | Readonly<{ kind: 'stored'; composeDigest: string }>
+        | Readonly<{ kind: 'folder'; manifestFingerprint: string }>,
 ): string {
-    return revision.kind === 'repository' ? revision.sha.slice(0, 7) : revision.composeDigest.replace(/^sha256:/, '').slice(0, 7);
+    if (revision.kind === 'repository') return revision.sha.slice(0, 7);
+    const digest = revision.kind === 'folder' ? revision.manifestFingerprint : revision.composeDigest;
+    return digest.replace(/^sha256:/, '').slice(0, 7);
 }
 export const DeploymentSourceMethodV1Schema = lazyZodSchema(() => z.enum(['gitIntegration', 'upload']));
 export type DeploymentSourceMethodV1 = z.infer<typeof DeploymentSourceMethodV1Schema>;

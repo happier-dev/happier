@@ -4,7 +4,7 @@ import { AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema } from '../../tea
 import { QualifiedConnectedAccountPurposeBindingV1Schema, QualifiedConnectedAccountPurposeTeamResourceSelectionV1Schema } from '../../connect/connectedAccountPurposeBindings.js';
 import { QualifiedConnectedAccountRefSchema } from '../../connect/qualifiedConnectedAccountPersistence.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision, DeploymentTimestampV1Schema as timestamp } from '../../deployments/deploymentIdentifiersV1.js';
-import { DeploymentSourceIntentV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
+import { DeploymentPlatformSourceIntentV1Schema, DeploymentSourceMethodV1Schema, EnvironmentVariableBindingV1Schema } from '../../deployments/storedAppInputV1.js';
 import { DeploymentTargetOwnedVariableV1Schema } from './deploymentTargetVariablesV1.js';
 export * from './deploymentTargetVariablesV1.js';
 import { DeploymentStateV1Schema, DeploymentStepV1Schema, DeploymentReceiptOperationV1Schema } from '../../deployments/deploymentStateV1.js';
@@ -207,10 +207,10 @@ export const DeploymentTargetLifecycleInputV1Schema = lazyZodSchema(() => z.exte
 }));
 export type DeploymentTargetLifecycleInputV1 = z.infer<typeof DeploymentTargetLifecycleInputV1Schema>;
 export const DeploymentTargetDeployInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
-    sourceIntent: DeploymentSourceIntentV1Schema, sourceMethod: z.literal('gitIntegration'),
+    sourceIntent: DeploymentPlatformSourceIntentV1Schema, sourceMethod: z.literal('gitIntegration'),
 }));
 export const DeploymentTargetUploadDeployInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetLifecycleInputV1Schema, {
-    sourceIntent: DeploymentSourceIntentV1Schema, sourceMethod: z.literal('upload'),
+    sourceIntent: DeploymentPlatformSourceIntentV1Schema, sourceMethod: z.literal('upload'),
 }));
 export const DeploymentTargetObserveInputV1Schema = DeploymentTargetLifecycleInputV1Schema;
 export const DeploymentTargetCancelInputV1Schema = DeploymentTargetLifecycleInputV1Schema;

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
+import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
 import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -125,14 +125,15 @@ function readRollbackData(review: DeploymentReviewApproval['review']): 'keep' | 
 }
 
 function revisionText(revision: DeploymentReviewRevisionV1): string {
-  return revision.kind === 'repository'
-    ? revision.sha.slice(0, 7)
-    : t('projects.deployments.review.versionStored', { revision: revision.contentRevision });
+  if (revision.kind === 'repository') return revision.sha.slice(0, 7);
+  if (revision.kind === 'folder') return t('projects.deployments.review.localFolder');
+  return t('projects.deployments.review.versionStored', { revision: revision.contentRevision });
 }
 
 function sameRevision(a: DeploymentReviewRevisionV1, b: DeploymentReviewRevisionV1): boolean {
-  return a.kind === 'repository' ? b.kind === 'repository' && a.sha === b.sha
-    : b.kind === 'stored' && a.contentRevision === b.contentRevision && a.composeDigest === b.composeDigest;
+  if (a.kind === 'repository') return b.kind === 'repository' && a.sha === b.sha;
+  if (a.kind === 'folder') return b.kind === 'folder' && a.manifestFingerprint === b.manifestFingerprint;
+  return b.kind === 'stored' && a.contentRevision === b.contentRevision && a.composeDigest === b.composeDigest;
 }
 
 const selectSentenceName = (machine: Machine | null): string | null =>
@@ -236,6 +237,13 @@ function describeReviewFields(
             : t('projects.deployments.review.replacesNothing'),
     }) : field('replaces', t('projects.deployments.review.replaces'), replaces === undefined ? null
       : replaces ? revisionText(replaces.revision) : t('projects.deployments.review.replacesNothing'))),
+    ...(revision?.kind === 'folder' ? [
+      ...field('folderFiles', t('projects.deployments.review.folderFiles'),
+        t('projects.deployments.review.folderContents', { count: revision.fileCount,
+          size: formatHappierDataBytes(revision.totalBytes, { kind: 'storage' }) })),
+      ...field('folderExcluded', t('projects.deployments.review.folderExcluded'),
+        revision.excludedPaths.length ? revision.excludedPaths.join('\n') : t('projects.deployments.review.folderNoneExcluded')),
+    ] : []),
     ...field('secrets', t('projects.deployments.review.secrets'), secretBindingNames?.length ? secretBindingNames.join(', ') : null, {
       names: secretBindingNames,
       note: soleMachine ? t('projects.deployments.review.secretsNoteOn', { machine: soleMachine }) : t('projects.deployments.review.secretsNote'),

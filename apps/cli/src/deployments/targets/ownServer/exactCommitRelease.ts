@@ -1,5 +1,8 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
+import type { DeploymentSourceIntentForHost } from '@/deployments/readDeploymentSourceIntentForHost';
+import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
 import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
@@ -149,9 +152,31 @@ export type DeploymentSourceAdmissionForHost = Readonly<{
     maintenanceOperationId?: string;
     /** Retain the pinned operation log admitted on this exact installation. */
     operationLog?: boolean;
-}> & (Readonly<{ sourcePath: string; commitSha: string; definition?: never;
-    pullRequestHead?: Readonly<{ number: number }>; repository?: ProjectSourceRepositorySelectorV1 }>
-    | Readonly<{ definition: StoredComposeDefinition; sourcePath?: never; commitSha?: never; pullRequestHead?: never; repository?: never }>);
+}> & DeploymentSourceMaterializationForHost;
+type DeploymentSourceMaterializationForHost =
+    Readonly<{ sourcePath: string; commitSha: string; definition?: never; folderExport?: never;
+        pullRequestHead?: Readonly<{ number: number }>; repository?: ProjectSourceRepositorySelectorV1 }>
+    | Readonly<{ definition: StoredComposeDefinition; sourcePath?: never; commitSha?: never;
+        folderExport?: never; pullRequestHead?: never; repository?: never }>
+    | Readonly<{ folderExport: NonNullable<DeploymentSourceIntentForHost['folderExport']>;
+        sourcePath?: never; commitSha?: never; definition?: never; pullRequestHead?: never; repository?: never }>;
+
+export function selectDeploymentSourceMaterializationForHost(captured: DeploymentSourceIntentForHost): DeploymentSourceMaterializationForHost {
+    const { sourceIntent: intent, workspace, sourceRepository, folderExport } = captured;
+    if (intent.kind === 'stored') return { definition: intent };
+    if (intent.kind === 'folder' && folderExport) return { folderExport };
+    if (intent.kind === 'repository' && workspace) return { sourcePath: workspace.rootPath, commitSha: intent.sha,
+        ...(intent.pullRequestHead ? { pullRequestHead: intent.pullRequestHead, repository: sourceRepository } : {}) };
+    throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'deployment_source_unavailable' });
+}
+
+export function matchesDeploymentSourceIntentForHost(source: DeploymentSourceAdmissionForHost | undefined,
+    intent: DeploymentSourceIntentV1): boolean {
+    if (!source) return false;
+    if (intent.kind === 'stored') return isDeepStrictEqual(source.definition, intent);
+    if (intent.kind === 'folder') return source.folderExport?.workspaceExportArtifacts.manifest.fingerprint === intent.manifestFingerprint;
+    return source.commitSha === intent.sha;
+}
 export type AdmittedDeploymentSourceV1 = DeploymentSourceAdmissionForHost & Readonly<{ assertCurrent(): Promise<void> }>;
 
 async function exportStoredDefinition(admitted: AdmittedDeploymentSourceV1 & Readonly<{ definition: StoredComposeDefinition }>) {
@@ -210,31 +235,39 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
             operation = (async () => {
                 options?.signal?.throwIfAborted();
                 const admitted = await input.admit(request, options?.signal);
-                if (!input.invocation) assertIdentityMatches(request, admitted);
                 const assertCurrent = async () => {
                     options?.signal?.throwIfAborted();
                     await admitted.assertCurrent();
                     options?.signal?.throwIfAborted();
                 };
-                await assertCurrent();
-                const targetPath = resolveDeploymentSourcePathForHost(admitted);
-                await input.onProgress?.('export');
-                if (admitted.pullRequestHead) {
-                    const number = admitted.pullRequestHead.number;
-                    const repository = admitted.repository;
-                    const cloneUrl = repository?.protocol === 'ssh' ? repository.repository.sshUrl : repository?.repository.cloneUrl;
-                    if (!Number.isSafeInteger(number) || number <= 0 || !cloneUrl) {
-                        throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Base repository source is unavailable' });
-                    }
-                    await fetchWorkspaceCommitRef({ sourcePath: admitted.sourcePath, cloneUrl,
-                        ref: `refs/pull/${number}/head`, expectedCommitSha: admitted.commitSha,
-                        registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                let targetPath: string;
+                let exported;
+                try {
+                    if (!input.invocation) assertIdentityMatches(request, admitted);
                     await assertCurrent();
+                    targetPath = resolveDeploymentSourcePathForHost(admitted);
+                    await input.onProgress?.('export');
+                    if (admitted.pullRequestHead) {
+                        const number = admitted.pullRequestHead.number;
+                        const repository = admitted.repository;
+                        const cloneUrl = repository?.protocol === 'ssh' ? repository.repository.sshUrl : repository?.repository.cloneUrl;
+                        if (!Number.isSafeInteger(number) || number <= 0 || !cloneUrl) {
+                            throw createActionExecuteFailureError({ ok: false, errorCode: 'deployment_source_unavailable', error: 'Base repository source is unavailable' });
+                        }
+                        await fetchWorkspaceCommitRef({ sourcePath: admitted.sourcePath, cloneUrl,
+                            ref: `refs/pull/${number}/head`, expectedCommitSha: admitted.commitSha,
+                            registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                        await assertCurrent();
+                    }
+                    exported = admitted.folderExport ? admitted.folderExport
+                        : admitted.definition
+                        ? await exportStoredDefinition({ ...admitted, definition: admitted.definition })
+                        : await exportWorkspaceCommit({ sourcePath: admitted.sourcePath, commitSha: admitted.commitSha,
+                            artifactDirectory: admitted.artifactDirectory, registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
+                } catch (error) {
+                    await admitted.folderExport?.dispose();
+                    throw error;
                 }
-                const exported = admitted.definition
-                    ? await exportStoredDefinition({ ...admitted, definition: admitted.definition })
-                    : await exportWorkspaceCommit({ sourcePath: admitted.sourcePath, commitSha: admitted.commitSha,
-                        artifactDirectory: admitted.artifactDirectory, registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
                 try {
                     await assertCurrent();
                     const manifestFingerprint = exported.workspaceExportArtifacts.manifest.fingerprint!;
@@ -319,7 +352,7 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                         ...('commitSubject' in exported && typeof exported.commitSubject === 'string' ? { commitSubject: exported.commitSubject } : {}),
                         ...(admitted.operationLog ? { operationLog: admitted.operationLog } : {}) });
                     return source;
-                } finally { await exported.blobProvider.dispose?.(); await exported.dispose(); }
+                } finally { try { await exported.blobProvider.dispose?.(); } finally { await exported.dispose(); } }
             })();
             return await operation;
         },

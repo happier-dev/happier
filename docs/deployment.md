@@ -6049,3 +6049,13 @@ active deployment, with both timestamps; the first sample or a replaced deployme
 reports `previous_sample_required`. This is not daily growth or durable history.
 Database and Services composition consume these facts; UI composition remains
 separate from this data contract.
+
+## Native deployment from a Machine folder
+
+The Deploy Action resolves the owned WorkspaceRef on the build Machine. Source
+admission selects Git's tracked working files and nonignored untracked files in a
+worktree. A plain folder follows its `.gitignore` files. Both exclude `.git` and
+`.env*` by default. The review shows the file count, bytes and excluded paths.
+The existing workspace exporter carries the selected manifest fingerprint through
+approval and Receipt. Docker applies its context rules when it builds. The source
+stage can be larger than Docker's eventual context, and review shows that size.

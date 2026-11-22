@@ -1,3 +1,4 @@
+import { projectDeploymentReviewRevisionV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentContentV1, DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
@@ -98,9 +99,7 @@ export function deploymentOperationLabel(operation: DeploymentReceiptHeaderV1['o
 export function deploymentSourceLabel(content: DeploymentContentV1): string | null {
   const source = content.sourceIntent;
   if (!source) return null;
-  return deploymentRevisionLabel(source.kind === 'repository'
-    ? { kind: 'repository', sha: source.sha }
-    : { kind: 'stored', contentRevision: source.contentRevision, composeDigest: source.composeDigest });
+  return deploymentRevisionLabel(projectDeploymentReviewRevisionV1(source));
 }
 
 type ReceiptOperation = DeploymentReceiptHeaderV1['operation'];
@@ -352,9 +351,7 @@ export function deploymentDurationMs(
 export function deploymentDefinitionLabel(
   content: DeploymentEnvironmentContentV1,
 ): string | null {
-  return content.definition.kind === 'repository'
-    ? content.definition.compose?.path ?? null
-    : null;
+  return content.definition.kind === 'stored' ? null : content.definition.compose?.path ?? null;
 }
 
 /** Whether this Environment can configure PR previews, and whether its template is enabled. */
@@ -362,7 +359,7 @@ export function deploymentPreviewAvailability(
   detail: Pick<DeploymentEnvironmentReadDetailV1, 'environment' | 'content'>,
 ): 'preview' | 'needsRepository' | 'on' | 'off' {
   if (detail.environment.purpose === 'preview') return 'preview';
-  if (detail.content.definition.kind === 'stored') return 'needsRepository';
+  if (detail.content.definition.kind !== 'repository') return 'needsRepository';
   return detail.content.previewTemplate?.enabled === true ? 'on' : 'off';
 }
 

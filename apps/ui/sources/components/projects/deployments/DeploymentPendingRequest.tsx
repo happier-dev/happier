@@ -24,7 +24,8 @@ export function DeploymentPendingRequest(props: Readonly<{
             title={t(source.kind === 'repository' && pending.intent.triggerOccurrence
                 ? 'projects.deployments.overviewStatus.pendingRepositoryTitle'
                 : 'projects.deployments.overviewStatus.pendingDeploymentTitle')}
-            subtitle={source.kind === 'repository' ? source.sha : t('projects.deployments.overviewStatus.pendingStoredRevision',
+            subtitle={source.kind === 'repository' ? source.sha : source.kind === 'folder'
+                ? t('projects.deployments.review.localFolder') : t('projects.deployments.overviewStatus.pendingStoredRevision',
                 { revision: source.contentRevision, digest: source.composeDigest })}
             subtitleLines={0} icon={<Icon name="clock" />}
             onPress={() => openActionOperationDetail({ serverId: props.serverId, operationId: pending.admission.actionOperationId })} />

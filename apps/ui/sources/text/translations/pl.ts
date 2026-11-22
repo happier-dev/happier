@@ -19851,6 +19851,16 @@ settingsSession: {
           environment: "Środowisko",
           version: "Wersja",
           versionStored: ({ revision }: { revision: number }) => `Plik Compose, rewizja ${revision}`,
+          localFolder: "Folder lokalny",
+
+          folderFiles: "Zawartość do wysłania",
+
+          folderExcluded: "Wykluczone pliki",
+
+          folderNoneExcluded: "Brak",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} plików · ${size}`,
+
           replaces: "Zastępuje",
           replacesNothing: "Nic jeszcze nie działa",
           replacesSame: `Ta sama wersja, która działa`,

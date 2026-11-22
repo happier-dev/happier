@@ -20136,6 +20136,16 @@ settingsSession: {
               environment: "Umgebung",
               version: "Version",
               versionStored: ({ revision }: { revision: number }) => `Compose-Datei, Revision ${revision}`,
+              localFolder: "Lokaler Ordner",
+
+              folderFiles: "Zu sendender Inhalt",
+
+              folderExcluded: "Ausgeschlossene Dateien",
+
+              folderNoneExcluded: "Keine",
+
+              folderContents: ({ count, size }: { count: number; size: string }) => `${count} Dateien · ${size}`,
+
               replaces: "Ersetzt",
               replacesNothing: "Noch nichts im Betrieb",
               replacesSame: `Dieselbe Version, die gerade läuft`,

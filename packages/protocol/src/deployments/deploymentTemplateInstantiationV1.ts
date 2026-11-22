@@ -6,7 +6,7 @@ import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revis
 import { DeploymentTemplateRefV1Schema, DeploymentDigestV1Schema, DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema,
   StoredAppPresetInputV1Schema, StoredAppPresetBindingsV1Schema, EnvironmentVariableBindingInputV1Schema, DeploymentSecretBindingSourceV1Schema,
   DeploymentNewProjectV1Schema, hasOneDeploymentProjectV1, DeploymentTargetManagedRetentionV1Schema,
-  DeploymentTextV1Schema, DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentRepositoryComposeV1Schema,
+  DeploymentTextV1Schema, DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentRepositoryComposeV1Schema, DeploymentFolderDefinitionInputV1Schema,
   DeploymentTemplateDomainBindingsV1Schema } from './storedAppInputV1.js';
 import { SharedSavedSecretCreateInputV1Schema } from '../account/settings/savedSecretResourceActionsV1.js';
 import { DeploymentTemplateV1Schema, DeploymentTemplateSecretProfileV1Schema } from '../plugins/contributions/deploymentTemplates.js';
@@ -232,7 +232,7 @@ export const DeploymentEnvironmentCreateIntentInputV1Schema = lazyZodSchema(() =
     provenance: DeploymentPreviewProvenanceV1Schema, headSha: ScmCommitOidSchema,
   })),
   mode: z.optional(z.enum(['preview', 'apply'])),
-  definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema,
+  definition: z.optional(z.union([DeploymentStoredDefinitionInputV1Schema, DeploymentCatalogAppDefinitionInputV1Schema, DeploymentFolderDefinitionInputV1Schema,
     z.strictObject({ from: z.literal('repository'), ref: DeploymentTextV1Schema, compose: z.optional(DeploymentRepositoryComposeV1Schema) })])),
   copyFrom: z.optional(DeploymentEnvironmentCopyFromV1Schema),
   controllerMachineId: z.optional(id), buildMachineId: z.optional(id),

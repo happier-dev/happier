@@ -663,6 +663,7 @@ describe('scm workspace integration', () => {
                 excludeAdministrativePaths: false,
             },
             isNestedRepoSourcePath: true,
+            selectionSource: 'scm',
         });
     });
 
@@ -699,6 +700,7 @@ describe('scm workspace integration', () => {
                     excludeAdministrativePaths: true,
                 },
                 isNestedRepoSourcePath: false,
+                selectionSource: 'filesystem',
             });
         } finally {
             await rm(sourcePath, { recursive: true, force: true });

@@ -19646,6 +19646,16 @@ settingsSession: {
           environment: "环境",
           version: "版本",
           versionStored: ({ revision }: { revision: number }) => `Compose 文件，修订 ${revision}`,
+          localFolder: "本地文件夹",
+
+          folderFiles: "要发送的内容",
+
+          folderExcluded: "排除的文件",
+
+          folderNoneExcluded: "无",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} 个文件 · ${size}`,
+
           replaces: "替换",
           replacesNothing: "尚无运行中的版本",
           replacesSame: `与当前运行的版本相同`,

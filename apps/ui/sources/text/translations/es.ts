@@ -20026,6 +20026,16 @@ settingsSession: {
           environment: "Entorno",
           version: "Versión",
           versionStored: ({ revision }: { revision: number }) => `Archivo Compose, revisión ${revision}`,
+          localFolder: "Carpeta local",
+
+          folderFiles: "Contenido para enviar",
+
+          folderExcluded: "Archivos excluidos",
+
+          folderNoneExcluded: "Ninguno",
+
+          folderContents: ({ count, size }: { count: number; size: string }) => `${count} archivos · ${size}`,
+
           replaces: "Sustituye",
           replacesNothing: "Todavía no hay nada en servicio",
           replacesSame: `La misma versión que está en ejecución`,

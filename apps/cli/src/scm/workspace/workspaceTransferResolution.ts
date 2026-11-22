@@ -41,6 +41,7 @@ import { normalizeWorkspacePath } from './workspaceExportPackaging/normalizeWork
 export { buildNonPortableWorkspacePathError } from './workspaceTransferErrors';
 
 export type ScmWorkspaceIntegrationWorkspaceReplicationSourceInputs = Readonly<{
+    selectionSource: 'scm' | 'filesystem';
     entries: readonly ScmWorkspaceIntegrationWorkspaceTransferEntry[];
     excludedPaths?: readonly string[];
     workspaceIntegrationMetadata: ScmWorkspaceIntegrationWorkspaceTransferMetadata | null;
@@ -295,6 +296,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
             });
             return {
                 entries,
+                selectionSource: 'scm',
                 ...(resolved.transfer.excludedPaths ? { excludedPaths: resolved.transfer.excludedPaths } : {}),
                 workspaceIntegrationMetadata: input.workspaceTransfer.contentOnly ? null : resolved.transfer.metadata ?? null,
                 safeFilterPolicy: await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry),
@@ -320,6 +322,7 @@ export async function resolveWorkspaceReplicationSourceInputsWithScmWorkspace(in
         }), sourceRoot: input.sourcePath, contentOnly: input.workspaceTransfer.contentOnly, registry });
         return {
             entries,
+            selectionSource: 'filesystem',
             workspaceIntegrationMetadata: null,
             safeFilterPolicy: entries.length > 0
                 ? await resolveWorkspaceManifestSafeFilterPolicyFromEntries(entries, resolved.registry)

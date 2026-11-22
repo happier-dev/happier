@@ -1,3 +1,4 @@
+import type { DeploymentSourceIntentV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { recordFailureCause } from '@/diagnostics/recordFailureCause';
 import { classifyNativeComposeFailure, NATIVE_COMPOSE_REGISTRY_INSPECT_PHASE } from './nativeComposeFailure';
 import { readNativeComposeLogsForHost } from './nativeComposeLogs';
@@ -134,7 +135,7 @@ export type NativeComposeEnvironmentProjectInput = Readonly<{
     onTelemetryProjection?(facts: readonly NativeComposeTelemetryProjectionFact[]): void;
     source: DeploymentSourceMaterializationV1;
     files: readonly string[];
-    sourceKind?: 'repository' | 'stored';
+    sourceKind?: DeploymentSourceIntentV1['kind'];
     profiles?: readonly string[];
     services: readonly string[];
     health?: OwnServerDeploymentInputBasisV1['health'];
