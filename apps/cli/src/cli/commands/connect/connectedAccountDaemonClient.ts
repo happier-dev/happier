@@ -12,7 +12,7 @@ import {
   ConnectedAccountDaemonControlResponseSchema,
   ConnectedAccountDaemonCommandSchema,
 } from '@/api/machine/rpcHandlers.connectedAccounts';
-import type { StoredCredentials } from '@/persistence';
+import { hasStoredSessionCredentialProvenance, type StoredCredentials } from '@/persistence';
 import { randomUUID } from 'node:crypto';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { ensureCliActionPolicySettings } from '@/session/actions/ensureCliActionPolicySettings';
@@ -26,7 +26,8 @@ import { CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION,
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import type { ActionExecuteResult } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext } from '@happier-dev/protocol';
+import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
 import type { CliApprovalRequestedHandler } from '@/session/actions/approvals/deferredResult';
 import {
   callMachineRpc as callMachineRpcRuntime,
@@ -67,6 +68,9 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
     throw new Error('Connected-account daemon client requires a machine id');
   }
   const callMachineRpc = params.callMachineRpc ?? callMachineRpcRuntime;
+  const authority = resolveInvocationAuthority({
+    credential: hasStoredSessionCredentialProvenance(params.credentials) ? 'terminal' : 'api_token', surface: 'cli',
+  });
   const serverHttpBaseUrl = params.serverHttpBaseUrl;
   const lifetime = new AbortController();
   let savedSecretOperationContext: SavedSecretOperationContextV1 | undefined;
@@ -102,22 +106,27 @@ export function createConnectedAccountDaemonClient(params: Readonly<{
         ...(machineId ? { machineId } : {}) };
       const nativeExecutor = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createCliActionExecutorFromCredentials({
         ...executorOptions, connectedAccountAuthenticationHost: host }));
+      const executeHostedAction = (id: ActionId, operands: unknown, context: ActionExecutorContext | undefined,
+        selectedHost: typeof host) => {
+        const invocationSignal = context?.signal ?? lifetime.signal;
+        // The human CLI keeps private completion in this live invocation,
+        // including when its native producer is reached through Home.
+        const hostActionApprovalLifetime = getActionSpec(id).approvalResultCustody === 'live_only'
+          ? { actionId: id, signal: invocationSignal, surface: 'cli' as const } : undefined;
+        return createCliActionExecutorFromCredentials({ ...executorOptions, connectedAccountAuthenticationHost: selectedHost,
+          ...(hostActionApprovalLifetime ? { hostActionApprovalLifetime } : {}),
+          pluginActionExecutionOwner: 'current_process' }).execute(id, operands,
+            { ...context, signal: invocationSignal });
+      };
       executor = { execute: async (id, operands, context) => {
-        const routed = await host.executeAction(id, operands, context, (selectedId, selectedInput, selectedContext, selectedHost) => {
-          const invocationSignal = selectedContext?.signal ?? lifetime.signal;
-          // The selected Account producer owns this live result and its attempt.
-          // Native dispatch has no local host lifetime and keeps deferred replay.
-          const hostActionApprovalLifetime = getActionSpec(selectedId).approvalResultCustody === 'live_only'
-            ? { actionId: selectedId, signal: invocationSignal, surface: 'cli' as const } : undefined;
-          return createCliActionExecutorFromCredentials({ ...executorOptions, connectedAccountAuthenticationHost: selectedHost,
-            ...(hostActionApprovalLifetime ? { hostActionApprovalLifetime } : {}),
-            pluginActionExecutionOwner: 'current_process' }).execute(selectedId, selectedInput,
-              { ...selectedContext, signal: invocationSignal });
-        });
-        return routed.matched ? routed.result : nativeExecutor.execute(id, operands, context);
+        const routed = await host.executeAction(id, operands, context, executeHostedAction);
+        return routed.matched ? routed.result : authority === 'present_user' && getActionSpec(id).approvalResultCustody === 'live_only'
+          ? executeHostedAction(id, operands, context, host) : nativeExecutor.execute(id, operands, context);
       } };
     }
-    return await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executor!.execute(actionId, input, { surface: 'cli', actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
+    return await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => executor!.execute(actionId, input, { surface: 'cli',
+      authority,
+      actionCaller: { kind: 'host' }, actionRequestId: randomUUID(),
       ...(signal && actionId !== CONNECTED_ACCOUNT_AUTHENTICATION_ACTION_ID_BY_OPERATION.cancel ? { signal } : {}) }));
   };
   const execute = async (actionId: ActionId, input: unknown) => {

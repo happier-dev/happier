@@ -1,6 +1,6 @@
 import { expect, it, onTestFinished, vi } from 'vitest';
 import { dirname, join } from 'node:path';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, unlink, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { ConnectedAccountAttemptResponseSchema, CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, normalizeActionsSettingsV1, accountSettingsParse, type ActionExecuteResult } from '@happier-dev/protocol';
 import { createDeploymentSocketHome } from '../../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
@@ -24,6 +24,7 @@ import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/rpc/
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import { registerConnectedAccountAttemptTransactionRoutes } from '../../../../server/sources/app/api/routes/connect/connectedAccountAttemptTransactions/registerConnectedAccountAttemptTransactionRoutes';
+import { registerAutomationActionIndexRoutes } from '../../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import * as sessionSockets from '@/api/session/sockets';
 import { buildActionExecuteResultFromRecordedApprovalExecution } from '@happier-dev/protocol/actions/actionExecutor';
 import { USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/usage/usageSources';
@@ -53,6 +54,7 @@ it('delivers public and private authentication completions through CLI, Home and
   } | undefined;
   const home = await createDeploymentSocketHome({ encryptionMode: 'e2ee', configureApp: async app => {
     await registerConnectedAccountAttemptTransactionRoutes(app);
+    registerAutomationActionIndexRoutes(app);
     app.addHook('preHandler', async request => {
       const race = consentRace;
       if (!race || request.method !== 'POST' || request.url !== `/v1/artifacts/${race.artifactId}`) return;
@@ -195,8 +197,9 @@ it('delivers public and private authentication completions through CLI, Home and
   rpc.replayUnacknowledgedHandlerRegistrations();
   expect(await rpc.waitForRegisteredHandlers([CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD,
     EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, rootActionId, consentActionId], { timeoutMs: 10_000 })).toEqual({ status: 'ready' });
-  writeDaemonState({ pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test', httpPort: runtime.controlPort,
-    controlToken: runtime.controlToken, machineId: home.machineId, accountId: home.accountId });
+  const daemonState = { pid: process.pid, startedAt: Date.now(), startedWithCliVersion: 'test', httpPort: runtime.controlPort,
+    controlToken: runtime.controlToken, machineId: home.machineId, accountId: home.accountId };
+  writeDaemonState(daemonState);
   let decision: ActionExecuteResult | undefined;
   let approvalId: string | undefined;
   let requestedDecision: 'approve' | 'reject' = 'approve';
@@ -210,7 +213,7 @@ it('delivers public and private authentication completions through CLI, Home and
     decision = await createCliActionExecutorFromCredentials({
       credentials: { ...credentials, token: home.token }, machineId: home.machineId,
     }).execute('approval.request.decide', { artifactId, decision: requestedDecision },
-      { surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' }, signal });
+      { surface: 'rpc', authority: 'present_user', actionCaller: { kind: 'host' }, signal: invocation.signal });
     return decision;
   };
   const createClient = (callerCredentials: StoredCredentials) => runWithServerHttpBaseUrl(home.baseUrl,
@@ -223,7 +226,7 @@ it('delivers public and private authentication completions through CLI, Home and
   await expect(personClient.authenticate({ operation: 'beginConnect', service, modeId: 'password' })).resolves.toEqual(nativeResult);
   const client = createClient(credentials);
   cleanup.push(() => client.dispose());
-  expect(decision?.ok).toBe(true);
+  await expect.poll(() => decision?.ok).toBe(true);
   if (decision?.ok) expect(decision.result).not.toHaveProperty('liveExecution');
   const receipt = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
     .execute('approval.request.get', { artifactId: approvalId }, { surface: 'cli', actionCaller: { kind: 'host' } });
@@ -283,7 +286,16 @@ it('delivers public and private authentication completions through CLI, Home and
   let finishManual!: () => void;
   nativeCompletion = new Promise<void>(resolve => { finishManual = resolve; });
   decision = undefined;
-  const manual = client.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
+  let manualApprovalId: string | undefined;
+  const sameTerminalClient = runWithServerHttpBaseUrl(home.baseUrl, () => createConnectedAccountDaemonClient({ credentials,
+    serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+    onApprovalRequested: (artifactId, _signal, decide) => { manualApprovalId = artifactId; return decide('approve'); },
+  }));
+  cleanup.push(() => sameTerminalClient.dispose());
+  // A remote Machine is reachable through Home without this CLI having its
+  // daemon's local control publication. Keep the installed RPC owner online.
+  await unlink(configuration.daemonStateFile);
+  const manual = sameTerminalClient.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
     fields: { token: 'private-manual-client-token' } });
   let manualError: unknown;
   void manual.catch(error => { manualError = error; });
@@ -292,8 +304,17 @@ it('delivers public and private authentication completions through CLI, Home and
     if (manualError) throw manualError;
     finishManual();
     await expect(manual).resolves.toEqual(nativeResult);
-  } finally { finishManual(); await manual.catch(() => undefined); }
+  } finally { finishManual(); await manual.catch(() => undefined); writeDaemonState(daemonState); }
   nativeCompletion = undefined;
+  const manualReceipt = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
+    .execute('approval.request.get', { artifactId: manualApprovalId }, { surface: 'cli', actionCaller: { kind: 'host' } });
+  if (!manualReceipt.ok) throw new Error('Missing manual approval receipt');
+  const manualRequest = ApprovalRequestGetResultV1Schema.parse(manualReceipt.result).request;
+  expect(manualRequest).toMatchObject({ status: 'executed', approval: { flow: 'blocking' },
+    executionOriginV1: { authority: 'present_user' } });
+  expect(JSON.stringify(manualRequest)).not.toContain('private-manual-client-token');
+  expect(buildActionExecuteResultFromRecordedApprovalExecution(manualRequest))
+    .toMatchObject({ ok: false, errorCode: 'approval_result_held' });
   requestedDecision = 'reject';
   await expect(client.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
     fields: { token: 'private-rejected-token' } })).rejects.toMatchObject({ code: 'approval_rejected' });
@@ -306,8 +327,8 @@ it('delivers public and private authentication completions through CLI, Home and
   }));
   try {
     await expect(cancelledClient.authenticate({ operation: 'submitManual', attemptId: 'connect-attempt',
-      // The existing transport contract cannot retract an issued mutation.
-      fields: { token: 'private-cancelled-token' } })).rejects.toMatchObject({ code: 'outcome_unknown' });
+      // Cancellation at the live approval wait precedes native dispatch.
+      fields: { token: 'private-cancelled-token' } })).rejects.toMatchObject({ code: 'cancelled' });
   } finally { await cancelledClient.dispose(); }
   expect(effects).toBe(2);
   // Generic Actions use the same real CLI -> daemon approval path. Private
@@ -319,10 +340,11 @@ it('delivers public and private authentication completions through CLI, Home and
     else callback?.();
     return true;
   });
+  const readNotice = (message: unknown) => String(message).trim() ? JSON.parse(String(message)) : undefined;
   const notices = vi.spyOn(console, 'error').mockImplementation(message => {
     if (!consentRace) return;
-    const notice = JSON.parse(String(message));
-    if (notice.data?.actionId === consentActionId) consentRace.artifactId = notice.data.artifactId;
+    const notice = readNotice(message);
+    if (notice?.data?.actionId === consentActionId) consentRace.artifactId = notice.data.artifactId;
   });
   const previousExitCode = process.exitCode;
   cleanup.push(() => { stdout.mockRestore(); notices.mockRestore(); process.exitCode = previousExitCode; });
@@ -345,13 +367,13 @@ it('delivers public and private authentication completions through CLI, Home and
     try { await command; } finally { commandLifetime.abort(); await command; }
     expect(JSON.parse(output)).toMatchObject({ ok: true, kind: 'actions_invoke', data: id === actionId
       ? { status: 'awaitingManual', attemptId: expect.any(String) } : nativeResult });
-    expect(notices.mock.calls.map(([message]) => JSON.parse(String(message))))
+    expect(notices.mock.calls.map(([message]) => readNotice(message)))
       .toContainEqual(expect.objectContaining({ data: { kind: 'approval_request_created',
         artifactId: expect.any(String), actionId: id } }));
-    expect(notices.mock.calls.filter(([message]) => JSON.parse(String(message)).data?.actionId === id)).toHaveLength(1);
+    expect(notices.mock.calls.filter(([message]) => readNotice(message)?.data?.actionId === id)).toHaveLength(1);
     expect(output).not.toContain('private-');
-    const notice = notices.mock.calls.map(([message]) => JSON.parse(String(message)))
-      .find(message => message.data?.actionId === id);
+    const notice = notices.mock.calls.map(([message]) => readNotice(message))
+      .find(message => message?.data?.actionId === id);
     const completed = await createCliActionExecutorFromCredentials({ credentials, machineId: home.machineId })
       .execute('approval.request.get', { artifactId: notice.data.artifactId }, { surface: 'cli', actionCaller: { kind: 'host' } });
     if (!completed.ok) throw new Error('Missing generic Action approval receipt');
@@ -380,7 +402,7 @@ it('delivers public and private authentication completions through CLI, Home and
     // The original person retains the private result on Home's original
     // request. An automation token has observation-only result custody.
     await expect.poll(() => rootEffects, { timeout: 10_000 }).toBe(1);
-    expect(notices.mock.calls.map(([message]) => JSON.parse(String(message))))
+    expect(notices.mock.calls.map(([message]) => readNotice(message)))
       .toContainEqual(expect.objectContaining({ data: { kind: 'approval_request_created',
         artifactId: expect.any(String), actionId: rootActionId } }));
     expect(rootSettled).toBe(false);
@@ -427,7 +449,7 @@ it('delivers public and private authentication completions through CLI, Home and
   const raceSockets = vi.spyOn(sessionSockets, 'createUserScopedSocketConnection').mockImplementation(options => {
     const connection = createSocket(options);
     if (approvalSockets.length === 0) connection.socket.once('disconnect', () => {
-      race.earlyPrompt = notices.mock.calls.some(([message]) => JSON.parse(String(message)).data?.actionId === consentActionId);
+      race.earlyPrompt = notices.mock.calls.some(([message]) => readNotice(message)?.data?.actionId === consentActionId);
       race.observerStopped.release();
     });
     approvalSockets.push(connection.socket);
@@ -440,7 +462,7 @@ it('delivers public and private authentication completions through CLI, Home and
     expect(consentEffects, JSON.stringify(race.writes)).toBeLessThanOrEqual(1);
     expect(JSON.parse(output), JSON.stringify(race.writes)).toMatchObject({ ok: true });
     expect(consentEffects, JSON.stringify(race.writes)).toBe(1);
-    expect(notices.mock.calls.filter(([message]) => JSON.parse(String(message)).data?.actionId === consentActionId)).toHaveLength(1);
+    expect(notices.mock.calls.filter(([message]) => readNotice(message)?.data?.actionId === consentActionId)).toHaveLength(1);
   } finally {
     race.observerStopped.release(); race.firstWrite.release(); race.allowFirst.release(); race.firstCommitted.release();
     consentRace = undefined;
