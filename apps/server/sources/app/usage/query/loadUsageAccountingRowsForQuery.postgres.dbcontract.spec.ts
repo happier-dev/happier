@@ -165,10 +165,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                 },
             }) as Tx, account.id, [request]));
             const captured = rows.find(row => row.id === event.id);
-            expect(captured).toEqual({ ...event, metadata: expect.any(String), captureKind: 'body',
+            expect(captured).toEqual({ ...event, metadata, captureKind: 'body',
                 reportKey: null, reportData: null, reportUpdatedAt: null });
-            if (!captured || captured.captureKind !== 'body') throw new Error('Expected the selected body');
-            expect(JSON.parse(String(captured.metadata))).toEqual(metadata);
             expect(rows.find(row => row.id === malformed.id)).toMatchObject({ captureKind: 'body', metadata: '{malformed' });
             expect(rows.find(row => row.id === historical.id)).toMatchObject({ captureKind: 'evidence',
                 observedAt: new Date(50), totalTokens: null, metadata: null });
