@@ -4,6 +4,14 @@ import { MetadataSchema } from "./metadata.js";
 import { SessionOwnerCompatibilityViewV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 
 describe('MetadataSchema (forkV1)', () => {
+    it.each([true, undefined])('round-trips recorded origin through the real metadata parser (%s)', continuation => {
+        const forkV1 = SessionOwnerCompatibilityViewV1Schema.shape.forkV1.parse({
+            v: 1, parentSessionId: 'parent-session', parentCutoffSeqInclusive: 12,
+            createdAtMs: 123, strategy: 'replay', ...(continuation ? { continuation } : {}),
+        });
+        const parsed = MetadataSchema.parse({ forkV1 });
+        expect(JSON.parse(JSON.stringify(parsed)).forkV1).toEqual(forkV1);
+    });
     it('retains explicit null request and native-session identities from the canonical owner fork shape', () => {
         const forkV1 = SessionOwnerCompatibilityViewV1Schema.shape.forkV1.parse({
             v: 1, parentSessionId: 'parent-session', parentCutoffSeqInclusive: 12,

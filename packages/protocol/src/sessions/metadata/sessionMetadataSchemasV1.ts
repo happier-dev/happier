@@ -1,3 +1,4 @@
+import { SessionForkV1Schema } from './sessionForkV1.js';
 import { SessionLifecycleStateReasonSchema } from './sessionDisplaySchemasV1.js';
 export { SessionLifecycleStateReasonSchema, type SessionLifecycleStateReason } from './sessionDisplaySchemasV1.js';
 import { UsageSessionTimingV1Schema } from '../../usage/usageTimingV1.js';
@@ -11,9 +12,8 @@ import { createStoredReadSchema, defineStoredReadProjection } from '../../json/s
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { SessionPermissionApprovalReviewerClaimV1Schema } from '../permissions/v1.js';
-import { SessionForkFilesNotCopiedV1Schema } from '../creation/sessionSpawnNewResultV1.js';
 import { SessionPublisherGenerationV1Schema } from '../control/machineSessionTerminalV1.js';
-import { SessionForkVisualCopyV1Schema, SessionForkVisualsV1Schema } from '../board/forkVisualCopies.js';
+import { SessionForkVisualsV1Schema } from '../board/forkVisualCopies.js';
 import { SessionUserActionRequiredOccurrenceV1Schema } from '../userActionRequiredOccurrenceV1.js';
 import { SessionCapabilityNoticeV1Schema } from '../messages/sessionCapabilityNoticeV1.js';
 import { SessionDisplayProjectionV1Schema } from './sessionDisplaySchemasV1.js';
@@ -1205,22 +1205,7 @@ const SessionOwnerHistoryV1Schema = lazyZodSchema(() => z.strictObject({
     lastImportedFingerprint: z.optional(z.string().check(z.maxLength(20_000))),
   })),
   sessionRollbackRangesV1: z.optional(SessionOwnerRollbackRangesV1Schema),
-  forkV1: z.optional(z.strictObject({
-    v: z.literal(1),
-    parentSessionId: BoundedIdentifierSchema,
-    continuation: z.optional(z.literal(true)),
-    parentCutoffSeqInclusive: z.number().check(z.int(), z.nonnegative()),
-    createdAtMs: TimestampSchema,
-    strategy: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
-    requestId: z.optional(OptionalOwnerIdentifierSchema),
-    filesNotCopied: z.optional(SessionForkFilesNotCopiedV1Schema),
-    visualCopies: z.optional(z.array(SessionForkVisualCopyV1Schema)),
-    agentHint: z.optional(z.strictObject({
-      agentId: z.optional(BoundedIdentifierSchema),
-      backendMode: z.optional(BoundedIdentifierSchema),
-      agentSessionId: z.optional(OptionalOwnerOpaqueIdentifierSchema),
-    })),
-  })),
+  forkV1: z.optional(SessionForkV1Schema),
   replaySeedV1: z.optional(z.strictObject({
     v: z.literal(1),
     seedText: z.string(),

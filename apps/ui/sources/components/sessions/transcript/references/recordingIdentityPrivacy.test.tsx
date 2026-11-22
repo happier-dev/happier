@@ -5,6 +5,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { t } from '@/text';
+import { MetadataSchema } from '@happier-dev/session-core/state';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
@@ -72,9 +73,9 @@ describe('incidental Session identity during recording', () => {
     it.each([true, undefined])('labels continued and forked origins from stored child lineage (%s)', async continuation => {
         setScreenSharingPrivacyActive(false);
         const child = createSessionFixture({ id: 'opened-session', serverId: address.serverId,
-            metadata: { ...createSessionFixture().metadata!, forkV1: { v: 1, parentSessionId: address.sessionId,
+            metadata: MetadataSchema.parse({ ...createSessionFixture().metadata!, forkV1: { v: 1, parentSessionId: address.sessionId,
                 parentCutoffSeqInclusive: 1, createdAtMs: 1, strategy: 'replay',
-                ...(continuation ? { continuation: true } : {}) } } });
+                ...(continuation ? { continuation: true } : {}) } }) });
         storage.setState({ sessions: { ...storage.getState().sessions, [child.id]: child } });
         const { ForkDividerRow } = await import('../forkContext/ForkDividerRow');
         const screen = await renderWithSessionTranscriptSource(<ForkDividerRow parentSessionId={address.sessionId}

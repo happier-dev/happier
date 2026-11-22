@@ -1,3 +1,4 @@
+import { SessionForkDisplayV1Schema } from './sessionForkV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -113,12 +114,7 @@ export const SessionOwnerDisplayV1Schema = lazyZodSchema(() => z.strictObject({
   work: z.optional(z.strictObject(sessionAuthoredDisplayShape())),
   sessionAgentActivityHeadlineV1: z.optional(AgentActivityDisplayV1Schema),
   sessionWorkflowActivityHeadlineV1: z.optional(WorkflowActivityDisplayV1Schema),
-  forkV1: z.optional(z.strictObject({
-    v: z.literal(1), parentSessionId: asProtocolZod(SessionIdSchema),
-    continuation: z.optional(z.literal(true)),
-    parentCutoffSeqInclusive: z.number().check(z.int(), z.nonnegative()),
-    createdAtMs: z.number().check(z.int(), z.nonnegative()), strategy: z.string(),
-  })),
+  forkV1: z.optional(SessionForkDisplayV1Schema),
   hiddenSystemSession: z.optional(z.boolean()),
   systemSessionKind: z.optional(z.literal('voice_custody')),
 }));

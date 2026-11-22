@@ -6,8 +6,7 @@ import { applyRuntimeDescriptorSessionMetadata, normalizeLegacyAgentVocabularySe
 import { AgentModelOptionOverrideRuleReadSchema } from '@happier-dev/protocol/models/descriptor';
 import { SessionOwnerCompatibilityViewV1Schema, SessionOwnerModeCatalogV2Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionWorkspaceLocationV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionWorkspaceLocationV1';
-import { SessionForkFilesNotCopiedV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
-import { SessionForkVisualCopyV1Schema, SessionForkVisualsV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
+import { SessionForkVisualsV1Schema } from '@happier-dev/protocol/sessions/board/forkVisualCopies';
 import { createAgentRuntimeFacetsV1Schema } from '@happier-dev/protocol/sessions/metadata/agentRuntimeFacetsV1';
 import { createAcpConfigOptionOverridesV1Schema, createAcpSessionModeOverrideV1Schema, createModelOverrideV1Schema, normalizeCodexBackendMode } from '@happier-dev/protocol/sessions/metadata/overrides';
 import { createSessionPermissionModeSchema } from '@happier-dev/protocol/sessions/metadata/permission-modes';
@@ -266,21 +265,7 @@ const MetadataObjectSchema = lazyZodSchema(() => z.looseObject({
      *
      * Used to render a virtual ancestor transcript (read-only) without duplicating messages.
      */
-    forkV1: z.optional(z.object({
-        v: z.literal(1),
-        parentSessionId: z.string(),
-        parentCutoffSeqInclusive: z.number(),
-        createdAtMs: z.number(),
-        strategy: z.string(),
-        requestId: z.optional(z.nullable(z.string())),
-        filesNotCopied: z.optional(createStoredReadSchema(SessionForkFilesNotCopiedV1Schema)),
-        visualCopies: z.optional(z.array(createStoredReadSchema(SessionForkVisualCopyV1Schema))),
-        agentHint: z.optional(z.object({
-            agentId: z.optional(z.string()),
-            backendMode: z.optional(z.string()),
-            agentSessionId: z.optional(z.nullable(z.string())),
-        })),
-    })),
+    forkV1: createStoredReadSchema(SessionOwnerCompatibilityViewV1Schema.shape.forkV1),
     forkVisualsV1: z.optional(createStoredReadSchema(SessionForkVisualsV1Schema)),
     /**
      * Hidden replay seed applied exactly once to the first real user prompt.
