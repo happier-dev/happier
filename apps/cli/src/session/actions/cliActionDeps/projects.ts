@@ -443,8 +443,12 @@ export function createCliProjectActionDeps(
       });
     },
     projectWorkspaceRefs: async (args, context) => {
-      const rows = await readAdmittedProjectRows({ kinds: ['workspace-ref', 'project-organization'], serverId: await resolveProjectHomeIdentity() },
-        context?.signal, context, 'action.options.resolve');
+      // Usage can name an admitted native Project from another source namespace.
+      // The checkout projection below still limits checkout choices to this Home.
+      const rows = await readAdmittedProjectRows({
+        kinds: ['workspace-ref', 'project-organization'],
+        ...(args.includeUsageProjects ? {} : { serverId: await resolveProjectHomeIdentity() }),
+      }, context?.signal, context, 'action.options.resolve');
       if (!rows) return { ok: false, errorCode: 'project_account_access_denied', error: 'project_account_access_denied' };
       const projected = projectProjectListV1({ serverId: widgetHomeId, workspaceRefs: rows.workspaceRefs, organizations: rows.organizations,
         includeHidden: args.includeUsageProjects });

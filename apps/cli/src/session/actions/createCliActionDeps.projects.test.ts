@@ -24,6 +24,9 @@ import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protoc
 import { createAuthoringMemoryRowCipher } from '@/settings/authoringMemory/createAuthoringMemoryClient';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { projectAccountRowsReadHttpResponse } from '@/workspaces/projectAccountRows.testkit';
+import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 
 let accountFixtureSequence = 0;
 afterEach(() => { vi.restoreAllMocks(); accountFixtureSequence += 1; });
@@ -201,6 +204,62 @@ function accountBoundary(options?: Readonly<{
   });
   return { post, rows };
 }
+
+describe('Project choices through the real CLI Account composition', () => {
+  it('names Usage operands from encrypted native Project rows outside the answering Home namespace', async () => {
+    const serverId = 'home-a';
+    const accountId = 'usage-project-options';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const encryption = { type: 'legacy' as const, secret: new Uint8Array(32).fill(8) };
+    const cipher = createProjectAccountRowCipherV1({ mode: 'e2ee', material: encryption, randomBytes: n => new Uint8Array(n) });
+    const desktop = 'a'.repeat(64);
+    const laptop = 'b'.repeat(64);
+    const unknown = 'c'.repeat(64);
+    const unused = 'd'.repeat(64);
+    const foreignCheckout = 'foreign-checkout';
+    const organizations = [
+      { home: 'native-source-one', key: desktop, root: '/private/first/work' },
+      { home: 'native-source-two', key: laptop, root: '/private/second/work' },
+      { home: 'native-source-two', key: unused, root: '/private/unused/work' },
+    ].map(({ home, key: projectKey, root }) => {
+      const key = { kind: 'project-organization' as const, serverId: home, projectKey };
+      return { key, revision: 0, content: cipher.seal({ key, value: { label: 'work', nativeUsageRootPath: root } }) };
+    });
+    const key = { kind: 'workspace-ref' as const, serverId: 'unrelated-home', id: foreignCheckout };
+    const rows = [...organizations, { key, revision: 0, content: cipher.seal({ key, value: {
+      serverId: key.serverId, id: key.id, machineId: 'foreign-machine', rootPath: '/private/foreign', label: 'Foreign checkout', createdAtMs: 1,
+    } }) }];
+    vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'e2ee', updatedAt: 0 } };
+      if (url.endsWith('/v1/machines')) return { status: 200, data: [] };
+      throw new Error(`Unexpected GET ${url}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => projectAccountRowsReadHttpResponse(rows, url, body));
+    const accounting = UsageAnalyticsQueryResponseSchema.parse({ v: 1, totals: { eventCount: 0,
+      tokens: { input: 0, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } },
+      scopeKeys: [{ dimension: 'project', keys: [desktop, laptop, unknown, foreignCheckout] }] });
+    const deps = createCliActionDeps({ token, credentials: { token, encryption }, sessionId: 'cli-global',
+      mode: 'legacy', ctx: null, serverId, serverHttpBaseUrl: 'https://home-a.test' });
+    const actions = createActionExecutor({ ...deps, usageActions: {
+      query: async ({ queries }) => resolveUsagePageAggregation({ queries,
+        accounting: queries.map(query => ({ query, value: accounting, status: 'available' as const })),
+      }, bundledUsageModelPriceCatalog),
+    } });
+
+    const choices = await actions.execute('action.options.resolve', {
+      actionId: 'usage.query', optionsSourceId: 'usage.filters.projects', draftInput: { period: { relative: '7days' } },
+    }, { surface: 'agent', serverId, runtimeAccountId: accountId });
+
+    expect(choices).toMatchObject({ ok: true, result: { options: expect.arrayContaining([
+      { value: desktop, label: 'work · first' }, { value: laptop, label: 'work · second' },
+      { value: unknown, label: 'No project name' }, { value: foreignCheckout, label: 'No project name' },
+    ]) } });
+    if (!choices.ok) throw new Error('Expected Project choices');
+    expect(choices.result).toMatchObject({ options: { length: 4 } });
+    expect(post.mock.calls.filter(([url]) => url.endsWith('/v1/account/project-rows/list'))).toHaveLength(1);
+  });
+});
 
 describe('projects.list through the real CLI Account composition', () => {
   it('returns a listed managed checkout through Action output validation', async () => {
