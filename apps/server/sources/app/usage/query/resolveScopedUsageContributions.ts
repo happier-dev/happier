@@ -141,21 +141,27 @@ function compareChronologically(left: ScopedUsageReplayOrderRow, right: ScopedUs
 export function orderRuntimeObservations<Row extends ScopedUsageReplayOrderRow>(rows: readonly Row[]): Row[] {
     const ordered = [...rows].sort(compareChronologically);
     for (let start = 0; start < ordered.length;) {
+        const timestamp = observedAtMs(ordered[start]!);
         let end = start + 1;
-        while (end < ordered.length && observedAtMs(ordered[end]!) === observedAtMs(ordered[start]!)) end++;
-        const streams = new Map<string, { slots: number[]; rows: Array<{ row: Row; sequence: number }> }>();
+        while (end < ordered.length && observedAtMs(ordered[end]!) === timestamp) end++;
+        if (end === start + 1) {
+            start = end;
+            continue;
+        }
+        let streams: Map<string, { slots: number[]; rows: Array<{ row: Row; sequence: number }> }> | undefined;
         for (let index = start; index < end; index++) {
             const row = ordered[index]!;
             const accounting = 'observedAtMs' in row ? undefined : row.accountingEvidence?.accounting;
             const order = 'observedAtMs' in row ? row.runtimeEventOrder
                 : accounting?.path === 'runtime' ? accounting.runtimeEventOrder : undefined;
             if (!order) continue;
+            streams ??= new Map();
             const stream = streams.get(order.runtimeIncarnationId) ?? { slots: [], rows: [] };
             stream.slots.push(index);
             stream.rows.push({ row, sequence: order.sequence });
             streams.set(order.runtimeIncarnationId, stream);
         }
-        for (const stream of streams.values()) {
+        if (streams) for (const stream of streams.values()) {
             stream.rows.sort((left, right) => left.sequence - right.sequence || compareChronologically(left.row, right.row));
             stream.slots.forEach((slot, index) => { ordered[slot] = stream.rows[index]!.row; });
         }
@@ -177,24 +183,31 @@ export function prepareScopedUsageReplayBasis(rows: readonly (ScopedUsageEvidenc
 export function selectScopedUsageReplayContext(basis: ReturnType<typeof prepareScopedUsageReplayBasis>,
     startMs?: number, filters?: UsageAnalyticsQueryRequest['filters']): ScopedUsageReplayContext {
     const { eligible, ranks, subjects } = basis;
-    const selectedSubjects = new Set(eligible
-        .filter(row => (startMs === undefined || observedAtMs(row) >= startMs)
-            && ('subjectKey' in row || canMatchUsageFilters(row, filters)))
-        .map(row => subjects.get(row.id)!));
+    const selectedSubjects = new Set<string>();
+    const legacyRows: typeof eligible[number][] = [];
+    for (const row of eligible) {
+        if ((startMs === undefined || observedAtMs(row) >= startMs)
+            && ('subjectKey' in row || canMatchUsageFilters(row, filters))) {
+            selectedSubjects.add(subjects.get(row.id)!);
+        }
+        if (row.source === 'legacy_usage_report' && row.sessionId) legacyRows.push(row);
+    }
     // A report in the view depends on linked modern history up to its
     // observation. Select those bodies even when they precede the window.
-    const legacySessions = new Set(eligible.flatMap(row => row.sessionId && row.source === 'legacy_usage_report'
-        && selectedSubjects.has(subjects.get(row.id)!) ? [row.sessionId] : []));
+    const legacySessions = new Set<string>();
+    for (const row of legacyRows) {
+        if (selectedSubjects.has(subjects.get(row.id)!)) legacySessions.add(row.sessionId!);
+    }
     if (legacySessions.size) {
         for (const row of eligible) {
             if (row.sessionId && legacySessions.has(row.sessionId)) selectedSubjects.add(subjects.get(row.id)!);
         }
     }
-    return {
-        selectedEventIds: new Set(eligible.filter(row => selectedSubjects.has(subjects.get(row.id)!)).map(row => row.id)),
-        ranks,
-        subjects,
-    };
+    const selectedEventIds = new Set<string>();
+    for (const row of eligible) {
+        if (selectedSubjects.has(subjects.get(row.id)!)) selectedEventIds.add(row.id);
+    }
+    return { selectedEventIds, ranks, subjects };
 }
 
 /** A contribution retains its originating event's time; only its subject's history can change its fold. */

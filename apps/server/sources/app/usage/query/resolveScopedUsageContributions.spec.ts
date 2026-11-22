@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { addUsageCost, addUsageTokens, createEmptyUsageCost, createEmptyUsageTokens } from "../usageMetrics";
-import { prepareScopedUsageReplayContext, resolveScopedUsageContributions, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
+import { orderRuntimeObservations, prepareScopedUsageReplayBasis, prepareScopedUsageReplayContext, resolveScopedUsageContributions, selectScopedUsageReplayContext, type ScopedUsageEventRow } from "./resolveScopedUsageContributions";
 import { readScopedUsageAccountingEvidence } from './scopedUsageEventRow';
 import { resolveEffectiveUsageCostUsd } from "./resolveUsageCostMode";
 import { buildUsageResultProjection } from './buildUsageResultProjection';
@@ -26,6 +26,40 @@ function requireMeasurement(value: number | null): number {
 }
 
 describe("resolveScopedUsageContributions", () => {
+    it('reads runtime ordering evidence only for observations with a tied timestamp', () => {
+        let orderReads = 0;
+        function fact(id: string, observedAtMs: number, sequence: number) {
+            return { id, observedAtMs, createdAtMs: observedAtMs, sessionId: 'session', source: 'runtime',
+                subjectKey: 'subject',
+                get runtimeEventOrder() {
+                    orderReads++;
+                    return { runtimeIncarnationId: 'runtime', sequence };
+                },
+            };
+        }
+        const ordered = orderRuntimeObservations([
+            fact('later', 3, 4), fact('same-created-a', 2, 3), fact('earlier', 1, 1), fact('same-created-b', 2, 2),
+        ]);
+        expect(ordered.map(item => item.id)).toEqual(['earlier', 'same-created-b', 'same-created-a', 'later']);
+        expect(orderReads, 'one runtime-order read per tied event; zero for singleton timestamps').toBe(2);
+    });
+
+    it('selects ordinary replay history in two scans per population', () => {
+        const facts = [row('baseline', 1, 'session_cumulative', 2), row('in-window', 2, 'turn_delta', 1),
+            { ...row('unrelated', 1, 'turn_delta', 1), sessionId: 'other-session' }];
+        const basis = prepareScopedUsageReplayBasis(facts);
+        let visits = 0;
+        const eligible = new Proxy(facts, {
+            get(target, key, receiver) {
+                if (typeof key === 'string' && /^\d+$/.test(key)) visits++;
+                return Reflect.get(target, key, receiver);
+            },
+        });
+        const selected = selectScopedUsageReplayContext({ ...basis, eligible }, 2);
+        expect([...selected.selectedEventIds]).toEqual(['baseline', 'in-window']);
+        expect(visits, 'one scan to admit in-window subjects and one scan to select their history').toBe(facts.length * 2);
+    });
+
     describe('Codex thread accounting', () => {
         const measures = (count: number) => ({ tokens: { input: 100 * count, output: 20 * count,
             cacheRead: 6 * count, cacheWrite: 4 * count, reasoning: 5 * count, total: 120 * count },
