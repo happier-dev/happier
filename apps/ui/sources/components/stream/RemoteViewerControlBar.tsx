@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, type LayoutChangeEvent } from 'react-native';
+import { Platform, View, type LayoutChangeEvent } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
 import {
@@ -15,10 +15,67 @@ import { CORE_CAPSULE_HOST } from '@/components/ui/status/capsuleHost';
 import { KeyHint } from '@/components/ui/keyboard/KeyHint';
 import { t } from '@/text';
 
+/** Who has the picture and the one control that gives it back (the presence capsule's human state). */
+export type RemoteViewerHandBack = Readonly<{ title: string; label: string; onPress: () => void }>;
+
+type HandBackSlot = Readonly<{
+    handBack: RemoteViewerHandBack | null;
+    publish: (handBack: RemoteViewerHandBack | null) => void;
+    /** The touch bar stands and carries the hand back, so the presence footer steps aside. */
+    barHolds: boolean;
+    setBarHolds: (holds: boolean) => void;
+}>;
+const HandBackSlotContext = React.createContext<HandBackSlot | null>(null);
+const BarHandBackContext = React.createContext<RemoteViewerHandBack | null>(null);
+
+/**
+ * One remote viewer (its picture, its touch bar and its presence footer). While a finger controls the picture the
+ * bar stands at the stage's foot; the presence capsule's "You have control · Hand back" then rides in the bar's own
+ * surface instead of a second band under it. The footer publishes the offer, the bar takes it while it stands.
+ */
+export function RemoteViewerHandBackScope(props: Readonly<{ children: React.ReactNode }>) {
+    const [handBack, publish] = React.useState<RemoteViewerHandBack | null>(null);
+    const [barHolds, setBarHolds] = React.useState(false);
+    const value = React.useMemo(() => ({ handBack, publish, barHolds, setBarHolds }), [barHolds, handBack]);
+    return <HandBackSlotContext.Provider value={value}>{props.children}</HandBackSlotContext.Provider>;
+}
+
+/**
+ * The presence footer's side: offers its hand back to a standing bar, and answers whether the bar holds it (the
+ * footer then draws nothing). Without a scope or a standing bar the footer keeps its capsule.
+ */
+export function useRemoteViewerHandBackOffer(offer: RemoteViewerHandBack | null): boolean {
+    const slot = React.useContext(HandBackSlotContext);
+    const publish = slot?.publish;
+    React.useLayoutEffect(() => {
+        if (!publish) return undefined;
+        publish(offer);
+        return () => publish(null);
+    }, [offer, publish]);
+    return Boolean(slot?.barHolds && offer);
+}
+
+/** The bar's surface: the host's floating material, led by the hand back while the bar carries it. */
+function RemoteViewerBarSurface(props: React.ComponentProps<RemoteViewerControlBarHost['Surface']>) {
+    const handBack = React.useContext(BarHandBackContext);
+    const { theme } = useUnistyles();
+    const Surface = CORE_CAPSULE_HOST.Surface;
+    const Text = CORE_CAPSULE_HOST.Text;
+    const Button = CORE_CAPSULE_HOST.Button;
+    return <Surface {...props}>
+        {handBack ? <View style={{ flexDirection: 'row', alignItems: 'center', gap: controlBarSpacing(theme).gap }}
+            testID={`${props.testID}-hand-back-row`}>
+            <View style={{ flex: 1, minWidth: 0 }}><Text role="title" numberOfLines={1}>{handBack.title}</Text></View>
+            <Button emphasis="primary" title={handBack.label} onPress={handBack.onPress} testID={`${props.testID}-hand-back`} />
+        </View> : null}
+        {props.children}
+    </Surface>;
+}
+
 // Cold Browser imports can reach this binding before capsuleHost finishes loading.
 // Keep the host stable and resolve its canonical leaves when the bar renders.
 const HOST: RemoteViewerControlBarHost = {
-    get Surface() { return CORE_CAPSULE_HOST.Surface; },
+    Surface: RemoteViewerBarSurface,
     get Button() { return CORE_CAPSULE_HOST.Button; },
     IconButton,
     SegmentedTabBar,
@@ -77,7 +134,16 @@ export function RemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 
 
 function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'actions' | 'controls' | 'enabled' | 'testID' | 'onLayout'>) {
     const { theme } = useUnistyles();
-    return <GlassLivePictureBackdropContext.Provider value><SharedRemoteViewerControlBar {...props} host={HOST}
+    const slot = React.useContext(HandBackSlotContext);
+    const handBack = slot?.handBack ?? null;
+    const setBarHolds = slot?.setBarHolds;
+    // Before paint, so the footer's band and the bar's row never show the same control together.
+    React.useLayoutEffect(() => {
+        if (!setBarHolds || !handBack) return undefined;
+        setBarHolds(true);
+        return () => setBarHolds(false);
+    }, [handBack, setBarHolds]);
+    return <GlassLivePictureBackdropContext.Provider value><BarHandBackContext.Provider value={handBack}><SharedRemoteViewerControlBar {...props} host={HOST}
         spacing={controlBarSpacing(theme)} labels={{
             directMode: t('browserPresence.stream.directMode'),
             trackpadMode: t('browserPresence.stream.trackpadMode'),
@@ -90,5 +156,5 @@ function TouchRemoteViewerControlBar(props: Pick<RemoteViewerControlBarProps, 'a
             clipboard: t('browserPresence.remoteControls.clipboard'),
             hideKeyboard: t('browserPresence.remoteControls.hideKeyboard'),
             showKeyboard: t('browserPresence.interaction.showKeyboard'),
-        }} /></GlassLivePictureBackdropContext.Provider>;
+        }} /></BarHandBackContext.Provider></GlassLivePictureBackdropContext.Provider>;
 }

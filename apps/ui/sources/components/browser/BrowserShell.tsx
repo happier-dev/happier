@@ -105,6 +105,7 @@ import type { BrowserOpenExternalAvailability } from '@/sync/domains/browser/act
 import type { BrowserStreamedPageRect, BrowserStreamedSurfaceRuntime } from './adapters/BrowserStreamedTarget';
 import { BrowserPluginActionPlacements } from './BrowserPluginActionPlacements';
 import { BrowserShellPresence, type BrowserShellAgentPresence } from './copresence/BrowserShellPresence';
+import { RemoteViewerHandBackScope } from '@/components/stream/RemoteViewerControlBar';
 import { BrowserFirstUseConnecting } from './streamed/BrowserFirstUseConnecting';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import {
@@ -899,6 +900,7 @@ export function BrowserShell(props: Readonly<{
     return (
         <GlassLivePictureBackdropContext.Provider value>
         <SurfaceStateSizeProvider size={phone ? 'phone' : 'details'}>
+        <RemoteViewerHandBackScope>
         <View ref={browserRootRef} testID={testID} style={stylesheet.root} onLayout={chromeDensity.onLayout}>
             {annotatorSession ? <BrowserAnnotatorMount session={annotatorSession} onAnnotator={setAnnotator} /> : null}
             {annotating ? (
@@ -1066,6 +1068,7 @@ export function BrowserShell(props: Readonly<{
                 </View>
             ) : null}
         </View>
+        </RemoteViewerHandBackScope>
         </SurfaceStateSizeProvider>
         </GlassLivePictureBackdropContext.Provider>
     );

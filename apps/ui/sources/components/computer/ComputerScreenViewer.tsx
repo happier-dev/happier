@@ -17,7 +17,7 @@ import { BrowserAgentCursor } from '@/components/browser/copresence/BrowserAgent
 import { BrowserFrameStatusCapsule } from '@/components/browser/frame/BrowserFrameStatusCapsule';
 import { RemoteViewerStage, remoteViewerFillTransform, useRemoteViewerFillsPane, type RemoteViewerStageControls, type RemoteViewerHostActions } from '@/components/stream/RemoteViewerStage';
 import { useRemoteViewerActions } from '@happier-dev/plugin-ui/presentation';
-import { RemoteViewerControlBar, useRemoteViewerControlsRoom } from '@/components/stream/RemoteViewerControlBar';
+import { RemoteViewerControlBar, RemoteViewerHandBackScope, useRemoteViewerControlsRoom } from '@/components/stream/RemoteViewerControlBar';
 import { useBrowserSoftKeyboard } from '@/components/browser/streamed/useBrowserSoftKeyboard';
 import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer } from '@/components/stream/LiveStreamPlayer';
@@ -553,6 +553,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     return (
         // Its menus, capsules and lines float over the live picture: they take the picture-safe coat.
         <GlassLivePictureBackdropContext.Provider value>
+        <RemoteViewerHandBackScope>
         <View style={[stylesheet.root, props.chrome === 'none' ? null : { paddingBottom: bottomChromeHeight }]} testID={testID}>
             {props.chrome === 'none' ? null : <View style={stylesheet.bar}>
                 {/* The pane's tab already says Computer, so the bar names only what isn't said yet:
@@ -657,6 +658,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                 />
             ) : null}
         </View>
+        </RemoteViewerHandBackScope>
         </GlassLivePictureBackdropContext.Provider>
     );
 }

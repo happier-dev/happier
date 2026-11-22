@@ -200,7 +200,9 @@ describe('ComputerScreenViewer', () => {
     // The viewport owns picture/input geometry; the existing inline primitive owns the footer's
     // reserved space. Actual browser hit testing remains a loaded-runtime QA check.
     expect(stage.findAllByType(BrowserPresenceCapsule).length).toBe(0);
-    expect(screen.root.findByType(BrowserPresenceCapsule).props.placement).toBe('inline');
+    // A finger in control: the presence rides in the touch bar's surface, never a band of its own.
+    expect(screen.root.findAllByType(BrowserPresenceCapsule).length).toBe(0);
+    expect(screen.findByTestId('v-input-controls-surface-hand-back-row')).not.toBeNull();
     // Escape is one of the keys in the open keys panel; the bar's row keeps one control style.
     expect(screen.findByTestId('v-input-controls-key-Escape')?.props.disabled).toBe(false);
     expect(screen.findByTestId('v-input-controls-keyboard')?.props.disabled).toBe(false);
@@ -239,6 +241,29 @@ describe('ComputerScreenViewer', () => {
       nativeEvent: { layout: { x: 12, y: 344, width: 776, height: 44 } } }));
     expect(pictureBottom(touch)).toBeLessThanOrEqual(300);
     await touch.unmount();
+  });
+  it('folds "You have control · Hand back" into the touch bar, so the controlling phone reads one band (DESIGN-ACCEPT-142 4)', async () => {
+    pointer.coarse = true;
+    const onHandBack = vi.fn();
+    const viewerProps = props({ onHandBack, presence: { kind: 'human', controlEpoch: 1, interruptedCompletion: null },
+      stream: { machineName: 'machine', input: { sourceId: 'computer-source', streamId: 'stream', send: vi.fn() },
+        playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } } });
+    const screen = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    await act(async () => pictureStage(screen).props.onLayout({ nativeEvent: { layout: { width: 390, height: 600 } } }));
+    expect(screen.findHostByTestId('v-input-controls')).not.toBeNull();
+    // No second band: the presence footer steps aside while the bar carries its control.
+    expect(screen.findByTestId('v-presence-frame')).toBeNull();
+    await screen.pressByTestIdAsync('v-input-controls-surface-hand-back');
+    expect(onHandBack).toHaveBeenCalledTimes(1);
+    await screen.unmount();
+
+    // A mouse has no bar: the footer keeps its capsule and its Hand back.
+    pointer.coarse = false;
+    const mouse = await renderScreen(<ComputerScreenViewer {...viewerProps} />);
+    await act(async () => pictureStage(mouse).props.onLayout({ nativeEvent: { layout: { width: 800, height: 600 } } }));
+    expect(mouse.findByTestId('v-presence-frame')).not.toBeNull();
+    await mouse.unmount();
   });
   it('mounts remote control panels on the live Machine viewer and sends keys and clipboard through its input owner', async () => {
     pointer.coarse = true;

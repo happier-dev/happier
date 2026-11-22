@@ -10,6 +10,7 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { CORE_CAPSULE_HOST, useCoreCapsuleColors } from '@/components/ui/status/capsuleHost';
+import { useRemoteViewerHandBackOffer } from '@/components/stream/RemoteViewerControlBar';
 import type { BrowserAgentActivity, BrowserCopresence } from '@/sync/domains/browser/automation/copresence';
 import { t } from '@/text';
 
@@ -163,7 +164,15 @@ export function BrowserPresenceFooter(
     props: Omit<BrowserPresenceCapsuleProps, 'placement'> & Readonly<{ frameTestID: string }>,
 ): React.ReactElement | null {
     const { frameTestID, ...capsule } = props;
-    if (capsule.presence.kind === 'idle') return null;
+    // While this viewer controls the picture with a finger, its touch bar carries "You have control · Hand back";
+    // the footer then draws no second band under it.
+    const human = capsule.presence.kind === 'human';
+    const { onHandBack, humanTitle } = capsule;
+    const offer = React.useMemo(() => (human && onHandBack ? {
+        title: humanTitle ?? t('browserPresence.youHaveControl'), label: t('browserPresence.handBack'), onPress: onHandBack,
+    } : null), [human, humanTitle, onHandBack]);
+    const barHolds = useRemoteViewerHandBackOffer(offer);
+    if (capsule.presence.kind === 'idle' || barHolds) return null;
     return (
         <View style={footerStyles.footer} testID={frameTestID}>
             <BrowserPresenceCapsule {...capsule} placement="inline" />
