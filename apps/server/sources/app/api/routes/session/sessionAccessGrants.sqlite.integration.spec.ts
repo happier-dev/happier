@@ -650,6 +650,63 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         });
     });
 
+    it.each(["non-member", "archived Team", "suspended membership"] as const)(
+        "refuses primary Team creation for %s and rolls back initial access",
+        async (scenario) => {
+            const { recipient, team } = await fixture();
+            const membership = { teamId_accountId: { teamId: team.id, accountId: recipient.id } };
+            await db.team.update({
+                where: { id: team.id },
+                data: {
+                    sessionCreationPolicy: "team_required",
+                    archivedAt: scenario === "archived Team" ? new Date() : null,
+                },
+            });
+            if (scenario === "non-member") {
+                await db.teamMembership.delete({ where: membership });
+            } else if (scenario === "suspended membership") {
+                await db.teamMembership.update({ where: membership, data: { status: "suspended" } });
+            }
+
+            const tag = "refused-primary-team";
+            await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+                const response = await app.inject({
+                    method: "POST", url: "/v1/sessions", headers: headers(recipient.id),
+                    payload: { ...body(tag), primaryTeamId: team.id },
+                });
+                expect.soft(response.statusCode, response.body).toBe(400);
+                expect.soft(response.json()).toEqual({ error: "session_access_subject_ineligible" });
+            });
+            expect.soft(await db.session.findUnique({
+                where: { accountId_tag: { accountId: recipient.id, tag } },
+            })).toBeNull();
+            expect(await db.sessionGrant.count({ where: { principalKind: "team", teamId: team.id } })).toBe(0);
+        },
+    );
+
+    it("accepts primary Team creation for an active member and stores the required Edit grant", async () => {
+        const { recipient, team } = await fixture();
+        await db.team.update({ where: { id: team.id }, data: { sessionCreationPolicy: "team_required" } });
+
+        const tag = "accepted-primary-team";
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const response = await app.inject({
+                method: "POST", url: "/v1/sessions", headers: headers(recipient.id),
+                payload: { ...body(tag), primaryTeamId: team.id },
+            });
+            expect(response.statusCode, response.body).toBe(200);
+        });
+        const session = await db.session.findUniqueOrThrow({
+            where: { accountId_tag: { accountId: recipient.id, tag } },
+            select: { primaryTeamId: true, grants: { where: { principalKind: "team" } } },
+        });
+        expect(session.primaryTeamId).toBe(team.id);
+        expect(session.grants).toHaveLength(1);
+        expect(session.grants[0]).toMatchObject({
+            teamId: team.id, accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: true,
+        });
+    });
+
     it("serves collaboration wherever Session sharing is enabled; the retired collaboration switch no longer withdraws it", async () => {
         const { owner, team } = await fixture();
         // The server-only `sessions.collaboration` bit is retired: its env switch
@@ -1117,6 +1174,28 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 effectiveAccess: expect.objectContaining({ v: 1, level: "view" }),
             }));
         });
+    });
+
+    it("refuses a primary Team update by a Session owner outside the Team", async () => {
+        const { recipient, team } = await fixture();
+        await db.teamMembership.delete({
+            where: { teamId_accountId: { teamId: team.id, accountId: recipient.id } },
+        });
+        const session = await db.session.create({ data: {
+            accountId: recipient.id, tag: "refused-context", encryptionMode: "plain",
+            metadata: "{}", currentStorageState: "hosted",
+        } });
+        await withAuthenticatedTestApp(sessionRoutes, async (app) => {
+            const response = await app.inject({
+                method: "POST", url: "/v2/sessions/access-context/set", headers: headers(recipient.id),
+                payload: { sessionId: session.id, primaryTeamId: team.id },
+            });
+            expect.soft(response.statusCode, response.body).toBe(400);
+            expect.soft(response.json()).toEqual({ error: "session_access_subject_ineligible" });
+        });
+        expect(await db.session.findUniqueOrThrow({
+            where: { id: session.id }, select: { primaryTeamId: true },
+        })).toEqual({ primaryTeamId: null });
     });
 
     it("changes the explicit Team context through the access route without granting access", async () => {
