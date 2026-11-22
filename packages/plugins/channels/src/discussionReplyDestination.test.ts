@@ -57,9 +57,9 @@ it('names a nested reply destination from its original binding and current conne
     collection })).toEqual({ kind: 'none' });
 });
 
-it('exposes destination names through the registered portable Account Action and refuses incomplete ancestry', async () => {
-  expect(CHANNELS_PLUGIN.manifest.contributes.actions?.find(action => action.id === DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1)
-    ?.placementBindings).toEqual([]);
+it('names a shared reply destination without requiring the viewer to have a Machine, and refuses incomplete ancestry', async () => {
+  expect(CHANNELS_PLUGIN.manifest.contributes.actions?.find(action => action.id === DISCUSSION_REPLY_DESTINATION_ACTION_ID_V1))
+    .toMatchObject({ readOnly: true, execution: { target: 'account', invokingUi: true }, placementBindings: [] });
   const { state, messages } = await destinationFixture();
   let incomplete = false;
   let contentUnavailable = false;

@@ -2487,8 +2487,10 @@ and desktop HTTP hosts retain direct Account execution when no subject Machine i
 addressed. Placement applies to every
 provider, without a provider list, retry or fallback after relay selection. A browser
 without an eligible own Machine receives `target_unavailable` unless the Action
-declares invoking-UI placement. Account
-read observers retain their local dependency subscriptions; their finite Action
+declares invoking-UI placement. The read-only Channels reply-destination Action
+uses this placement so a Discussion participant can read the shared destination
+names without connecting a Machine. Account read observers retain their local
+dependency subscriptions; their finite Action
 reads follow the same placement rule. Authentication and established credential
 runtimes are separate from this Action placement contract.
 

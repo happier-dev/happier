@@ -729,7 +729,7 @@ function createChannelsPlugin(): ChannelsPlugin {
         description: 'Names the Channel connection and conversation selected by a Discussion reply ancestor.',
         inputSchema: DiscussionReplyDestinationInputV1Schema,
         resultSchema: DiscussionReplyDestinationResultV1Schema,
-        execution: { target: 'account', account: { artifactId: 'channels-account-runtime', exportName: 'activate' } },
+        execution: { target: 'account', invokingUi: true, account: { artifactId: 'channels-account-runtime', exportName: 'activate' } },
         surfaces: ['ui', 'agent', 'plugin'], placementBindings: [], dangerLevel: 'safe', readOnly: true,
         hostAccess: ['account-storage'],
         run: readConversationDiscussionReplyDestinationForInvocation,
