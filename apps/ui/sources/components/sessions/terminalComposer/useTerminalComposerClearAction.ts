@@ -3,9 +3,21 @@ import { Modal } from '@/modal';
 import { t } from '@/text';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { resolveServerIdForSessionIdFromLocalCache } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerIdForSessionIdFromLocalCache';
+import type { Session } from '@/sync/domains/state/storageTypes';
 import type { ActionId } from '@happier-dev/protocol';
 
 const SESSION_TERMINAL_COMPOSER_CLEAR_ACTION_ID = 'session.terminalComposer.clear' as ActionId;
+
+export function canClearLiveTerminalComposerDraft(
+    session: Pick<Session, 'active' | 'agentState'> | null | undefined,
+): boolean {
+    if (session?.active !== true) return false;
+    const capabilities = session.agentState?.capabilities;
+    return capabilities?.terminalComposerClearSupported !== false && (
+        capabilities?.terminalComposerDraftPresent === true
+        || capabilities?.inFlightSteerUnavailableReason === 'user_terminal_draft'
+    );
+}
 
 function readRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' && !Array.isArray(value)

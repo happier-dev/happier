@@ -48,7 +48,7 @@ So Happier classifies the composer before it writes:
 - **Anything else** — do not touch it. The message is held and retried.
 - **A dialog, a permission prompt, a selection list, or a generating screen** — also held; that screen does not belong to the composer.
 
-A held message is visible, not silent. The pending row shows **Terminal draft is blocking delivery**, with the notice “Waiting: a draft in the terminal composer is blocking delivery. Clear it in the terminal or interrupt the turn.” If the block persists, Happier offers **Clear composer**, which asks for confirmation first because it discards whatever is typed in the terminal.
+A held message shows **Terminal draft is blocking delivery** in the pending queue. When **Clear composer** is available, it asks for confirmation before discarding what is typed in the terminal. In current development builds, Happier offers the action only while the session is active and reports a draft.
 
 Happier never clears a draft it did not write without you asking.
 
@@ -170,7 +170,7 @@ Happier installs a Claude Code plugin so permissions and lifecycle events can be
 
 ### A message says it is waiting on a terminal draft
 
-There is unsent text in the terminal composer. Clear it in the terminal, or use **Clear composer** in the pending messages sheet, or interrupt the turn.
+If the session is active, use **Clear composer** in the pending queue when offered, clear the draft in the terminal, or interrupt the turn. If Happier shows the session as inactive and the terminal is still open, inspect the draft in the terminal and [resume the existing Happier session](/sessions/session-resume) to restore app control.
 
 ## Related
 
