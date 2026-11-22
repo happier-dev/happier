@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import { createServer, request as httpRequest } from 'node:http';
 import { createRequire } from 'node:module';
 import { Readable } from 'node:stream';
@@ -8,7 +9,7 @@ import { delimiter, join } from 'node:path';
 import { beforeEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunListResponseSchema, ExecutionRunStartResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -38,6 +39,10 @@ import { decodeBase64 } from '@/api/encryption';
 import type { AccountSettingsSnapshotResolver } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { emptyPromptLibraryRecordV1 } from '@happier-dev/protocol/prompts/library/promptLibraryCatalogV1';
+import { buildRoleArtifactHeaderV1, type RoleArtifactV1 } from '@happier-dev/protocol/prompts/roles/roleArtifactV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { captureScmComparison } from '@/scm/comparisons/captureScmComparison';
+import { runWithScmAccountScope } from '@/scm/accountScope';
 
 import { ActionAutomationIndexV1Schema, AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { readMachineAgentIsolationPolicyV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
@@ -234,6 +239,8 @@ describe('detached execution-run Machine composition', () => {
     { requesterKind: 'session', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
+    { requesterKind: 'account', rootActionId: 'review.start', roleId: 'custom-review' },
+    { requesterKind: 'account', rootActionId: 'review.start', roleId: 'builder' },
     { requesterKind: 'account', rootActionId: 'scm.diffSummary.generate' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'owner' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'member' },
@@ -242,6 +249,8 @@ describe('detached execution-run Machine composition', () => {
     const { requesterKind, rootActionId } = row;
     const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
     const roleId = 'roleId' in row ? row.roleId : undefined;
+    const reviewRole = { name: 'Writable review', instructions: 'Inspect the selected comparison.',
+      runsAs: { kind: 'background_run', intent: 'review' }, workspaceWrites: 'allow', secondOpinion: 'off', enabled: true } satisfies RoleArtifactV1;
     const custodianAccountId = selectedMcp === 'member' ? 'other-custodian' : 'requester';
     const actorAccountId = selectedMcp === 'foreign-requester' ? 'member' : 'requester';
     const memberCredentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'member',
@@ -264,6 +273,12 @@ describe('detached execution-run Machine composition', () => {
       readAdditionalHttpResponse: async url => {
         const path = new URL(url).pathname;
         homeReads.push(path);
+        if (path === '/v1/artifacts/custom-review') return { status: 200, data: {
+          id: 'custom-review', ownerAccountId: 'requester', access: 'owner', publicAudience: 'none', encryptionMode: 'plain',
+          header: encodePlainArtifactStoredContent(buildRoleArtifactHeaderV1(reviewRole)),
+          body: encodePlainArtifactStoredContent({ body: JSON.stringify(reviewRole) }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
+        } };
         return path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1
           ? { status: 200, data: ActionAutomationIndexV1Schema.parse({ v: 1, rows: [] }) } : undefined;
       },
@@ -430,6 +445,8 @@ describe('detached execution-run Machine composition', () => {
       } }), credentials: callerCredentials,
       serverId: 'session-home', serverIdentityId: 'srv_session_home',
       serverHttpBaseUrl, isCurrent: async () => f.isHomeCurrent(), isCustodyCurrent: async () => f.isHomeCurrent(),
+      ...(rootActionId === 'review.start' ? { invocation: { surface: 'cli' as const, authority: 'account_automation' as const,
+        caller: { kind: 'host' as const }, callerPermissionMode: 'read-only' as const } } : {}),
     }) : null;
     if (requesterKind === 'account' && !accountRequester) throw new Error('Account requester admission failed');
     if (accountRequester) onTestFinished(() => accountRequester.dispose());
@@ -458,16 +475,49 @@ describe('detached execution-run Machine composition', () => {
       } } });
     const options = { exactMachineId: 'machine', surface: 'cli' as const, authority: 'present_user' as const };
     phase = 'initial native Run admission';
-    const action = await createActionExecutor(deps).execute('execution.run.start', { sessionId: null,
+    const actionContext = { surface: 'cli' as const, authority: 'present_user' as const,
+      executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
+      ...(accountRequester ? { externalActionExecutionAuthorization: accountRequester.authorization,
+        externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) };
+    if (rootActionId === 'review.start') execFileSync('git', ['init', cwd], { stdio: 'ignore' });
+    const comparison = rootActionId === 'review.start' ? await runWithScmAccountScope(actorAccountId,
+      () => captureScmComparison({ cwd, source: { kind: 'workingTree' } })) : undefined;
+    const action = rootActionId === 'review.start'
+      ? await deps.executionRunStart(null, { intent: 'review', cwd, backendTarget, roleId,
+          intentInput: { comparisonId: comparison!.comparison.id }, childSelection: 'agentDefault',
+          instructions: 'Review the captured change.', permissionMode: 'read_only', retentionPolicy: 'ephemeral',
+          runClass: 'bounded', ioMode: 'streaming', notifyParentOnCompletion: false,
+        }, { ...options, externalActionExecutionAuthorization: accountRequester!.authorization,
+          externalActionTarget: { kind: 'machine', machineId: 'machine' } })
+      : await createActionExecutor(deps).execute('execution.run.start', { sessionId: null,
       intent: 'agent', ...(roleId ? { roleId } : {}), backendTarget,
       instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp && !roleId ? 'resumable' : 'ephemeral',
       cwd, runClass: requesterKind === 'account' && !selectedMcp && !roleId ? 'long_lived' : 'bounded', ioMode: 'request_response',
       ...(selectedMcp ? { capabilitySelection: { mcp: { managedServersEnabled: true } } } : {}),
       ...(requesterKind === 'account' ? { connectedServices: { v: 2, bindingsByServiceId: {} } } : {}),
-    }, { surface: 'cli', authority: 'present_user',
-      executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
-      ...(accountRequester ? { externalActionExecutionAuthorization: accountRequester.authorization,
-        externalActionTarget: { kind: 'machine' as const, machineId: 'machine' } } : {}) });
+    }, actionContext);
+    if (rootActionId === 'review.start') {
+      if (roleId === 'builder') {
+        expect(action, JSON.stringify(action)).toMatchObject({ ok: false,
+          errorCode: 'role_runs_as_mismatch', details: { executionRunStart: { runCreation: 'noRunCreated' } } });
+        expect(await deps.executionRunList(null, {}, options)).toMatchObject({ runs: [] });
+        expect(h.nativeEffects()).toBe(0);
+        return;
+      }
+      expect(action, JSON.stringify(action)).toMatchObject({ runId: expect.any(String) });
+      const runs = ExecutionRunListResponseSchema.parse(await deps.executionRunList(null, {}, options));
+      expect(runs).toMatchObject({ runs: [expect.objectContaining({ intent: 'review', permissionMode: 'read-only' })] });
+      const runId = runs.runs[0]!.runId;
+      onTestFinished(async () => {
+        await deps.executionRunStop(null, { runId }, options);
+        await deps.executionRunWait(null, { runId }, options);
+      });
+      await vi.waitFor(async () => expect(await readRetainedExecutionRunRecord(runId)).toMatchObject({ state: {
+        runId, sessionId: null, roleId: 'custom-review', intent: 'review',
+        permissionMode: 'read-only', workspaceWrites: 'allow',
+      } }));
+      return;
+    }
     if (rootActionId !== 'execution.run.start') {
       // A signed SCM root is not a reviewed Workflow child admission. This
       // direct Run hop must refuse; SCM success belongs to its real producer path.

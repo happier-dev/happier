@@ -1208,8 +1208,8 @@ export function createExecutionRunRpcActionExecutor(
           .execute(actionId, input, context);
       }
       const hostRoleStart = context?.authority === 'present_user'
-        || context?.authority === 'account_automation' && context.surface === 'rpc'
-          && (!context.actionCaller || context.actionCaller.kind === 'host');
+        || context?.authority === 'account_automation'
+          && (context.actionCaller?.kind === 'host' || context.surface === 'rpc' && !context.actionCaller);
       if (hostRoleStart && context && isAgentStartActionV1(actionId) && isRecord(input)) {
         const prepared = await prepareRoleStartContext(context, input, params.context.resolveAgentStartContext);
         if (!prepared.ok) return prepared;
