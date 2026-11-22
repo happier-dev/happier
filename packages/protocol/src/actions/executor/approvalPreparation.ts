@@ -4,7 +4,7 @@ import type { ActionExecutorContext, ActionExecutorDeps, ActionPreparedOperation
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { SessionStatusResultSchema } from '../../sessions/control/contract.js';
 import { resolveSessionIdFromInput, resolveServerIdForSession } from './sessionScope.js';
-import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+import { isPresentUserHostInvocation, isSignedSessionSpawnWithoutRequesterTeam } from '../invocationAuthority.js';
 import { type ApprovalRequestV1 } from '../../approvals/approvalRequestV1.js';
 import { getActionSpec, type ActionSpec } from '../actionSpecs.js';
 import { readRecord } from '../../inputs/inputRecords.js';
@@ -16,7 +16,7 @@ import { readActionFailureEnvelope } from './actionFailureEnvelope.js';
 import { ActionInvokeInputSchema } from '../actionInvokeInput.js';
 import { formatQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import { ComputerSelectedTargetResponseV1Schema, type ComputerApprovalDisplayV1 } from '../../computer/v1.js';
-import { type ActionId } from '../actionIds.js';
+import { SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from '../actionIds.js';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
   DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema,
@@ -583,6 +583,10 @@ export async function prepareApprovalRequest(params: Readonly<{
   const customizedSummary = typeof customizedRecord.summary === 'string'
     ? customizedRecord.summary.trim()
     : '';
+  const summary = customizedSummary && customizedSummary !== defaultPreview.summary
+    ? appendTeamCredentialSourceSummary(customizedSummary, teamCredentialSources) : defaultPreview.summary;
+  const teamCredentialDefaults = params.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && isSignedSessionSpawnWithoutRequesterTeam(params.context)
+    ? 'unavailable_without_requester_team' as const : undefined;
   const preview = {
     ...customizedRecord,
     actionId: params.actionId,
@@ -593,8 +597,8 @@ export async function prepareApprovalRequest(params: Readonly<{
     // review schema validates its safe projection, including live-only inputs
     // whose raw operands stay with the originating waiter.
     actionArgs: projectApprovalReviewInput(spec, params.input),
-    summary: customizedSummary && customizedSummary !== defaultPreview.summary
-      ? appendTeamCredentialSourceSummary(customizedSummary, teamCredentialSources) : defaultPreview.summary,
+    summary: teamCredentialDefaults ? `${summary}\n\nThis Session starts without Team credential defaults if policy allows it.` : summary,
+    ...(teamCredentialDefaults ? { teamCredentialDefaults } : {}),
     ...(teamCredentialSources.length ? { teamCredentialSources } : {}),
     // The host's scoped read owns these labels; custom previews cannot replace them.
     ...(nativePermissionAnswer ? { sessionPermissionRequest } : {}),

@@ -53,8 +53,8 @@ describe('whole external Action encryption', () => {
     });
     expect(open(request)).toEqual({ input });
     expect(open({ ...request, projectSessionDefaultsAdmission: { primaryTeamId: 'substituted-team' } })).toBeNull();
-    const { projectSessionDefaultsAdmission: _scope, ...legacy } = request;
-    expect(open(legacy)).toEqual({ input });
+    const { projectSessionDefaultsAdmission: _scope, ...withoutScope } = request;
+    expect(open(withoutScope)).toBeNull();
   });
 
   it('keeps the finite theme-content read intent inside its authenticated requester envelope', () => {

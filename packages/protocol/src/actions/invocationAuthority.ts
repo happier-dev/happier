@@ -1,5 +1,5 @@
 import type { ActionRequiredAuthority, ActionSurfaces } from './metadata.js';
-import { ACTION_INVOKE_ACTION_ID_V1, type ActionId } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, type ActionId } from './actionIds.js';
 import type { ActionExecutorContext } from './executor/types.js';
 import type { ApprovalExecutionOriginV1 } from '../approvals/approvalRequestV1.js';
 import { AUTH_TOKEN_KIND_AUTHORITIES, type AuthTokenAuthority, type AuthTokenKind } from '../auth/authToken.js';
@@ -10,6 +10,11 @@ export const AUTHORITY_CEILING_HEADER_V1 =
 /** Missing host authority retains the incumbent automation ceiling. */
 export function resolveHostStampedAuthority(ctx: ActionExecutorContext): ActionRequiredAuthority {
   return ctx.authority ?? 'account_automation';
+}
+
+export function isSignedSessionSpawnWithoutRequesterTeam(ctx: Pick<ActionExecutorContext, 'externalActionExecutionAuthorization'>): boolean {
+  const binding = ctx.externalActionExecutionAuthorization?.binding;
+  return binding?.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && binding.projectSessionDefaultsAdmission?.primaryTeamId == null;
 }
 
 /** Nested Plugin Actions retain the original host-stamped initiating caller. */

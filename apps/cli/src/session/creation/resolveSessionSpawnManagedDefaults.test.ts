@@ -54,6 +54,36 @@ const initialPolicy = configuration.organizationPolicy;
 afterEach(() => { Object.defineProperty(configuration, 'organizationPolicy', { value: initialPolicy, configurable: true }); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('Session spawn defaults at admission', () => {
+  it.each([false, true])('prepares a signed spawn without querying a Team credential default outside its admission (locked=%s)', async locked => {
+    const executionTarget = { serverId: 'home', machineId: 'machine' };
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-proof', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 },
+      accountEncryptionMode: 'plain', serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: 'session.spawn_new', requestId: 'unscoped-spawn', target: { kind: 'machine', machineId: 'machine' },
+      requestEnvelopeDigest: 'a'.repeat(43),
+    } });
+    const teamDefault = { purpose: purpose.purpose, service, target: null,
+      teamResource: { teamId: 'saved-team', selection: { source: 'team_resource' as const, resourceId: 'resource', deliveryMode: 'brokered' as const } } };
+    const homeDefaults = { connectedServicesByAgentTargetKey: { [targetKey]: [teamDefault] } };
+    const readCatalog = vi.fn(async () => { throw new Error('The signed request would receive 401 not_authenticated'); });
+    const preparation = resolveSessionSpawnManagedDefaults({ executionTarget, agentTarget: target }, {
+      agentId: 'codex', accountSettings: {}, organizationPolicy: locked
+        ? { status: 'loaded', policy: { schemaVersion: 2, organization: 'Example', sessionDefaults: { locked: true, values: homeDefaults } } }
+        : { status: 'absent' },
+      startContext: { surface: 'voice', externalActionExecutionAuthorization: authorization },
+      readHome: async () => ({ homeDefaults }),
+      resolveTeamCredentialResourceCatalog: readCatalog,
+    });
+    if (locked) {
+      await expect(preparation).rejects.toMatchObject({ code: 'resource_unavailable',
+        reason: 'connected_services_team_default_requires_current_resource' });
+    } else {
+      await expect(preparation).resolves.toMatchObject({ connectedServices: { v: 2, bindingsByServiceId: {} } });
+      expect((await preparation).teamCredentialBindings).toBeUndefined();
+    }
+    expect(readCatalog).not.toHaveBeenCalled();
+  });
+
   it.each([undefined, 'custom:team-profile'])('retains inherited approval provenance only for an omitted choice (%s)', async approvalProfileId => {
     const executionTarget = { serverId: 'home', machineId: 'machine' };
     const admittedInput = SessionSpawnNewInputV2Schema.parse({

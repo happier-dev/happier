@@ -2,7 +2,7 @@ import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readMachineIsolationPolicyV1, type MachineIsolationPolicyV1, type MachineIsolationV1 } from '@happier-dev/protocol/machines/machineIsolationV1';
 import { selectMachineIsolationWorkChoiceV1 } from '@happier-dev/protocol/machines/machineIsolationPolicyV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
-import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, readInitiatingActionCallerV1 } from '@happier-dev/protocol/actions/invocationAuthority';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation, isSignedSessionSpawnWithoutRequesterTeam, readInitiatingActionCallerV1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { BOT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { SESSION_SPAWN_NEW_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
@@ -24,7 +24,7 @@ import type { SessionSpawnNewInputV2 } from '@happier-dev/protocol/sessions/crea
 import type { SessionPlacementSelectionV1 } from '@happier-dev/protocol/sessions/creation/sessionPlacementSelectionV1';
 import type { ConnectedServiceBindingsV2, SessionTeamCredentialBindingIntentListV1 } from '@happier-dev/protocol';
 import { mergeSessionTeamCredentialBindingIntents } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
-import { materializeSessionSpawnConnectedServicesDefaults, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
+import { ConnectedServicesDefaultUnavailableError, materializeSessionSpawnConnectedServicesDefaults, readAgentPurposeDefaults, type ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
 import { readSessionSpawnModelChoice } from './readSessionSpawnModelChoice';
 import { readSessionSpawnMemberDefaults } from './readSessionSpawnMemberDefaults';
 
@@ -212,10 +212,16 @@ export async function resolveSessionSpawnManagedDefaults(input: SpawnDefaultSele
   });
   const decisions = new Map(resolved.connectedServices.flatMap(decision => decision.value
     ? [[qualifiedPurposeKey(decision.value.purpose), decision] as const] : []));
+  const teamDefaultsUnscoped = params.startContext !== undefined && isSignedSessionSpawnWithoutRequesterTeam(params.startContext);
   // Managed purposes cannot introduce an undeclared consumer or service.
   const selectedPurposes = declarations.flatMap(entry => {
     const decision = decisions.get(qualifiedPurposeKey(entry.purpose));
-    return decision?.value ? [decision.value] : [];
+    if (!decision?.value) return [];
+    if (teamDefaultsUnscoped && decision.value.teamResource) {
+      if (decision.lock) throw new ConnectedServicesDefaultUnavailableError('connected_services_team_default_requires_current_resource');
+      return [];
+    }
+    return [decision.value];
   });
   const payload = selectedPurposes.length > 0 ? await materializeSessionSpawnConnectedServicesDefaults({
     agentId: params.agentId, purposeDefaults: selectedPurposes,

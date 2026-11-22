@@ -7497,11 +7497,14 @@ credential revision, configuration revision, authentication mode, and encryption
 rechecked when material is written and read so a stale preparation cannot replace current material.
 
 In 0.3 development, a signed `session.spawn_new` can read the requester's entitled
-credential catalog for the primary Team authored in that spawn. Home signs the
-Team ID as routing metadata even when the request has no Project or Source. For
-an E2EE spawn, the executor compares that metadata with the sealed input. A
-request without the signed Team operand carries no catalog scope. The catalog
-still applies Team membership, sign-in qualification, and resource entitlement.
+credential catalog for the primary Team bound at mint. The requester can name
+that Team or derive it from the Source owner or a single initial Team share.
+Home signs the Team ID as routing metadata even when the request has no Project
+or Source. For an E2EE spawn, the executor requires an exact match with the
+sealed input. A request without the signed Team operand skips optional Team
+credential defaults and discloses that limit in the approval review. A locked
+Team credential default still prevents launch. Scoped catalog reads apply Team
+membership, sign-in qualification, and resource entitlement.
 
 The 0.3 development user-facing preparation read is the canonical
 `teams.credentials.preparation.get` Action, used by the UI and exposed to session

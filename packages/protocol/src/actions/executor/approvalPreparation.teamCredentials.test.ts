@@ -8,6 +8,7 @@ import { NO_TEAM_CAPABILITIES_V1 } from '../../teams/capabilities.js';
 import { TeamCredentialResourceCatalogEntryV1Schema, TeamCredentialResourceEntitledPageV1Schema } from '../../teams/credentials/resourceV1.js';
 import { SessionSpawnNewInputV2Schema } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { ManagedAcquireInputV1Schema } from '../../machines/managed/actionsV1.js';
+import { ExternalActionExecutionAuthorizationV1Schema } from '../externalActionApi.js';
 
 const team = TeamSummaryV1Schema.parse({ id: 'team-build', name: 'Build Team', description: null,
   logo: null, archivedAt: null, recovery: null, viewerRole: 'member', counts: null,
@@ -28,6 +29,22 @@ const input = SessionSpawnNewInputV2Schema.parse({
 const context = { surface: 'mcp', authority: 'account_automation', serverId: 'home' } as const;
 
 describe('Team credential source at existing Action admission', () => {
+  it.each([false, true])('describes the signed spawn’s Team defaults scope on the approval card (bound=%s)', async bound => {
+    const { teamCredentialBindings: _bindings, ...ordinary } = input;
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'admitted-proof', binding: {
+      accountId: 'requester', custodianAccountId: 'custodian', authentication: { kind: 'account', tokenEpoch: 0 }, accountEncryptionMode: 'plain',
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation', actionId: 'session.spawn_new',
+      requestId: 'spawn', target: { kind: 'machine', machineId: 'machine' }, requestEnvelopeDigest: 'a'.repeat(43),
+      ...(bound ? { projectSessionDefaultsAdmission: { primaryTeamId: team.id } } : {}),
+    } });
+    const spawn = { ...ordinary, ...(bound ? { primaryTeamId: team.id } : {}) };
+    const prepared = await prepareApprovalRequest({ deps: {}, actionId: 'session.spawn_new', input: spawn, actionArgs: spawn,
+      context: { ...context, surface: 'voice', externalActionExecutionAuthorization: authorization } });
+    if (bound) expect(prepared).not.toHaveProperty('preview.teamCredentialDefaults');
+    else expect(prepared).toMatchObject({ preview: { teamCredentialDefaults: 'unavailable_without_requester_team',
+      summary: expect.stringContaining('starts without Team credential defaults') } });
+  });
+
   it('keeps each selected Team identity when aggregated references name the same resource', async () => {
     const source = { teamId: team.id, resourceId: resource.id, teamName: team.name, accountName: 'Work account' };
     const sources = await prepareTeamCredentialSources({ deps: {}, selection: { serverId: 'home', resources: [

@@ -100,6 +100,7 @@ export function createUiPrepareSessionSpawnNewInput(ports: PreparationPorts): No
             model: { value: null, updatedAtMs: modelSelectionInput.updatedAt, selectionSource: 'explicit' as const },
         } : input.configuration;
         const exact = admitSessionSpawnNewActionInputV2({ ...authoredInput, executionTarget, agentTarget,
+            ...(input.primaryTeamId == null && defaultsContext.primaryTeamId ? { primaryTeamId: defaultsContext.primaryTeamId } : {}),
             ...(acquiredPlacement ? { sessionPlacement: acquiredPlacement }
                 : acquiredCreation && selected.placement.source === 'explicit' && selected.placement.value ? { sessionPlacement: selected.placement.value }
                     : selected.placement.source === 'explicit' && authoredPlacement ? { sessionPlacement: authoredPlacement }

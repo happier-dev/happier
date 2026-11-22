@@ -12,6 +12,15 @@ const executionTarget = { serverId: 'home', machineId: 'selected' };
 const projectTarget = { serverId: 'home', machineId: 'project-machine' };
 
 describe('UI Session authoring preparation', () => {
+    it.each(['ui', 'voice'] as const)('carries the requester’s unique Team share into the %s spawn input', async surface => {
+        const prepare = createUiPrepareSessionSpawnNewInput({ readSettings: async () => settingsDefaults,
+            createLoader: () => ({ readSource: async () => { throw new Error('No Source was requested'); } }) });
+        const prepared = await prepare({ executionTarget, agentTarget: authoredAgent, directory: { kind: 'path', path: '/repo' },
+            initialAccess: { grants: [{ subject: { kind: 'team', teamId: 'requester-team' }, accessLevel: 'view', canApprovePermissions: false }] },
+        }, { surface });
+        expect(prepared.input.primaryTeamId).toBe('requester-team');
+    });
+
     it.each([false, true])('preserves typed optional defaults notes without refusing authored creation, captured=%s', async captured => {
         const failure = { ok: false as const, errorCode: 'defaults_unavailable', error: 'defaults_unavailable', effectAttempted: false };
         const unexpectedRead = async (): Promise<never> => { throw new Error('captured defaults must not reread'); };
