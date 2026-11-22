@@ -971,6 +971,7 @@ describe('Artifact composed view reads', () => {
     it('opens a Review as its Review page, never its stored rounds as a document', async () => {
         await setup('document');
         const rounds = [{ ordinal: 1, state: 'completed', startedAt: 1, finishedAt: 2, reviewerIds: ['s0:r0', 's0:r1'],
+            reviewerDisplayNames: { 's0:r0': 'Claude', 's0:r1': 'Codex' },
             runs: [{ kind: 'execution', runId: 'run-claude', machineId: 'machine-1', sessionId: 'session-1' }] }];
         const row: DecryptedArtifact = { id: 'review-1', title: 'Fix settings modal remount', isDecrypted: true,
             header: { kind: 'review.v1', v: 1, reviewId: 'review-1', title: 'Fix settings modal remount' },
@@ -982,8 +983,14 @@ describe('Artifact composed view reads', () => {
         expect(screen.tree.root.findByProps({ testID: 'review-detail:header' }).props.title).toBe('Fix settings modal remount');
         expect(screen.findByTestId('review-detail:run:run-claude')).toBeNull();
         await screen.pressByTestIdAsync('review-detail:tab:runs');
-        // The Runs tab opens the round's original result.
-        expect(screen.findByTestId('review-detail:run:run-claude')).not.toBeNull();
+        // 04:20 ruling: historical rounds retain names, with no invented individual outcome or duration.
+        for (const [reviewerId, name] of Object.entries(rounds[0].reviewerDisplayNames)) {
+            const reviewer = screen.findByTestId(`review-detail:run:${reviewerId}`);
+            expect(reviewer).not.toBeNull();
+            expect(reviewer?.findAll(node => typeof node.type === 'string').flatMap(node => node.children)
+                .filter((child): child is string => typeof child === 'string').join(' ').trim()).toBe(name);
+        }
+        expect(screen.findByTestId('review-detail:run:run-claude')).toBeNull();
         await screen.unmount();
     });
     it.each([
