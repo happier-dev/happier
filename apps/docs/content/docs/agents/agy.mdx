@@ -84,7 +84,10 @@ sessions. For shared MCP setup and session selection, see [MCP servers](/extendi
 ## Troubleshooting
 
 - Run `agy --version` on the agent machine to confirm the CLI is installed. If launch reports `unexpected argument "acp"`, run `agy update`.
-- For `Authentication required`, run `happier agy auth login` on that machine and wait for it to finish.
+- For `Authentication required` in a native-login session, run `happier agy auth login` on that machine and wait for it to finish.
+- For `Authentication required` with a connected account, sign in to that account again in
+  **Settings -> Connected services** (or with `happier connect agy`), then retry launch.
+  `happier agy auth login` refreshes only the native CLI login.
 - For a connected account, if the pinned ACP server is missing, reselect Antigravity in the app
   and watch the install progress, then retry launch.
 - If a model is unavailable, retry after the ACP handshake completes; the model list is
