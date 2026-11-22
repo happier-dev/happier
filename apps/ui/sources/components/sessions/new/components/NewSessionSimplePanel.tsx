@@ -84,6 +84,7 @@ export type NewSessionSimplePanelProps = Readonly<{
     launchApproval?: NewSessionLaunchApprovalNoticeState | null;
     /** Canonical selected Team/account disclosure for the existing Send/Run inline review. */
     creationReviewSummary?: string | null;
+    onReviewCredentialVisibility?: () => void;
     /** The requester's own folders on someone else's machine (MEMBER-WORKSPACE): read state and its hint. */
     requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
     sessionIsolation?: import('../hooks/newSessionScreenModelTypes').NewSessionScreenModel['sessionIsolation'];

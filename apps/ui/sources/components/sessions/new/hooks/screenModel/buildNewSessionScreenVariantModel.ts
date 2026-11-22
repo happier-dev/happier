@@ -36,6 +36,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         draft: Parameters<typeof buildSessionAuthoringCredentialOperands>[0];
         serverId: string | null;
         teamCredentialPresentation?: ActionExecutorContext['teamCredentialPresentation'];
+        onReviewCredentialVisibility?: () => void;
     }>;
     popoverBoundaryRef: React.RefObject<View>;
     temporaryComputerLaunch?: NewSessionTemporaryComputerLaunch;
@@ -69,6 +70,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
         const simpleProps: NewSessionSimpleScreenProps = {
             ...params.simplePanelProps,
             creationReviewSummary,
+            onReviewCredentialVisibility: params.creationReview?.onReviewCredentialVisibility,
             managedMachineDraft: params.managedMachineDraft,
             ...(managedProgressBadge ? { statusBadges: [...(params.simplePanelProps.statusBadges ?? []), managedProgressBadge] } : {}),
             checkoutCreationDraft: params.checkoutCreationDraft,
@@ -116,6 +118,7 @@ export function buildNewSessionScreenVariantModel(params: Readonly<{
             footer: {
                 ...params.wizardFooterProps,
                 creationReviewSummary,
+                onReviewCredentialVisibility: params.creationReview?.onReviewCredentialVisibility,
                 requesterIsolation: params.requesterIsolation,
                 ...(managedProgressBadge ? { statusBadges: [...(params.wizardFooterProps.statusBadges ?? []), managedProgressBadge] } : {}),
             },

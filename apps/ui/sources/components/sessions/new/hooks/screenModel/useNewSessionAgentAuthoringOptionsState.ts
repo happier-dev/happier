@@ -15,8 +15,7 @@ import type { RememberedEngineSelectionV1 } from '@/sync/domains/session/authori
 import { backendTargetKeysMatch, resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolveSessionModelSelectionForAgentTarget } from '@/components/sessions/authoring/sessionModelSelectionValue';
-import { resolveNewSessionTeamModelRequirement, type NewSessionTeamModelCatalog } from './useNewSessionTeamCredentialModelState';
-import type { NewSessionCreateRequirement } from './newSessionCreateAdmission';
+import { resolveNewSessionTeamModelRequirement, type NewSessionTeamModelCatalog, type NewSessionTeamModelRequirement } from './useNewSessionTeamCredentialModelState';
 
 type PersistedAuthoringDraftLike = Readonly<{
     agentTarget?: AgentExecutionTargetV1 | null;
@@ -235,7 +234,7 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     modelIsManagedDefault: boolean;
     teamCredentialModel: TeamCredentialProviderModelSelectionV1 | null;
     teamCredentialModelIntent: TeamCredentialProviderModelSelectionV1 | null;
-    teamCredentialModelRequirement: NewSessionCreateRequirement;
+    teamCredentialModelRequirement: NewSessionTeamModelRequirement;
     setModelSelection: (selection: SessionModelSelection | null) => void;
     setModelSelectionForBackendTarget: (backendTargetKey: string, selection: SessionModelSelection | null) => void;
     /** The layer the model came from, for the picker row's provenance. */
@@ -353,7 +352,8 @@ export function useNewSessionAgentAuthoringOptionsState(params: Readonly<{
     const teamCredentialModelRequirement = resolveNewSessionTeamModelRequirement({
         selection: teamCredentialModel,
         catalog: params.teamCredentialCatalog,
-        restoredAccess: !modelAuthored && explicitTeamSelection ? params.teamCredentialAccess : undefined,
+        restoredAccess: !modelIsManagedDefault && !modelAuthored && explicitTeamSelection ? params.teamCredentialAccess : undefined,
+        inheritedAccess: modelIsManagedDefault ? params.teamCredentialAccess : undefined,
     });
 
     const setModelMode = React.useCallback<React.Dispatch<React.SetStateAction<ModelMode>>>((next) => {

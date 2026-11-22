@@ -10,7 +10,7 @@ import { t } from '@/text';
 import type { NewSessionCreateRequirement } from './newSessionCreateAdmission';
 import * as React from 'react';
 import type { SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
-import type { SessionTeamCredentialBindingIntentListV1, TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
+import type { SessionTeamCredentialBindingIntentListV1, TeamCredentialProviderModelSelectionV1, TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams';
 
 type TeamModelDraft = Readonly<{
     modelSelection?: SessionModelSelection | null;
@@ -18,14 +18,22 @@ type TeamModelDraft = Readonly<{
 }>;
 
 export type NewSessionTeamModelCatalog = Pick<HomeTeamCredentialModelCatalog, 'resources' | 'resourceStatusByKey' | 'condition'>;
+type TeamModelAccess = Readonly<{ primaryTeamId: string | null; access: SessionInitialAccessDraftV1 | null }>;
+export type NewSessionTeamModelRequirement = NewSessionCreateRequirement & Readonly<{
+    visibilityConsent?: Readonly<{
+        resource: TeamCredentialResourceCatalogEntryV1;
+        selection: TeamCredentialProviderModelSelectionV1;
+    }>;
+}>;
 
 /** Project only the still-entitled selection. The scoped draft retains the intent for recovery. */
 export function resolveNewSessionTeamModelRequirement(input: Readonly<{
     selection: TeamCredentialProviderModelSelectionV1 | null;
     catalog?: NewSessionTeamModelCatalog;
-    restoredAccess?: Readonly<{ primaryTeamId: string | null; access: SessionInitialAccessDraftV1 | null }>;
-}>): NewSessionCreateRequirement {
-    const { selection, catalog, restoredAccess } = input;
+    restoredAccess?: TeamModelAccess;
+    inheritedAccess?: TeamModelAccess;
+}>): NewSessionTeamModelRequirement {
+    const { selection, catalog, restoredAccess, inheritedAccess } = input;
     if (!selection || !catalog) return { ready: true, reason: null };
     const chooseTeamModel = () => t('session.startFailure.cause.team_credential_model_selection_required');
     const key = `${selection.teamId}:${selection.resourceId}`;
@@ -37,13 +45,17 @@ export function resolveNewSessionTeamModelRequirement(input: Readonly<{
     if (!resourceHasAvailableTeamCredentialProviderModel(resource, selection)) {
         return { ready: false, reason: teamCredentialUnavailableReason(resource, selection.deliveryMode) ?? chooseTeamModel() };
     }
-    if (restoredAccess) {
+    const access = restoredAccess ?? inheritedAccess;
+    if (access) {
         const consequence = projectTeamCredentialSelectionConsequence(resource, selection.deliveryMode);
-        const teamContextRequired = consequence.visibilityRequirement !== 'none' && restoredAccess.primaryTeamId !== selection.teamId;
+        const teamContextRequired = consequence.visibilityRequirement !== 'none' && access.primaryTeamId !== selection.teamId;
         const teamVisibilityRequired = consequence.visibilityRequirement === 'team_visibility_required'
-            && !restoredAccess.access?.grants.some(grant => grant.subject.kind === 'team' && grant.subject.teamId === selection.teamId);
-        if (consequence.directDisclosure === 'required' || teamContextRequired || teamVisibilityRequired) {
+            && !access.access?.grants.some(grant => grant.subject.kind === 'team' && grant.subject.teamId === selection.teamId);
+        if (restoredAccess && (consequence.directDisclosure === 'required' || teamContextRequired || teamVisibilityRequired)) {
             return { ready: false, reason: chooseTeamModel() };
+        }
+        if (inheritedAccess && teamVisibilityRequired) {
+            return { ready: true, reason: null, visibilityConsent: { resource, selection } };
         }
     }
     return { ready: true, reason: null };

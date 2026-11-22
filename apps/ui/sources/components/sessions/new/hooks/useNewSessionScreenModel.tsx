@@ -1930,7 +1930,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
             onRefresh: refreshCliAvailability,
         };
     }, [cliAvailabilityProbePhase, refreshCliAvailability, selectedMachineId]);
-    const applyConnectedServiceTeamCredentialPolicy = React.useCallback(async (
+    const applyTeamCredentialPolicy = React.useCallback(async (
         resource: TeamCredentialResourceCatalogEntryV1,
         isCurrent: () => boolean,
     ) => {
@@ -1940,8 +1940,9 @@ export function useNewSessionScreenModel(input?: Readonly<{
                 t('teams.credentials.usePolicy.visibilityNote'),
                 { confirmText: t('common.continue'), cancelText: t('common.cancel') },
             );
-            if (!confirmed || !isCurrent()) return false;
+            if (!confirmed) return false;
         }
+        if (!isCurrent()) return false;
         if (resource.sessionUsePolicy !== 'personal_allowed') {
             accessDraftState.applyTeamCredentialPolicy(
                 resource.teamId,
@@ -1987,7 +1988,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineAgent: selectedBackendEntry ? getBackendEntryMachineAgent(selectedBackendEntry) : null,
         settings: connectedServicesSettings,
         router,
-        applyTeamCredentialPolicy: applyConnectedServiceTeamCredentialPolicy,
+        applyTeamCredentialPolicy,
     });
     // The injected host's spawn owner materializes Account defaults (or its bound Connected
     // Services selection) after the child submits. A spawn-only child has no Account catalog
@@ -2138,25 +2139,11 @@ export function useNewSessionScreenModel(input?: Readonly<{
             isCurrent: stillCurrent,
         });
         if (selectionOutcome.kind !== 'continue') return false;
-        if (selectedResource.sessionUsePolicy === 'team_visibility_required') {
-            const confirmed = await Modal.confirm(
-                t('teams.credentials.usePolicy.title'),
-                t('teams.credentials.usePolicy.visibilityNote'),
-                { confirmText: t('common.continue'), cancelText: t('common.cancel') },
-            );
-            if (!confirmed || !stillCurrent()) return false;
-        }
         const model = selectedResource.providerModels.find(candidate => (
             sessionModelSelectionKey(candidate.selection) === sessionModelSelectionKey(selectionOutcome.selection)
         ));
         if (!model) return false;
-        if (!stillCurrent()) return false;
-        if (selectedResource.sessionUsePolicy !== 'personal_allowed') {
-            accessDraftState.applyTeamCredentialPolicy(
-                selectedResource.teamId,
-                selectedResource.sessionUsePolicy === 'team_visibility_required',
-            );
-        }
+        if (!await applyTeamCredentialPolicy(selectedResource, stillCurrent) || !stillCurrent()) return false;
         setSelectedTeamCredentialModel(selectionOutcome.selection);
         const previousOverrides = currentEngineSelectionRef.current.sessionConfigOptionOverrides;
         const sourceOverrides = sanitizeNewSessionConfigOverridesForModelSelection({
@@ -2182,8 +2169,28 @@ export function useNewSessionScreenModel(input?: Readonly<{
             },
         });
         return true;
-    }, [accessDraftState, acpConfigOptions, modelOptions, coordinateTeamCredentialSelection, currentEngineSelectionRef,
+    }, [applyTeamCredentialPolicy, acpConfigOptions, modelOptions, coordinateTeamCredentialSelection, currentEngineSelectionRef,
         setModelSelection, setSelectedTeamCredentialModel, setSessionConfigOptionOverrides, teamCredentialSelectionContextRef]);
+
+    const pendingVisibility = teamCredentialModelRequirement.visibilityConsent;
+    const visibilityScope = targetAccountScopeResolution.kind === 'bound' ? targetAccountScopeResolution.scope : null;
+    const visibilityConsentKey = pendingVisibility && visibilityScope && collaborationAvailability === 'available'
+        ? JSON.stringify([visibilityScope.serverId, visibilityScope.accountId, draftId, sessionModelSelectionKey(pendingVisibility.selection)])
+        : null;
+    const visibilityConsentRef = useLatestRef(visibilityConsentKey);
+    const reviewCredentialVisibility = React.useCallback(async () => {
+        if (!pendingVisibility || !visibilityConsentKey) return;
+        const stillCurrent = () => visibilityConsentRef.current === visibilityConsentKey;
+        if (!stillCurrent()) return;
+        const { resource, selection } = pendingVisibility;
+        const outcome = await coordinateTeamCredentialSelection({
+            resource, deliveryMode: selection.deliveryMode, selection, isCurrent: stillCurrent,
+        });
+        if (outcome.kind === 'continue') await applyTeamCredentialPolicy(resource, stillCurrent);
+    }, [applyTeamCredentialPolicy, coordinateTeamCredentialSelection, pendingVisibility, visibilityConsentKey, visibilityConsentRef]);
+    const teamCredentialLaunchRequirement = pendingVisibility
+        ? { ready: false, reason: collaborationAvailability === 'unavailable' ? t('session.access.homeUnsupported') : null }
+        : teamCredentialModelRequirement;
 
     const allProfilesRequirementNames = React.useMemo(() => {
         const names = new Set<string>();
@@ -4206,7 +4213,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         profileMap,
         recentMachinePaths,
         requireConnectedAccountDefaultsReady,
-        teamCredentialModelReady: teamCredentialModelRequirement.ready,
+        teamCredentialModelReady: teamCredentialLaunchRequirement.ready,
         agentType: selectedUiAgentType,
         presentConnectedAccountPoolFailure,
         staticAgentId,
@@ -4313,7 +4320,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
     const hasMachine = useHasMachineForGettingStartedGuidance();
     const createAdmission = resolveNewSessionCreateAdmission([
         { ready: !profileLaunchFailure, reason: profileLaunchFailure?.message ?? null },
-        teamCredentialModelRequirement,
+        teamCredentialLaunchRequirement,
         resolveNewSessionTargetRequirement({
             ready: canCreateFromAuthoring,
             hasTarget: Boolean(selectedMachineId || managedMachineSelection),
@@ -4868,7 +4875,8 @@ export function useNewSessionScreenModel(input?: Readonly<{
     }), [wizardFooterProps, simplePanelProps.machineName]);
 
     return { ...buildNewSessionScreenVariantModel({
-        creationReview: { draft: effectiveCurrentAuthoringDraft, serverId: targetServerId ?? null, teamCredentialPresentation },
+        creationReview: { draft: effectiveCurrentAuthoringDraft, serverId: targetServerId ?? null, teamCredentialPresentation,
+            onReviewCredentialVisibility: visibilityConsentKey ? reviewCredentialVisibility : undefined },
         spaceMembership: organizationPlacementState.spaceMembership,
         setSpaceMembership: organizationPlacementState.setSpaceMembership,
         sessionIsolation: { snapshot: isolationSnapshot, proposedOutcome: proposedIsolationOutcome,

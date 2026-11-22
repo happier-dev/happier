@@ -112,6 +112,45 @@ describe('useNewSessionAgentAuthoringOptionsState', () => {
         } finally { await hook.unmount(); }
     });
 
+    it('keeps an inherited model selected while its required Team visibility awaits consent', async () => {
+        const agentTarget = AgentExecutionTargetV1Schema.parse({
+            kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+        });
+        const agentTargetKey = resolveBackendTargetKeyV2(agentTarget);
+        const ref = { teamId: 'team-a', resourceId: 'codex-share', expectedResourceRevision: 3,
+            deliveryMode: 'brokered', agentTargetKey, modelId: 'team-model' } as const;
+        const modelSelection = SessionModelSelectionV2Schema.parse({ v: 2, updatedAt: 1,
+            ref: { source: 'team_resource', ...ref } });
+        const selection = { kind: 'team_credential_provider_model', ...ref } as const;
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: ref.resourceId, teamId: ref.teamId, displayName: null, resourceRevision: 3,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'current', sessionUsePolicy: 'team_visibility_required', sourcePresentation: null,
+            providerModels: [{ selection, descriptor: { id: ref.modelId, name: 'Team model' }, application: {
+                agentTargetKey, implementationIdentity: { pluginId: 'happier.provider.openai', localId: 'openai' },
+                endpointTemplateId: 'responses', protocol: 'openai-responses',
+            }, sourceRevision: 'source-1', availability: 'available' }],
+        });
+        const input: Parameters<typeof useNewSessionAgentAuthoringOptionsState>[0] = {
+            agentType: 'codex', agentTarget, backendTargetKey: agentTargetKey,
+            hydratedTempAuthoringDraft: null, hydratedPersistedAuthoringDraft: null,
+            managedDefaults: { projectDefaults: { modelByAgentTargetKey: { [agentTargetKey]: modelSelection } } },
+            teamCredentialAccess: { primaryTeamId: 'team-a', access: null },
+            teamCredentialCatalog: { condition: null, resources: [resource],
+                resourceStatusByKey: new Map([[`${ref.teamId}:${ref.resourceId}`, { kind: 'current' }]]) },
+        };
+        const hook = await renderHook(useNewSessionAgentAuthoringOptionsState, { initialProps: input });
+        try {
+            expect(hook.getCurrent().teamCredentialModel).toEqual(selection);
+            expect(hook.getCurrent().teamCredentialModelRequirement.visibilityConsent).toEqual({ resource, selection });
+            await hook.rerender({ ...input, teamCredentialAccess: { primaryTeamId: 'team-a', access: { grants: [{
+                subject: { kind: 'team', teamId: 'team-a' }, accessLevel: 'view', canApprovePermissions: false,
+            }] } } });
+            expect(hook.getCurrent().teamCredentialModelRequirement.visibilityConsent).toBeUndefined();
+            expect(hook.getCurrent().modelSelectionForPersistence).toBeUndefined();
+        } finally { await hook.unmount(); }
+    });
+
     it.each(['selection', 'target', 'engine'] as const)('resets a stale Team %s intent after switching Agents', async setter => {
         const codex = 'agent:happier.agent.codex/codex';
         const pi = 'agent:happier.agent.pi/pi';

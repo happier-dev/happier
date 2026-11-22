@@ -180,7 +180,8 @@ export function NewSessionComposerCard(input: Readonly<{
                     />
                     <NewSessionLaunchApprovalNotice approval={props.launchApproval} />
                     <NewSessionRequesterFolderHint isolation={props.requesterIsolation} />
-                    <NewSessionCreationReviewLine summary={props.creationReviewSummary} />
+                    <NewSessionCreationReviewLine summary={props.creationReviewSummary}
+                        onReviewCredentialVisibility={props.onReviewCredentialVisibility} />
                     <PluginContextualResourceStoreProvider>
                         {props.composerDocument?.beforeComposer}
                         {props.composerTopContent ? (

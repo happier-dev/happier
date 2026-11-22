@@ -261,6 +261,7 @@ export interface NewSessionWizardFooterProps {
     /** Canonical selected Team/account disclosure for the existing Send/Run inline review. */
     creationReviewSummary?: string | null;
     /** The requester's own folders on someone else's machine (MEMBER-WORKSPACE): read state and its hint. */
+    onReviewCredentialVisibility?: () => void;
     requesterIsolation?: ReturnType<typeof import('@/hooks/machine/useMachineOwnIsolationStatus').useMachineOwnIsolationStatus>;
     submitAccessibilityLabel?: React.ComponentProps<typeof AgentInput>['submitAccessibilityLabel'];
     emptyAutocompleteKinds: React.ComponentProps<typeof AgentInput>['autocompleteKinds'];
@@ -749,7 +750,8 @@ export const NewSessionWizard = React.memo(function NewSessionWizard(props: NewS
                                     />
                                     <NewSessionLaunchApprovalNotice approval={props.footer.launchApproval} />
                                     <NewSessionRequesterFolderHint isolation={props.footer.requesterIsolation} />
-                                    <NewSessionCreationReviewLine summary={props.footer.creationReviewSummary} />
+                                    <NewSessionCreationReviewLine summary={props.footer.creationReviewSummary}
+                                        onReviewCredentialVisibility={props.footer.onReviewCredentialVisibility} />
                                     {/*
                                       * Resolved upstream by
                                       * `resolveNewSessionLaunchPresentation`. The Wizard

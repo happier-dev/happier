@@ -466,7 +466,7 @@ describe('NewSessionSimplePanel', () => {
     it('shows the selected Team credential source in the Send review above the composer, with no extra step', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const handleCreateSession = vi.fn();
-        const panel = (summary: string | null) => <NewSessionSimplePanel
+        const panel = (summary: string | null, onReviewCredentialVisibility?: () => void) => <NewSessionSimplePanel
             popoverBoundaryRef={{ current: null } as unknown as React.RefObject<any>}
             headerHeight={44}
             safeAreaTop={0}
@@ -498,14 +498,23 @@ describe('NewSessionSimplePanel', () => {
             selectedProfileId={null}
             connectionStatus={undefined}
             creationReviewSummary={summary}
+            onReviewCredentialVisibility={onReviewCredentialVisibility}
         />;
         const summary = 'Start a session using Harbor Team’s Claude account';
         const screen = await renderScreen(panel(summary));
         expect(screen.findAllHostsByTestId('new-session-creation-review')).toHaveLength(1);
         expect(screen.getTextContent()).toContain(summary);
         expect(handleCreateSession).not.toHaveBeenCalled();
+        expect(screen.findByTestId('new-session-review-credential-visibility')).toBeNull();
 
         screen.tree.unmount();
+        const review = vi.fn();
+        const pending = await renderScreen(panel(summary, review));
+        pending.pressByTestId('new-session-review-credential-visibility');
+        expect(review).toHaveBeenCalledOnce();
+        expect(handleCreateSession).not.toHaveBeenCalled();
+        await pending.unmount();
+
         const unselected = await renderScreen(panel(null));
         expect(unselected.findAllHostsByTestId('new-session-creation-review')).toHaveLength(0);
     });
