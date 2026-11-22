@@ -638,14 +638,21 @@ export async function verifyMachineRpcAdmissionCurrent(
   return (await readMachineRpcAdmissionCurrent(input)) !== null;
 }
 
+export type MachineRpcAdmissionVerificationFailure = Readonly<{
+  stage: 'input_validation' | 'proof_signing' | 'transport' | 'request_cancelled' | 'response_status' | 'response_schema';
+  status?: number;
+  transportCode?: string;
+}>;
+
 /** Same verification owner, retaining the Home-proven destination identity for the physical writer. */
 export async function readMachineRpcAdmissionCurrent(
   input: MachineRpcAdmissionCurrentInput,
+  onFailure?: (failure: MachineRpcAdmissionVerificationFailure) => void,
 ): Promise<ReturnType<
   typeof MachineAdmissionVerifyResponseV1Schema.parse
 > | null> {
   try {
-    return await readMachineRpcAdmissionCurrentOrThrow(input);
+    return await readMachineRpcAdmissionCurrentOrThrow(input, onFailure);
   } catch {
     return null;
   }
@@ -655,22 +662,23 @@ export async function readMachineRpcAdmissionCurrent(
  * The boolean/null adapters retain their existing fail-closed contract. */
 export async function readMachineRpcAdmissionCurrentOrThrow(
   input: MachineRpcAdmissionCurrentInput,
+  onFailure?: (failure: MachineRpcAdmissionVerificationFailure) => void,
 ): Promise<ReturnType<
   typeof MachineAdmissionVerifyResponseV1Schema.parse
 > | null> {
-  type VerificationStage =
-    | 'input_validation'
-    | 'proof_signing'
-    | 'transport'
-    | 'request_cancelled'
-    | 'response_status'
-    | 'response_schema';
+  type VerificationStage = MachineRpcAdmissionVerificationFailure['stage'];
   let stage: VerificationStage = 'input_validation';
   const failed = (
     failureStage: VerificationStage,
     status?: number,
     transportCode?: string,
   ) => {
+    if (onFailure) {
+      onFailure({ stage: failureStage,
+        ...(status === undefined ? {} : { status }),
+        ...(transportCode ? { transportCode } : {}) });
+      return null;
+    }
     const candidateMethod = input.method?.slice(input.method.indexOf(':') + 1);
     const method =
       input.purpose?.kind === 'requester_session_currentness'
@@ -687,6 +695,9 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
     });
     return null;
   };
+  // The signed preflight caller logs its Action request once, including local
+  // validation exits which never reached the Home HTTP boundary.
+  const refuseInput = () => onFailure ? failed('input_validation') : null;
   try {
     const context = SocketRpcMachineAdmissionContextV1Schema.parse(
       input.context,
@@ -709,7 +720,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
         input.workspaceSyncSourceWriterTargetRouting !== undefined ||
         input.workspaceSyncSourceWriterTargetReceiver !== undefined)
     )
-      return null;
+      return refuseInput();
     const admissionPurpose = purpose ? { purpose } : { method: input.method! };
     const custody =
       input.custodySubjectAccountId === undefined
@@ -902,7 +913,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
           targetRouting.targetContext.machineAdmission,
         ))
     )
-      return null;
+      return refuseInput();
     const targetMethodMachineId =
       targetReceiver?.destinationMachineId ?? targetReceiver?.machineId;
     if (
@@ -931,7 +942,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
               ))))) ||
       (writerTargetReceiver && !writerTarget)
     )
-      return null;
+      return refuseInput();
     if (
       writerTargetReceiver?.destinationMachineId &&
       (!writerTarget ||
@@ -945,7 +956,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
             writerTarget.source.sourceContext.machineAdmission,
           )))
     )
-      return null;
+      return refuseInput();
     if (
       originalRoot &&
       !moveChild &&

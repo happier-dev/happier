@@ -1,5 +1,6 @@
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import axios from 'axios';
 import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
 import { join } from 'node:path';
 import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
@@ -1283,4 +1284,41 @@ it.skipIf(process.platform !== 'linux').each([
     expect(await readdir(setup.targetPath)).toEqual(['worker-local.txt']);
   }
   expect(setup.approvalArtifacts.size).toBe(1);
+});
+
+it.skipIf(process.platform !== 'linux')('reports a Home refusal before a Session can ask to link a worker copy', async () => {
+  executionBoundary.member = false;
+  const setup = await createRequesterWorkspaceSyncFixture({ role: 'manage', socketIo, remoteTarget: true,
+    sourceCustodianAccountId: 'member-a', targetCustodianAccountId: 'requester',
+    workerCleanCopy: true, originalActionHomeHttp: true });
+  await rm(setup.targetPath, { recursive: true });
+  const warning = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => undefined);
+  onTestFinished(() => warning.mockRestore());
+  const post = vi.mocked(axios.post);
+  const respond = post.getMockImplementation();
+  if (!respond) throw new Error('The fixture must provide the Home HTTP boundary');
+  const refused = vi.fn();
+  post.mockImplementation(async (url, body, config) => {
+    if (String(url).endsWith('/v1/machines/machine/admission/verify')
+      && body && typeof body === 'object' && 'workspaceSyncSourceWriterTargetRouting' in body) {
+      const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.parse(body.workspaceSyncSourceWriterTargetRouting);
+      if (routing.target.phase === 'preflight') {
+        refused(routing.source.operationId);
+        return { status: 403, data: { error: 'access_denied' } };
+      }
+    }
+    return respond(url, body, config);
+  });
+
+  const requestId = 'b6a04b9a-f5a7-4d42-8e6d-2e99953186a0';
+  const invocation = await setup.prepareInvocation({ ...setup.request, operationId: requestId });
+  const result = await setup.executeRelationshipAction(invocation, { askedBy: 'session_agent' });
+  expect(refused).toHaveBeenCalledExactlyOnceWith(requestId);
+  expect(setup.approvalArtifacts.size).toBe(0);
+  await expect(readdir(setup.targetPath)).rejects.toMatchObject({ code: 'ENOENT' });
+  const failureCause = { phase: 'workspace_sync.target_preflight.home_admission', errorCode: 'peer_unavailable',
+    nativeErrorReason: 'home_admission_denied', httpStatus: 403 };
+  expect(result).toMatchObject({ ok: false, errorCode: 'peer_unavailable', failureCause });
+  expect(warning.mock.calls.filter(([message]) => message === '[Workspace Sync] Target preflight refused'))
+    .toEqual([['[Workspace Sync] Target preflight refused', { requestId, failureCause: expect.objectContaining(failureCause) }]]);
 });

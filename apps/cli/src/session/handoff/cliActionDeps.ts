@@ -1,13 +1,15 @@
 import type { ResolvedSessionTransport } from '../actions/cliActionDeps/types';
 import type { CliActionDepsParams } from '../actions/cliActionDeps/types';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecuteFailure, ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { HandoffTargetReplacementPreflightResultV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import type { resolveSessionHandoffSourceAuthority } from '@/session/handoff/resolveSessionHandoffSourceAuthority';
 import type { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { logger } from '@/ui/logger';
 import type { CliMachineActionCall } from '@/session/actions/cliActionDeps/machineTransport';
 type FamilyActionDeps = Pick<ActionExecutorDeps, 'sessionHandoffTargetReplacementApprovalPreflight' | 'sessionHandoffStart'
   | 'sessionHandoffStatusGet' | 'sessionHandoffPrepareTargetResume' | 'sessionWorkspaceReturn'>;
@@ -69,8 +71,24 @@ export function createCliSessionHandoffActionDeps(
       }
       const mirrors = activatesExactMirror
         ?? (workspaceAction?.kind === 'create_relationship' && workspaceAction.mode === 'mirror_exactly');
+      const refuse = (failure: ActionExecuteFailure, cause: unknown) => {
+        const failureCause = projectActionFailureCauseV1(cause, 'session.handoff.replacement_preflight',
+          { allowUnknownErrorCode: failure.errorCode === 'peer_unavailable' });
+        if (failure.errorCode === 'peer_unavailable') {
+          const requestId = context.actionRequestId ?? operationId;
+          // Caller-authored IDs can contain arbitrary text. Native Session IDs
+          // at this boundary are opaque UUIDs.
+          const opaqueId = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(requestId);
+          try {
+            logger.warnLocalFile('[Workspace Sync] Target preflight refused', {
+              ...(opaqueId ? { requestId } : {}), failureCause,
+            });
+          } catch { /* A local log failure cannot replace the original refusal. */ }
+        }
+        return { type: 'error' as const, result: { ...failure, failureCause } };
+      };
       try {
-        return HandoffTargetReplacementPreflightResultV1Schema.parse(await callMachineAction({
+        const raw = await callMachineAction({
           machineId: targetMachineId,
           method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT,
           request: {
@@ -87,11 +105,14 @@ export function createCliSessionHandoffActionDeps(
           effectActionId,
           exactMachine: true,
           ...(signal ? { signal } : {}),
-        }));
+        });
+        const failure = readActionFailureEnvelope(raw);
+        if (failure) return refuse(failure, failure);
+        return HandoffTargetReplacementPreflightResultV1Schema.parse(raw);
       } catch (error) {
-        // A same-Machine preflight throws the target owner's typed code in-process.
+        // Both the in-process signed sender and the exact target RPC can throw a typed refusal.
         const errorCode = readRpcErrorCode(error) ?? readActionErrorCodeV1(error) ?? 'target_unavailable';
-        return { type: 'error' as const, result: { ok: false, errorCode, error: errorCode } };
+        return refuse({ ...readActionFailureEnvelope(error), ok: false, errorCode, error: errorCode }, error);
       }
     },
     sessionHandoffStart: async ({

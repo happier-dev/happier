@@ -31,6 +31,7 @@ import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/plu
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { ManagedWakeTargetV1Schema } from '@happier-dev/protocol/machines/managed/managedIntentV1';
 import { SignedRootActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { createDiscussionReplyReturnPublisher } from '@/discussions/discussionReplyReturnPublisher';
@@ -373,6 +374,7 @@ import {
 } from './machine/rpcHandlers.connectedAccounts';
 import { authorizeMachineRpcRequest,
     readMachineRpcAdmissionCurrent, doesWorkspaceSyncSourceRootMatchRouting, doesWorkspaceSyncSourceWriterTargetRootMatchRouting, doesWorkspaceSyncSeedRootMatchRouting,
+    type MachineRpcAdmissionVerificationFailure,
     doesWorkspaceSyncTargetRequestMatchRouting, doesWorkspaceSyncTargetRoutingMatchWriterTarget,
     readWorkspaceSyncTargetMethod, admitSameMachineWorkspaceSyncTargetPhase, type MachineRpcAdmissionBoundary } from './machine/machineRpcAuthorization';
 import type { MachineTerminalAccountReadRuntime, MachineTerminalOwnSessionReadRuntime } from './machine/rpcHandlers.terminal';
@@ -4866,8 +4868,19 @@ export class ApiMachineClient {
             && isDeepStrictEqual(admittedWriterSource.source, admission);
         // Admission/signing refusals precede dispatch. A failed response binding
         // below explicitly retains uncertainty about effects on the receiver.
-        const unavailable = (disposition: RpcRequestDisposition = 'notSent') => markRpcRequestDisposition(Object.assign(
-            new Error('Workspace source authority is unavailable'), { code: 'peer_unavailable' }), disposition);
+        const unavailable = (disposition: RpcRequestDisposition = 'notSent', diagnostic?: Readonly<{
+            stage: string; reason: string; status?: number; transportCode?: string;
+        }>) => {
+            const message = 'Workspace source authority is unavailable';
+            const error = writerTarget?.target.phase === 'preflight' && diagnostic
+                ? createActionExecuteFailureError({ ok: false, errorCode: 'peer_unavailable', error: message,
+                    failureCause: { phase: `workspace_sync.target_preflight.${diagnostic.stage}`,
+                        errorClass: 'Error', errorCode: 'peer_unavailable', httpStatus: diagnostic.status ?? null,
+                        nativeErrorReason: diagnostic.reason,
+                        ...(diagnostic.transportCode ? { nativeErrorCode: diagnostic.transportCode } : {}) } })
+                : Object.assign(new Error(message), { code: 'peer_unavailable' });
+            return markRpcRequestDisposition(error, disposition);
+        };
         if (!socket?.connected || !admission || !installation || !custodianAccountId
             || forwardWork && input.context.callerInputAuthorization && !writerTarget && !seedRouting && !admittedSourceRoot
             || forwardWork && writerTarget && !jointTarget && signedBinding
@@ -4899,7 +4912,7 @@ export class ApiMachineClient {
             || configuration.activeServerId !== this.machineRuntimeServerId
             || forwardWork && !sourceAlreadyAdmitted
                 && (!input.context.verifyMachineAdmissionCurrent || !await input.context.verifyMachineAdmissionCurrent())) {
-            throw unavailable();
+            throw unavailable('notSent', { stage: 'source_admission', reason: 'installed_source_admission_unavailable' });
         }
         try {
             const homeId = await this.readWorkspaceSyncHomeIdentity(forwardWork
@@ -4908,7 +4921,7 @@ export class ApiMachineClient {
             if (homeId !== input.accountServerId || configuration.activeServerId !== this.machineRuntimeServerId
                 || this.socket !== socket || !socket.connected
                 || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
-        } catch { throw unavailable(); }
+        } catch { throw unavailable('notSent', { stage: 'source_currentness', reason: 'source_home_or_installation_changed' }); }
         if (forwardWork && signedBinding && !writerTarget && !seedRouting && (signedBinding.actionId !== input.signedEffectActionId
             || signedBinding.machineId !== admission.machineId || signedBinding.installationId !== installation.installationId
             || signedBinding.accountId !== admission.actorAccountId || signedBinding.custodianAccountId !== custodianAccountId
@@ -4993,6 +5006,7 @@ export class ApiMachineClient {
             // Key discovery is an effectful first-hop purpose. Cleanup already
             // holds its Home-witnessed recipient; the current installed source
             // socket and the recipient's signed Home proof authenticate release.
+            let refusal: MachineRpcAdmissionVerificationFailure | undefined;
             const verified = retainedWriterRelease ? null : await readMachineRpcAdmissionCurrent({ context: admission,
                 method: `${input.machineId}:${input.method}`, workspaceSyncSourceWriterTargetRouting: writerTarget,
                 ...(signedAuthorization ? { callerInputAuthorization: signedAuthorization } : {}),
@@ -5003,15 +5017,24 @@ export class ApiMachineClient {
                     : { workspaceSyncSourceWriterTargetReceiver: { machineId: this.machine.id, installationId: installation.installationId,
                         accountId: custodianAccountId, destinationMachineId: input.machineId } }),
                 privateKey: installation.privateKey, daemonToken: this.token, serverHttpBaseUrl: this.machineRuntimeServerHttpBaseUrl,
-                ...(input.signal ? { signal: input.signal } : {}) });
+                ...(input.signal ? { signal: input.signal } : {}) },
+                writerTarget.target.phase === 'preflight' ? failure => { refusal = failure; } : undefined);
             const destination = retainedWriterRelease ? input.physicalEndpoint : verified?.destinationInstallation;
-            if (!retainedWriterRelease && !verified || !destination || destination.machineId !== input.machineId
+            if (!retainedWriterRelease && !verified) {
+                const denied = refusal?.status === 401 || refusal?.status === 403;
+                throw unavailable('notSent', { stage: 'home_admission',
+                    reason: denied ? 'home_admission_denied' : refusal?.stage ?? 'home_admission_unavailable',
+                    status: refusal?.status, transportCode: refusal?.transportCode });
+            }
+            if (!destination || destination.machineId !== input.machineId
                 || !retainedWriterRelease && !retainedWriterCopyPhase && input.machineId === writerTarget.target.targetMachineId
                     && !isWorkspaceSyncRelationshipWriteActionId(signedAuthorization?.binding.actionId)
                     && destination.installationId !== (signedAuthorization?.binding.actionId === 'projects.open'
                         ? signedAuthorization.binding.installationId : signedAuthorization?.binding.handoffAdmission?.targetInstallationId)
                 || configuration.activeServerId !== this.machineRuntimeServerId || this.socket !== socket || !socket.connected
-                || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) throw unavailable();
+                || readInstallationIdentityIfExistsSync()?.installationId !== installation.installationId) {
+                throw unavailable('notSent', { stage: 'destination_binding', reason: 'verified_destination_unavailable' });
+            }
             const content = createWorkspaceSyncTargetContent({ destination, method: `${input.machineId}:${input.method}`, routing: writerTarget });
             const teardown = input.retainedCheckoutTeardown;
             if (teardown && (!signedAuthorization || !retainedWriterCopyPhase || writerTarget.target.phase !== 'remove')) throw unavailable();
@@ -5031,7 +5054,7 @@ export class ApiMachineClient {
                         effectActionId: authorizationForTarget.binding.actionId, installationId: installation.installationId,
                         method: wire.method, requestId: wire.requestId, params: wire.params,
                         workspaceSyncSourceWriterTargetRouting: writerTarget, privateKey: installation.privateKey });
-                    if (!execution) throw unavailable();
+                    if (!execution) throw unavailable('notSent', { stage: 'request_signing', reason: 'signed_preflight_unavailable' });
                     return execution;
                 } } : {}), ...(input.signal ? { signal: input.signal } : {}) }));
             if (writerTarget.target.phase === 'release') return WorkspaceSyncTargetBootstrapReleaseResultV1Schema.parse(result);
@@ -5046,7 +5069,9 @@ export class ApiMachineClient {
             // only when D owns the admitted workspace; a bound D must retain
             // its independently verified P2 result instead.
             if (!jointTarget && parsed.targetWorkspace?.machineId !== destination.machineId) return parsed;
-            if (parsed.physicalEndpoint && !isDeepStrictEqual(parsed.physicalEndpoint, destination)) throw unavailable('outcomeUnknown');
+            if (parsed.physicalEndpoint && !isDeepStrictEqual(parsed.physicalEndpoint, destination)) {
+                throw unavailable('outcomeUnknown', { stage: 'response_binding', reason: 'destination_witness_mismatch' });
+            }
             return { ...parsed, physicalEndpoint: destination };
         }
         let content: SocketRpcContent;
