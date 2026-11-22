@@ -4,6 +4,7 @@ import { copyFile, mkdir, writeFile } from 'node:fs/promises';
 import { spawn as observedSpawn } from 'node:child_process';
 import axios, { AxiosHeaders, type AxiosRequestConfig } from 'axios';
 import { ProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema,
   bindExternalActionExecutionAuthorizationHttpPathV1, bindExternalActionExecutionAuthorizationVerifyHttpPathV1,
@@ -26,7 +27,6 @@ import type { ExecutionRunState } from '@/agent/runtime/bridges/executionRun/exe
 import type { ExecutionRunController } from '@/agent/executionRuns/controllers/types';
 import { VoiceAgentManager } from '@/agent/voice/agent/VoiceAgentManager';
 import * as sessionRpc from '@/session/transport/rpc/sessionRpc';
-import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import { createProjectSetupTrustClient } from '@/workspaces/projectSetup/projectSetupTrust';
 import { createProjectSetupSuccessStore } from '@/workspaces/projectSetup/projectSetupSuccess';
 import type { startDaemonControlServer } from '@/daemon/controlServer';
@@ -1440,6 +1440,7 @@ it('reports the same Project setup readiness through Account, agent and MCP ingr
       const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'readiness-proof', binding: {
         accountId: 'requester', authentication: { kind: request.sessionActionOrigin ? 'account' : 'terminal', tokenEpoch: 0 }, serverIdentityId: 'srv_readiness',
         machineId: 'machine', custodianAccountId: 'requester', installationId: h.f.installation.installationId,
+        admittedMachineRole: 'manage',
         actionId: 'projects.inspect', requestId: request.envelope.requestId, target: request.envelope.target,
         accountEncryptionMode: 'plain', requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(request.envelope),
         sessionActionOrigin: request.sessionActionOrigin, sessionActionSource: request.sessionActionSource,
@@ -1461,38 +1462,10 @@ it('reports the same Project setup readiness through Account, agent and MCP ingr
     actionExecutor: h.daemon.externalActionIngressOwner!.executor });
   const inspectRpc = handlers.get('daemon.projects.inspect.v1');
   if (!inspectRpc) throw new Error('Missing installed Project inspection RPC');
-  // Home delivery is the substituted boundary; match its closed stamp to the
-  // fixture's admitted requester/installation instead of adding Account ports.
   const machineAdmission = SocketRpcMachineAdmissionContextV1Schema.parse({
     actorAccountId: h.f.bootstrap.attribution.accountId, custodianAccountId: 'requester',
     machineId: h.f.bootstrap.attribution.machineId, installationId: h.f.installation.installationId,
     role: 'use', encryptionMode: h.machine.getMachineEncryptionMode(),
-  });
-  // Substitute only Machine delivery: use the real sender's private custody
-  // seal and the installed receiver's opener/executor, as transported UI reads do.
-  const transport = vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async request => {
-    expect(request.machineId).toBe('machine');
-    expect(request.method).toBe('daemon.projects.inspect.v1');
-    const authorization = request.externalAction?.context.externalActionExecutionAuthorization;
-    // Credentialed Session MCP uses the ordinary Home-admitted Machine RPC,
-    // without the newer private Session dispatcher's sealed Account projection.
-    if (!authorization) {
-      expect(request.credentials.token).toBe(credentials.token);
-      return await inspectRpc(request.request, { signal: request.signal ?? h.signal,
-        callerAuthority: 'account_automation', transportRequestId: 'rpc-credentialed-session-inspect',
-        machineAdmission, verifyMachineAdmissionCurrent: h.requester.isCurrent });
-    }
-    const sealed = await authorization.requesterAccountProjection?.sealRequesterAccountContext?.({ authorization,
-      purpose: { kind: 'external_action' }, installationPublicKey: decodeBase64(h.f.installation.publicKey, 'base64url') });
-    if (!sealed) throw new Error('Missing requester transport custody');
-    const prepared = await h.daemon.externalActionIngressOwner?.prepareRequesterAccountContext?.({ authorization: sealed, signal: h.signal });
-    if (!prepared) throw new Error('Missing installed requester context');
-    try {
-      const outcome = await prepared.executor.execute('projects.inspect', request.request, {
-        ...request.externalAction?.context, externalActionExecutionAuthorization: prepared.authorization,
-      });
-      return outcome.ok ? outcome.result : outcome;
-    } finally { await prepared.dispose(); }
   });
   for (const surface of ['agent', 'mcp'] as const) {
     const response = await h.dispatch({ kind: 'action.execute', surface, actionId: 'projects.inspect',
@@ -1574,19 +1547,30 @@ it('reports the same Project setup readiness through Account, agent and MCP ingr
     expect(response.statusCode).toBe(200);
     expect(response.json(), JSON.stringify(response.json())).toMatchObject({ ok: true, result: { setupReadiness: account.setupReadiness } });
   } finally { await app.close(); }
-  expect(transport).toHaveBeenCalledTimes(4);
   // Home admission never grants a foreign Account the custodian's private
   // inputs, and a missing or retired Machine witness cannot prove readiness.
-  for (const ingress of [
-    { machineAdmission: { ...machineAdmission, actorAccountId: 'foreign' }, verifyMachineAdmissionCurrent: h.requester.isCurrent },
-    { machineAdmission },
-    { machineAdmission, verifyMachineAdmissionCurrent: async () => false },
-  ]) {
-    const refused = ProjectDefinitionInspectOutputSchema.parse(await inspectRpc({ workspace }, {
+  const refusals = [];
+  for (const [scenario, ingress] of [
+    ['foreign', { machineAdmission: { ...machineAdmission, actorAccountId: 'foreign' }, verifyMachineAdmissionCurrent: h.requester.isCurrent }],
+    ['missing', { machineAdmission }],
+    ['retired', { machineAdmission, verifyMachineAdmissionCurrent: async () => false }],
+  ] as const) {
+    const response = await inspectRpc({ workspace }, {
       signal: h.signal, callerAuthority: 'account_automation', ...ingress,
-    }));
-    expect(refused.setupReadiness).toMatchObject({ kind: 'unknown' });
+    });
+    if (scenario === 'missing') {
+      refusals.push({ scenario, setupReadiness: ProjectDefinitionInspectOutputSchema.parse(response).setupReadiness });
+    } else {
+      const failure = ActionExecuteFailureSchema.parse(response);
+      refusals.push({ scenario, ok: failure.ok, errorCode: failure.errorCode, failureCause: failure.failureCause });
+    }
   }
+  expect(refusals).toEqual([
+    { scenario: 'foreign', ok: false, errorCode: 'agent_isolation_unavailable', failureCause: {
+      phase: 'dispatch', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null } },
+    { scenario: 'missing', setupReadiness: { kind: 'unknown', code: 'project_setup_requester_review_unavailable' } },
+    { scenario: 'retired', ok: false, errorCode: 'machine_admission_changed', failureCause: undefined },
+  ]);
   expect(h.nativeEffects()).toBe(0);
   expect(h.trustWrites()).toBe(trustWrites);
 }, 120_000);
