@@ -273,7 +273,13 @@ export function buildSessionListRenderableFromCacheEntry(entry: SessionListCache
         latestTurnStatus: entry.latestTurnStatus ?? null,
         latestTurnStatusObservedAt: normalizeNonNegativeNumber(entry.latestTurnStatusObservedAt),
         lastRuntimeIssue: entry.lastRuntimeIssue ?? null,
-        ...readCompleteRuntimeActivityProjection(entry),
+        // The warm-cache boundary already admits the runtime-activity projection as a tuple.
+        ...(entry.runtimeActivityState != null ? {
+            runtimeActivityState: entry.runtimeActivityState,
+            runtimeActivityActiveCount: entry.runtimeActivityActiveCount,
+            runtimeActivityObservedAt: entry.runtimeActivityObservedAt,
+            runtimeActivityRevision: entry.runtimeActivityRevision,
+        } : {}),
         rollbackEligibleTurnStarts: normalizeNonNegativeNumberArray(entry.rollbackEligibleTurnStarts),
         latestReadyEventSeq: normalizeNonNegativeInteger(entry.latestReadyEventSeq),
         latestReadyEventAt: normalizeNonNegativeNumber(entry.latestReadyEventAt),

@@ -29,6 +29,7 @@ import { CardGridCell } from '@/components/ui/cardGrid/CardGrid';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { StyleSheet } from 'react-native';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
 import { WidgetAddSurface } from '@/components/widgets/add/WidgetAddSurface';
 import type { WidgetAddSection } from '@/components/widgets/add/widgetAddModel';
 import { SessionSurfaceEntityDragHandle, SessionSurfaceEntityTargetFeedback } from '@/components/sessions/board/SessionSurfaceEntityDrag';
@@ -1234,12 +1235,21 @@ describe('HomeHub plugin widgets', () => {
             frameStyle: 'card', dividers: 'hairline', children: [{ kind: 'widget', instance: only, size: 'small' }] }] };
         const screen = await renderHome();
         await lay(screen, { [only.id]: 300 });
+        expect(screen.findAllByType(HomeWidgetAddPopover)).toHaveLength(0);
         // While customizing, the lone widget keeps its half beside an empty slot.
         await act(async () => { screen.pressByTestId('home-hub.customize'); });
         await flushHookEffects({ cycles: 2 });
-        await act(async () => { screen.pressByTestId('home-hub.section.happier.slot.add'); });
-        await flushHookEffects({ cycles: 3 });
-        const surface = screen.root.findAllByType(WidgetAddSurface).find(node => node.props.open === true)!;
+        expect(screen.findAllByType(HomeWidgetAddPopover)).toHaveLength(0);
+
+        const openedPicker = () => screen.root.findAllByType(WidgetAddSurface).find(node => node.props.open === true);
+        await screen.pressByTestIdAsync('home-hub.customizing.add');
+        await vi.waitFor(() => expect(openedPicker()).toBeDefined());
+        await act(async () => { openedPicker()!.props.onRequestClose(); });
+        expect(screen.findAllByType(HomeWidgetAddPopover)).toHaveLength(0);
+
+        await screen.pressByTestIdAsync('home-hub.section.happier.slot.add');
+        await vi.waitFor(() => expect(openedPicker()).toBeDefined());
+        const surface = openedPicker()!;
         const entry = surface.props.sections.flatMap((section: WidgetAddSection) => section.entries)
             .find((candidate: { title: string }) => candidate.title === 'Checks')!;
         const setup = entry.setup!();

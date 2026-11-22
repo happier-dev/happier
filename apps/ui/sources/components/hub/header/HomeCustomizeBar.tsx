@@ -4,7 +4,7 @@ import { View } from 'react-native';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
-import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
+import { HomeWidgetAddPopoverEntry } from '@/components/widgets/add/HomeWidgetAddPopoverEntry';
 import { StagedMoveDockFooter, StagedMoveDockSlotContext, useStagedMoveDockSlot } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
 import { CustomModal } from '@/modal/components/CustomModal';
 import type { CustomModalConfig } from '@/modal/types';
@@ -142,13 +142,14 @@ export const HomeCustomizeBar = React.memo(function HomeCustomizeBar(
           )}
         </Popover>
       ) : null}
-      <HomeWidgetAddPopover
-        open={addOpen}
-        anchorRef={addAnchorRef}
-        regionRef={barRef}
-        onRequestClose={closeAdd}
-        testID="home-hub.add"
-      />
+      {addOpen ? (
+        <HomeWidgetAddPopoverEntry
+          anchorRef={addAnchorRef}
+          regionRef={barRef}
+          onRequestClose={closeAdd}
+          testID="home-hub.add"
+        />
+      ) : null}
     </ItemGroup>
   );
 });

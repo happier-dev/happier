@@ -16,6 +16,7 @@ import {
 } from './warmCacheAdapters';
 import { SessionListCacheEntryV1Schema, type SessionListCacheEntryV1 } from './warmCachePersistence';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
+import { SessionRuntimeActivityProjectionSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 function makeWindowRenderable(id: string, meaningfulActivityAt: number): SessionListRenderableSession {
@@ -942,7 +943,13 @@ describe('warmCacheAdapters', () => {
             pendingRequestObservedAt: 1_000,
             rollbackEligibleTurnStarts: [3, 9],
         }));
-        expect(buildSessionListRenderableFromCacheEntry(entry)).toEqual(expect.objectContaining({
+        const admitted = SessionListCacheEntryV1Schema.parse(JSON.parse(JSON.stringify(entry)));
+        const runtimeActivityParse = vi.spyOn(SessionRuntimeActivityProjectionSchema, 'safeParse');
+        const restored = buildSessionListRenderableFromCacheEntry(admitted);
+        const repeatedParses = runtimeActivityParse.mock.calls.length;
+        runtimeActivityParse.mockRestore();
+        expect(repeatedParses).toBe(0);
+        expect(restored).toEqual(expect.objectContaining({
             latestTurnStatus: 'failed',
             latestTurnStatusObservedAt: 1_200,
             lastRuntimeIssue: expect.objectContaining({ code: 'auth_error' }),

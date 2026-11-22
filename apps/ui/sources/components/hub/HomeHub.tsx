@@ -41,7 +41,7 @@ import type { WidgetBindingValueLabels } from '@/components/widgets/surface/useW
 import { resolveWidgetGroupCells } from '@happier-dev/plugin-ui/components';
 import { resolveWidgetGroupColumns } from '@happier-dev/plugin-ui/presentation';
 import { resolveWidgetCardPointerDestination, resolveWidgetGroupPointerDestination, widgetGroupDropTarget, widgetLayoutCardDropTarget, widgetLayoutEndDropTarget, widgetLayoutSiblingIds } from '@/components/widgets/group/widgetGroupDropTarget';
-import { HomeWidgetAddPopover } from '@/components/widgets/add/HomeWidgetAddPopover';
+import { HomeWidgetAddPopoverEntry } from '@/components/widgets/add/HomeWidgetAddPopoverEntry';
 import { widgetProvidedContext } from '@/components/widgets/surface/widgetSurfaceSetup';
 import { useWidgetGroupMenu } from '@/components/widgets/group/useWidgetGroupMenu';
 import { WidgetGroupDropFeedback } from '@/components/widgets/group/WidgetGroupDropFeedback';
@@ -284,7 +284,7 @@ function HubGroupSlot(props: SlotProps & Readonly<{ section: HubGroupSection }>)
                 dropFeedback={homeSurface ? <WidgetGroupDropFeedback drag={drop} group={group} surface={homeSurface} testID={`${testID}.drop`} /> : null}
             />
             {menu.overlays}
-            <HomeWidgetAddPopover open={slotAddOpen} anchorRef={slotAnchorRef} onRequestClose={closeSlotAdd} groupId={group.id} testID={`${testID}.slotAdd`} />
+            {slotAddOpen ? <HomeWidgetAddPopoverEntry anchorRef={slotAnchorRef} onRequestClose={closeSlotAdd} groupId={group.id} testID={`${testID}.slotAdd`} /> : null}
         </View>
     );
 }
