@@ -1,4 +1,7 @@
 import { defineConfig } from 'vitest/config';
+import { build, normalizePath, type Plugin } from 'vite';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,10 +20,47 @@ const reactNativeWebAliases = [
     { find: /^react-native$/u, replacement: requireUiDependency.resolve('react-native-web/dist/index.js') },
     { find: /^react-native-svg$/u, replacement: requireUiDependency.resolve('react-native-svg/lib/module/elements.web.js') },
 ];
+// Native Workers run outside Vitest's module graph. Compile this entry once
+// from workspace source so each connection starts its own native Worker without
+// reloading the full SDK graph or resolving stale workspace dist exports.
+function sqliteWorkerFixture(): Plugin {
+    const sourceRoot = normalizePath(resolve(root, 'src'));
+    let fixture: Promise<{ directory: string; entry: string }> | undefined;
+    return {
+        name: 'database-workbench-sqlite-worker-fixture',
+        enforce: 'pre',
+        async resolveId(source, importer) {
+            if (source !== './sqlite.js' || !importer?.startsWith(`${sourceRoot}/`)) return;
+            fixture ??= (async () => {
+                const directory = await mkdtemp(resolve(tmpdir(), 'happier-workbench-worker-'));
+                try {
+                    await build({
+                        configFile: false, root, publicDir: false, logLevel: 'error',
+                        ssr: { noExternal: true, resolve: { conditions: ['happier-source', 'node'] } },
+                        build: {
+                            ssr: resolve(sourceRoot, 'sqlite.ts'), outDir: directory, emptyOutDir: false,
+                            rollupOptions: { output: { format: 'es', entryFileNames: 'sqlite.mjs' } },
+                        },
+                    });
+                    return { directory, entry: normalizePath(resolve(directory, 'sqlite.mjs')) };
+                } catch (error) {
+                    await rm(directory, { recursive: true, force: true });
+                    throw error;
+                }
+            })();
+            return (await fixture).entry;
+        },
+        async closeBundle() {
+            const built = await fixture?.catch(() => undefined);
+            if (built) await rm(built.directory, { recursive: true, force: true });
+        },
+    };
+}
+
 export default defineConfig({
     root,
     resolve: { alias: reactNativeWebAliases, dedupe: ['react', 'react-dom'] },
-    plugins: [createWorkspacePackageSourcesPlugin(['databases', 'database-protocol', 'protocol', 'plugin-sdk', 'plugin-ui'].map(name => ({
+    plugins: [sqliteWorkerFixture(), createWorkspacePackageSourcesPlugin(['databases', 'database-protocol', 'protocol', 'plugin-sdk', 'plugin-ui'].map(name => ({
         packageName: `@happier-dev/${name}`, packageSourceRoot: resolve(root, '../..', name, 'src'),
     })))],
     test: { ...resolveVitestWorkers(), environment: 'node', include: ['src/**/*.test.ts', 'src/**/*.test.tsx'] },
