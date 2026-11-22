@@ -85,13 +85,13 @@ export function freezeStepLayer(
     const rect = captureElementFlightRect(root);
     if (rect.width <= 0 || rect.height <= 0) return null;
     const { elements, leaves, ink } = readStepLeaves(root, grid);
-    const clone = copyRegion(root, rect);
+    const clone = copyRegion(root, rect, backdrop !== undefined);
     const webAtmosphere = copyStepAtmosphere(layer, backdrop);
     const chrome = layer.webChrome?.(backdrop ? 'shell' : undefined) ?? [];
-    const webChrome = chrome.map(region => copyRegion(region, captureElementFlightRect(region)));
+    const webChrome = chrome.map(region => copyRegion(region, captureElementFlightRect(region), backdrop !== undefined));
     for (const { element, rect } of pressedChrome) {
         if (!chrome.some(region => region === element || region.dataset.testid === element.dataset.testid)) {
-            webChrome.push(copyRegion(element, rect));
+            webChrome.push(copyRegion(element, rect, backdrop !== undefined));
         }
     }
     const testID = anchor?.testID;

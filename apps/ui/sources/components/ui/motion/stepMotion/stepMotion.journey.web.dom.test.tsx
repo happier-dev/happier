@@ -544,6 +544,19 @@ it('captures the approved step before the presentation loads and dissolves it wh
     let atmosphere: HTMLElement | undefined;
     let land: () => void;
     let presentHome: () => void;
+    let spinner: HTMLSpanElement | null = null;
+    const previousGetAnimations = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'getAnimations');
+    class SpinnerEffect {
+        constructor(readonly target: HTMLSpanElement) {}
+        getKeyframes() { return [{ transform: 'none' }, { transform: 'translateX(-80px)' }]; }
+    }
+    vi.stubGlobal('KeyframeEffect', SpinnerEffect);
+    Object.defineProperty(HTMLElement.prototype, 'getAnimations', {
+        configurable: true,
+        value(this: HTMLElement) {
+            return spinner && this.contains(spinner) ? [{ effect: new SpinnerEffect(spinner) }] : [];
+        },
+    });
     const webChrome = (scope?: 'shell') => scope === 'shell' && wordmark ? [wordmark] : [];
     const webAtmosphere = () => atmosphere;
     function Journey() {
@@ -559,13 +572,14 @@ it('captures the approved step before the presentation loads and dissolves it wh
             <main>{home ? <StepMotionLayer key="home" layerKey="home" warmOnMount={false}><h1>Home</h1></StepMotionLayer> : 'Loading Home'}</main>
         ) : (
             <section>
+                <style>{'#live-spinner { transform: translateX(-40px) }'}</style>
                 <div ref={node => { atmosphere = node ?? undefined; }}>Planet</div>
                 <header ref={node => { wordmark = node; }}>Happier</header>
                 <StepMotionLayer layerKey="workflow" webChrome={webChrome} webAtmosphere={webAtmosphere}>
                     <button onClick={() => {
                         holdFirstArrivalStep();
                         setAdopting(true);
-                    }}>{adopting ? 'First time here' : 'Approved'}</button>
+                    }}>{adopting ? 'First time here' : 'Approved'}<span id="live-spinner" data-spinner="" ref={node => { spinner = node; }} /></button>
                 </StepMotionLayer>
             </section>
         )}</StepMotionStage>;
@@ -581,6 +595,9 @@ it('captures the approved step before the presentation loads and dissolves it wh
         expect(copy?.textContent).toContain('Happier');
         expect(copy?.textContent).toContain('Planet');
         expect(copy?.textContent).toContain('Approved');
+        const heldSpinner = copy?.querySelector('[data-spinner]');
+        assert(heldSpinner);
+        expect(getComputedStyle(heldSpinner).transform).toBe('translateX(-40px)');
         expect(container.querySelector('button')?.textContent).toBe('First time here');
         await act(async () => { await vi.dynamicImportSettled(); });
         await act(async () => land());
@@ -620,6 +637,8 @@ it('captures the approved step before the presentation loads and dissolves it wh
         container.remove();
         rect.mockRestore();
         Object.defineProperty(HTMLElement.prototype, 'animate', { configurable: true, value: previousAnimate });
+        if (previousGetAnimations) Object.defineProperty(HTMLElement.prototype, 'getAnimations', previousGetAnimations);
+        else Reflect.deleteProperty(HTMLElement.prototype, 'getAnimations');
         setReducedMotionPreferenceOverride(null);
         vi.unstubAllGlobals();
     }
