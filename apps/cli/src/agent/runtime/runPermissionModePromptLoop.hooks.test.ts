@@ -1116,12 +1116,10 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('/goal fix authentication', {
       localId: 'local-goal',
       localIds: ['local-goal'],
-      hostReopensStaleTeamEndpoint: true,
     });
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nCOMPOSITION\n\ncontinue normally', {
       localId: 'local-normal',
       localIds: ['local-normal'],
-      hostReopensStaleTeamEndpoint: true,
     });
     expect(resolveFreshSessionSystemPrompt).toHaveBeenCalledTimes(1);
     expect(resolveAgentCompositionBeforeDispatch).toHaveBeenCalledTimes(1);
@@ -1181,7 +1179,7 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(transformAgentContextBeforeDispatch).not.toHaveBeenCalled();
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(
       `/goal fix authentication\n\n${inputContextBlock}`,
-      { localId: 'local-attributed-goal', localIds: ['local-attributed-goal'], hostReopensStaleTeamEndpoint: true },
+      { localId: 'local-attributed-goal', localIds: ['local-attributed-goal'] },
     );
   });
 
@@ -1609,7 +1607,6 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('hello', {
       localId: 'local-custody',
       localIds: ['local-custody'],
-      hostReopensStaleTeamEndpoint: true,
     });
   });
 
@@ -1682,7 +1679,6 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith(`${inputContextBlock}\n\nSYSTEM\n\nhello [context]`, {
       localId: 'local-1',
       localIds: ['local-1'],
-      hostReopensStaleTeamEndpoint: true,
     });
   });
 
@@ -1774,7 +1770,6 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nCOMPOSITION\n\nreview this', {
       localId: 'local-composition',
       localIds: ['local-composition'],
-      hostReopensStaleTeamEndpoint: true,
     });
   });
 
@@ -1904,7 +1899,6 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('SYSTEM\n\nhello\n\nfixture context', {
       localId: 'local-1',
       localIds: ['local-1'],
-      hostReopensStaleTeamEndpoint: true,
     });
   });
 
@@ -1963,7 +1957,6 @@ describe('runPermissionModePromptLoop hook dispatch', () => {
     expect(runtime.sendTurnPrompt).toHaveBeenCalledWith('private prompt', {
       localId: 'local-context-fallback',
       localIds: ['local-context-fallback'],
-      hostReopensStaleTeamEndpoint: true,
     });
     expect(loggerDebugMock).toHaveBeenCalledWith(
       '[plugins] agent.context.before failed; using original provider prompt',
