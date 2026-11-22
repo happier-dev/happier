@@ -40,7 +40,7 @@ import { MachineVitalsSnapshotV1Schema } from '../machines/vitals/machineVitalsR
 import { SESSION_CONNECTED_SERVICE_AUTH_OPTIONS_SOURCE_ID, SessionConnectedServiceAuthSwitchOptionsResultSchema } from '../connect/sessionConnectedServiceAuthSwitch.js';
 import { SESSION_CONFIG_OPTION_IDS_SOURCE_ID, SESSION_CONFIG_OPTION_VALUES_SOURCE_ID, SessionConfigOptionChoicesSchema } from '../sessions/control/sessionConfigOptionV1.js';
 import { resolveSessionControlTarget } from '../actions/executor/sessionScope.js';
-import { normalizeUsageQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
+import { buildUsageScopeInventoryQuery, readUsageGroupByOptions, readUsagePeriodOptions } from './usageQuery.js';
 import { DEPLOYMENT_TELEMETRY_ENVIRONMENTS_OPTIONS_SOURCE_ID_V1, DEPLOYMENT_TELEMETRY_ROUTES_OPTIONS_SOURCE_ID_V1,
   resolveDeploymentTelemetryEnvironmentOptionsV1, resolveDeploymentTelemetryRouteOptionsV1 } from './deploymentTelemetryEnvironmentOptions.js';
 import { readUsageProjectScopeMachines, readUsageScopeOptions, type UsageProjectOptionFacts } from '../usage/usageFilterOptions.js';
@@ -430,12 +430,7 @@ export async function resolveInputOptions(params: Readonly<{
     // Inventory is the same authorized accounting read the Usage toolbar consumes; no execution
     // target catalog or consumer-owned picker decides what a usage identity means.
     const draft = isRecord(params.input.query) ? params.input.query : params.input;
-    const query = normalizeUsageQuery({ period: draft.period, session: draft.session, costBasis: draft.costBasis,
-      includeAccounting: true, includeContributions: false, includeComparison: false, includeQuotaHistory: false,
-      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false,
-      includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
-      includeModelTimeline: false, includeMessageStats: false,
-      breakdown: ['agent', 'machine', 'project', 'source'] });
+    const query = buildUsageScopeInventoryQuery(draft);
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!deps.usageActions) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
     // The typed port admits its transport once. Only an external Action needs

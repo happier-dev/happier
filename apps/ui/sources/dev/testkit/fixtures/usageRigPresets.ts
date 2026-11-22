@@ -1,8 +1,8 @@
 import { createUsageWidgetPresets, flattenWidgetLayoutWidgetsV1, readBuiltinWidgetDescriptorV1,
     resolveConfiguredWidgetInputs, setWidgetInputBindingsV1, WidgetLayoutItemsV1Schema } from '@happier-dev/protocol/widgets';
-import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { buildUsageScopeInventoryQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { usageWidgetAcceptsMetric } from '@/components/settings/usage/usageWidgetActions';
-import { buildUsageWidgetQueryPlan, isUsageQueryWidget, resolveUsageWidgetInventoryQuery,
+import { buildUsageWidgetQueryPlan, isUsageQueryWidget,
     resolveUsageWidgetQuery } from '@/components/settings/usage/widgets/usageWidgetBatch';
 import { buildUsageWidgetPageInventoryQuery, readUsageWidgetPageContext, readUsageWidgetPageScope,
     readUsageWidgetQueryOverrides, resolveUsageWidgetPageInitialQuery } from '@/components/settings/usage/usageWidgetPageContext';
@@ -17,7 +17,7 @@ export function buildUsageRigPresetPlans(scope: ServerAccountScope, period: Usag
         nowMs: USAGE_RIG_NOW, timeZoneOffsetMinutes: 0 });
     const context = readUsageWidgetPageContext(readUsageWidgetPageScope(page));
     const clauses = readUsageWidgetQueryOverrides(page);
-    const inventory = resolveUsageWidgetInventoryQuery(buildUsageWidgetPageInventoryQuery(clauses, context));
+    const inventory = buildUsageScopeInventoryQuery(buildUsageWidgetPageInventoryQuery(clauses, context));
     return createUsageWidgetPresets().map(preset => {
         const registrations = new Map<string, NonNullable<ReturnType<typeof resolveUsageWidgetQuery>>>();
         const widgets = flattenWidgetLayoutWidgetsV1(WidgetLayoutItemsV1Schema.parse(preset.items));

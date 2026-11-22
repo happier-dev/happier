@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getUsageQueryKey, normalizeUsageQuery } from '../inputs/usageQuery.js';
+import { getUsageQueryKey, normalizeUsageQuery, resolveUsageQueryPeriod } from '../inputs/usageQuery.js';
 import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '../usage/resolveUsagePageAggregation.js';
 import { enforceExternalActionResponseEnvelopeLimitV1 } from './externalActionApi.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES, measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from './externalActionLimits.js';
@@ -222,6 +222,50 @@ describe('personal usage Action execution', () => {
     expect(await resolveInputOptions({ deps: deps as ActionExecutorDeps, ctx: { surface: 'agent', serverId: 'home-1' }, actionId: null,
       optionsSourceId: 'usage.filters.projects', input: {}, readFailure: () => null,
       resolveSessionId: () => null, reviewScope: () => undefined })).toEqual({ ok: true, result: [{ value: 'project-1', label: 'App' }] });
+  });
+
+  it('lists both native Projects from the first local calendar hour in the agent picker', async () => {
+    const first = 'a'.repeat(64);
+    const second = 'b'.repeat(64);
+    const outside = 'c'.repeat(64);
+    const observedAtMs = Date.parse('2026-11-15T23:30:00Z');
+    const nowMs = Date.parse('2026-11-22T10:00:00Z');
+    const options = [
+      { value: first, label: 'Archive' },
+      { value: second, label: 'Notes' },
+    ];
+    const projectFacts = new Map([...options, { value: outside, label: 'Unused' }]
+      .map(({ value, label }) => [value, { label }]));
+    const deps: Partial<ActionExecutorDeps> = {
+      projectWorkspaceRefs: async () => ({ workspaceRefs: [], usageProjects: projectFacts }),
+      usageActions: { query: async ({ queries }) => resolveUsagePageAggregation({ queries,
+        accounting: queries.map(query => {
+          const { startMs } = resolveUsageQueryPeriod(query, nowMs);
+          const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting,
+            scopeKeys: [{ dimension: 'project', keys: startMs !== undefined && startMs <= observedAtMs ? [first, second] : [] }] });
+          return { query, value, status: 'available' as const };
+        }),
+      }, bundledUsageModelPriceCatalog) },
+    };
+    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    const input = { actionId: 'usage.query', optionsSourceId: 'usage.filters.projects',
+      draftInput: { period: { relative: '7days' }, timeZoneOffsetMinutes: 60 } };
+    const context = { surface: 'agent', serverId: 'home-1' } as const;
+    expect(await executor.execute('action.options.resolve', input, context))
+      .toMatchObject({ ok: true, result: { options } });
+    expect(await executor.execute('action.options.resolve', {
+      ...input, draftInput: { ...input.draftInput, timeZoneOffsetMinutes: 0 },
+    }, context)).toMatchObject({ ok: true, result: { options: [] } });
+
+    const page = await executor.execute('action.options.resolve', { ...input, limit: 1 }, context);
+    expect(page).toMatchObject({ ok: true, result: { options: [options[0]], nextCursor: expect.any(String) } });
+    if (!page.ok || !page.result || typeof page.result !== 'object' || !('nextCursor' in page.result)) {
+      throw new Error('Expected a project continuation');
+    }
+    const last = await executor.execute('action.options.resolve', { ...input, limit: 1, cursor: page.result.nextCursor }, context);
+    expect(last).toMatchObject({ ok: true, result: { options: [options[1]] } });
+    if (!last.ok) throw new Error('Expected the final Project page');
+    expect(last.result).not.toHaveProperty('nextCursor');
   });
 
   it('resolves Usage filter choices from admitted accounting instead of execution target identities', async () => {

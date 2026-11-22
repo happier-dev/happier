@@ -2,6 +2,7 @@ import type { AutomationSubjectKindV1 } from '../automations/automationSubjectV1
 import type { ActionId } from './actionIds.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
+import { decodeKeysetCursorV1, encodeKeysetCursorV1 } from '../pagination/keysetCursorV1.js';
 import {
   getActionSpec,
   isActionEffectHookableV1,
@@ -691,4 +692,24 @@ export function filterResolvedActionOptions(
     : [...valued];
 
   return limit === null ? filtered : filtered.slice(0, limit);
+}
+
+/** Page a complete choice inventory by stable operand, after the caller's search. */
+export function pageResolvedStringActionOptions(
+  options: readonly ResolvedActionOption[],
+  params: Readonly<{ query?: string; values?: readonly JsonValue[]; limit?: number; cursor?: string }>,
+  queryKey: string,
+): Readonly<{ options: readonly ResolvedActionOption[]; nextCursor?: string }> | null {
+  const cursor = params.cursor === undefined ? undefined : decodeKeysetCursorV1(params.cursor, queryKey);
+  if (cursor !== undefined && (cursor.status !== 'ok' || cursor.parts.length !== 1 || typeof cursor.parts[0] !== 'string')) {
+    return null;
+  }
+  const after = cursor?.parts[0];
+  const remaining = filterResolvedActionOptions(options, { query: params.query, values: params.values })
+    .filter((option): option is ResolvedActionOption & { value: string } =>
+      typeof option.value === 'string' && (typeof after !== 'string' || option.value > after))
+    .sort((left, right) => left.value < right.value ? -1 : left.value > right.value ? 1 : 0);
+  const page = remaining.slice(0, params.limit ?? remaining.length);
+  if (page.length >= remaining.length) return { options: page };
+  return { options: page, nextCursor: encodeKeysetCursorV1({ queryKey, parts: [page[page.length - 1]!.value] }) };
 }

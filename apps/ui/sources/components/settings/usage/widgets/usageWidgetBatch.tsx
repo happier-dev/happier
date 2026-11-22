@@ -6,6 +6,7 @@ import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { readBuiltinWidgetDescriptorV1, proposeWidgetInputDefaultBindingsV1 } from '@happier-dev/protocol/widgets';
 import { resolveEffectiveInputFields } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import {
+  buildUsageScopeInventoryQuery,
   getUsageQueryKey,
   getUsageQueryBatchKey,
   normalizeUsageQuery,
@@ -85,15 +86,6 @@ export function isUsageQueryWidget(id: string): id is UsageQueryWidgetId {
   return Object.hasOwn(USAGE_WIDGET_DEMAND, id);
 }
 
-/** Filter choices consume accounting membership without private work detail. */
-export function resolveUsageWidgetInventoryQuery(query: UsageQuery): UsageQuery {
-  return normalizeUsageQuery({ ...query,
-    includeContributions: false,
-    includeSeries: false, includeInsights: false, includeActivity: false, includeLeaders: false,
-    includeModelTimeline: false, includeMessageStats: false, includeQuotaHistory: false, includeComparison: false,
-    includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeQuota: false,
-  });
-}
 type UsageWidgetBatch = Readonly<{
   clauses: UsageWidgetQueryOverrides;
   register(id: string, registration: BoundRegistration): () => void;
@@ -208,7 +200,7 @@ export function UsageWidgetBatchProvider(
     [viewer?.serverId, viewer?.accountId],
   );
   const inventoryQuery = React.useMemo(() => props.inventoryQuery
-    ? resolveUsageWidgetInventoryQuery(props.inventoryQuery) : undefined, [props.inventoryQuery]);
+    ? buildUsageScopeInventoryQuery(props.inventoryQuery) : undefined, [props.inventoryQuery]);
   // A visible frame can still be binding its inputs after its neighbours mount.
   // Admit their complete cohort, using the frame and binder owners' facts, once.
   const collecting = props.queryWidgetIds?.some(id => !placements.has(id)) === true

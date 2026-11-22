@@ -1,4 +1,4 @@
-import { normalizeUsageQuery, USAGE_QUERY_INPUT_FIELDS, UsageQuerySchema, usageAnalyticsRequestToQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, resolveUsageScopeDefaultPeriod, USAGE_QUERY_INPUT_FIELDS, UsageQuerySchema, usageAnalyticsRequestToQuery, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WidgetBindingResolutionInputV1 } from '@happier-dev/protocol/widgets';
 import type { WidgetSurfaceContext } from '@/components/widgets/surface/widgetSurfaceSetup';
@@ -16,7 +16,7 @@ export type UsageWidgetPageInitialFilters = Omit<UsageFilterState, 'period'> & R
 
 /** The one default period: the account page opens on the last 7 days, a Session's own page on the whole Session. */
 export function resolveUsagePageDefaultPeriod(sessionId?: string): UsagePeriod {
-    return sessionId === undefined ? '7days' : 'all';
+    return resolveUsageScopeDefaultPeriod(sessionId);
 }
 export type UsageWidgetQueryOverrides = Omit<UsageQuery, keyof UsageWidgetPageScope | 'metric' | 'breakdown'>;
 
@@ -40,13 +40,12 @@ export function readUsageWidgetPageContext(scope: UsageWidgetPageScope): WidgetB
         sources: [scope.sources], session: [scope.session], costBasis: [scope.costBasis] };
 }
 
-/** Inventory keeps the page period and Session while listing every value of the other scopes. */
+/** Supply the admitted page operands to the shared inventory query owner. */
 export function buildUsageWidgetPageInventoryQuery(clauses: UsageWidgetQueryOverrides,
     context: WidgetBindingResolutionInputV1['context']): UsageQuery {
     return normalizeUsageQuery({
         ...clauses,
         ...Object.fromEntries(Object.entries(context).map(([path, values]) => [path, values[0]])),
-        agents: [], machines: [], projects: [], sources: [], metric: 'tokens', breakdown: ['agent', 'machine', 'project', 'source'],
     });
 }
 

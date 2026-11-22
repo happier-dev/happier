@@ -371,6 +371,7 @@ import {
   findActionInputFieldHint,
   filterResolvedActionOptions,
   getActionSpecForCatalogSurface,
+  pageResolvedStringActionOptions,
   projectActionDefinitionForExternalDiscovery,
   projectActionDefinitionSummaryForExternalDiscovery,
   searchSerializedActionSpecsForSurface,
@@ -6514,6 +6515,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             includeSpawnModelCatalog: actionIdRaw === SESSION_SPAWN_NEW_ACTION_ID_V1 && fieldPath === 'modelSelection',
           });
           if (!dynamic.ok) return dynamic;
+          if (optionsSourceId === 'usage.filters.projects' && (data.limit !== undefined || data.cursor !== undefined)) {
+            const queryKey = JSON.stringify([optionsSourceId, ctx.serverId, ctx.runtimeAccountId, draftInput, data.query, optionValues]);
+            const page = pageResolvedStringActionOptions(dynamic.result, data, queryKey);
+            return page
+              ? { ok: true, result: { actionId: actionIdRaw || null, fieldPath: fieldPath || null, optionsSourceId, ...page } }
+              : actionInputIssueFailure({ code: 'invalid_cursor', path: ['cursor'] });
+          }
           const modelQuery = ctx.surface === 'voice' && actionIdRaw === SESSION_SPAWN_NEW_ACTION_ID_V1 && fieldPath === 'modelSelection'
             && typeof data.query === 'string' ? data.query.trim() : '';
           const modelCandidates = modelQuery ? filterResolvedActionOptions(dynamic.result, { values: optionValues }) : null;
