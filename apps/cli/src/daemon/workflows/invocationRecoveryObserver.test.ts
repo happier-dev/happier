@@ -46,6 +46,24 @@ vi.mock('@/api/session/sockets', async (importOriginal) => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('exact Workflow recovery observation', () => {
+  it.each([7, -1])('uses a retained shell exit to distinguish stopped work from a transport refusal (%s)', async exitCode => {
+    const observed = await observeWorkflowInvocationRecoveryEvidence({
+      runId: 'workflow-run', credentials: { token: 'token', encryption: null }, machineId: 'machine',
+      progress: {
+        ...progress, blockKind: 'action',
+        execution: {
+          kind: 'action', actionId: 'machines.command.run', actionRequestId: 'invocation',
+          localInputId: 'input', input: { command: 'exit 7' },
+        },
+        timing: { startedAt: '2026-11-21T07:25:16.883Z', finishedAt: '2026-11-21T07:25:25.703Z' },
+        result: { exitCode, stdout: '', stderr: '' }, reason: { code: 'command_failed' },
+      },
+      getRun: async () => { throw new Error('The shell command has no detached Agent Run'); },
+    });
+    expect(observed).toEqual({ activity: exitCode > 0 ? 'not_active' : 'unknown',
+      canReattach: false, canContinueConversation: false });
+  });
+
   it.each([
     { receiptRunId: 'run-1', unknown: false }, { receiptRunId: 'other-run', unknown: false },
     { receiptRunId: 'run-1', unknown: true },

@@ -44,6 +44,7 @@ import { classifyWorkflowSessionInputResult, observeWorkflowDetachedExecutionRun
 import { observeWorkflowDetachedRunRecovery } from './detachedRunRecovery';
 import { readWorkflowActionApprovalSettlement } from './actionApproval';
 import { isWorkflowInlineAccountReadWithoutResult } from './actionReadRecovery';
+import { WorkflowMachineCommandOutputV1Schema } from '@happier-dev/protocol/workflows/stepActionsV1';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { isSessionStopConfirmed } from '@happier-dev/protocol/sessions/control/contract';
 import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
@@ -214,6 +215,15 @@ export async function observeWorkflowInvocationRecoveryEvidence(params: Readonly
       if (approval) return { activity: approval.kind === 'unresolved' ? 'unknown' : 'not_active',
         canReattach: approval.kind !== 'unresolved' || approval.code === 'approval_required', canContinueConversation: false };
       const reason = params.progress.reason;
+      if (params.progress.blockKind === 'action' && execution.actionId === 'machines.command.run'
+        && reason?.code === 'command_failed' && params.progress.timing?.finishedAt !== undefined) {
+        const command = WorkflowMachineCommandOutputV1Schema.safeParse(params.progress.result);
+        // A positive process exit is terminal. The -1 fallback also covers
+        // refusals without a process result, so it cannot establish inactivity.
+        if (command.success && command.data.exitCode > 0) {
+          return { activity: 'not_active', canReattach: false, canContinueConversation: false };
+        }
+      }
       if (params.progress.blockKind === 'action' && reason?.code === 'action_failed'
         && isWorkflowInlineAccountReadWithoutResult(execution)) {
         return { activity: 'not_active', canReattach: false, canContinueConversation: false };
