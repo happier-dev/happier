@@ -205,7 +205,7 @@ const AppTextInput = React.forwardRef<any, AppTextInputProps>(
         const handleWebKeyPress = React.useCallback<NonNullable<RNTextInputProps['onKeyPress']>>(event => {
             onKeyPress?.(event);
             // RN Web's TextInput stops keydown before it reaches the document.
-            if (event.nativeEvent instanceof KeyboardEvent) forwardWebOverlayTab(event.nativeEvent);
+            if (typeof KeyboardEvent !== 'undefined' && event.nativeEvent instanceof KeyboardEvent) forwardWebOverlayTab(event.nativeEvent);
         }, [onKeyPress]);
 
         return (
