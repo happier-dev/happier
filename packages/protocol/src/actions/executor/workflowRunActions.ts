@@ -1140,7 +1140,8 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
         }));
       startInputs = { ...previousInputs,
         [WORKFLOW_PREVIOUS_ROUND_CONTEXT_INPUT_V1]: StrictJsonValueSchema.parse({ runId: replayRequest.runId,
-          state: replaySource.snapshot.run.state, outcomes, costConsent: replayRequest.costConsent === true }) };
+          state: replaySource.snapshot.run.state, outcomes, costConsent: replayRequest.costConsent === true,
+          ...(replayRequest.reviewerIds ? { reviewerIds: replayRequest.reviewerIds } : {}) }) };
     }
     if (replaySource) {
       assertRunResourceRestriction(args.context, { machineId: replaySource.accepted.machineId,

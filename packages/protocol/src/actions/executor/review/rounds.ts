@@ -95,9 +95,15 @@ export async function dispatchReviewRoundAction(inv: RoundActionInvocation): Pro
     const prior = await inv.executeHostChild('workflow.run.get', { runId: input.runId }, inv.ctx);
     if (!prior.ok) return prior;
     const opened = WorkflowRunGetResultV1Schema.parse(prior.result);
+    // Lazy like Review composition: the builtin graph owner sits above the Action executor.
+    if (input.reviewerIds && !(await import('../../../workflows/builtins/reviewAndConverge.js'))
+      .supportsReviewReviewerRetryV1(opened.authoredDefinition, input.reviewerIds)) {
+      return { ok: false, errorCode: 'review_reviewer_retry_unavailable', error: 'review_reviewer_retry_unavailable' };
+    }
     const prepared = prepareWorkflowRunStartV1({ definition: opened.authoredDefinition, acceptedContext: opened.acceptedContext,
       replay: { runId: input.runId, intent: 'another_round',
-        ...(input.costConsent === undefined ? {} : { costConsent: input.costConsent }) } });
+        ...(input.costConsent === undefined ? {} : { costConsent: input.costConsent }),
+        ...(input.reviewerIds ? { reviewerIds: input.reviewerIds } : {}) } });
     const workflowInput = {
       runId: globalThis.crypto.randomUUID(), source: prepared.source, inputs: prepared.inputs,
       ...(prepared.executionTarget ? { executionTarget: prepared.executionTarget } : {}),

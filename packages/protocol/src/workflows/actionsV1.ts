@@ -153,6 +153,8 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
       /** Explicit new-run continuation; the owner reads prior outcomes into the declared previousRoundContext input. */
       intent: z.optional(z.literal('another_round')),
       costConsent: z.optional(z.boolean()),
+      /** Another round of a Review that retries only these reviewers. */
+      reviewerIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
       agentOverride: zMini.optional(WorkflowReplayAgentOverrideV1Schema) })),
   })).check(zMini.superRefine((source, context) => {
     if (source.visibleTeamId !== undefined && source.sourceArtifactId === undefined) {
@@ -160,6 +162,9 @@ export const WorkflowRunSourceV1Schema = lazyZodSchema(() => z.discriminatedUnio
     }
     if (source.replay && (source.sourceArtifactId !== undefined || source.visibleTeamId !== undefined)) {
       context.addIssue({ code: 'custom', path: ['replay'], message: 'Replay retains the accepted source and Team visibility' });
+    }
+    if (source.replay?.reviewerIds !== undefined && source.replay.intent !== 'another_round') {
+      context.addIssue({ code: 'custom', path: ['replay', 'reviewerIds'], message: 'Retrying reviewers starts another round' });
     }
     if (source.replay?.intent === 'another_round' && source.replay.agentOverride !== undefined) {
       context.addIssue({ code: 'custom', path: ['replay', 'agentOverride'], message: 'Another round retains every accepted participant' });

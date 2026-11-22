@@ -1,4 +1,5 @@
 import type { WorkflowDefinitionV1, WorkflowActionLeafV1, WorkflowActionFieldBindingV1, WorkflowBlock } from '../workflowV1.js';
+import type { WorkflowCondition } from '../workflowReferenceV1.js';
 import { StrictJsonValueSchema, type JsonValue } from '../../json/strictJsonValue.js';
 import type { ScmComparison } from '../../scm/comparison.js';
 import type { ScmComparisonCaptureInput } from '../../scm/diffSummary.js';
@@ -11,6 +12,24 @@ import { MENTION_KIND_V1, buildMentionRefForKindV1 } from '../../runtime/input/m
 import { formatInlineReferenceTokenV1 } from '../../runtime/input/inlineReferenceTokenV1.js';
 import { REVIEW_FINDINGS_VERIFY_ONLY_INSTRUCTIONS_V1 } from '../../reviews/reviewFindingsApplyInputV1.js';
 import { document, input, literal, result } from './definitionParts.js';
+
+/** A reviewer leaf runs unless the prepared round left its roster slot out (single-reviewer retry). */
+function reviewerLeafRunsWhenV1(reviewerId: string): WorkflowCondition {
+  return { kind: 'not', condition: { kind: 'exists',
+    value: result('prepare', ['skippedReviewers', reviewerId], { kind: 'outer', levels: 1 }) } };
+}
+
+/** True when every requested reviewer has a leaf that a retry can skip around; older graphs cannot. */
+export function supportsReviewReviewerRetryV1(definition: WorkflowDefinitionV1, reviewerIds: readonly string[]): boolean {
+  const retryable = new Set<string>();
+  for (const block of definition.blocks) {
+    if (block.kind !== 'parallel') continue;
+    for (const branch of block.branches) for (const leaf of branch.blocks) {
+      if ((leaf.kind === 'action' || leaf.kind === 'step') && leaf.onlyWhen !== undefined) retryable.add(leaf.id);
+    }
+  }
+  return reviewerIds.every(id => retryable.has(id));
+}
 
 /** One admitted pass; the Review record and aggregate owners decide coverage and attention. */
 export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, reviewRound: ReviewRoundBindingV1,
@@ -52,6 +71,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
         const reviewerInstructions = includeSessionTranscript && transcriptInput
           ? `${instructions}\n\n${transcriptInput}` : instructions;
         const reviewerId = reviewReviewerIdForSelectionV1(reviewerIndex, stepIndex);
+        const onlyWhen = reviewerLeafRunsWhenV1(reviewerId);
         if (reviewer.kind === 'engine') {
           const references = [prepared, ...previous].map((_, index) => {
             const ref = buildMentionRefForKindV1(MENTION_KIND_V1.workflowInput, String(index));
@@ -60,7 +80,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
           });
           const bindings: Record<string, WorkflowActionFieldBindingV1> = Object.fromEntries(Object.entries(leafInput)
             .filter(([, value]) => value !== undefined).map(([key, value]) => [key, literal(StrictJsonValueSchema.parse(value))]));
-          return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start',
+          return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'action' as const, id: reviewerId, name: 'Run the selected reviewer', actionId: 'review.start', onlyWhen,
             ...(reviewer.roleId ? { execution: { roleId: reviewer.roleId } } : {}),
             input: { ...bindings, reviewers: literal([StrictJsonValueSchema.parse(participant)]),
               instructions: { kind: 'text' as const,
@@ -77,7 +97,7 @@ export function buildReviewStepsWorkflowV1(reviewInput: ReviewStartInput, review
         inputs[participantName] = StrictJsonValueSchema.parse(reviewer.kind === 'model'
           ? { ...participant, launch: { ...reviewer.launch, permissionMode: 'read-only' } } : participant);
         declarations.push({ name: participantName, valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } });
-        return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'step' as const, id: reviewerId, name: 'Review with the selected participant',
+        return [{ id: `branch-${reviewerId}`, blocks: [{ kind: 'step' as const, id: reviewerId, name: 'Review with the selected participant', onlyWhen,
           document: document(reviewerInstructions), execution: { participant: { kind: 'input' as const, name: participantName }, permissionMode: 'read-only' as const },
           input: [prepared, literal({ kind: 'review_session.v1', reviewerId }), ...previous], result: { kind: 'json' as const, schema: terminalSchema },
         }] }];

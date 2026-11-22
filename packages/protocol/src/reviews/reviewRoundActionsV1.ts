@@ -27,6 +27,8 @@ export const ReviewPreparedRoundV1Schema = lazyZodSchema(() => z.strictObject({
   inlineThreshold: z.optional(ReviewFindingSeveritySchema),
   comparisonId: z.optional(z.string().check(z.minLength(1))),
   comparison: z.optional(ScmComparisonSchema),
+  /** Roster slots a single-reviewer retry leaves out of this round; their leaves do not run. */
+  skippedReviewers: z.optional(z.record(z.string().check(z.minLength(1)), z.literal(true))),
 }));
 export type ReviewPreparedRoundV1 = z.infer<typeof ReviewPreparedRoundV1Schema>;
 
@@ -78,7 +80,9 @@ export const ReviewNativeNewRoundInputV1Schema = lazyZodSchema(() => z.strictObj
 /** Person-only records and explicit native routing share the existing Workflow replay Action. */
 export const ReviewNewRoundInputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ reviewId: z.string().check(z.minLength(1)) }),
-  z.strictObject({ runId: z.string().check(z.minLength(1)), costConsent: z.optional(z.boolean()) }),
+  z.strictObject({ runId: z.string().check(z.minLength(1)), costConsent: z.optional(z.boolean()),
+    /** Retry only these admitted reviewers in a new round; earlier findings carry over by identity. */
+    reviewerIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))) }),
   z.strictObject({ runId: z.string().check(z.minLength(1)), sessionId: z.string().check(z.minLength(1)),
     ...ReviewNativeNewRoundInputV1Schema.shape }),
   z.strictObject({ runId: z.string().check(z.minLength(1)), target: z.strictObject({ kind: z.literal('detached') }),

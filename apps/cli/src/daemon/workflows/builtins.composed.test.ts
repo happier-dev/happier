@@ -547,6 +547,7 @@ function harness(fixtures: Fixtures = {}) {
   let goalInitialized = false;
   return { get store() { return store; }, events, launches, notifications, goals, removedTriggers, scmRequests, reviewReads, commentReads, sessionTargets, sessionInputs, sentMessages, aggregateReads,
     readReviewMetadata: (reviewId: string) => reviewMetadata.get(reviewId),
+    readReview: (reviewId: string) => reviewRecords.read(reviewId),
     executeAction: executor.execute.bind(executor), readGoal: () => goalControl('get'),
     admitReview: (reviewInput: ReviewStartInput) => reviewRecords.start({ reviewId: 'review', title: 'Review',
       subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: reviewReviewerIdsForStartV1(reviewInput), startedAt: 1 }),
@@ -1084,6 +1085,29 @@ describe('built-ins through accepted materialization and native leaf adapters', 
     expect(h.launches[0]?.request.instructions).toContain('"reviewId":"review"');
     expect(h.aggregateReads).toEqual(['review']);
     expect(h.commentReads).toEqual([]);
+  });
+  it('retries only the selected reviewer in a new round of the same Review', async () => {
+    const h = harness({ workDepthLimit: 1, reviewCounts: { total: 0, needsDecision: 0 } });
+    const reviewInput = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review once.', reviewers: [
+      { kind: 'engine', engineId: engine, connectedServices: null }, { kind: 'engine', engineId: engine, connectedServices: null }] });
+    const composed = reviewComposition.buildReviewStepsWorkflowV1(reviewInput, await h.admitReview(reviewInput));
+    const snapshot = await accepted(composed.definition, { ...composed.inputs, previousRoundContext: { runId: 'partial-run',
+      state: 'succeeded', outcomes: [], costConsent: false, reviewerIds: ['step-1-reviewer-2'] } }, true, false, {
+      admission: { kind: 'agent', admitLeaf: async (leaf, facts) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+        readWorkflowRunLeafStartRequestV1(leaf), {
+          caller: { kind: 'originless', runId: 'author', runDepth: 0 }, baseline: { machineId: workspace.machineId, directory: workspace.directory },
+          ledSubtreeSessionIds: [], roles: facts.role ? { [facts.role.roleId]: facts.role } : {},
+          callerPermissionCeiling: 'read-only', workDepthLimit: 1,
+        }) },
+    });
+    // The real coordinator decides the leaf condition; this harness does not settle a later-round native launch.
+    await h.runAccepted(snapshot);
+    const leaves = h.store.list().filter(row => row.blockId.startsWith('step-1-reviewer-'));
+    expect(leaves.map(row => [row.blockId, row.lifecycle === 'skipped'])).toEqual(expect.arrayContaining([
+      ['step-1-reviewer-1', true], ['step-1-reviewer-2', false]]));
+    expect(leaves.find(row => row.blockId === 'step-1-reviewer-1')?.reason).toBe('condition_false');
+    expect((await h.readReview('review'))?.rounds.map(round => [round.ordinal, round.reviewerIds])).toEqual([
+      [1, ['step-1-reviewer-1', 'step-1-reviewer-2']], [2, ['step-1-reviewer-2']]]);
   });
   it.each([
     { state: 'completed', fixtures: {} },

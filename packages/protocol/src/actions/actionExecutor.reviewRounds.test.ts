@@ -6,7 +6,7 @@ import { prepareReviewRoundV1 } from '../reviews/prepareReviewRoundV1.js';
 import { ReviewPrepareRoundInputV1Schema } from '../reviews/reviewRoundActionsV1.js';
 import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.testkit.js';
 import { WorkflowRunStartRequestV1Schema } from '../workflows/actionsV1.js';
-import { resolveWorkflowActionFieldBinding } from '../../../../apps/cli/src/daemon/workflows/input.js';
+import { evaluateWorkflowCondition, resolveWorkflowActionFieldBinding } from '../../../../apps/cli/src/daemon/workflows/input.js';
 import { ScmComparisonCaptureInputSchema } from '../scm/diffSummary.js';
 import { createScmCapabilities } from '../scm/index.js';
 import { buildReviewStepsWorkflowV1 } from '../workflows/builtins/reviewAndConverge.js';
@@ -312,6 +312,35 @@ describe('Review round preparation', () => {
     });
     await expect(executor.execute('review.new_round', { runId: 'previous-native-run', sessionId: 'actual-session', fresh: true },
       { surface: 'ui', serverId: 'home' })).resolves.toEqual({ ok: true, result: receipt });
+  });
+
+  it('retries only the selected reviewers in a new round; the other reviewer leaves are skipped', async () => {
+    const records = createInMemoryReviewRecordPortV1();
+    const reviewInput = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Find defects.',
+      reviewers: [{ kind: 'engine', engineId: 'codex' }, { kind: 'engine', engineId: 'claude' }] });
+    const firstRound = await records.start({ reviewId: 'retry-review', title: 'Review', subjectKind: 'repository',
+      sourceKind: 'workflow', reviewerIds: ['step-1-reviewer-1', 'step-1-reviewer-2'], startedAt: 1 });
+    await records.settle({ ...firstRound, outcome: 'completed', finishedAt: 2, runs: [], reviewerOutcomes: [
+      { key: 'step-1-reviewer-1', outcome: 'completed', reviewOutcome: 'complete', materialization: { kind: 'complete' } },
+      { key: 'step-1-reviewer-2', outcome: 'failed' }] });
+    const built = buildReviewStepsWorkflowV1(reviewInput, firstRound);
+    const prepare = (reviewerIds: string[]) => prepareReviewRoundV1(ReviewPrepareRoundInputV1Schema.parse({ reviewRound: firstRound,
+      reviewInput, previousRoundContext: { runId: 'partial-run', state: 'succeeded', outcomes: [], reviewerIds } }), {
+      reviewRecords: records, startedAt: 3, captureComparison: async () => { throw new Error('Repository review'); } });
+    await expect(prepare(['step-1-reviewer-9'])).rejects.toMatchObject({ rpcErrorCode: 'invalid_parameters' });
+    const prepared = await prepare(['step-1-reviewer-2']);
+    expect((await records.read('retry-review'))?.rounds.map(round => [round.ordinal, round.state, round.reviewerIds])).toEqual([
+      [1, 'partial', ['step-1-reviewer-1', 'step-1-reviewer-2']], [2, 'running', ['step-1-reviewer-2']]]);
+    const stage = built.definition.blocks.find(block => block.kind === 'parallel');
+    if (stage?.kind !== 'parallel') throw new Error('Expected the reviewer stage');
+    const runs = await Promise.all(stage.branches.map(async branch => {
+      const leaf = branch.blocks[0];
+      if (!leaf || !('onlyWhen' in leaf) || !leaf.onlyWhen) return [branch.id, 'always'];
+      return [branch.id, await evaluateWorkflowCondition(leaf.onlyWhen, { inputs: built.inputs,
+        resolveResult: async () => StrictJsonValueSchema.parse(prepared),
+        resolveWorkspace: async () => { throw new Error('No workspace reference'); } })];
+    }));
+    expect(runs).toEqual([['branch-step-1-reviewer-1', false], ['branch-step-1-reviewer-2', true]]);
   });
 
   it('consumes initial admission and captures current evidence for later rounds of the same Review', async () => {

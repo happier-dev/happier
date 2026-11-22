@@ -39,6 +39,17 @@ export async function prepareReviewHumanRoundV1(review: ReviewArtifactV1, deps: 
   return { reviewRound, ...(comparison ? { comparisonId: comparison.id, comparison } : {}) };
 }
 
+/** A retry of chosen reviewers narrows the next round to those admitted roster slots. */
+function readRetriedReviewerIds(previousRoundContext: unknown, roster: readonly string[]): string[] | undefined {
+  const requested = readRecord(previousRoundContext).reviewerIds;
+  if (requested === undefined) return undefined;
+  if (!Array.isArray(requested) || requested.length === 0
+    || requested.some(id => typeof id !== 'string' || !roster.includes(id))) {
+    throw new RpcError('Retry names a reviewer outside this Review', 'invalid_parameters');
+  }
+  return roster.filter(id => requested.includes(id));
+}
+
 /** One round/comparison preparation owner for workflow replay and native continuation. */
 export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, deps: Readonly<{
   reviewRecords: Pick<ReviewRecordPortV1, 'start'>;
@@ -65,10 +76,12 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
     comparison = await deps.captureComparison(comparisonCapture);
   }
   const { projection: _projection, ...retainedCaptureInput } = comparisonCapture ?? {};
+  const roster = reviewReviewerIdsForStartV1(input.reviewInput);
+  const retried = isNewRound ? readRetriedReviewerIds(input.previousRoundContext, roster) : undefined;
   const reviewRound = isNewRound ? await deps.reviewRecords.start({
     reviewId: input.reviewRound.reviewId, title: 'Code review',
     subjectKind: comparison ? 'comparison' : 'repository', sourceKind: deps.sourceKind ?? 'workflow',
-    reviewerIds: reviewReviewerIdsForStartV1(input.reviewInput),
+    reviewerIds: retried ?? roster,
     reviewerDisplayNames: reviewReviewerDisplayNamesForStartV1(input.reviewInput),
     ...(comparison ? { comparisonId: comparison.id } : {}),
     ...(comparison && comparisonCapture && deps.comparisonTarget ? { comparisonCapture: {
@@ -77,7 +90,9 @@ export async function prepareReviewRoundV1(input: ReviewPrepareRoundInputV1, dep
     } } : {}),
     startedAt: deps.startedAt, newRound: true, signal: deps.signal,
   }) : input.reviewRound;
+  const skipped = retried ? roster.filter(id => !retried.includes(id)) : [];
   return { reviewRound, newRoundCostConsent: isNewRound ? readRecord(input.previousRoundContext).costConsent === true : null,
+    ...(skipped.length ? { skippedReviewers: Object.fromEntries(skipped.map(id => [id, true as const])) } : {}),
     ...(comparison ? { comparisonId: comparison.id, comparison } : {}),
     ...(input.reviewInput.inlineThreshold === undefined ? {} : { inlineThreshold: input.reviewInput.inlineThreshold }) };
 }

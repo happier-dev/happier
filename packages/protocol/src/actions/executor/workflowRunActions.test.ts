@@ -376,11 +376,14 @@ describe('shared Account workflow run owner', () => {
 
   it.each(['refused', 'unresolved', 'accepted'] as const)('settles a composed Review only when its Workflow admission is definitely %s', async outcome => {
     const records = createInMemoryReviewRecordPortV1();
+    let workflowWrites = 0;
+    let nativeStarts = 0;
     let binding: ReviewRoundBindingV1 | undefined;
     const owner = createWorkflowAccountRunActionOwner({
       ...ownerDeps({ execute: async operation => {
         if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
         if (operation.operation === 'admit') {
+          workflowWrites += 1;
           if (outcome === 'unresolved') throw new Error('lost_admission_reply');
           return { kind: 'created', run: { ...runSnapshot().run, id: operation.runId } };
         }
@@ -401,6 +404,10 @@ describe('shared Account workflow run owner', () => {
         return binding;
       } }),
       workflowAction: createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, runs: owner }),
+      executionRunStart: async () => {
+        nativeStarts += 1;
+        throw new Error('Composed Review must launch through its admitted Workflow');
+      },
     });
     const selection = { reviewers: [{ kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' },
       { kind: 'engine' as const, engineId: 'agent:happier.agent.codex/codex' }], instructions: 'Review independently.', scope: 'repository' as const };
@@ -408,6 +415,8 @@ describe('shared Account workflow run owner', () => {
       externalActionTarget: { kind: 'machine', machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } });
     expect(result).toMatchObject(outcome === 'accepted' ? { ok: true }
       : { ok: false, errorCode: outcome === 'refused' ? 'target_unavailable' : 'workflow_outcome_unresolved' });
+    expect(nativeStarts).toBe(0);
+    if (outcome === 'refused') expect(workflowWrites).toBe(0);
     expect(binding).toBeDefined();
     const record = await records.read(binding!.reviewId);
     expect(record?.rounds[0]?.state).toBe(outcome === 'refused' ? 'failed' : 'running');
@@ -1253,7 +1262,7 @@ describe('shared Account workflow run owner', () => {
         requestRef: 'person-review', requester: { serverId: 'home', accountId: 'account-1' },
       } }, confirmation: { ok: true, requesterConfirmation: null } });
       const priorRunId = childRunId;
-      const replay = await executor.execute('review.new_round', { runId: priorRunId }, {
+      const replay = await executor.execute('review.new_round', { runId: priorRunId, reviewerIds: ['step-1-reviewer-1'] }, {
         surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, callerPermissionMode: 'default',
         serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'account-1', defaultSessionId: 'origin-1',
         externalActionTarget: authorization.binding.target, externalActionExecutionAuthorization: {
@@ -1269,7 +1278,7 @@ describe('shared Account workflow run owner', () => {
         binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: childRunId } });
       expect(next).toMatchObject({ kind: 'available', content: { origin: { authenticatedStarterV1: {
         requestRef: 'person-new-round', requester: { serverId: 'home', accountId: 'account-1' },
-      } } } });
+      } }, inputs: { previousRoundContext: { reviewerIds: ['step-1-reviewer-1'] } } } });
     } else {
       expect(origin).not.toHaveProperty('authenticatedStarterV1');
       expect(confirmation).toMatchObject({ ok: false, errorCode: 'approval_requester_unavailable' });
@@ -3527,6 +3536,52 @@ describe('shared Account workflow run owner', () => {
       envelope: parseWorkflowStoredContentEnvelopeV1(admitted) });
     expect(opened).toMatchObject({ kind: 'available', content: { inputs: { reviewInput,
       previousRoundContext: { costConsent: consent === true },
+    } } });
+  });
+  it('carries the reviewers a person retries into Another round', async () => {
+    if (!acceptedSnapshotResult.ok) throw new Error('snapshot_fixture_failed');
+    const rounds = { ...definition, inputs: [
+      { name: 'reviewInput', valueType: 'json' as const, required: false },
+      { name: 'previousRoundContext', valueType: 'json' as const, required: false },
+    ] };
+    const reviewInput = { scope: 'repository', instructions: 'Review.', profileId: 'paid-profile',
+      profileSourceCustody: { kind: 'development', registeredRootId: 'paid-root' },
+      acceptCharge: true, engines: { paid: { acceptCharge: true, effort: 'high' } }, reviewers: [
+      { kind: 'engine', engineId: 'paid', options: { acceptCharge: true, effort: 'high' } },
+      { kind: 'engine', engineId: 'free', profileId: 'free-profile',
+        profileSourceCustody: { kind: 'development', registeredRootId: 'free-root' }, options: { effort: 'low' } },
+    ] };
+    const accepted = WorkflowAcceptedSnapshotV1Schema.parse({ ...acceptedSnapshotResult.snapshot,
+      definition: rounds, authoredDefinition: rounds, inputs: { reviewInput } });
+    const original = { ...runSnapshot(), run: { ...runSnapshot().run, state: 'succeeded' },
+      acceptedEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+        mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId }, acceptedSnapshot: accepted,
+      })) };
+    let writes = 0;
+    let admitted = '';
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: async operation => {
+      if (operation.operation === 'get') {
+        if (operation.runId === runId) return original;
+        throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      }
+      if (operation.operation === 'invocations.list') return { invocations: [] };
+      if (operation.operation === 'admit') { writes++; admitted = String(operation.acceptedEnvelope); return { ...runSnapshot(), kind: 'created' }; }
+      throw new Error('unexpected_storage_operation');
+    } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true } }),
+    });
+    const request = { actionId: 'workflow.run.start' as const, input: WorkflowRunStartRequestV1Schema.parse({
+      runId: '22222222-2222-4222-8222-222222222222', source: { kind: 'inline', definition: rounds,
+        replay: { runId, intent: 'another_round', reviewerIds: ['step-1-reviewer-2'] } },
+    }), context: { surface: 'ui' as const, authority: 'present_user' as const, callerPermissionMode: 'default', serverId: 'home',
+      externalActionTarget: { kind: 'machine' as const, machineId: 'machine-a', project: { machineId: 'machine-a', directory: '/repo' } } } };
+    await expect(owner.execute(request)).resolves.toMatchObject({ admission: 'created' });
+    expect(writes).toBe(1);
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'account-1', runId: request.input.runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(admitted) });
+    expect(opened).toMatchObject({ kind: 'available', content: { inputs: { reviewInput,
+      previousRoundContext: { costConsent: false, reviewerIds: ['step-1-reviewer-2'] },
     } } });
   });
   it.each(['succeeded', 'cancelled'] as const)('starts Another round from a %s source with accepted inputs and durable outcomes, and rejoins the same new Run', async state => {
