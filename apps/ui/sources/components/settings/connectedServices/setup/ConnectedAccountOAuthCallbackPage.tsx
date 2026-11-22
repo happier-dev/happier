@@ -295,6 +295,8 @@ export function ConnectedAccountOAuthCallbackStateView(props: Readonly<{
         <SurfaceStateCard
           testID={testIdPrefix + ':paste'}
           kind="empty"
+          // One step is left, not nothing: the glyph names that step (copy the code back), not an empty tray.
+          iconName="clipboard"
           title={copy.pasteTitle}
           reason={copy.pasteBody}
           body={<CallbackAnswer testID={testIdPrefix + ':answer'} answer={view.answer} />}

@@ -8,6 +8,7 @@ import { describeDeploymentTargetGitCreateV1 } from '@happier-dev/protocol/plugi
 import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 
 /** A failed durable checkpoint must still expose the acknowledged resource to the initiating client. */
 export class RuntimeTargetCreationCheckpointError extends Error {
@@ -23,14 +24,18 @@ export function prepareRuntimeTargetCreateForHost(input: DeploymentTargetLinkCre
     if (!action) throw createActionExecuteFailureError({ ok: false, errorCode: 'source_unavailable', error: 'source_unavailable' });
     const operand = DeploymentTargetCreateInputV1Schema.parse({ ...input.providerCreate, v: 1,
         serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision, requestKey: input.requestKey });
-    const summary = describeDeploymentTargetGitCreateV1(target.gitSource, resolvePluginLocalizedStringV2Text(target.title), {
+    const platformName = resolvePluginLocalizedStringV2Text(target.title);
+    const source = {
         resourceName: operand.resourceName,
         ...(operand.repository ? { repository: operand.repository.repository } : {}),
         ...(operand.productionBranch ? { productionBranch: operand.productionBranch } : {}),
-    });
+    };
+    const summary = describeDeploymentTargetGitCreateV1(target.gitSource, platformName, source);
+    // The approval reads as the reviewed decision (what gets created, where, from what); provider ids stay in the input.
+    const deploymentReview = normalizeStrictJsonValue(DeploymentApprovalReviewV1Schema.parse({ ...(summary ? { summary } : {}),
+        platformCreate: { platformName, ...source, ...(summary ? { followsBranch: true } : {}) } }));
     return { children: [{ action, role: 'create', input: normalizeStrictJsonValue(operand) }],
-        ...(summary ? { approvalPreview: { summary } } : {}) };
-
+        approvalPreview: { ...(summary ? { summary } : {}), deploymentReview } };
 }
 
 /** Native acknowledgment is checkpointed by the existing encrypted operation owner before any follow-up. */

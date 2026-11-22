@@ -73,7 +73,9 @@ describe('activated Railway managed database actions', () => {
     const h = await host({ data: { template: { id: 'pg-template' }, serviceInstance: instance } });
     try {
       await expect(h.invoke('postgresql-link', { ...selection, serviceId: 'database-one' })).resolves.toMatchObject({
-        engine: 'postgresql', providerIdentity: { providerResourceId: 'database-one', providerEnvironment: 'production' },
+        // Database pages title it through the deployment template engine vocabulary (RAILWAY-VISUAL-ACCEPT D7).
+        engine: 'postgres', providerIdentity: { providerResourceId: 'database-one', providerEnvironment: 'production' },
+        providerConsole: { label: 'Open in Railway' },
       });
       expect(h.calls).toHaveLength(1);
       expect(h.calls[0]?.variables).toMatchObject({ serviceId: 'database-one', environmentId: 'production' });

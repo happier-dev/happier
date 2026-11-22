@@ -308,7 +308,9 @@ export function DeploymentDatabasePage(
   if (!database) {
     return <NavigationBackChromeProvider control={backControl}>
       <ItemList testID={`${id}.state`}>
-        <PageHeader title={selection.kind === 'managed' ? selection.link.targetLink.targetKind : databaseEngineTitle(selection.data)} />
+        <PageHeader title={selection.kind === 'managed'
+          ? selection.link.content?.data ? databaseEngineTitle(selection.link.content.data) : t('projects.deployments.services.columnDatabase')
+          : databaseEngineTitle(selection.data)} />
         {choices.kind === 'failed' ? <SurfaceStateCard testID={`${id}.failed`} kind="error"
           title={t('projects.deployments.environmentErrorTitle')} diagnosticCode={choices.code}
           action={{ label: t('common.retry'), onPress: retryTargetLink }} />
@@ -334,13 +336,15 @@ export function DeploymentDatabasePage(
       : null;
 
   const providerConsole = database.kind === 'managed' ? database.link.content.data?.providerConsole : undefined;
+  // A managed database names its platform by the target's title; its target kind is an identifier, never a name.
+  const managedPlatform = database.kind === 'managed' && database.link.targetLink.source.kind === 'plugin'
+    ? platformTitle(database.link.targetLink.source) : null;
+  const managedResource = database.kind === 'managed' ? readPlatformResourceName(database.link.content) : null;
   const title =
     database.kind === 'selfHosted'
       ? databaseEngineTitle(database.data)
       : database.link.content.data ? databaseEngineTitle(database.link.content.data)
-      : ((database.link.targetLink.source?.kind === 'plugin'
-          ? platformTitle(database.link.targetLink.source)
-          : null) ?? database.link.targetLink.targetKind);
+      : managedPlatform ?? t('projects.deployments.services.columnDatabase');
   const meta: PageHeaderMetaFact[] =
     database.kind === 'selfHosted'
       ? [
@@ -354,9 +358,11 @@ export function DeploymentDatabasePage(
               : database.data.service,
           },
         ]
-      : [{ key: 'where', text: database.link.targetLink.source.kind === 'plugin'
-          ? platformTitle(database.link.targetLink.source) ?? database.link.targetLink.targetKind
-          : database.link.targetLink.targetKind }];
+      // Where it lives, as the header's identity fact ("Railway · orders-service"): the platform, then its resource.
+      : [
+          ...(managedPlatform ? [{ key: 'where', text: managedPlatform }] : []),
+          ...(managedResource ? [{ key: 'resource', text: managedResource }] : []),
+        ];
 
 
   const runBackup = backupOperations.run;
@@ -672,16 +678,9 @@ export function DeploymentDatabasePage(
                 onPress={() => props.controller && requestOpenExternalUrl(providerConsole.url, { serverId: props.controller.scope.serverId, expectedAccountId: props.controller.scope.accountId })} /> : null}
               {openManaged ? <Item testID={`${id}.manage`} title={t('projects.deployments.managedData.manage')}
                 onPress={openManaged} /> : null}
-              <Item
-                title={database.link.targetLink.source.kind === 'plugin'
-                  ? platformTitle(database.link.targetLink.source) ?? database.link.targetLink.targetKind
-                  : database.link.targetLink.targetKind}
-                subtitle={database.link.content.providerIdentity?.providerResourceId}
-                mode="info"
-              />
               {/* Removal comes last in the provider section: Unlink is the safe choice, deletion is typed. */}
               {openRemoval ? <Item testID={`${id}.remove`} title={t('projects.deployments.platformLink.removalTitle',
-                { resource: readPlatformResourceName(database.link.content) ?? database.link.targetLink.targetKind })}
+                { resource: managedResource ?? title })}
                 onPress={openRemoval} /> : null}
             </ItemGroup>
           ) : null}

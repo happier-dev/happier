@@ -338,10 +338,10 @@ const SPECIMEN_DOMAINS = [
  * `team` (a Team Environment) or `railway-domains` (Railway staging with its addresses, receipt and variables).
  * `railway-database` also links a database to the same Railway environment.
  */
-function tabFixtures(tabs: string, environmentId: string) {
+function tabFixtures(tabs: string, environmentId: string, runtimeTargetLinkId: string) {
   const never = new Promise<never>(() => {});
   const domainItem = (domain: (typeof SPECIMEN_DOMAINS)[number]) => ({
-    domain: { v: 1 as const, id: `domain-${domain.id}`, environmentId, targetLinkId: 'target-a', revision: 1, state: domain.state,
+    domain: { v: 1 as const, id: `domain-${domain.id}`, environmentId, targetLinkId: runtimeTargetLinkId, revision: 1, state: domain.state,
       contentArtifactId: `domain-content-${domain.id}`, contentHeaderVersion: 1, contentBodyVersion: 1,
       createdByAccountId: ACCOUNT, createdAtMs: SPECIMEN_NOW - 48 * HOUR, updatedAtMs: SPECIMEN_NOW - HOUR },
     title: domain.hostname,
@@ -470,7 +470,8 @@ function transportFor(
   const baseHeader = createDeploymentEnvironmentHeaderV1({
     updatedAtMs: SPECIMEN_NOW - 0.4 * HOUR,
   });
-  const fixtures = tabFixtures(tabs, baseHeader.id);
+  // Addresses attach to the Environment's runtime link, so the serving one reads as serving, not Unattached.
+  const fixtures = tabFixtures(tabs, baseHeader.id, base.targetLinks[0]!.targetLink.id);
   // `?telemetry=populated|offline`: the Environment keeps telemetry on a Machine of the Account (lab p7Flows-mark).
   const ownedHeader = fixtures.owner ? { ...baseHeader, owner: fixtures.owner } : baseHeader;
   // An Account without Machines keeps it on the specimen's fixture collector.
@@ -510,7 +511,7 @@ function transportFor(
         providerEnvironment: { kind: 'native' as const, selection: RAILWAY_DATA_SELECTION },
         credentialPrincipal: { ...RAILWAY_LINK.credentialPrincipal,
           purpose: { consumer: { pluginId: RAILWAY_DATA_TARGET.pluginId, localId: 'postgresql-link' }, purpose: 'cloud-api' } },
-        data: { engine: 'postgresql', providerConsole: { label: 'Railway',
+        data: { engine: 'postgres', providerConsole: { label: 'Open in Railway',
           url: 'https://railway.com/project/shop-project/service/orders-service?environmentId=shop-staging' } },
       },
     }],
@@ -741,7 +742,7 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
     providerResource: { name: 'acme-docs', consequence: null, defaultChoice: 'unlink' } },
   railway: { subject: { kind: 'target', targetLinkId: 'link-railway' }, name: 'Staging', machine: null, provider: 'Railway',
     running: true, hasRetainedAssociations: true, canRemove: true,
-    providerResource: { name: 'backend', consequence: 'Delete this Railway service from the selected environment?',
+    providerResource: { name: 'backend', consequence: 'Delete this Railway service and its deployments?',
       defaultChoice: 'unlink' } },
   // A managed database project, from the Database page: the provider's own delete words, Environment kept.
   'data-created': { subject: { kind: 'target', targetLinkId: 'link-neon' }, name: 'Production', machine: null, provider: 'Neon',
@@ -753,7 +754,7 @@ const SPECIMEN_REMOVALS: Readonly<Record<string, Omit<DeploymentDispositionSheet
       defaultChoice: 'unlink' , role: 'data' } },
   'railway-database': { subject: { kind: 'target', targetLinkId: RAILWAY_DATA_LINK_ID }, name: 'Staging', machine: null,
     provider: 'Railway PostgreSQL', running: false, hasRetainedAssociations: true, canRemove: true,
-    providerResource: { name: 'Orders', consequence: 'Delete the selected Railway database service?', defaultChoice: 'unlink', role: 'data' } },
+    providerResource: { name: 'Orders', consequence: 'Delete this Railway database and its data?', defaultChoice: 'unlink', role: 'data' } },
   machine: { subject: { kind: 'target', targetLinkId: 'link-machine' }, name: 'Production', machine: 'vps-fra-1',
     running: true, services: ['web', 'worker', 'postgres'], hasRetainedAssociations: true, canRemove: true },
 };
@@ -787,11 +788,11 @@ export function DeploymentsSpecimen(
     return (match ?? [...named].sort((a, b) => b.name.length - a.name.length)[0])?.id ?? null;
   });
   const preview = React.useMemo(() => createSpecimenPreview(props.preview), [props.preview]);
-  const railway = railwayTabs(props.tabs);
   const actions = React.useMemo(() => ({ ...specimenActions(props.deploy ?? 'unsupported', props.restore, props.tabs),
     ...(preview ? specimenPreviewActions(preview) : {}) }), [props.deploy, props.restore, props.tabs, preview]);
-  // Preview and platform specimens use the signed-in Account's installed deployment-target declarations.
-  const { binding } = useServerCredentialAccountScopeBinding(preview || railway ? getActiveServerId() : null);
+  // Preview specimens use the signed-in Account's installed deployment-target declarations; the Railway tabs keep the
+  // specimen's own current Account, like every sibling, so the fixture source stays theirs.
+  const { binding } = useServerCredentialAccountScopeBinding(preview ? getActiveServerId() : null);
   const cancellable = props.cancellable === 'true' ? true : props.cancellable === 'false' ? false : undefined;
   const receiptState = (
     [
@@ -839,7 +840,7 @@ export function DeploymentsSpecimen(
       demand={SHOWN}
       accountId={ACCOUNT}
       serverId="home"
-      lifetime={props.state === 'reader' ? null : preview || railway ? binding : SPECIMEN_LIFETIME as never}
+      lifetime={props.state === 'reader' ? null : preview ? binding : SPECIMEN_LIFETIME as never}
       sourceId="source-app"
     />
   );

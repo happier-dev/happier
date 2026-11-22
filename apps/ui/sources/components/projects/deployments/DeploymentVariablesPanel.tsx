@@ -165,6 +165,9 @@ export const DeploymentVariablesPanel = React.memo(
     const railwayChoices = React.useMemo(() => props.lifetime ? railwayDatabaseReferenceChoices(railwayDetail) : [],
       [props.lifetime, railwayDetail]);
     const providerByKey = React.useMemo(() => new Map(provider.value?.variables.map(row => [row.key, row]) ?? []), [provider.value]);
+    // The provider column holds its place while the read is pending; a read that failed says so once, in its notice,
+    // instead of a column of dashes.
+    const providerColumn = Boolean(props.providerTargetLinkId) && !(provider.failure && !provider.value);
     const [providerSaveState, setProviderSave] = React.useState<Readonly<{ lifetime: typeof props.lifetime; environmentId: string; result: ProviderSaveResult }> | null>(null);
     const providerSave = providerSaveState?.lifetime === props.lifetime && providerSaveState.environmentId === props.environmentId
       ? providerSaveState.result : null;
@@ -329,12 +332,13 @@ export const DeploymentVariablesPanel = React.memo(
                   minWidth: 240,
                   priority: 4,
                 },
-                ...(props.providerTargetLinkId ? [{
+                ...(providerColumn ? [{
                   key: 'provider', title: t('projects.deployments.providerVariablesColumn'),
                   render: (row: VariableRow) => providerByKey.has(row.name) ? <ProviderVariableStatus fact={providerByKey.get(row.name)!}
                     choice={draft.providerChoices.get(row.name)} editable={editable}
                     onChoose={choice => draft.chooseProviderVariable(row.name, choice)} /> : null,
-                  minWidth: 180, priority: 6, control: true,
+                  // What the provider holds compares against Value from, so Value from keeps its column first.
+                  minWidth: 180, priority: 3, control: true,
                 }] : []),
                 {
                   key: 'menu',
@@ -358,7 +362,7 @@ export const DeploymentVariablesPanel = React.memo(
       providerByKey,
       draft.providerChoices,
       draft.chooseProviderVariable,
-      props.providerTargetLinkId,
+      providerColumn,
       props.environmentName,
       secretName,
       remove,

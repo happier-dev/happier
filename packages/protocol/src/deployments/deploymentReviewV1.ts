@@ -180,7 +180,20 @@ export const DeploymentApprovalReviewV1Schema = z.union([
     platformPromotion: z.strictObject(platformReview),
     providerReview: StrictJsonValueSchema,
   }),
+  /** A reviewed provider create: what the new resource is called and what it builds. Provider ids stay in the input. */
+  z.strictObject({
+    summary: z.optional(z.string()),
+    platformCreate: z.strictObject({
+      platformName: z.string(),
+      resourceName: z.string(),
+      repository: z.optional(z.string()),
+      productionBranch: z.optional(z.string()),
+      /** The provider builds the branch's latest commit and redeploys when it moves. */
+      followsBranch: z.optional(z.literal(true)),
+    }),
+  }),
 ]);
+export type DeploymentPlatformCreateReviewV1 = Extract<DeploymentApprovalReviewV1, { platformCreate: unknown }>['platformCreate'];
 export type DeploymentApprovalReviewV1 = z.infer<
   typeof DeploymentApprovalReviewV1Schema
 >;

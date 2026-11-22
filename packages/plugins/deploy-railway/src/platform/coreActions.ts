@@ -291,7 +291,7 @@ export const coreActions: Readonly<Record<
     inputSchema: railwayRoleInput(inputs.cancel.jsonSchema), resultSchema: output.jsonSchema,
     run: (value: JsonValue, context: PluginAccountActionContext) => cancel(value as unknown as DeploymentTargetCancelInputV1, context) },
   teardown: { ...railwayAccountAction, title: 'Remove the selected Railway service', dangerLevel: 'writesRemote', readOnly: false,
-    confirmation: { title: 'Remove this Railway service from the selected environment?' },
+    confirmation: { title: 'Delete this Railway service and its deployments?' },
     inputSchema: railwayRoleInput(inputs.teardown.jsonSchema), resultSchema: output.jsonSchema,
     run: (value: JsonValue, context: PluginAccountActionContext) => removeServiceInstance(value as unknown as DeploymentTargetObserveInputV1, context, false) },
 };

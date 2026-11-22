@@ -363,6 +363,11 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       technicalInputPaths: ['requestKey', 'targetLinkId', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion',
         ...(id === deploymentActionIds.DEPLOYMENT_ROLLBACK_ACTION_ID_V1 ? ['deploymentId', 'restoreBackupId'] : []),
         ...(id === deploymentActionIds.DEPLOYMENT_PROMOTE_ACTION_ID_V1 ? ['destinationContent'] : [])] } } : {}),
+    // A link names its Home; the Environment, target declaration, provider operands and pinned content only route
+    // the request. A create reads through the host's review, an association through its summary.
+    ...(isDeploymentTargetLinkActionIdV1(id) ? { approvalPresentation: {
+      technicalInputPaths: ['environmentId', 'expectedRevision', 'requestKey', 'targetId', 'role', 'source', 'targetKind',
+        'machines', 'contentArtifactId', 'contentHeaderVersion', 'contentBodyVersion'] } } : {}),
     // A restore is approved by its consequence; every id only correlates the request with the Environment, the
     // capture receipt and the prepared operation, so they read under Technical details. The Machine stays named.
     ...(id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 ? { approvalPresentation: {

@@ -13,7 +13,7 @@ function versionLabel(revision: DeploymentReviewRevisionV1): string {
 
 function describeRollbackReview(preview: unknown): string | undefined {
   const parsed = DeploymentApprovalReviewV1Schema.safeParse(readRecord(preview).deploymentReview);
-  if (!parsed.success) return;
+  if (!parsed.success || 'platformCreate' in parsed.data) return;
   const review = 'platformRollback' in parsed.data ? parsed.data.platformRollback
     : 'deployment' in parsed.data ? parsed.data.deployment : parsed.data;
   const data = 'platformName' in review ? review.data : review.rollbackData;

@@ -2,9 +2,10 @@ import * as React from 'react';
 import { DEPLOYMENT_ROLLBACK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { deploymentRevisionLabelV1 as deploymentRevisionLabel } from '@happier-dev/deployments';
 import { formatHappierDataBytes, joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
+import { DeploymentApprovalReviewV1Schema, type DeploymentApprovalReviewV1, type DeploymentFolderReviewRevisionV1, type DeploymentPlatformCreateReviewV1, type DeploymentMachineReviewV1, type DeploymentReviewRevisionV1, type DeploymentReviewRiskKindV1, type DeploymentReviewServiceV1, type DeploymentReviewV1 } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loopbackHostname';
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -18,30 +19,26 @@ type PlatformReview =
   | Extract<DeploymentApprovalReviewV1, { platformPromotion: unknown }>['platformPromotion'];
 
 export type DeploymentReviewApproval = Readonly<{
-  review: DeploymentReviewV1 | PlatformReview;
+  review: DeploymentReviewV1 | PlatformReview | DeploymentPlatformCreateReviewV1;
   /** A promotion wraps the destination's deploy review with the Compose document change it applies. */
   promotion: Readonly<{ composeChanges?: boolean; sourceRevision?: DeploymentReviewRevisionV1 }> | null;
 }>;
 
 /**
- * The reviewed effect the installed host attached to a deploy, rollback or promotion approval. It reads
- * through the Deployment Protocol schema; anything else (another Action's preview, an older host) is
- * simply not a deploy review and the page keeps its generic reading.
+ * The reviewed effect the installed host attached to a deploy, rollback, promotion or provider create approval. It
+ * reads through the Deployment Protocol schema, from the deploy preparation's `deploymentReview` or, for an Action
+ * whose host-reviewed children carry it (a provider create), from that host content; anything else (another Action's
+ * preview, an older host) is simply not a deploy review and the page keeps its generic reading.
  */
 export function readDeploymentReviewApproval(
   approval: Pick<ApprovalRequest, 'preview'>,
 ): DeploymentReviewApproval | null {
-  const preview = approval.preview;
-  if (
-    typeof preview !== 'object' ||
-    preview === null ||
-    !('deploymentReview' in preview)
-  )
-    return null;
-  const parsed = DeploymentApprovalReviewV1Schema.safeParse(
-    preview.deploymentReview,
-  );
+  const preview = readRecord(approval.preview);
+  const carried = preview.deploymentReview ?? readRecord(preview.hostReviewedContent).deploymentReview;
+  if (carried === undefined) return null;
+  const parsed = DeploymentApprovalReviewV1Schema.safeParse(carried);
   if (!parsed.success) return null;
+  if ('platformCreate' in parsed.data) return { review: parsed.data.platformCreate, promotion: null };
   if ('platformRollback' in parsed.data) return { review: parsed.data.platformRollback, promotion: null };
   if ('platformPromotion' in parsed.data) return { review: parsed.data.platformPromotion, promotion: {} };
   return 'deployment' in parsed.data
@@ -123,6 +120,25 @@ function readMachines(review: DeploymentReviewApproval['review']): readonly Revi
 
 function readRollbackData(review: DeploymentReviewApproval['review']): 'keep' | 'restoreBackup' | undefined {
   return 'platformName' in review ? ('data' in review ? review.data : undefined) : review.rollbackData;
+}
+
+/** A provider create has no version or Environment of its own yet: it reads as the resource it makes. */
+function isPlatformCreate(review: DeploymentReviewApproval['review']): review is DeploymentPlatformCreateReviewV1 {
+  return 'resourceName' in review;
+}
+
+/** What a provider create makes, where, and what it builds from. */
+function describeCreateFields(create: DeploymentPlatformCreateReviewV1): ApprovalFieldsPresentation {
+  const source = joinHappierFacts(create.repository ?? null, create.productionBranch ?? null) || null;
+  return { rows: [
+    ...field('create.where', t('projects.deployments.review.whereTitle'), create.platformName),
+    ...field('create.name', t('projects.deployments.review.createName'), create.resourceName),
+    ...field('create.source', t('projects.deployments.review.createSource'), source, {
+      note: create.followsBranch && create.productionBranch
+        ? t('projects.deployments.review.createFollowsBranch', { platform: create.platformName, branch: create.productionBranch })
+        : undefined,
+    }),
+  ], unrepresentable: null };
 }
 
 // One name for a deployed version on every surface (PAGE-ACCEPT-176 R12-D4): its short id, as the Receipt, History and
@@ -236,6 +252,7 @@ function describeReviewFields(
   names: MachineNames,
 ): ApprovalFieldsPresentation {
   const { review, promotion } = approval;
+  if (isPlatformCreate(review)) return describeCreateFields(review);
   const { environment, revision } = review;
   const reviewedVersion = promotion?.sourceRevision ?? revision;
   const replaces = 'replaces' in review ? review.replaces : undefined;
@@ -310,7 +327,8 @@ function describeReviewFields(
         ? t('projects.deployments.review.restoresPrevious') : t('projects.deployments.review.staysDown')),
     ] : []),
     // The rollout choice the person made before requesting; reviewed as captured, changed only by asking again.
-    ...field('onFailure', t('projects.deployments.receipt.policy'), onFailure
+    // What happens when one Machine of several fails: a fleet choice, said only where there is a fleet (R12-D4).
+    ...field('onFailure', t('projects.deployments.receipt.policy'), onFailure && multiple
       ? t(`projects.deployments.receipt.${onFailure}`) : null),
   ];
   return { rows, unrepresentable: null };
@@ -337,7 +355,13 @@ export function describeDeploymentReviewDecision(
   machine: string | null,
 ): DeploymentReviewDecision | null {
   if (!approval) return null;
-  const { revision, environment } = approval.review;
+  const { review } = approval;
+  if (isPlatformCreate(review)) return {
+    title: t('projects.deployments.review.decisionCreate', { name: review.resourceName, platform: review.platformName }),
+    description: t('projects.deployments.review.consequence'),
+    approve: t('projects.deployments.review.approveCreate', { name: review.resourceName }),
+  };
+  const { revision, environment } = review;
   if (!revision || !environment) return null;
   const vars = { version: revisionText(approval.promotion?.sourceRevision ?? revision), environment: environment.name };
   const rollback = actionId === DEPLOYMENT_ROLLBACK_ACTION_ID_V1;
@@ -433,13 +457,14 @@ export const DeploymentReviewApprovalFacts = React.memo(
     }>,
   ) {
     const machines = React.useMemo(() => readMachines(props.approval.review), [props.approval.review]);
+    const environment = 'environment' in props.approval.review ? props.approval.review.environment : undefined;
     const ids = React.useMemo(() => {
-      const ingress = props.approval.review.environment?.ingress;
+      const ingress = environment?.ingress;
       return [...new Set([
         ...machines.flatMap((machine) => (machine.id ? [machine.id] : [])),
         ...(ingress?.kind === 'edgeCaddy' ? [ingress.edgeMachineId] : []),
       ])];
-    }, [machines, props.approval.review.environment?.ingress]);
+    }, [machines, environment?.ingress]);
     return (
       <NamedMachines serverId={props.serverId} ids={ids}>
         {(names) => (
@@ -467,8 +492,9 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   return (
     <>
       <ActionApprovalFieldsCard presentation={presentation} anatomy="page" serverId={props.serverId}
-        title={t(readRollbackData(props.approval.review)
-          ? 'projects.deployments.review.rollbackWhatChanges' : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
+        title={t(isPlatformCreate(props.approval.review) ? 'projects.deployments.review.createWhatTitle'
+          : readRollbackData(props.approval.review) ? 'projects.deployments.review.rollbackWhatChanges'
+            : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
       {props.machines.map((machine, index) => (
         <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple} decided={props.decided}
           name={machine.id ? props.names[machine.id] ?? null : null}

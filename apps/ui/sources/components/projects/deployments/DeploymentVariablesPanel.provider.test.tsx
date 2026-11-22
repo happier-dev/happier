@@ -207,3 +207,37 @@ it('adds a scoped Railway database reference to the reviewed Variables draft', a
         source: { kind: 'value', value: reference } }], remove: [] })]));
   } finally { await screen.unmount(); await installed.dispose(); context.dispose(); }
 });
+
+it('draws no At provider column when the provider read failed, only the retryable notice (RAILWAY-VISUAL-ACCEPT D3)', async () => {
+  const serverId = await homes.addHome({ name: 'Failed Provider Read', serverUrl: 'https://variables-provider-failed.test',
+    serverIdentityId: `srv_${'b'.repeat(32)}`, accountId: 'owner', currentAccount: true });
+  const base = createDeploymentEnvironmentDetailV1();
+  const detail = { ...base, environment: { ...base.environment, serverId }, content: { ...base.content,
+    bindings: [{ purpose: 'variable' as const, name: 'MODE', phase: 'runtime' as const, source: { kind: 'value' as const, value: 'production' } }] } };
+  const targetLink = detail.targetLinks[0]!.targetLink;
+  const lifetime = { scope: { serverId, accountId: 'owner' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+  homes.answer(serverId, `GET /v1/deployments/environments/${detail.environment.id}`, {
+    body: { ok: true, environment: detail.environment, targetLinks: [targetLink] } });
+  await answerExternalActionAccountForHome(homes, serverId, { actionId: 'deployments.observation.get',
+    machineId: detail.environment.controllerMachineId, tokenEpoch: 0,
+    failure: () => ({ errorCode: 'provider_unavailable', error: 'provider_unavailable' }),
+    execute: () => { throw new Error('The failed read has no result'); } });
+  const actions = createDeploymentActions(lifetime, detail.environment.projectSourceId);
+  function Page() {
+    const draft = useEnvironmentSecretBindingsDraft({ environmentId: detail.environment.id, lifetime,
+      snapshot: { status: 'ready', value: detail, failure: null }, setBindings: actions.setBindings });
+    return <DeploymentVariablesPanel draft={draft} phone={false} environmentName={() => null} sealedOn={null}
+      review={{ pendingId: null, request() {}, open() {} }} environmentId={detail.environment.id}
+      projectSourceId={detail.environment.projectSourceId} providerTargetLinkId={targetLink.id} providerVariablesActive
+      scope={lifetime.scope} lifetime={lifetime} />;
+  }
+  const screen = await renderScreen(<ListPresentationProvider value="page"><Page /></ListPresentationProvider>, {
+    createNodeMock: () => ({ offsetTop: 0, offsetHeight: 44, scrollTo() {}, getBoundingClientRect: () => new DOMRect(0, 0, 1200, 44) }),
+  });
+  await measureMountedCollections(screen);
+  await vi.waitFor(() => expect(screen.findByTestId('project-deployments.environment.variables.provider.unavailable')).not.toBeNull());
+  await measureMountedCollections(screen);
+  const text = screen.getTextContent();
+  expect(text).toContain('Value from');
+  expect(text).not.toContain('At provider');
+});

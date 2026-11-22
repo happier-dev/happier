@@ -45,6 +45,31 @@ const machineReview = {
 };
 
 describe('DeploymentReviewApprovalFacts', () => {
+  it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {
+    const preview = { actionId: 'deployments.targets.link', hostReviewedContent: { summary: 'Create service checkout-api.',
+      deploymentReview: { summary: 'Create service checkout-api.', platformCreate: { platformName: 'Railway', resourceName: 'checkout-api',
+        repository: 'acme/checkout', productionBranch: 'release', followsBranch: true } } } };
+    const approval = readDeploymentReviewApproval({ preview });
+    if (!approval) throw new Error('Expected a typed create review');
+    expect(describeDeploymentReviewDecision(approval, 'deployments.targets.link', null)).toEqual({
+      title: 'projects.deployments.review.decisionCreate', description: 'projects.deployments.review.consequence',
+      approve: 'projects.deployments.review.approveCreate',
+    });
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="create-facts" />,
+    );
+    const text = screen.getTextContent();
+    expect(text).toContain('projects.deployments.review.createWhatTitle');
+    expect(text).toContain('Railway');
+    expect(text).toContain('checkout-api');
+    expect(text).toContain('acme/checkout');
+    expect(text).toContain('projects.deployments.review.createFollowsBranch');
+    // A create without a branch to follow (an uploaded Vercel project) still reads as its own decision.
+    const upload = readDeploymentReviewApproval({ preview: { hostReviewedContent: { deploymentReview: {
+      platformCreate: { platformName: 'Vercel', resourceName: 'upload-app' } } } } });
+    expect(describeDeploymentReviewDecision(upload, 'deployments.targets.link', null)?.approve).toBe('projects.deployments.review.approveCreate');
+  });
+
   it('shows the reviewed folder count, size and excluded paths before confirmation', async () => {
     const deploymentReview = { ...machineReview, revision: { kind: 'folder',
       manifestFingerprint: `sha256:${'a'.repeat(64)}`, fileCount: 4, totalBytes: 2_000_000,
@@ -196,12 +221,23 @@ describe('DeploymentReviewApprovalFacts', () => {
   });
 
   it('shows the selected deployment failure policy independently of migration recovery', async () => {
+    const fleet = [{ machineId: 'machine-a', review: machineReview }, { machineId: 'machine-b', review: machineReview }];
     const screen = await renderScreen(
-      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'keepPartial',
-        ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } }, promotion: null }}
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'keepPartial', runtimeMachines: fleet,
+        ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } }, promotion: null } as never}
         serverId={getActiveServerSnapshot().serverId} testID="facts" />,
     );
     expect(screen.getTextContent()).toContain('projects.deployments.receipt.keepPartial');
+  });
+
+  // PAGE-ACCEPT-176 R12-D4: "If a Machine fails" is a fleet choice; a one-Machine Environment has no other Machine.
+  it('omits the fleet failure policy for a one-Machine deploy', async () => {
+    const screen = await renderScreen(
+      <DeploymentReviewApprovalFacts approval={{ review: { ...machineReview, onFailure: 'rollbackAll',
+        ownServer: { rollout: 'recreate', autoRestorePreviousRelease: true } }, promotion: null }}
+        serverId={getActiveServerSnapshot().serverId} testID="facts" />,
+    );
+    expect(screen.getTextContent()).not.toContain('projects.deployments.receipt.policy');
   });
 
   it('does not redraw the approval page when only the Machine presence changes', async () => {

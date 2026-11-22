@@ -73,6 +73,8 @@ it('retains a real Vercel Create choice through protected storage and omitted-me
     try {
         const target = readDeploymentTargetV1(source, mounted.registry.contributes.deploymentTargets);
         const plan = prepareRuntimeTargetCreateForHost(request, target);
+        // Every provider's create reads as the same decision: the new resource and its platform, never provider ids.
+        expect(plan.approvalPreview).toEqual({ deploymentReview: { platformCreate: { platformName: 'Vercel', resourceName: 'upload-app' } } });
         const operations = createHostActionOperationRuntime({ machineId: 'machine-a', serverId: 'home', resolveAccountId: async () => 'owner' });
         const result = await operations.runActionOperation({ actionId: 'deployments.targets.link', input: request,
             context: { actionRequestId: 'create-upload', hostReviewedChild: createHostReviewedChildPortV1({
@@ -254,5 +256,7 @@ it('reviews Railway Create as branch HEAD through the admitted target catalog', 
         expect(review.approvalPreview?.summary).toBe(
             'Create service backend from acme/backend on branch release. Railway builds the latest commit on that branch and redeploys when it changes.',
         );
+        expect(review.approvalPreview?.deploymentReview).toEqual({ summary: review.approvalPreview?.summary, platformCreate: {
+            platformName: 'Railway', resourceName: 'backend', repository: 'acme/backend', productionBranch: 'release', followsBranch: true } });
     } finally { await mounted.dispose(); }
 });

@@ -139,18 +139,20 @@ export function DeploymentDomainsList<Item extends DomainRowItem>(props: Readonl
   const routed = props.items.some(item => item.content.target.kind !== 'provider');
   const anatomy = React.useMemo<CollectionAnatomy<Item | BuiltInAddressRow>>(() => ({
     glyph: () => <Icon name="globe" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
-    // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole.
+    // The host is an identifier (lab envDom): one mono line ending in an ellipsis; the label keeps it whole. An address
+    // the provider has yet to assign is a sentence, not a host, so it keeps the body face.
     title: (item) => isBuiltInAddress(item) ? item.hostname : item.content.hostname ?? t('projects.deployments.providerDomainPending'),
-    titleIdentifier: true,
-    byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline />
+    titleIdentifier: (item) => isBuiltInAddress(item) || item.content.hostname !== null,
+    byline: (item, layout) => isBuiltInAddress(item) ? <BuiltInAddressByline columns={layout?.fieldColumns === true} />
       : domainBylineShown(item, context, layout?.fieldColumns === true)
         ? <DomainByline item={item} context={context} columns={layout?.fieldColumns === true} environment={environmentTitle?.(item) ?? null} />
         : null,
     // The recovery an address needs stands beside it, not only in ⋯ (DEPLOY-REACCEPT-1113): it ends the byline.
     titleControls: (item) => isBuiltInAddress(item) || (item as DomainRowWithControls).domainRowControls === false ? null
       : <DomainRowControls item={item} context={context} />,
-    // A phone folds the columns; the state and ⋯ keep the row's end.
-    titleMeta: (item) => isBuiltInAddress(item) ? <BuiltInAddressEnd row={item} context={context} /> : <DomainRowEnd item={item} context={context} />,
+    // A phone folds the columns: the host keeps line 1 beside only its ⋯, and the state leads line 2, which wraps
+    // whole so a record to copy is never cut (Phones recompose).
+    titleMeta: (item) => isBuiltInAddress(item) ? <BuiltInAddressMenuSlot context={context} /> : <DomainRowMenu item={item} context={context} />,
     titleMetaAlign: 'row',
     // The facts keep tight columns so the host keeps most of the row (lab envDom: Domain about 45%).
     fields: [
@@ -300,19 +302,26 @@ function DomainStateCell(props: Readonly<{ item: DomainRowItem; context: DomainR
 }
 
 /** A built-in address says what it is; the platform keeps it, so there is nothing to check, change or remove. */
-function BuiltInAddressByline() {
+function BuiltInAddressByline(props: Readonly<{ columns: boolean }>) {
   const { theme } = useUnistyles();
+  const builtIn = t('projects.deployments.editors.domainBuiltIn');
   return <Text variant="meta" numberOfLines={1} style={{ color: theme.colors.text.secondary }}>
-    {t('projects.deployments.editors.domainBuiltIn')}
+    {props.columns ? builtIn : <>
+      <StatusWord variant="neutral" label={t('projects.deployments.editors.domainServing')} />{` · ${builtIn}`}</>}
   </Text>;
 }
 
-/** Serving, quietly, like a settled address of ours; no ⋯, but its place is kept so the state column lines up. */
+/** No ⋯ on a built-in address, but its place is kept so every row's end lines up. */
+function BuiltInAddressMenuSlot(props: Readonly<{ context: DomainRowContext }>) {
+  return rowMenusShown(props.context) ? <View style={styles.menuSlot} /> : null;
+}
+
+/** Serving, quietly, like a settled address of ours; then the row's ⋯ place, so the state column lines up. */
 function BuiltInAddressEnd(props: Readonly<{ row: BuiltInAddressRow; context: DomainRowContext }>) {
   return <View style={styles.rowEnd}>
     <Status tone="secondary" label={t('projects.deployments.editors.domainServing')} presentation="inline" indicator={false}
       testID={`project-deployments.environment.domains.builtIn.${props.row.hostname}.state`} />
-    {rowMenusShown(props.context) ? <View style={styles.menuSlot} /> : null}
+    <BuiltInAddressMenuSlot context={props.context} />
   </View>;
 }
 
@@ -393,9 +402,13 @@ function domainBylineShown(item: DomainItem, context: DomainRowContext, columns:
  * The row's second line: the record to add while DNS is missing, or what sets the address apart (a redirect, a
  * password), then the Machines it leads to. A phone has no Reaches column, so a row with nothing else says its route.
  */
-function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowContext; columns: boolean; environment: string | null }>) {
+function DomainByline(props: Readonly<{ item: DomainRowItem; context: DomainRowContext; columns: boolean; environment: string | null }>) {
   const { theme } = useUnistyles();
   const { item, context } = props;
+  // A phone has no State column: the state word leads the line, in the one wrapping run (DomainStateLine's anatomy).
+  const { attention, state } = useDomainRowFacts(item, context);
+  const stateWord = props.columns ? null : attention ? { variant: attention.variant, label: attention.label }
+    : state === 'active' ? { variant: 'neutral' as const, label: t('projects.deployments.editors.domainServing') } : null;
   const { content } = item;
   // Where the address leads, by Machine name, unless it is only the Machine the page already names; raw ids stay out.
   const routedMachineIds = React.useMemo(() => domainRouteMachineIds(item.domain.routedReplicas?.replicas, context.ownMachineId),
@@ -408,9 +421,17 @@ function DomainByline(props: Readonly<{ item: DomainItem; context: DomainRowCont
   // A phone has no Environment column: the line names it first.
   const parts = [props.columns ? null : props.environment, lead, routedOn].filter(Boolean);
   const line = parts.length > 0 ? parts.join(' · ') : props.columns ? null : domainRoute(content);
-  if (!line) return null;
-  return <Text variant="meta" numberOfLines={2} selectable={records.length > 0} style={{ color: theme.colors.text.secondary }}
-    testID={`project-deployments.environment.domains.${item.domain.id}.line`}>{line}</Text>;
+  if (!line && !stateWord) return null;
+  // A record to add is copied character by character: it wraps whole instead of ending in an ellipsis.
+  return <Text variant="meta" {...(records.length > 0 ? {} : { numberOfLines: 2 })} selectable={records.length > 0}
+    style={{ color: theme.colors.text.secondary }}
+    testID={`project-deployments.environment.domains.${item.domain.id}.line`}>
+    {stateWord ? <>
+      <StatusWord variant={stateWord.variant} label={stateWord.label}
+        testID={`project-deployments.environment.domains.${item.domain.id}.state`} />
+      {line ? ` · ${line}` : null}
+    </> : line}
+  </Text>;
 }
 
 /** Check again beside an address that needs the person, then its investigation and a failed change's details. */

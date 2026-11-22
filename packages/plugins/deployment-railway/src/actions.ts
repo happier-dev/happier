@@ -28,7 +28,7 @@ const provisionResult = { anyOf: [closed({ ...scope, status: status('adoption_re
   closed({ ...scope, status: status('outcome_unknown') })] } satisfies PluginJsonSchema;
 const nativeEnvironment = closed({ kind: status('native'), selection: exactSelectionSchema });
 const providerIdentity = closed({ providerAccountId: text, providerResourceId: text, providerEnvironment: text });
-const linkResult = closed({ serviceName: text, engine: status('postgresql', 'mysql'),
+const linkResult = closed({ serviceName: text, engine: status('postgres', 'mysql'),
   providerIdentity, providerEnvironment: nativeEnvironment,
   providerConsole: closed({ label: text, url: text }),
 });
@@ -71,7 +71,7 @@ function removalAction(observeOnly: boolean): AccountAction {
   const role = observeOnly ? 'projects.observe' : 'projects.delete';
   return {
     ...common, title, readOnly: observeOnly, dangerLevel: observeOnly ? 'safe' as const : 'destructive' as const,
-    ...(!observeOnly ? { confirmation: { title } } : {}),
+    ...(!observeOnly ? { confirmation: { title: 'Delete this Railway database and its data?' } } : {}),
     inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema),
     resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
     run: async (input: JsonValue, context: PluginAccountActionContext) => {
@@ -111,11 +111,12 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
       const project = encodeURIComponent(input.projectId);
       const serviceId = encodeURIComponent(service.id);
       const environment = encodeURIComponent(input.railwayEnvironmentId);
-      return { engine, serviceName: service.name, providerIdentity: { providerAccountId: input.projectId,
+      // The data presentation speaks the deployment template's engine vocabulary, as every database page reads it.
+      return { engine: engines[engine].template, serviceName: service.name, providerIdentity: { providerAccountId: input.projectId,
         providerResourceId: service.id, providerEnvironment: input.railwayEnvironmentId },
       providerEnvironment: { kind: 'native', selection: { projectId: input.projectId,
         environmentId: input.railwayEnvironmentId, serviceId: service.id } },
-      providerConsole: { label: 'Railway', url: `https://railway.com/project/${project}/service/${serviceId}?environmentId=${environment}` } };
+      providerConsole: { label: 'Open in Railway', url: `https://railway.com/project/${project}/service/${serviceId}?environmentId=${environment}` } };
     }, { fields }),
     [ids.reference]: action<Scope & { runtimeProviderIdentity: NonNullable<Scope['providerIdentity']>;
       runtimeProviderEnvironment: Scope['providerEnvironment'] }>(
