@@ -274,8 +274,10 @@ function useWorkflowLinkController(input: Readonly<{
             isCurrent: () => isCurrent() && binding.isCurrent() }).list();
         return projectSessionAccessAudience(snapshot, scope.accountId);
     });
+    // Project and saved Health attachments are Account-private, with no grant roster.
+    const privateSubject = subject?.kind === 'project' || subject?.kind === 'healthCheck';
     const audience = machineSubject ? machineSharing.audience : profileSubject ? profileSharing.audience
-        : sourceAudience ?? sessionAudience.value ?? undefined;
+        : sourceAudience ?? (privateSubject ? NO_SHARED_AUDIENCE : sessionAudience.value ?? undefined);
     const needsAudience = workflow?.kind === 'artifact' && subject !== null;
     const review = useDocumentShareController(demanded && binding && workflow?.kind === 'artifact'
         && audience && audience.length > 0 ? { scope: binding.scope, artifactId: workflow.artifactId,
