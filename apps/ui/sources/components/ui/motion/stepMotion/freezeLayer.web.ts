@@ -103,5 +103,5 @@ export function freezeStepLayer(
     const webFocal = focal instanceof HTMLElement ? cloneElements[elements.indexOf(focal)] : undefined;
     const webLeaves = leaves.map(({ rect: leafRect, index }) => ({ element: cloneElements[index], rect: leafRect }));
     return { clone, rect, ink, control, webLeaves, webFocal, webChrome, webAtmosphere,
-        ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop) };
+        ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop, { source: root, clone }) };
 }

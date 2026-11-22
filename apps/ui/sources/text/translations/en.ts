@@ -3448,6 +3448,7 @@ const enConnect = {
   pairingLinkFieldLabel: 'Pairing link',
   signInPairingLinkHelp: "On a device that's already signed in, open Settings → Add your phone and copy its pairing link. It works once and expires after a few minutes.",
   signInPairingLinkHelpScan: "On a device that's already signed in, open Settings → Add your phone, then scan its code with Use camera or paste its pairing link.",
+  signInPairingLinkNeedsHttps: "To show a QR code here, this Home needs a secure address that your other device can reach.",
   signInShowQr: "Show a QR code here for that device to scan",
   pairingLinkPlaceholder: "Paste a pairing link",
   pairingLinkRequired: 'Paste the pairing link shown on the other device.',

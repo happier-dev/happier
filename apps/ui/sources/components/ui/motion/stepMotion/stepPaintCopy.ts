@@ -45,7 +45,11 @@ export function copyRegion(root: HTMLElement, rect: StepFreeze['rect'], freezeEf
 }
 
 /** Mount copies above the app, inert and hidden from assistive technology; returns their removal. */
-export function mountPaintCopy(regions: readonly HTMLElement[], backdrop?: string) {
+export function mountPaintCopy(
+  regions: readonly HTMLElement[],
+  backdrop: string | undefined,
+  workflow: Readonly<{ source: HTMLElement; clone: HTMLElement }>,
+) {
   const capture = document.createElement('div');
   Object.assign(capture.style, {
     position: 'fixed',
@@ -66,6 +70,14 @@ export function mountPaintCopy(regions: readonly HTMLElement[], backdrop?: strin
       element.removeAttribute(key);
   }
   document.body.append(capture);
+  if (backdrop) {
+    // A cloned text field keeps its value but needs a layout before it can scroll.
+    const copies = workflow.clone.querySelectorAll('input');
+    workflow.source.querySelectorAll('input').forEach((input, index) => {
+      const scrollLeft = input.scrollLeft;
+      if (scrollLeft !== 0) copies[index].scrollLeft = scrollLeft;
+    });
+  }
   return { webBackdrop: backdrop ? capture : undefined, release: () => {
     capture.querySelectorAll('canvas').forEach(canvas => releaseCanvasBackingStore(canvas));
     capture.remove();
@@ -96,6 +108,6 @@ export function copyStepLayer(layer: StepMotionLayerHandle, backdrop?: string): 
     rect,
     webChrome,
     webAtmosphere,
-    ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop),
+    ...mountPaintCopy(webAtmosphere ? [webAtmosphere, clone, ...webChrome] : [clone, ...webChrome], backdrop, { source: root, clone }),
   };
 }

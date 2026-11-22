@@ -66,6 +66,8 @@ const { installDesktopDeepLinks } = await import('@/desktop/deepLinks/installDes
 const { openMarkdownLinkUrl } = await import('@/components/markdown/enriched/enrichedMarkdownLinkHandling');
 const { RestoreScanComputerQrView } = await import('./RestoreScanComputerQrView');
 const { QrCodeScannerView } = await import('@/components/qr/QrCodeScannerView');
+const { RestoreIndexEmbedded } = await import('@/components/onboarding/restore/RestoreIndexEmbedded');
+const { FIRST_RUN_WORKFLOW_LAYER, StepMotionLayer } = await import('@/components/ui/motion/stepMotion/StepMotionLayer');
 
 const home = HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_home_b',
     canonicalServerUrl: 'https://home-b.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home-b.test' }] });
@@ -467,6 +469,26 @@ describe('RestoreScanComputerQrView (web phone)', () => {
         expect(http.features).toHaveBeenCalledOnce(); expect(boundary.retried).not.toHaveBeenCalled();
         expect(screen.getTextContent()).toContain('terminal.invalidConnectionLinkDescription');
     });
+    it('keeps the first-open paste form visible while a submitted pairing link awaits credentials', async () => {
+        const pending = hold();
+        http.poll.mockImplementation(() => pending.promise);
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}>
+            <StepMotionLayer layerKey={FIRST_RUN_WORKFLOW_LAYER}>
+                <RestoreIndexEmbedded entryIntent="enter_home" initialView="paste" onBack={() => {}} />
+            </StepMotionLayer>
+        </AuthProvider>);
+        const link = buildHomeQrInviteDeepLink({ invite: activeInvite });
+        await act(async () => screen.findByTestId('restore-pairing-link-input')!.props.onChangeText(link));
+        try {
+            await vi.waitFor(() => expect(http.poll).toHaveBeenCalled());
+            expect(screen.findByTestId('restore-pairing-link-input')).toBeTruthy();
+            expect(screen.findByTestId('restore-enrollment-securing')).toBeNull();
+        } finally {
+            pending.resolve(Response.json({}, { status: 410 }));
+        }
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('connect.pairingQrExpired'));
+    });
+
     it('waits automatically without a confirmation code and keeps status stable across poll progress', async () => {
         vi.useFakeTimers(); http.poll.mockImplementation(() => Response.json({ state: 'requested' }));
         const screen = await mount(); const { completion } = await beginScan(screen);

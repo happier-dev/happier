@@ -3726,6 +3726,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         pairingLinkFieldLabel: '配對連結',
         signInPairingLinkHelp: "在已登入的裝置上開啟「設定 → 新增你的手機」，複製它的配對連結。連結只能使用一次，幾分鐘後過期。",
         signInPairingLinkHelpScan: "在已登入的裝置上開啟「設定 → 新增你的手機」，然後用「使用相機」掃描它的代碼，或貼上它的配對連結。",
+        signInPairingLinkNeedsHttps: "若要在這裡顯示 QR 碼，此 Home 需要另一部裝置可以存取的安全位址。",
         signInShowQr: "在這裡顯示 QR 碼，用那台裝置掃描",
         pairingLinkPlaceholder: "貼上配對連結",
         pairingLinkRequired: '貼上另一台裝置上顯示的配對連結。',

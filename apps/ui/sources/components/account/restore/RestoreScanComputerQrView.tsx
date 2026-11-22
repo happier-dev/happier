@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { useFirstRunRouteMove } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { useFirstRunRouteMove, useFirstRunWorkflowMotion } from '@/components/ui/motion/stepMotion/StepMotionLayer';
+import { holdFirstArrivalStep } from '@/components/ui/motion/stepMotion/StepMotionStage';
 import { useStepFocal } from '@/components/ui/motion/stepMotion/useStepFocal';
 import { Platform, ScrollView, View, useWindowDimensions } from 'react-native';
 import type { StyleProp, TextStyle, ViewStyle } from 'react-native';
@@ -243,6 +244,7 @@ export type RestoreScanComputerQrViewProps = Readonly<{
     entryIntent: HomeQrEntryIntent;
     embedded?: boolean;
     initialPairingLink?: string | null;
+    renderPairingLinkEntry?: (submit: (link: string) => Promise<boolean>) => React.ReactNode;
     onBack?: () => void;
     /** False when the host already draws the way back (the welcome pane's chevron, the setup card's back). */
     showBack?: boolean;
@@ -291,6 +293,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
     const auth = useAuth();
     const isFocused = useIsFocused();
     const embedded = props.embedded === true;
+    const retainFirstRunStep = useFirstRunWorkflowMotion() && embedded && props.entryIntent === 'enter_home';
+    const holdWebArrival = retainFirstRunStep && !props.onAuthenticated && !isDesktopHost();
     const pairingDecision = useFeatureDecision(DESKTOP_QR_SCAN_FEATURE_ID);
     // The focused Home may decide only its own server capability. Keep its
     // server-axis result out of local scanner admission; after parsing, the
@@ -487,7 +491,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         profileId: string,
         targetLabel: string,
         attemptId: number,
-    ): Promise<void> => {
+    ): Promise<boolean> => {
         const result = await openEnrolledHomeOrReturnToShell({
             profileId,
             targetLabel,
@@ -497,6 +501,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         if (result !== 'cancelled' && isCurrentAttempt(attemptId)) {
             setShellNavigationRequested(true);
         }
+        return result === 'opened';
     }, [auth.refreshFromActiveServer, isCurrentAttempt]);
 
     const finishEnrolledHome = React.useCallback(async (params: Readonly<{
@@ -505,7 +510,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         homeServerIdentityId: string;
         targetLabel: string;
         attemptId: number;
-    }>): Promise<'succeeded' | null> => {
+    }>): Promise<'succeeded' | 'handoff' | null> => {
         if (isDesktopHost()) {
             const { profileId, targetLabel, credentials, homeServerIdentityId } = params;
             setDesktopEnrollment({ profileId, targetLabel, credentials, homeServerIdentityId });
@@ -517,8 +522,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         }
         trackAccountRestored();
         if (props.entryIntent === 'add_home') return 'succeeded';
-        await openRetainedHomeOrReturnToShell(params.profileId, params.targetLabel, params.attemptId);
-        return null;
+        return await openRetainedHomeOrReturnToShell(params.profileId, params.targetLabel, params.attemptId) ? 'handoff' : null;
     }, [openRetainedHomeOrReturnToShell, props.entryIntent, props.onAuthenticated]);
 
     const retryRetainedHome = React.useCallback(async () => {
@@ -530,10 +534,16 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         attempt.cancellable = false;
         setNavigationLocked(true);
         setPhase('securing');
+        let releaseArrival = holdWebArrival ? holdFirstArrivalStep() : undefined;
         let profileCommitted = false;
         try {
             const profile = await retry.finish();
-            if (!isCurrentAttempt(attempt.id)) return;
+            if (!isCurrentAttempt(attempt.id)) {
+                // Successful adoption may retire this route before its next render.
+                // The root arrival still owns the held frame through the Home paint.
+                if (profile) releaseArrival = undefined;
+                return;
+            }
             if (!profile) {
                 setEnrollmentResult('partial_commit');
                 return;
@@ -546,19 +556,21 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 targetLabel: formatHomeEnrollmentTargetLabel(retry.invite.home),
                 attemptId: attempt.id,
             });
-            if (isCurrentAttempt(attempt.id)) setEnrollmentResult(result);
+            if (result === 'handoff') releaseArrival = undefined;
+            if (isCurrentAttempt(attempt.id)) setEnrollmentResult(result === 'handoff' ? null : result);
         } catch {
             if (!isCurrentAttempt(attempt.id)) return;
             if (!profileCommitted) retainedAdoptionRef.current = retry;
             setEnrollmentResult(profileCommitted ? 'retryable_error' : 'partial_commit');
         } finally {
+            releaseArrival?.();
             if (activeAttemptRef.current === attempt) {
                 activeAttemptRef.current = null;
                 setPhase('idle');
                 setNavigationLocked(false);
             }
         }
-    }, [beginEnrollmentAttempt, finishEnrolledHome, isCurrentAttempt]);
+    }, [beginEnrollmentAttempt, finishEnrolledHome, holdWebArrival, isCurrentAttempt]);
 
     const processHomeQrInvite = React.useCallback(
         async (link: RequesterApproval | Readonly<{
@@ -569,6 +581,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
 
             let target: HomeQrEnrollmentTarget | null = null;
             let terminalResult: HomeEnrollmentScannerResult | null = null;
+            let releaseArrival: (() => void) | undefined;
             const publishTerminalResult = (result: HomeEnrollmentScannerResult) => {
                 terminalResult = result;
                 setEnrollmentResult(result);
@@ -939,12 +952,19 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         await props.onCredentials({ credentials: result.credentials, homeServerIdentityId: result.homeServerIdentityId });
                         return;
                     }
+                    // The exact Home's adoption can remount the workflow inside the signed-in pane.
+                    if (holdWebArrival) releaseArrival = holdFirstArrivalStep();
                     const stored = await completeEnrollment(
                         result.credentials,
                         result.homeServerIdentityId,
                         observedHomeDescriptor,
                     );
-                    if (!isCurrentAttempt(attempt.id)) return;
+                    if (!isCurrentAttempt(attempt.id)) {
+                        // Profile adoption can retire this route as it publishes the credentials.
+                        // Keep the original frame for the root's Home arrival in that case.
+                        if (stored.kind === 'completed') releaseArrival = undefined;
+                        return;
+                    }
                     if (stored.kind === 'partial_commit') {
                         const failure = stored.error;
                         if (failure instanceof HomeProfileAdoptionPartialCommitError && failure.canRetry) {
@@ -971,7 +991,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                         homeServerIdentityId: observedHomeDescriptor.homeServerIdentityId,
                         attemptId: attempt.id,
                     });
-                    if (outcome) publishTerminalResult(outcome);
+                    if (outcome === 'handoff') releaseArrival = undefined;
+                    else if (outcome) publishTerminalResult(outcome);
                 } else {
                     if (result.reason === 'cancelled') {
                         return;
@@ -994,6 +1015,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     publishTerminalResult('retryable_error');
                 }
             } finally {
+                releaseArrival?.();
                 await target?.close().catch(() => {});
                 if (activeAttemptRef.current?.id === attempt.id) {
                     setNavigationLocked(false);
@@ -1003,7 +1025,8 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                 }
             }
         },
-        [beginEnrollmentAttempt, completeEnrollment, finishEnrolledHome, isCurrentAttempt, props.expectedHomeServerIdentityId, props.onCredentials],
+        [beginEnrollmentAttempt, completeEnrollment, finishEnrolledHome, holdWebArrival,
+            isCurrentAttempt, props.expectedHomeServerIdentityId, props.onCredentials],
     );
 
     const processPairingLink = React.useCallback(
@@ -1147,13 +1170,23 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         || (enrollmentPresentation.contextualFacts !== 'none' && activeInvite != null);
     // The same conditions that draw the live camera below (no desktop or requester result in front of it).
     const cameraLive = (pairingState === 'enabled' || pairingState === 'unknown') && !enrollmentResult
-        && !desktopEnrollment && !pendingRequesterApproval && phase === 'idle';
+        && !desktopEnrollment && !pendingRequesterApproval && !props.renderPairingLinkEntry
+        && (phase === 'idle' || retainFirstRunStep);
     const onHeadingChange = props.onHeadingChange;
     const resultStep = embedded && onHeadingChange !== undefined && enrollmentResult != null;
     const heading = cameraLive ? 'camera' : resultStep ? 'result' : null;
     React.useEffect(() => {
         onHeadingChange?.(heading);
     }, [heading, onHeadingChange]);
+
+    if (props.renderPairingLinkEntry && pairingState === 'enabled'
+        && !enrollmentResult && !desktopEnrollment && !pendingRequesterApproval) {
+        return props.renderPairingLinkEntry(async link => {
+            setInviteOrigin('link');
+            await processPairingLink(link);
+            return true;
+        });
+    }
 
     if (pairingState === 'unknown' && !enrollmentResult) {
         const frame = (
@@ -1281,7 +1314,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
         );
     }
 
-    if (phase === 'idle' && !enrollmentResult && embedded && (props.renderAdditionalSignInWays || props.onHeadingChange)) {
+    if (cameraLive && embedded && (props.renderAdditionalSignInWays || props.onHeadingChange)) {
         // The camera step (lab "Point at your computer"): the camera as a window on the column, its one status line,
         // then the same ways row as Approve, with this view's own ways leading it. A step host without the model's
         // ways (the standalone restore route) gets this view's own ways on the shared row.
@@ -1320,7 +1353,7 @@ export const RestoreScanComputerQrView = React.memo(function RestoreScanComputer
                     embedded
                     previewHeight={cameraPreviewHeight}
                     onScan={async (data) => {
-                        if (typeof data === 'string' && data.trim()) {
+                        if (phase === 'idle' && typeof data === 'string' && data.trim()) {
                             setInviteOrigin('scanned');
                             await processPairingLink(data.trim());
                         }

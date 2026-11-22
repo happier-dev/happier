@@ -576,6 +576,7 @@ it('captures the approved step before the presentation loads and dissolves it wh
                 <div ref={node => { atmosphere = node ?? undefined; }}>Planet</div>
                 <header ref={node => { wordmark = node; }}>Happier</header>
                 <StepMotionLayer layerKey="workflow" webChrome={webChrome} webAtmosphere={webAtmosphere}>
+                    <input aria-label="Pairing link" defaultValue="a long pairing link" />
                     <button onClick={() => {
                         holdFirstArrivalStep();
                         setAdopting(true);
@@ -588,6 +589,8 @@ it('captures the approved step before the presentation loads and dissolves it wh
         stageRendererWaiting = true;
         await act(async () => root.render(<Journey />));
         setReducedMotionPreferenceOverride(false);
+        const liveInput = container.querySelector('input')!;
+        liveInput.scrollLeft = 72;
         await act(async () => container.querySelector('button')!.click());
         const copy = document.body.querySelector<HTMLElement>('[aria-hidden="true"][style*="position: fixed"]');
         expect(copy?.isConnected).toBe(true);
@@ -595,6 +598,7 @@ it('captures the approved step before the presentation loads and dissolves it wh
         expect(copy?.textContent).toContain('Happier');
         expect(copy?.textContent).toContain('Planet');
         expect(copy?.textContent).toContain('Approved');
+        expect(copy?.querySelector('input')?.scrollLeft).toBe(liveInput.scrollLeft);
         const heldSpinner = copy?.querySelector('[data-spinner]');
         assert(heldSpinner);
         expect(getComputedStyle(heldSpinner).transform).toBe('translateX(-40px)');

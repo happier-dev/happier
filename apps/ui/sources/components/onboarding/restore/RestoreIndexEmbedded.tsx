@@ -124,27 +124,16 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
         return true;
     };
 
-    const content = <>
-        {activeView === 'terminal_link' ? (
+    const firstOpenEntry = firstRun && props.entryIntent === 'enter_home';
+    const renderPasteEntry = (submit: (link: string) => Promise<boolean>) => {
+        const help = t(phone && openScanner ? 'connect.signInPairingLinkHelpScan' : 'connect.signInPairingLinkHelp');
+        const subtitle = firstOpenEntry && !openQr ? `${help}\n\n${t('connect.signInPairingLinkNeedsHttps')}` : help;
+        return (
             <View style={VIEW_STYLE}>
-                <UnauthenticatedStepHeading title={t('terminal.connectTerminal')} />
+                <UnauthenticatedStepHeading title={t('connect.pairingLinkPlaceholder')} subtitle={subtitle} />
                 <PairingLinkEntryForm
                     embedded
-                    fieldLabel={t('connect.enterUrlManually')}
-                    placeholder={t('connect.terminalUrlPlaceholder')}
-                    onSubmit={submitPastedPairingLink}
-                    onBack={backSlot ? undefined : onBack}
-                />
-            </View>
-        ) : activeView === 'paste' ? (
-            // A pairing link from a device that is already signed in (lab "Paste a pairing link"): the field and its
-            // one primary, then this device's other ways in on the ways row.
-            <View style={VIEW_STYLE}>
-                <UnauthenticatedStepHeading title={t('connect.pairingLinkPlaceholder')}
-                    subtitle={t(phone && openScanner ? 'connect.signInPairingLinkHelpScan' : 'connect.signInPairingLinkHelp')} />
-                <PairingLinkEntryForm
-                    embedded
-                    onSubmit={submitPastedPairingLink}
+                    onSubmit={submit}
                     onBack={backSlot ? undefined : onBack}
                     // A phone focuses nothing: its keyboard would cover the ways beneath.
                     autoFocus={!phone}
@@ -172,28 +161,52 @@ export const RestoreIndexEmbedded = React.memo(function RestoreIndexEmbedded(pro
                         : props.entryIntent === 'enter_home' || openScanner || openQr ? <StepWaysRow>{ways}</StepWaysRow> : null;
                 })()}
             </View>
+        );
+    };
+    const renderScanner = (renderPairingLinkEntry?: RestoreScanComputerQrViewProps['renderPairingLinkEntry']) => (
+        <RestoreScanComputerQrView
+            entryIntent={props.entryIntent}
+            embedded
+            initialPairingLink={ways.pastedLink ?? props.initialPairingLink}
+            initialResult={props.initialResult}
+            renderPairingLinkEntry={renderPairingLinkEntry}
+            onBack={onBack}
+            showBack={false}
+            onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
+            renderAdditionalSignInWays={props.renderAdditionalSignInWays}
+            onOpenLostAccess={props.onOpenLostAccess}
+            onHeadingChange={setScannerHeading}
+            onOpenPairingLinkEntry={openPasteEntry}
+            onShowQrInstead={openQr}
+            onNavigationLockChange={props.onNavigationLockChange}
+            onInviteDirectionChange={props.onInviteDirectionChange}
+        />
+    );
+
+    const content = <>
+        {activeView === 'terminal_link' ? (
+            <View style={VIEW_STYLE}>
+                <UnauthenticatedStepHeading title={t('terminal.connectTerminal')} />
+                <PairingLinkEntryForm
+                    embedded
+                    fieldLabel={t('connect.enterUrlManually')}
+                    placeholder={t('connect.terminalUrlPlaceholder')}
+                    onSubmit={submitPastedPairingLink}
+                    onBack={backSlot ? undefined : onBack}
+                />
+            </View>
+        ) : activeView === 'paste' ? (
+            firstOpenEntry
+                ? renderScanner(renderPasteEntry)
+                : renderPasteEntry(submitPastedPairingLink)
         ) : activeView === 'scanner' ? (
             <View style={VIEW_STYLE}>
             {scannerHeading === 'result' ? null : scannerHeading === 'camera' && props.entryIntent === 'enter_home'
                 ? <UnauthenticatedStepHeading title={t('connect.pointAtComputerTitle')} subtitle={t('connect.pointAtComputerSubtitle')} />
-                : <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />}
+                : firstOpenEntry ? null
+                    : <UnauthenticatedStepHeading title={t('setupOnboarding.authRestoreTitle')} subtitle={t('setupOnboarding.authRestoreSubtitle')} />}
             <StepEntranceBody>
-                <RestoreScanComputerQrView
-                    entryIntent={props.entryIntent}
-                    embedded
-                    initialPairingLink={ways.pastedLink ?? props.initialPairingLink}
-                    initialResult={props.initialResult}
-                    onBack={onBack}
-                    showBack={false}
-                    onOpenSecretKeyLogin={props.onOpenSecretKeyLogin}
-                    renderAdditionalSignInWays={props.renderAdditionalSignInWays}
-                    onOpenLostAccess={props.onOpenLostAccess}
-                    onHeadingChange={setScannerHeading}
-                    onOpenPairingLinkEntry={openPasteEntry}
-                    onShowQrInstead={openQr}
-                    onNavigationLockChange={props.onNavigationLockChange}
-                    onInviteDirectionChange={props.onInviteDirectionChange}
-                />
+                {renderScanner()}
             </StepEntranceBody>
             </View>
         ) : (
