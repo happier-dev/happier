@@ -490,6 +490,7 @@ vi.mock('@/hooks/server/connectedServices/useConnectedServiceQuotaSnapshots', as
         profiles: normalizeConnectedServiceQuotaProfileRefs(profiles as any),
         snapshotsByKey: quotaSnapshotsState.current,
         loadingByKey: {},
+        errorsByKey: {},
       };
     },
   };
