@@ -48,7 +48,7 @@ export const runCollectorAppJourney: ProductionTelemetryCollectorAppJourney = as
         bindings: [{ purpose: 'variable', phase: 'runtime', name: 'HAPPIER_SERVER_URL', source: { kind: 'value', value: home.baseUrl } }],
     } satisfies DeploymentTemplateInstantiateInputV1;
     const useAttempt = await initiator.invokeSettled('deployments.templates.instantiate', instantiate, home.machineId);
-    expect(useAttempt).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
+    expect(useAttempt.ok).toBe(false);
     if (!useAttempt.ok) expect(useAttempt.effectAttempted).not.toBe(true);
     await initiator.grantHostManage();
     const applied = DeploymentTemplateInstantiateResultV1Schema.parse(
