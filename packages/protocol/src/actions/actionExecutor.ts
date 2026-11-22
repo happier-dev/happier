@@ -27,13 +27,13 @@ import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js'
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
 import { isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
-import { isProjectSourceActionIdV1 } from './specs/projectSourcesActionIdsV1.js';
+import { isProjectSourceActionIdV1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
-import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3 } from './executor/projects/dispatch.js';
+import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3, readProjectSourceProfileChange } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
@@ -3605,6 +3605,12 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       contextualUiConfirmation ??= declared.uiConfirmationRequired;
     }
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
+    if (!existingAdmission && actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1) {
+      const projectProfile = await readProjectSourceProfileChange(
+        admittedInput as AdmittedActionInputById[typeof PROJECT_SOURCE_UPDATE_ACTION_ID_V1], deps.projectSourcesRead, ctx);
+      if ('ok' in projectProfile) return projectProfile;
+      if (projectProfile.approvalProfileChange) ctx = { ...ctx, approvalProfileChange: true };
+    }
     if (!existingAdmission && isWorkflowTriggerMutationActionId(actionId) && deps.workflowAction?.prepareTriggerMutation) {
       const prepared = await deps.workflowAction.prepareTriggerMutation({ actionId, input: admittedInput, context: ctx } as
         import('./executor/types.js').WorkflowActionExecuteArgs<import('./workflowTriggerActionIds.js').WorkflowTriggerMutationActionId>);

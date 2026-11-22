@@ -22,7 +22,6 @@ import type { WorkflowApprovedOperationV1 } from '../workflows/workflowDefinitio
 import { isHostAdmittedReviewedChildPolicyV1 } from './executor/deploymentRoleChild.js';
 import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from './invocationAuthority.js';
 import { readExplicitActionApprovalPreferenceFromSettingsV1 } from './actionApprovalPreference.js';
-import { PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { MACHINE_ACCESS_GRANT_SET_ACTION_ID_V1 } from './specs/machine/accessActionIdsV1.js';
 import { isApprovalRuleChangeActionId } from './actionPolicyActionIds.js';
 export { isSharedRequesterActionV1 } from './actionRequestAttributionV1.js';
@@ -368,16 +367,13 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // control's preference and surface defaults, at this one routing owner.
   const input = readRecord(args.input);
   const runProfileControl = args.actionId === 'execution.run.action' && input.actionId === 'approval_profile.set';
-  const projectDefaultChange = args.actionId === PROJECT_SOURCE_UPDATE_ACTION_ID_V1;
-  const projectDefaults = projectDefaultChange ? readRecord(readRecord(input.patch).sessionDefaults).defaults : undefined;
   const referenceInput = runProfileControl ? readRecord(input.input)
-    : projectDefaultChange ? readRecord(projectDefaults)
     : args.actionId === 'workflow.trigger.update' ? readRecord(input.patch) : input;
-  const reference = projectDefaults === null ? null : referenceInput.approvalProfileId;
+  const reference = referenceInput.approvalProfileId;
   const differsFromInherited = (value: unknown) => (value === null || typeof value === 'string')
     && (value !== (args.context?.approvalProfileId ?? null)
       // Accepting an inherited id clears tighten-only just as choosing another id does.
-      || !projectDefaultChange && typeof value === 'string' && args.context?.approvalProfileTeamOrGroupDerived === true);
+      || typeof value === 'string' && args.context?.approvalProfileTeamOrGroupDerived === true);
   // Editing a profile's rows or a Machine default changes what a running Session's profile means.
   const triggerMutation = args.context?.workflowTriggerMutationAdmission;
   const changesProfile = args.context?.approvalProfileChange === true || runProfileControl

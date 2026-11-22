@@ -1198,7 +1198,7 @@ export type ActionExecutorContext = Readonly<{
    * admission from `readSessionApprovalConsents`. Any caller-supplied value is replaced.
    */
   sessionApprovalConsents?: import('../sessionApprovalConsentsV1.js').BoundSessionApprovalConsentsV1 | null;
-  /** Host-derived selection change from an admitted Workflow origin; never authored Action input. */
+  /** Host-derived change to the selected profile established at Action admission. */
   approvalProfileChange?: boolean;
   /** Incumbent row opened by the trigger mutation owner at this invocation's admission. */
   workflowTriggerMutationAdmission?: Readonly<{ actionId: 'workflow.trigger.add'; changesProfile: boolean }>

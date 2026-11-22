@@ -20,7 +20,7 @@ import { isPluginError } from '../../../plugins/errors.js';
 import { type ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../../projects/projectOrganizationV1.js';
 import type { ProjectSourcesUpdateInputV1Schema } from '../../../projects/sources/projectSourceV1.js';
 import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, type ActionId } from '../../actionIds.js';
-import type { ActionExecuteResult, ActionExecutorContext, AdmittedClientActionContext } from '../types.js';
+import type { ActionExecuteFailure, ActionExecuteResult, ActionExecutorContext, AdmittedClientActionContext } from '../types.js';
 import type { CoreInvocation, DispatchFacts, PreparedCoreAdmission } from '../coreInvocation.js';
 import type { ActionExecutorDeps } from '../types.js';
 import { clientActionUnavailable } from '../../clientDispatchV1.js';
@@ -207,6 +207,25 @@ export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actio
           return completeActionResult(res);
         }
   return null;
+}
+
+export async function readProjectSourceProfileChange(
+  input: z.infer<typeof ProjectSourcesUpdateInputV1Schema>,
+  readSource: ActionExecutorDeps['projectSourcesRead'],
+  context: ActionExecutorContext,
+): Promise<Pick<ActionExecutorContext, 'approvalProfileChange'> | ActionExecuteFailure> {
+  const patch = input.patch.sessionDefaults;
+  if (!patch) return {};
+  const replacement = patch.defaults?.approvalProfileId;
+  // The leaf CAS guarantees there is no incumbent when this creation succeeds.
+  if (patch.expectedRevision === 'absent') return { approvalProfileChange: replacement !== undefined };
+  if (!readSource) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.sources.read' };
+  const current = await readSource({ serverId: input.serverId, sourceId: input.sourceId },
+    { ...context, onTransportIssued: undefined });
+  if ('errorCode' in current) return current;
+  if (!current.ok) return { ok: false, errorCode: current.error, error: current.error };
+  return { approvalProfileChange: current.sessionDefaults?.revision !== patch.expectedRevision
+    || replacement !== current.sessionDefaults?.defaults?.approvalProfileId };
 }
 
 export async function dispatchProjectsDispatch3(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'data' | 'ctx'>): Promise<ActionExecuteResult | null> {

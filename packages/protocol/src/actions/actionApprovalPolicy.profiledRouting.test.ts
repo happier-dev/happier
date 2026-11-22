@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { createActionExecutor } from './actionExecutor.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1, setScopedActionApprovalPreference } from './actionSettings.js';
 import { getActionSpec } from './actionSpecs.js';
@@ -59,16 +60,40 @@ describe('profile and admitted target inputs at the approval router', () => {
     expect(resolveActionApprovalRouting({ ...args, context })).toMatchObject({ required: false });
   });
 
-  it('uses the profile control for a project default change through its revisioned Source leaf', () => {
-    const sourceId = 'projects.sources.update';
-    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [sourceId]: ['agent'] } });
-    const route = (defaults: unknown) => resolveActionApprovalRouting({ actionId: sourceId,
-      spec: getActionSpec(sourceId), settings, context: { ...context, approvalProfileTeamOrGroupDerived: true },
-      input: { patch: { sessionDefaults: { expectedRevision: 'absent', defaults } } } });
-    expect(route({ approvalProfileId: 'different-profile' })).toMatchObject({ required: true });
-    expect(route(null)).toMatchObject({ required: true });
-    expect(route({ approvalProfileId: context.approvalProfileId })).toMatchObject({ required: false });
-    expect(route({})).toMatchObject({ required: false });
+  it('reviews project profile changes against the saved defaults, including an explicit opt-out', async () => {
+    const sourceId = 'project-source';
+    const sourceAction = 'projects.sources.update';
+    const settings = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [sourceAction]: ['agent'] } });
+    const source = { id: sourceId, name: 'Repository', revision: 1, createdByAccountId: 'manager',
+      audience: [], attachments: [] };
+    const savedProfile = { approvalProfileId: 'saved-project-profile' };
+    type Defaults = { approvalProfileId?: string | null };
+    let savedDefaults: Defaults = savedProfile;
+    const current = () => ({ ok: true as const, canManage: true, canManageSessionDefaults: true, source,
+      sessionDefaults: { revision: 1, defaults: savedDefaults } });
+    const executor = createActionExecutor({
+      readActionsSettings: () => settings,
+      projectSourcesRead: async () => current(),
+      projectSourcesUpdate: async () => current(),
+    });
+    const update = async (defaults?: Defaults | null, expectedRevision = 1) => {
+      const result = await executor.execute(sourceAction, {
+        serverId: 'home', sourceId, expectedRevision: 1,
+        patch: defaults === undefined ? { name: 'Renamed' } : { sessionDefaults: { expectedRevision, defaults } },
+      }, { ...context, serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'manager',
+        expectedAccountId: 'manager', interactivePresentation: 'unavailable' });
+      return result.ok ? 'applied' : result.errorCode;
+    };
+    await expect(update()).resolves.toBe('applied');
+    const review = 'action_interactive_review_required';
+    expect([await update({}), await update(null), await update({ approvalProfileId: context.approvalProfileId }),
+      await update(savedProfile)]).toEqual([review, review, review, 'applied']);
+
+    savedDefaults = {};
+    await expect(update({})).resolves.toBe('applied');
+    await expect(update(null)).resolves.toBe('applied');
+    expect(await update({ approvalProfileId: null })).toBe(review);
+    expect(await update({}, 2)).toBe(review);
   });
 
   it('allows an admitted no-approval target to waive the default but preserves the person\'s scoped Ask', () => {
