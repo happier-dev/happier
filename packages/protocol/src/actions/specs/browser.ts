@@ -633,6 +633,32 @@ export const BROWSER_RUNTIME_ACTION_OUTPUT_SCHEMAS: Readonly<
  * A view command is read by what it opens or does, never by the ids that route it: correlation and
  * discriminator operands, and the opening client's own plumbing, belong to Technical details.
  */
+/**
+ * The deciding fact of a Browser open or navigate, as the approval record stores it: the address's host (with a
+ * non-default port) only. The path, query and fragment can carry tokens, so they never reach the summary.
+ */
+function readBrowserAddressHost(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? url.host || null : null;
+  } catch {
+    return null;
+  }
+}
+
+function readBrowserTargetHost(input: unknown): string | null {
+  if (!input || typeof input !== 'object') return null;
+  const target = (input as { target?: unknown }).target;
+  if (!target || typeof target !== 'object' || (target as { kind?: unknown }).kind !== 'externalUrl') return null;
+  return readBrowserAddressHost((target as { url?: unknown }).url);
+}
+
+const summarizeBrowserOpen = (input: unknown): string | null => {
+  const host = readBrowserTargetHost(input);
+  return host ? `Open ${host} in the Browser` : null;
+};
+
 const BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS = ['commandId', 'browserSessionId', 'viewId', 'kind'] as const;
 const BROWSER_TARGETED_COMMAND_TECHNICAL_INPUT_PATHS = [...BROWSER_VIEW_COMMAND_TECHNICAL_INPUT_PATHS, 'target.targetId'] as const;
 const BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS = {
@@ -656,6 +682,7 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
   confirmationFacts: NonNullable<RuntimeActionSpecFamily['confirmationFacts']>;
   approvalPolicies: NonNullable<RuntimeActionSpecFamily['approvalPolicies']>;
   approvalTechnicalInputPaths: typeof BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS;
+  approvalSummaries: NonNullable<RuntimeActionSpecFamily['approvalSummaries']>;
   titles: typeof BROWSER_RUNTIME_ACTION_TITLES;
   descriptions: typeof BROWSER_RUNTIME_ACTION_DESCRIPTIONS;
   agentGuidance: typeof BROWSER_RUNTIME_ACTION_AGENT_GUIDANCE;
@@ -693,6 +720,15 @@ export const BROWSER_RUNTIME_ACTION_SPEC_FAMILY: Readonly<{
     'browser.context.attachToAgentTurn': { agentDefault: 'egress' },
   },
   approvalTechnicalInputPaths: BROWSER_APPROVAL_TECHNICAL_INPUT_PATHS,
+  // Only the Actions an address decides; every other Browser Action keeps its title as its summary.
+  approvalSummaries: {
+    'browser.workspace.open': summarizeBrowserOpen,
+    'browser.view.open': summarizeBrowserOpen,
+    'browser.navigate': (input: unknown) => {
+      const host = readBrowserAddressHost(input && typeof input === 'object' ? (input as { url?: unknown }).url : null);
+      return host ? `Go to ${host} in the Browser` : null;
+    },
+  },
   titles: BROWSER_RUNTIME_ACTION_TITLES,
   descriptions: BROWSER_RUNTIME_ACTION_DESCRIPTIONS,
   agentGuidance: BROWSER_RUNTIME_ACTION_AGENT_GUIDANCE,
