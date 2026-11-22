@@ -1774,6 +1774,7 @@ async function bindingsForThreadObservation(input: Readonly<{
     }
     if (spawned.type === 'error') {
       const reason = spawned.code === 'update_required' ? spawned.details.reason
+        : spawned.code === 'session_team_credential_binding_rejected' ? spawned.reason
         : spawned.launchError?.code ?? spawned.incompatibleTarget?.reason;
       const failure = new PluginError({ code: 'channels_thread_spawn_failed',
         message: 'The Session owner refused thread creation.', retryable: spawned.retryable,
