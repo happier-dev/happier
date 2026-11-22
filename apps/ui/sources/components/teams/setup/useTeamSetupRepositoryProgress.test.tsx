@@ -2,6 +2,7 @@ import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { ActionOperationSnapshotV1Schema, type ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { OpenProjectResultV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { createDeferred, renderHook, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -86,10 +87,16 @@ describe('selected Team batch progress', () => {
     it('opens the exact editable draft from the ready notice after leaving Joined Setup', async () => {
         const openProject = createDeferred<typeof preparedResult>();
         const openDraft = vi.fn(async () => ({ kind: 'opened', draftId: 'new-draft', destination: 'newSession' } as const));
-        const executor = createActionExecutor({ projectsOpen: () => openProject.promise, sessionAuthoringOpen: openDraft });
+        let nativeRequestId: string | undefined;
+        const executor = createActionExecutor({ projectsOpen: (_input, context) => {
+            nativeRequestId = context.actionRequestId ?? undefined;
+            return openProject.promise;
+        }, sessionAuthoringOpen: openDraft });
         const execute = createFrontDoorActionExecute({ ...executor, executeConfirmed: (id, input, context) =>
             executor.execute(id, input, bindPresentUserActionConfirmation(id, input, context ?? {})) });
-        const context = { serverId: query.serverId, surface: 'ui', expectedAccountId: query.accountId } as const;
+        const context = { serverId: query.serverId, surface: 'ui', authority: 'present_user',
+            runtimeAccountId: query.accountId, expectedAccountId: query.accountId, serverIdentityId: 'team-home',
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
         let controller!: ReturnType<typeof useRetainedTeamSetupPlan>;
         let leaveReview!: () => void;
         let isPresented = true;
@@ -108,7 +115,7 @@ describe('selected Team batch progress', () => {
         daemonReply.mockReturnValue(new Promise(() => {}));
         const screen = await renderScreen(<App />);
         const source = { id: query.sourceId, name: 'Shared repository', revision: 2 };
-        const plan = await controller.prepare({ target: { serverId: query.serverId, homeId: 'home', machineId: query.machineId },
+        const plan = await controller.prepare({ target: { serverId: query.serverId, homeId: 'team-home', machineId: query.machineId },
             repositories: [{ id: source.id, input: { source: { kind: 'folder', path: '/repo' }, materialization: { kind: 'attach' } } }],
             isCurrent: () => true });
         if (!plan?.ok) throw new Error('Could not review the selected repository');
@@ -119,6 +126,7 @@ describe('selected Team batch progress', () => {
         });
         const requestId = controller.batch?.selection.repositories[0]?.requestId;
         if (!requestId) throw new Error('No native request from the selected batch');
+        expect(nativeRequestId).toBe(requestId);
         act(() => actionOperationStore.mergeSnapshots({ serverId: query.serverId, snapshotComplete: true,
             snapshots: [opening({ requestId, createdAt: 3 }),
                 setupOperation({ operationId: 'previous-setup', createdAt: 1, startedAt: 1, state: 'succeeded', settledAt: 2 })] }));

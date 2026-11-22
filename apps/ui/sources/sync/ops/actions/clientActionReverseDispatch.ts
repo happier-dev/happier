@@ -5,7 +5,9 @@ import {
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectKnownAccountAuthorityRetirementReceipt } from '@happier-dev/protocol/actions/accountAuthorityRetirement';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { createDefaultActionExecutor } from './defaultActionExecutor';
+import { TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchInputV1Schema } from '@happier-dev/protocol/teams';
+import { createActionConfirmationPresenter } from './actionConfirmationPresenter';
+import { createDefaultActionExecutor, withDefaultActionExecuteContext } from './defaultActionExecutor';
 
 /** The server authenticates the App or exact Machine continuing its admitted Action. */
 export function createUiClientActionReverseHandler(binding: Readonly<{
@@ -29,12 +31,31 @@ export function createUiClientActionReverseHandler(binding: Readonly<{
             ...(binding.machineId && parentRequestId
                 ? { admittedClientActionParent: { machineId: binding.machineId, requestId: parentRequestId } } : {}) });
         try {
-            const execution = await executor.execute(actionId, input, {
+            const invocation = {
                 ...admitted,
                 serverId: binding.serverId,
                 expectedAccountId: binding.accountId,
                 signal: context.signal,
-            });
+            };
+            const execution = actionId === TEAM_SETUP_RUN_ACTION_ID_V1
+                ? await (async () => {
+                    if ((admitted.surface !== 'agent' && admitted.surface !== 'mcp')
+                        || admitted.authority !== 'account_automation' || admitted.externalActionCredential) {
+                        return failure('admission_unavailable').execution;
+                    }
+                    // The Machine can propose the exact batch. Only a press on the
+                    // requester's captured App can originate the reviewed effects.
+                    const ownInvocation = { surface: 'ui' as const, serverId: binding.serverId,
+                        expectedAccountId: binding.accountId, signal: context.signal };
+                    const { clientId: _answeringApp, ...batch } = TeamSetupBatchInputV1Schema.parse(input);
+                    return await withDefaultActionExecuteContext(undefined, ownInvocation, async (ownExecutor, account) => {
+                        const local = { ...ownInvocation, runtimeAccountId: account.accountId, serverIdentityId: account.serverIdentityId };
+                        const confirmed = await createActionConfirmationPresenter(account)({ actionId, input: batch, context: local });
+                        if (context.signal.aborted || !binding.isCurrent()) return failure('cancelled').execution;
+                        return confirmed ? ownExecutor.executeConfirmed(actionId, batch, local)
+                            : failure('approval_canceled').execution;
+                    }, actionId);
+                })() : await executor.execute(actionId, input, invocation);
             // Retirement cannot disclose the old Account's data. Only a declared,
             // validated self-retirement keeps its already-known status-only receipt.
             let safeExecution = execution;

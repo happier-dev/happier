@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { teamSetupRepositoryRequestIdV1 } from '@happier-dev/protocol/teams';
 import type { ProjectSourceIdentityV1 } from '@happier-dev/protocol/projects/sources/projectSourceIdentityV1';
 
 import { randomUUID } from '@/platform/randomUUID';
@@ -66,14 +67,15 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
         return { complete,
         prepare: (input: Omit<Parameters<typeof prepareTeamSetupPlan>[0], 'executeAction' | 'context'>) =>
             prepareTeamSetupPlan({ ...input, executeAction, context }),
-        run: async (input: Omit<Parameters<typeof runTeamSetupPlan>[0], 'executeAction' | 'context' | 'repositoryRequestIds'>
+        run: async (input: Omit<Parameters<typeof runTeamSetupPlan>[0], 'executeAction' | 'context' | 'actionRequestId'>
             & Readonly<{ selection?: TeamSetupBatchSelection }>) => {
             const { selection: selected, ...run } = input;
             if (!selected) return runTeamSetupPlan({ ...run, executeAction, context });
             const sourcesById = new Map(selected.sources.map(source => [source.id, source]));
+            const actionRequestId = randomUUID();
             const repositoryRequestIds = new Map<string, string>();
-            const repositories = run.plan.repositories.flatMap(repository => {
-                const requestId = randomUUID();
+            const repositories = run.plan.repositories.flatMap((repository, index) => {
+                const requestId = teamSetupRepositoryRequestIdV1(actionRequestId, index);
                 repositoryRequestIds.set(repository.id, requestId);
                 const inputSource = repository.input.source;
                 // An adopted existing clone opens as a Folder attach; its row still belongs to the Team Source.
@@ -99,7 +101,7 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
             let settlement: TeamSetupRunResult | null = null;
             try {
                 settlement = await runTeamSetupPlan({ ...run, executeAction, context,
-                    repositoryRequestIds,
+                    actionRequestId,
                     onRepositoryOpening: id => {
                         setBatch(current => current?.selection === selection ? {
                             ...current, dispatched: new Set([...current.dispatched, id]),
@@ -112,7 +114,8 @@ export function useTeamSetupPlan(executeAction: FrontDoorActionExecute, context:
                 } else {
                     for (const { id, result } of settlement.repositories) {
                         const requestId = repositoryRequestIds.get(id);
-                        if (requestId && result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired') {
+                        if (requestId && result.ok && 'kind' in result.result
+                            && result.result.kind === 'opened' && result.result.setup === 'notRequired') {
                             complete(selection, requestId);
                         }
                     }

@@ -1,12 +1,12 @@
 import * as React from 'react';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
+import type { TeamSetupBatchResultV1 } from '@happier-dev/protocol/teams';
 
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { resolveActionOperationStatus } from '@/components/inbox/actionOperations/actionOperationPresentation';
 
 import type { TeamSetupBatch } from './useTeamSetupPlan';
-import type { TeamSetupOwnerResult } from './teamSetupPlan';
 import { useTeamSetupRepositoryProgress, type TeamSetupRepositoryProgress } from './useTeamSetupRepositoryProgress';
 
 export type TeamSetupRepositoryPhase = 'queued' | 'opening' | 'prepared' | 'ready' | 'approval' | 'failed' | 'stopped' | 'unavailable';
@@ -28,7 +28,7 @@ export type TeamSetupBatchRepositoryProgress = Readonly<{
 }>;
 
 function readPhase(batch: TeamSetupBatch, dispatched: boolean,
-    progress: TeamSetupRepositoryProgress, ownerResult: TeamSetupOwnerResult<OpenProjectResultV1> | null,
+    progress: TeamSetupRepositoryProgress, ownerResult: TeamSetupBatchResultV1['repositories'][number]['result'] | null,
     ready: boolean): TeamSetupRepositoryPhase {
     if (!dispatched) {
         if (batch.running) return 'queued';
@@ -81,7 +81,7 @@ export function useTeamSetupBatchProgress(
         requestId: row?.requestId,
     }, options?.observeOpen === false ? null : batch?.selection.lifetime ?? null);
     const ownerResult = batch?.settlement?.repositories.find(repository => repository.id === row?.repositoryId)?.result ?? null;
-    const returnedOpen = ownerResult?.ok && ownerResult.result.kind === 'opened' ? ownerResult.result : null;
+    const returnedOpen = ownerResult?.ok && 'kind' in ownerResult.result && ownerResult.result.kind === 'opened' ? ownerResult.result : null;
     const opened = progress.result?.kind === 'opened' ? progress.result : returnedOpen;
     const openSucceeded = progress.openOperation?.snapshot.state === 'succeeded' || (!progress.openOperation && !!returnedOpen);
     const readyProject = openSucceeded && opened

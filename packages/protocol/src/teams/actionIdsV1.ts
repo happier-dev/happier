@@ -2,6 +2,15 @@ import { TEAM_DIRECTORY_ACTION_IDS_V1 } from './directory/actionIds.js';
 import { TEAM_IDENTITY_ACTION_IDS_V1 } from './identity/actionIds.js';
 import { TEAM_EXTERNAL_GROUP_BINDING_ACTION_IDS_V1 } from './externalGroupBindings/actionIds.js';
 import { TEAM_CREDENTIAL_HOME_ACTION_IDS_V1, TEAM_CREDENTIAL_HOST_ACTION_IDS_V1 } from './credentials/actionIdsV1.js';
+import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV1.js';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '../actions/operations/actionIdsV1.js';
+
+export const TEAM_SETUP_RUN_ACTION_ID_V1 = 'teams.setup.run';
+export const TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1 = {
+  machine: MACHINE_SETUP_APPLY_ACTION_ID_V1,
+  repository: 'projects.open',
+  operation: ACTION_OPERATION_GET_ACTION_ID_V1,
+} as const;
 
 export const TEAM_CREATE_ACTION_ID_V1 = 'teams.create';
 export const TEAM_POLICY_SET_ACTION_ID_V1 = 'teams.policy.set';
@@ -72,6 +81,7 @@ export const TEAM_HOME_ACTION_IDS_V1 = [
   ...TEAM_CREDENTIAL_HOME_ACTION_IDS_V1,
 ] as const;
 export const TEAM_ACTION_IDS_V1 = [
+  TEAM_SETUP_RUN_ACTION_ID_V1,
   ...TEAM_HOME_ACTION_IDS_V1,
   ...TEAM_MEMBERSHIP_HISTORY_ACTION_IDS_V1,
   ...TEAM_CREDENTIAL_HOST_ACTION_IDS_V1,

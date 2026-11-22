@@ -38,6 +38,9 @@ import type { PluginUiContributionOriginV1 } from '@/sync/domains/plugins/ui/pro
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowReadRequestV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams/actionIdsV1';
 
 const navigation = vi.hoisted(() => ({ push: vi.fn(), segments: [] as string[], sessionId: '' }));
 // The cross-package daemon dispatcher can import Socket before the UI installs
@@ -131,6 +134,80 @@ afterEach(async () => {
 });
 
 describe('admitted app Actions and daemon-to-app continuations', () => {
+  it('runs the same reviewed Team Setup batch for Joined Setup and an Agent on the requester App', async () => {
+    const actionId = TEAM_SETUP_RUN_ACTION_ID_V1;
+    const machine = createMachineFixture({ id: 'selected-machine', activeAt: Date.now(),
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
+    publishMachineActivityForTest([machine]);
+    storage.setState({ machines: { [machine.id]: machine }, machineListByServerId: {} });
+    homes.answer(serverId, `/v1/machines/${machine.id}`, { body: { machine: createPlainMachineRowFixture({
+      id: machine.id, accountId: 'relay-account',
+    }) } });
+    const rows = createPlainProjectAccountRowListFixture({
+      workspaceRefs: [{ id: 'repo', machineId: machine.id, serverId, rootPath: '/ready', createdAtMs: 1 }],
+    });
+    homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, { body: rows });
+    homes.answer(serverId, `POST ${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/read`, { select: input => {
+      const { key } = ProjectAccountRowReadRequestV1Schema.parse(input);
+      const row = rows.rows.find(candidate => candidate.key.kind === 'workspace-ref'
+        && key.kind === 'workspace-ref' && candidate.key.id === key.id && candidate.key.serverId === key.serverId);
+      return { body: row ? { status: 'present', row } : { status: 'absent' } };
+    } });
+    const openPaths: string[] = [];
+    answerDaemonRpc = (method, request) => {
+      if (method !== `${machine.id}:${RPC_METHODS.PROJECTS_OPEN}` && method !== RPC_METHODS.PROJECTS_OPEN) {
+        throw new Error(`Unexpected RPC ${method}`);
+      }
+      const { source } = request as { source: { path: string } };
+      openPaths.push(source.path);
+      return source.path === '/waiting' ? { kind: 'refused', code: 'folder_missing' } : {
+        kind: 'opened', setup: 'notRequired', directory: source.path,
+        workspace: { serverId, machineId: machine.id, workspaceId: 'repo', rootPath: source.path },
+      };
+    };
+    const input = { serverId, homeId: serverId, machineId: machine.id, repositories: ['/waiting', '/ready'].map(path => ({
+      id: path, input: { serverId, machineId: machine.id, source: { kind: 'folder', path }, materialization: { kind: 'attach' } },
+    })) };
+    const app = createDefaultActionExecutor();
+    const signal = new AbortController().signal;
+    const accepted = { ok: true, result: { completed: false, repositories: [
+      { id: '/waiting', result: { ok: false, errorCode: 'folder_missing' } },
+      { id: '/ready', result: { ok: true, result: { kind: 'opened', directory: '/ready' } } },
+    ] } };
+    expect(await app.executeConfirmed(actionId, input, { surface: 'ui', serverId, expectedAccountId: 'relay-account', signal }))
+      .toMatchObject(accepted);
+    expect(openPaths).toEqual(['/waiting', '/ready']);
+    openPaths.length = 0;
+    const { Modal } = await import('@/modal');
+    const review = vi.spyOn(Modal, 'confirm').mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    try {
+      const receive = createUiClientActionReverseHandler({ serverId, accountId: 'relay-account', isCurrent: () => true });
+      const reverse = createClientActionReverseDispatcher(() => ({
+        hasConnectedClientRpcHandler: method => method === RPC_METHODS.UI_ACTION_EXECUTE,
+        callConnectedClientRpc: async (method, payload, options) => {
+          expect(method).toBe(RPC_METHODS.UI_ACTION_EXECUTE);
+          expect(options.principalAccountId).toBe('relay-account');
+          options.onIssued();
+          return { ok: true, result: await receive(JSON.parse(JSON.stringify(payload)), { signal }) };
+        },
+      }));
+      const caller = createActionExecutor({ clientActionExecute: reverse, readApprovalOwner: () => 'receiver' });
+      const agent = (actionRequestId: string) => caller.execute(actionId, input, {
+        surface: 'agent', authority: 'account_automation', runtimeAccountId: 'relay-account',
+        defaultSessionId: 'background-session', serverId, actionRequestId, signal,
+      });
+      expect(await receive({ v: 1, actionId, input, context: { surface: 'ui', authority: 'present_user' } }, { signal }))
+        .toMatchObject({ execution: { ok: false, errorCode: 'admission_unavailable' } });
+      expect(await agent('decline')).toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+      expect(openPaths).toEqual([]);
+      expect(await agent('accept')).toMatchObject(accepted);
+      expect(review).toHaveBeenCalledTimes(2);
+      expect(openPaths).toEqual(['/waiting', '/ready']);
+    } finally {
+      review.mockRestore();
+    }
+  });
+
   it('delivers background Agent desktop Actions and acknowledges a native window whose renderer never readies', async () => {
     const { ClientActionReverseRuntime } = await import('@/components/appShell/runtime/ClientActionReverseRuntime');
     const { selectRpcTarget } = await import('../../../../../server/sources/app/api/socket/rpc/rpcTargetSelection');

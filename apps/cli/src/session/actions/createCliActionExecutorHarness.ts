@@ -13,6 +13,7 @@ import { parseLocalServiceDomainActionRpcRequest, readLocalServiceControlActionR
 import { DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { ProjectWorkerStatusInputV1Schema } from '@happier-dev/protocol/actions/specs/projectWorkers';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ActionId } from '@happier-dev/protocol';
 import { DeploymentActionInputSchemasV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -146,7 +147,8 @@ export function createCliActionExecutorHarness(
   // Original CLI finite admission defers Ask to the receiving signed Machine root; projectAction
   // refuses a host-only Ask that the Account cannot preserve before anything is sent.
   const readApprovalOwner = (id: string, ctx: ActionExecutorContext) =>
-    requiresOriginalCliFiniteAdmission(id, ctx) ? 'receiver' as const : 'local' as const;
+    (id === TEAM_SETUP_RUN_ACTION_ID_V1 && (ctx.surface === 'agent' || ctx.surface === 'mcp'))
+      || requiresOriginalCliFiniteAdmission(id, ctx) ? 'receiver' as const : 'local' as const;
   const rawDeps: MutableActionExecutorDeps = {
     ...baseDepsForRuntime,
     prepareApprovalExecutionOriginContext: async ({ targetSessionId }) => {

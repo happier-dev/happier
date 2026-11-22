@@ -20,6 +20,7 @@ import { executeOriginalAccountActionTransport, executeOriginalAccountMachineAct
     readOriginalAccountActionMachine, resolveOriginalAccountPluginInvocation } from '@/sync/api/externalActionAccountTransport';
 import { bindPresentUserActionConfirmation } from '@/sync/ops/actions/presentUserConfirmation';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams';
 import { bindManagedPresetAcquireOriginV1, ManagedMachineControllerError } from '@happier-dev/cli-common/machines/managed';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { executeUiManagedAccountAcquire, executeUiManagedAccountRecovery } from './managedMachineAccountAcquire';
@@ -160,7 +161,9 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
                 admittedChild ? { ...addressedContext, presentUserConfirmation: undefined } : addressedContext, params.reviewDigest)
             : addressedContext;
         const confirmation = context.presentUserConfirmation?.inputDigest === undefined ? undefined : context.presentUserConfirmation;
-        const reviewedParent = readHostReviewedParentV1(context);
+        const parent = readHostReviewedParentV1(context);
+        // The requester-side Team review has already bound the ordinary Apply above.
+        const reviewedParent = admittedChild && parent?.actionId === TEAM_SETUP_RUN_ACTION_ID_V1 ? null : parent;
         const requester = confirmation || reviewedParent ? ExternalActionRequesterInvocationV1Schema.safeParse({
             caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface, authority: context.authority,
             callerPermissionMode: context.callerPermissionMode, callerInputConstraints: context.callerInputConstraints,

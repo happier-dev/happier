@@ -54,8 +54,11 @@ import {
 import { TeamLogoSetInputV1Schema } from '../../teams/logo.js';
 import {
   TEAM_POLICY_SET_ACTION_ID_V1,
+  TEAM_SETUP_RUN_ACTION_ID_V1,
   TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
 } from '../../teams/actionIdsV1.js';
+import { TeamSetupBatchInputV1Schema, TeamSetupBatchResultV1Schema } from '../../teams/setupBatchV1.js';
+import { resolvePluginLocalizedStringV2Text } from '../../plugins/contributions/publicTypes.js';
 import { TeamSharedResourcesSummaryInputV1Schema, TeamSharedResourcesSummaryV1Schema } from '../../teams/teamShareableResourceKindV1.js';
 import {
   TeamMemberAddInputV1Schema,
@@ -283,6 +286,7 @@ type ActionSpec<
 // Keep per-id schema correlations without serializing every schema's implementation
 // into the inferred factory declaration, matching the Execution Run spec boundary.
 export type TeamActionSpecs = readonly [
+  ActionSpec<typeof TEAM_SETUP_RUN_ACTION_ID_V1, typeof TeamSetupBatchInputV1Schema, typeof TeamSetupBatchResultV1Schema, 'client'>,
   ActionSpec<'teams.credentials.usage.export', typeof TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'], typeof TEAM_CREDENTIAL_ACTION_OUTPUT_SCHEMAS_V1['teams.credentials.usage.export'], 'client'>,
   ActionSpec<'teams.members.history.preparation.get', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryReadinessV1Schema, 'client'>,
   ActionSpec<'teams.members.history.prepare', typeof TeamMembershipHistoryInputV1Schema, typeof TeamMembershipHistoryPreparationResultV1Schema, 'client', 'present_user'>,
@@ -367,6 +371,43 @@ export type TeamActionSpecs = readonly [
  */
 function createTeamActionSpecs(): TeamActionSpecs {
   return Object.freeze<TeamActionSpecs>([
+  {
+    id: TEAM_SETUP_RUN_ACTION_ID_V1, title: 'Set up Team projects',
+    description: 'Ask the requester to review the selected Machine setup and checkouts on their App, then run them in order.',
+    executionPlacement: 'client', requiredAuthority: 'account_automation', safety: 'danger', sideEffectClass: 'write',
+    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false }, placements: [],
+    inputSchema: TeamSetupBatchInputV1Schema, outputSchema: TeamSetupBatchResultV1Schema,
+    approval: { flow: 'blocking', result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' },
+    approvalPresentation: { summary: value => {
+      const { machineId, homeId, machine, repositories } = TeamSetupBatchInputV1Schema.parse(value);
+      return [
+        `Machine ${machineId} on Home ${homeId}`,
+        ...(machine ? machine.targets.flatMap(target => [
+          `Apply ${target.preset?.id ?? 'Machine setup'} (revision ${target.preset?.revision ?? target.desiredRevision})`,
+          ...target.recipePlans.flatMap(({ plan }) => plan.steps.map(step =>
+            `${step.kind}: ${step.review ? resolvePluginLocalizedStringV2Text(step.review.title) : step.id}`)),
+          ...(target.removeItemKeys ?? []).map(id => `Remove ${id}`),
+          ...(target.appChildren ?? []).map(child => child.actionId),
+        ]) : []),
+        ...repositories.map(({ input }) => {
+          const source = input.source.kind === 'folder' ? input.source.path
+            : input.source.kind === 'workspace' ? input.source.checkout?.rootPath ?? `Workspace ${input.source.workspaceId}`
+            : `${input.source.selector.repository.nameWithOwner} on ${input.source.selector.provider.baseUrl}`
+              + (input.source.kind === 'source' && input.source.checkout ? ` at ${input.source.checkout.rootPath}` : '');
+          const checkout = input.materialization;
+          const destination = checkout.kind === 'clone'
+            ? ` → ${checkout.destinationParentPath}/${checkout.destinationDirectoryName}`
+            : checkout.kind === 'sync' ? ` → ${checkout.targetPath}`
+              : checkout.kind === 'worktree' ? ` → ${checkout.targetPath ?? checkout.checkout.displayName}` : '';
+          const authentication = checkout.kind === 'clone'
+            ? ` using ${checkout.gitAccount ? `Connected Account ${checkout.gitAccount.accountId}` : checkout.authentication}` : '';
+          const ref = input.ref ?? (input.source.kind === 'source' ? input.source.defaultRef : undefined);
+          return `${checkout.kind} ${source}${ref ? ` @ ${ref}` : ''}${authentication}${destination}`;
+        }),
+      ].join('\n');
+    } },
+    bindings: { mcpToolName: 'teams_setup_run' },
+  } as const satisfies PreNormalizedActionSpec,
   {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
     description: 'Build CSV file bytes on the keyholding client from the authorized Team credential usage projection, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',

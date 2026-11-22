@@ -38,6 +38,9 @@ import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, re
 import { withScmRefineInputAuthorizationV1, readHostRootInputCredentialActionV1 } from './executor/scmRefineInputPurpose.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedParentV1, readHostReviewedChildOperationV1, readHostReviewedChildRootV1, readDeploymentRoleRootInputV1, hasHostReviewedChildCredentialScopeAdmissionV1, retainHostReviewedChildAdmissionV1, retainHostReviewedChildOperationContextV1 } from './executor/deploymentRoleChild.js';
 import { prepareHostReviewedChildrenV1, readHostReviewedChildrenPlanV1 } from './executor/deploymentRoleApproval.js';
+import { describeTeamSetupBatch, runTeamSetupBatch } from './executor/teamSetup.js';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { TeamSetupBatchInputV1Schema } from '../teams/setupBatchV1.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
   readHostReviewedChildOriginalAuthorizationV1,
@@ -3706,6 +3709,13 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       }
       options?.onAutomationAdmission?.(ctx);
     }
+    if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && !existingAdmission && isPresentUserHostInvocation(ctx)) {
+      const setup = TeamSetupBatchInputV1Schema.parse(admittedInput);
+      if (!ctx.serverId || !isSameHome(setup.serverId, ctx.serverId, ctx) || !isSameHome(setup.homeId, ctx.serverId, ctx)) {
+        return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+      }
+      preparedHostReviewedChildren = { children: describeTeamSetupBatch(setup) };
+    }
     if (!existingAdmission && spec.hostReviewedChildren) {
       const children = typeof spec.hostReviewedChildren === 'function'
         ? spec.hostReviewedChildren(admittedInput)
@@ -4519,6 +4529,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // A captured keyholder can execute this exact client Action locally.
       // Preserve generic reverse delivery only when that native port is absent.
       const hasNativeClientEffect = actionId === 'teams.credentials.usage.export' && deps.teamCredentialUsageExport !== undefined
+        || actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && isPresentUserHostInvocation(ctx)
         || isMachineManagedInstallationActionIdV1(actionId) && deps.machineManagedInstallationRespond !== undefined
         || isPluginCollectionSharingActionIdV1(actionId) && deps.pluginCollectionSharingAction !== undefined;
       if (admittedClientContext && deps.clientActionExecute && !existingAdmission?.clientExecutionContinued
@@ -6664,6 +6675,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         }
         const dispatchRunsDispatch2Result = await dispatchRunsDispatch2({ actionId, data, parsed, ctx, deps });
         if (dispatchRunsDispatch2Result !== null) return dispatchRunsDispatch2Result;
+        if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1) {
+          return await runTeamSetupBatch(TeamSetupBatchInputV1Schema.parse(parsed.data), ctx, executeHostChild);
+        }
         const dispatchProjectsDispatch1Result = await dispatchProjectsDispatch1({ actionId, deps, parsed, ctx, executeHostChild, admittedClientContext });
         if (dispatchProjectsDispatch1Result !== null) return dispatchProjectsDispatch1Result;
 

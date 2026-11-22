@@ -1,19 +1,9 @@
-import {
-    MachineSetupApplyResultV1Schema,
-    waitForMachineSetupOperationV1,
-} from '@happier-dev/protocol/machines/managed/actionsV1';
-import {
-    ActionApprovalRequestCreatedResultSchema,
-    type ActionApprovalRequestCreatedResult,
-    type ActionExecuteFailure,
-    type ActionExecuteResult,
-} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { OpenProjectInputV1, OpenProjectResultV1 } from '@happier-dev/protocol/projects/openProjectV1';
 import {
-    OpenProjectResultV1Schema,
-    type OpenProjectInputV1,
-    type OpenProjectResultV1,
-} from '@happier-dev/protocol/projects/openProjectV1';
+    TEAM_SETUP_RUN_ACTION_ID_V1, TeamSetupBatchResultV1Schema, type TeamSetupBatchResultV1,
+} from '@happier-dev/protocol/teams';
 
 import {
     prepareMachineSetupPresetApplyInput,
@@ -23,8 +13,6 @@ import type { MachineSetupPreparedApply } from '@/components/settings/machines/m
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { FrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { openSessionAuthoringAction } from '@/sync/ops/actions/sessionAuthoringActions';
-
-type MachineSetupApplyResultV1 = ReturnType<typeof MachineSetupApplyResultV1Schema.parse>;
 
 export type TeamSetupTarget = Readonly<{ serverId: string; homeId: string; machineId: string }>;
 /** Existing Action admission binds effects to the Account that reviewed this setup. */
@@ -38,18 +26,8 @@ export type TeamSetupPlan = Readonly<{
     machine: Extract<MachineSetupPreparedApply, { ok: true }> | null;
     repositories: readonly Readonly<{ id: string; input: OpenProjectInputV1 }>[];
 }>;
-export type TeamSetupOwnerResult<T> = ActionExecuteFailure | Readonly<{
-    ok: true;
-    result: T | ActionApprovalRequestCreatedResult;
-}>;
-export type TeamSetupRunResult = Readonly<{
-    completed: boolean;
-    machine: TeamSetupOwnerResult<MachineSetupApplyResultV1> | null;
-    machineSettlement: ActionExecuteFailure | null;
-    repositories: readonly Readonly<{ id: string; result: TeamSetupOwnerResult<OpenProjectResultV1> }>[];
-}>;
+export type TeamSetupRunResult = Readonly<TeamSetupBatchResultV1>;
 
-/** The selected Machine and ordinary Project choices are the whole batch; no Team executor or progress store. */
 export async function prepareTeamSetupPlan(params: Readonly<{
     executeAction: FrontDoorActionExecute;
     context: TeamSetupActionContext;
@@ -82,62 +60,30 @@ export function buildTeamSetupPlan(
     } })) };
 }
 
-function decodeOwnerResult<T>(result: ActionExecuteResult, parse: (value: unknown) => T): TeamSetupOwnerResult<T> {
-    if (!result.ok) return result;
-    const approval = ActionApprovalRequestCreatedResultSchema.safeParse(result.result);
-    return { ok: true, result: approval.success ? approval.data : parse(result.result) };
-}
-
-/** Called by the surface's explicit Set up confirmation; every effect retains its existing Action admission. */
+/** Joined Setup has already presented the checkboxes and the Set up confirmation. */
 export async function runTeamSetupPlan(params: Readonly<{
     executeAction: FrontDoorActionExecute;
     context: TeamSetupActionContext;
     plan: TeamSetupPlan;
-    onMachineApplied?: (result: TeamSetupOwnerResult<MachineSetupApplyResultV1>) => void;
-    onMachineSettled?: (failure: ActionExecuteFailure | null) => void;
-    repositoryRequestIds?: ReadonlyMap<string, string>;
+    actionRequestId?: string;
+    onMachineApplied?: (result: NonNullable<TeamSetupRunResult['machine']>) => void;
     onRepositoryOpening?: (id: string) => void;
-    onRepositoryOpened?: (id: string, result: TeamSetupOwnerResult<OpenProjectResultV1>) => void;
 }>): Promise<TeamSetupRunResult> {
-    let machine: TeamSetupRunResult['machine'] = null;
-    let machineSettlement: ActionExecuteFailure | null = null;
-    if (params.plan.machine && !params.context.signal?.aborted) {
-        machine = decodeOwnerResult(await params.executeAction.confirmed(
-            'machines.setup.apply', params.plan.machine.input, params.context,
-        ), value => MachineSetupApplyResultV1Schema.parse(value));
-        params.onMachineApplied?.(machine);
-        if (machine.ok && !ActionApprovalRequestCreatedResultSchema.safeParse(machine.result).success) {
-            const applied = MachineSetupApplyResultV1Schema.parse(machine.result);
-            const observed = await params.executeAction('action.operations.get', {
-                serverId: params.plan.target.serverId, machineId: params.plan.target.machineId,
-                operationId: applied.operationId, waitForTerminal: true,
-            }, params.context);
-            machineSettlement = observed.ok
-                ? await waitForMachineSetupOperationV1(applied.operationId, async () => observed.result)
-                : observed;
-            params.onMachineSettled?.(machineSettlement);
-        }
-        // These checkouts need the selected Machine setup. Pending approval or a
-        // failed prerequisite stays visible through the owner's result, without replay.
-        if (!machine.ok || ActionApprovalRequestCreatedResultSchema.safeParse(machine.result).success || machineSettlement) {
-            return { completed: false, machine, machineSettlement, repositories: [] };
-        }
-    }
-    const repositories: TeamSetupRunResult['repositories'][number][] = [];
-    for (const repository of params.plan.repositories) {
-        if (params.context.signal?.aborted) break;
-        params.onRepositoryOpening?.(repository.id);
-        const requestId = params.repositoryRequestIds?.get(repository.id);
-        const result = decodeOwnerResult(await params.executeAction.confirmed(
-            'projects.open', repository.input, requestId ? { ...params.context, actionRequestId: requestId } : params.context,
-        ), value => OpenProjectResultV1Schema.parse(value));
-        repositories.push({ id: repository.id, result });
-        params.onRepositoryOpened?.(repository.id, result);
-    }
-    const completed = !params.context.signal?.aborted && (machine !== null || repositories.length > 0)
-        && repositories.length === params.plan.repositories.length
-        && repositories.every(({ result }) => result.ok && result.result.kind === 'opened' && result.result.setup === 'notRequired');
-    return { completed, machine, machineSettlement, repositories };
+    const { plan, context, actionRequestId } = params;
+    const execution = await params.executeAction.confirmed(TEAM_SETUP_RUN_ACTION_ID_V1, {
+        ...plan.target,
+        ...(plan.machine ? { machine: plan.machine.input } : {}),
+        repositories: plan.repositories,
+    }, {
+        ...context,
+        ...(actionRequestId ? { actionRequestId } : {}),
+        onTeamSetupBatchProgress: event => {
+            if (event.kind === 'machineApplied') params.onMachineApplied?.(event.result);
+            else params.onRepositoryOpening?.(event.id);
+        },
+    });
+    return execution.ok ? TeamSetupBatchResultV1Schema.parse(execution.result)
+        : TeamSetupBatchResultV1Schema.parse({ completed: false, machine: null, machineSettlement: execution, repositories: [] });
 }
 
 /** Opening an editable composer is a separate person action, never a side effect of joining or setup. */

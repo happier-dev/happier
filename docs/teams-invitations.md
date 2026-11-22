@@ -188,6 +188,12 @@ observed on the open setup page, native Project readiness retires the offer
 for that Team through the existing Home Hub layout intent. A Project that is
 prepared and still needs Trust review or execution remains pending.
 
+Joined Setup and agents submit the same `teams.setup.run` Action. An agent's
+request opens a review on an answering App signed in to the requesting Account.
+The App runs the selected Machine Apply, waits for its outcome, then opens the
+reviewed checkouts in order. Machine Apply and Project Open own their respective
+permissions. Project Open still reviews any setup needed by a checkout.
+
 In unreleased 0.3, unauthenticated preview keeps unknown and malformed bearers generic.
 For a known bearer, its existing `unavailable` outcome may carry an optional typed
 `reason`: `expired`, `revoked`, `used`, `team_archived`, or `teams_disabled`. The join

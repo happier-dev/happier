@@ -1,6 +1,7 @@
 import { THEME_ACTION_IDS, isThemeActionId } from '@happier-dev/protocol/actions/themeActionIdsV1';
 import { WORKFLOW_LIBRARY_VIEW_ACTION_IDS, WORKFLOW_RUN_VIEW_ACTION_IDS, isWorkflowLibraryViewActionId, isWorkflowRunViewActionId } from '@happier-dev/protocol/actions/scopeActionIdsV1';
 import { USAGE_HISTORY_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
@@ -84,6 +85,7 @@ export function createClientActionReverseDispatcher(
     // the invoking Agent's Session is in the background. View-specific Actions
     // still require the App viewing their exact Session, without fallback.
     const accountClientAction = isVoiceConversationActionId(actionId) || isSettingsDeclarationActionIdV1(actionId)
+      || actionId === TEAM_SETUP_RUN_ACTION_ID_V1
       || isSessionClientControlActionId(actionId)
       || isSessionOrganizationAppearanceActionId(actionId)
       || isWorkspaceActionId(actionId) || actionId === USAGE_HISTORY_ACTION_IDS.read

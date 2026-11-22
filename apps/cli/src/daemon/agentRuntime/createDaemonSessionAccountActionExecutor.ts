@@ -9,6 +9,7 @@ import type { ExternalActionRequestEnvelope } from '@happier-dev/protocol/action
 import { isSessionActionRpcMethodV1, type SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ActionIdSchema, ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '@happier-dev/protocol/teams';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import type { AgentRuntimeDaemonServiceRequestV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
@@ -370,6 +371,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           || ACTION_ID_FAMILIES_V1.todo_session_link.some(id => id === operation.actionId)
           || ACTION_ID_FAMILIES_V1.list_reorder.some(id => id === operation.actionId)))
         && !(operation.actionId === 'action.invoke' && executionPlacement === 'account')
+        && !(operation.actionId === TEAM_SETUP_RUN_ACTION_ID_V1 && executionPlacement === 'client')
         ? await runTracedExternalActionStage(operation.actionId, operation.requestId, 'session_action.authorization',
           () => readRequesterHomeWithinActionLifetime(async () => !await authority.isCurrent() ? null
             : await prepare({ operation, authority, isCallerCurrent, sessionActionOrigin,
