@@ -36,6 +36,7 @@ function ExactModelChoiceModal(
   props: Readonly<{
     agentTargetKey: string;
     purpose?: SessionModelPickerProps['purpose'];
+    clearOption?: SessionModelPickerProps['clearOption'];
     declarationContext: NonNullable<SessionModelPickerProps['declarationContext']>;
     sourceBrowse?: SessionModelPickerProps['sourceBrowse'];
     nativeModels: readonly {
@@ -63,6 +64,7 @@ function ExactModelChoiceModal(
     <SessionModelPicker
       agentTargetKey={props.agentTargetKey}
       purpose={props.purpose}
+      clearOption={props.clearOption}
       declarationContext={props.declarationContext}
       sourceBrowse={props.sourceBrowse}
       nativeModels={props.nativeModels}
@@ -160,13 +162,11 @@ export function useExactModelChoice(
     agentTargetKey: params.agentTargetKey,
     refresh: projection.refresh,
   });
-  const nativeModels = React.useMemo(() => {
-    // The picker reads a native `default` row as "no explicit model" and selects `null`.
-    const clear = params.clearOptionLabel ? [{ value: 'default', label: params.clearOptionLabel,
-      ...(params.clearOptionDescription ? { description: params.clearOptionDescription } : {}) }] : [];
-    if (!params.agentId) return clear;
-    return [...clear, ...nativeCatalog.modelOptions.filter((model) => !params.clearOptionLabel || model.value !== 'default')];
-  }, [nativeCatalog.modelOptions, params.agentId, params.clearOptionDescription, params.clearOptionLabel]);
+  const nativeModels = React.useMemo(() => params.agentId ? nativeCatalog.modelOptions : [],
+    [nativeCatalog.modelOptions, params.agentId]);
+  const clearOption = React.useMemo(() => params.clearOptionLabel ? { label: params.clearOptionLabel,
+    ...(params.clearOptionDescription ? { description: params.clearOptionDescription } : {}) } : undefined,
+  [params.clearOptionDescription, params.clearOptionLabel]);
   const hiddenNativeModelKeys = React.useMemo(
     () =>
       hiddenModelVisibilityKeys(providerSettings, {
@@ -229,6 +229,7 @@ export function useExactModelChoice(
   const live = React.useMemo(
     () => ({
       purpose: params.purpose,
+      clearOption,
       declarationContext,
       sourceBrowse: { machineId: params.machineId, serverId: params.serverId },
       nativeModels,
@@ -249,6 +250,7 @@ export function useExactModelChoice(
     }),
     [
       confirmExperimentalModel,
+      clearOption,
       declarationContext,
       currentSelectionRecovery,
       hiddenNativeModelKeys,

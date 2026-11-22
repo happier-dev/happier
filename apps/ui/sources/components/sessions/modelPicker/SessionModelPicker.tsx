@@ -13,7 +13,7 @@ import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionL
 import { providerDeclarationContext, readAccountAgentCatalogConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import type { ProviderBoundModelRef} from '@happier-dev/protocol/providers/selection/v1';
+import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,
@@ -219,6 +219,7 @@ export type SessionModelPickerProps = Readonly<{
     hiddenNativeModelKeys?: ReadonlySet<string>;
     /** Default `true`; `false` drops the automatic option (a model-restricted embed). */
     allowAutomatic?: boolean;
+    clearOption?: Parameters<typeof buildSessionModelPickerSections>[0]['clearOption'];
     selected: SessionModelPickerOptionValue;
     /** Where the selected model came from when it is an inherited default ("Team default"); shown on that row only. */
     selectedAttribution?: string | null;
@@ -531,6 +532,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         providerProjectionAuthoritative: props.providerProjectionAuthoritative,
         selected: props.selected,
         allowAutomatic: props.allowAutomatic,
+        clearOption: props.clearOption,
         selectedTeamCredentialModel: props.selectedTeamCredentialModel ?? undefined,
         currentSelectionRecovery: props.currentSelectionRecovery,
         teamCredentialResources: props.teamCredentialResources,
@@ -547,6 +549,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         props.agentTargetKey,
         declarationContext,
         props.allowAutomatic,
+        props.clearOption,
         nativeSourceLabel,
         props.scope,
         props.gatewaySlotTitle,
@@ -636,7 +639,11 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     // its lone group goes unheaded too. A lone Favorites group keeps its label: it still says what
     // the list is.
     const browsing = props.scope !== undefined;
-    const selectedKey = sessionModelSelectionKey(props.selectedTeamCredentialModel ?? props.selected);
+    // With no preference-clear row, the ordinary Session picker still displays null as Automatic.
+    const selectedValue = React.useMemo(() => props.selectedTeamCredentialModel ?? props.selected
+        ?? (props.clearOption ? null : { agentTargetKey: props.agentTargetKey, providerConnectionId: null, modelId: 'default' }),
+    [props.agentTargetKey, props.clearOption, props.selected, props.selectedTeamCredentialModel]);
+    const selectedKey = sessionModelSelectionKey(selectedValue);
     const labeledSections = React.useMemo((): ReadonlyArray<SessionModelPickerSection> => {
         // What can run reads first; every model that can't sits in one "Unavailable (n)" group last, each
         // row naming its source and a few words of why (the full reason stays its accessible label). A reason
@@ -689,7 +696,8 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
             values: props.favoriteKeys,
-            isFavoritable: (option) => option.value !== null && 'providerConnectionId' in option.value,
+            isFavoritable: (option) => option.value !== null && 'providerConnectionId' in option.value
+                && !isNativeAutomaticModelSelectionInputV1(option.value),
             onToggle: (option) => {
                 if (!option.value || !('providerConnectionId' in option.value)) return;
                 const effort = sessionModelSelectionKey(option.value) === selectedKey
@@ -763,8 +771,8 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             if (binding) return props.onSelect(ref, binding);
             return;
         }
-        return props.onSelect(ref);
-    }, [props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel, props.providerGroups]);
+        return props.onSelect(!props.clearOption && ref && isNativeAutomaticModelSelectionInputV1(ref) ? null : ref);
+    }, [props.clearOption, props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel, props.providerGroups]);
     // Both a card press and a favorite shortcut use the same confirmation.
     const selectModel = (ref: SessionModelPickerOptionValue, commit = () => commitSelection(ref)) => {
         const resolution = resolveSessionModelPickerSelection({ purpose: props.purpose, groups: props.providerGroups, ref });
@@ -1005,7 +1013,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             notes={notes}
             options={[]}
             sections={presentedSections}
-            selectedValue={props.selectedTeamCredentialModel ?? props.selected}
+            selectedValue={selectedValue}
             nothingSelected={props.mixedSelection !== undefined}
             getValueKey={sessionModelSelectionKey}
             emptyText={t('settingsProviders.models.empty')}

@@ -32,7 +32,7 @@ export function isTeamCredentialProviderModelPickerValue(
  * collapse into one row or favorite.
  */
 export function sessionModelSelectionKey(value: SessionModelPickerOptionValue): string {
-    if (value === null) return 'automatic';
+    if (value === null) return 'inherit';
     if (isTeamCredentialProviderModelPickerValue(value)) {
         return JSON.stringify(['team_resource', value.teamId, value.resourceId, value.expectedResourceRevision, value.deliveryMode, value.agentTargetKey, value.modelId]);
     }

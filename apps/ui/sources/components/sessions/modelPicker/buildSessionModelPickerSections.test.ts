@@ -1110,8 +1110,9 @@ describe('buildSessionModelPickerSections', () => {
             allowAutomatic,
         }).flatMap((section) => section.options.map((option) => option.value));
 
-        expect(values(true)).toContain(null);
-        expect(values(false)).not.toContain(null);
+        const automatic = { agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'default' };
+        expect(values(true)).toContainEqual(automatic);
+        expect(values(false)).not.toContainEqual(automatic);
         expect(values(false)).toContainEqual({ agentTargetKey: 'agent:happier.agent.claude/claude', providerConnectionId: null, modelId: 'claude-sonnet-4-5' });
     });
 });

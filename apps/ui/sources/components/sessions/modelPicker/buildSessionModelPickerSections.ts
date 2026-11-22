@@ -159,10 +159,8 @@ export function sessionModelConnectionTitle(group: SessionModelProjectionGroup):
     return providerConnectionSourceLabel(group);
 }
 
-function nativeModelRef(agentTargetKey: string, modelId: string): ProviderBoundModelRef | null {
-    return isNativeAutomaticModelSelectionInputV1({ modelId })
-        ? null
-        : { agentTargetKey, providerConnectionId: null, modelId };
+function nativeModelRef(agentTargetKey: string, modelId: string): ProviderBoundModelRef {
+    return { agentTargetKey, providerConnectionId: null, modelId };
 }
 
 export function buildSessionModelPickerSections(input: Readonly<{
@@ -170,14 +168,16 @@ export function buildSessionModelPickerSections(input: Readonly<{
     agentTargetKey: string;
     declarationContext: ProviderDeclarationContext;
     nativeModels: readonly SessionNativeModelOption[];
+    /** Removing a saved preference is distinct from deliberately choosing native Automatic. */
+    clearOption?: Readonly<{ label: string; description?: string }>;
     providerGroups: readonly SessionModelProjectionGroup[];
     hiddenNativeModelKeys: ReadonlySet<string>;
     canConfirmExperimental?: boolean;
     providerProjectionAuthoritative: boolean;
     selected?: SessionModelPickerValue;
     /**
-     * Default `true`. `false` removes the automatic/default native option, which maps to no model ref
-     * and so cannot be hidden by the visibility keys (an embed that restricts models, plan 04 §4.6).
+     * Default `true`. `false` removes the automatic/default native option, which cannot be hidden
+     * by visibility keys (an embed that restricts models, plan 04 §4.6).
      */
     allowAutomatic?: boolean;
     currentSelectionRecovery?: DaemonProviderCurrentSelectionRecoveryV1 | null;
@@ -219,9 +219,10 @@ export function buildSessionModelPickerSections(input: Readonly<{
         group.rows.map(row => sessionModelSelectionKey(row.ref))));
     const nativeOptions = nativeModels.flatMap((model): SessionModelPickerOption[] => {
         const value = nativeModelRef(input.agentTargetKey, model.value);
-        if (value !== null && projectedModelKeys.has(sessionModelSelectionKey(value))) return [];
-        if (value === null && input.allowAutomatic === false) return [];
-        const hidden = value !== null && input.hiddenNativeModelKeys.has(serializeModelVisibilityRefV1({
+        if (projectedModelKeys.has(sessionModelSelectionKey(value))) return [];
+        const automatic = isNativeAutomaticModelSelectionInputV1(value);
+        if (automatic && input.allowAutomatic === false) return [];
+        const hidden = !automatic && input.hiddenNativeModelKeys.has(serializeModelVisibilityRefV1({
             scope: 'agent',
             agentTargetKey: input.agentTargetKey,
             providerConnectionId: null,
@@ -318,6 +319,7 @@ export function buildSessionModelPickerSections(input: Readonly<{
     const teamSections = buildTeamCredentialModelPickerSections(input, teamModelEligible);
 
     const sections: SessionModelPickerSection[] = [
+        ...(input.clearOption ? [{ id: 'inherit', options: [{ value: null, ...input.clearOption }] }] : []),
         ...(nativeOptions.length > 0
             ? [{ id: 'native', title: nativeSource.label, options: nativeOptions }]
             : []),

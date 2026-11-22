@@ -166,6 +166,59 @@ it('shows a failed Team model catalog and reloads it without losing native choic
     });
 });
 
+it('keeps explicit Automatic separate from clearing a personal model to its Source default', async () => {
+    const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true, waivedActions: ['providers.models.refresh'],
+        machines: [createMachineFixture({ id: 'machine-5964', activeAt: Date.now(), storageMode: 'plain' })],
+        settings: { experiments: true, featureToggles: { providers: true } },
+        features: createRootLayoutFeaturesResponse({ features: { providers: { enabled: true }, teams: { enabled: true } } }),
+    });
+    const { ProjectSessionDefaultsSection } = await import('./TeamMemberDefaultsSection');
+    const automatic = { ...nativeRef, modelId: 'default' };
+    const lower = { ...nativeRef, modelId: 'source-model' };
+    declarations.setResponse(RPC_METHODS.CAPABILITIES_INVOKE, { ok: true, result: {
+        availableModels: [{ id: modelId, name: 'GPT-6.1-Sol' }, { id: lower.modelId, name: lower.modelId }],
+        supportsFreeform: false, source: 'dynamic', observedAt: Date.now(),
+    } });
+    const context = { primaryTeamId: null, projectDefaults: { modelByAgentTargetKey: {
+        [agentTargetKey]: { v: 1 as const, ref: lower, updatedAt: 1 },
+    } } };
+    let persisted: React.ComponentProps<typeof ProjectSessionDefaultsSection>['defaults'] = {
+        placement: { kind: 'machine', target: { serverId, machineId: 'machine-5964' } },
+        permissionModeByAgentTargetKey: { [agentTargetKey]: 'read-only' },
+        modelByAgentTargetKey: { [agentTargetKey]: { v: 1, ref: automatic, updatedAt: 2 } },
+    };
+    const writes = vi.fn();
+    function Host() {
+        const [defaults, setDefaults] = React.useState(persisted);
+        return <ProjectSessionDefaultsSection testID="defaults" serverId={serverId} teamId={null}
+            defaults={defaults} save={async next => { persisted = next; writes(next); setDefaults(next); }}
+            scope="personal-project" context={context} teamName="Acme" projectName="acme/web" editable busy={false} />;
+    }
+    const screen = await renderScreen(<ModalProvider><Host /></ModalProvider>);
+    const agent = () => screen.findAll(node => node.props.testID === 'defaults-agent:codex'
+        && typeof node.props.onExpandedChange === 'function')[0];
+    await waitForHomeGovernance(() => expect(agent()).toBeDefined());
+    await act(async () => { agent()!.props.onExpandedChange(true); });
+    const rowId = 'defaults-agent:codex:model';
+    const automaticKey = sessionModelSelectionKey(automatic);
+    await screen.pressByTestIdAsync(rowId);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:' + automaticKey)).toBeTruthy());
+    expect(writes).not.toHaveBeenCalled();
+    // Control: a concrete native model is offered, persisted and read back through the same field.
+    await screen.pressByTestIdAsync('model-picker-overlay-option:' + sessionModelSelectionKey(nativeRef));
+    await waitForHomeGovernance(() => expect(persisted.modelByAgentTargetKey?.[agentTargetKey]?.ref).toEqual(nativeRef));
+    await screen.pressByTestIdAsync(rowId);
+    await screen.pressByTestIdAsync('model-picker-overlay-option:' + automaticKey);
+    await waitForHomeGovernance(() => expect(persisted.modelByAgentTargetKey?.[agentTargetKey]?.ref).toEqual(automatic));
+    await screen.pressByTestIdAsync(rowId);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:' + automaticKey)).toBeTruthy());
+    await screen.pressByTestIdAsync('model-picker-overlay-option:' + sessionModelSelectionKey(null));
+    await waitForHomeGovernance(() => expect(persisted.modelByAgentTargetKey?.[agentTargetKey]).toBeUndefined());
+    expect(persisted.permissionModeByAgentTargetKey?.[agentTargetKey]).toBe('read-only');
+    expect(persisted.placement).toMatchObject({ kind: 'machine', target: { machineId: 'machine-5964' } });
+    await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(lower.modelId));
+});
+
 it('shows what an empty project field falls back to, whose it is, and names it on the clear row', async () => {
     const { serverId } = await account.restore({ accountId: 'admin', currentAccount: true, waivedActions: ['providers.models.refresh'],
         machines: [createMachineFixture({ id: 'machine-5964', activeAt: Date.now(), storageMode: 'plain' })],

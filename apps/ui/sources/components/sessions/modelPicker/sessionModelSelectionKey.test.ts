@@ -15,9 +15,9 @@ describe('sessionModelSelectionKey', () => {
         expect(sessionModelSelectionKey(value)).not.toBe(sessionModelSelectionKey(sessionModelPickerValueFromRef({ ...ref, teamId: 'team-b' })));
     });
 
-    it('matches a native default sentinel to Automatic while retaining exact Provider and Team defaults', () => {
+    it('keeps native Automatic distinct from inheritance and exact Provider and Team defaults', () => {
         const native = { agentTargetKey: 'agent:happier.agent.grok/grok', providerConnectionId: null, modelId: 'default' };
-        expect(sessionModelSelectionKey(native)).toBe(sessionModelSelectionKey(null));
+        expect(sessionModelSelectionKey(native)).not.toBe(sessionModelSelectionKey(null));
         expect(sessionModelSelectionKey({ ...native, providerConnectionId: ProviderConnectionIdSchema.parse('pc_a') }))
             .not.toBe(sessionModelSelectionKey(null));
         expect(sessionModelSelectionKey({ kind: 'team_credential_provider_model', teamId: 'team', resourceId: 'resource',

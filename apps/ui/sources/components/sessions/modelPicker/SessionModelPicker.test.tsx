@@ -88,6 +88,22 @@ function experimentalProviderGroup(id: string) {
 }
 
 describe('SessionModelPicker', () => {
+    it('keeps omitted Session model selection on Automatic without a clear preference row', async () => {
+        const onSelect = vi.fn();
+        const onToggleFavorite = vi.fn();
+        const agentTargetKey = 'agent:happier.agent.codex/codex';
+        const automatic = { agentTargetKey, providerConnectionId: null, modelId: 'default' };
+        const key = sessionModelSelectionKey(automatic);
+        const screen = await renderScreen(<SessionModelPicker agentTargetKey={agentTargetKey} declarationContext={{ kind: 'account' }}
+            nativeModels={[{ value: 'default', label: 'Automatic' }]} providerGroups={[]} providerProjectionAuthoritative
+            selected={null} onSelect={onSelect} favoriteKeys={new Set()} onToggleFavorite={onToggleFavorite} />);
+        expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:' + key)).toBeTruthy();
+        expect(screen.findByTestId('model-picker-overlay-option-favorite:' + key)).toBeNull();
+        await screen.pressByTestIdAsync('model-picker-overlay-option:' + key);
+        expect(onSelect).toHaveBeenCalledWith(null);
+        expect(onToggleFavorite).not.toHaveBeenCalled();
+    });
+
     it('names an inherited default\'s source on the selected model row only', async () => {
         const agentTargetKey = 'agent:happier.agent.codex/codex';
         const selected = { agentTargetKey, providerConnectionId: null, modelId: 'gpt-5.6-luna' };
