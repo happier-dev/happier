@@ -63,7 +63,7 @@ Development builds containing per-message read-aloud let you read a message from
 
 Press the speaker action to read the message. Press its Stop action to stop, or press another message's speaker action to switch. Playback continues when you leave the transcript; the global voice control keeps Stop available on the current screen, including while speech is preparing. The same Markdown cleanup described above applies.
 
-Long messages are read one sentence-sized piece at a time, so speech starts after the first piece is ready rather than after the whole message is synthesized. The piece size follows the voice streaming chunk-size setting.
+For long messages, OpenAI-compatible and Google Cloud TTS prepare a short first batch so playback can start sooner. Subsequent batches group sentences using the voice streaming chunk-size setting. You may hear pauses while the service prepares the next batch.
 
 Reading cancels and discards an active Local voice recording before speech starts. Starting the microphone stops read-aloud. Turning Voice off or removing the required voice setup also stops read-aloud.
 
