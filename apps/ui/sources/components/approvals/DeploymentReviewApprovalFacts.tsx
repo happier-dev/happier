@@ -279,25 +279,23 @@ function describeReviewFields(
 export type DeploymentReviewDecision = Readonly<{
   /** The decision as one sentence ("Deploy 7f3e2b1 to Production API"); the page's title. */
   title: string;
-  /** Its consequence: nothing changes until the person confirms. */
+  /** What confirming does, in one line. */
   description: string;
   /** The approve button names the effect ("Deploy 7f3e2b1"). */
   approve: string | null;
 }>;
 
-/**
- * What the deploy approval page leads with (lab d3 review): the decision and its consequence, read from the
- * host's review only. Null when the review does not name both the version and the environment, so the page
- * keeps the request's own title. Reads the one Machine it names through the server-scoped reader.
- */
-export function useDeploymentReviewDecision(
+export function readSoleDeploymentReviewMachineId(approval: DeploymentReviewApproval | null): string | null {
+  const machines = approval ? readMachines(approval.review) : [];
+  return machines.length === 1 ? machines[0]!.id : null;
+}
+
+/** The decision leads both an immediate confirmation and a saved approval, using the host's captured facts. */
+export function describeDeploymentReviewDecision(
   approval: DeploymentReviewApproval | null,
   actionId: string | null,
-  serverId: string | null,
+  machine: string | null,
 ): DeploymentReviewDecision | null {
-  const machines = approval ? readMachines(approval.review) : [];
-  const soleId = machines.length === 1 ? machines[0]!.id : null;
-  const machine = useReviewMachineName(serverId, soleId);
   if (!approval) return null;
   const { revision, environment } = approval.review;
   if (!revision || !environment) return null;
@@ -306,13 +304,26 @@ export function useDeploymentReviewDecision(
   const title = approval.promotion ? t('projects.deployments.review.decisionPromote', vars)
     : rollback ? t('projects.deployments.review.decisionRollback', vars)
       : t('projects.deployments.review.decisionDeploy', vars);
+  const data = 'platformName' in approval.review ? approval.review.data : approval.review.rollbackData;
+  const description = rollback && data
+    ? t(data === 'restoreBackup' ? 'projects.deployments.review.rollbackRestoresBackup' : 'projects.deployments.review.rollbackKeepsData', { machine })
+    : machine ? t('projects.deployments.review.consequenceOn', { machine }) : t('projects.deployments.review.consequence');
   return {
     title,
-    description: machine ? t('projects.deployments.review.consequenceOn', { machine }) : t('projects.deployments.review.consequence'),
+    description,
     approve: approval.promotion ? t('projects.deployments.review.approvePromote', vars)
       : rollback ? t('projects.deployments.review.approveRollback', vars)
         : t('projects.deployments.review.approveDeploy', vars),
   };
+}
+
+export function useDeploymentReviewDecision(
+  approval: DeploymentReviewApproval | null,
+  actionId: string | null,
+  serverId: string | null,
+): DeploymentReviewDecision | null {
+  const machine = useReviewMachineName(serverId, readSoleDeploymentReviewMachineId(approval));
+  return describeDeploymentReviewDecision(approval, actionId, machine);
 }
 
 /** Changed references and settings worth checking share one amber callout after the facts. */

@@ -23427,6 +23427,11 @@ const enProjects = {
         rollbackData: "Data",
         rollbackDataKept: "Keep current data",
         rollbackDataRestored: "Replace current data with the selected backup",
+        rollbackKeepsData: ({ machine }: { machine: string | null }) => machine
+          ? `Runs the selected version on ${machine} and keeps your current data.` : 'Your current data stays in place.',
+        rollbackRestoresBackup: ({ machine }: { machine: string | null }) => machine
+          ? `Runs the selected version on ${machine} and replaces your current data with the selected backup.`
+          : 'The selected backup replaces your current data.',
         replacesNote: ({ revision }: { revision: string }) => `Replaces ${revision}`,
         buildPlatforms: "Build platforms",
         emulationCost: "Emulated builds are slower. The build Machine checks support when the build runs.",

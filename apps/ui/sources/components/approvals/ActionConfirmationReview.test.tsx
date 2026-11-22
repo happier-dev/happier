@@ -10,7 +10,7 @@ import { DeploymentTemplateInstantiationReviewV1Schema } from '@happier-dev/prot
 import { DeploymentEnvironmentCreationReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { DeploymentApprovalReviewV1Schema } from '@happier-dev/protocol/deployments/deploymentReviewV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
+import { buildApprovalPreviewSummary, prepareApprovalRequest } from '@happier-dev/protocol/actions/executor/approvalPreparation';
 import { createPluginInstallationReviewFixture } from '@happier-dev/protocol/testing/pluginInstallationReviewFixture';
 
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
@@ -189,6 +189,59 @@ describe('native confirmation of a carried executor review', () => {
     }
   });
 
+  it.each(['deployments.rollback', 'deployments.deploy', 'deployments.promote',
+    'deployments.teardown', 'deployments.domains.add', 'deployments.domains.remove',
+    'deployments.domains.dns.create'] as const)('builds person-facing review copy for %s', actionId => {
+    const spec = getActionSpec(actionId);
+    const summary = buildApprovalPreviewSummary(spec, {});
+    for (const agentText of [spec.description, spec.inputHints?.description]) {
+      if (agentText) expect(summary).not.toContain(agentText);
+    }
+    if (actionId === 'deployments.domains.add') expect(summary).toContain('live routes and certificate state are retained');
+  });
+
+  it.each([
+    ['keep', 'Your current data stays in place.'],
+    ['restoreBackup', 'The selected backup replaces your current data.'],
+  ] as const)('names both Rollback versions and explains data handling (%s) in native confirmation', async (rollbackData, consequence) => {
+    const { preloadTranslations, setPreferredLanguageFromSettings } = await import('@/text');
+    await preloadTranslations('en');
+    setPreferredLanguageFromSettings('en');
+    const { Modal } = await import('@/modal');
+    const actionId = 'deployments.rollback';
+    const spec = getActionSpec(actionId);
+    const actionArgs = spec.inputSchema.parse({ serverId: 'home', environmentId: 'production', deploymentId: 'historical' });
+    const deploymentReview = DeploymentApprovalReviewV1Schema.parse({
+      environment: { id: 'production', name: 'Production website' },
+      revision: { kind: 'repository', sha: 'abcdef1'.padEnd(40, 'a') },
+      replaces: { deploymentId: 'serving', revision: { kind: 'repository', sha: 'fedcba2'.padEnd(40, 'b') } },
+      rollbackData, inspection: 'complete', services: [], risks: [],
+      target: { engine: 'native', requiresAwakeComputerAndDockerDesktop: false, domains: 'notDetermined' },
+    });
+    const prepared = await prepareApprovalRequest({ actionId, input: actionArgs, actionArgs, deploymentReview,
+      context: { surface: 'ui' }, deps: {} });
+    if (!prepared || 'errorCode' in prepared) throw new Error('fixture_preparation_failed');
+    const presentation = presentActionApproval({ actionId, actionArgs: prepared.actionArgs,
+      preview: prepared.preview, kind: 'confirmation' });
+    const screen = await renderScreen(<ModalProvider />);
+    const answer = confirmActionReview({ actionId, actionArgs: prepared.actionArgs, preview: prepared.preview,
+      title: presentation.title ?? '', summary: presentation.summary, summaryPlacement: 'host',
+      confirmLabel: presentation.confirmLabel ?? '', irreversible: false, serverId: 'home' });
+    try {
+      await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
+      const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome;
+      expect(chrome).toMatchObject({ title: 'Roll back Production website to abcdef1', subtitle: consequence });
+      expect(screen.getTextContent()).toContain('Replaces fedcba2');
+      expect(screen.getTextContent()).not.toContain(spec.inputHints?.description);
+    } finally {
+      if (screen.findByTestId('actions.confirmation-review.decision-reject')) {
+        await screen.pressByTestIdAsync('actions.confirmation-review.decision-reject');
+        await answer;
+      }
+      await screen.unmount();
+    }
+  });
+
   it('shows the prepared Deployment family review without the Action API instructions in native chrome', async () => {
     const { preloadTranslations, setPreferredLanguageFromSettings, t } = await import('@/text');
     await preloadTranslations('en');
@@ -228,10 +281,8 @@ describe('native confirmation of a carried executor review', () => {
       await vi.waitFor(() => expect(screen.findByTestId('actions.confirmation-review.decision-reject')).not.toBeNull());
       const chrome = vi.mocked(Modal.show).mock.calls.at(-1)?.[0]?.chrome;
       const visible = `${chrome?.kind === 'card' ? chrome.subtitle ?? '' : ''} ${screen.getTextContent()}`;
-      expect(visible).toContain('Production website');
-      expect(screen.getTextContent().replace(/\s+/g, ' ').trim().startsWith([
-        t('projects.deployments.review.whatTitle'), t('projects.deployments.review.environment'), 'Production website',
-      ].join(' '))).toBe(true);
+      expect(chrome).toMatchObject({ title: 'Deploy Compose file, revision 2 to Production website' });
+      expect(screen.getTextContent()).toContain(t('projects.deployments.review.whatTitle'));
       expect(visible).toContain('Reviewed runtime host');
       expect(visible).toContain('reviewed-website');
       expect(visible).not.toContain(agentInstructions);

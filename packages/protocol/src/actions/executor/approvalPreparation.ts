@@ -84,7 +84,7 @@ export function buildApprovalPreviewSummary(spec: ActionSpec, input: unknown, co
   } catch {
     // Presentation cannot become a second effect-admission failure.
   }
-  const fallback = String(spec.inputHints?.description ?? spec.title ?? spec.id).trim();
+  const fallback = String(spec.title ?? spec.id).trim();
   return appendTeamCredentialSourceSummary(sentenceTerminated(domainSummary ?? (fallback || String(spec.id))), context?.teamCredentialSources ?? []);
 }
 

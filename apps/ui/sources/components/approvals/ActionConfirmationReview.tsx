@@ -12,7 +12,12 @@ import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterA
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { t } from '@/text';
 import { SharePrincipalNamesContext } from '@/components/sharing/sharePrincipalNames';
+import { isDeploymentRolloutActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
+import { storage } from '@/sync/domains/state/storageStore';
+import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { ApprovalReviewFacts, type ApprovalReviewFactsInput } from './ApprovalReviewFacts';
+import { describeDeploymentReviewDecision, readDeploymentReviewApproval, readSoleDeploymentReviewMachineId } from './DeploymentReviewApprovalFacts';
 
 /** The exact review a receiving executor carried back for the person's own press (`{ review, reviewDigest }`). */
 export type ActionConfirmationReviewInput = Pick<ApprovalReviewFactsInput, 'actionId' | 'actionArgs' | 'preview'> & Readonly<{
@@ -119,6 +124,11 @@ export function confirmActionReview(
       signal?: AbortSignal;
     }>,
 ): Promise<boolean> {
+  const deployment = isDeploymentRolloutActionIdV1(input.actionId) ? readDeploymentReviewApproval(input) : null;
+  const machineId = readSoleDeploymentReviewMachineId(deployment);
+  const machine = machineId ? resolveServerScopedMachine(storage.getState(), input.serverId, machineId) : null;
+  const decision = describeDeploymentReviewDecision(deployment, input.actionId, machine ? getMachineSentenceName(machine) : null);
+  const summary = decision?.description ?? input.summary;
   return new Promise<boolean>((resolve) => {
     let settled = false;
     const settle = (confirmed: boolean) => {
@@ -139,7 +149,7 @@ export function confirmActionReview(
         preview: input.preview,
         principalNames: input.principalNames,
         serverId: input.serverId,
-        confirmLabel: input.confirmLabel,
+        confirmLabel: decision?.approve ?? input.confirmLabel,
         irreversible: input.irreversible,
         destructive: input.destructive === true,
         summaryPlacement: input.summaryPlacement,
@@ -152,8 +162,8 @@ export function confirmActionReview(
       closeOnBackdrop: false,
       chrome: {
         kind: 'card',
-        title: input.title,
-        ...(input.summary ? { subtitle: input.summary } : {}),
+        title: decision?.title ?? input.title,
+        ...(summary ? { subtitle: summary } : {}),
         testID: 'actions.confirmation-review.modal',
         phonePresentation: 'sheet',
         scrollHost: 'bounded',
