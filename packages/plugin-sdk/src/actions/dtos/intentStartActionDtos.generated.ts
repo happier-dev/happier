@@ -25,6 +25,18 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
+        } | {
+            source: 'connected_account';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            agentTargetKey: string;
+            modelId: string;
         };
         teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
@@ -97,6 +109,18 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
+        } | {
+            source: 'connected_account';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            agentTargetKey: string;
+            modelId: string;
         };
         teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
@@ -165,6 +189,18 @@ export type IntentStartActionInputById = {
         } | {
             agentTargetKey: string;
             providerConnectionId: string;
+            modelId: string;
+        } | {
+            source: 'connected_account';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            agentTargetKey: string;
             modelId: string;
         };
         teamCredentialModel?: undefined | {
@@ -258,6 +294,18 @@ export type IntentStartActionInputById = {
                 } | {
                     agentTargetKey: string;
                     providerConnectionId: string;
+                    modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
                     modelId: string;
                 };
                 roleId?: string | undefined;
@@ -379,6 +427,18 @@ export type IntentStartActionInputById = {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -645,6 +705,18 @@ export type IntentStartActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
+                        modelId: string;
                     };
                     roleId?: string | undefined;
                     launchProfileId?: string | undefined;
@@ -765,6 +837,18 @@ export type IntentStartActionInputById = {
                                 source: 'account_provider_connection';
                                 agentTargetKey: string;
                                 providerConnectionId: string;
+                                modelId: string;
+                            } | {
+                                source: 'connected_account';
+                                purpose: {
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    purpose: string;
+                                };
+                                endpointTemplateId: string;
+                                agentTargetKey: string;
                                 modelId: string;
                             } | {
                                 source: 'native';
@@ -1296,6 +1380,18 @@ export type IntentStartActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
             };
             teamCredentialModel?: undefined | {
                 kind: 'team_credential_provider_model';
@@ -1617,6 +1713,18 @@ export type IntentStartActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
             };
             roleId?: string | undefined;
             launchProfileId?: string | undefined;
@@ -1737,6 +1845,18 @@ export type IntentStartActionInputById = {
                         source: 'account_provider_connection';
                         agentTargetKey: string;
                         providerConnectionId: string;
+                        modelId: string;
+                    } | {
+                        source: 'connected_account';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                        endpointTemplateId: string;
+                        agentTargetKey: string;
                         modelId: string;
                     } | {
                         source: 'native';
@@ -2003,6 +2123,18 @@ export type IntentStartActionInputById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
+                } | {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
                 };
                 roleId?: string | undefined;
                 launchProfileId?: string | undefined;
@@ -2123,6 +2255,18 @@ export type IntentStartActionInputById = {
                             source: 'account_provider_connection';
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         } | {
                             source: 'native';
@@ -2654,6 +2798,18 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
+        } | {
+            source: 'connected_account';
+            purpose: {
+                consumer: {
+                    pluginId: string;
+                    localId: string;
+                };
+                purpose: string;
+            };
+            endpointTemplateId: string;
+            agentTargetKey: string;
+            modelId: string;
         };
         teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
@@ -2957,6 +3113,18 @@ export type IntentStartActionResultById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
+            } | {
+                source: 'connected_account';
+                purpose: {
+                    consumer: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    purpose: string;
+                };
+                endpointTemplateId: string;
+                agentTargetKey: string;
+                modelId: string;
             };
             teamCredentialModel?: undefined | {
                 kind: 'team_credential_provider_model';
@@ -3104,6 +3272,18 @@ export type IntentStartActionResultById = {
                         } | {
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         };
                         teamCredentialModel?: undefined | {
@@ -3949,6 +4129,18 @@ export type IntentStartActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
+                            modelId: string;
                         };
                         teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
@@ -4791,6 +4983,18 @@ export type IntentStartActionResultById = {
                         } | {
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         };
                         teamCredentialModel?: undefined | {
@@ -5635,6 +5839,18 @@ export type IntentStartActionResultById = {
                         } | {
                             agentTargetKey: string;
                             providerConnectionId: string;
+                            modelId: string;
+                        } | {
+                            source: 'connected_account';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            endpointTemplateId: string;
+                            agentTargetKey: string;
                             modelId: string;
                         };
                         teamCredentialModel?: undefined | {
