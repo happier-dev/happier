@@ -599,6 +599,29 @@ describe('workspace metadata parity through the real CLI Account composition', (
     expect(post).not.toHaveBeenCalled();
   });
 
+  it('updates the private Project Session defaults through the CLI Action with its own revision', async () => {
+    const { rows } = accountBoundary({ promptStack });
+    const owner = executor();
+    const projectRef = { serverId: 'home-a', projectKey: 'first' };
+    const organization = structuredClone(rows.find(row => row.key.kind === 'project-organization'));
+    const defaults = { defaultAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
+    const input = { projectRef, expectedRevision: 'absent',
+      sessionDefaults: { expectedRevision: 'absent', defaults } };
+
+    const saved = await owner.execute('projects.organization.update', input, approvedPresentUser);
+    expect(saved).toMatchObject({ ok: true, result: { ok: true, sessionDefaults: { revision: 0, defaults } } });
+    expect(await owner.execute('projects.organization.update', {
+      ...input, sessionDefaults: { expectedRevision: 'absent', defaults: null },
+    }, approvedPresentUser)).toMatchObject({
+      ok: true, result: { ok: false, errorCode: 'project_organization_conflict', currentRevision: 0 },
+    });
+    const key = { kind: 'project-session-defaults', ...projectRef };
+    expect(rows.find(row => row.key.kind === key.kind)).toEqual({
+      key, revision: 0, content: { t: 'plain', v: { key, value: defaults } },
+    });
+    expect(rows.find(row => row.key.kind === 'project-organization')).toEqual(organization);
+  });
+
   it('renames and resets the Project label through every Action surface while preserving checkouts and organization fields', async () => {
     const { post, rows } = accountBoundary({ promptStack });
     const organization = rows.find(row => row.key.kind === 'project-organization' && row.key.projectKey === 'first')!;

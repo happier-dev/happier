@@ -142,7 +142,7 @@ function createProjectContextActionSpecs() {
     id: 'projects.organization.update', approval: {result: 'required'}, title: 'Update Project organization',
     automationPrimarySubject: { kind: 'project', field: 'projectRef' },
     approvalScope: { subjectKinds: ['project'], project: (input) => ({ subjects: [{ kind: 'project', ...ProjectOrganizationUpdateInputV1Schema.parse(input).projectRef }] }) },
-    description: 'Set or reset the private Project label or one Saved Secret reference binding at the reviewed organization row revision. A null label restores its baseline title; a null binding reference removes that name. Secret values are never accepted, and other organization fields are preserved.',
+    description: 'Set or reset the private Project label, a Saved Secret reference binding, or the personal Session defaults. Defaults use their own reviewed revision and are edited separately from metadata. A null value resets the selected field. Secret values are never accepted.',
     sideEffectClass: 'write', safety: 'safe', executionPlacement: 'account', placements: [],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     bindings: { mcpToolName: 'projects_organization_update', voiceClientToolName: 'projects_organization_update' },
@@ -154,6 +154,7 @@ function createProjectContextActionSpecs() {
       { path: 'expectedRevision', title: 'Reviewed organization revision', widget: 'json', required: true },
       { path: 'label', title: 'Project label (null to reset)', widget: 'text' },
       { path: 'environmentBinding', title: 'Environment binding name and Saved Secret reference (null to remove)', widget: 'json' },
+      { path: 'sessionDefaults', title: 'Personal Session defaults and their expected revision (null defaults to clear)', widget: 'json' },
     ] },
   } satisfies PreNormalizedActionSpec,
   {

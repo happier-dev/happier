@@ -14159,6 +14159,15 @@ selection and personal overrides. Source-selected `artifact.get` adds the exact
 requiring matching development components; no released skew fallback, alternate
 trust store or migration is introduced.
 
+The unreleased `projects.organization.update` Action also accepts
+`sessionDefaults: { expectedRevision, defaults }` as a standalone edit. The
+personal defaults keep their own Account row revision and accept `null` to
+clear. The existing top-level `expectedRevision` remains required and governs
+metadata edits. A successful defaults edit returns the defaults leaf and its
+new revision. Earlier strict Action readers reject the new field, so editors
+and Action clients need matching Protocol source. The stored row and the Home
+row API are unchanged. The released 0.2 line has no Project organization Action.
+
 Source demand reads expose optional `audienceTeams: [{ teamId, name }]` from
 Team facts already captured by Source admission. Accepted setup content retains
 that display snapshot as `acceptedSharedSetup.sourceAudienceTeams`; update

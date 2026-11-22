@@ -6,31 +6,45 @@ import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { SavedSecretReferenceV1Schema } from '../profiles/secretReferenceOverlayV1.js';
 import { ProjectAccountOrganizationActionViewV1Schema, ProjectAccountOrganizationV1Schema, ProjectAccountRowExpectedRevisionV1Schema, projectProjectAccountOrganizationActionViewV1 } from './projectAccountRowsV1.js';
 import { captureProjectContextAccountScopeV1, type ProjectContextActionOwnerDepsV1 } from './projectContextV1.js';
+import type { ProjectSessionDefaultsV1 } from './projectSessionDefaultsV1.js';
+import { ProjectSessionDefaultsPatchV1Schema, ProjectSessionDefaultsLeafV1Schema } from './projectSessionDefaultsStorageV1.js';
+
+export type ProjectOrganizationUpdateDepsV1 = Pick<ProjectContextActionOwnerDepsV1,
+  'accountScope' | 'normalizeServerId' | 'mutateOrganization'> & Readonly<{
+  mutateSessionDefaults?: (input: Readonly<{ serverId: string; projectKey: string;
+    expectedRevision: number | 'absent'; defaults: ProjectSessionDefaultsV1 | null; signal?: AbortSignal }>) => Promise<
+      Readonly<{ status: 'updated'; revision: number; value: ProjectSessionDefaultsV1 | null }>
+      | Readonly<{ status: 'conflict'; revision: number }>>;
+}>;
 
 export const ProjectOrganizationUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   projectRef: QualifiedProjectKeyV1Schema,
   expectedRevision: ProjectAccountRowExpectedRevisionV1Schema,
+  sessionDefaults: z.optional(ProjectSessionDefaultsPatchV1Schema),
   label: z.optional(z.nullable(z.nonoptional(ProjectAccountOrganizationV1Schema.shape.label))),
   environmentBinding: z.optional(z.strictObject({
     name: EnvVarRequirementSchema.shape.name,
     reference: z.nullable(SavedSecretReferenceV1Schema),
   })),
-}).check(z.refine(input => input.label !== undefined || input.environmentBinding !== undefined,
-  'Provide a label or an environment binding edit')));
+}).check(z.refine(input => input.sessionDefaults !== undefined
+  ? input.label === undefined && input.environmentBinding === undefined
+  : input.label !== undefined || input.environmentBinding !== undefined,
+  'Provide one project metadata or Session defaults edit')));
 export type ProjectOrganizationUpdateInputV1 = z.infer<typeof ProjectOrganizationUpdateInputV1Schema>;
 
 export const ProjectOrganizationUpdateOutputV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), row: ProjectAccountOrganizationActionViewV1Schema,
     revision: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }),
+  z.strictObject({ ok: z.literal(true), sessionDefaults: ProjectSessionDefaultsLeafV1Schema }),
   z.strictObject({ ok: z.literal(false), errorCode: z.enum(['invalid_parameters', 'project_organization_conflict',
     'project_organization_access_denied', 'project_organization_unavailable']),
     currentRevision: z.optional(ProjectAccountRowExpectedRevisionV1Schema) }),
 ]));
 export type ProjectOrganizationUpdateOutputV1 = z.infer<typeof ProjectOrganizationUpdateOutputV1Schema>;
 
-/** Private Project metadata and reference-only bindings share the existing organization row and CAS. */
+/** Private metadata uses the organization CAS. Session defaults use their own leaf and revision. */
 export async function updateProjectOrganizationV1(
-  deps: Pick<ProjectContextActionOwnerDepsV1, 'accountScope' | 'normalizeServerId' | 'mutateOrganization'>,
+  deps: ProjectOrganizationUpdateDepsV1,
   input: ProjectOrganizationUpdateInputV1,
   options?: Readonly<{ signal?: AbortSignal }>,
 ): Promise<ProjectOrganizationUpdateOutputV1> {
@@ -49,6 +63,14 @@ export async function updateProjectOrganizationV1(
   };
   try {
     assertCurrent();
+    if (request.sessionDefaults !== undefined) {
+      if (!deps.mutateSessionDefaults) return { ok: false, errorCode: 'project_organization_unavailable' };
+      const result = await deps.mutateSessionDefaults({ ...request.projectRef, ...request.sessionDefaults,
+        signal: options?.signal });
+      if (result.status === 'conflict') return { ok: false, errorCode: 'project_organization_conflict',
+        currentRevision: result.revision < 0 ? 'absent' : result.revision };
+      return { ok: true, sessionDefaults: { revision: result.revision, defaults: result.value } };
+    }
     const result = await deps.mutateOrganization({ ...request.projectRef, expectedRevision: request.expectedRevision,
       signal: options?.signal, mutate(value) {
         assertCurrent();
