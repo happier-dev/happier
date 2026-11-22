@@ -6,6 +6,7 @@ import {
   type DeploymentReadTransportV1,
 } from '@happier-dev/deployments';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
 import {
   ProjectReadinessReadInputV1Schema,
   type ProjectReadinessReadInputV1,
@@ -20,6 +21,7 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import type { ServicesView } from './ServicesViews';
+import { perfFixtureId } from '../../../../../../packages/tests/src/testkit/stress/scenarios/perfProfile';
 
 const routerMock = await vi.hoisted(async () => {
   const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
@@ -64,7 +66,7 @@ const items = [
   environment('env-api-production', 'source-api', 'Production API'),
 ];
 
-function controllerFor(): DeploymentReadControllerV1 {
+function controllerFor(inventory: readonly (typeof items)[number][] = items): DeploymentReadControllerV1 {
   const unavailable = async () => ({
     ok: false as const,
     failure: { code: 'deployment_unavailable', retryable: true },
@@ -72,7 +74,8 @@ function controllerFor(): DeploymentReadControllerV1 {
   const transport: DeploymentReadTransportV1 = {
     listEnvironments: async () => ({
       ok: true,
-      value: { items, nextCursor: null },
+      value: { items: inventory.slice(0, ARTIFACT_LIST_PAGE_MAX_ITEMS_V1),
+        nextCursor: inventory.length > ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 ? inventory[ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 - 1]!.environment.id : null },
     }),
     readEnvironment: unavailable,
     listHistory: unavailable,
@@ -111,6 +114,7 @@ async function mount(
     presented: boolean;
     commands?: boolean;
     fail?: (input: ProjectReadinessReadInputV1) => boolean;
+    inventory?: readonly (typeof items)[number][];
   }>,
 ) {
   const identity = `srv_${'7'.repeat(32)}`;
@@ -142,7 +146,7 @@ async function mount(
       };
     },
   });
-  const controller = controllerFor();
+  const controller = controllerFor(options.inventory);
   function Page() {
     const read = useDeploymentCollection(controller, shown);
     const [view, selectView] = React.useState<ServicesView>('apps');
@@ -200,6 +204,27 @@ afterEach(() => {
 });
 
 describe('All deployments → Not backed up', () => {
+  it.each([3, 500])('starts zero readiness reads on cold open and only reads the narrowed selection on first use (%i Environments)', async size => {
+    const inventory = [...items, ...Array.from({ length: size - items.length }, (_, index) =>
+      environment(perfFixtureId(11, 'environment', index), perfFixtureId(11, 'project', index), `Load fixture ${index}`))];
+    const { screen, reads, dispose } = await mount({ presented: true, inventory });
+    try {
+      await act(async () => {});
+      expect(reads, 'Apps opened without the backup filter').toHaveLength(0);
+      const header = screen.root.findAll(node => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
+      await act(async () => { header.props.search.onChangeText('Production API'); });
+      expect(rowIds(screen)).toEqual(['all-deployments.row.env-api-production']);
+      expect(reads).toHaveLength(0);
+      await act(async () => { await screen.pressByTestIdAsync('all-deployments.notBackedUp'); });
+      await vi.waitFor(() => expect(screen.getTextContent()).toContain('Not backed up · 1'));
+      expect(rowIds(screen)).toEqual(['all-deployments.row.env-api-production']);
+      expect(reads.map(input => input.environments.map(row => row.environmentId))).toEqual([['env-api-production']]);
+      await act(async () => { await screen.pressByTestIdAsync('all-deployments.notBackedUp'); });
+      expect(rowIds(screen)).toEqual(['all-deployments.row.env-api-production']);
+      expect(reads).toHaveLength(1);
+    } finally { dispose(); }
+  });
+
   it.each(['agent', 'mcp'] as const)('lets %s discover and change the mounted Services view and backup filter, then retires them', async surface => {
     const { screen, reads, serverId, removePage, dispose } = await mount({ presented: true, commands: true });
     try {
@@ -217,11 +242,12 @@ describe('All deployments → Not backed up', () => {
       expect(filter, 'the rendered Apps filter is discoverable').toBeDefined();
       if (!filter) throw new Error('Not backed up command is missing');
       expect(filter.description).toBe(t('common.off'));
+      expect(reads).toHaveLength(0);
       const invoke = async (id: string) => {
         await act(async () => { expect(await executor.execute('ui.current_context.command.invoke', { commandId: id }, context)).toMatchObject({ ok: true }); });
       };
       await invoke(filter.id);
-      expect(rowIds(screen)).toHaveLength(2);
+      await act(async () => { await vi.waitFor(() => expect(rowIds(screen)).toHaveLength(2)); });
       expect(reads).toHaveLength(2);
       const enabledFilter = (await readCommands()).find(command => command.title === t('projects.deployments.notBackedUp'))!;
       expect(enabledFilter.description).toBe(t('common.on'));
@@ -235,7 +261,7 @@ describe('All deployments → Not backed up', () => {
         if (view !== 'apps') expect((await readCommands()).some(candidate => candidate.title === t('projects.deployments.notBackedUp'))).toBe(false);
         if (view === 'databases') expect(await executor.execute('ui.current_context.command.invoke', { commandId: enabledFilter.id }, context)).toMatchObject({ ok: false });
       }
-      expect(rowIds(screen)).toHaveLength(2);
+      await act(async () => { await vi.waitFor(() => expect(rowIds(screen)).toHaveLength(2)); });
       const currentFilter = (await readCommands()).find(command => command.title === t('projects.deployments.notBackedUp'))!;
       await invoke(currentFilter.id);
       expect(rowIds(screen)).toHaveLength(3);
@@ -254,16 +280,7 @@ describe('All deployments → Not backed up', () => {
           ).not.toBeNull(),
         );
       });
-      // One existing readiness read per (Project, Machine) group, never one per app.
-      expect(
-        reads.map((read) =>
-          read.environments.map((entry) => entry.environmentId),
-        ),
-      ).toEqual([
-        ['env-shop-production', 'env-shop-staging'],
-        ['env-api-production'],
-      ]);
-      expect(screen.getTextContent()).toContain('Not backed up · 2');
+      expect(reads).toHaveLength(0);
       expect(rowIds(screen)).toHaveLength(3);
       expect(screen.getTextContent()).toContain('3 environments in 2 projects');
       // The filter sits inline in the list, one press away, never folded into the header's phone overflow (DEPLOY-REACCEPT-1113 D3).
@@ -283,6 +300,12 @@ describe('All deployments → Not backed up', () => {
           'all-deployments.row.env-api-production',
         ]);
       });
+      // The active filter uses one existing read per (Project, Machine) group.
+      expect(reads.map(read => read.environments.map(entry => entry.environmentId))).toEqual([
+        ['env-shop-production', 'env-shop-staging'],
+        ['env-api-production'],
+      ]);
+      expect(screen.getTextContent()).toContain('Not backed up · 2');
       // The count line counts what the filter keeps (SERVICES-ACCEPT-1116 F3), not every Environment read.
       expect(screen.findByTestId('all-deployments.header:count')).not.toBeNull();
       expect(screen.getTextContent()).toContain('2 environments in 2 projects');
@@ -314,14 +337,14 @@ describe('All deployments → Not backed up', () => {
         await vi.waitFor(() => expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull());
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');
       });
-      expect(rowIds(screen)).toHaveLength(2);
+      await act(async () => { await vi.waitFor(() => expect(rowIds(screen)).toHaveLength(2)); });
       const header = () => screen.root.findAll((node) => node.props.testID === 'all-deployments.header' && 'search' in node.props)[0]!;
       await act(async () => { header().props.search.onChangeText('no-such-environment'); });
       expect(rowIds(screen)).toHaveLength(0);
       expect(screen.findByTestId('all-deployments.noMatches')).not.toBeNull();
       expect(screen.findByTestId('all-deployments.allBackedUp')).toBeNull();
       await act(async () => { header().props.search.onChangeText(''); });
-      expect(rowIds(screen)).toHaveLength(2);
+      await act(async () => { await vi.waitFor(() => expect(rowIds(screen)).toHaveLength(2)); });
     } finally {
       dispose();
     }
@@ -344,9 +367,7 @@ describe('All deployments → Not backed up', () => {
     });
     try {
       await act(async () => {
-        await vi.waitFor(() =>
-          expect(screen.getTextContent()).toContain('Not backed up · 1'),
-        );
+        await vi.waitFor(() => expect(screen.findByTestId('all-deployments.notBackedUp')).not.toBeNull());
       });
       await act(async () => {
         await screen.pressByTestIdAsync('all-deployments.notBackedUp');
@@ -357,6 +378,7 @@ describe('All deployments → Not backed up', () => {
           'all-deployments.row.env-api-production',
         ]);
       });
+      expect(screen.getTextContent()).toContain('Not backed up · 1');
       expect(
         screen.findByTestId('all-deployments.backupsUnresolved'),
       ).not.toBeNull();

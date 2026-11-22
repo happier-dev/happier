@@ -109,7 +109,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     read: AllDeploymentsRead;
     serverId: string | null;
     lifetime?: ServerAccountScopeLifetime | null;
-    /** Whether the page is on screen: backup coverage is read for the shown Environments only then. */
+    /** Whether the page is on screen and can demand reads for the active view. */
     presented?: boolean;
     /** The Account-wide read owner the other views (Databases, Domains) demand from; without it only Apps shows. */
     controller?: DeploymentReadControllerV1 | null;
@@ -126,20 +126,31 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const { snapshot } = read;
   const pageStateSize = usePageSurfaceStateSize();
   const items = snapshot.value?.items ?? NO_ITEMS;
-  const environments = React.useMemo(() => items.map((item) => item.environment), [items]);
-  const backups = useVisibleBackupCoverage(props.lifetime ?? null, environments, props.presented === true);
-  const [notBackedUpOnly, setNotBackedUpOnly] = React.useState(false);
-  const toggleNotBackedUp = React.useCallback(() => setNotBackedUpOnly((on) => !on), []);
-  const uncovered = React.useMemo(() => new Set(backups.coverage?.rows
-    .filter((row) => row.status === 'uncovered').map((row) => row.environment.id)), [backups.coverage]);
-  // The filter is offered only when it has something to show, and stays while it is on so it can be turned off.
-  const filtering = notBackedUpOnly && backups.coverage !== null;
-  const showBackupFilter = filtering || uncovered.size > 0;
   const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
   // One header (owner D5): beside the Services column its header places the saved views and filters; the page only narrows.
   const besideColumn = useAppShellColumn().columnVisible;
   const placesSpaces = view === 'apps' && !besideColumn;
   const servicesView = useServicesListView(items, props.presented !== false && placesSpaces);
+  const { isVisible, narrowing } = servicesView;
+  const [query, setQuery] = React.useState('');
+  const needle = query.trim().toLocaleLowerCase();
+  const matchingItems = React.useMemo(() => !narrowing && needle === '' ? items : items.filter(item =>
+    isVisible(item.environment.id) && (needle === '' || item.title.toLocaleLowerCase().includes(needle)
+      || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle))),
+  [isVisible, items, narrowing, needle]);
+  const [notBackedUpOnly, setNotBackedUpOnly] = React.useState(false);
+  const toggleNotBackedUp = React.useCallback(() => setNotBackedUpOnly(on => !on), []);
+  const pagedRead = read.hasNextPage || read.hasPreviousPage;
+  const showBackupFilter = view === 'apps' && !!props.lifetime && props.presented === true
+    && (items.length > 0 || notBackedUpOnly && pagedRead);
+  const filtering = showBackupFilter && notBackedUpOnly;
+  const readinessItems = filtering ? matchingItems : NO_ITEMS;
+  const environments = React.useMemo(() => readinessItems.map(item => item.environment), [readinessItems]);
+  const backups = useVisibleBackupCoverage(props.lifetime ?? null, environments, filtering);
+  const uncovered = React.useMemo(() => new Set(backups.coverage?.rows
+    .filter(row => row.status === 'uncovered').map(row => row.environment.id)), [backups.coverage]);
+  const shownItems = React.useMemo(() => filtering ? matchingItems.filter(item => uncovered.has(item.environment.id))
+    : matchingItems, [filtering, matchingItems, uncovered]);
   const hasViewControls = Boolean(props.controller && props.demand && props.onSelectView);
   const localCommands = React.useMemo(() => props.presented === false ? [] : [
     ...(hasViewControls ? SERVICES_VIEWS.map(({ id, labelKey }) => ({
@@ -148,7 +159,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       ...(view === id ? { description: t('common.active') } : {}),
       invoke: () => props.onSelectView?.(id),
     })) : []),
-    ...(view === 'apps' && showBackupFilter ? [{
+    ...(showBackupFilter ? [{
       key: 'all-deployments.notBackedUp',
       title: t('projects.deployments.notBackedUp'),
       description: filtering ? t('common.on') : t('common.off'),
@@ -165,9 +176,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       id: 'all-deployments.notBackedUp',
       testID: 'all-deployments.notBackedUp',
       label: t('projects.deployments.notBackedUp'),
-      valueLabel: uncovered.size > 0
-        ? t('projects.deployments.notBackedUpCount', { count: uncovered.size })
-        : t('projects.deployments.notBackedUp'),
+      ...(uncovered.size > 0
+        ? { valueLabel: t('projects.deployments.notBackedUpCount', { count: uncovered.size }) } : {}),
       selected: filtering,
       onToggle: () => { void commands.invoke('all-deployments.notBackedUp'); },
     }]} />
@@ -192,7 +202,6 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   // One create (reuse map D2): beside the Services column, its "+" is the page's create and its field the search.
   // The main-screen head (lab svcHead): the title row's magnifier and create, the views and their filter right under
   // it, then the count line from the shown view's own reported counts.
-  const [query, setQuery] = React.useState('');
   const search = React.useMemo<MainScreenSearch>(() => ({ value: query, onChangeText: setQuery,
     placeholder: t('projects.deployments.services.searchPlaceholder'), testID: 'all-deployments.search' }), [query]);
   const [viewCount, setViewCountState] = React.useState<ServicesViewCount | null>(null);
@@ -200,22 +209,9 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
     setViewCountState(next);
     setViewNeedYou((current) => current[next.view] === (next.needYou ?? 0) ? current : { ...current, [next.view]: next.needYou ?? 0 });
   }, []);
-  const pagedRead = read.hasNextPage || read.hasPreviousPage;
   const total = snapshot.value?.totalCount;
-  // What the filters keep (the saved view's conditions, Not backed up): the rows shown and the count line both say it.
-  const { isVisible, narrowing } = servicesView;
-  const narrowed = narrowing || filtering;
-  const keptItems = React.useMemo(() => narrowed
-    ? items.filter((item) => (!filtering || uncovered.has(item.environment.id)) && isVisible(item.environment.id))
-    : items, [filtering, isVisible, items, narrowed, uncovered]);
-  // The search narrows the rows already read by the names they show (Environment and Project).
-  const needle = query.trim().toLocaleLowerCase();
-  const shownItems = React.useMemo(() => needle === '' ? keptItems : keptItems.filter((item) =>
-    item.title.toLocaleLowerCase().includes(needle)
-      || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle)),
-  [keptItems, needle]);
   // Opening Apps shares the column's first page. Once continuing, the page read can carry the exact total it displays.
-  const showsAccountCount = !narrowed && needle === '';
+  const showsAccountCount = !narrowing && !filtering && needle === '';
   const { nextPage } = read;
   const nextAppsPage = React.useCallback(() => {
     nextPage(showsAccountCount && !read.hasPreviousPage ? 'includeTotal' : undefined);
@@ -355,13 +351,15 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           />
         </ItemGroup>
       ) : null}
-      {shownItems.length === 0 && items.length > 0 && (needle !== '' || servicesView.narrowing) ? (
+      {matchingItems.length === 0 && items.length > 0 ? (
         // The search or the view's conditions keep none of the rows read: say so, the header's tokens clear them.
         <ItemGroup surface="none">
           <EmptyState testID="all-deployments.noMatches" layout="line" title={t('projects.deployments.services.noMatches')} />
         </ItemGroup>
-      ) : filtering && shownItems.length === 0 && items.length > 0 ? (
-        // Nothing known uncovered: "all backed up" only when every shown Environment answered.
+      ) : backups.coverage?.status === 'loading' ? (
+        <PageLoadingRows testID="all-deployments.backupsLoading" />
+      ) : filtering && shownItems.length === 0 && matchingItems.length > 0 ? (
+        // Nothing known uncovered: "all backed up" only when every selected Environment answered.
         unresolved > 0 ? null : <ItemGroup surface="none">
           <EmptyState testID="all-deployments.allBackedUp" layout="line" title={t('projects.deployments.allBackedUp')} />
         </ItemGroup>
