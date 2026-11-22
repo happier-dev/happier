@@ -1113,7 +1113,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                   ? () => openTab('settings') : null} /> : null}
               {/* What the latest Receipt decides is appended once it settles, never inserted above (R12-D3). */}
               {arrival.body === 'held' ? <PageLoadingRows testID="project-deployments.environment.body.loading" /> : <>
-              {active.snapshot.value?.content?.sourceIntent ? <DeploymentVersionComparison
+              {active.snapshot.value?.content?.sourceIntent ? <DeploymentVersionComparison presentation="summary"
                 source={active.snapshot.value.content.sourceIntent} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}

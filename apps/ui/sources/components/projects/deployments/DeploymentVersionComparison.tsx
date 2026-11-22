@@ -3,6 +3,7 @@ import type { DeploymentEnvironmentDefinitionV1, DeploymentSourceIntentV1 } from
 import type { DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { CodeBlockView } from '@/components/ui/code/blocks/CodeBlockView';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -24,12 +25,14 @@ type Props = Readonly<{
   serverId: string;
   accountId: string;
   demand: DeploymentReadDemandV1;
+  /** `summary`: the Environment Overview, where the deployed document waits one press away; the Receipt keeps it open. */
+  presentation?: 'summary' | 'detail';
 }>;
 
 /** Definitions stay in their protected receipt; repository comparison stays with the SCM reader/viewer. */
 export function DeploymentVersionComparison(props: Props) {
   if (props.source.kind === 'stored') return <StoredDefinitionHistory source={props.source}
-    current={props.current?.kind === 'stored' ? props.current : null} />;
+    current={props.current?.kind === 'stored' ? props.current : null} summary={props.presentation === 'summary'} />;
   return <RepositoryComparison key={`${props.serverId}:${props.accountId}:${props.source.projectSourceId}:${props.source.sourceRevision}:${props.source.sha}:${props.workspaceRef?.id}:${props.workspaceRef?.source?.sourceId}:${props.workspaceRef?.source?.revision}:${props.current?.kind === 'repository' ? props.current.ref : ''}`}
     {...props} source={props.source} />;
 }
@@ -37,8 +40,10 @@ export function DeploymentVersionComparison(props: Props) {
 function StoredDefinitionHistory(props: Readonly<{
   source: Extract<DeploymentSourceIntentV1, { kind: 'stored' }>;
   current: Extract<DeploymentEnvironmentDefinitionV1, { kind: 'stored' }> | null;
+  summary: boolean;
 }>) {
   const [compare, setCompare] = React.useState(false);
+  const [documentOpen, setDocumentOpen] = React.useState(false);
   const { source, current } = props;
   const different = current !== null && source.contentRevision !== current.contentRevision;
   const currentFiles = new Map(current?.publicFiles?.map(file => [file.path, file.content]) ?? []);
@@ -50,11 +55,13 @@ function StoredDefinitionHistory(props: Readonly<{
     action={different ? <SectionActionButton testID="project-deployments.receipt.definition.compare"
       icon="git-diff" title={t('projects.scripts.definition.compare')} onPress={() => setCompare(value => !value)} /> : undefined}>
     <DefinitionSelectors definition={source} />
-    {/* Code scrolls sideways, never wraps mid-token (D24: "postgres-⏎data:" read as two keys on a phone). */}
-    <CodeBlockView code={storedComposeDocumentText(source.document)} language="yaml" showHeaderRow={false} showCopyButton />
-    {source.publicFiles?.map(file => <ItemGroup key={file.path} title={file.path} surface="none">
-      <CodeBlockView code={file.content} showHeaderRow={false} showCopyButton />
-    </ItemGroup>)}
+    {props.summary ? (
+      // A summary keeps the document one press away, as the Definition section's Compose file row does (R12-D10).
+      <ExpandableItem testID="project-deployments.receipt.definition.document" expanded={documentOpen} onExpandedChange={setDocumentOpen}
+        header={state => <Item {...state.headerProps} testID="project-deployments.receipt.definition.documentToggle" title={t('projects.deployments.composeFile')} />}>
+        <DeployedDocument source={source} />
+      </ExpandableItem>
+    ) : <DeployedDocument source={source} />}
     {compare && current ? <ItemGroup title={t('projects.deployments.editors.versionCurrent')}
       description={t('projects.deployments.review.versionStored', { revision: current.contentRevision })} surface="none">
       <DefinitionSelectors definition={current} />
@@ -64,6 +71,16 @@ function StoredDefinitionHistory(props: Readonly<{
       </ItemGroup>)}
     </ItemGroup> : null}
   </ItemGroup>;
+}
+
+function DeployedDocument({ source }: Readonly<{ source: Extract<DeploymentSourceIntentV1, { kind: 'stored' }> }>) {
+  return <>
+    {/* Code scrolls sideways, never wraps mid-token (D24: "postgres-⏎data:" read as two keys on a phone). */}
+    <CodeBlockView code={storedComposeDocumentText(source.document)} language="yaml" showHeaderRow={false} showCopyButton />
+    {source.publicFiles?.map(file => <ItemGroup key={file.path} title={file.path} surface="none">
+      <CodeBlockView code={file.content} showHeaderRow={false} showCopyButton />
+    </ItemGroup>)}
+  </>;
 }
 
 function DefinitionSelectors({ definition }: Readonly<{ definition: Extract<DeploymentSourceIntentV1, { kind: 'stored' }> }>) {

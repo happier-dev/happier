@@ -25,6 +25,7 @@ import { CollectionDraftTitleScope } from '@/components/ui/lists/collection/Coll
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -613,7 +614,8 @@ const ProjectDeploymentsPage = React.memo(
       const projectPreviews = items.filter(item => item.environment.purpose === 'preview');
       return (
         <View testID="project-deployments" style={{ flex: 1, minHeight: 0 }}>
-          <ItemList testID="project-deployments.project">
+          {/* A table of Environments: the Services page's wide column, so Runs on keeps its column (R12-D8). */}
+          <ItemList testID="project-deployments.project" pageColumn="wide">
             <PageHeader
               testID="project-deployments.project.header"
               leading={<Icon name="folder" size={28} color={theme.colors.text.secondary} />}
@@ -638,11 +640,21 @@ const ProjectDeploymentsPage = React.memo(
               <DeploymentEnvironmentRows items={projectPreviews} serverId={props.serverId} lifetime={props.lifetime ?? null}
                 testID="project-deployments.project.previewRows" accessibilityLabel={t('projects.deployments.previewsTitle')} />
             </> : null}
-            {preparation ? (
+            {/* The agent ways are one row of the page (R12-D8), as the draft's "Ask an agent" row: Prepare its action,
+                Import a quiet second, beneath the words on a phone. */}
+            {newWorkEnabled && sourceAvailable && props.lifetime ? (
+              <ItemGroup>
+                <Item testID="project-deployments.project.agents" title={t('projects.deployments.preparation.askAgent')}
+                  subtitle={t('projects.deployments.preparation.askAgentBody')} subtitleLines={0}
+                  showChevron={false} accessoryLayout={phone ? 'stacked' : 'adaptive'}
+                  rightElement={<View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s8 }}>
+                    <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="prepare" emphasis="secondary" />
+                    <DeploymentPreparationEntry lifetime={props.lifetime} projectSourceId={props.sourceId} mode="import" emphasis="plain" />
+                  </View>} />
+              </ItemGroup>
+            ) : preparation ? (
               <ItemGroup header="none" surface="none">
-                <View testID="project-deployments.project.agents" style={{ flexDirection: 'row', flexWrap: 'wrap', gap: theme.space.s16 }}>
-                  {preparation}
-                </View>
+                <View testID="project-deployments.project.agents">{preparation}</View>
               </ItemGroup>
             ) : null}
           </ItemList>

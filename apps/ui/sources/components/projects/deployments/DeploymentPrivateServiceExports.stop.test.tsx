@@ -83,6 +83,14 @@ it('opens a saved private share and stops sharing it through the Environment upd
   );
   await screen.pressByTestIdAsync(`${id}.export:database`);
   expect(screen.findByTestId(`${id}.detail`)).not.toBeNull();
+  // PAGE-ACCEPT-176 R12-D9: the sheet leads with who reaches the service; Stop's consequence sits with Stop, worded as
+  // a consequence of pressing it, after the lead; the export's values wait in one disclosure.
+  const text = screen.getTextContent();
+  const lead = text.indexOf('reach postgres');
+  const consequence = text.indexOf('If you stop sharing');
+  expect(lead).toBeGreaterThanOrEqual(0);
+  expect(consequence).toBeGreaterThan(lead);
+  expect(text).not.toContain('Container port');
   await screen.pressByTestIdAsync(`${id}.stop`);
   expect(updateEnvironment).toHaveBeenCalledTimes(1);
   const patch = (

@@ -149,6 +149,9 @@ export type DeploymentSettingsTranslations = Readonly<{
   privateSharingHappierNetworkPending: string;
   privateSharingStop: string;
   privateSharingStopConsequence: (params: Readonly<{ service: string }>) => string;
+  privateSharingDetailTitle: (params: Readonly<{ service: string }>) => string;
+  privateSharingDetailHappier: (params: Readonly<{ service: string }>) => string;
+  privateSharingDetailNetwork: (params: Readonly<{ service: string; network: string }>) => string;
   privateSharingJoinedNetworkBody: string;
   privateSharingReviewBodyHappier: string;
   privateSharingWho: string;
@@ -300,7 +303,10 @@ export const deploymentSettingsTranslations = {
     privateSharingHappierNetworkBody: "Your Machines reach it privately through Happier. No VPN needed.",
     privateSharingHappierNetworkPending: "Not available yet",
     privateSharingStop: "Stop sharing",
-    privateSharingStopConsequence: ({ service }: Readonly<{ service: string }>) => `${service} stops being shared at this environment’s next deploy. Anything that reaches it then loses the connection.`,
+    privateSharingStopConsequence: ({ service }: Readonly<{ service: string }>) => `If you stop sharing, ${service} stops being shared at this environment’s next deploy, and anything that reaches it then loses the connection.`,
+    privateSharingDetailTitle: ({ service }: Readonly<{ service: string }>) => `Sharing ${service}`,
+    privateSharingDetailHappier: ({ service }: Readonly<{ service: string }>) => `Apps that can see this Environment reach ${service} privately through Happier. It stays off the internet.`,
+    privateSharingDetailNetwork: ({ service, network }: Readonly<{ service: string; network: string }>) => `Apps on ${network} reach ${service} at its private address.`,
     privateSharingJoinedNetworkBody: "Apps on this network reach it at its private address.",
     privateSharingReviewBodyHappier: "The next deployment publishes this port on this Machine only. Your other Machines reach it through Happier.",
     privateSharingWho: "Who can use it",

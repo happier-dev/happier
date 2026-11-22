@@ -70,7 +70,7 @@ export function DeploymentPrivateServiceExports(props: Readonly<{
   const openShare = (entry: ServiceExport) => {
     if (!editing) return;
     showDeploymentSheet({ component: PrivateServiceExportDetailSheet, props: { detail: props.detail, editing, entry },
-      title: entry.service, testID: `${id}.detailModal` });
+      title: t('projects.deployments.settingsSections.privateSharingDetailTitle', { service: entry.service }), testID: `${id}.detailModal` });
   };
   return <ItemGroup testID={id} title={t('projects.deployments.settingsSections.privateSharingTitle')}
     surface={exports.length === 0 && authoring.kind === 'ready' ? 'none' : 'sheet'}
@@ -133,13 +133,23 @@ function PrivateServiceExportDetailSheet(props: Readonly<{
   </ModalCardFooterActions>;
   React.useEffect(() => { setChrome?.({ kind: 'card', footer }); });
   React.useEffect(() => () => setChrome?.(null), [setChrome]);
+  const [details, setDetails] = React.useState(false);
+  // The lead says who reaches the service (the title already names it); the values a developer checks wait in one
+  // disclosure, as the add sheet's review keeps them; what Stop does sits last, beside Stop (PAGE-ACCEPT-176 R12-D9).
+  const lead = entry.transport?.kind === 'iroh'
+    ? t('projects.deployments.settingsSections.privateSharingDetailHappier', { service: entry.service })
+    : t('projects.deployments.settingsSections.privateSharingDetailNetwork', { service: entry.service,
+        network: privateServiceExportReachLabel(entry) });
   return <ListPresentationProvider value="page" pageInsets="contained"><View testID={`${id}.detail`} style={deploymentSheetStyles.body}>
-    <ItemGroup description={t('projects.deployments.settingsSections.privateSharingStopConsequence', { service: entry.service })}>
-      <Item title={t('projects.deployments.settingsSections.privateSharingService')} detail={entry.service} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingWho')} detail={privateServiceExportReachLabel(entry)} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={entry.key} mode="info" />
-      <Item title={t('projects.deployments.settingsSections.privateSharingPort')} detail={String(entry.containerPort)} mode="info" />
+    <ItemGroup description={lead}>
+      <ExpandableItem testID={`${id}.detailValues`} expanded={details} onExpandedChange={setDetails}
+        header={state => <Item {...state.headerProps} title={t('newApp.details')} subtitle={entry.key} />}>
+        <Item title={t('projects.deployments.settingsSections.privateSharingKey')} detail={entry.key} mode="info" />
+        <Item title={t('projects.deployments.settingsSections.privateSharingPort')} detail={String(entry.containerPort)} mode="info" />
+      </ExpandableItem>
     </ItemGroup>
+    <ItemGroup testID={`${id}.stopConsequence`} surface="none"
+      description={t('projects.deployments.settingsSections.privateSharingStopConsequence', { service: entry.service })} />
     {change.outcome?.kind === 'refused' ? <SurfaceStateCard testID={`${id}.stopRefused`} size="line" kind="error"
       title={deploymentActionRefusalRemedy(change.outcome.code)} diagnosticCode={change.outcome.code} /> : null}
     {setChrome ? null : footer}
