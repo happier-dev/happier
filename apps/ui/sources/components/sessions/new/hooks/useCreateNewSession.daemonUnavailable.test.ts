@@ -1173,6 +1173,35 @@ describe('useCreateNewSession (daemon unavailable UX)', () => {
     } finally { await hook.unmount(); }
   });
 
+  it('clears the refused Provider launch after changing the qualified source for the same model', async () => {
+    const { useCreateNewSession, modalAlertSpy, storageState, scope } = await setupTaskHarness({ httpsHome: true });
+    const { createProviderErrorV1 } = await import('@happier-dev/protocol/providers/errors');
+    const { buildNewSessionAuthoringDraftFromResolvedInputs } = await import('@/components/sessions/authoring/draft/sessionAuthoringDraftAdapters');
+    const { NewSessionEmbeddedHostProvider } = await import('@/components/sessions/new/navigation/newSessionHost');
+    const providerError = createProviderErrorV1('provider_not_enabled_on_machine');
+    const executeSpawnAction = vi.fn(async (_input: SessionSpawnNewInputV2) => ({ ok: true as const,
+      result: { type: 'error' as const, code: 'spawn_failed' as const, retryable: false, providerError } }));
+    const host = { params: {}, demanded: true, setParams: () => {}, openDraft: () => {}, onHandedOff: () => {}, executeSpawnAction };
+    const target = { kind: 'agent', identity: BUNDLED_AGENT_CONTRIBUTION_IDENTITIES.codex } as const;
+    let endpointTemplateId = 'gateway-a';
+    const hook = await renderHook(() => useCreateNewSession(createRetryParams(storageState.settings, { draftScope: scope,
+      targetServerId: scope.serverId, allowedTargetServerIds: [scope.serverId],
+      authoringDraft: buildNewSessionAuthoringDraftFromResolvedInputs({ directory: '/tmp', prompt: '', agentTarget: target, connectedServices: null,
+        modelSelection: { v: 2, updatedAt: 1, ref: { source: 'connected_account', agentTargetKey: 'agent:happier.agent.codex/codex',
+          modelId: 'same-model', endpointTemplateId, purpose: { consumer: { pluginId: 'happier.providers.gateway', localId: 'gateway' }, purpose: 'inference' } } } }) })), {
+      wrapper: ({ children }) => React.createElement(NewSessionEmbeddedHostProvider, { host, children }),
+    });
+    try {
+      await act(async () => { await hook.getCurrent().handleCreateSession(); });
+      expect(executeSpawnAction.mock.calls[0]?.[0], JSON.stringify(modalAlertSpy.mock.calls))
+        .toMatchObject({ modelSelection: { ref: { endpointTemplateId } } });
+      await vi.waitFor(() => expect(hook.getCurrent().providerLaunchError).toEqual(providerError));
+      endpointTemplateId = 'gateway-b';
+      await hook.rerender();
+      expect(hook.getCurrent().providerLaunchError).toBeNull();
+    } finally { await hook.unmount(); }
+  });
+
   it('retains a refused remembered Profile on its draft until the Profile or target changes', async () => {
     const { useCreateNewSession, sessionSpawnNewActionBoundarySpy, modalAlertSpy, additionalBoundary, storageState, scope } = await setupTaskHarness({ httpsHome: true });
     const { SessionSpawnNewResultV1Schema } = await import('@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1');

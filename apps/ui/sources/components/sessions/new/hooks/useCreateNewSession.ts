@@ -1,5 +1,6 @@
 import { isActionApprovalDeclinedErrorCode } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useOpenExecutionRunLauncherDraft } from '@/components/sessions/runs/launcher/useOpenExecutionRunLauncherDraft';
+import { sessionModelPickerValueFromRef, sessionModelSelectionKey } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
 import { canCreateSessionWithInitialAccess, useSessionCollaborationAvailability } from '@/hooks/session/useSessionCollaborationAvailability';
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -383,8 +384,8 @@ function buildLaunchErrorScopeKey(
         resolveBackendTargetKeyV2(backendTarget),
         params.useProfiles,
         normalizeLaunchScopePart(params.selectedProfileId),
-        ...(kind === 'provider' ? [modelRef?.agentTargetKey ?? null,
-            modelRef?.providerConnectionId ?? null, modelRef?.modelId ?? params.modelMode] : []),
+        ...(kind === 'provider' ? [modelRef
+            ? sessionModelSelectionKey(sessionModelPickerValueFromRef(modelRef)) : params.modelMode] : []),
     ]);
 }
 
